@@ -32,6 +32,9 @@ logger = logging.getLogger("skcapstone.trust")
 FEB_SEARCH_PATHS = [
     Path("~/.cloud9/feb-backups"),
     Path("~/.cloud9/febs"),
+    Path("~/.openclaw/feb"),
+    Path("~/clawd/cloud9/feb-backups"),
+    Path("~/clawd/skills/cloud9/feb-backups"),
     Path("~/Nextcloud/p/smilintux-org/cloud9/feb-backups"),
     Path("~/Nextcloud/p/smilintux-org/cloud9/examples"),
 ]
