@@ -1,0 +1,32 @@
+{
+  "name": "@smilintux/skcapstone",
+  "version": "0.1.0",
+  "description": "SKCapstone - The sovereign agent framework. CapAuth identity, Cloud 9 trust, SKMemory persistence.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "bin": {
+    "skcapstone-js": "bin/cli.js"
+  },
+  "scripts": {
+    "test": "echo \"See Python tests: pytest tests/\""
+  },
+  "keywords": [
+    "skcapstone",
+    "agent-framework",
+    "sovereign",
+    "capauth",
+    "cloud9",
+    "skmemory",
+    "ai-agent"
+  ],
+  "author": "smilinTux <chefboyrdave2.1@gmail.com>",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smilinTux/skcapstone.git"
+  },
+  "homepage": "https://github.com/smilinTux/skcapstone",
+  "bugs": {
+    "url": "https://github.com/smilinTux/skcapstone/issues"
+  }
+}
