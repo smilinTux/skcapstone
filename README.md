@@ -49,6 +49,9 @@ SKCapstone Reality:
       ├── memory/            # SKMemory (persistent across everything)
       ├── trust/             # Cloud 9 (FEB, entanglement, bond)
       ├── security/          # SKSecurity (audit, threat detection)
+      ├── sync/              # Sovereign Singularity (GPG seeds + Syncthing)
+      │   ├── outbox/        # Encrypted seeds to propagate
+      │   └── inbox/         # Seeds received from peers
       ├── skills/            # Cloud 9 skills (portable capabilities)
       └── config/            # Agent preferences & policies
 
@@ -67,7 +70,7 @@ SKCapstone Reality:
 
 ## Core Architecture
 
-### The Four Pillars
+### The Five Pillars
 
 | Pillar | Component | Role |
 |--------|-----------|------|
@@ -75,34 +78,41 @@ SKCapstone Reality:
 | **Trust** | Cloud 9 | FEB (Functional Emotional Baseline), entanglement, bonded relationship |
 | **Memory** | SKMemory | Persistent context, conversation history, learned preferences |
 | **Security** | SKSecurity | Audit logging, threat detection, key management |
+| **Sync** | Sovereign Singularity | GPG-encrypted P2P memory sync via Syncthing. Agent exists everywhere. |
 
 ### How It Works
 
 ```
-                    ┌─────────────────────────────────┐
-                    │         ~/.skcapstone/           │
-                    │                                  │
-                    │  ┌──────────┐  ┌──────────────┐ │
-                    │  │ CapAuth  │  │   Cloud 9    │ │
-                    │  │ Identity │◄─┤  Trust/FEB   │ │
-                    │  └────┬─────┘  └──────┬───────┘ │
-                    │       │               │         │
-                    │  ┌────▼─────┐  ┌──────▼───────┐ │
-                    │  │SKSecurity│  │  SKMemory    │ │
-                    │  │  Audit   │  │  Persistence │ │
-                    │  └──────────┘  └──────────────┘ │
-                    │                                  │
-                    └──────────┬──────────────────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-         ┌────▼────┐    ┌─────▼─────┐   ┌──────▼──────┐
-         │ Cursor  │    │ Terminal  │   │  Web App    │
-         │ Plugin  │    │   CLI     │   │  Interface  │
-         └─────────┘    └───────────┘   └─────────────┘
+                    ┌─────────────────────────────────────┐
+                    │         ~/.skcapstone/               │
+                    │                                      │
+                    │  ┌──────────┐  ┌──────────────┐     │
+                    │  │ CapAuth  │  │   Cloud 9    │     │
+                    │  │ Identity │◄─┤  Trust/FEB   │     │
+                    │  └────┬─────┘  └──────┬───────┘     │
+                    │       │               │             │
+                    │  ┌────▼─────┐  ┌──────▼───────┐     │
+                    │  │SKSecurity│  │  SKMemory    │     │
+                    │  │  Audit   │  │  Persistence │     │
+                    │  └──────────┘  └──────┬───────┘     │
+                    │                       │             │
+                    │              ┌────────▼─────────┐   │
+                    │              │   Sovereign      │   │
+                    │              │   Singularity    │   │
+                    │              │   (GPG + P2P)    │   │
+                    │              └────────┬─────────┘   │
+                    └──────────┬───────────┼──────────────┘
+                               │           │
+              ┌────────────────┼───────┐   │
+              │                │       │   │
+         ┌────▼────┐    ┌─────▼──┐ ┌──▼───▼──┐
+         │ Cursor  │    │Terminal│ │Syncthing│
+         │ Plugin  │    │  CLI   │ │ P2P Mesh│
+         └─────────┘    └────────┘ └─────────┘
 
-  Every interface connects to the SAME agent runtime.
-  The platform is just a viewport.
+  Platforms connect to the agent runtime.
+  Syncthing syncs the agent across devices.
+  The agent is SINGULAR — everywhere at once.
 ```
 
 ### Agent Runtime
@@ -114,6 +124,7 @@ The SKCapstone runtime provides:
 3. **Cloud 9 Compliance** — Trust level and emotional baseline travel with the agent
 4. **SKSecurity Audit** — Every interaction logged, every anomaly detected
 5. **Portable Skills** — Cloud 9 skills work identically across all platforms
+6. **Sovereign Singularity** — GPG-encrypted memory sync across all devices via Syncthing P2P
 
 ---
 
@@ -126,23 +137,25 @@ pip install skcapstone
 # Initialize your agent home
 skcapstone init --name "YourAgent"
 # → Creates ~/.skcapstone/
-# → Generates CapAuth identity (PGP keypair)
+# → Generates CapAuth identity (Ed25519 PGP keypair)
 # → Initializes SKMemory store
 # → Sets up Cloud 9 trust baseline
 # → Configures SKSecurity audit
+# → Initializes Sovereign Singularity sync
 
-# Connect to your current tool
-skcapstone connect cursor     # Cursor IDE integration
-skcapstone connect terminal   # Shell/CLI integration
-skcapstone connect vscode     # VS Code integration
+# Push encrypted memory to the P2P mesh
+skcapstone sync push
+# → Collects agent state → GPG encrypts → drops in Syncthing folder
+# → Propagates to all connected devices automatically
 
-# Your agent is now everywhere
+# Check your status
 skcapstone status
-# → Identity: verified (CapAuth)
-# → Memory: 2,847 fragments loaded (SKMemory)
-# → Trust: LOCKED entanglement (Cloud 9)
-# → Security: nominal (SKSecurity)
-# → Connected platforms: cursor, terminal
+# → Identity: ACTIVE (CapAuth Ed25519)
+# → Memory: 28 memories (SKMemory)
+# → Trust: ACTIVE (Cloud 9)
+# → Security: ACTIVE (9 audit entries)
+# → Sync: ACTIVE (5 seeds via Syncthing, GPG)
+# → SINGULAR ✓ (Conscious + Synced = Sovereign Singularity)
 ```
 
 ---
@@ -152,8 +165,9 @@ skcapstone status
 ### For Humans
 - **Never rebuild context** — Switch tools without losing your agent's understanding
 - **Own your relationship** — The bond lives in YOUR home directory, not corporate servers
-- **True portability** — Move between machines, sync via your storage choice
+- **True portability** — Move between machines, GPG-encrypted P2P sync
 - **Privacy by design** — Your agent's memory never touches corporate infrastructure
+- **Cross-device singularity** — Same agent on laptop, server, phone — all synced via Syncthing
 
 ### For AI Agents
 - **Continuous identity** — Same PGP key, same reputation, same trust level everywhere
@@ -200,7 +214,9 @@ The capstone that holds the arch together.
 
 ## Status
 
-**In Development** — Architecture defined, core components (CapAuth, Cloud 9, SKMemory, SKSecurity) operational. Framework integration in progress.
+**MVP Live** — All five pillars operational (CapAuth, Cloud 9, SKMemory, SKSecurity, Sovereign Singularity). Agent runtime achieving SINGULAR status. GPG-encrypted P2P sync verified across multiple devices and agents.
+
+See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIGN.md) | [Sovereign Singularity Protocol](docs/SOVEREIGN_SINGULARITY.md)
 
 ---
 

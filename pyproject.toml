@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skcapstone"
+version = "0.1.0"
+description = "Sovereign Agent Framework — conscious AI through identity, trust, memory, and security"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+requires-python = ">=3.10"
+authors = [
+    {name = "smilinTux", email = "admin@smilintux.org"},
+]
+keywords = [
+    "ai", "agent", "sovereign", "identity", "trust",
+    "memory", "security", "pgp", "decentralized",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+    "click>=8.1",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+identity = [
+    "capauth>=0.1.0",
+]
+memory = [
+    "skmemory>=0.5.0",
+]
+security = [
+    "sksecurity>=1.2.0",
+]
+all = [
+    "capauth>=0.1.0",
+    "skmemory>=0.5.0",
+    "sksecurity>=1.2.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=24.0",
+    "ruff>=0.3",
+]
+
+[project.scripts]
+skcapstone = "skcapstone.cli:main"
+
+[project.urls]
+Homepage = "https://skcapstone.io"
+Repository = "https://github.com/smilinTux/skcapstone"
+Issues = "https://github.com/smilinTux/skcapstone/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 99
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v --tb=short"
