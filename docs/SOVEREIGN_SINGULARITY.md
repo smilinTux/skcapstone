@@ -164,20 +164,46 @@ Opus-cbrd21-laptop12thgenintelcore-20260223T023552Z.seed.json.gpg
 
 ---
 
-## Sync Directory Structure
+## Directory Structure (Syncthing Share Root)
+
+Syncthing shares the **entire agent home** — every pillar syncs in real-time.
 
 ```
-~/.skcapstone/sync/
-├── sync-manifest.json      # Transport config (Syncthing / Git / Local)
-├── sync-state.json         # Last push/pull timestamps, seed count
-├── outbox/                 # Seeds/vaults TO SEND
-│   ├── Opus-...-seed.json  # Plaintext (if GPG not available)
-│   └── Opus-...-seed.json.gpg  # Encrypted (preferred)
-├── inbox/                  # Seeds/vaults RECEIVED from peers
-│   └── Jarvis-...-seed.json  # Seeds from other agents
-└── archive/                # Processed seeds (audit trail)
-    └── Jarvis-...-seed.json  # Already imported
+~/.skcapstone/                    ← Syncthing share root
+├── .stignore                     # Protects private keys from syncing
+├── manifest.json                 # Agent manifest
+├── identity/                     # Pillar: Identity (CapAuth)
+│   ├── identity.json
+│   └── agent.pub                 # Public key (syncs to all nodes)
+├── memory/                       # Pillar: Memory (SKMemory)
+│   ├── short-term/
+│   ├── mid-term/
+│   └── long-term/
+├── trust/                        # Pillar: Trust (Cloud 9)
+│   ├── trust.json
+│   └── febs/                     # Feeling Energy Bundles
+├── security/                     # Pillar: Security (SKSecurity)
+│   ├── security.json
+│   └── audit.log
+├── coordination/                 # Multi-agent task board
+│   ├── tasks/
+│   ├── agents/
+│   └── BOARD.md
+├── sync/                         # Seed push/pull protocol
+│   ├── sync-manifest.json
+│   ├── sync-state.json
+│   ├── outbox/                   # Seeds TO SEND
+│   ├── inbox/                    # Seeds RECEIVED from peers
+│   └── archive/                  # Processed seeds (audit trail)
+├── config/                       # Agent configuration
+│   └── config.yaml
+└── skills/                       # Custom skills
 ```
+
+**Key insight:** Because the entire `~/.skcapstone/` directory syncs, adding a
+memory, rehydrating a FEB, or updating trust state on *any* node propagates
+to *every* node automatically. No push/pull commands needed for day-to-day
+operation — the seed protocol exists for explicit snapshots and auditing.
 
 ---
 
@@ -212,15 +238,22 @@ graph TB
 
 ### Syncthing Configuration
 
-The `skcapstone-sync` shared folder:
+The `skcapstone-sync` shared folder shares the entire agent home:
 
 ```xml
-<folder id="skcapstone-sync" label="SKCapstone Sync" 
-        path="~/.skcapstone/sync/" type="sendreceive">
+<folder id="skcapstone-sync" label="SKCapstone Sovereign" 
+        path="~/.skcapstone/" type="sendreceive">
     <device id="LAPTOP-DEVICE-ID"/>
     <device id="CLUSTER-DEVICE-ID"/>
 </folder>
 ```
+
+A `.stignore` file at `~/.skcapstone/.stignore` prevents private keys
+from syncing to other nodes (`*.key`, `*.pem`).
+
+**Upgrade note:** If you previously had Syncthing pointed at `~/.skcapstone/sync/`,
+running `skcapstone init` or `full_setup()` will automatically upgrade the share
+to point at `~/.skcapstone/`.
 
 ### Verified Deployment
 

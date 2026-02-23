@@ -1,9 +1,10 @@
 """
 Syncthing auto-setup skill for skcapstone / OpenClaw agents.
 
-Detects, installs, and configures Syncthing for sovereign P2P
-memory synchronization. Generates device IDs, shared folder config,
-and optional QR codes for easy pairing.
+Detects, installs, and configures Syncthing for Sovereign Singularity —
+real-time P2P sync of the entire agent home directory. Identity, memory,
+trust, security, coordination, and sync seeds all propagate across every
+node in the mesh automatically.
 """
 
 import json
@@ -17,8 +18,28 @@ from pathlib import Path
 from typing import Optional
 
 
-SYNC_DIR = Path.home() / ".skcapstone" / "sync"
+AGENT_HOME = Path.home() / ".skcapstone"
+SYNC_DIR = AGENT_HOME / "sync"
 SHARED_FOLDER_ID = "skcapstone-sync"
+
+# Reason: .stignore protects private keys from leaving this node
+STIGNORE_CONTENTS = """\
+// SKCapstone Sovereign Singularity — Syncthing ignore rules
+// Private key material must never leave this node
+*.key
+*.pem
+**/private.*
+
+// Python cache
+__pycache__
+*.pyc
+*.pyo
+
+// OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+"""
 
 # Reason: Syncthing stores its config in different locations per platform
 if platform.system() == "Windows":
@@ -141,18 +162,62 @@ def get_device_id() -> Optional[str]:
 
 
 def ensure_shared_folder() -> Path:
-    """Create the skcapstone sync shared folder if it doesn't exist.
+    """Create the full skcapstone agent home directory structure.
+
+    Ensures every pillar data directory exists so Syncthing has a
+    complete tree to replicate across nodes. Also writes the .stignore
+    to prevent private key material from leaving the node.
 
     Returns:
-        Path: The shared folder path.
+        Path: The agent home path (the Syncthing share root).
     """
-    for subdir in ("outbox", "inbox", "archive"):
-        (SYNC_DIR / subdir).mkdir(parents=True, exist_ok=True)
-    return SYNC_DIR
+    AGENT_HOME.mkdir(parents=True, exist_ok=True)
+
+    pillar_dirs = [
+        AGENT_HOME / "identity",
+        AGENT_HOME / "memory" / "short-term",
+        AGENT_HOME / "memory" / "mid-term",
+        AGENT_HOME / "memory" / "long-term",
+        AGENT_HOME / "trust" / "febs",
+        AGENT_HOME / "security",
+        AGENT_HOME / "coordination" / "tasks",
+        AGENT_HOME / "coordination" / "agents",
+        AGENT_HOME / "config",
+        AGENT_HOME / "skills",
+        SYNC_DIR / "outbox",
+        SYNC_DIR / "inbox",
+        SYNC_DIR / "archive",
+    ]
+    for d in pillar_dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+    _write_stignore()
+    return AGENT_HOME
+
+
+def _write_stignore() -> Path:
+    """Write the .stignore file to the agent home directory.
+
+    Syncthing reads this to know which files should never propagate
+    to other nodes (private keys, cache files, etc.).
+
+    Returns:
+        Path: The .stignore file path.
+    """
+    stignore_path = AGENT_HOME / ".stignore"
+    stignore_path.write_text(STIGNORE_CONTENTS)
+    return stignore_path
 
 
 def configure_syncthing_folder() -> bool:
-    """Add the skcapstone sync folder to Syncthing config.
+    """Add or update the skcapstone shared folder in Syncthing config.
+
+    Points Syncthing at the entire agent home (~/.skcapstone/) so all
+    pillar data — identity, memory, trust, security, coordination, and
+    sync seeds — replicates automatically across every node.
+
+    If an older config pointed at the sync/ subfolder, it gets upgraded
+    to share the full agent home instead.
 
     Returns:
         bool: True if configuration was added/updated.
@@ -166,14 +231,24 @@ def configure_syncthing_folder() -> bool:
     except ET.ParseError:
         return False
 
+    agent_home_str = str(AGENT_HOME)
+    old_sync_str = str(SYNC_DIR)
+
     for folder in root.iter("folder"):
         if folder.get("id") == SHARED_FOLDER_ID:
+            current_path = folder.get("path", "")
+            if current_path == agent_home_str:
+                return True
+            # Reason: upgrade old sync/-only share to full agent home
+            folder.set("path", agent_home_str)
+            folder.set("label", "SKCapstone Sovereign")
+            tree.write(str(SYNCTHING_CONFIG_FILE), xml_declaration=True)
             return True
 
     folder_elem = ET.SubElement(root, "folder")
     folder_elem.set("id", SHARED_FOLDER_ID)
-    folder_elem.set("label", "SKCapstone Sync")
-    folder_elem.set("path", str(SYNC_DIR))
+    folder_elem.set("label", "SKCapstone Sovereign")
+    folder_elem.set("path", agent_home_str)
     folder_elem.set("type", "sendreceive")
     folder_elem.set("rescanIntervalS", "60")
     folder_elem.set("fsWatcherEnabled", "true")
@@ -285,7 +360,10 @@ def add_remote_device(device_id: str, name: str = "peer") -> bool:
 
 
 def full_setup() -> dict:
-    """Run the complete Syncthing setup flow.
+    """Run the complete Syncthing setup flow for Sovereign Singularity.
+
+    Creates the full agent home directory structure, configures Syncthing
+    to share the entire ~/.skcapstone/ tree, and starts the daemon.
 
     Returns:
         dict: Setup result with device_id, folder_path, status.
@@ -293,7 +371,7 @@ def full_setup() -> dict:
     result = {
         "syncthing_installed": False,
         "device_id": None,
-        "folder_path": str(SYNC_DIR),
+        "folder_path": str(AGENT_HOME),
         "folder_configured": False,
         "started": False,
         "qr_code": None,
