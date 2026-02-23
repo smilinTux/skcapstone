@@ -39,11 +39,14 @@ class VaultManifest(BaseModel):
     agent_name: str
     source_host: str
     created_at: datetime
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     fingerprint: Optional[str] = None
     pillars_included: list[str] = Field(default_factory=list)
     encrypted: bool = True
     signature: Optional[str] = None
+    signed_by: Optional[str] = None
+    archive_hash: Optional[str] = None
+    file_hashes: dict[str, str] = Field(default_factory=dict)
 
 
 class SyncBackendConfig(BaseModel):

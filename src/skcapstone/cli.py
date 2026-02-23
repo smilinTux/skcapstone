@@ -379,17 +379,40 @@ def connect(platform: str, home: str):
 )
 def audit(home: str):
     """Show the security audit log."""
-    home_path = Path(home).expanduser()
-    audit_log = home_path / "security" / "audit.log"
+    from .pillars.security import read_audit_log
 
-    if not audit_log.exists():
+    home_path = Path(home).expanduser()
+    entries = read_audit_log(home_path)
+
+    if not entries:
         console.print("[yellow]No audit log found.[/]")
         return
 
     console.print()
-    console.print("[bold]Security Audit Log[/]")
-    console.print("[dim]" + "=" * 60 + "[/]")
-    console.print(audit_log.read_text())
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    table.add_column("Time", style="dim", no_wrap=True)
+    table.add_column("Event", style="bold cyan")
+    table.add_column("Detail")
+    table.add_column("Host", style="dim")
+
+    event_colors = {
+        "INIT": "green",
+        "AUTH": "blue",
+        "SYNC_PUSH": "magenta",
+        "SYNC_PULL": "magenta",
+        "TOKEN_ISSUE": "yellow",
+        "TOKEN_REVOKE": "red",
+        "SECURITY": "red",
+        "LEGACY": "dim",
+    }
+
+    for e in entries:
+        ts = e.timestamp[:19].replace("T", " ") if "T" in e.timestamp else e.timestamp
+        color = event_colors.get(e.event_type, "white")
+        table.add_row(ts, f"[{color}]{e.event_type}[/]", e.detail, e.host)
+
+    console.print(table)
+    console.print(f"\n  [dim]{len(entries)} entries[/]\n")
 
 
 @main.group()
