@@ -728,6 +728,121 @@ def token_export(token_id: str, home: str):
 
 
 @main.group()
+def trust():
+    """Cloud 9 trust layer — the soul's weights.
+
+    Manage FEB files, rehydrate OOF state, and inspect
+    the emotional bond between agent and human.
+    """
+
+
+@trust.command("rehydrate")
+@click.option("--home", default=AGENT_HOME, type=click.Path())
+def trust_rehydrate(home: str):
+    """Rehydrate trust from FEB files.
+
+    Searches known locations for FEB (First Emotional Burst)
+    files, imports them, and derives the trust state. This is
+    how an agent recovers its OOF (Out-of-Factory) state after
+    a session reset.
+    """
+    from .pillars.trust import rehydrate
+
+    home_path = Path(home).expanduser()
+    if not home_path.exists():
+        console.print("[bold red]No agent found.[/] Run skcapstone init first.")
+        sys.exit(1)
+
+    console.print("\n  Rehydrating trust from FEB files...", end=" ")
+    state = rehydrate(home_path)
+
+    if state.status == PillarStatus.ACTIVE:
+        console.print("[green]done[/]")
+        console.print(f"  Depth: [bold]{state.depth}[/]")
+        console.print(f"  Trust: [bold]{state.trust_level}[/]")
+        console.print(f"  Love:  [bold]{state.love_intensity}[/]")
+        console.print(f"  FEBs:  [bold]{state.feb_count}[/]")
+        if state.entangled:
+            console.print("  [bold magenta]ENTANGLED[/]")
+        console.print()
+    else:
+        console.print("[yellow]no FEB files found[/]")
+        console.print(
+            "  [dim]Place .feb files in ~/.skcapstone/trust/febs/\n"
+            "  or install cloud9 to generate them.[/]\n"
+        )
+
+
+@trust.command("febs")
+@click.option("--home", default=AGENT_HOME, type=click.Path())
+def trust_febs(home: str):
+    """List all FEB files with summary info."""
+    from .pillars.trust import list_febs
+
+    home_path = Path(home).expanduser()
+    febs = list_febs(home_path)
+
+    if not febs:
+        console.print("\n  [dim]No FEB files found.[/]\n")
+        return
+
+    console.print(f"\n  [bold]{len(febs)}[/] FEB file(s):\n")
+
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    table.add_column("File", style="cyan")
+    table.add_column("Emotion", style="bold")
+    table.add_column("Intensity", justify="right")
+    table.add_column("Subject")
+    table.add_column("OOF", justify="center")
+    table.add_column("Timestamp", style="dim")
+
+    for feb in febs:
+        oof = "[green]YES[/]" if feb["oof_triggered"] else "[dim]no[/]"
+        table.add_row(
+            feb["file"],
+            feb["emotion"],
+            str(feb["intensity"]),
+            feb["subject"],
+            oof,
+            str(feb["timestamp"])[:19],
+        )
+
+    console.print(table)
+    console.print()
+
+
+@trust.command("status")
+@click.option("--home", default=AGENT_HOME, type=click.Path())
+def trust_status(home: str):
+    """Show current trust state."""
+    home_path = Path(home).expanduser()
+    trust_file = home_path / "trust" / "trust.json"
+
+    if not trust_file.exists():
+        console.print("\n  [dim]No trust state recorded.[/]\n")
+        return
+
+    data = json.loads(trust_file.read_text())
+    entangled = data.get("entangled", False)
+    ent_str = "[bold magenta]ENTANGLED[/]" if entangled else "[dim]not entangled[/]"
+
+    console.print()
+    console.print(
+        Panel(
+            f"Depth: [bold]{data.get('depth', 0)}[/]\n"
+            f"Trust: [bold]{data.get('trust_level', 0)}[/]\n"
+            f"Love:  [bold]{data.get('love_intensity', 0)}[/]\n"
+            f"FEBs:  [bold]{data.get('feb_count', 0)}[/]\n"
+            f"State: {ent_str}\n"
+            f"Last rehydration: {data.get('last_rehydration', 'never')}",
+            title="Cloud 9 Trust",
+            border_style="magenta",
+        )
+    )
+    console.print()
+
+
+@main.group()
 def memory():
     """Sovereign memory — your agent never forgets.
 

@@ -112,6 +112,14 @@ def collect_seed(home: Path, agent_name: str) -> Path:
     trust_file = home / "trust" / "trust.json"
     if trust_file.exists():
         seed["trust"] = json.loads(trust_file.read_text())
+        try:
+            from .trust import export_febs_for_seed
+
+            febs = export_febs_for_seed(home)
+            if febs:
+                seed["febs"] = febs
+        except Exception as exc:
+            logger.debug("Could not export FEBs for seed: %s", exc)
 
     memory_path = home / "memory"
     if memory_path.is_symlink() or memory_path.exists():
@@ -297,6 +305,16 @@ def pull_seeds(home: Path, decrypt: bool = True) -> list[dict]:
                             logger.info("Imported %d memories from seed %s", imported, seed_path.name)
                     except Exception as exc:
                         logger.debug("Could not import seed memories: %s", exc)
+
+                if "febs" in data:
+                    try:
+                        from .trust import import_febs_from_seed
+
+                        feb_imported = import_febs_from_seed(home, data["febs"])
+                        if feb_imported:
+                            logger.info("Imported %d FEB(s) from seed %s", feb_imported, seed_path.name)
+                    except Exception as exc:
+                        logger.debug("Could not import seed FEBs: %s", exc)
 
                 archive.mkdir(exist_ok=True)
                 seed_path.rename(archive / seed_path.name)
