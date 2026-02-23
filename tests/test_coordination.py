@@ -13,6 +13,8 @@ from skcapstone.coordination import (
     TaskPriority,
     TaskStatus,
     TaskView,
+    get_briefing_json,
+    get_briefing_text,
 )
 
 
@@ -237,3 +239,61 @@ class TestCorruptFiles:
         agents = board.load_agents()
         assert len(agents) == 1
         assert agents[0].agent == "good"
+
+
+class TestBriefing:
+    """Tests for the tool-agnostic briefing functions."""
+
+    def test_briefing_text_contains_protocol(self, tmp_path: Path):
+        text = get_briefing_text(tmp_path)
+        assert "SKCapstone Agent Coordination Protocol" in text
+        assert "skcapstone coord briefing" in text
+        assert "Conflict-Free Design" in text
+
+    def test_briefing_text_includes_live_tasks(self, board: Board):
+        board.create_task(Task(id="t1", title="Test task"))
+        text = get_briefing_text(board.home)
+        assert "Current Board Snapshot" in text
+        assert "t1" in text
+        assert "Test task" in text
+
+    def test_briefing_text_includes_agents(self, board: Board):
+        board.create_task(Task(id="t2", title="Another"))
+        board.save_agent(AgentFile(agent="tester", current_task="t2"))
+        text = get_briefing_text(board.home)
+        assert "tester" in text
+
+    def test_briefing_text_empty_board(self, tmp_path: Path):
+        text = get_briefing_text(tmp_path)
+        assert "Current Board Snapshot" not in text
+
+    def test_briefing_json_valid(self, tmp_path: Path):
+        raw = get_briefing_json(tmp_path)
+        data = json.loads(raw)
+        assert data["protocol_version"] == "1.0"
+        assert "commands" in data
+        assert "rules" in data
+        assert "agent_names" in data
+
+    def test_briefing_json_includes_tasks(self, board: Board):
+        board.create_task(Task(id="j1", title="JSON task", priority=TaskPriority.HIGH))
+        raw = get_briefing_json(board.home)
+        data = json.loads(raw)
+        assert len(data["tasks"]) == 1
+        assert data["tasks"][0]["id"] == "j1"
+        assert data["tasks"][0]["priority"] == "high"
+
+    def test_briefing_json_includes_agents(self, board: Board):
+        board.save_agent(AgentFile(agent="bot", state=AgentState.ACTIVE))
+        raw = get_briefing_json(board.home)
+        data = json.loads(raw)
+        assert len(data["agents"]) == 1
+        assert data["agents"][0]["name"] == "bot"
+        assert data["agents"][0]["state"] == "active"
+
+    def test_briefing_text_mentions_tool_agnostic(self, tmp_path: Path):
+        text = get_briefing_text(tmp_path)
+        assert "Cursor" in text
+        assert "Claude Code" in text
+        assert "Aider" in text
+        assert "Windsurf" in text

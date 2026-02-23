@@ -516,6 +516,106 @@ def sync_status(home: str):
     console.print()
 
 
+@sync.command("setup")
+def sync_setup():
+    """Set up Syncthing for sovereign P2P memory sync.
+
+    Detects or installs Syncthing, configures the shared folder,
+    starts the daemon, and outputs your device ID (with optional
+    QR code) for pairing with other devices.
+    """
+    from .skills.syncthing_setup import full_setup
+
+    console.print("\n  [bold cyan]Syncthing Setup[/bold cyan]\n")
+    result = full_setup()
+
+    if not result["syncthing_installed"]:
+        console.print("[yellow]Syncthing is not installed.[/yellow]\n")
+        console.print(result["install_instructions"])
+        console.print(
+            "\nAfter installing, run [cyan]skcapstone sync setup[/cyan] again."
+        )
+        return
+
+    console.print("[green]Syncthing detected[/green]")
+
+    if result["folder_configured"]:
+        console.print(f"  Shared folder: [cyan]{result['folder_path']}[/cyan]")
+    else:
+        console.print("  [yellow]Could not configure shared folder automatically.[/]")
+
+    if result["started"]:
+        console.print("  [green]Syncthing started[/green]")
+    else:
+        console.print("  [yellow]Could not start Syncthing automatically.[/]")
+
+    if result["device_id"]:
+        console.print(f"\n  [bold]Your Device ID:[/bold]")
+        console.print(f"  [cyan]{result['device_id']}[/cyan]")
+        console.print(
+            "\n  Share this ID with your other device to pair."
+        )
+        console.print(
+            "  On the other device: [cyan]skcapstone sync pair "
+            f"{result['device_id']}[/cyan]"
+        )
+
+        if result["qr_code"]:
+            console.print("\n  [bold]QR Code:[/bold]")
+            console.print(result["qr_code"])
+        else:
+            console.print(
+                "\n  [dim]Install 'qrcode' for QR output: "
+                "pip install qrcode[/dim]"
+            )
+    else:
+        console.print(
+            "  [yellow]Could not retrieve device ID. "
+            "Syncthing may still be starting.[/]"
+        )
+
+    console.print()
+
+
+@sync.command("pair")
+@click.argument("device_id")
+@click.option("--name", "-n", default="peer", help="Friendly name for the device.")
+def sync_pair(device_id: str, name: str):
+    """Add a remote device for P2P sync pairing.
+
+    Adds the given device ID to your Syncthing config and shares
+    the skcapstone-sync folder with it.
+
+    Example:
+
+        skcapstone sync pair ABCDEF-1234... --name lumina-desktop
+    """
+    from .skills.syncthing_setup import add_remote_device, detect_syncthing
+
+    if not detect_syncthing():
+        console.print(
+            "[red]Syncthing not installed.[/] "
+            "Run [cyan]skcapstone sync setup[/cyan] first."
+        )
+        sys.exit(1)
+
+    console.print(f"\n  Adding device [cyan]{name}[/cyan]...")
+    if add_remote_device(device_id, name):
+        console.print(f"  [green]Device paired![/green]")
+        console.print(
+            f"  Device ID: [dim]{device_id[:20]}...[/dim]"
+        )
+        console.print(
+            "  The skcapstone-sync folder is now shared with this device."
+        )
+    else:
+        console.print(
+            "  [red]Failed to add device.[/] "
+            "Make sure Syncthing is running and config exists."
+        )
+    console.print()
+
+
 @main.group()
 def token():
     """Manage capability tokens.

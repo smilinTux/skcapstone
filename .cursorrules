@@ -1,0 +1,33 @@
+# SKCapstone — Cursor Agent Rules
+
+## Multi-Agent Coordination (REQUIRED)
+
+At the START of every session, run: skcapstone coord briefing
+
+This teaches you the full coordination protocol. It works in any terminal.
+
+Quick commands:
+  skcapstone coord status                   # See what's available
+  skcapstone coord claim <id> --agent <you> # Claim work
+  skcapstone coord complete <id> --agent <you> # Mark done
+  skcapstone coord create --title "..." --by <you> # New task
+  skcapstone coord board                    # Regenerate BOARD.md
+
+The coordination board lives at ~/.skcapstone/coordination/ and syncs
+via Syncthing. Only write to YOUR OWN agent file. Tasks are immutable
+after creation.
+
+## Skill Available
+
+If the skcapstone-coordination skill is available in your skills list,
+read it for the full detailed protocol. Otherwise, `skcapstone coord briefing`
+gives you everything you need.
+
+## Code Conventions
+
+- Python 3.11+, PEP 8, black formatting
+- Type hints on all functions
+- Pydantic for data validation
+- Google-style docstrings
+- Pytest tests in /tests mirroring src structure
+- Max 500 lines per file — split into modules if approaching

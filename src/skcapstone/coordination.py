@@ -399,6 +399,8 @@ Cline, a plain terminal, or anything that can run shell commands.
 4. Mark complete:            skcapstone coord complete <id> --agent <you>
 5. Create new tasks:         skcapstone coord create --title "..." --by <you>
 6. Update the board:         skcapstone coord board
+7. Show this protocol:       skcapstone coord briefing
+8. Machine-readable:         skcapstone coord briefing --format json
 
 ## Directory Layout
 
