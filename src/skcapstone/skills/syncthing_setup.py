@@ -18,9 +18,16 @@ from typing import Optional
 
 
 SYNC_DIR = Path.home() / ".skcapstone" / "sync"
-SYNCTHING_CONFIG_DIR = Path.home() / ".config" / "syncthing"
-SYNCTHING_CONFIG_FILE = SYNCTHING_CONFIG_DIR / "config.xml"
 SHARED_FOLDER_ID = "skcapstone-sync"
+
+# Reason: Syncthing stores its config in different locations per platform
+if platform.system() == "Windows":
+    _local_app = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+    SYNCTHING_CONFIG_DIR = Path(_local_app) / "Syncthing"
+else:
+    SYNCTHING_CONFIG_DIR = Path.home() / ".config" / "syncthing"
+
+SYNCTHING_CONFIG_FILE = SYNCTHING_CONFIG_DIR / "config.xml"
 
 
 def detect_syncthing() -> Optional[str]:
@@ -76,18 +83,25 @@ def _detect_linux_distro() -> str:
     Returns:
         str: Distribution identifier (e.g., 'ubuntu', 'arch').
     """
+    if platform.system() != "Linux":
+        return "unknown"
+
+    os_release = Path("/etc/os-release")
+    if not os_release.exists():
+        return "unknown"
+
     try:
-        with open("/etc/os-release") as f:
-            for line in f:
-                if line.startswith("ID="):
-                    return line.strip().split("=")[1].strip('"').lower()
-                if line.startswith("ID_LIKE="):
-                    like = line.strip().split("=")[1].strip('"').lower()
-                    if "arch" in like:
-                        return "arch"
-                    if "debian" in like:
-                        return "debian"
-    except FileNotFoundError:
+        text = os_release.read_text()
+        for line in text.splitlines():
+            if line.startswith("ID="):
+                return line.strip().split("=")[1].strip('"').lower()
+            if line.startswith("ID_LIKE="):
+                like = line.strip().split("=")[1].strip('"').lower()
+                if "arch" in like:
+                    return "arch"
+                if "debian" in like:
+                    return "debian"
+    except OSError:
         pass
     return "unknown"
 
@@ -172,27 +186,37 @@ def configure_syncthing_folder() -> bool:
 def start_syncthing() -> bool:
     """Start Syncthing as a background process or systemd service.
 
+    On Linux: tries systemd first, then falls back to direct launch.
+    On Windows/macOS: launches directly as a detached background process.
+
     Returns:
         bool: True if started successfully.
     """
-    # Reason: try systemd user service first, then fall back to direct launch
-    result = subprocess.run(
-        ["systemctl", "--user", "start", "syncthing.service"],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode == 0:
-        return True
+    # Reason: systemctl is Linux-only; skip on other platforms
+    if platform.system() == "Linux":
+        result = subprocess.run(
+            ["systemctl", "--user", "start", "syncthing.service"],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return True
 
     st = detect_syncthing()
     if not st:
         return False
 
-    subprocess.Popen(
-        [st, "--no-browser", "--no-restart"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    popen_kwargs: dict = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    # Reason: on Windows, CREATE_NO_WINDOW prevents a console flash
+    if platform.system() == "Windows":
+        popen_kwargs["creationflags"] = (
+            subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+        )
+
+    subprocess.Popen([st, "--no-browser", "--no-restart"], **popen_kwargs)
     return True
 
 
