@@ -86,10 +86,9 @@ def discover_identity(home: Path) -> IdentityState:
 def discover_memory(home: Path) -> MemoryState:
     """Probe for SKMemory state.
 
-    Checks:
-    1. skmemory Python package installed
-    2. ~/.skmemory/ exists with memory layers
-    3. Counts memories across layers
+    Checks (in order):
+    1. Built-in memory engine at ~/.skcapstone/memory/
+    2. External skmemory package at ~/.skmemory/ (legacy fallback)
 
     Args:
         home: The agent home directory (~/.skcapstone).
@@ -99,6 +98,17 @@ def discover_memory(home: Path) -> MemoryState:
     """
     state = MemoryState()
 
+    memory_dir = home / "memory"
+    if memory_dir.is_dir():
+        state.short_term = _count_json_files(memory_dir / "short-term")
+        state.mid_term = _count_json_files(memory_dir / "mid-term")
+        state.long_term = _count_json_files(memory_dir / "long-term")
+        state.total_memories = state.short_term + state.mid_term + state.long_term
+        state.store_path = memory_dir
+        state.status = PillarStatus.ACTIVE
+        return state
+
+    # Reason: legacy fallback for agents using the external skmemory package
     skmemory = _try_import("skmemory")
     if skmemory is None:
         return state
@@ -142,8 +152,8 @@ def discover_trust(home: Path) -> TrustState:
     has_cloud9_cli = shutil.which("cloud9") is not None
     has_cloud9_package = cloud9_py is not None or has_cloud9_cli
 
-    # Reason: trust data persists in trust.json even if cloud9 package
-    # isn't installed in this environment — check disk state first
+    # Reason: trust state is now built into skcapstone via FEB rehydration,
+    # so trust.json with valid data means ACTIVE regardless of cloud9 package
     manifest = trust_dir / "trust.json"
     if manifest.exists():
         try:
@@ -154,7 +164,8 @@ def discover_trust(home: Path) -> TrustState:
             state.entangled = data.get("entangled", False)
             if data.get("last_rehydration"):
                 state.last_rehydration = datetime.fromisoformat(data["last_rehydration"])
-            state.status = PillarStatus.ACTIVE if has_cloud9_package else PillarStatus.DEGRADED
+            has_trust_data = state.depth > 0 or state.trust_level > 0
+            state.status = PillarStatus.ACTIVE if has_trust_data else PillarStatus.DEGRADED
             return state
         except (json.JSONDecodeError, KeyError, ValueError):
             state.status = PillarStatus.ERROR
@@ -190,10 +201,9 @@ def discover_trust(home: Path) -> TrustState:
 def discover_security(home: Path) -> SecurityState:
     """Probe for SKSecurity state.
 
-    Checks:
-    1. sksecurity Python package installed
-    2. Audit log presence
-    3. Scan history
+    Checks (in order):
+    1. Built-in audit log at ~/.skcapstone/security/audit.log
+    2. External sksecurity package (enhancer)
 
     Args:
         home: The agent home directory (~/.skcapstone).
@@ -202,14 +212,8 @@ def discover_security(home: Path) -> SecurityState:
         SecurityState with current security information.
     """
     state = SecurityState()
-
-    sksecurity = _try_import("sksecurity")
-    if sksecurity is None:
-        return state
-
-    state.status = PillarStatus.DEGRADED
-
     security_dir = home / "security"
+
     audit_log = security_dir / "audit.log"
     if audit_log.exists():
         try:
@@ -229,6 +233,10 @@ def discover_security(home: Path) -> SecurityState:
             state.status = PillarStatus.ACTIVE
         except (json.JSONDecodeError, KeyError, ValueError):
             pass
+
+    sksecurity = _try_import("sksecurity")
+    if sksecurity is not None and state.status == PillarStatus.MISSING:
+        state.status = PillarStatus.DEGRADED
 
     return state
 
