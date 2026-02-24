@@ -44,20 +44,12 @@ def generate_identity(
         status=PillarStatus.DEGRADED,
     )
 
-    try:
-        from capauth.keys import generate_keypair  # type: ignore[import-untyped]
-
-        pub_key, fingerprint = generate_keypair(
-            name=name,
-            email=state.email,
-            output_dir=str(identity_dir),
-        )
-        state.fingerprint = fingerprint
-        state.key_path = identity_dir / "agent.pub"
+    capauth_state = _try_init_capauth(name, state.email, identity_dir)
+    if capauth_state is not None:
+        state.fingerprint = capauth_state.fingerprint
+        state.key_path = capauth_state.key_path
         state.status = PillarStatus.ACTIVE
-    except (ImportError, Exception):
-        # Reason: CapAuth not installed or key generation failed —
-        # record identity metadata anyway so agent has a name
+    else:
         state.fingerprint = _generate_placeholder_fingerprint(name)
         state.status = PillarStatus.DEGRADED
 
@@ -71,6 +63,80 @@ def generate_identity(
     (identity_dir / "identity.json").write_text(json.dumps(identity_manifest, indent=2))
 
     return state
+
+
+def _try_init_capauth(
+    name: str, email: str, identity_dir: Path
+) -> Optional[IdentityState]:
+    """Try to create or load a real CapAuth identity.
+
+    Attempts (in order):
+    1. Load an existing CapAuth profile from ~/.capauth/
+    2. Create a new profile via capauth.profile.init_profile()
+    3. Fall back to legacy capauth.keys.generate_keypair()
+
+    Args:
+        name: Agent display name.
+        email: Agent email.
+        identity_dir: Path to ~/.skcapstone/identity/.
+
+    Returns:
+        IdentityState with real PGP keys, or None if CapAuth unavailable.
+    """
+    # Try loading an existing CapAuth profile first
+    try:
+        from capauth.profile import load_profile  # type: ignore[import-untyped]
+
+        profile = load_profile()
+        return IdentityState(
+            fingerprint=profile.key_info.fingerprint,
+            key_path=Path(profile.key_info.public_key_path),
+            name=profile.entity.name,
+            email=profile.entity.email,
+            status=PillarStatus.ACTIVE,
+        )
+    except ImportError:
+        return None
+    except Exception:
+        pass
+
+    # No existing profile — try creating one
+    try:
+        from capauth.profile import init_profile  # type: ignore[import-untyped]
+
+        profile = init_profile(
+            name=name,
+            email=email,
+            passphrase="",
+        )
+        return IdentityState(
+            fingerprint=profile.key_info.fingerprint,
+            key_path=Path(profile.key_info.public_key_path),
+            name=profile.entity.name,
+            email=profile.entity.email,
+            status=PillarStatus.ACTIVE,
+        )
+    except Exception:
+        pass
+
+    # Legacy fallback: capauth.keys.generate_keypair
+    try:
+        from capauth.keys import generate_keypair  # type: ignore[import-untyped]
+
+        _pub_key, fingerprint = generate_keypair(
+            name=name,
+            email=email,
+            output_dir=str(identity_dir),
+        )
+        return IdentityState(
+            fingerprint=fingerprint,
+            key_path=identity_dir / "agent.pub",
+            name=name,
+            email=email,
+            status=PillarStatus.ACTIVE,
+        )
+    except Exception:
+        return None
 
 
 def _generate_placeholder_fingerprint(name: str) -> str:

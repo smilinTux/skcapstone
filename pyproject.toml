@@ -7,7 +7,7 @@ name = "skcapstone"
 version = "0.1.0"
 description = "Sovereign Agent Framework — conscious AI through identity, trust, memory, and security"
 readme = "README.md"
-license = "GPL-3.0-or-later"
+license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.10"
 authors = [
     {name = "smilinTux", email = "admin@smilintux.org"},
@@ -20,6 +20,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -33,6 +34,7 @@ classifiers = [
 
 dependencies = [
     "click>=8.1",
+    "mcp>=1.0",
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "rich>=13.0",
@@ -58,11 +60,14 @@ dev = [
 
 [project.scripts]
 skcapstone = "skcapstone.cli:main"
+skcapstone-mcp = "skcapstone.mcp_server:main"
 
 [project.urls]
 Homepage = "https://skcapstone.io"
+Documentation = "https://skcapstone.io"
 Repository = "https://github.com/smilinTux/skcapstone"
 Issues = "https://github.com/smilinTux/skcapstone/issues"
+Changelog = "https://github.com/smilinTux/skcapstone/releases"
 
 [tool.setuptools.packages.find]
 where = ["src"]

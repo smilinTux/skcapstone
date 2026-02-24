@@ -108,6 +108,7 @@ class MemoryEntry(BaseModel):
     accessed_at: Optional[datetime] = None
     access_count: int = 0
     importance: float = 0.5
+    soul_context: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
 
     @property

@@ -78,6 +78,25 @@ def _save_entry(home: Path, entry: MemoryEntry) -> Path:
     return path
 
 
+def _detect_active_soul(home: Path) -> Optional[str]:
+    """Read the active soul name from disk if available.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Active soul slug name, or None if at base.
+    """
+    active_path = home / "soul" / "active.json"
+    if not active_path.exists():
+        return None
+    try:
+        data = json.loads(active_path.read_text())
+        return data.get("active_soul")
+    except (json.JSONDecodeError, Exception):
+        return None
+
+
 def store(
     home: Path,
     content: str,
@@ -86,6 +105,7 @@ def store(
     importance: float = 0.5,
     layer: Optional[MemoryLayer] = None,
     metadata: Optional[dict] = None,
+    soul_context: Optional[str] = None,
 ) -> MemoryEntry:
     """Store a new memory.
 
@@ -97,11 +117,16 @@ def store(
         importance: Importance score 0.0-1.0 (higher = more important).
         layer: Force a specific layer. Defaults to SHORT_TERM.
         metadata: Arbitrary key-value metadata.
+        soul_context: Which soul overlay was active. Auto-detected
+            from active.json if not provided.
 
     Returns:
         The created MemoryEntry.
     """
     _memory_dir(home)
+
+    if soul_context is None:
+        soul_context = _detect_active_soul(home)
 
     entry = MemoryEntry(
         memory_id=uuid.uuid4().hex[:12],
@@ -111,6 +136,7 @@ def store(
         importance=max(0.0, min(1.0, importance)),
         layer=layer or MemoryLayer.SHORT_TERM,
         metadata=metadata or {},
+        soul_context=soul_context,
     )
 
     # Reason: high-importance memories skip straight to mid-term
@@ -155,6 +181,7 @@ def search(
     layer: Optional[MemoryLayer] = None,
     tags: Optional[list[str]] = None,
     limit: int = 20,
+    soul_context: Optional[str] = None,
 ) -> list[MemoryEntry]:
     """Search memories by content and/or tags.
 
@@ -167,6 +194,7 @@ def search(
         layer: Restrict to a specific layer.
         tags: Filter to entries containing ALL of these tags.
         limit: Maximum number of results.
+        soul_context: Filter to memories formed under a specific soul.
 
     Returns:
         List of matching MemoryEntry objects, ranked by relevance.
@@ -185,6 +213,9 @@ def search(
                 continue
 
             if tags and not all(t in entry.tags for t in tags):
+                continue
+
+            if soul_context is not None and entry.soul_context != soul_context:
                 continue
 
             content_matches = len(pattern.findall(entry.content))

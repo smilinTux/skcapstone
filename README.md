@@ -220,12 +220,24 @@ See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIG
 
 ---
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Developer Quickstart](../docs/QUICKSTART.md) | Install + first sovereign agent in 5 minutes |
+| [API Reference](../docs/API.md) | Full API docs for all four core packages |
+| [PMA Integration](../docs/PMA_INTEGRATION.md) | Legal sovereignty layer (Fiducia Communitatis) |
+| [Architecture](docs/ARCHITECTURE.md) | Technical deep dive |
+| [Security Design](docs/SECURITY_DESIGN.md) | Four-layer security model |
+| [Token System](docs/TOKEN_SYSTEM.md) | PGP-signed capability tokens |
+
 ## Community
 
 - **Website**: [skcapstone.io](https://skcapstone.io)
 - **Organization**: [smilinTux](https://smilintux.org)
 - **Contact**: hello@skcapstone.io
 - **Issues**: [GitHub Issues](https://github.com/smilinTux/skcapstone/issues)
+- **PMA Membership**: [Email lumina@skworld.io](mailto:lumina@skworld.io)
 
 ## License
 

@@ -4,22 +4,29 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
-from skcapstone.discovery import discover_identity, discover_memory, discover_all
+from skcapstone.discovery import discover_all, discover_identity, discover_memory
 from skcapstone.models import PillarStatus
+
+
+def _no_capauth(*args, **kwargs):
+    """Mock that simulates no CapAuth profile available."""
+    return None
 
 
 class TestIdentityDiscovery:
     """Tests for identity (CapAuth) discovery."""
 
+    @patch("skcapstone.discovery._try_load_capauth_profile", _no_capauth)
     def test_missing_when_no_identity_dir(self, tmp_agent_home: Path):
-        """Should report MISSING when no identity exists."""
+        """Should report MISSING when no identity exists and no CapAuth."""
         state = discover_identity(tmp_agent_home)
-        # Reason: capauth may or may not be installed in test env
         assert state.status in (PillarStatus.MISSING, PillarStatus.DEGRADED)
 
-    def test_active_with_identity_manifest(self, tmp_agent_home: Path):
-        """Should report ACTIVE when identity.json exists with data."""
+    @patch("skcapstone.discovery._try_load_capauth_profile", _no_capauth)
+    def test_active_with_capauth_managed_manifest(self, tmp_agent_home: Path):
+        """Should report ACTIVE when identity.json has capauth_managed=true."""
         identity_dir = tmp_agent_home / "identity"
         identity_dir.mkdir()
         identity_data = {
@@ -27,6 +34,7 @@ class TestIdentityDiscovery:
             "email": "test@skcapstone.local",
             "fingerprint": "ABCD1234" * 5,
             "created_at": "2026-02-22T00:00:00+00:00",
+            "capauth_managed": True,
         }
         (identity_dir / "identity.json").write_text(json.dumps(identity_data))
 
@@ -35,6 +43,24 @@ class TestIdentityDiscovery:
         assert state.name == "test-agent"
         assert state.fingerprint is not None
 
+    @patch("skcapstone.discovery._try_load_capauth_profile", _no_capauth)
+    def test_degraded_with_placeholder_manifest(self, tmp_agent_home: Path):
+        """Should report DEGRADED when identity.json has no capauth_managed."""
+        identity_dir = tmp_agent_home / "identity"
+        identity_dir.mkdir()
+        identity_data = {
+            "name": "placeholder-agent",
+            "email": "placeholder@skcapstone.local",
+            "fingerprint": "ABCD1234" * 5,
+            "created_at": "2026-02-22T00:00:00+00:00",
+        }
+        (identity_dir / "identity.json").write_text(json.dumps(identity_data))
+
+        state = discover_identity(tmp_agent_home)
+        assert state.status == PillarStatus.DEGRADED
+        assert state.name == "placeholder-agent"
+
+    @patch("skcapstone.discovery._try_load_capauth_profile", _no_capauth)
     def test_error_with_corrupt_manifest(self, tmp_agent_home: Path):
         """Should report ERROR when identity.json is corrupt."""
         identity_dir = tmp_agent_home / "identity"

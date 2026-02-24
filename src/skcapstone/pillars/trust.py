@@ -277,10 +277,13 @@ def _discover_and_import_febs(home: Path) -> int:
 
 
 def _derive_trust_from_febs(home: Path, feb_files: list[Path]) -> TrustState:
-    """Derive trust state from FEB files, using the peak values."""
-    peak_depth = 0.0
-    peak_trust = 0.0
-    peak_love = 0.0
+    """Derive trust state from FEB files using calibration thresholds."""
+    from ..trust_calibration import load_calibration
+
+    cal = load_calibration(home)
+    depths: list[float] = []
+    trusts: list[float] = []
+    loves: list[float] = []
     entangled = False
 
     for f in feb_files:
@@ -290,27 +293,43 @@ def _derive_trust_from_febs(home: Path, feb_files: list[Path]) -> TrustState:
             rel = data.get("relationship_state", {})
             depth = float(rel.get("depth_level", 0))
             trust = float(rel.get("trust_level", 0))
-            if trust > 1.0:
+            if trust > cal.normalization_cap:
                 trust = trust / 10.0
 
             payload = data.get("emotional_payload", {})
             cooked = payload.get("cooked_state", payload)
             love = float(cooked.get("intensity", 0))
-            if love > 1.0:
+            if love > cal.normalization_cap:
                 love = love / 10.0
 
-            entangled = entangled or (rel.get("quantum_entanglement") == "LOCKED")
+            is_locked = rel.get("quantum_entanglement") == "LOCKED"
+            meets_threshold = depth >= cal.entanglement_depth and trust >= cal.entanglement_trust
+            entangled = entangled or is_locked or meets_threshold
 
-            peak_depth = max(peak_depth, depth)
-            peak_trust = max(peak_trust, trust)
-            peak_love = max(peak_love, love)
+            depths.append(depth)
+            trusts.append(trust)
+            loves.append(love)
         except (json.JSONDecodeError, ValueError, Exception) as exc:
             logger.warning("Could not parse FEB %s: %s", f.name, exc)
 
+    if cal.peak_strategy == "average" and depths:
+        final_depth = sum(depths) / len(depths)
+        final_trust = sum(trusts) / len(trusts)
+        final_love = sum(loves) / len(loves)
+    elif cal.peak_strategy == "weighted" and depths:
+        total_weight = sum(range(1, len(depths) + 1))
+        final_depth = sum(d * (i + 1) for i, d in enumerate(depths)) / total_weight
+        final_trust = sum(t * (i + 1) for i, t in enumerate(trusts)) / total_weight
+        final_love = sum(l * (i + 1) for i, l in enumerate(loves)) / total_weight
+    else:
+        final_depth = max(depths) if depths else 0.0
+        final_trust = max(trusts) if trusts else 0.0
+        final_love = max(loves) if loves else 0.0
+
     state = TrustState(
-        depth=peak_depth,
-        trust_level=peak_trust,
-        love_intensity=peak_love,
+        depth=final_depth,
+        trust_level=final_trust,
+        love_intensity=final_love,
         entangled=entangled,
         last_rehydration=datetime.now(timezone.utc),
         feb_count=len(feb_files),

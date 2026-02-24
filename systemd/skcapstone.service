@@ -1,0 +1,28 @@
+[Unit]
+Description=SKCapstone Sovereign Agent Daemon
+Documentation=https://github.com/smilinTux/skcapstone
+After=network-online.target syncthing.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=skcapstone daemon start --foreground
+ExecStop=skcapstone daemon stop
+Restart=on-failure
+RestartSec=10
+WatchdogSec=120
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone %h/.skmemory %h/.capauth %h/.cloud9 %h/.skcomm %h/.skchat
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

@@ -43,10 +43,14 @@ def _count_json_files(directory: Path) -> int:
 def discover_identity(home: Path) -> IdentityState:
     """Probe for CapAuth identity.
 
-    Checks:
-    1. capauth Python package installed
-    2. ~/.skcapstone/identity/ has key material
-    3. Falls back to checking ~/.gnupg for existing PGP keys
+    Checks (in priority order):
+    1. Real CapAuth profile at ~/.capauth/ (sovereign PGP keys)
+    2. Identity manifest at ~/.skcapstone/identity/identity.json
+    3. Key material files in the identity directory
+
+    When a real CapAuth profile is found, the identity.json is
+    updated to reflect the actual PGP fingerprint, replacing any
+    placeholder values from a previous init without CapAuth.
 
     Args:
         home: The agent home directory (~/.skcapstone).
@@ -57,9 +61,11 @@ def discover_identity(home: Path) -> IdentityState:
     state = IdentityState()
     identity_dir = home / "identity"
 
-    capauth = _try_import("capauth")
-    if capauth is not None:
-        state.status = PillarStatus.DEGRADED
+    capauth_state = _try_load_capauth_profile()
+    if capauth_state is not None:
+        state = capauth_state
+        _sync_identity_json(identity_dir, state)
+        return state
 
     manifest_file = identity_dir / "identity.json"
     if manifest_file.exists():
@@ -70,7 +76,8 @@ def discover_identity(home: Path) -> IdentityState:
             state.email = data.get("email")
             if data.get("created_at"):
                 state.created_at = datetime.fromisoformat(data["created_at"])
-            state.status = PillarStatus.ACTIVE
+            is_placeholder = not data.get("capauth_managed", False)
+            state.status = PillarStatus.DEGRADED if is_placeholder else PillarStatus.ACTIVE
         except (json.JSONDecodeError, KeyError, ValueError):
             state.status = PillarStatus.ERROR
 
@@ -81,6 +88,64 @@ def discover_identity(home: Path) -> IdentityState:
             state.status = PillarStatus.DEGRADED
 
     return state
+
+
+def _try_load_capauth_profile() -> Optional[IdentityState]:
+    """Attempt to load a real CapAuth profile from ~/.capauth/.
+
+    Returns:
+        IdentityState populated from the CapAuth profile, or None
+        if capauth is not installed or no profile exists.
+    """
+    try:
+        from capauth.profile import load_profile  # type: ignore[import-untyped]
+
+        profile = load_profile()
+        return IdentityState(
+            fingerprint=profile.key_info.fingerprint,
+            name=profile.entity.name,
+            email=profile.entity.email,
+            key_path=Path(profile.key_info.public_key_path),
+            created_at=profile.key_info.created,
+            status=PillarStatus.ACTIVE,
+        )
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def _sync_identity_json(identity_dir: Path, state: IdentityState) -> None:
+    """Write or update identity.json when a real CapAuth profile is found.
+
+    Ensures the skcapstone identity manifest stays in sync with the
+    CapAuth profile so other pillars (sync, tokens) see the real
+    fingerprint instead of a placeholder.
+
+    Args:
+        identity_dir: Path to ~/.skcapstone/identity/.
+        state: IdentityState with real CapAuth data.
+    """
+    identity_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = identity_dir / "identity.json"
+
+    manifest = {
+        "name": state.name,
+        "email": state.email,
+        "fingerprint": state.fingerprint,
+        "created_at": state.created_at.isoformat() if state.created_at else None,
+        "capauth_managed": True,
+    }
+
+    existing = {}
+    if manifest_path.exists():
+        try:
+            existing = json.loads(manifest_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if existing.get("fingerprint") != state.fingerprint or not existing.get("capauth_managed"):
+        manifest_path.write_text(json.dumps(manifest, indent=2))
 
 
 def discover_memory(home: Path) -> MemoryState:

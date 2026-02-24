@@ -1,0 +1,12 @@
+[Unit]
+Description=SKComm Queue Drain Timer — periodic message retry
+Documentation=https://github.com/smilinTux/skcomm
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=120s
+RandomizedDelaySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
