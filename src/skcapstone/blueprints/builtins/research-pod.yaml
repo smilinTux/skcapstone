@@ -1,0 +1,69 @@
+name: "Research Pod"
+slug: "research-pod"
+version: "1.0.0"
+description: "Deep research and knowledge synthesis — gather, analyze, and distill."
+icon: "📚"
+author: "smilinTux"
+
+agents:
+  lead-researcher:
+    role: manager
+    model: reason
+    model_name: "deepseek-r1:32b"
+    description: "Research strategy, hypothesis formation, synthesis of findings."
+    vm_type: lxc
+    resources:
+      memory: "8g"
+      cores: 4
+      disk: "30g"
+    soul_blueprint: "souls/researcher.yaml"
+    skills: [research, analysis, hypothesis, synthesis]
+
+  scout:
+    role: researcher
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "Web search, source gathering, initial summarization."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 2
+      disk: "15g"
+    soul_blueprint: "souls/scout.yaml"
+    skills: [web-search, summarization, source-evaluation]
+    depends_on: [lead-researcher]
+    count: 2
+
+  analyst:
+    role: worker
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "Deep analysis, fact-checking, cross-referencing."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 1
+      disk: "10g"
+    soul_blueprint: "souls/analyst.yaml"
+    skills: [fact-checking, cross-reference, critical-thinking]
+    depends_on: [scout]
+
+default_provider: local
+estimated_cost: "$0 (local) / ~$8/mo (cloud)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-research-pod"
+  memory_backend: skvector
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: supervisor
+  heartbeat: "30m"
+  escalation: chef
+
+tags: [research, analysis, knowledge, synthesis]

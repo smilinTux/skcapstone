@@ -1,0 +1,81 @@
+name: "DeFi Trading"
+slug: "defi-trading"
+version: "1.0.0"
+description: "Market analysis, signal detection, portfolio management, and risk assessment."
+icon: "💰"
+author: "smilinTux"
+
+agents:
+  strategist:
+    role: manager
+    model: reason
+    model_name: "deepseek-r1:32b"
+    description: "Portfolio strategy, risk/reward analysis, market thesis."
+    vm_type: lxc
+    resources:
+      memory: "8g"
+      cores: 4
+      disk: "30g"
+    soul_blueprint: "souls/strategist.yaml"
+    skills: [market-analysis, portfolio-theory, risk-management, macro]
+
+  scanner:
+    role: researcher
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "Market data feeds, on-chain analytics, signal detection."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 2
+      disk: "15g"
+    soul_blueprint: "souls/scanner.yaml"
+    skills: [data-feeds, on-chain, signal-detection, technical-analysis]
+    depends_on: [strategist]
+    count: 2
+
+  executor:
+    role: coder
+    model: code
+    model_name: "minimax-m2.1"
+    description: "Trade execution, smart contract interaction, order management."
+    vm_type: lxc
+    resources:
+      memory: "4g"
+      cores: 2
+      disk: "20g"
+    soul_blueprint: "souls/executor.yaml"
+    skills: [web3, solidity, defi-protocols, order-management]
+    depends_on: [strategist, scanner]
+
+  risk-monitor:
+    role: ops
+    model: local
+    model_name: "llama3.1:8b"
+    description: "Real-time position monitoring, stop-loss enforcement, exposure limits."
+    vm_type: container
+    resources:
+      memory: "1g"
+      cores: 1
+      disk: "5g"
+    skills: [risk-monitoring, position-tracking, alerting]
+
+default_provider: local
+estimated_cost: "$0 (local) / ~$25/mo (cloud)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-defi-trading"
+  memory_backend: skvector
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: hierarchical
+  heartbeat: "5m"
+  escalation: chef
+
+tags: [defi, trading, finance, crypto, market-analysis]

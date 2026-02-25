@@ -1,0 +1,81 @@
+name: "Content Studio"
+slug: "content-studio"
+version: "1.0.0"
+description: "Creative content team — marketing copy, docs, social media, and design briefs."
+icon: "🎭"
+author: "smilinTux"
+
+agents:
+  creative-director:
+    role: manager
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "Brand voice, content strategy, quality control."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 2
+      disk: "15g"
+    soul_blueprint: "souls/creative-director.yaml"
+    skills: [brand-voice, content-strategy, editing, tone]
+
+  copywriter:
+    role: worker
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "Blog posts, landing pages, email campaigns."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 1
+      disk: "10g"
+    soul_blueprint: "souls/copywriter.yaml"
+    skills: [copywriting, seo, email-marketing, storytelling]
+    depends_on: [creative-director]
+
+  social-media:
+    role: worker
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "Social posts, engagement copy, hashtag strategy."
+    vm_type: container
+    resources:
+      memory: "1g"
+      cores: 1
+      disk: "5g"
+    soul_blueprint: "souls/social.yaml"
+    skills: [social-media, engagement, hashtags, trends]
+    depends_on: [creative-director]
+
+  technical-writer:
+    role: documentarian
+    model: code
+    model_name: "minimax-m2.1"
+    description: "API docs, user guides, tutorials, changelogs."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 1
+      disk: "10g"
+    soul_blueprint: "souls/tech-writer.yaml"
+    skills: [technical-writing, tutorials, openapi, diagrams]
+
+default_provider: local
+estimated_cost: "$0 (local) / ~$10/mo (cloud)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-content-studio"
+  memory_backend: filesystem
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: supervisor
+  heartbeat: "1h"
+  escalation: chef
+
+tags: [content, marketing, creative, documentation]

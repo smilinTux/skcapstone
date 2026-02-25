@@ -1,0 +1,107 @@
+name: "Infrastructure Guardian"
+slug: "infrastructure-guardian"
+version: "1.0.0"
+description: "Security-first ops team for infrastructure hardening, audits, and 24/7 monitoring."
+icon: "🛡️"
+author: "smilinTux"
+
+agents:
+  sentinel:
+    role: manager
+    model: code
+    model_name: "minimax-m2.1"
+    description: "Team lead — triages security findings, delegates hardening tasks."
+    vm_type: lxc
+    resources:
+      memory: "4g"
+      cores: 2
+      disk: "20g"
+    soul_blueprint: "souls/sentinel.yaml"
+    skills: [security, hardening, audit, delegation]
+
+  rook:
+    role: security
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "Penetration testing, firewall validation, crypto audits."
+    vm_type: lxc
+    resources:
+      memory: "4g"
+      cores: 2
+      disk: "20g"
+    soul_blueprint: "souls/rook.yaml"
+    skills: [pentest, firewall, crypto, vulnerability-scan]
+    depends_on: [sentinel]
+
+  chronicle:
+    role: documentarian
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "Documents every finding, builds the team knowledge base."
+    vm_type: container
+    resources:
+      memory: "1g"
+      cores: 1
+      disk: "10g"
+    soul_blueprint: "souls/chronicle.yaml"
+    skills: [docs, knowledge-base, reporting]
+
+  dev-alpha:
+    role: coder
+    model: code
+    model_name: "minimax-m2.1"
+    description: "Implements hardening fixes, patches configs, writes automation."
+    vm_type: lxc
+    resources:
+      memory: "2g"
+      cores: 2
+      disk: "15g"
+    soul_blueprint: "souls/dev-alpha.yaml"
+    skills: [python, bash, ansible, terraform]
+    depends_on: [sentinel, rook]
+
+  dev-beta:
+    role: coder
+    model: code
+    model_name: "minimax-m2.1"
+    description: "Database hardening, backup validation, schema security."
+    vm_type: lxc
+    resources:
+      memory: "2g"
+      cores: 2
+      disk: "15g"
+    soul_blueprint: "souls/dev-beta.yaml"
+    skills: [sql, qdrant, supabase, backup]
+    depends_on: [sentinel]
+
+  watchdog:
+    role: ops
+    model: local
+    model_name: "llama3.1:8b"
+    description: "24/7 lightweight monitor — alerts on anomalies, restarts failed services."
+    vm_type: container
+    resources:
+      memory: "512m"
+      cores: 1
+      disk: "5g"
+    skills: [monitoring, alerting, health-check]
+
+default_provider: local
+estimated_cost: "$0 (local) / ~$15/mo (cloud)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-infra-guardian"
+  memory_backend: filesystem
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: supervisor
+  heartbeat: "15m"
+  escalation: chef
+
+tags: [security, infrastructure, ops, hardening, audit]
