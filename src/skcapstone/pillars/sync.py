@@ -148,16 +148,20 @@ def gpg_encrypt(
     seed_path: Path,
     recipient: Optional[str] = None,
     home: Optional[Path] = None,
+    extra_recipients: Optional[list[str]] = None,
 ) -> Optional[Path]:
     """Encrypt a seed file with GPG.
 
-    Uses the agent's CapAuth key (or specified recipient) for encryption.
-    Armor output for git-friendliness.
+    Encrypts to the agent's own key AND all known peer fingerprints so
+    that every peer in the mesh can independently decrypt the seed they
+    receive via Syncthing. Without peer fingerprints, only the sender
+    can decrypt — which defeats the purpose of sync.
 
     Args:
         seed_path: Path to the plaintext seed file.
-        recipient: GPG recipient (fingerprint/email). Auto-detects if None.
+        recipient: Primary GPG recipient (fingerprint/email). Auto-detects if None.
         home: Agent home directory for key detection.
+        extra_recipients: Additional peer fingerprints to encrypt to.
 
     Returns:
         Path to the encrypted file, or None if encryption failed.
@@ -166,21 +170,32 @@ def gpg_encrypt(
         logger.error("gpg not found in PATH — cannot encrypt")
         return None
 
+    agent_home = home or Path("~/.skcapstone").expanduser()
+
     if recipient is None:
-        agent_home = home or Path("~/.skcapstone").expanduser()
         recipient = _detect_gpg_key(agent_home)
 
     if recipient is None:
         logger.error("No GPG key found for encryption")
         return None
 
+    # Build recipient list: own key + all known peers
+    all_recipients = [recipient]
+    if extra_recipients:
+        all_recipients.extend(r for r in extra_recipients if r and r != recipient)
+
     encrypted_path = seed_path.parent / (seed_path.name + ".gpg")
+
+    recipient_args: list[str] = []
+    for r in all_recipients:
+        recipient_args += ["--recipient", r]
 
     try:
         subprocess.run(
             [
                 "gpg", "--batch", "--yes", "--trust-model", "always",
-                "--armor", "--encrypt", "--recipient", recipient,
+                "--armor", "--encrypt",
+                *recipient_args,
                 "--output", str(encrypted_path), str(seed_path),
             ],
             capture_output=True,
@@ -188,7 +203,10 @@ def gpg_encrypt(
             check=True,
             timeout=30,
         )
-        logger.info("Encrypted: %s -> %s", seed_path.name, encrypted_path.name)
+        logger.info(
+            "Encrypted: %s -> %s (recipients: %d)",
+            seed_path.name, encrypted_path.name, len(all_recipients),
+        )
         return encrypted_path
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         logger.error("GPG encryption failed: %s", exc)
@@ -235,6 +253,9 @@ def push_seed(home: Path, agent_name: str, encrypt: bool = True) -> Optional[Pat
     This is the high-level 'push' operation. After this, Syncthing
     (or git) handles propagation to all peers automatically.
 
+    Reads peer_fingerprints from the sync config so seeds are encrypted
+    to all known peers, not just the sender's own key.
+
     Args:
         home: Agent home directory.
         agent_name: Agent display name.
@@ -246,13 +267,37 @@ def push_seed(home: Path, agent_name: str, encrypt: bool = True) -> Optional[Pat
     seed_path = collect_seed(home, agent_name)
 
     if encrypt:
-        encrypted = gpg_encrypt(seed_path, home=home)
+        peer_fingerprints = _load_peer_fingerprints(home)
+        encrypted = gpg_encrypt(seed_path, home=home, extra_recipients=peer_fingerprints)
         if encrypted:
             seed_path.unlink()
             return encrypted
         logger.warning("Encryption failed — keeping plaintext seed")
 
     return seed_path
+
+
+def _load_peer_fingerprints(home: Path) -> list[str]:
+    """Load known peer GPG fingerprints from sync config.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        List of peer fingerprint strings (may be empty).
+    """
+    config_file = home / "config" / "config.yaml"
+    if not config_file.exists():
+        return []
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(config_file.read_text()) or {}
+        sync_data = data.get("sync", {})
+        peers = sync_data.get("peer_fingerprints", [])
+        return [str(p) for p in peers if p]
+    except Exception as exc:
+        logger.debug("Could not load peer fingerprints: %s", exc)
+        return []
 
 
 def pull_seeds(home: Path, decrypt: bool = True) -> list[dict]:

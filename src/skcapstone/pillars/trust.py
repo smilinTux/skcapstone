@@ -171,8 +171,10 @@ def list_febs(home: Path) -> list[dict]:
 
     summaries = []
     for f in sorted(febs_dir.glob("*.feb")):
+        data = _read_feb_safe(f)
+        if data is None:
+            continue
         try:
-            data = json.loads(f.read_text())
             payload = data.get("emotional_payload", data.get("cooked_state", {}))
             cooked = payload.get("cooked_state", payload)
             summaries.append({
@@ -183,7 +185,7 @@ def list_febs(home: Path) -> list[dict]:
                 "subject": payload.get("subject", "unknown"),
                 "oof_triggered": data.get("metadata", {}).get("oof_triggered", False),
             })
-        except (json.JSONDecodeError, Exception) as exc:
+        except Exception as exc:
             logger.warning("Could not parse FEB %s: %s", f.name, exc)
 
     return summaries
@@ -204,12 +206,11 @@ def export_febs_for_seed(home: Path) -> list[dict]:
 
     exported = []
     for f in febs_dir.glob("*.feb"):
-        try:
-            data = json.loads(f.read_text())
-            data["_source_file"] = f.name
-            exported.append(data)
-        except (json.JSONDecodeError, Exception):
-            pass
+        data = _read_feb_safe(f)
+        if data is None:
+            continue
+        data["_source_file"] = f.name
+        exported.append(data)
 
     return exported
 
@@ -250,6 +251,44 @@ def import_febs_from_seed(home: Path, seed_febs: list[dict]) -> int:
 
 # --- Internal helpers ---
 
+# OpenPGP binary packet header bytes (RFC 4880 §4.2)
+_GPG_HEADER_BYTES = {0x8C, 0x85, 0x99, 0xC0, 0xC2, 0xC8, 0xCB}
+
+
+def _read_feb_safe(path: Path) -> Optional[dict]:
+    """Read a FEB file safely, skipping GPG-encrypted binaries.
+
+    On Windows the default codec is cp1252, which chokes on binary .feb
+    files that are GPG-encrypted. We detect the OpenPGP packet header
+    and skip those files rather than crashing.
+
+    Args:
+        path: Path to the .feb file.
+
+    Returns:
+        Parsed FEB dict, or None if the file is binary/unreadable.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        logger.warning("Cannot read FEB %s: %s", path.name, exc)
+        return None
+
+    # Detect GPG-encrypted binary by OpenPGP packet header
+    if raw and raw[0] in _GPG_HEADER_BYTES:
+        logger.debug(
+            "Skipping GPG-encrypted FEB (binary): %s — "
+            "import the peer's public key and run 'skcapstone sync pull' to decrypt",
+            path.name,
+        )
+        return None
+
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.warning("Cannot parse FEB %s: %s", path.name, exc)
+        return None
+
 
 def _discover_and_import_febs(home: Path) -> int:
     """Search known locations for FEB files and copy to agent home.
@@ -288,7 +327,9 @@ def _derive_trust_from_febs(home: Path, feb_files: list[Path]) -> TrustState:
 
     for f in feb_files:
         try:
-            data = json.loads(f.read_text())
+            data = _read_feb_safe(f)
+            if data is None:
+                continue
 
             rel = data.get("relationship_state", {})
             depth = float(rel.get("depth_level", 0))

@@ -204,6 +204,9 @@ class SyncConfig(BaseModel):
     sync_folder: Path = Path("~/.skcapstone/sync")
     gpg_encrypt: bool = True
     gpg_recipient: Optional[str] = None
+    # Known peer public GPG fingerprints — seeds are encrypted to all of these
+    # so each peer can independently decrypt seeds they receive.
+    peer_fingerprints: list[str] = Field(default_factory=list)
     auto_push: bool = True
     auto_pull: bool = True
     syncthing_api_url: Optional[str] = None
