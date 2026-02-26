@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# skcapstone CLI wrapper — run without pip install (dev from repo).
+#
+# Adds skcapstone src to PYTHONPATH and invokes the CLI. Use when working
+# from the monorepo without activating a venv or installing the package.
+#
+# To get `skcapstone` on PATH:
+#   export PATH="/path/to/smilintux-org/skcapstone/scripts:$PATH"
+# Or from repo root: export PATH="$(pwd)/skcapstone/scripts:$PATH"
+#
+# Usage:
+#   ./skcapstone/scripts/skcapstone status
+#   skcapstone trust rehydrate   # when scripts/ is on PATH
+# ---------------------------------------------------------------------------
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKCAPSTONE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SRC_DIR="${SKCAPSTONE_DIR}/src"
+
+export PYTHONPATH="${SRC_DIR}${PYTHONPATH:+:$PYTHONPATH}"
+
+# Prefer venv python if present (has deps); else system python (may need deps)
+if [[ -x "${SKCAPSTONE_DIR}/.venv/bin/python" ]]; then
+    exec "${SKCAPSTONE_DIR}/.venv/bin/python" -c "
+import sys
+sys.argv = ['skcapstone'] + sys.argv[1:]
+from skcapstone.cli import main
+main()
+" "$@"
+elif [[ -x "$(cd "$SCRIPT_DIR/../.." && pwd)/skmemory/.venv/bin/python" ]]; then
+    REPO_VENV="$(cd "$SCRIPT_DIR/../.." && pwd)/skmemory/.venv/bin/python"
+    exec "$REPO_VENV" -c "
+import sys
+sys.argv = ['skcapstone'] + sys.argv[1:]
+from skcapstone.cli import main
+main()
+" "$@"
+else
+    exec python -c "
+import sys
+sys.argv = ['skcapstone'] + sys.argv[1:]
+from skcapstone.cli import main
+main()
+" "$@"
+fi

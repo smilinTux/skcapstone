@@ -14,6 +14,7 @@ Directory layout:
 from __future__ import annotations
 
 import json
+import re
 import socket
 import uuid
 from datetime import datetime, timezone
@@ -22,6 +23,32 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+
+def _slugify_filename(text: str) -> str:
+    """Convert text to a filesystem-safe slug.
+    
+    Removes or replaces characters that are illegal in filenames:
+    - Forward slash (/) → dash (-)
+    - Backslash (\\) → dash (-)
+    - Colon (:) → dash (-)
+    - Other special chars → removed
+    
+    Args:
+        text: Input string (e.g., task title)
+        
+    Returns:
+        Safe filename slug
+    """
+    slug = text.lower().strip()
+    # Replace path separators and other illegal chars with dash
+    slug = re.sub(r'[/\\:*?"<>|]', '-', slug)
+    # Remove remaining non-word chars (except dash and space)
+    slug = re.sub(r'[^\w\s-]', '', slug)
+    # Convert spaces and underscores to single dash
+    slug = re.sub(r'[\s_]+', '-', slug)
+    # Remove leading/trailing dashes
+    return slug.strip('-')
 
 
 class TaskPriority(str, Enum):
@@ -202,7 +229,7 @@ class Board:
             Path to the written file.
         """
         self.ensure_dirs()
-        slug = task.title.lower().replace(" ", "-")[:40]
+        slug = _slugify_filename(task.title)[:40]
         # Reason: filename includes id + slug for human readability
         filename = f"{task.id}-{slug}.json"
         path = self.tasks_dir / filename

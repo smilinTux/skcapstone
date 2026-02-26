@@ -8,5 +8,6 @@ The engine doesn't care where agents run; providers handle the details.
 from .local import LocalProvider
 from .proxmox import ProxmoxProvider
 from .cloud import CloudProvider
+from .docker import DockerProvider
 
-__all__ = ["LocalProvider", "ProxmoxProvider", "CloudProvider"]
+__all__ = ["LocalProvider", "ProxmoxProvider", "CloudProvider", "DockerProvider"]

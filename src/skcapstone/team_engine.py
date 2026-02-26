@@ -32,7 +32,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from .blueprints.schema import AgentSpec, BlueprintManifest, ProviderType
+from .blueprints.schema import AgentRole, AgentSpec, BlueprintManifest, ProviderType
+from .team_comms import TeamChannel, bootstrap_team_channel
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,11 @@ class TeamDeployment(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     status: str = "deploying"
+    comms_channel: Optional[Any] = Field(
+        default=None,
+        exclude=True,
+        description="In-memory TeamChannel; not persisted to disk.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -193,17 +199,24 @@ class TeamEngine:
     Args:
         home: Agent home directory.
         provider: The backend to deploy to.
+        comms_root: Root directory for team comms channels. Defaults to
+            ``<home>/comms``. Pass ``None`` to disable comms bootstrapping.
     """
 
     def __init__(
         self,
         home: Optional[Path] = None,
         provider: Optional[ProviderBackend] = None,
+        comms_root: Optional[Path] = None,
     ) -> None:
         self._home = (home or Path("~/.skcapstone")).expanduser()
         self._provider = provider
         self._deployments_dir = self._home / "deployments"
         self._deployments_dir.mkdir(parents=True, exist_ok=True)
+        # Reason: allow callers to disable comms by passing comms_root=None explicitly
+        self._comms_root: Optional[Path] = (
+            comms_root if comms_root is not None else self._home / "comms"
+        )
 
     # ------------------------------------------------------------------
     # Dependency resolution
@@ -359,6 +372,12 @@ class TeamEngine:
         )
 
         self._save_deployment(deployment)
+
+        if self._comms_root is not None:
+            deployment.comms_channel = self._bootstrap_comms(
+                deployment, blueprint
+            )
+
         return deployment
 
     # ------------------------------------------------------------------
@@ -446,3 +465,57 @@ class TeamEngine:
             encoding="utf-8",
         )
         return path
+
+    def _bootstrap_comms(
+        self,
+        deployment: TeamDeployment,
+        blueprint: BlueprintManifest,
+    ) -> TeamChannel:
+        """Bootstrap SKComm file channel for all agents in a deployment.
+
+        Identifies the queen agent from the blueprint's coordination config
+        (falling back to any agent with role=manager) and provisions per-agent
+        inboxes plus a broadcast directory.
+
+        Args:
+            deployment: The freshly created TeamDeployment.
+            blueprint: The blueprint manifest used for this deployment.
+
+        Returns:
+            TeamChannel: The configured comms channel.
+        """
+        agent_names = list(deployment.agents.keys())
+
+        # Determine the queen: prefer coordination config, then role=manager
+        queen: Optional[str] = None
+        configured_queen = blueprint.coordination.queen
+        if configured_queen:
+            # Find the deployed instance that matches this spec key
+            for inst_name in agent_names:
+                agent = deployment.agents[inst_name]
+                if agent.agent_spec_key == configured_queen:
+                    queen = inst_name
+                    break
+
+        if queen is None:
+            for inst_name in agent_names:
+                agent = deployment.agents[inst_name]
+                spec = blueprint.agents.get(agent.agent_spec_key)
+                if spec and spec.role == AgentRole.MANAGER:
+                    queen = inst_name
+                    break
+
+        assert self._comms_root is not None  # guarded by caller
+        channel = bootstrap_team_channel(
+            team_slug=deployment.deployment_id,
+            agent_names=agent_names,
+            comms_root=self._comms_root,
+            queen=queen,
+        )
+
+        logger.info(
+            "Comms channel ready for deployment '%s' (queen=%s)",
+            deployment.deployment_id,
+            queen or "none",
+        )
+        return channel

@@ -131,8 +131,18 @@ The SKCapstone runtime provides:
 ## Quick Start
 
 ```bash
-# Install SKCapstone
+# Install SKCapstone (recommended)
 pip install skcapstone
+
+# Or run from repo without installing — add CLI to PATH:
+#   # macOS / Linux (bash/zsh):
+#   export PATH="/path/to/smilintux-org/skcapstone/scripts:$PATH"
+#   # Windows (PowerShell):
+#   $Env:Path = "$PWD\\skcapstone\\scripts;" + $Env:Path
+#   # Windows (cmd.exe):
+#   set PATH=%CD%\\skcapstone\\scripts;%PATH%
+# Then: skcapstone status
+# From repo root you can also: ./skcapstone/scripts/skcapstone status
 
 # Initialize your agent home
 skcapstone init --name "YourAgent"
@@ -216,6 +226,9 @@ The capstone that holds the arch together.
 
 **MVP Live** — All five pillars operational (CapAuth, Cloud 9, SKMemory, SKSecurity, Sovereign Singularity). Agent runtime achieving SINGULAR status. GPG-encrypted P2P sync verified across multiple devices and agents.
 
+- **Outstanding tasks:** No formal task list is maintained in this repo. For current work items, run `skcapstone coord status` (coordination board is synced via Sovereign Singularity).
+- **Nextcloud integrations:** nextcloud-capauth (install/use), nextcloud-gtd (OpenClaw), and nextcloud-talk (script) are documented in [docs/NEXTCLOUD.md](../docs/NEXTCLOUD.md) — install and use for each is covered there.
+
 See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIGN.md) | [Sovereign Singularity Protocol](docs/SOVEREIGN_SINGULARITY.md)
 
 ---
@@ -225,6 +238,7 @@ See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIG
 | Document | Description |
 |----------|-------------|
 | [Developer Quickstart](../docs/QUICKSTART.md) | Install + first sovereign agent in 5 minutes |
+| [Agent Scaffolding](../docs/AGENT_SCAFFOLDING.md) | Complete agent development tool stack (Crush, Cursor, OpenClaw, MCP) |
 | [API Reference](../docs/API.md) | Full API docs for all four core packages |
 | [PMA Integration](../docs/PMA_INTEGRATION.md) | Legal sovereignty layer (Fiducia Communitatis) |
 | [Architecture](docs/ARCHITECTURE.md) | Technical deep dive |

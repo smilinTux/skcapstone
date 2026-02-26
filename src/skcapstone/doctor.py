@@ -159,7 +159,22 @@ def _check_packages() -> list[Check]:
 
 def _check_system_tools() -> list[Check]:
     """Check for required system tools on PATH."""
+    from .preflight import check_git, git_install_hint_for_doctor
+
     checks = []
+
+    # Git (required for clone/setup) — platform-aware download link
+    git_installed, _, git_detail = check_git()
+    git_fix = git_install_hint_for_doctor() if not git_installed else ""
+    checks.append(Check(
+        name="tool:git",
+        description="Git (clone repo, dev workflow)",
+        passed=git_installed,
+        detail=git_detail if git_installed else "not found",
+        fix=git_fix,
+        category="system",
+    ))
+
     tools = [
         ("gpg", "GnuPG for PGP operations", "sudo apt install gnupg2  # or: brew install gnupg"),
         ("syncthing", "P2P file sync (optional)", "sudo apt install syncthing  # optional for sync"),
