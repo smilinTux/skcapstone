@@ -104,7 +104,9 @@ class MemoryEntry(BaseModel):
     tags: list[str] = Field(default_factory=list)
     source: str = "cli"
     layer: MemoryLayer = MemoryLayer.SHORT_TERM
-    created_at: datetime = Field(default_factory=lambda: datetime.now(__import__("datetime").timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(__import__("datetime").timezone.utc)
+    )
     accessed_at: Optional[datetime] = None
     access_count: int = 0
     importance: float = 0.5
@@ -217,7 +219,7 @@ class SyncConfig(BaseModel):
 class AgentConfig(BaseModel):
     """Persistent configuration for the agent runtime."""
 
-    agent_name: str = "sovereign-agent"
+    agent_name: str = "sksovereign-agent"
     auto_rehydrate: bool = True
     auto_audit: bool = True
     soul_path: Optional[Path] = None
