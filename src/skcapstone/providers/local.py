@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_CRUSH_BINARY_NAMES: List[str] = ["crush", "openclaw"]
+_CRUSH_BINARY_NAMES: List[str] = ["crush", "openclaw", "claude"]
 _SESSION_STATE_FILE = "session_state.json"
 _PID_FILE = "agent.pid"
 _SESSION_CONFIG_FILE = "session.json"
@@ -73,6 +73,18 @@ def _find_crush_binary() -> Optional[str]:
         if path:
             return path
     return None
+
+
+def _is_claude_binary(binary: str) -> bool:
+    """Check whether the resolved binary is the claude CLI rather than crush/openclaw.
+
+    Args:
+        binary: Absolute path to the binary.
+
+    Returns:
+        True if the binary basename is ``claude``.
+    """
+    return Path(binary).name == "claude"
 
 
 def _resolve_soul_blueprint_path(
@@ -622,6 +634,10 @@ class LocalProvider(ProviderBackend):
         binary = self._crush_binary or _find_crush_binary()
 
         if binary:
+            if _is_claude_binary(binary):
+                return self._start_claude_session(
+                    agent_name, work_dir, binary, env, provision_result
+                )
             return self._start_crush_session(
                 agent_name, work_dir, binary, env, provision_result
             )
