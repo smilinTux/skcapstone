@@ -43,6 +43,7 @@ from skcapstone.providers.local import (
     _build_crush_config,
     _build_session_config,
     _find_crush_binary,
+    _is_claude_binary,
     _pid_is_alive,
     _read_pid,
     _read_session_state,
@@ -138,6 +139,16 @@ class TestFindCrushBinary:
         ):
             result = _find_crush_binary()
         assert result == "/usr/local/bin/openclaw"
+
+    def test_returns_claude_path_as_last_fallback(self):
+        def _which(name):
+            if name == "claude":
+                return "/bin/claude"
+            return None
+
+        with patch("shutil.which", side_effect=_which):
+            result = _find_crush_binary()
+        assert result == "/bin/claude"
 
 
 # ---------------------------------------------------------------------------
@@ -921,3 +932,375 @@ class TestFullLifecycle:
         with patch("skcapstone.providers.local._pid_is_alive", return_value=True):
             status = provider.health_check("stub-agent", pr)
         assert status == AgentStatus.RUNNING
+
+
+# ---------------------------------------------------------------------------
+# _is_claude_binary
+# ---------------------------------------------------------------------------
+
+
+class TestIsClaudeBinary:
+    """Tests for _is_claude_binary helper."""
+
+    def test_returns_true_for_claude(self):
+        assert _is_claude_binary("/bin/claude") is True
+
+    def test_returns_true_for_claude_in_usr(self):
+        assert _is_claude_binary("/usr/local/bin/claude") is True
+
+    def test_returns_false_for_crush(self):
+        assert _is_claude_binary("/usr/bin/crush") is False
+
+    def test_returns_false_for_openclaw(self):
+        assert _is_claude_binary("/usr/local/bin/openclaw") is False
+
+
+# ---------------------------------------------------------------------------
+# LocalProvider.start — claude binary path
+# ---------------------------------------------------------------------------
+
+
+class TestStartWithClaudeBinary:
+    """Tests for LocalProvider.start() when claude binary is found."""
+
+    @pytest.fixture()
+    def _patched_popen(self):
+        """Patch subprocess.Popen to return a fake process."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 33000
+        with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
+            yield mock_popen, mock_proc
+
+    def test_spawns_claude_subprocess(self, provider, tmp_path, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec()
+        pr = provider.provision("agent-claude", spec, "team-c")
+        provider.configure("agent-claude", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            result = provider.start("agent-claude", pr)
+
+        assert result is True
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == "/bin/claude"
+        assert "-p" in cmd
+
+    def test_claude_cmd_includes_model(self, provider, tmp_path, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec(model_name="claude-opus-4-6")
+        pr = provider.provision("agent-cm", spec, "team-c")
+        provider.configure("agent-cm", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("agent-cm", pr)
+
+        cmd = mock_popen.call_args[0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-opus-4-6"
+
+    def test_claude_cmd_includes_system_prompt(self, provider, tmp_path, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec(soul_blueprint="lumina")
+        pr = provider.provision("agent-sp", spec, "team-c")
+        provider.configure("agent-sp", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("agent-sp", pr)
+
+        cmd = mock_popen.call_args[0][0]
+        assert "--system-prompt" in cmd
+
+    def test_claude_cmd_includes_output_format(self, provider, tmp_path, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec()
+        pr = provider.provision("agent-of", spec, "team-c")
+        provider.configure("agent-of", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("agent-of", pr)
+
+        cmd = mock_popen.call_args[0][0]
+        of_idx = cmd.index("--output-format")
+        assert cmd[of_idx + 1] == "stream-json"
+
+    def test_claude_cmd_includes_session_id(self, provider, tmp_path, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec()
+        pr = provider.provision("agent-si", spec, "team-c")
+        provider.configure("agent-si", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("agent-si", pr)
+
+        cmd = mock_popen.call_args[0][0]
+        assert "--session-id" in cmd
+
+    def test_claude_cmd_includes_dangerously_skip_permissions(
+        self, provider, tmp_path, _patched_popen
+    ):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec()
+        pr = provider.provision("agent-dsp", spec, "team-c")
+        provider.configure("agent-dsp", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("agent-dsp", pr)
+
+        cmd = mock_popen.call_args[0][0]
+        assert "--dangerously-skip-permissions" in cmd
+
+    def test_sets_pid_in_provision_result(self, provider, tmp_path, _patched_popen):
+        _, mock_proc = _patched_popen
+        mock_proc.pid = 44444
+        spec = _make_spec()
+        pr = provider.provision("agent-cpid", spec, "team-c")
+        provider.configure("agent-cpid", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("agent-cpid", pr)
+
+        assert pr["pid"] == 44444
+
+    def test_writes_session_state_with_claude_backend(
+        self, provider, tmp_path, _patched_popen
+    ):
+        _, mock_proc = _patched_popen
+        mock_proc.pid = 55000
+        spec = _make_spec()
+        pr = provider.provision("agent-csb", spec, "team-c")
+        provider.configure("agent-csb", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("agent-csb", pr)
+
+        state = json.loads(
+            (Path(pr["work_dir"]) / _SESSION_STATE_FILE).read_text()
+        )
+        assert state["status"] == _STATE_RUNNING
+        assert state["backend"] == "claude"
+        assert state["pid"] == 55000
+
+    def test_returns_false_on_popen_error(self, provider, tmp_path):
+        spec = _make_spec()
+        pr = provider.provision("agent-cerr", spec, "team-c")
+        provider.configure("agent-cerr", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            with patch(
+                "subprocess.Popen", side_effect=OSError("not found")
+            ):
+                result = provider.start("agent-cerr", pr)
+
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Claude session environment
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeSessionEnv:
+    """Tests for claude session environment variable passing."""
+
+    @pytest.fixture()
+    def _patched_popen(self):
+        mock_proc = MagicMock()
+        mock_proc.pid = 66000
+        with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
+            yield mock_popen, mock_proc
+
+    def test_passes_agent_name_in_env(self, provider, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec()
+        pr = provider.provision("env-agent", spec, "team-env")
+        provider.configure("env-agent", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("env-agent", pr)
+
+        env = mock_popen.call_args[1]["env"]
+        assert env["AGENT_NAME"] == "env-agent"
+
+    def test_passes_model_in_env(self, provider, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec(model="reason")
+        pr = provider.provision("env-model", spec, "team-env")
+        provider.configure("env-model", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("env-model", pr)
+
+        env = mock_popen.call_args[1]["env"]
+        assert env["AGENT_MODEL_TIER"] == "reason"
+
+    def test_passes_soul_in_env(self, provider, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec(soul_blueprint="lumina")
+        pr = provider.provision("env-soul", spec, "team-env")
+        provider.configure("env-soul", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("env-soul", pr)
+
+        env = mock_popen.call_args[1]["env"]
+        assert "SOUL_BLUEPRINT" in env
+        assert "lumina" in env["SOUL_BLUEPRINT"].lower() or env["SOUL_BLUEPRINT"] == "lumina"
+
+    def test_passes_skills_as_json_in_env(self, provider, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec(skills=["code-review", "docs"])
+        pr = provider.provision("env-skills", spec, "team-env")
+        provider.configure("env-skills", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("env-skills", pr)
+
+        env = mock_popen.call_args[1]["env"]
+        parsed = json.loads(env["AGENT_SKILLS"])
+        assert "code-review" in parsed
+        assert "docs" in parsed
+
+
+# ---------------------------------------------------------------------------
+# Fallback chain priority: crush → claude → stub
+# ---------------------------------------------------------------------------
+
+
+class TestStartFallbackChain:
+    """Tests for the three-tier fallback: crush → claude → stub."""
+
+    @pytest.fixture()
+    def _patched_popen(self):
+        mock_proc = MagicMock()
+        mock_proc.pid = 99000
+        with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
+            yield mock_popen, mock_proc
+
+    def test_crush_binary_uses_crush_session(self, provider, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec()
+        pr = provider.provision("fb-crush", spec, "team-fb")
+        provider.configure("fb-crush", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/usr/bin/crush",
+        ):
+            provider.start("fb-crush", pr)
+
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == "/usr/bin/crush"
+        assert "run" in cmd
+        # Should NOT have -p flag (that's the claude path)
+        assert "-p" not in cmd
+
+    def test_claude_binary_uses_claude_session(self, provider, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec()
+        pr = provider.provision("fb-claude", spec, "team-fb")
+        provider.configure("fb-claude", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value="/bin/claude",
+        ):
+            provider.start("fb-claude", pr)
+
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == "/bin/claude"
+        assert "-p" in cmd
+
+    def test_no_binary_uses_stub(self, provider, _patched_popen):
+        mock_popen, _ = _patched_popen
+        spec = _make_spec()
+        pr = provider.provision("fb-stub", spec, "team-fb")
+        provider.configure("fb-stub", spec, pr)
+
+        with patch(
+            "skcapstone.providers.local._find_crush_binary",
+            return_value=None,
+        ):
+            provider.start("fb-stub", pr)
+
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == os.sys.executable
+        assert cmd[1] == "-c"
+
+    def test_lifecycle_with_claude(self, provider):
+        """End-to-end lifecycle with claude binary."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 98765
+
+        spec = _make_spec(
+            role="coder",
+            model="code",
+            soul_blueprint="lumina",
+            skills=["code-review"],
+        )
+
+        with patch("subprocess.Popen", return_value=mock_proc):
+            with patch(
+                "skcapstone.providers.local._find_crush_binary",
+                return_value="/bin/claude",
+            ):
+                pr = provider.provision("claude-lc", spec, "team-lc")
+                provider.configure("claude-lc", spec, pr)
+                started = provider.start("claude-lc", pr)
+
+        assert started is True
+        assert pr["pid"] == 98765
+
+        # Health check
+        with patch("skcapstone.providers.local._pid_is_alive", return_value=True):
+            status = provider.health_check("claude-lc", pr)
+        assert status == AgentStatus.RUNNING
+
+        # Stop
+        alive_seq = iter([True] + [False] * 60)
+        with patch("os.kill"):
+            with patch(
+                "skcapstone.providers.local._pid_is_alive",
+                side_effect=alive_seq,
+            ):
+                stopped = provider.stop("claude-lc", pr)
+        assert stopped is True

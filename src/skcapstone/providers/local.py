@@ -741,6 +741,155 @@ class LocalProvider(ProviderBackend):
         )
         return True
 
+    def _start_claude_session(
+        self,
+        agent_name: str,
+        work_dir: Path,
+        binary: str,
+        env: Dict[str, str],
+        provision_result: Dict[str, Any],
+    ) -> bool:
+        """Launch a claude CLI session as the agent runtime.
+
+        Constructs a ``claude -p`` invocation that receives the agent's full
+        identity (soul blueprint, model, skills) and streams JSON output.
+        An MCP config temp file is written from the crush.json mcpServers
+        section when available.
+
+        Args:
+            agent_name: Agent instance name.
+            work_dir: Agent working directory.
+            binary: Absolute path to the ``claude`` CLI binary.
+            env: Environment variables for the subprocess.
+            provision_result: Mutated in-place with the spawned PID.
+
+        Returns:
+            True if the process started without error.
+        """
+        import hashlib
+        import uuid
+
+        session_config = provision_result.get("session_config", {})
+        model = session_config.get("model", "fast")
+
+        # Build system prompt from soul blueprint + agent context
+        soul_path = session_config.get("soul_blueprint")
+        system_prompt_parts: List[str] = []
+        if soul_path:
+            soul_file = Path(soul_path)
+            if soul_file.is_file():
+                try:
+                    system_prompt_parts.append(
+                        soul_file.read_text(encoding="utf-8")
+                    )
+                except OSError:
+                    system_prompt_parts.append(f"Soul blueprint: {soul_path}")
+            elif soul_file.is_dir():
+                # Look for a markdown file inside the soul blueprint directory
+                for ext in ("*.md", "*.txt", "*.yaml"):
+                    for f in sorted(soul_file.glob(ext)):
+                        try:
+                            system_prompt_parts.append(
+                                f.read_text(encoding="utf-8")
+                            )
+                        except OSError:
+                            pass
+                if not system_prompt_parts:
+                    system_prompt_parts.append(f"Soul blueprint: {soul_path}")
+            else:
+                system_prompt_parts.append(f"Soul blueprint: {soul_path}")
+
+        system_prompt_parts.append(
+            f"\nAgent: {agent_name}\n"
+            f"Role: {session_config.get('role', 'worker')}\n"
+            f"Team: {session_config.get('team_name', '')}\n"
+            f"Skills: {json.dumps(session_config.get('skills', []))}\n"
+        )
+        system_prompt = "\n".join(system_prompt_parts)
+
+        # Deterministic session ID from agent name
+        session_id = str(
+            uuid.UUID(
+                hashlib.md5(agent_name.encode()).hexdigest()  # noqa: S324
+            )
+        )
+
+        cmd: List[str] = [
+            binary,
+            "-p",
+            "--model", model,
+            "--system-prompt", system_prompt,
+            "--output-format", "stream-json",
+            "--session-id", session_id,
+            "--dangerously-skip-permissions",
+        ]
+
+        # Write MCP config from crush.json mcpServers if present
+        crush_config_path = work_dir / _CRUSH_CONFIG_FILE
+        if crush_config_path.exists():
+            try:
+                crush_data = json.loads(
+                    crush_config_path.read_text(encoding="utf-8")
+                )
+                mcp_servers = crush_data.get("mcpServers")
+                if mcp_servers:
+                    mcp_config = {"mcpServers": mcp_servers}
+                    mcp_config_file = work_dir / "mcp_config.json"
+                    mcp_config_file.write_text(
+                        json.dumps(mcp_config, indent=2), encoding="utf-8"
+                    )
+                    cmd.extend(["--mcp-config", str(mcp_config_file)])
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Initial prompt
+        initial_prompt = (
+            f"You are agent '{agent_name}'. "
+            f"Check your inbox at ~/.skcapstone/comms/"
+            f"{session_config.get('team_name', 'default')}/{agent_name}/inbox/ "
+            f"for tasks. Process any pending work and report results to your outbox."
+        )
+        cmd.append(initial_prompt)
+
+        log_file = work_dir / "agent.log"
+
+        try:
+            with open(log_file, "ab") as log_fh:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(work_dir),
+                    env=env,
+                    stdout=log_fh,
+                    stderr=log_fh,
+                    start_new_session=True,
+                )
+        except OSError as exc:
+            logger.error(
+                "start: failed to launch claude session for %s: %s",
+                agent_name, exc,
+            )
+            return False
+
+        pid = proc.pid
+        (work_dir / _PID_FILE).write_text(str(pid), encoding="utf-8")
+        provision_result["pid"] = pid
+
+        _write_session_state(work_dir, {
+            "status": _STATE_RUNNING,
+            "pid": pid,
+            "agent_name": agent_name,
+            "started_at": _now_iso(),
+            "binary": binary,
+            "session_id": session_id,
+            "backend": "claude",
+        })
+
+        logger.info(
+            "Started claude session for %s (pid=%d session_id=%s)",
+            agent_name, pid, session_id,
+        )
+        return True
+
     def _start_stub_session(
         self,
         agent_name: str,

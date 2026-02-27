@@ -65,6 +65,7 @@ dev = [
 [project.scripts]
 skcapstone = "skcapstone.cli:main"
 skcapstone-mcp = "skcapstone.mcp_server:main"
+crush = "skcapstone.crush_shim:main"
 
 [project.urls]
 Homepage = "https://skcapstone.io"
