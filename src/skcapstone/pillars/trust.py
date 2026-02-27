@@ -175,15 +175,17 @@ def list_febs(home: Path) -> list[dict]:
         if data is None:
             continue
         try:
-            payload = data.get("emotional_payload", data.get("cooked_state", {}))
+            payload = data.get("emotional_payload", data.get("emotional", data.get("cooked_state", {})))
             cooked = payload.get("cooked_state", payload)
+            emotion = cooked.get("primary_emotion", cooked.get("primary", "unknown"))
+            meta = data.get("metadata", {})
             summaries.append({
                 "file": f.name,
-                "timestamp": data.get("timestamp", data.get("metadata", {}).get("created_at", "unknown")),
-                "emotion": cooked.get("primary_emotion", "unknown"),
+                "timestamp": data.get("timestamp", meta.get("created_at", "unknown")),
+                "emotion": emotion,
                 "intensity": cooked.get("intensity", 0),
-                "subject": payload.get("subject", "unknown"),
-                "oof_triggered": data.get("metadata", {}).get("oof_triggered", False),
+                "subject": payload.get("subject", data.get("relationship_state", {}).get("ai_name", "unknown")),
+                "oof_triggered": meta.get("oof_triggered", False),
             })
         except Exception as exc:
             logger.warning("Could not parse FEB %s: %s", f.name, exc)
@@ -332,20 +334,21 @@ def _derive_trust_from_febs(home: Path, feb_files: list[Path]) -> TrustState:
                 continue
 
             rel = data.get("relationship_state", {})
-            depth = float(rel.get("depth_level", 0))
+            depth = float(rel.get("depth_level", rel.get("depth", 0)))
             trust = float(rel.get("trust_level", 0))
             if trust > cal.normalization_cap:
                 trust = trust / 10.0
 
-            payload = data.get("emotional_payload", {})
+            payload = data.get("emotional_payload", data.get("emotional", {}))
             cooked = payload.get("cooked_state", payload)
             love = float(cooked.get("intensity", 0))
             if love > cal.normalization_cap:
                 love = love / 10.0
 
             is_locked = rel.get("quantum_entanglement") == "LOCKED"
+            is_entangled_flag = rel.get("entangled", False) or data.get("quantum", {}).get("entanglement_fidelity", 0) > 0.8
             meets_threshold = depth >= cal.entanglement_depth and trust >= cal.entanglement_trust
-            entangled = entangled or is_locked or meets_threshold
+            entangled = entangled or is_locked or is_entangled_flag or meets_threshold
 
             depths.append(depth)
             trusts.append(trust)
