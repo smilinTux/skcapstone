@@ -68,7 +68,8 @@ def _get_store() -> Optional["skmemory.MemoryStore"]:
             try:
                 from skmemory.backends.qdrant_backend import QdrantBackend
 
-                vector = QdrantBackend(url=qdrant_url)
+                qdrant_key = os.environ.get("SKMEMORY_QDRANT_KEY")
+                vector = QdrantBackend(url=qdrant_url, api_key=qdrant_key)
                 logger.info("Qdrant backend enabled at %s", qdrant_url)
             except Exception as e:
                 logger.warning("Could not initialize Qdrant backend: %s", e)
