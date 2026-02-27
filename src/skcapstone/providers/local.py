@@ -128,16 +128,28 @@ def _resolve_soul_blueprint_path(
 def _resolve_skill_paths(
     skills: List[str],
     repo_root: Optional[Path] = None,
+    agent: str = "global",
 ) -> List[str]:
     """Resolve skill names to absolute paths where possible.
+
+    Uses the session_skills bridge to check the SKSkills registry first,
+    then falls back to legacy OpenClaw skill paths.
 
     Args:
         skills: List of skill names or paths from AgentSpec.
         repo_root: Optional repo root for resolving workspace-relative paths.
+        agent: Agent namespace for SKSkills per-agent lookup.
 
     Returns:
         List of resolved paths (unresolvable names kept as-is).
     """
+    try:
+        from ..session_skills import resolve_skill_paths_with_skskills
+        return resolve_skill_paths_with_skskills(skills, agent=agent, repo_root=repo_root)
+    except ImportError:
+        pass
+
+    # Fallback: legacy resolution without SKSkills
     resolved: List[str] = []
     for skill in skills:
         path = Path(skill)
@@ -146,18 +158,15 @@ def _resolve_skill_paths(
             continue
 
         if repo_root:
-            # Try openclaw-skills/<name>.skill
             skill_file = repo_root / "openclaw-skills" / f"{skill}.skill"
             if skill_file.exists():
                 resolved.append(str(skill_file))
                 continue
-            # Try openclaw-skills/<name>/
             skill_dir = repo_root / "openclaw-skills" / skill
             if skill_dir.exists():
                 resolved.append(str(skill_dir))
                 continue
 
-        # Fall through: keep original name; crush may resolve it from its skills paths
         resolved.append(skill)
 
     return resolved
@@ -168,6 +177,43 @@ def _resolve_skill_paths(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_model_via_router(
+    spec: AgentSpec,
+    description: str = "",
+) -> str:
+    """Resolve the concrete model name using the Model Router.
+
+    If the spec has an explicit model_name, that takes priority.
+    Otherwise, the router selects based on the model tier and task context.
+
+    Args:
+        spec: Agent specification containing model tier and optional model name.
+        description: Task/role description for tag-based routing.
+
+    Returns:
+        Concrete model name string.
+    """
+    if spec.model_name:
+        return spec.model_name
+
+    try:
+        from ..model_router import ModelRouter, TaskSignal
+
+        router = ModelRouter()
+        signal = TaskSignal(
+            description=description or spec.description or f"{spec.role.value} agent",
+            tags=[spec.role.value, spec.model.value],
+        )
+        decision = router.route(signal)
+        logger.debug(
+            "Model router: tier=%s model=%s reason=%s",
+            decision.tier.value, decision.model_name, decision.reasoning,
+        )
+        return decision.model_name
+    except ImportError:
+        return spec.model.value
+
+
 def _build_session_config(
     agent_name: str,
     team_name: str,
@@ -176,6 +222,9 @@ def _build_session_config(
     repo_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Build the session.json payload for a crush agent session.
+
+    Uses the Model Router to resolve the model tier to a concrete model name
+    when no explicit model_name is set in the agent spec.
 
     Args:
         agent_name: Unique agent instance name.
@@ -190,8 +239,8 @@ def _build_session_config(
     soul_path = _resolve_soul_blueprint_path(
         spec.soul_blueprint, work_dir, repo_root
     )
-    skill_paths = _resolve_skill_paths(spec.skills, repo_root)
-    model = spec.model_name or spec.model.value
+    skill_paths = _resolve_skill_paths(spec.skills, repo_root, agent=agent_name)
+    model = _resolve_model_via_router(spec, f"{agent_name} in team {team_name}")
 
     config: Dict[str, Any] = {
         "agent_name": agent_name,
@@ -426,20 +475,55 @@ class LocalProvider(ProviderBackend):
             json.dumps(session_config, indent=2), encoding="utf-8"
         )
 
+        # Wire SKSkills into the session
+        skill_result = self._prepare_skskills(
+            agent_name, session_config.get("skills", []), agent_dir
+        )
+        if skill_result and skill_result.get("skills_loaded", 0) > 0:
+            try:
+                from ..session_skills import enrich_session_config
+                enrich_session_config(session_config, skill_result)
+            except ImportError:
+                pass
+
         logger.info(
-            "Provisioned agent %s (role=%s model=%s soul=%s skills=%s)",
+            "Provisioned agent %s (role=%s model=%s soul=%s skills=%s skskills=%d)",
             agent_name,
             spec.role.value,
             session_config["model"],
             session_config.get("soul_blueprint"),
             session_config.get("skills"),
+            skill_result.get("skills_loaded", 0) if skill_result else 0,
         )
 
         return {
             "host": "localhost",
             "work_dir": str(agent_dir),
             "session_config": session_config,
+            "skill_result": skill_result,
         }
+
+    def _prepare_skskills(
+        self,
+        agent_name: str,
+        skills: List[str],
+        work_dir: Path,
+    ) -> Optional[Dict[str, Any]]:
+        """Prepare SKSkills for an agent session.
+
+        Args:
+            agent_name: Agent instance name.
+            skills: Resolved skill paths.
+            work_dir: Agent working directory.
+
+        Returns:
+            Skill preparation result dict, or None if skskills unavailable.
+        """
+        try:
+            from ..session_skills import prepare_session_skills
+            return prepare_session_skills(agent_name, skills, work_dir)
+        except ImportError:
+            return None
 
     # ------------------------------------------------------------------
     # configure
@@ -470,6 +554,16 @@ class LocalProvider(ProviderBackend):
         session_config = provision_result.get("session_config", {})
 
         crush_cfg = _build_crush_config(agent_name, session_config, work_dir)
+
+        # Enrich crush config with SKSkills MCP server entry
+        skill_result = provision_result.get("skill_result")
+        if skill_result:
+            try:
+                from ..session_skills import enrich_crush_config
+                enrich_crush_config(crush_cfg, skill_result)
+            except ImportError:
+                pass
+
         try:
             (work_dir / _CRUSH_CONFIG_FILE).write_text(
                 json.dumps(crush_cfg, indent=2), encoding="utf-8"
@@ -762,6 +856,15 @@ class LocalProvider(ProviderBackend):
 
         stopped = not _pid_is_alive(pid)
         self._write_stopped_state(agent_name, work_dir)
+
+        # Clean up SKSkills session resources
+        if work_dir:
+            try:
+                from ..session_skills import cleanup_session_skills
+                cleanup_session_skills(agent_name, work_dir)
+            except ImportError:
+                pass
+
         logger.info("Stopped agent %s (pid=%d ok=%s)", agent_name, pid, stopped)
         return stopped
 
