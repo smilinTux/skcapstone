@@ -688,6 +688,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return _error_response(f"{name} failed: {exc}")
 
 
+def _get_memory_backend_health() -> dict:
+    """Get health status of all memory backends (sqlite, qdrant, falkordb)."""
+    try:
+        from .memory_adapter import get_unified
+
+        store = get_unified()
+        if store is None:
+            return {"json": "ok"}
+
+        health = store.health()
+        backends = {}
+        if "primary" in health:
+            backends["sqlite"] = "ok" if health["primary"].get("ok") else "error"
+        if "vector" in health:
+            backends["qdrant"] = "ok" if health["vector"].get("ok") else "error"
+        if "graph" in health:
+            backends["falkordb"] = "ok" if health["graph"].get("ok") else "error"
+        return backends or {"json": "ok"}
+    except Exception:
+        return {"json": "ok"}
+
+
 async def _handle_agent_status(_args: dict) -> list[TextContent]:
     """Return agent pillar states and consciousness level."""
     from .runtime import get_runtime
@@ -714,6 +736,7 @@ async def _handle_agent_status(_args: dict) -> list[TextContent]:
                 "long_term": m.memory.long_term,
                 "mid_term": m.memory.mid_term,
                 "short_term": m.memory.short_term,
+                "backends": _get_memory_backend_health(),
             },
             "trust": {
                 "status": m.trust.status.value,

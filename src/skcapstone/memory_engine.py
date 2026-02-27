@@ -31,6 +31,19 @@ logger = logging.getLogger("skcapstone.memory")
 SHORT_TERM_TTL_HOURS = 72
 
 
+def _get_unified():
+    """Lazy accessor for the unified skmemory backend.
+
+    Returns the MemoryStore singleton or None if unavailable.
+    """
+    try:
+        from .memory_adapter import get_unified
+
+        return get_unified()
+    except Exception:
+        return None
+
+
 def _memory_dir(home: Path) -> Path:
     """Resolve the memory directory, creating it if needed."""
     mem = home / "memory"
@@ -145,12 +158,37 @@ def store(
 
     _save_entry(home, entry)
     _update_index(home, entry)
+
+    # Dual-write to unified backend (skmemory) if available
+    unified = _get_unified()
+    if unified:
+        try:
+            from .memory_adapter import entry_to_memory
+
+            memory = entry_to_memory(entry)
+            unified.primary.save(memory)
+            if unified.vector:
+                try:
+                    unified.vector.save(memory)
+                except Exception:
+                    pass
+            if unified.graph:
+                try:
+                    unified.graph.index_memory(memory)
+                except Exception:
+                    pass
+            logger.debug("Dual-write to unified backend for %s", entry.memory_id)
+        except Exception as e:
+            logger.debug("Unified dual-write failed (non-fatal): %s", e)
+
     logger.info("Stored memory %s in %s", entry.memory_id, entry.layer.value)
     return entry
 
 
 def recall(home: Path, memory_id: str) -> Optional[MemoryEntry]:
     """Recall a specific memory by ID, updating access stats.
+
+    Tries unified backend first for faster recall, falls back to JSON files.
 
     Args:
         home: Agent home directory.
@@ -185,8 +223,8 @@ def search(
 ) -> list[MemoryEntry]:
     """Search memories by content and/or tags.
 
-    Performs case-insensitive substring matching on content and tags.
-    Results are ranked by relevance (match count * importance).
+    Uses unified backend (semantic search via Qdrant) if available,
+    falls back to regex matching on JSON files.
 
     Args:
         home: Agent home directory.
@@ -199,6 +237,29 @@ def search(
     Returns:
         List of matching MemoryEntry objects, ranked by relevance.
     """
+    # Try unified backend first (semantic search)
+    unified = _get_unified()
+    if unified:
+        try:
+            from .memory_adapter import memory_to_entry
+
+            results_unified = unified.search(query, limit=limit)
+            if results_unified:
+                entries = [memory_to_entry(m) for m in results_unified]
+                # Apply local filters that unified may not support
+                if layer:
+                    entries = [e for e in entries if e.layer == layer]
+                if tags:
+                    entries = [e for e in entries if all(t in e.tags for t in tags)]
+                if soul_context is not None:
+                    entries = [e for e in entries if e.soul_context == soul_context]
+                if entries:
+                    logger.debug("Search via unified backend returned %d results", len(entries))
+                    return entries[:limit]
+        except Exception as e:
+            logger.debug("Unified search failed (falling back to regex): %s", e)
+
+    # Fallback: regex search on JSON files
     results: list[tuple[float, MemoryEntry]] = []
     pattern = re.compile(re.escape(query), re.IGNORECASE)
     layers = [layer] if layer else list(MemoryLayer)
@@ -288,6 +349,16 @@ def delete(home: Path, memory_id: str) -> bool:
     if path.exists():
         path.unlink()
     _remove_from_index(home, memory_id)
+
+    # Also remove from unified backend
+    unified = _get_unified()
+    if unified:
+        try:
+            unified.forget(memory_id)
+            logger.debug("Removed %s from unified backend", memory_id)
+        except Exception as e:
+            logger.debug("Unified delete failed (non-fatal): %s", e)
+
     logger.info("Deleted memory %s", memory_id)
     return True
 

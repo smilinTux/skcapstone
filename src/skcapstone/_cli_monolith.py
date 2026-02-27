@@ -2158,6 +2158,117 @@ def memory_curate(home: str, dry_run: bool, promote: bool, dedupe: bool, stats: 
     console.print()
 
 
+@memory.command("migrate")
+@click.option("--home", default=AGENT_HOME, type=click.Path())
+@click.option("--dry-run", is_flag=True, help="Preview without writing.")
+@click.option("--verify", is_flag=True, help="Verify migration integrity.")
+def memory_migrate(home: str, dry_run: bool, verify: bool):
+    """Migrate JSON memories to the unified three-tier backend.
+
+    Moves memories from ~/.skcapstone/memory/ JSON files into
+    SQLite + Qdrant (vector) + FalkorDB (graph). Safe to re-run.
+
+    Examples:
+
+        skcapstone memory migrate --dry-run
+        skcapstone memory migrate
+        skcapstone memory migrate --verify
+    """
+    from .migrate_memories import migrate
+
+    home_path = Path(home).expanduser()
+    if not home_path.exists():
+        console.print("[bold red]No agent found.[/] Run skcapstone init first.")
+        sys.exit(1)
+
+    result = migrate(home_path, dry_run=dry_run, verify=verify)
+
+    if dry_run:
+        console.print(f"\n  [bold]DRY RUN:[/] Found {result['total_json']} JSON memories to migrate.\n")
+        return
+
+    if verify:
+        verified = result.get("verified", 0)
+        missing = result.get("missing", [])
+        if not missing:
+            console.print(f"\n  [green]Verified:[/] All {verified} memories present in unified backend.\n")
+        else:
+            console.print(f"\n  [yellow]Verification:[/] {verified} present, {len(missing)} missing.")
+            for mid in missing[:10]:
+                console.print(f"    [red]Missing:[/] {mid}")
+            if len(missing) > 10:
+                console.print(f"    ... and {len(missing) - 10} more")
+            console.print()
+        return
+
+    console.print(f"\n  [bold]Migration results:[/]")
+    console.print(f"    Total JSON memories: {result['total_json']}")
+    console.print(f"    [green]Migrated:[/] {result['migrated']}")
+    console.print(f"    [dim]Skipped (existing):[/] {result['skipped_existing']}")
+    if result.get("errors"):
+        console.print(f"    [red]Errors:[/] {len(result['errors'])}")
+        for err in result["errors"][:5]:
+            console.print(f"      {err}")
+    console.print()
+
+
+@memory.command("verify")
+@click.option("--home", default=AGENT_HOME, type=click.Path())
+def memory_verify(home: str):
+    """Check consistency across memory backends.
+
+    Compares memory counts in SQLite, Qdrant, and FalkorDB.
+    """
+    from .memory_adapter import verify_sync
+
+    home_path = Path(home).expanduser()
+    if not home_path.exists():
+        console.print("[bold red]No agent found.[/] Run skcapstone init first.")
+        sys.exit(1)
+
+    result = verify_sync()
+
+    console.print("\n  [bold]Backend sync status:[/]")
+    for name, info in result.get("backends", {}).items():
+        ok = info.get("ok", False)
+        count = info.get("count", "?")
+        icon = "[green]ok[/]" if ok else "[red]error[/]"
+        console.print(f"    {name}: {icon} ({count} memories)")
+
+    if result.get("synced"):
+        console.print("\n  [green]All backends in sync.[/]\n")
+    else:
+        console.print(f"\n  [yellow]Out of sync:[/] {result.get('reason', 'unknown')}\n")
+
+
+@memory.command("reindex")
+@click.option("--home", default=AGENT_HOME, type=click.Path())
+def memory_reindex(home: str):
+    """Rebuild vector and graph indexes from SQLite primary.
+
+    Use this after a migration or if secondary indexes become stale.
+    """
+    from .memory_adapter import reindex_all
+
+    home_path = Path(home).expanduser()
+    if not home_path.exists():
+        console.print("[bold red]No agent found.[/] Run skcapstone init first.")
+        sys.exit(1)
+
+    console.print("\n  Reindexing secondary backends...\n")
+    result = reindex_all()
+
+    if result.get("ok"):
+        console.print(f"  [green]Done:[/] {result['total']} memories reindexed.")
+        console.print(f"    Vector: {result['vector_indexed']}")
+        console.print(f"    Graph:  {result['graph_indexed']}")
+    else:
+        console.print(f"  [red]Errors during reindex.[/]")
+        for err in result.get("errors", [])[:5]:
+            console.print(f"    {err}")
+    console.print()
+
+
 @main.group()
 def coord():
     """Multi-agent coordination board.

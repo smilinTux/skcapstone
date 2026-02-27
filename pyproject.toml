@@ -47,9 +47,13 @@ identity = [
 security = [
     "sksecurity>=1.2.0",
 ]
+memory = [
+    "skmemory>=0.5.0",
+]
 all = [
     "capauth>=0.1.0",
     "sksecurity>=1.2.0",
+    "skmemory>=0.5.0",
 ]
 dev = [
     "pytest>=7.0",
