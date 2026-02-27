@@ -186,7 +186,7 @@ def _anchor_from_trust_state(home: Path) -> dict[str, Any]:
         return {"warmth": 5.0, "trust": 5.0, "connection_strength": 5.0, "source": "defaults"}
 
     try:
-        data = json.loads(trust_file.read_text())
+        data = json.loads(trust_file.read_text(encoding="utf-8"))
         return {
             "warmth": min(10.0, data.get("love_intensity", 0.5) * 10),
             "trust": min(10.0, data.get("trust_level", 0.5) * 10),
@@ -230,7 +230,7 @@ def _calibrate_from_trust(home: Path, cal: AnchorCalibration) -> None:
         return
 
     try:
-        data = json.loads(trust_file.read_text())
+        data = json.loads(trust_file.read_text(encoding="utf-8"))
         cal.trust = min(10.0, data.get("trust_level", 0.5) * 10)
         cal.warmth = min(10.0, data.get("love_intensity", 0.5) * 10)
         cal.connection = min(10.0, data.get("depth", 5.0))

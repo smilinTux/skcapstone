@@ -143,7 +143,7 @@ def _load_identity(home: Path, card: IdentityCard) -> None:
         return
 
     try:
-        data = json.loads(identity_file.read_text())
+        data = json.loads(identity_file.read_text(encoding="utf-8"))
         card.name = data.get("name", card.name)
         card.email = data.get("email", "")
         card.fingerprint = data.get("fingerprint", "")
@@ -162,7 +162,7 @@ def _load_capauth(card: IdentityCard) -> None:
     profile_path = capauth_dir / "profile.json"
     if profile_path.exists():
         try:
-            data = json.loads(profile_path.read_text())
+            data = json.loads(profile_path.read_text(encoding="utf-8"))
             entity = data.get("entity", {})
             key_info = data.get("key_info", {})
 
@@ -264,7 +264,7 @@ def _load_capabilities(home: Path, card: IdentityCard) -> None:
     if skills_dir.exists():
         for f in skills_dir.glob("*.json"):
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 name = data.get("name", f.stem)
                 caps.append(f"skill:{name}")
             except (json.JSONDecodeError, OSError):

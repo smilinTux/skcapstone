@@ -68,7 +68,7 @@ def _load_entry(path: Path) -> Optional[MemoryEntry]:
         MemoryEntry or None if the file is invalid.
     """
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return MemoryEntry(**data)
     except (json.JSONDecodeError, Exception) as exc:
         logger.warning("Failed to load memory %s: %s", path, exc)
@@ -87,7 +87,7 @@ def _save_entry(home: Path, entry: MemoryEntry) -> Path:
     """
     path = _entry_path(home, entry)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(entry.model_dump_json(indent=2))
+    path.write_text(entry.model_dump_json(indent=2), encoding="utf-8")
     return path
 
 
@@ -104,7 +104,7 @@ def _detect_active_soul(home: Path) -> Optional[str]:
     if not active_path.exists():
         return None
     try:
-        data = json.loads(active_path.read_text())
+        data = json.loads(active_path.read_text(encoding="utf-8"))
         return data.get("active_soul")
     except (json.JSONDecodeError, Exception):
         return None
@@ -542,7 +542,7 @@ def _load_index(home: Path) -> dict:
     index_path = _memory_dir(home) / "index.json"
     if index_path.exists():
         try:
-            return json.loads(index_path.read_text())
+            return json.loads(index_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
     return {}
@@ -551,7 +551,7 @@ def _load_index(home: Path) -> dict:
 def _save_index(home: Path, index: dict) -> None:
     """Persist the memory index to disk."""
     index_path = _memory_dir(home) / "index.json"
-    index_path.write_text(json.dumps(index, indent=2))
+    index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
 
 
 def _load_index_ids(home: Path) -> set[str]:

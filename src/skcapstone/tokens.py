@@ -221,7 +221,7 @@ def revoke_token(home: Path, token_id: str) -> bool:
     }
 
     revocation_file.parent.mkdir(parents=True, exist_ok=True)
-    revocation_file.write_text(json.dumps(revoked, indent=2))
+    revocation_file.write_text(json.dumps(revoked, indent=2), encoding="utf-8")
     logger.info("Revoked token %s", token_id[:12])
     return True
 
@@ -258,7 +258,7 @@ def list_tokens(home: Path) -> list[SignedToken]:
     for f in sorted(token_dir.iterdir()):
         if f.suffix == ".json":
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 token = SignedToken(
                     payload=TokenPayload(**data["payload"]),
                     signature=data.get("signature"),
@@ -323,7 +323,7 @@ def _get_issuer_fingerprint(home: Path) -> str:
     identity_file = home / "identity" / "identity.json"
     if identity_file.exists():
         try:
-            data = json.loads(identity_file.read_text())
+            data = json.loads(identity_file.read_text(encoding="utf-8"))
             fp = data.get("fingerprint")
             if fp:
                 return fp
@@ -426,7 +426,7 @@ def _store_token(home: Path, token: SignedToken) -> None:
         "signature": token.signature,
         "verified": token.verified,
     }
-    token_file.write_text(json.dumps(data, indent=2, default=str))
+    token_file.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
 
 def _load_revocation_list(revocation_file: Path) -> dict:
@@ -434,6 +434,6 @@ def _load_revocation_list(revocation_file: Path) -> dict:
     if not revocation_file.exists():
         return {}
     try:
-        return json.loads(revocation_file.read_text())
+        return json.loads(revocation_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}

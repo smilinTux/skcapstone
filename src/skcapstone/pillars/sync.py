@@ -56,7 +56,7 @@ def initialize_sync(home: Path, config: Optional[SyncConfig] = None) -> SyncStat
         "auto_push": config.auto_push,
         "auto_pull": config.auto_pull,
     }
-    (sync_dir / "sync-manifest.json").write_text(json.dumps(manifest, indent=2))
+    (sync_dir / "sync-manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     state = SyncState(
         transport=config.transport,
@@ -107,11 +107,11 @@ def collect_seed(home: Path, agent_name: str) -> Path:
 
     identity_file = home / "identity" / "identity.json"
     if identity_file.exists():
-        seed["identity"] = json.loads(identity_file.read_text())
+        seed["identity"] = json.loads(identity_file.read_text(encoding="utf-8"))
 
     trust_file = home / "trust" / "trust.json"
     if trust_file.exists():
-        seed["trust"] = json.loads(trust_file.read_text())
+        seed["trust"] = json.loads(trust_file.read_text(encoding="utf-8"))
         try:
             from .trust import export_febs_for_seed
 
@@ -134,11 +134,11 @@ def collect_seed(home: Path, agent_name: str) -> Path:
 
     manifest_file = home / "manifest.json"
     if manifest_file.exists():
-        seed["manifest"] = json.loads(manifest_file.read_text())
+        seed["manifest"] = json.loads(manifest_file.read_text(encoding="utf-8"))
 
     seed_name = f"{agent_name}-{hostname}-{timestamp.strftime('%Y%m%dT%H%M%SZ')}{SEED_EXTENSION}"
     seed_path = outbox / seed_name
-    seed_path.write_text(json.dumps(seed, indent=2, default=str))
+    seed_path.write_text(json.dumps(seed, indent=2, default=str), encoding="utf-8")
 
     logger.info("Seed collected: %s", seed_path.name)
     return seed_path
@@ -291,7 +291,7 @@ def _load_peer_fingerprints(home: Path) -> list[str]:
         return []
     try:
         import yaml as _yaml
-        data = _yaml.safe_load(config_file.read_text()) or {}
+        data = _yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
         sync_data = data.get("sync", {})
         peers = sync_data.get("peer_fingerprints", [])
         return [str(p) for p in peers if p]
@@ -338,7 +338,7 @@ def pull_seeds(home: Path, decrypt: bool = True) -> list[dict]:
 
         if seed_path.suffix == ".json" or seed_path.name.endswith(SEED_EXTENSION):
             try:
-                data = json.loads(seed_path.read_text())
+                data = json.loads(seed_path.read_text(encoding="utf-8"))
                 seeds.append(data)
 
                 if "memory_entries" in data:
@@ -388,7 +388,7 @@ def discover_sync(home: Path) -> SyncState:
         return SyncState(sync_path=sync_dir, status=PillarStatus.DEGRADED)
 
     try:
-        data = json.loads(manifest_file.read_text())
+        data = json.loads(manifest_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return SyncState(sync_path=sync_dir, status=PillarStatus.DEGRADED)
 
@@ -427,7 +427,7 @@ def _detect_gpg_key(home: Path) -> Optional[str]:
     identity_file = home / "identity" / "identity.json"
     if identity_file.exists():
         try:
-            data = json.loads(identity_file.read_text())
+            data = json.loads(identity_file.read_text(encoding="utf-8"))
             fp = data.get("fingerprint")
             if fp and data.get("capauth_managed"):
                 return fp
@@ -505,7 +505,7 @@ def _load_sync_timestamps(sync_dir: Path, state: SyncState) -> None:
     state_file = sync_dir / "sync-state.json"
     if state_file.exists():
         try:
-            data = json.loads(state_file.read_text())
+            data = json.loads(state_file.read_text(encoding="utf-8"))
             if data.get("last_push"):
                 state.last_push = datetime.fromisoformat(data["last_push"])
             if data.get("last_pull"):
@@ -528,4 +528,4 @@ def save_sync_state(sync_dir: Path, state: SyncState) -> None:
         "peers_known": state.peers_known,
         "seed_count": state.seed_count,
     }
-    (sync_dir / "sync-state.json").write_text(json.dumps(data, indent=2))
+    (sync_dir / "sync-state.json").write_text(json.dumps(data, indent=2), encoding="utf-8")

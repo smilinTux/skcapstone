@@ -477,12 +477,12 @@ class SoulManager:
         self.soul_dir.mkdir(parents=True, exist_ok=True)
         (self.soul_dir / "installed").mkdir(parents=True, exist_ok=True)
         if not (self.soul_dir / "history.json").exists():
-            (self.soul_dir / "history.json").write_text("[]")
+            (self.soul_dir / "history.json").write_text("[]", encoding="utf-8")
         if not (self.soul_dir / "active.json").exists():
             state = SoulState()
             (self.soul_dir / "active.json").write_text(
                 state.model_dump_json(indent=2)
-            )
+            , encoding="utf-8")
         if not (self.soul_dir / "base.json").exists():
             base = SoulBlueprint(
                 name="base",
@@ -492,7 +492,7 @@ class SoulManager:
             )
             (self.soul_dir / "base.json").write_text(
                 base.model_dump_json(indent=2)
-            )
+            , encoding="utf-8")
 
     def install(self, path: Path) -> SoulBlueprint:
         """Parse a blueprint markdown file and install it.
@@ -506,7 +506,7 @@ class SoulManager:
         self._ensure_dirs()
         bp = parse_blueprint(path)
         dest = self.soul_dir / "installed" / f"{bp.name}.json"
-        dest.write_text(bp.model_dump_json(indent=2))
+        dest.write_text(bp.model_dump_json(indent=2), encoding="utf-8")
 
         state = self._load_state()
         if bp.name not in state.installed_souls:
@@ -642,7 +642,7 @@ class SoulManager:
         if not history_path.exists():
             return []
         try:
-            data = json.loads(history_path.read_text())
+            data = json.loads(history_path.read_text(encoding="utf-8"))
             return [SoulSwapEvent.model_validate(e) for e in data]
         except (json.JSONDecodeError, Exception):
             return []
@@ -661,7 +661,7 @@ class SoulManager:
         if not path.exists():
             return None
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             return SoulBlueprint.model_validate(data)
         except (json.JSONDecodeError, Exception):
             return None
@@ -688,7 +688,7 @@ class SoulManager:
         if not active_path.exists():
             return None
         try:
-            data = json.loads(active_path.read_text())
+            data = json.loads(active_path.read_text(encoding="utf-8"))
             return data.get("active_soul")
         except (json.JSONDecodeError, Exception):
             return None
@@ -701,7 +701,7 @@ class SoulManager:
         if not path.exists():
             return SoulState()
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             return SoulState.model_validate(data)
         except (json.JSONDecodeError, Exception):
             return SoulState()
@@ -709,7 +709,7 @@ class SoulManager:
     def _save_state(self, state: SoulState) -> None:
         """Persist soul state to disk."""
         path = self.soul_dir / "active.json"
-        path.write_text(state.model_dump_json(indent=2))
+        path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
 
     def _append_history(self, event: SoulSwapEvent) -> None:
         """Append a swap event to the history log."""
@@ -717,8 +717,8 @@ class SoulManager:
         history: list[dict] = []
         if history_path.exists():
             try:
-                history = json.loads(history_path.read_text())
+                history = json.loads(history_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, Exception):
                 history = []
         history.append(event.model_dump())
-        history_path.write_text(json.dumps(history, indent=2))
+        history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")

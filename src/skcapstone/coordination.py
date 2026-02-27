@@ -164,7 +164,7 @@ class Board:
             return tasks
         for f in sorted(self.tasks_dir.glob("*.json")):
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 tasks.append(Task.model_validate(data))
             except (json.JSONDecodeError, Exception):
                 continue
@@ -181,7 +181,7 @@ class Board:
             return agents
         for f in sorted(self.agents_dir.glob("*.json")):
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 agents.append(AgentFile.model_validate(data))
             except (json.JSONDecodeError, Exception):
                 continue
@@ -199,7 +199,7 @@ class Board:
         path = self.agents_dir / f"{name}.json"
         if not path.exists():
             return None
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return AgentFile.model_validate(data)
 
     def save_agent(self, agent: AgentFile) -> Path:
@@ -216,7 +216,7 @@ class Board:
         path = self.agents_dir / f"{agent.agent}.json"
         path.write_text(
             json.dumps(agent.model_dump(), indent=2) + "\n"
-        )
+        , encoding="utf-8")
         return path
 
     def create_task(self, task: Task) -> Path:
@@ -235,7 +235,7 @@ class Board:
         path = self.tasks_dir / filename
         path.write_text(
             json.dumps(task.model_dump(), indent=2) + "\n"
-        )
+        , encoding="utf-8")
         return path
 
     def get_task_views(self) -> list[TaskView]:
@@ -407,7 +407,7 @@ class Board:
         self.ensure_dirs()
         content = self.generate_board_md()
         path = self.coord_dir / "BOARD.md"
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
         return path
 
 

@@ -164,7 +164,7 @@ class MetricsCollector:
             fp = self._home / filename
             if fp.exists():
                 try:
-                    data = json.loads(fp.read_text())
+                    data = json.loads(fp.read_text(encoding="utf-8"))
                     return data.get("name") or data.get("agent_name") or ""
                 except Exception:
                     continue
@@ -179,7 +179,7 @@ class MetricsCollector:
 
             profile_path = capauth_dir / "identity" / "profile.json"
             if profile_path.exists():
-                data = json.loads(profile_path.read_text())
+                data = json.loads(profile_path.read_text(encoding="utf-8"))
                 entity = data.get("entity", {})
                 key_info = data.get("key_info", {})
                 report.identity = IdentityMetrics(
@@ -276,7 +276,7 @@ class MetricsCollector:
                 try:
                     import yaml
 
-                    cfg = yaml.safe_load(config_path.read_text())
+                    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
                     transports = cfg.get("skcomm", {}).get("transports", {})
                     transport_count = sum(
                         1 for t in transports.values()
@@ -309,7 +309,7 @@ class MetricsCollector:
 
             for f in tasks_dir.glob("*.json"):
                 try:
-                    data = json.loads(f.read_text())
+                    data = json.loads(f.read_text(encoding="utf-8"))
                     status = data.get("status", "open").lower()
                     if status in counts:
                         counts[status] += 1

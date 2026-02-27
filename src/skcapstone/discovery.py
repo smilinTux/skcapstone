@@ -70,7 +70,7 @@ def discover_identity(home: Path) -> IdentityState:
     manifest_file = identity_dir / "identity.json"
     if manifest_file.exists():
         try:
-            data = json.loads(manifest_file.read_text())
+            data = json.loads(manifest_file.read_text(encoding="utf-8"))
             state.fingerprint = data.get("fingerprint")
             state.name = data.get("name")
             state.email = data.get("email")
@@ -140,12 +140,12 @@ def _sync_identity_json(identity_dir: Path, state: IdentityState) -> None:
     existing = {}
     if manifest_path.exists():
         try:
-            existing = json.loads(manifest_path.read_text())
+            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
 
     if existing.get("fingerprint") != state.fingerprint or not existing.get("capauth_managed"):
-        manifest_path.write_text(json.dumps(manifest, indent=2))
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def discover_memory(home: Path) -> MemoryState:
@@ -222,7 +222,7 @@ def discover_trust(home: Path) -> TrustState:
     manifest = trust_dir / "trust.json"
     if manifest.exists():
         try:
-            data = json.loads(manifest.read_text())
+            data = json.loads(manifest.read_text(encoding="utf-8"))
             state.depth = data.get("depth", 0.0)
             state.trust_level = data.get("trust_level", 0.0)
             state.love_intensity = data.get("love_intensity", 0.0)
@@ -282,7 +282,7 @@ def discover_security(home: Path) -> SecurityState:
     audit_log = security_dir / "audit.log"
     if audit_log.exists():
         try:
-            line_count = sum(1 for _ in audit_log.open())
+            line_count = sum(1 for _ in audit_log.open(encoding="utf-8"))
             state.audit_entries = line_count
             state.status = PillarStatus.ACTIVE
         except OSError:
@@ -291,7 +291,7 @@ def discover_security(home: Path) -> SecurityState:
     manifest = security_dir / "security.json"
     if manifest.exists():
         try:
-            data = json.loads(manifest.read_text())
+            data = json.loads(manifest.read_text(encoding="utf-8"))
             state.threats_detected = data.get("threats_detected", 0)
             if data.get("last_scan"):
                 state.last_scan = datetime.fromisoformat(data["last_scan"])

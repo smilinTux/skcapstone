@@ -73,7 +73,7 @@ def load_calibration(home: Path) -> TrustThresholds:
         return TrustThresholds()
 
     try:
-        data = json.loads(cal_file.read_text())
+        data = json.loads(cal_file.read_text(encoding="utf-8"))
         return TrustThresholds(**data)
     except (json.JSONDecodeError, Exception) as exc:
         logger.warning("Failed to load calibration: %s — using defaults", exc)
@@ -93,7 +93,7 @@ def save_calibration(home: Path, thresholds: TrustThresholds) -> Path:
     trust_dir = home / "trust"
     trust_dir.mkdir(parents=True, exist_ok=True)
     cal_file = trust_dir / CALIBRATION_FILENAME
-    cal_file.write_text(thresholds.model_dump_json(indent=2))
+    cal_file.write_text(thresholds.model_dump_json(indent=2), encoding="utf-8")
     return cal_file
 
 

@@ -86,7 +86,7 @@ def initialize_trust(home: Path) -> TrustState:
         "feb_search_paths": [str(p) for p in FEB_SEARCH_PATHS],
         "how_to_fix": "Place .feb files in ~/.skcapstone/trust/febs/ or install cloud9",
     }
-    (trust_dir / "trust.json").write_text(json.dumps(trust_config, indent=2))
+    (trust_dir / "trust.json").write_text(json.dumps(trust_config, indent=2), encoding="utf-8")
     return TrustState(status=PillarStatus.MISSING)
 
 
@@ -240,7 +240,7 @@ def import_febs_from_seed(home: Path, seed_febs: list[dict]) -> int:
         if filename in existing:
             continue
 
-        (febs_dir / filename).write_text(json.dumps(feb_data, indent=2))
+        (febs_dir / filename).write_text(json.dumps(feb_data, indent=2), encoding="utf-8")
         imported += 1
 
     if imported:
@@ -392,4 +392,4 @@ def _write_trust_json(trust_dir: Path, state: TrustState) -> None:
         "feb_count": state.feb_count,
         "last_rehydration": state.last_rehydration.isoformat() if state.last_rehydration else None,
     }
-    (trust_dir / "trust.json").write_text(json.dumps(data, indent=2))
+    (trust_dir / "trust.json").write_text(json.dumps(data, indent=2), encoding="utf-8")

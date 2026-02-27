@@ -382,7 +382,7 @@ class DaemonService:
         """Write the PID file."""
         pid_path = self.config.home / PID_FILE
         pid_path.parent.mkdir(parents=True, exist_ok=True)
-        pid_path.write_text(str(os.getpid()))
+        pid_path.write_text(str(os.getpid()), encoding="utf-8")
 
     def _remove_pid(self) -> None:
         """Remove the PID file."""
@@ -405,7 +405,7 @@ def read_pid(home: Optional[Path] = None) -> Optional[int]:
     if not pid_path.exists():
         return None
     try:
-        pid = int(pid_path.read_text().strip())
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
         os.kill(pid, 0)
         return pid
     except (ValueError, ProcessLookupError, PermissionError):

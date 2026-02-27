@@ -97,13 +97,13 @@ class SyncthingBackend(SyncBackend):
             state = {}
             if state_file.exists():
                 try:
-                    state = json.loads(state_file.read_text())
+                    state = json.loads(state_file.read_text(encoding="utf-8"))
                 except json.JSONDecodeError:
                     pass
 
             state["last_push"] = datetime.now(timezone.utc).isoformat()
             state["seed_count"] = len(list(self.outbox.glob("*.tar.gz*")))
-            state_file.write_text(json.dumps(state, indent=2))
+            state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
             logger.info(
                 "Vault pushed to Syncthing outbox: %s", vault_path.name

@@ -170,8 +170,8 @@ class AgentCard(BaseModel):
         if not pubkey_path.exists():
             raise FileNotFoundError(f"Public key not found: {pubkey_path}")
 
-        profile_data = json.loads(profile_path.read_text())
-        public_key = pubkey_path.read_text()
+        profile_data = json.loads(profile_path.read_text(encoding="utf-8"))
+        public_key = pubkey_path.read_text(encoding="utf-8")
 
         entity = profile_data.get("entity", {})
         key_info = profile_data.get("key_info", {})
@@ -282,7 +282,7 @@ class AgentCard(BaseModel):
         path = Path(filepath).expanduser()
         if not path.exists():
             raise FileNotFoundError(f"Agent card not found: {path}")
-        return cls.model_validate_json(path.read_text())
+        return cls.model_validate_json(path.read_text(encoding="utf-8"))
 
     def to_compact(self) -> dict:
         """Export a compact representation for display or QR codes.

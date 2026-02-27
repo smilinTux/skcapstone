@@ -217,7 +217,7 @@ def init(name: str, email: str | None, home: str):
     config_dir = home_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_data = config.model_dump(mode="json")
-    (config_dir / "config.yaml").write_text(yaml.dump(config_data, default_flow_style=False))
+    (config_dir / "config.yaml").write_text(yaml.dump(config_data, default_flow_style=False), encoding="utf-8")
 
     skills_dir = home_path / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
@@ -228,7 +228,7 @@ def init(name: str, email: str | None, home: str):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "connectors": [],
     }
-    (home_path / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (home_path / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     audit_event(home_path, "INIT", f"Agent '{name}' initialized at {home_path}")
 
@@ -874,7 +874,7 @@ def card_generate(home: str, capauth_home: str, motto, output, do_sign, passphra
         capauth_path = Path(capauth_home).expanduser()
         priv_path = capauth_path / "identity" / "private.asc"
         if priv_path.exists():
-            agent_card.sign(priv_path.read_text(), passphrase)
+            agent_card.sign(priv_path.read_text(encoding="utf-8"), passphrase)
             console.print("[green]Card signed.[/]")
         else:
             console.print("[yellow]Private key not found, card unsigned.[/]")
@@ -1371,12 +1371,12 @@ def _register_peer_fingerprint(home_path: Path, fingerprint: str) -> None:
         return
 
     try:
-        data = _yaml.safe_load(config_file.read_text()) or {}
+        data = _yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
         sync_data = data.setdefault("sync", {})
         peers = sync_data.setdefault("peer_fingerprints", [])
         if fingerprint not in peers:
             peers.append(fingerprint)
-            config_file.write_text(_yaml.dump(data, default_flow_style=False))
+            config_file.write_text(_yaml.dump(data, default_flow_style=False), encoding="utf-8")
             logger.info("Registered peer fingerprint: %s", fingerprint)
     except Exception as exc:
         logger.warning("Could not persist peer fingerprint: %s", exc)
@@ -1688,7 +1688,7 @@ def trust_status(home: str):
         console.print("\n  [dim]No trust state recorded.[/]\n")
         return
 
-    data = json.loads(trust_file.read_text())
+    data = json.loads(trust_file.read_text(encoding="utf-8"))
     entangled = data.get("entangled", False)
     ent_str = "[bold magenta]ENTANGLED[/]" if entangled else "[dim]not entangled[/]"
 
@@ -3273,7 +3273,7 @@ def backup_create(home: str, output: str, no_encrypt: bool):
             result_path.name.split(".tar")[0] + ".manifest.json"
         )
         if manifest_path.exists():
-            manifest = BackupManifest.model_validate_json(manifest_path.read_text())
+            manifest = BackupManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
             console.print(Panel(
                 f"[bold]Agent:[/] {manifest.agent_name}\n"
                 f"[bold]Files:[/] {manifest.file_count}\n"
@@ -3737,7 +3737,7 @@ def session_capture(
         sys.exit(1)
 
     if file:
-        text = Path(file).read_text()
+        text = Path(file).read_text(encoding="utf-8")
     elif use_stdin:
         text = sys.stdin.read()
     elif content:
@@ -3867,14 +3867,14 @@ def context_generate(home: str, memories: int, target: str):
 
     if target in ("claude-md", "both"):
         claude_path = cwd / "CLAUDE.md"
-        claude_path.write_text(FORMATTERS["claude-md"](ctx))
+        claude_path.write_text(FORMATTERS["claude-md"](ctx), encoding="utf-8")
         console.print(f"  [green]Written:[/] {claude_path}")
 
     if target in ("cursor-rules", "both"):
         rules_dir = cwd / ".cursor" / "rules"
         rules_dir.mkdir(parents=True, exist_ok=True)
         rules_path = rules_dir / "agent.mdc"
-        rules_path.write_text(FORMATTERS["cursor-rules"](ctx))
+        rules_path.write_text(FORMATTERS["cursor-rules"](ctx), encoding="utf-8")
         console.print(f"  [green]Written:[/] {rules_path}")
 
     console.print()
@@ -5043,7 +5043,7 @@ def agents_messages(deployment_id: str, agent_name: Optional[str], limit: int, h
         for env_file in reversed(envelope_files):
             try:
                 import json as _json
-                data = _json.loads(env_file.read_text())
+                data = _json.loads(env_file.read_text(encoding="utf-8"))
                 sender = data.get("sender", "?")
                 recipient = data.get("recipient", "?")
                 content = data.get("payload", {}).get("content", "")
@@ -5092,7 +5092,7 @@ def agents_messages(deployment_id: str, agent_name: Optional[str], limit: int, h
             for env_file in reversed(bc_files):
                 try:
                     import json as _json
-                    data = _json.loads(env_file.read_text())
+                    data = _json.loads(env_file.read_text(encoding="utf-8"))
                     sender = data.get("sender", "?")
                     content = data.get("payload", {}).get("content", "")
                     created_at = (

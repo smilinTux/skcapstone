@@ -176,7 +176,7 @@ class Vault:
         manifest_file = archive_path.with_suffix(".manifest.json")
         manifest_file.write_text(
             manifest.model_dump_json(indent=2)
-        )
+        , encoding="utf-8")
 
         if encrypt:
             encrypted_path = self._encrypt_vault(
@@ -283,10 +283,10 @@ class Vault:
                     vault_file.name.replace(".tar.gz.gpg", ".tar.gz.manifest.json")
                 )
                 if old_manifest.exists():
-                    data = json.loads(old_manifest.read_text())
+                    data = json.loads(old_manifest.read_text(encoding="utf-8"))
                     data["encrypted"] = True
                     data["archive_hash"] = _sha256_file(new_encrypted)
-                    old_manifest.write_text(json.dumps(data, indent=2))
+                    old_manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
                 rotated.append(new_encrypted)
                 logger.info("Rotated encryption: %s", new_encrypted.name)
@@ -300,7 +300,7 @@ class Vault:
                 continue
             manifest_file = vault_file.with_suffix(".manifest.json")
             if manifest_file.exists():
-                data = json.loads(manifest_file.read_text())
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
                 if data.get("encrypted"):
                     continue
 
@@ -309,10 +309,10 @@ class Vault:
                 vault_file.unlink()
 
                 if manifest_file.exists():
-                    data = json.loads(manifest_file.read_text())
+                    data = json.loads(manifest_file.read_text(encoding="utf-8"))
                     data["encrypted"] = True
                     data["archive_hash"] = _sha256_file(new_encrypted)
-                    manifest_file.write_text(json.dumps(data, indent=2))
+                    manifest_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
                 rotated.append(new_encrypted)
                 logger.info("Encrypted plaintext vault: %s", new_encrypted.name)
@@ -338,7 +338,7 @@ class Vault:
             meta: dict = {"path": f, "size": f.stat().st_size}
             if manifest_file.exists():
                 try:
-                    data = json.loads(manifest_file.read_text())
+                    data = json.loads(manifest_file.read_text(encoding="utf-8"))
                     meta.update(data)
                 except json.JSONDecodeError:
                     pass
@@ -371,7 +371,7 @@ class Vault:
             logger.debug("No manifest found for %s", vault_path.name)
             return None
 
-        manifest_data = json.loads(manifest_file.read_text())
+        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
         manifest = VaultManifest(**manifest_data)
 
         if verify_signature and manifest.signature:
@@ -439,7 +439,7 @@ class Vault:
             ).encode()
             sig = backend.sign(
                 sign_data,
-                private_key_path.read_text(),
+                private_key_path.read_text(encoding="utf-8"),
                 passphrase or "",
             )
             return sig
@@ -538,17 +538,17 @@ class Vault:
             data = archive_path.read_bytes()
             identity_file = self.agent_home / "identity" / "identity.json"
             if identity_file.exists():
-                identity = json.loads(identity_file.read_text())
+                identity = json.loads(identity_file.read_text(encoding="utf-8"))
                 private_key_path = (
                     self.agent_home / "identity" / "agent.key"
                 )
                 if private_key_path.exists():
                     signed = backend.sign(
                         data,
-                        private_key_path.read_text(),
+                        private_key_path.read_text(encoding="utf-8"),
                         passphrase or "",
                     )
-                    output_path.write_text(signed)
+                    output_path.write_text(signed, encoding="utf-8")
                     logger.info("Vault encrypted via CapAuth")
                     return output_path
         except (ImportError, Exception) as exc:
@@ -604,7 +604,7 @@ class Vault:
         manifest = self.agent_home / "manifest.json"
         if manifest.exists():
             try:
-                data = json.loads(manifest.read_text())
+                data = json.loads(manifest.read_text(encoding="utf-8"))
                 return data.get("name", "unknown")
             except json.JSONDecodeError:
                 pass
@@ -615,7 +615,7 @@ class Vault:
         identity_file = self.agent_home / "identity" / "identity.json"
         if identity_file.exists():
             try:
-                data = json.loads(identity_file.read_text())
+                data = json.loads(identity_file.read_text(encoding="utf-8"))
                 return data.get("fingerprint")
             except json.JSONDecodeError:
                 pass

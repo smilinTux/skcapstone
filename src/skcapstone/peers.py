@@ -185,7 +185,7 @@ def list_peers(
     peers = []
     for f in sorted(peers_dir.glob("*.json")):
         try:
-            data = json.loads(f.read_text())
+            data = json.loads(f.read_text(encoding="utf-8"))
             peers.append(PeerRecord.model_validate(data))
         except (json.JSONDecodeError, Exception):
             continue
@@ -212,7 +212,7 @@ def get_peer(
         return None
 
     try:
-        data = json.loads(peer_file.read_text())
+        data = json.loads(peer_file.read_text(encoding="utf-8"))
         return PeerRecord.model_validate(data)
     except (json.JSONDecodeError, Exception):
         return None

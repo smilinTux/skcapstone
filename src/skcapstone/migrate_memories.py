@@ -45,7 +45,7 @@ def _scan_json_memories(home: Path) -> list[MemoryEntry]:
             if f.name == "index.json":
                 continue
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 entry = MemoryEntry(**data)
                 entries.append(entry)
             except (json.JSONDecodeError, Exception) as e:

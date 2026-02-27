@@ -266,7 +266,7 @@ class ModelRouter:
             FileNotFoundError: If *path* does not exist.
             ValueError: If the YAML content cannot be parsed into a valid config.
         """
-        raw: Any = yaml.safe_load(path.read_text())
+        raw: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
         config = ModelRouterConfig.model_validate(raw)
         return cls(config=config)
 

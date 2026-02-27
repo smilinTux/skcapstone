@@ -59,7 +59,7 @@ class SyncEngine:
         config_file = self.sync_dir / "config.yaml"
         if config_file.exists():
             try:
-                data = yaml.safe_load(config_file.read_text()) or {}
+                data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
                 return SyncConfig(**data)
             except (yaml.YAMLError, ValueError) as exc:
                 logger.warning(
@@ -72,7 +72,7 @@ class SyncEngine:
         state_file = self.sync_dir / "state.json"
         if state_file.exists():
             try:
-                data = json.loads(state_file.read_text())
+                data = json.loads(state_file.read_text(encoding="utf-8"))
                 return SyncState(**data)
             except (json.JSONDecodeError, ValueError) as exc:
                 logger.warning(
@@ -85,7 +85,7 @@ class SyncEngine:
         state_file = self.sync_dir / "state.json"
         state_file.write_text(
             self.state.model_dump_json(indent=2)
-        )
+        , encoding="utf-8")
 
     def save_config(self) -> None:
         """Persist sync configuration to disk."""
@@ -93,7 +93,7 @@ class SyncEngine:
         data = self.config.model_dump(mode="json")
         config_file.write_text(
             yaml.dump(data, default_flow_style=False)
-        )
+        , encoding="utf-8")
 
     def add_backend(self, config: SyncBackendConfig) -> None:
         """Register a new sync backend.

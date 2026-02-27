@@ -112,7 +112,7 @@ def _detect_linux_distro() -> str:
         return "unknown"
 
     try:
-        text = os_release.read_text()
+        text = os_release.read_text(encoding="utf-8")
         for line in text.splitlines():
             if line.startswith("ID="):
                 return line.strip().split("=")[1].strip('"').lower()
@@ -205,7 +205,7 @@ def _write_stignore() -> Path:
         Path: The .stignore file path.
     """
     stignore_path = AGENT_HOME / ".stignore"
-    stignore_path.write_text(STIGNORE_CONTENTS)
+    stignore_path.write_text(STIGNORE_CONTENTS, encoding="utf-8")
     return stignore_path
 
 

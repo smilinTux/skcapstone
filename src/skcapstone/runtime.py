@@ -58,7 +58,7 @@ class AgentRuntime:
         config_file = self.home / "config" / "config.yaml"
         if config_file.exists():
             try:
-                data = yaml.safe_load(config_file.read_text()) or {}
+                data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
                 return AgentConfig(**data)
             except (yaml.YAMLError, ValueError) as exc:
                 logger.warning("Failed to load config: %s — using defaults", exc)
@@ -78,7 +78,7 @@ class AgentRuntime:
         manifest_file = self.home / "manifest.json"
         if manifest_file.exists():
             try:
-                data = json.loads(manifest_file.read_text())
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
                 self.manifest.name = data.get("name", self.manifest.name)
                 if data.get("created_at"):
                     self.manifest.created_at = datetime.fromisoformat(data["created_at"])
@@ -133,7 +133,7 @@ class AgentRuntime:
             ),
             "connectors": [c.model_dump(mode="json") for c in self.manifest.connectors],
         }
-        manifest_file.write_text(json.dumps(data, indent=2, default=str))
+        manifest_file.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
     def register_connector(self, name: str, platform: str) -> ConnectorInfo:
         """Register a platform connector.

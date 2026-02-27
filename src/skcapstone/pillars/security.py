@@ -64,7 +64,7 @@ def initialize_security(home: Path) -> SecurityState:
             "note": "Install sksecurity (pip install sksecurity) for full security",
             "audit_enabled": True,
         }
-        (security_dir / "security.json").write_text(json.dumps(security_config, indent=2))
+        (security_dir / "security.json").write_text(json.dumps(security_config, indent=2), encoding="utf-8")
         state.status = PillarStatus.DEGRADED
         _init_audit_log(security_dir)
         return state
@@ -77,7 +77,7 @@ def initialize_security(home: Path) -> SecurityState:
         "audit_enabled": True,
         "initialized_at": datetime.now(timezone.utc).isoformat(),
     }
-    (security_dir / "security.json").write_text(json.dumps(baseline, indent=2))
+    (security_dir / "security.json").write_text(json.dumps(baseline, indent=2), encoding="utf-8")
 
     return state
 
@@ -90,7 +90,7 @@ def _init_audit_log(security_dir: Path) -> None:
             event_type="INIT",
             detail="SKCapstone security audit log created",
         )
-        audit_log.write_text(entry.model_dump_json() + "\n")
+        audit_log.write_text(entry.model_dump_json() + "\n", encoding="utf-8")
 
 
 def audit_event(
@@ -127,7 +127,7 @@ def audit_event(
         metadata=metadata,
     )
 
-    with audit_log.open("a") as f:
+    with audit_log.open("a", encoding="utf-8") as f:
         f.write(entry.model_dump_json() + "\n")
 
     return entry
@@ -152,7 +152,7 @@ def read_audit_log(home: Path, limit: int = 0) -> list[AuditEntry]:
         return []
 
     entries: list[AuditEntry] = []
-    for line in audit_log.read_text().splitlines():
+    for line in audit_log.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue

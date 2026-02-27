@@ -120,7 +120,7 @@ def _add_self_node(home: Path, graph: TrustGraph) -> None:
     identity_file = home / "identity" / "identity.json"
     if identity_file.exists():
         try:
-            data = json.loads(identity_file.read_text())
+            data = json.loads(identity_file.read_text(encoding="utf-8"))
             name = data.get("name", "self")
             graph.agent_name = name
             graph.add_node(TrustNode(
@@ -137,7 +137,7 @@ def _add_self_node(home: Path, graph: TrustGraph) -> None:
     manifest = home / "manifest.json"
     if manifest.exists():
         try:
-            data = json.loads(manifest.read_text())
+            data = json.loads(manifest.read_text(encoding="utf-8"))
             name = data.get("name", "self")
             graph.agent_name = name
             graph.add_node(TrustNode(id=name, label=name, node_type="agent"))
@@ -155,7 +155,7 @@ def _add_token_edges(home: Path, graph: TrustGraph) -> None:
         if token_file.name.startswith("revoked"):
             continue
         try:
-            data = json.loads(token_file.read_text())
+            data = json.loads(token_file.read_text(encoding="utf-8"))
             payload = data.get("payload", data)
             subject = payload.get("subject", "")
             issuer = payload.get("issuer", graph.agent_name)
@@ -189,7 +189,7 @@ def _add_feb_edges(home: Path, graph: TrustGraph) -> None:
         return
 
     try:
-        data = json.loads(trust_file.read_text())
+        data = json.loads(trust_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return
 
@@ -216,7 +216,7 @@ def _add_feb_edges(home: Path, graph: TrustGraph) -> None:
     if febs_dir.exists():
         for feb_file in febs_dir.glob("*.feb"):
             try:
-                feb_data = json.loads(feb_file.read_text())
+                feb_data = json.loads(feb_file.read_text(encoding="utf-8"))
                 subject = feb_data.get("subject", feb_file.stem)
                 emotion = feb_data.get("emotion", "unknown")
                 intensity = feb_data.get("intensity", 0)
@@ -250,7 +250,7 @@ def _add_sync_edges(home: Path, graph: TrustGraph) -> None:
         seen_agents: set[str] = set()
         for seed_file in seed_dir.glob("*.seed.json*"):
             try:
-                data = json.loads(seed_file.read_text())
+                data = json.loads(seed_file.read_text(encoding="utf-8"))
                 agent = data.get("agent_name", "")
                 host = data.get("source_host", "unknown")
                 if agent and agent not in seen_agents and agent != graph.agent_name:
@@ -280,7 +280,7 @@ def _add_coord_agents(home: Path, graph: TrustGraph) -> None:
 
     for agent_file in agents_dir.glob("*.json"):
         try:
-            data = json.loads(agent_file.read_text())
+            data = json.loads(agent_file.read_text(encoding="utf-8"))
             name = data.get("agent", "")
             if not name or name == graph.agent_name:
                 continue

@@ -242,7 +242,7 @@ def _check_agent_home(home: Path) -> list[Check]:
     manifest = home / "manifest.json"
     if manifest.exists():
         try:
-            data = json.loads(manifest.read_text())
+            data = json.loads(manifest.read_text(encoding="utf-8"))
             name = data.get("name", "unknown")
             checks.append(Check(
                 name="home:manifest",
@@ -280,7 +280,7 @@ def _check_identity(home: Path) -> list[Check]:
     identity_file = identity_dir / "identity.json"
     if identity_file.exists():
         try:
-            data = json.loads(identity_file.read_text())
+            data = json.loads(identity_file.read_text(encoding="utf-8"))
             fp = data.get("fingerprint", "")
             managed = data.get("capauth_managed", False)
             checks.append(Check(
@@ -481,7 +481,7 @@ def _check_sync(home: Path) -> list[Check]:
     manifest = sync_dir / "sync-manifest.json"
     if manifest.exists():
         try:
-            data = json.loads(manifest.read_text())
+            data = json.loads(manifest.read_text(encoding="utf-8"))
             backends = data.get("backends", [])
             checks.append(Check(
                 name="sync:backends",

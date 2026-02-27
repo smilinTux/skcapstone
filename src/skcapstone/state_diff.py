@@ -87,7 +87,7 @@ def save_snapshot(home: Path) -> Path:
     """
     snapshot = take_snapshot(home)
     snap_path = home / SNAPSHOT_FILENAME
-    snap_path.write_text(json.dumps(snapshot, indent=2, default=str))
+    snap_path.write_text(json.dumps(snapshot, indent=2, default=str), encoding="utf-8")
     return snap_path
 
 
@@ -105,7 +105,7 @@ def load_snapshot(home: Path) -> dict[str, Any] | None:
     snap_path = home / SNAPSHOT_FILENAME
     if snap_path.exists():
         try:
-            return json.loads(snap_path.read_text())
+            return json.loads(snap_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -266,7 +266,7 @@ def _snapshot_trust(home: Path) -> dict[str, Any]:
     if not trust_file.exists():
         return {}
     try:
-        return json.loads(trust_file.read_text())
+        return json.loads(trust_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -309,7 +309,7 @@ def _find_latest_seed(home: Path) -> dict[str, Any] | None:
         seeds = sorted(seed_dir.glob("*.seed.json*"), reverse=True)
         if seeds:
             try:
-                data = json.loads(seeds[0].read_text())
+                data = json.loads(seeds[0].read_text(encoding="utf-8"))
                 memory_data = data.get("memory", {})
                 return {
                     "timestamp": data.get("created_at", "unknown"),

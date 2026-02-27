@@ -335,7 +335,7 @@ def _read_agent_name(home: Path) -> str:
         filepath = home / filename
         if filepath.exists():
             try:
-                data = json.loads(filepath.read_text())
+                data = json.loads(filepath.read_text(encoding="utf-8"))
                 name = data.get("name") or data.get("agent_name")
                 if name:
                     return name

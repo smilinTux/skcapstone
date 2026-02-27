@@ -142,7 +142,7 @@ def _gather_soul(home: Path) -> dict[str, Any]:
     if not active_path.exists():
         return {"active": None, "base": "default"}
     try:
-        data = json.loads(active_path.read_text())
+        data = json.loads(active_path.read_text(encoding="utf-8"))
         return {
             "active": data.get("active_soul"),
             "base": data.get("base_soul", "default"),

@@ -60,7 +60,7 @@ def generate_identity(
         "created_at": state.created_at.isoformat() if state.created_at else None,
         "capauth_managed": state.status == PillarStatus.ACTIVE,
     }
-    (identity_dir / "identity.json").write_text(json.dumps(identity_manifest, indent=2))
+    (identity_dir / "identity.json").write_text(json.dumps(identity_manifest, indent=2), encoding="utf-8")
 
     return state
 

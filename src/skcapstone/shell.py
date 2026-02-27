@@ -247,7 +247,7 @@ def _handle_trust(args: list[str]) -> None:
         if not trust_file.exists():
             console.print("  [dim]No trust state recorded.[/]")
             return
-        data = json.loads(trust_file.read_text())
+        data = json.loads(trust_file.read_text(encoding="utf-8"))
         entangled = "[magenta]ENTANGLED[/]" if data.get("entangled") else "[dim]not entangled[/]"
         console.print(
             f"\n  Depth: {data.get('depth', 0)}  Trust: {data.get('trust_level', 0)}  "

@@ -176,5 +176,5 @@ def write_changelog(home: Path, output: Optional[Path] = None) -> Path:
     """
     content = generate_changelog(home)
     out_path = output or Path.cwd() / "CHANGELOG.md"
-    out_path.write_text(content)
+    out_path.write_text(content, encoding="utf-8")
     return out_path
