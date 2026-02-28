@@ -76,6 +76,65 @@ class CoordinationMetrics(BaseModel):
     claimed: int = 0
 
 
+class TrustMetrics(BaseModel):
+    """Cloud 9 trust stats."""
+
+    available: bool = False
+    depth: float = 0.0
+    trust_level: float = 0.0
+    love_intensity: float = 0.0
+    entangled: bool = False
+    feb_count: int = 0
+    last_rehydration: str = ""
+
+
+class SecurityMetrics(BaseModel):
+    """Security audit stats."""
+
+    available: bool = False
+    audit_entries: int = 0
+    tamper_alerts: int = 0
+    event_types: dict[str, int] = Field(default_factory=dict)
+
+
+class SyncMetrics(BaseModel):
+    """Sync layer stats."""
+
+    available: bool = False
+    seeds_outbox: int = 0
+    seeds_inbox: int = 0
+    peers_known: int = 0
+    last_push: str = ""
+    last_pull: str = ""
+
+
+class PubSubMetrics(BaseModel):
+    """Pub/sub messaging stats."""
+
+    available: bool = False
+    topics: int = 0
+    messages: int = 0
+    subscriptions: int = 0
+
+
+class KmsMetrics(BaseModel):
+    """KMS key management stats."""
+
+    available: bool = False
+    total_keys: int = 0
+    active_keys: int = 0
+    by_type: dict[str, int] = Field(default_factory=dict)
+    rotations: int = 0
+
+
+class FortressMetrics(BaseModel):
+    """Memory fortress stats."""
+
+    enabled: bool = False
+    encryption_enabled: bool = False
+    seal_algorithm: str = ""
+
+
 class BackupMetrics(BaseModel):
     """Backup stats."""
 
@@ -98,9 +157,15 @@ class MetricsReport(BaseModel):
 
     identity: IdentityMetrics = Field(default_factory=IdentityMetrics)
     memory: MemoryMetrics = Field(default_factory=MemoryMetrics)
+    trust: TrustMetrics = Field(default_factory=TrustMetrics)
+    security: SecurityMetrics = Field(default_factory=SecurityMetrics)
     chat: ChatMetrics = Field(default_factory=ChatMetrics)
     transport: TransportMetrics = Field(default_factory=TransportMetrics)
+    sync: SyncMetrics = Field(default_factory=SyncMetrics)
     coordination: CoordinationMetrics = Field(default_factory=CoordinationMetrics)
+    pubsub: PubSubMetrics = Field(default_factory=PubSubMetrics)
+    kms: KmsMetrics = Field(default_factory=KmsMetrics)
+    fortress: FortressMetrics = Field(default_factory=FortressMetrics)
     backup: BackupMetrics = Field(default_factory=BackupMetrics)
 
     collection_time_ms: float = 0.0
@@ -115,8 +180,12 @@ class MetricsReport(BaseModel):
         parts = [
             f"id={'yes' if self.identity.available else 'no'}",
             f"mem={self.memory.total_memories}",
+            f"trust={self.trust.depth:.0f}",
+            f"keys={self.kms.active_keys}",
             f"chat={self.chat.total_messages}",
             f"board={self.coordination.done}/{self.coordination.total_tasks}",
+            f"topics={self.pubsub.topics}",
+            f"fortress={'on' if self.fortress.enabled else 'off'}",
         ]
         return f"[{self.agent_name}] " + " | ".join(parts)
 
@@ -150,9 +219,15 @@ class MetricsCollector:
         report.agent_name = self._read_agent_name()
         self._collect_identity(report)
         self._collect_memory(report)
+        self._collect_trust(report)
+        self._collect_security(report)
         self._collect_chat(report)
         self._collect_transport(report)
+        self._collect_sync(report)
         self._collect_coordination(report)
+        self._collect_pubsub(report)
+        self._collect_kms(report)
+        self._collect_fortress(report)
         self._collect_backup(report)
 
         report.collection_time_ms = (time.monotonic() - start) * 1000
@@ -326,6 +401,178 @@ class MetricsCollector:
             )
         except Exception as exc:
             report.errors.append(f"coordination: {exc}")
+
+    def _collect_trust(self, report: MetricsReport) -> None:
+        """Collect Cloud 9 trust metrics."""
+        try:
+            trust_path = self._home / "trust" / "trust.json"
+            if not trust_path.exists():
+                return
+
+            data = json.loads(trust_path.read_text(encoding="utf-8"))
+            febs_dir = self._home / "trust" / "febs"
+            feb_count = sum(1 for _ in febs_dir.glob("*.feb")) if febs_dir.is_dir() else 0
+
+            report.trust = TrustMetrics(
+                available=True,
+                depth=data.get("depth", 0),
+                trust_level=data.get("trust_level", 0),
+                love_intensity=data.get("love_intensity", 0),
+                entangled=data.get("entangled", False),
+                feb_count=feb_count,
+                last_rehydration=data.get("last_rehydration", ""),
+            )
+        except Exception as exc:
+            report.errors.append(f"trust: {exc}")
+
+    def _collect_security(self, report: MetricsReport) -> None:
+        """Collect security audit metrics."""
+        try:
+            audit_log = self._home / "security" / "audit.log"
+            if not audit_log.exists():
+                return
+
+            lines = audit_log.read_text(encoding="utf-8").splitlines()
+            total = len([line for line in lines if line.strip()])
+
+            type_counts: dict[str, int] = {}
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    et = entry.get("event_type", "UNKNOWN")
+                    type_counts[et] = type_counts.get(et, 0) + 1
+                except json.JSONDecodeError:
+                    type_counts["LEGACY"] = type_counts.get("LEGACY", 0) + 1
+
+            report.security = SecurityMetrics(
+                available=True,
+                audit_entries=total,
+                tamper_alerts=type_counts.get("MEMORY_TAMPER_ALERT", 0),
+                event_types=type_counts,
+            )
+        except Exception as exc:
+            report.errors.append(f"security: {exc}")
+
+    def _collect_sync(self, report: MetricsReport) -> None:
+        """Collect sync layer metrics."""
+        try:
+            sync_dir = self._home / "sync"
+            if not sync_dir.is_dir():
+                return
+
+            outbox = sync_dir / "outbox"
+            inbox = sync_dir / "inbox"
+            seeds_out = sum(1 for _ in outbox.glob("*")) if outbox.is_dir() else 0
+            seeds_in = sum(1 for _ in inbox.glob("*")) if inbox.is_dir() else 0
+
+            state_path = sync_dir / "sync_state.json"
+            state: dict[str, Any] = {}
+            if state_path.exists():
+                try:
+                    state = json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+
+            report.sync = SyncMetrics(
+                available=True,
+                seeds_outbox=seeds_out,
+                seeds_inbox=seeds_in,
+                peers_known=state.get("peers_known", 0),
+                last_push=state.get("last_push", ""),
+                last_pull=state.get("last_pull", ""),
+            )
+        except Exception as exc:
+            report.errors.append(f"sync: {exc}")
+
+    def _collect_pubsub(self, report: MetricsReport) -> None:
+        """Collect pub/sub messaging metrics."""
+        try:
+            pubsub_dir = self._home / "pubsub"
+            if not pubsub_dir.is_dir():
+                return
+
+            topics_dir = pubsub_dir / "topics"
+            topic_count = 0
+            message_count = 0
+            if topics_dir.is_dir():
+                for td in topics_dir.iterdir():
+                    if td.is_dir():
+                        topic_count += 1
+                        message_count += sum(1 for _ in td.glob("msg-*.json"))
+
+            subs_file = pubsub_dir / "subscriptions.json"
+            sub_count = 0
+            if subs_file.exists():
+                try:
+                    subs = json.loads(subs_file.read_text(encoding="utf-8"))
+                    sub_count = len(subs)
+                except Exception:
+                    pass
+
+            report.pubsub = PubSubMetrics(
+                available=True,
+                topics=topic_count,
+                messages=message_count,
+                subscriptions=sub_count,
+            )
+        except Exception as exc:
+            report.errors.append(f"pubsub: {exc}")
+
+    def _collect_kms(self, report: MetricsReport) -> None:
+        """Collect KMS key management metrics."""
+        try:
+            keystore_path = self._home / "security" / "kms" / "keystore.json"
+            if not keystore_path.exists():
+                return
+
+            data = json.loads(keystore_path.read_text(encoding="utf-8"))
+            keys = data.get("keys", {})
+            by_type: dict[str, int] = {}
+            active = 0
+
+            for key_data in keys.values():
+                kt = key_data.get("key_type", "unknown")
+                by_type[kt] = by_type.get(kt, 0) + 1
+                if key_data.get("status") == "active":
+                    active += 1
+
+            rot_log = self._home / "security" / "kms" / "rotation-log.json"
+            rotations = 0
+            if rot_log.exists():
+                try:
+                    rot_data = json.loads(rot_log.read_text(encoding="utf-8"))
+                    rotations = len(rot_data)
+                except Exception:
+                    pass
+
+            report.kms = KmsMetrics(
+                available=True,
+                total_keys=len(keys),
+                active_keys=active,
+                by_type=by_type,
+                rotations=rotations,
+            )
+        except Exception as exc:
+            report.errors.append(f"kms: {exc}")
+
+    def _collect_fortress(self, report: MetricsReport) -> None:
+        """Collect memory fortress metrics."""
+        try:
+            config_path = self._home / "memory" / "fortress.json"
+            if not config_path.exists():
+                return
+
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            report.fortress = FortressMetrics(
+                enabled=data.get("enabled", False),
+                encryption_enabled=data.get("encryption_enabled", False),
+                seal_algorithm=data.get("seal_algorithm", ""),
+            )
+        except Exception as exc:
+            report.errors.append(f"fortress: {exc}")
 
     def _collect_backup(self, report: MetricsReport) -> None:
         """Collect backup metrics."""
