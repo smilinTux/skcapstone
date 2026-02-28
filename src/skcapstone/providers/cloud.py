@@ -328,16 +328,27 @@ class HetznerAdapter:
 # Cloud-init template
 # ---------------------------------------------------------------------------
 
-def _build_cloud_init(agent_name: str, spec: AgentSpec) -> str:
+def _build_cloud_init(
+    agent_name: str,
+    spec: AgentSpec,
+    tailscale_authkey: Optional[str] = None,
+) -> str:
     """Generate cloud-init user data to bootstrap an agent VM.
 
     Args:
         agent_name: Agent instance name.
         spec: Agent specification.
+        tailscale_authkey: Optional Tailscale auth key for mesh auto-join.
+            Falls back to TAILSCALE_AUTHKEY environment variable at build time.
 
     Returns:
         Cloud-init YAML string.
     """
+    ts_key = tailscale_authkey or os.environ.get("TAILSCALE_AUTHKEY", "")
+    ts_join = ""
+    if ts_key:
+        ts_join = f'  - tailscale up --authkey="{ts_key}" --hostname="{agent_name}"\n'
+
     return f"""#cloud-config
 package_update: true
 packages:
@@ -360,7 +371,7 @@ runcmd:
     }}
     AGENT_EOF
   - curl -fsSL https://tailscale.com/install.sh | sh
-  - echo "Agent {agent_name} provisioned by skcapstone"
+{ts_join}  - echo "Agent {agent_name} provisioned by skcapstone"
 """
 
 
