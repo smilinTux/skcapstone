@@ -1,5 +1,5 @@
 """
-Syncthing auto-setup skill for skcapstone / OpenClaw agents.
+Syncthing auto-setup skill for skcapstone sovereign agents.
 
 Detects, installs, and configures Syncthing for Sovereign Singularity —
 real-time P2P sync of the entire agent home directory. Identity, memory,

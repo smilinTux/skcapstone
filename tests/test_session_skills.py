@@ -44,14 +44,9 @@ def skskills_home(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def repo_root(tmp_path: Path) -> Path:
-    """Set up a mock repo root with legacy OpenClaw skills."""
+    """Set up a mock repo root."""
     root = tmp_path / "repo"
-    oc_skills = root / "openclaw-skills"
-    oc_skills.mkdir(parents=True)
-    (oc_skills / "legacy.skill").write_text("legacy skill content")
-    legacy_dir = oc_skills / "legacy-dir"
-    legacy_dir.mkdir()
-    (legacy_dir / "manifest.json").write_text("{}")
+    root.mkdir(parents=True)
     return root
 
 
@@ -80,16 +75,15 @@ class TestResolveSkillPaths:
             assert "jarvis" in result[0]
             assert "code-review" in result[0]
 
-    def test_resolve_from_legacy_openclaw(self, skskills_home: Path, repo_root: Path):
-        """Should fall back to OpenClaw paths when not in SKSkills."""
+    def test_resolve_passthrough_when_not_in_skskills(self, skskills_home: Path, repo_root: Path):
+        """Skills not in SKSkills should pass through as-is."""
         from skcapstone.session_skills import resolve_skill_paths_with_skskills
 
         with patch.dict(os.environ, {"SKSKILLS_HOME": str(skskills_home)}):
             result = resolve_skill_paths_with_skskills(
                 ["legacy"], repo_root=repo_root
             )
-            assert len(result) == 1
-            assert "openclaw-skills" in result[0]
+            assert result == ["legacy"]
 
     def test_resolve_passthrough_for_unknown(self, skskills_home: Path):
         """Unknown skills should pass through as-is."""

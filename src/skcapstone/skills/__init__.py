@@ -1,1 +1,1 @@
-"""SKCapstone skills - OpenClaw-compatible agent skills."""
+"""SKCapstone skills - SKSkills-native agent skills."""

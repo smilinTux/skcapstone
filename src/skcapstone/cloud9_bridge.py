@@ -15,9 +15,9 @@ for accurate scoring instead of relying solely on FEB metadata flags.
 
 Usage:
     bridge = Cloud9Bridge(memory_store)
-    bridge.ingest_feb(feb)                    # single FEB
-    bridge.scan_directory("~/.openclaw/feb")  # bulk import
-    bridge.watch("~/.openclaw/feb")           # live watch
+    bridge.ingest_feb(feb)                         # single FEB
+    bridge.scan_directory("~/.cloud9/feb-backups") # bulk import
+    bridge.watch("~/.cloud9/feb-backups")          # live watch
 """
 
 from __future__ import annotations
@@ -168,7 +168,7 @@ class Cloud9Bridge:
 
     def scan_directory(
         self,
-        directory: str | Path = "~/.openclaw/feb",
+        directory: str | Path = "~/.cloud9/feb-backups",
     ) -> dict:
         """Scan a directory for .feb files and ingest any new ones.
 

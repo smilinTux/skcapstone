@@ -1,0 +1,173 @@
+# Ops & Monitoring Team — Docker Compose Template
+#
+# Infrastructure operations team: an ops lead (manager), a security sentinel,
+# a monitor, and a self-healing ops agent.  Mirrors the ops-monitoring
+# blueprint with Docker containers and a shared sovereign MCP stack.
+#
+# Usage:
+#   cp ops-team.yml docker-compose.yml
+#   docker compose up -d
+#
+# Key points:
+#   - security-sentinel has read-only access to /skcomm for audit trails
+#   - monitor polls heartbeats every 30m via the MCP heartbeat tools
+#   - ops-agent handles restarts, rotations, and scaling via trustee_* tools
+
+version: "3.9"
+
+x-agent-defaults: &agent-defaults
+  image: skcapstone-agent:latest
+  restart: unless-stopped
+  networks:
+    - skcapstone
+
+services:
+
+  # ── Sovereign MCP Server ─────────────────────────────────────────────
+  skcapstone-mcp:
+    image: skcapstone-agent:latest
+    container_name: ops-team-mcp
+    command: ["skcapstone", "mcp", "--stdio"]
+    restart: unless-stopped
+    networks:
+      - skcapstone
+    environment:
+      SKCAPSTONE_HOME: /agent/skcapstone
+    volumes:
+      - skcapstone-mcp-data:/agent/skcapstone
+    labels:
+      - "managed_by=skcapstone"
+      - "team=ops-team"
+      - "role=mcp-server"
+
+  # ── Ops Lead (Manager) ────────────────────────────────────────────────
+  ops-lead:
+    <<: *agent-defaults
+    container_name: ops-team-ops-lead
+    depends_on:
+      - skcapstone-mcp
+    environment:
+      AGENT_NAME: ops-team-ops-lead
+      TEAM_NAME: ops-team
+      AGENT_ROLE: manager
+      AGENT_MODEL: claude-sonnet-4-6
+      SOUL_BLUEPRINT: souls/ops-lead.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - ops-team-ops-lead-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=ops-team"
+      - "agent=ops-team-ops-lead"
+      - "role=manager"
+
+  # ── Security Sentinel ─────────────────────────────────────────────────
+  security-sentinel:
+    <<: *agent-defaults
+    container_name: ops-team-security-sentinel
+    depends_on:
+      - skcapstone-mcp
+      - ops-lead
+    environment:
+      AGENT_NAME: ops-team-security-sentinel
+      TEAM_NAME: ops-team
+      AGENT_ROLE: security
+      AGENT_MODEL: claude-sonnet-4-6
+      SOUL_BLUEPRINT: souls/sentinel.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - ops-team-security-sentinel-data:/agent
+      - skcomm-data:/skcomm:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=ops-team"
+      - "agent=ops-team-security-sentinel"
+      - "role=security"
+
+  # ── Monitor ───────────────────────────────────────────────────────────
+  monitor:
+    <<: *agent-defaults
+    container_name: ops-team-monitor
+    depends_on:
+      - skcapstone-mcp
+    environment:
+      AGENT_NAME: ops-team-monitor
+      TEAM_NAME: ops-team
+      AGENT_ROLE: ops
+      AGENT_MODEL: claude-haiku-4-5-20251001
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+      # Poll interval for heartbeat checks (seconds)
+      MONITOR_INTERVAL: "1800"
+    volumes:
+      - ops-team-monitor-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=ops-team"
+      - "agent=ops-team-monitor"
+      - "role=ops"
+
+  # ── Ops Agent (Self-healing) ──────────────────────────────────────────
+  ops-agent:
+    <<: *agent-defaults
+    container_name: ops-team-ops-agent
+    depends_on:
+      - skcapstone-mcp
+      - ops-lead
+    environment:
+      AGENT_NAME: ops-team-ops-agent
+      TEAM_NAME: ops-team
+      AGENT_ROLE: ops
+      AGENT_MODEL: claude-haiku-4-5-20251001
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+      # Docker socket for trustee operations (restart, rotate, scale)
+      DOCKER_HOST: "unix:///var/run/docker.sock"
+    volumes:
+      - ops-team-ops-agent-data:/agent
+      - skcomm-data:/skcomm
+      # Bind Docker socket so the ops agent can restart containers
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=ops-team"
+      - "agent=ops-team-ops-agent"
+      - "role=ops"
+
+# ── Volumes ──────────────────────────────────────────────────────────────
+volumes:
+  skcapstone-mcp-data: {}
+  skcomm-data: {}
+  ops-team-ops-lead-data: {}
+  ops-team-security-sentinel-data: {}
+  ops-team-monitor-data: {}
+  ops-team-ops-agent-data: {}
+
+# ── Networks ─────────────────────────────────────────────────────────────
+networks:
+  skcapstone:
+    driver: bridge

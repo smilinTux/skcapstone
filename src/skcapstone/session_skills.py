@@ -3,7 +3,7 @@
 Bridges the gap between the team engine's session lifecycle and the
 SKSkills framework.  When an agent session starts, this module:
 
-1. Resolves skill names → SKSkills registry entries (alongside legacy OpenClaw paths)
+1. Resolves skill names → SKSkills registry entries
 2. Loads the agent's skills into a SkillLoader/SkillAggregator
 3. Writes an MCP config snippet so the crush session can reach skill tools
 4. Provides hooks for session start/stop to manage skill server lifecycle
@@ -38,13 +38,12 @@ def resolve_skill_paths_with_skskills(
     Resolution order per skill name:
     1. Absolute path — use as-is if it exists
     2. SKSkills registry — check ~/.skskills/installed/<name> or agents/<agent>/<name>
-    3. Legacy OpenClaw paths — openclaw-skills/<name>.skill or directory
-    4. Pass-through — let crush resolve from its own skill paths
+    3. Pass-through — let crush resolve from its own skill paths
 
     Args:
         skills: List of skill names or paths from AgentSpec.
         agent: Agent namespace for SKSkills per-agent lookup.
-        repo_root: Workspace root for resolving legacy OpenClaw paths.
+        repo_root: Unused; kept for call-site compatibility.
 
     Returns:
         List of resolved paths (unresolvable names kept as-is).
@@ -63,12 +62,12 @@ def resolve_skill_paths_with_skskills(
             continue
 
         # 2. SKSkills registry — per-agent first, then global
-        found_in_skskills = False
         search_dirs = []
         if agent != "global":
             search_dirs.append(skskills_home / "agents" / agent / skill)
         search_dirs.append(skskills_home / "installed" / skill)
 
+        found_in_skskills = False
         for candidate in search_dirs:
             if candidate.exists() and (candidate / "skill.yaml").exists():
                 resolved.append(str(candidate))
@@ -79,18 +78,7 @@ def resolve_skill_paths_with_skskills(
         if found_in_skskills:
             continue
 
-        # 3. Legacy OpenClaw paths
-        if repo_root:
-            skill_file = repo_root / "openclaw-skills" / f"{skill}.skill"
-            if skill_file.exists():
-                resolved.append(str(skill_file))
-                continue
-            skill_dir = repo_root / "openclaw-skills" / skill
-            if skill_dir.exists():
-                resolved.append(str(skill_dir))
-                continue
-
-        # 4. Pass-through
+        # 3. Pass-through — let crush resolve from its own skill paths
         resolved.append(skill)
 
     return resolved
@@ -138,7 +126,7 @@ def prepare_session_skills(
         skill_yaml = skill_path / "skill.yaml"
 
         if not skill_yaml.exists():
-            # Not an SKSkills directory — skip (might be OpenClaw .skill file)
+            # Not an SKSkills directory — skip
             continue
 
         try:

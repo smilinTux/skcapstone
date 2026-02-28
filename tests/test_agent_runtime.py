@@ -132,15 +132,7 @@ class TestFindCrushBinary:
             result = _find_crush_binary()
         assert result == "/usr/bin/crush"
 
-    def test_returns_openclaw_path_as_fallback(self):
-        with patch(
-            "shutil.which",
-            side_effect=lambda x: None if x == "crush" else "/usr/local/bin/openclaw",
-        ):
-            result = _find_crush_binary()
-        assert result == "/usr/local/bin/openclaw"
-
-    def test_returns_claude_path_as_last_fallback(self):
+    def test_returns_claude_path_as_fallback_when_crush_absent(self):
         def _which(name):
             if name == "claude":
                 return "/bin/claude"
@@ -211,30 +203,13 @@ class TestResolveSkillPaths:
         result = _resolve_skill_paths([str(skill)])
         assert result == [str(skill)]
 
-    def test_resolves_via_openclaw_skills_file(self, tmp_path):
-        skill_file = tmp_path / "openclaw-skills" / "discord-bot-manager.skill"
-        skill_file.parent.mkdir(parents=True)
-        skill_file.write_text("skill data")
-        result = _resolve_skill_paths(["discord-bot-manager"], repo_root=tmp_path)
-        assert result == [str(skill_file)]
-
-    def test_resolves_via_openclaw_skills_dir(self, tmp_path):
-        skill_dir = tmp_path / "openclaw-skills" / "my-skill"
-        skill_dir.mkdir(parents=True)
-        result = _resolve_skill_paths(["my-skill"], repo_root=tmp_path)
-        assert result == [str(skill_dir)]
-
     def test_unknown_skill_kept_as_is(self, tmp_path):
         result = _resolve_skill_paths(["unknown-skill"], repo_root=tmp_path)
         assert result == ["unknown-skill"]
 
-    def test_mixed_resolved_and_unresolved(self, tmp_path):
-        skill_file = tmp_path / "openclaw-skills" / "known.skill"
-        skill_file.parent.mkdir(parents=True)
-        skill_file.write_text("")
+    def test_multiple_unknown_skills_kept_as_is(self, tmp_path):
         result = _resolve_skill_paths(["known", "unknown"], repo_root=tmp_path)
-        assert result[0] == str(skill_file)
-        assert result[1] == "unknown"
+        assert result == ["known", "unknown"]
 
 
 # ---------------------------------------------------------------------------
@@ -276,13 +251,18 @@ class TestBuildSessionConfig:
         config = _build_session_config("a", "t", spec, tmp_path, repo_root=tmp_path)
         assert config["soul_blueprint"] == str(soul_dir)
 
-    def test_skills_resolved(self, tmp_path):
-        skill_file = tmp_path / "openclaw-skills" / "test.skill"
+    def test_skills_resolved_via_absolute_path(self, tmp_path):
+        skill_file = tmp_path / "my-skill" / "skill.yaml"
         skill_file.parent.mkdir(parents=True)
-        skill_file.write_text("")
-        spec = _make_spec(skills=["test"])
+        skill_file.write_text("name: my-skill")
+        spec = _make_spec(skills=[str(skill_file.parent)])
         config = _build_session_config("a", "t", spec, tmp_path, repo_root=tmp_path)
-        assert config["skills"] == [str(skill_file)]
+        assert config["skills"] == [str(skill_file.parent)]
+
+    def test_unknown_skills_passed_through(self, tmp_path):
+        spec = _make_spec(skills=["unknown-skill"])
+        config = _build_session_config("a", "t", spec, tmp_path, repo_root=tmp_path)
+        assert config["skills"] == ["unknown-skill"]
 
     def test_env_vars_included(self, tmp_path):
         spec = _make_spec(env={"MY_KEY": "my_value"})
@@ -950,9 +930,6 @@ class TestIsClaudeBinary:
 
     def test_returns_false_for_crush(self):
         assert _is_claude_binary("/usr/bin/crush") is False
-
-    def test_returns_false_for_openclaw(self):
-        assert _is_claude_binary("/usr/local/bin/openclaw") is False
 
 
 # ---------------------------------------------------------------------------

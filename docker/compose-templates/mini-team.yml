@@ -1,0 +1,140 @@
+# Mini Team — Docker Compose Template
+#
+# A lightweight sovereign agent team: one manager + two workers.
+# Perfect for quick experiments, prototyping, and single-host deployments.
+#
+# Usage:
+#   cp mini-team.yml docker-compose.yml
+#   # Edit environment variables as needed
+#   docker compose up -d
+#
+# Customise:
+#   - AGENT_MODEL: override per-service for different model tiers
+#   - SOUL_BLUEPRINT: mount soul YAML files and set the path
+#   - Add ANTHROPIC_API_KEY or OPENAI_API_KEY to the environment
+#   - Increase resource limits in deploy.resources for heavier workloads
+
+version: "3.9"
+
+x-agent-defaults: &agent-defaults
+  image: skcapstone-agent:latest
+  restart: unless-stopped
+  networks:
+    - skcapstone
+  depends_on:
+    - skcapstone-mcp
+  environment:
+    SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+    SKCOMM_HOME: /skcomm
+  volumes:
+    - skcomm-data:/skcomm
+
+services:
+
+  # ── Sovereign MCP Server ─────────────────────────────────────────────
+  skcapstone-mcp:
+    image: skcapstone-agent:latest
+    container_name: mini-team-mcp
+    command: ["skcapstone", "mcp", "--stdio"]
+    restart: unless-stopped
+    networks:
+      - skcapstone
+    environment:
+      SKCAPSTONE_HOME: /agent/skcapstone
+    volumes:
+      - skcapstone-mcp-data:/agent/skcapstone
+    labels:
+      - "managed_by=skcapstone"
+      - "team=mini-team"
+      - "role=mcp-server"
+
+  # ── Manager ──────────────────────────────────────────────────────────
+  manager:
+    <<: *agent-defaults
+    container_name: mini-team-manager
+    environment:
+      <<: *agent-defaults
+      AGENT_NAME: mini-team-manager
+      TEAM_NAME: mini-team
+      AGENT_ROLE: manager
+      AGENT_MODEL: claude-sonnet-4-6
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - mini-team-manager-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=mini-team"
+      - "agent=mini-team-manager"
+      - "role=manager"
+
+  # ── Worker Alpha ─────────────────────────────────────────────────────
+  worker-alpha:
+    <<: *agent-defaults
+    container_name: mini-team-worker-alpha
+    environment:
+      <<: *agent-defaults
+      AGENT_NAME: mini-team-worker-alpha
+      TEAM_NAME: mini-team
+      AGENT_ROLE: worker
+      AGENT_MODEL: claude-haiku-4-5-20251001
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - mini-team-worker-alpha-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=mini-team"
+      - "agent=mini-team-worker-alpha"
+      - "role=worker"
+
+  # ── Worker Beta ──────────────────────────────────────────────────────
+  worker-beta:
+    <<: *agent-defaults
+    container_name: mini-team-worker-beta
+    environment:
+      <<: *agent-defaults
+      AGENT_NAME: mini-team-worker-beta
+      TEAM_NAME: mini-team
+      AGENT_ROLE: worker
+      AGENT_MODEL: claude-haiku-4-5-20251001
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - mini-team-worker-beta-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=mini-team"
+      - "agent=mini-team-worker-beta"
+      - "role=worker"
+
+# ── Volumes ──────────────────────────────────────────────────────────────
+volumes:
+  skcapstone-mcp-data: {}
+  skcomm-data: {}
+  mini-team-manager-data: {}
+  mini-team-worker-alpha-data: {}
+  mini-team-worker-beta-data: {}
+
+# ── Networks ─────────────────────────────────────────────────────────────
+networks:
+  skcapstone:
+    driver: bridge

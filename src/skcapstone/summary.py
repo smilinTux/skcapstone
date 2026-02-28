@@ -37,6 +37,8 @@ def gather_briefing(home: Path) -> dict:
         "memory": _memory_summary(home),
         "board": _board_summary(home),
         "peers": _peer_summary(home),
+        "inbox": _inbox_summary(home),
+        "sync": _sync_summary(home),
         "backups": _backup_summary(home),
         "health": _health_summary(home),
         "journal": _journal_summary(),
@@ -182,6 +184,58 @@ def _health_summary(home: Path) -> dict:
         }
     except Exception:
         return {"passed": 0, "failed": 0, "total": 0, "all_passed": False}
+
+
+def _inbox_summary(home: Path) -> dict:
+    """Count unread messages in the SKComm and SKChat inboxes."""
+    total = 0
+    sources: list[str] = []
+
+    # SKComm file transport inbox
+    skcomm_inbox = home / "comms" / "inbox"
+    if skcomm_inbox.exists():
+        count = sum(1 for f in skcomm_inbox.iterdir() if f.is_file())
+        if count:
+            total += count
+            sources.append(f"skcomm:{count}")
+
+    # SKChat local inbox (skchat daemon stores messages here)
+    skchat_inbox = home / "skchat" / "inbox"
+    if skchat_inbox.exists():
+        count = sum(1 for f in skchat_inbox.iterdir() if f.is_file())
+        if count:
+            total += count
+            sources.append(f"skchat:{count}")
+
+    return {"count": total, "sources": sources}
+
+
+def _sync_summary(home: Path) -> dict:
+    """Get sync pillar status: transport, seed count, last push."""
+    try:
+        from .runtime import get_runtime
+
+        runtime = get_runtime(home)
+        sy = runtime.manifest.sync
+        result: dict = {
+            "status": sy.status.value,
+            "seed_count": sy.seed_count,
+            "transport": sy.transport.value if sy.transport else None,
+            "gpg": bool(sy.gpg_fingerprint),
+            "last_push": sy.last_push.isoformat() if sy.last_push else None,
+        }
+        return result
+    except Exception:
+        # Fallback: inspect sync directory directly
+        sync_dir = home / "sync"
+        seeds = list(sync_dir.glob("*.tar.gz*")) if sync_dir.exists() else []
+        return {
+            "status": "active" if sync_dir.exists() else "missing",
+            "seed_count": len(seeds),
+            "transport": None,
+            "gpg": False,
+            "last_push": None,
+        }
 
 
 def _journal_summary() -> dict:

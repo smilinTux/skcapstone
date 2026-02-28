@@ -470,10 +470,74 @@ def _uninstall_packages() -> None:
 # Main wizard
 # ---------------------------------------------------------------------------
 
+def _export_backup(home_path: Path) -> Optional[Path]:
+    """Create a full backup archive before wiping.
+
+    Args:
+        home_path: Agent home directory.
+
+    Returns:
+        Path to the created archive, or None on failure.
+    """
+    console.print()
+    console.print("  [bold]Creating backup before removal...[/]")
+
+    dest = click.prompt(
+        "  Save backup to directory (leave blank for ~/)",
+        default="",
+        show_default=False,
+    )
+    out_dir = Path(dest).expanduser() if dest.strip() else Path.home()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from .backup import create_backup  # type: ignore[import]
+    except ImportError:
+        try:
+            from skcapstone.backup import create_backup  # type: ignore[import]
+        except ImportError:
+            create_backup = None
+
+    if create_backup is None:
+        # Fallback: plain tar archive
+        import tarfile
+        import time
+
+        ts = int(time.time())
+        archive_path = out_dir / f"skcapstone-export-{ts}.tar.gz"
+        console.print(f"  Archiving to [cyan]{archive_path}[/]...", end=" ")
+        try:
+            with tarfile.open(archive_path, "w:gz") as tar:
+                tar.add(home_path, arcname=home_path.name)
+            size = _human_size(archive_path.stat().st_size)
+            console.print(f"[green]done[/] ({size})")
+            return archive_path
+        except (OSError, tarfile.TarError) as exc:
+            console.print(f"[red]failed: {exc}[/]")
+            return None
+
+    console.print(f"  Archiving to [cyan]{out_dir}[/]...", end=" ")
+    try:
+        result = create_backup(home=home_path, output_dir=out_dir)
+        archive_path = Path(result["filepath"])
+        size = _human_size(result["archive_size"])
+        console.print(f"[green]done[/] ({result['file_count']} files, {size})")
+        console.print(f"  Archive: [cyan]{archive_path}[/]")
+        console.print(
+            "  [dim]Restore on any machine with:[/]\n"
+            f"  [cyan]  skcapstone backup restore {archive_path}[/]"
+        )
+        return archive_path
+    except Exception as exc:
+        console.print(f"[red]failed: {exc}[/]")
+        return None
+
+
 def run_uninstall_wizard(
     home: str = AGENT_HOME,
     force: bool = False,
     keep_data: bool = False,
+    export_first: bool = False,
 ) -> None:
     """Run the full uninstall wizard.
 
@@ -481,6 +545,7 @@ def run_uninstall_wizard(
         home: Agent home directory.
         force: Skip confirmations (for CI/scripting).
         keep_data: Keep local files (only deregister).
+        export_first: Create a full backup archive before removing data.
     """
     home_path = Path(home).expanduser()
 
@@ -519,6 +584,10 @@ def run_uninstall_wizard(
 
     table.add_row("Home directory", str(home_path))
     table.add_row("Total size", _human_size(inventory["total_size_bytes"]))
+    table.add_row(
+        "Backup",
+        "[green]will export first[/]" if export_first else "[dim]no backup[/]",
+    )
 
     if inventory["vault_names"]:
         table.add_row("Vaults", ", ".join(inventory["vault_names"]))
@@ -555,6 +624,18 @@ def run_uninstall_wizard(
         if confirmation != "DELETE":
             console.print("  [green]Cancelled.[/] Nothing was changed.")
             return
+        console.print()
+
+    # --- Export-first: full backup archive before wiping ---
+    if export_first and not keep_data:
+        archive = _export_backup(home_path)
+        if archive is None and not force:
+            if not click.confirm(
+                "  Backup failed. Continue with removal anyway?",
+                default=False,
+            ):
+                console.print("  [green]Cancelled.[/] Nothing was changed.")
+                return
         console.print()
 
     # --- Data transfer option ---

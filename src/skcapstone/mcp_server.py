@@ -2226,7 +2226,7 @@ async def _handle_skskills_list_tools(args: dict) -> list[TextContent]:
             "skskills is not installed. Run: pip install skskills"
         )
 
-    agent = args.get("agent", "global")
+    agent = args.get("agent") or _get_agent_name(_home())
     agg = SkillAggregator(agent=agent)
     count = agg.load_all_skills()
 
@@ -2261,7 +2261,7 @@ async def _handle_skskills_run_tool(args: dict) -> list[TextContent]:
     if not tool_name:
         return _error_response("'tool' argument is required (e.g. 'syncthing-setup.check_status')")
 
-    agent = args.get("agent", "global")
+    agent = args.get("agent") or _get_agent_name(_home())
     tool_args = args.get("args") or {}
 
     agg = SkillAggregator(agent=agent)

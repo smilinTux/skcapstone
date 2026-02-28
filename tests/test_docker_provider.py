@@ -1,8 +1,8 @@
 """Tests for the Docker provider backend.
 
 All Docker SDK calls are mocked so no real daemon is required.
-Covers provision, configure, start, stop, destroy, health_check,
-and generate_compose.
+Covers provision, configure, start, stop, destroy, rotate,
+health_check, and generate_compose (including SKComm/MCP wiring).
 """
 
 from __future__ import annotations
@@ -664,3 +664,303 @@ class TestGenerateCompose:
         output = provider.generate_compose(bp)
         parsed = yaml.safe_load(output)
         assert parsed["services"] == {} or parsed["services"] is None
+
+
+# ---------------------------------------------------------------------------
+# provision() — team_name fix
+# ---------------------------------------------------------------------------
+
+
+class TestProvisionTeamName:
+    """Verify that team_name is included in the provision result."""
+
+    def test_team_name_in_result(self, provider, mock_docker_client):
+        mock_client, mock_container = mock_docker_client
+        spec = _make_spec()
+        with patch.object(provider, "_client", return_value=mock_client):
+            result = provider.provision("my-agent", spec, "my-team")
+
+        assert result.get("team_name") == "my-team"
+
+    def test_configure_uses_team_name_from_provision_result(self, provider):
+        """configure() should not produce empty team_name in config.json."""
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_container.status = "running"
+        # Capture the exec_run cmd to inspect the config JSON written
+        written_json: list[str] = []
+
+        def capture_exec(cmd, **kwargs):
+            # The sh -c command contains the JSON payload
+            written_json.append(cmd[2] if len(cmd) > 2 else "")
+            return (0, b"")
+
+        mock_container.exec_run.side_effect = capture_exec
+        mock_client.containers.get.return_value = mock_container
+
+        spec = _make_spec()
+        pr = _provision_result("my-agent")
+        pr["team_name"] = "alpha-team"
+
+        with patch.object(provider, "_client", return_value=mock_client):
+            provider.configure("my-agent", spec, pr)
+
+        assert written_json, "exec_run was never called"
+        assert "alpha-team" in written_json[0]
+
+
+# ---------------------------------------------------------------------------
+# SKComm / MCP sovereign wiring
+# ---------------------------------------------------------------------------
+
+
+class TestSovereignWiring:
+    """Verify SKComm and MCP env vars are injected correctly."""
+
+    def test_mcp_host_injected_in_env(self, mock_docker_client):
+        mock_client, mock_container = mock_docker_client
+        provider = DockerProvider(
+            base_image="python:3.12-slim",
+            network_name="skcapstone",
+            mcp_host="host-gateway:8765",
+        )
+        spec = _make_spec()
+        with patch.object(provider, "_client", return_value=mock_client):
+            provider.provision("agent-x", spec, "team-y")
+
+        kwargs = mock_client.containers.create.call_args[1]
+        env = kwargs["environment"]
+        assert env.get("SKCAPSTONE_MCP_HOST") == "host-gateway:8765"
+
+    def test_skcomm_home_env_injected_when_dir_exists(
+        self, mock_docker_client, tmp_path
+    ):
+        skcomm_dir = tmp_path / "skcomm"
+        skcomm_dir.mkdir()
+
+        mock_client, mock_container = mock_docker_client
+        provider = DockerProvider(
+            base_image="python:3.12-slim",
+            network_name="skcapstone",
+            skcomm_home=str(skcomm_dir),
+        )
+        spec = _make_spec()
+        with patch.object(provider, "_client", return_value=mock_client):
+            provider.provision("agent-x", spec, "team-y")
+
+        kwargs = mock_client.containers.create.call_args[1]
+        env = kwargs["environment"]
+        assert env.get("SKCOMM_HOME") == "/skcomm"
+
+    def test_skcomm_volume_mounted_when_dir_exists(
+        self, mock_docker_client, tmp_path
+    ):
+        skcomm_dir = tmp_path / "skcomm"
+        skcomm_dir.mkdir()
+
+        mock_client, mock_container = mock_docker_client
+        provider = DockerProvider(
+            base_image="python:3.12-slim",
+            network_name="skcapstone",
+            skcomm_home=str(skcomm_dir),
+        )
+        spec = _make_spec()
+        with patch.object(provider, "_client", return_value=mock_client):
+            provider.provision("agent-x", spec, "team-y")
+
+        kwargs = mock_client.containers.create.call_args[1]
+        volumes = kwargs["volumes"]
+        assert str(skcomm_dir) in volumes
+        assert volumes[str(skcomm_dir)]["bind"] == "/skcomm"
+
+    def test_no_skcomm_mount_when_dir_missing(self, mock_docker_client):
+        mock_client, mock_container = mock_docker_client
+        provider = DockerProvider(
+            base_image="python:3.12-slim",
+            network_name="skcapstone",
+            skcomm_home="/nonexistent/skcomm",
+        )
+        spec = _make_spec()
+        with patch.object(provider, "_client", return_value=mock_client):
+            provider.provision("agent-x", spec, "team-y")
+
+        kwargs = mock_client.containers.create.call_args[1]
+        volumes = kwargs["volumes"]
+        assert "/nonexistent/skcomm" not in volumes
+
+    def test_mcp_socket_env_injected_when_socket_missing(self, mock_docker_client):
+        """SKCAPSTONE_MCP_SOCKET env is set regardless; socket mounted only if exists."""
+        mock_client, mock_container = mock_docker_client
+        provider = DockerProvider(
+            base_image="python:3.12-slim",
+            network_name="skcapstone",
+            mcp_socket_path="/run/skcapstone/mcp.sock",
+        )
+        spec = _make_spec()
+        with patch.object(provider, "_client", return_value=mock_client):
+            provider.provision("agent-x", spec, "team-y")
+
+        kwargs = mock_client.containers.create.call_args[1]
+        env = kwargs["environment"]
+        # Socket path env always set; actual mount conditional on file existence
+        assert "SKCAPSTONE_MCP_SOCKET" in env
+
+    def test_soul_blueprint_in_env_on_provision(self, mock_docker_client):
+        mock_client, mock_container = mock_docker_client
+        provider = DockerProvider(
+            base_image="python:3.12-slim",
+            network_name="skcapstone",
+        )
+        spec = _make_spec(soul_blueprint="souls/sentinel.yaml")
+        with patch.object(provider, "_client", return_value=mock_client):
+            provider.provision("sentinel-1", spec, "ops-team")
+
+        kwargs = mock_client.containers.create.call_args[1]
+        env = kwargs["environment"]
+        assert env.get("SOUL_BLUEPRINT") == "souls/sentinel.yaml"
+
+
+# ---------------------------------------------------------------------------
+# rotate()
+# ---------------------------------------------------------------------------
+
+
+class TestRotate:
+    """Tests for DockerProvider.rotate()."""
+
+    def test_rotate_calls_destroy_then_provision_configure_start(self, provider):
+        spec = _make_spec()
+        old_pr = _provision_result("my-agent")
+        old_pr["team_name"] = "my-team"
+
+        new_pr = {
+            "container_id": "new-id",
+            "container_name": "my-agent",
+            "host": "my-agent",
+            "volume_name": "skcapstone-agent-my-agent",
+            "team_name": "my-team",
+        }
+
+        with (
+            patch.object(provider, "destroy", return_value=True) as mock_destroy,
+            patch.object(provider, "provision", return_value=new_pr) as mock_provision,
+            patch.object(provider, "configure", return_value=True) as mock_configure,
+            patch.object(provider, "start", return_value=True) as mock_start,
+        ):
+            result = provider.rotate("my-agent", spec, old_pr)
+
+        mock_destroy.assert_called_once_with("my-agent", old_pr)
+        mock_provision.assert_called_once_with("my-agent", spec, "my-team")
+        mock_configure.assert_called_once_with("my-agent", spec, new_pr)
+        mock_start.assert_called_once_with("my-agent", new_pr)
+        assert result == new_pr
+
+    def test_rotate_preserves_team_name(self, provider):
+        spec = _make_spec()
+        old_pr = _provision_result("agent-x")
+        old_pr["team_name"] = "research-team"
+
+        captured: dict = {}
+
+        def fake_provision(name, s, team):
+            captured["team"] = team
+            return {**old_pr, "container_id": "new-id"}
+
+        with (
+            patch.object(provider, "destroy", return_value=True),
+            patch.object(provider, "provision", side_effect=fake_provision),
+            patch.object(provider, "configure", return_value=True),
+            patch.object(provider, "start", return_value=True),
+        ):
+            provider.rotate("agent-x", spec, old_pr)
+
+        assert captured["team"] == "research-team"
+
+    def test_rotate_returns_new_provision_result(self, provider):
+        spec = _make_spec()
+        old_pr = _provision_result("agent-z")
+        old_pr["team_name"] = "t"
+        new_pr = {**old_pr, "container_id": "brand-new"}
+
+        with (
+            patch.object(provider, "destroy", return_value=True),
+            patch.object(provider, "provision", return_value=new_pr),
+            patch.object(provider, "configure", return_value=True),
+            patch.object(provider, "start", return_value=True),
+        ):
+            result = provider.rotate("agent-z", spec, old_pr)
+
+        assert result["container_id"] == "brand-new"
+
+
+# ---------------------------------------------------------------------------
+# generate_compose() — MCP service + SKComm volume
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateComposeSovereignExtensions:
+    """Tests for SKComm/MCP extensions in generate_compose()."""
+
+    def test_mcp_service_added_when_requested(self, provider):
+        bp = _make_blueprint(agent_count=1)
+        output = provider.generate_compose(bp, include_mcp_service=True)
+        parsed = yaml.safe_load(output)
+        assert "skcapstone-mcp" in parsed["services"]
+
+    def test_agents_depend_on_mcp_service_when_included(self, provider):
+        bp = _make_blueprint(agent_count=1)
+        output = provider.generate_compose(bp, include_mcp_service=True)
+        parsed = yaml.safe_load(output)
+        agent_svcs = [k for k in parsed["services"] if k != "skcapstone-mcp"]
+        for svc_name in agent_svcs:
+            assert "skcapstone-mcp" in parsed["services"][svc_name].get(
+                "depends_on", []
+            )
+
+    def test_mcp_host_env_set_on_agents_when_mcp_service_included(self, provider):
+        bp = _make_blueprint(agent_count=1)
+        output = provider.generate_compose(bp, include_mcp_service=True)
+        parsed = yaml.safe_load(output)
+        agent_svcs = [k for k in parsed["services"] if k != "skcapstone-mcp"]
+        for svc_name in agent_svcs:
+            env = parsed["services"][svc_name]["environment"]
+            assert "SKCAPSTONE_MCP_HOST" in env
+
+    def test_no_mcp_service_by_default(self, provider):
+        bp = _make_blueprint(agent_count=1)
+        output = provider.generate_compose(bp)
+        parsed = yaml.safe_load(output)
+        assert "skcapstone-mcp" not in parsed["services"]
+
+    def test_skcomm_volume_in_compose_when_configured(self, tmp_path):
+        skcomm_dir = tmp_path / "skcomm"
+        skcomm_dir.mkdir()
+        provider = DockerProvider(
+            base_image="python:3.12-slim",
+            network_name="skcapstone",
+            skcomm_home=str(skcomm_dir),
+        )
+        bp = _make_blueprint(agent_count=1)
+        output = provider.generate_compose(bp)
+        parsed = yaml.safe_load(output)
+        assert "skcomm-data" in parsed.get("volumes", {})
+
+    def test_skcomm_env_on_agents_when_configured(self, tmp_path):
+        skcomm_dir = tmp_path / "skcomm"
+        skcomm_dir.mkdir()
+        provider = DockerProvider(
+            base_image="python:3.12-slim",
+            network_name="skcapstone",
+            skcomm_home=str(skcomm_dir),
+        )
+        bp = _make_blueprint(agent_count=1)
+        output = provider.generate_compose(bp)
+        parsed = yaml.safe_load(output)
+        for svc in parsed["services"].values():
+            assert svc["environment"].get("SKCOMM_HOME") == "/skcomm"
+
+    def test_mcp_service_volume_included(self, provider):
+        bp = _make_blueprint(agent_count=1)
+        output = provider.generate_compose(bp, include_mcp_service=True)
+        parsed = yaml.safe_load(output)
+        assert "skcapstone-mcp-data" in parsed["volumes"]

@@ -255,11 +255,16 @@ def register_setup_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, help="Agent home directory.", type=click.Path())
     @click.option("--force", is_flag=True, help="Skip confirmations (for scripting).")
     @click.option("--keep-data", is_flag=True, help="Deregister only — keep local files.")
-    def uninstall_cmd(home, force, keep_data):
+    @click.option(
+        "--export-first",
+        is_flag=True,
+        help="Create a full backup archive before removing data.",
+    )
+    def uninstall_cmd(home, force, keep_data, export_first):
         """Remove this sovereign node completely."""
         from ..uninstall_wizard import run_uninstall_wizard
 
-        run_uninstall_wizard(home=home, force=force, keep_data=keep_data)
+        run_uninstall_wizard(home=home, force=force, keep_data=keep_data, export_first=export_first)
 
     @main.command("install-gui")
     def install_gui_cmd():
@@ -299,7 +304,19 @@ def register_setup_commands(main: click.Group) -> None:
     @main.command("onboard")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def onboard_cmd(home: str):
-        """Guided wizard for new sovereign agents."""
+        """Interactive onboarding wizard for new humans and AI agents.
+
+        \b
+        Eight guided steps — zero to sovereign in under 5 minutes:
+          1. Identity   — generate PGP keypair via CapAuth
+          2. Soul       — create name, values, and personality blueprint
+          3. Memory     — initialize SKMemory and import Cloud 9 seeds
+          4. Ritual     — run the full rehydration ritual
+          5. Trust      — verify trust chain from FEB files
+          6. Mesh       — check Syncthing peering
+          7. Heartbeat  — publish your first alive beacon
+          8. Board      — register on the coordination board
+        """
         from ..onboard import run_onboard
 
         run_onboard(home)

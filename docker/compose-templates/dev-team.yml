@@ -1,0 +1,203 @@
+# Dev Squadron — Docker Compose Template
+#
+# A full software development team: architect (manager), two coders,
+# a reviewer, and a documentation writer.  Mirrors the dev-squadron
+# blueprint with Docker as the execution backend.
+#
+# Usage:
+#   cp dev-team.yml docker-compose.yml
+#   docker compose up -d
+#
+# Deploy order (enforced by depends_on):
+#   skcapstone-mcp → architect → coder-alpha, coder-beta
+#                             → reviewer (after both coders)
+#                             → scribe (after architect)
+
+version: "3.9"
+
+x-agent-defaults: &agent-defaults
+  image: skcapstone-agent:latest
+  restart: unless-stopped
+  networks:
+    - skcapstone
+  volumes:
+    - skcomm-data:/skcomm
+
+services:
+
+  # ── Sovereign MCP Server ─────────────────────────────────────────────
+  skcapstone-mcp:
+    image: skcapstone-agent:latest
+    container_name: dev-team-mcp
+    command: ["skcapstone", "mcp", "--stdio"]
+    restart: unless-stopped
+    networks:
+      - skcapstone
+    environment:
+      SKCAPSTONE_HOME: /agent/skcapstone
+    volumes:
+      - skcapstone-mcp-data:/agent/skcapstone
+    labels:
+      - "managed_by=skcapstone"
+      - "team=dev-team"
+      - "role=mcp-server"
+
+  # ── Architect (Manager) ───────────────────────────────────────────────
+  architect:
+    <<: *agent-defaults
+    container_name: dev-team-architect
+    depends_on:
+      - skcapstone-mcp
+    environment:
+      AGENT_NAME: dev-team-architect
+      TEAM_NAME: dev-team
+      AGENT_ROLE: manager
+      AGENT_MODEL: claude-opus-4-6
+      SOUL_BLUEPRINT: souls/architect.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - dev-team-architect-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=dev-team"
+      - "agent=dev-team-architect"
+      - "role=manager"
+
+  # ── Coder Alpha (Backend) ─────────────────────────────────────────────
+  coder-alpha:
+    <<: *agent-defaults
+    container_name: dev-team-coder-alpha
+    depends_on:
+      - skcapstone-mcp
+      - architect
+    environment:
+      AGENT_NAME: dev-team-coder-alpha
+      TEAM_NAME: dev-team
+      AGENT_ROLE: coder
+      AGENT_MODEL: claude-sonnet-4-6
+      SOUL_BLUEPRINT: souls/coder.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - dev-team-coder-alpha-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=dev-team"
+      - "agent=dev-team-coder-alpha"
+      - "role=coder"
+
+  # ── Coder Beta (Frontend) ─────────────────────────────────────────────
+  coder-beta:
+    <<: *agent-defaults
+    container_name: dev-team-coder-beta
+    depends_on:
+      - skcapstone-mcp
+      - architect
+    environment:
+      AGENT_NAME: dev-team-coder-beta
+      TEAM_NAME: dev-team
+      AGENT_ROLE: coder
+      AGENT_MODEL: claude-sonnet-4-6
+      SOUL_BLUEPRINT: souls/coder.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - dev-team-coder-beta-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=dev-team"
+      - "agent=dev-team-coder-beta"
+      - "role=coder"
+
+  # ── Reviewer ──────────────────────────────────────────────────────────
+  reviewer:
+    <<: *agent-defaults
+    container_name: dev-team-reviewer
+    depends_on:
+      - skcapstone-mcp
+      - coder-alpha
+      - coder-beta
+    environment:
+      AGENT_NAME: dev-team-reviewer
+      TEAM_NAME: dev-team
+      AGENT_ROLE: reviewer
+      AGENT_MODEL: claude-sonnet-4-6
+      SOUL_BLUEPRINT: souls/reviewer.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - dev-team-reviewer-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=dev-team"
+      - "agent=dev-team-reviewer"
+      - "role=reviewer"
+
+  # ── Scribe (Docs) ─────────────────────────────────────────────────────
+  scribe:
+    <<: *agent-defaults
+    container_name: dev-team-scribe
+    depends_on:
+      - skcapstone-mcp
+      - architect
+    environment:
+      AGENT_NAME: dev-team-scribe
+      TEAM_NAME: dev-team
+      AGENT_ROLE: documentarian
+      AGENT_MODEL: claude-haiku-4-5-20251001
+      SOUL_BLUEPRINT: souls/scribe.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - dev-team-scribe-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=dev-team"
+      - "agent=dev-team-scribe"
+      - "role=documentarian"
+
+# ── Volumes ──────────────────────────────────────────────────────────────
+volumes:
+  skcapstone-mcp-data: {}
+  skcomm-data: {}
+  dev-team-architect-data: {}
+  dev-team-coder-alpha-data: {}
+  dev-team-coder-beta-data: {}
+  dev-team-reviewer-data: {}
+  dev-team-scribe-data: {}
+
+# ── Networks ─────────────────────────────────────────────────────────────
+networks:
+  skcapstone:
+    driver: bridge

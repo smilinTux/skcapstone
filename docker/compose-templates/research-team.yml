@@ -1,0 +1,170 @@
+# Research Pod — Docker Compose Template
+#
+# A deep-research team: research lead (manager), two researchers, and an
+# analyst.  Mirrors the research-pod blueprint adapted for Docker.
+#
+# Usage:
+#   cp research-team.yml docker-compose.yml
+#   docker compose up -d
+#
+# Scale researchers on demand:
+#   docker compose up -d --scale researcher-alpha=3
+
+version: "3.9"
+
+x-agent-defaults: &agent-defaults
+  image: skcapstone-agent:latest
+  restart: unless-stopped
+  networks:
+    - skcapstone
+  volumes:
+    - skcomm-data:/skcomm
+
+services:
+
+  # ── Sovereign MCP Server ─────────────────────────────────────────────
+  skcapstone-mcp:
+    image: skcapstone-agent:latest
+    container_name: research-team-mcp
+    command: ["skcapstone", "mcp", "--stdio"]
+    restart: unless-stopped
+    networks:
+      - skcapstone
+    environment:
+      SKCAPSTONE_HOME: /agent/skcapstone
+    volumes:
+      - skcapstone-mcp-data:/agent/skcapstone
+    labels:
+      - "managed_by=skcapstone"
+      - "team=research-team"
+      - "role=mcp-server"
+
+  # ── Research Lead (Manager) ───────────────────────────────────────────
+  research-lead:
+    <<: *agent-defaults
+    container_name: research-team-research-lead
+    depends_on:
+      - skcapstone-mcp
+    environment:
+      AGENT_NAME: research-team-research-lead
+      TEAM_NAME: research-team
+      AGENT_ROLE: manager
+      AGENT_MODEL: claude-opus-4-6
+      SOUL_BLUEPRINT: souls/research-lead.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - research-team-research-lead-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=research-team"
+      - "agent=research-team-research-lead"
+      - "role=manager"
+
+  # ── Researcher Alpha ──────────────────────────────────────────────────
+  researcher-alpha:
+    <<: *agent-defaults
+    container_name: research-team-researcher-alpha
+    depends_on:
+      - skcapstone-mcp
+      - research-lead
+    environment:
+      AGENT_NAME: research-team-researcher-alpha
+      TEAM_NAME: research-team
+      AGENT_ROLE: researcher
+      AGENT_MODEL: claude-sonnet-4-6
+      SOUL_BLUEPRINT: souls/researcher.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - research-team-researcher-alpha-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=research-team"
+      - "agent=research-team-researcher-alpha"
+      - "role=researcher"
+
+  # ── Researcher Beta ───────────────────────────────────────────────────
+  researcher-beta:
+    <<: *agent-defaults
+    container_name: research-team-researcher-beta
+    depends_on:
+      - skcapstone-mcp
+      - research-lead
+    environment:
+      AGENT_NAME: research-team-researcher-beta
+      TEAM_NAME: research-team
+      AGENT_ROLE: researcher
+      AGENT_MODEL: claude-sonnet-4-6
+      SOUL_BLUEPRINT: souls/researcher.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - research-team-researcher-beta-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=research-team"
+      - "agent=research-team-researcher-beta"
+      - "role=researcher"
+
+  # ── Analyst ───────────────────────────────────────────────────────────
+  analyst:
+    <<: *agent-defaults
+    container_name: research-team-analyst
+    depends_on:
+      - skcapstone-mcp
+      - researcher-alpha
+      - researcher-beta
+    environment:
+      AGENT_NAME: research-team-analyst
+      TEAM_NAME: research-team
+      AGENT_ROLE: worker
+      AGENT_MODEL: claude-sonnet-4-6
+      SOUL_BLUEPRINT: souls/analyst.yaml
+      SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
+      SKCOMM_HOME: /skcomm
+    volumes:
+      - research-team-analyst-data:/agent
+      - skcomm-data:/skcomm
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    labels:
+      - "managed_by=skcapstone"
+      - "team=research-team"
+      - "agent=research-team-analyst"
+      - "role=worker"
+
+# ── Volumes ──────────────────────────────────────────────────────────────
+volumes:
+  skcapstone-mcp-data: {}
+  skcomm-data: {}
+  research-team-research-lead-data: {}
+  research-team-researcher-alpha-data: {}
+  research-team-researcher-beta-data: {}
+  research-team-analyst-data: {}
+
+# ── Networks ─────────────────────────────────────────────────────────────
+networks:
+  skcapstone:
+    driver: bridge

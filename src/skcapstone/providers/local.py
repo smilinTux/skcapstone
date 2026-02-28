@@ -1,11 +1,11 @@
 """
-Local Provider — runs agent teams as local processes backed by crush/OpenClaw sessions.
+Local Provider — runs agent teams as local processes backed by crush/SKSkills sessions.
 
-Each agent is spawned as a real ``crush`` (OpenClaw fork) subprocess that receives
-its full identity via a generated session config: soul blueprint, skills list, model
-tier, and coordination context.  If the crush binary is not present the provider
-falls back to a lightweight Python stub so development can proceed without the full
-runtime installed.
+Each agent is spawned as a real ``crush`` subprocess that receives its full identity
+via a generated session config: soul blueprint, skills list, model tier, and
+coordination context.  If the crush binary is not present the provider falls back to
+a lightweight Python stub so development can proceed without the full runtime
+installed.
 
 Session lifecycle
 -----------------
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_CRUSH_BINARY_NAMES: List[str] = ["crush", "openclaw", "claude"]
+_CRUSH_BINARY_NAMES: List[str] = ["crush", "claude"]
 _SESSION_STATE_FILE = "session_state.json"
 _PID_FILE = "agent.pid"
 _SESSION_CONFIG_FILE = "session.json"
@@ -61,10 +61,10 @@ _STATE_STOPPED = "stopped"
 
 
 def _find_crush_binary() -> Optional[str]:
-    """Locate the crush or openclaw binary on PATH.
+    """Locate the crush binary on PATH, falling back to claude.
 
     Returns:
-        Absolute path to the binary, or None if neither is found.
+        Absolute path to the binary, or None if not found.
     """
     import shutil
 
@@ -76,7 +76,7 @@ def _find_crush_binary() -> Optional[str]:
 
 
 def _is_claude_binary(binary: str) -> bool:
-    """Check whether the resolved binary is the claude CLI rather than crush/openclaw.
+    """Check whether the resolved binary is the claude CLI rather than crush.
 
     Args:
         binary: Absolute path to the binary.
@@ -144,8 +144,7 @@ def _resolve_skill_paths(
 ) -> List[str]:
     """Resolve skill names to absolute paths where possible.
 
-    Uses the session_skills bridge to check the SKSkills registry first,
-    then falls back to legacy OpenClaw skill paths.
+    Uses the session_skills bridge to check the SKSkills registry.
 
     Args:
         skills: List of skill names or paths from AgentSpec.
@@ -161,25 +160,14 @@ def _resolve_skill_paths(
     except ImportError:
         pass
 
-    # Fallback: legacy resolution without SKSkills
+    # Fallback: basic resolution without skskills installed
     resolved: List[str] = []
     for skill in skills:
         path = Path(skill)
         if path.is_absolute() and path.exists():
             resolved.append(str(path))
-            continue
-
-        if repo_root:
-            skill_file = repo_root / "openclaw-skills" / f"{skill}.skill"
-            if skill_file.exists():
-                resolved.append(str(skill_file))
-                continue
-            skill_dir = repo_root / "openclaw-skills" / skill
-            if skill_dir.exists():
-                resolved.append(str(skill_dir))
-                continue
-
-        resolved.append(skill)
+        else:
+            resolved.append(skill)
 
     return resolved
 
@@ -298,7 +286,7 @@ def _build_crush_config(
             "skills_paths": [
                 str(work_dir / "skills"),
                 "~/.config/crush/skills",
-                "~/.openclaw/skills",
+                "~/.skskills/installed",
             ],
             "debug": False,
             "disabled_tools": [],
@@ -409,7 +397,7 @@ def _pid_is_alive(pid: int) -> bool:
 
 
 class LocalProvider(ProviderBackend):
-    """Deploy agents as local processes backed by crush/OpenClaw sessions.
+    """Deploy agents as local processes backed by crush/SKSkills sessions.
 
     Each agent is given its own working directory containing:
     - ``config.json``        — human-readable agent configuration
@@ -424,8 +412,8 @@ class LocalProvider(ProviderBackend):
         home: Agent home directory (default: ``~/.skcapstone``).
         work_dir: Root directory for agent working dirs.
         repo_root: Workspace root for resolving soul/skill paths.
-        crush_binary: Explicit path to crush/openclaw binary (auto-detected
-            from PATH if not provided).
+        crush_binary: Explicit path to crush binary (auto-detected from PATH
+            if not provided).
     """
 
     provider_type = ProviderType.LOCAL
@@ -598,7 +586,7 @@ class LocalProvider(ProviderBackend):
         agent_name: str,
         provision_result: Dict[str, Any],
     ) -> bool:
-        """Spawn a crush/OpenClaw session for the agent.
+        """Spawn a crush session for the agent.
 
         Attempts to launch the crush binary found on PATH.  If crush is not
         installed, falls back to a lightweight Python stub process that writes
@@ -690,7 +678,7 @@ class LocalProvider(ProviderBackend):
         Args:
             agent_name: Agent instance name.
             work_dir: Agent working directory.
-            binary: Absolute path to crush/openclaw binary.
+            binary: Absolute path to crush binary.
             env: Environment variables for the subprocess.
             provision_result: Mutated in-place with the spawned PID.
 

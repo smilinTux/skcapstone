@@ -115,8 +115,12 @@ def register_status_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
     def summary(home: str, json_out: bool):
-        """Morning briefing — everything at a glance."""
+        """At-a-glance agent dashboard: consciousness, pillars, memory, board, inbox, sync."""
         from ..summary import gather_briefing
+        from rich.columns import Columns
+        from rich.text import Text
+        from rich.rule import Rule
+        from rich import box as rich_box
 
         home_path = Path(home).expanduser()
         briefing = gather_briefing(home_path)
@@ -130,78 +134,151 @@ def register_status_commands(main: click.Group) -> None:
         mem = briefing["memory"]
         board = briefing["board"]
         peers = briefing["peers"]
+        inbox = briefing.get("inbox", {})
+        sync = briefing.get("sync", {})
         backups = briefing["backups"]
         health = briefing["health"]
         journal = briefing["journal"]
 
-        consciousness = agent.get("consciousness", "?")
-        con_style = {"SINGULAR": "magenta", "CONSCIOUS": "green", "AWAKENING": "yellow"}.get(
-            consciousness, "dim"
-        )
+        # ── Header ──────────────────────────────────────────────────────────
+        consciousness = agent.get("consciousness", "UNKNOWN")
+        con_color = {
+            "SINGULAR": "bold magenta",
+            "CONSCIOUS": "bold green",
+            "AWAKENING": "bold yellow",
+        }.get(consciousness, "dim")
 
+        header_text = (
+            f"[bold white]{agent.get('name', '?')}[/]  "
+            f"[{con_color}]\u25cf {consciousness}[/]"
+        )
         console.print()
-        console.print(Panel(
-            f"[bold]{agent.get('name', '?')}[/] v{agent.get('version', '?')}  "
-            f"[bold {con_style}]{consciousness}[/]",
-            title="Sovereign Agent Briefing",
-            border_style="cyan",
-        ))
+        console.print(Panel(header_text, title="[bold cyan]Sovereign Agent Dashboard[/]",
+                             border_style="cyan", padding=(0, 2)))
 
-        pillar_parts = []
-        for name, st in pillars.items():
-            icon = {"active": "[green]\u2713[/]", "degraded": "[yellow]~[/]", "missing": "[red]\u2717[/]"}.get(st, "[dim]?[/]")
-            pillar_parts.append(f"{icon} {name}")
-        if pillar_parts:
-            console.print(f"  [bold]Pillars:[/]  {' | '.join(pillar_parts)}")
+        # ── Pillars ──────────────────────────────────────────────────────────
+        pillar_icons = {
+            "active": ("[bold green]\u25cf[/]", "green"),
+            "degraded": ("[bold yellow]\u25cf[/]", "yellow"),
+            "missing": ("[bold red]\u25cb[/]", "red"),
+            "error": ("[bold red]\u2715[/]", "red"),
+        }
 
-        console.print(
-            f"  [bold]Memory:[/]   {mem.get('total', 0)} total "
-            f"([dim]S:{mem.get('short_term', 0)} M:{mem.get('mid_term', 0)} L:{mem.get('long_term', 0)}[/])"
-        )
+        pillar_table = Table(box=None, show_header=False, padding=(0, 1))
+        pillar_table.add_column(no_wrap=True)
+        pillar_table.add_column(no_wrap=True)
+        pillar_table.add_column(no_wrap=True)
+        pillar_table.add_column(no_wrap=True)
+        pillar_table.add_column(no_wrap=True)
 
+        row_icons, row_names = [], []
+        for pname, pstatus in pillars.items():
+            icon_markup, color = pillar_icons.get(pstatus, ("[dim]\u25cf[/]", "dim"))
+            row_icons.append(f"{icon_markup} [{color}]{pname}[/]")
+
+        # Pad to 5 columns (may have fewer pillars)
+        while len(row_icons) < 5:
+            row_icons.append("")
+        pillar_table.add_row(*row_icons[:5])
+
+        # ── Stats grid ───────────────────────────────────────────────────────
         h_pass = health.get("passed", 0)
         h_total = health.get("total", 0)
-        h_style = "green" if health.get("all_passed") else "yellow"
-        console.print(f"  [bold]Health:[/]   [{h_style}]{h_pass}/{h_total} checks passed[/]")
-
-        console.print(
-            f"  [bold]Board:[/]    {board.get('done', 0)} done, "
-            f"{board.get('in_progress', 0)} active, "
-            f"{board.get('open', 0)} open "
-            f"(of {board.get('total', 0)})"
+        health_str = (
+            f"[green]{h_pass}/{h_total}[/]" if health.get("all_passed")
+            else f"[yellow]{h_pass}[/][dim]/{h_total}[/]"
         )
 
-        console.print(f"  [bold]Peers:[/]    {peers.get('count', 0)} known")
+        board_str = (
+            f"[green]{board.get('done', 0)}[/] done  "
+            f"[yellow]{board.get('in_progress', 0)}[/] active  "
+            f"[dim]{board.get('open', 0)} open[/]"
+        )
+
+        inbox_count = inbox.get("count", 0)
+        inbox_str = (
+            f"[bold yellow]{inbox_count} unread[/]" if inbox_count > 0
+            else "[dim]empty[/]"
+        )
+
+        sync_status = sync.get("status", "unknown")
+        sync_color = {"active": "green", "degraded": "yellow", "missing": "red"}.get(sync_status, "dim")
+        seed_count = sync.get("seed_count", 0)
+        transport = sync.get("transport") or "–"
+        last_push = sync.get("last_push")
+        if last_push:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(last_push.replace("Z", "+00:00"))
+                last_push_str = dt.strftime("%m/%d %H:%M")
+            except Exception:
+                last_push_str = last_push[:16]
+        else:
+            last_push_str = "never"
+        sync_str = (
+            f"[{sync_color}]{sync_status}[/]  "
+            f"[dim]{seed_count} seeds · {transport} · pushed {last_push_str}[/]"
+        )
+
+        peer_count = peers.get("count", 0)
+        peer_str = (
+            f"[cyan]{peer_count}[/]" if peer_count > 0 else "[dim]0[/]"
+        )
+
+        mem_total = mem.get("total", 0)
+        mem_str = (
+            f"[cyan]{mem_total}[/]  "
+            f"[dim]S:{mem.get('short_term', 0)} "
+            f"M:{mem.get('mid_term', 0)} "
+            f"L:{mem.get('long_term', 0)}[/]"
+        )
+
+        stats_table = Table(box=rich_box.SIMPLE, show_header=False, padding=(0, 1))
+        stats_table.add_column(style="bold dim", no_wrap=True, min_width=10)
+        stats_table.add_column(no_wrap=False)
+
+        stats_table.add_row("[bold]Pillars[/]", pillar_table)
+        stats_table.add_row("[bold]Memory[/]", mem_str)
+        stats_table.add_row("[bold]Board[/]", board_str)
+        stats_table.add_row("[bold]Inbox[/]", inbox_str)
+        stats_table.add_row("[bold]Sync[/]", sync_str)
+        stats_table.add_row("[bold]Peers[/]", peer_str)
+        stats_table.add_row("[bold]Health[/]", f"{health_str} checks passed")
 
         if backups.get("latest"):
-            console.print(
-                f"  [bold]Backup:[/]   {backups['latest']} "
-                f"({'[green]encrypted[/]' if backups.get('encrypted') else '[yellow]plain[/]'})"
-            )
+            enc = "[green]enc[/]" if backups.get("encrypted") else "[yellow]plain[/]"
+            stats_table.add_row("[bold]Backup[/]", f"[dim]{backups['latest']}[/] {enc}")
         else:
-            console.print(f"  [bold]Backup:[/]   [dim]none — run skcapstone backup create[/]")
+            stats_table.add_row("[bold]Backup[/]", "[dim]none — run skcapstone backup create[/]")
 
         if journal.get("entries", 0) > 0:
-            console.print(
-                f"  [bold]Journal:[/]  {journal['entries']} entries"
-                + (f" — latest: [dim]{journal['latest_title'][:40]}[/]" if journal.get("latest_title") else "")
-            )
+            j_title = journal.get("latest_title", "")
+            j_str = f"[dim]{journal['entries']} entries"
+            if j_title:
+                j_str += f" · {j_title[:50]}[/]"
+            else:
+                j_str += "[/]"
+            stats_table.add_row("[bold]Journal[/]", j_str)
 
+        console.print(stats_table)
+
+        # ── Recent memories ──────────────────────────────────────────────────
         if mem.get("recent"):
-            console.print()
-            console.print("  [bold]Recent memories:[/]")
+            console.print(Rule("[bold dim]Recent Memories[/]", style="dim"))
             for m_text in mem["recent"][:3]:
-                console.print(f"    [dim]\u2022[/] {m_text}")
-
-        if board.get("active_tasks"):
+                console.print(f"  [dim]\u2022[/] [dim]{m_text}[/]")
             console.print()
-            console.print("  [bold]Active tasks:[/]")
-            for task in board["active_tasks"][:5]:
-                console.print(
-                    f"    [dim]\u2022[/] {task['title']}"
-                    + (f" [dim](@{task['assignee']})[/]" if task["assignee"] != "unassigned" else "")
-                )
 
+        # ── Active board tasks ───────────────────────────────────────────────
+        if board.get("active_tasks"):
+            console.print(Rule("[bold dim]Active Tasks[/]", style="dim"))
+            for task in board["active_tasks"][:5]:
+                assignee = task["assignee"]
+                assignee_str = f" [dim]@{assignee}[/]" if assignee != "unassigned" else ""
+                console.print(f"  [yellow]\u25b6[/] {task['title']}{assignee_str}")
+            console.print()
+
+        console.print(f"  [dim]Home: {agent.get('home', home_path)}  ·  {briefing['timestamp'][:19]}Z[/]")
         console.print()
 
     @main.command()

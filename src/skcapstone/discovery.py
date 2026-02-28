@@ -323,15 +323,18 @@ def discover_sync(home: Path) -> SyncState:
     return _discover(home)
 
 
-def discover_skills(home: Path) -> SkillsState:
+def discover_skills(home: Path, agent: Optional[str] = None) -> SkillsState:
     """Probe for SKSkills installations.
 
-    Checks ~/.skskills/installed/ for skills with a valid skill.yaml.
-    Reports installed count and skill names.
+    Checks skill directories in priority order:
+    1. Per-agent skcapstone skills at ~/.skcapstone/skills/agents/<agent>/
+    2. Global registry at ~/.skskills/installed/
+    3. Per-agent registry at ~/.skskills/agents/<agent>/
 
     Args:
-        home: The agent home directory (~/.skcapstone). Unused directly but
-              kept for API consistency with other discover functions.
+        home: The agent home directory (~/.skcapstone).
+        agent: Agent name for per-agent namespace lookup. When provided,
+               per-agent skills are reported alongside global ones.
 
     Returns:
         SkillsState with current skill installation information.
@@ -342,17 +345,40 @@ def discover_skills(home: Path) -> SkillsState:
     skskills_home = Path(os.environ.get("SKSKILLS_HOME", "~/.skskills")).expanduser()
     state.skskills_home = skskills_home
 
+    skill_names: set[str] = set()
+
+    # 1. Per-agent skcapstone skills (synced via Syncthing, highest priority)
+    if agent:
+        agent_skcap_dir = home / "skills" / "agents" / agent
+        if agent_skcap_dir.is_dir():
+            for d in agent_skcap_dir.iterdir():
+                if d.is_dir() and (d / "skill.yaml").exists():
+                    skill_names.add(d.name)
+
     if not skskills_home.exists():
+        state.installed = len(skill_names)
+        state.skill_names = sorted(skill_names)
+        if skill_names:
+            state.status = PillarStatus.ACTIVE
         return state
 
+    # 2. Global registry
     installed_dir = skskills_home / "installed"
     if installed_dir.exists():
-        skill_dirs = [
-            d for d in installed_dir.iterdir()
-            if d.is_dir() and (d / "skill.yaml").exists()
-        ]
-        state.installed = len(skill_dirs)
-        state.skill_names = sorted(d.name for d in skill_dirs)
+        for d in installed_dir.iterdir():
+            if d.is_dir() and (d / "skill.yaml").exists():
+                skill_names.add(d.name)
+
+    # 3. Per-agent registry (overrides/extends global)
+    if agent:
+        agent_reg_dir = skskills_home / "agents" / agent
+        if agent_reg_dir.is_dir():
+            for d in agent_reg_dir.iterdir():
+                if (d.is_dir() or d.is_symlink()) and (d / "skill.yaml").exists():
+                    skill_names.add(d.name)
+
+    state.installed = len(skill_names)
+    state.skill_names = sorted(skill_names)
 
     if state.installed > 0:
         state.status = PillarStatus.ACTIVE
@@ -362,20 +388,24 @@ def discover_skills(home: Path) -> SkillsState:
     return state
 
 
-def discover_all(home: Path) -> dict:
+def discover_all(home: Path, agent: Optional[str] = None) -> dict:
     """Run full discovery across all pillars including sync and skills.
 
     Args:
         home: The agent home directory (~/.skcapstone).
+        agent: Agent name for per-agent skill namespace lookup.
 
     Returns:
         Dict with identity, memory, trust, security, sync, skills states.
     """
+    identity = discover_identity(home)
+    # Resolve agent from identity when not explicitly provided
+    resolved_agent = agent or identity.name or None
     return {
-        "identity": discover_identity(home),
+        "identity": identity,
         "memory": discover_memory(home),
         "trust": discover_trust(home),
         "security": discover_security(home),
         "sync": discover_sync(home),
-        "skills": discover_skills(home),
+        "skills": discover_skills(home, agent=resolved_agent),
     }

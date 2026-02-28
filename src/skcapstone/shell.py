@@ -568,64 +568,212 @@ DISPATCH: dict[str, object] = {
     "help": lambda args: _handle_help(),
 }
 
+# ═══════════════════════════════════════════════════════════════════════════
+# prompt_toolkit completion tree (mirrors DISPATCH + subcommands)
+# ═══════════════════════════════════════════════════════════════════════════
 
-def run_shell() -> None:
-    """Run the interactive REPL loop.
+_PT_COMPLETER_DICT: dict = {
+    "status": None,
+    "memory": {
+        "store": None,
+        "search": None,
+        "list": None,
+        "recall": None,
+        "stats": None,
+        "curate": {"stats": None, "dry": None, "preview": None},
+    },
+    "capture": None,
+    "context": {fmt: None for fmt in CONTEXT_FORMATS},
+    "trust": {
+        "graph": {"table": None, "dot": None, "json": None},
+        "status": None,
+        "calibrate": {"recommend": None},
+        "rehydrate": None,
+    },
+    "coord": {
+        "status": None,
+        "claim": None,
+        "complete": None,
+        "create": None,
+        "board": None,
+    },
+    "chat": {
+        "send": None,
+        "inbox": None,
+    },
+    "sync": {
+        "push": None,
+        "pull": None,
+        "status": None,
+    },
+    "journal": {
+        "write": None,
+        "read": None,
+    },
+    "soul": None,
+    "ritual": None,
+    "anchor": {
+        "show": None,
+        "boot": None,
+        "calibrate": None,
+    },
+    "diff": {"save": None},
+    "help": None,
+    "exit": None,
+    "quit": None,
+}
 
-    Sets up tab completion, loads command history, and enters
-    the prompt loop. Works from any terminal.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Internal helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class _ExitShell(Exception):
+    """Raised by _dispatch_line when the user types exit/quit."""
+
+
+def _print_banner(name: str) -> None:
+    console.print(
+        f"\n  [bold cyan]SKCapstone Shell[/] v{__version__}\n"
+        f"  Agent: [bold]{name}[/]\n"
+        f"  Type [bold]help[/] for commands, [bold]exit[/] to quit.\n"
+    )
+
+
+def _dispatch_line(line: str) -> None:
+    """Parse *line* and invoke the matching handler.
+
+    Raises _ExitShell when the user types exit/quit so callers can
+    print the goodbye message and clean up history.
     """
+    line = line.strip()
+    if not line:
+        return
+
+    try:
+        parts = shlex.split(line)
+    except ValueError:
+        parts = line.split()
+
+    cmd = parts[0].lower()
+    args = parts[1:]
+
+    if cmd in ("exit", "quit"):
+        raise _ExitShell()
+
+    handler = DISPATCH.get(cmd)
+    if handler:
+        try:
+            handler(args)
+        except _ExitShell:
+            raise
+        except Exception as exc:
+            console.print(f"  [red]Error:[/] {exc}")
+    else:
+        console.print(f"  Unknown: [yellow]{cmd}[/].  Type [bold]help[/] for options.")
+
+
+def _run_shell_pt(name: str, hist_file: Path) -> None:
+    """REPL loop powered by prompt_toolkit.
+
+    Provides multi-level tab completion, persistent file history,
+    and a styled prompt. Falls through to ImportError if the package
+    is not installed.
+    """
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import NestedCompleter
+    from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.styles import Style
+
+    completer = NestedCompleter.from_nested_dict(_PT_COMPLETER_DICT)
+    style = Style.from_dict({
+        "prompt": "ansicyan bold",
+        "": "",  # default text
+    })
+    session: PromptSession = PromptSession(
+        completer=completer,
+        history=FileHistory(str(hist_file)),
+        style=style,
+        complete_while_typing=False,
+        mouse_support=False,
+    )
+
+    _goodbye = "  Goodbye. staycuriousANDkeepsmilin\n"
+    while True:
+        try:
+            line = session.prompt([("class:prompt", f"{name}> ")])
+        except KeyboardInterrupt:
+            console.print()
+            continue
+        except EOFError:
+            console.print(_goodbye)
+            break
+
+        try:
+            _dispatch_line(line)
+        except _ExitShell:
+            console.print(_goodbye)
+            break
+
+
+def _run_shell_readline(name: str, hist_file: Path) -> None:
+    """REPL loop using stdlib readline (fallback when prompt_toolkit absent)."""
     readline.set_completer(_completer)
     readline.parse_and_bind("tab: complete")
 
-    hist_file = _home() / ".shell_history"
     try:
         readline.read_history_file(str(hist_file))
     except FileNotFoundError:
         pass
 
-    name = _agent_name()
-    console.print(
-        f"\n  [bold cyan]SKCapstone Shell[/] v{__version__}\n"
-        f"  Agent: [bold]{name}[/]\n"
-        f"  Type [bold]help[/] for commands, [bold]exit[/] to leave.\n"
-    )
+    _goodbye = "  Goodbye. staycuriousANDkeepsmilin\n"
+    _prompt = f"\033[36m{name}>\033[0m " if sys.stdout.isatty() else f"{name}> "
 
     while True:
         try:
-            prompt = f"\033[36m{name}>\033[0m " if sys.stdout.isatty() else f"{name}> "
-            line = input(prompt)
+            line = input(_prompt)
         except (EOFError, KeyboardInterrupt):
-            console.print("\n  Goodbye. staycuriousANDkeepsmilin\n")
+            console.print("\n" + _goodbye)
             break
-
-        line = line.strip()
-        if not line:
-            continue
 
         try:
-            parts = shlex.split(line)
-        except ValueError:
-            parts = line.split()
-
-        cmd = parts[0].lower()
-        args = parts[1:]
-
-        if cmd in ("exit", "quit"):
-            console.print("  Goodbye. staycuriousANDkeepsmilin\n")
+            _dispatch_line(line)
+        except _ExitShell:
+            console.print(_goodbye)
             break
 
-        handler = DISPATCH.get(cmd)
-        if handler:
-            try:
-                handler(args)
-            except Exception as exc:
-                console.print(f"  [red]Error:[/] {exc}")
-        else:
-            console.print(f"  Unknown: {cmd}. Type 'help' for options.")
-
     try:
-        hist_file.parent.mkdir(parents=True, exist_ok=True)
         readline.write_history_file(str(hist_file))
     except OSError:
         pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Public entry point
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def run_shell(home: Optional[str] = None) -> None:
+    """Launch the interactive sovereign agent shell.
+
+    Uses prompt_toolkit when available (multi-level tab completion,
+    persistent history, coloured prompt). Falls back to readline on
+    plain terminals or when prompt_toolkit is not installed.
+    """
+    import os
+
+    if home:
+        os.environ["SKCAPSTONE_HOME"] = home
+
+    hist_dir = _home()
+    hist_dir.mkdir(parents=True, exist_ok=True)
+    hist_file = hist_dir / ".shell_history"
+
+    name = _agent_name()
+    _print_banner(name)
+
+    try:
+        _run_shell_pt(name, hist_file)
+    except ImportError:
+        _run_shell_readline(name, hist_file)
