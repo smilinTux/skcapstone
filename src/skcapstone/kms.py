@@ -807,8 +807,8 @@ class KeyStore:
                 fingerprint = data.get("fingerprint", "")
                 if fingerprint:
                     return f"skcapstone:identity:{fingerprint}".encode()
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Failed to read identity file %s: %s", identity_file, exc)
 
         logger.warning("No identity found for KMS — using random master seed")
         return secrets.token_bytes(64)
@@ -882,8 +882,8 @@ class KeyStore:
         if self._rotation_log.exists():
             try:
                 log = json.loads(self._rotation_log.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Failed to read rotation log, starting fresh: %s", exc)
         log.append(entry.model_dump(mode="json"))
         self._rotation_log.write_text(json.dumps(log, indent=2, default=str), encoding="utf-8")
 

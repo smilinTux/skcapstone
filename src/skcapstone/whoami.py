@@ -18,12 +18,15 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class IdentityCard(BaseModel):
@@ -147,8 +150,8 @@ def _load_identity(home: Path, card: IdentityCard) -> None:
         card.name = data.get("name", card.name)
         card.email = data.get("email", "")
         card.fingerprint = data.get("fingerprint", "")
-    except (json.JSONDecodeError, OSError):
-        pass
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to load identity from %s: %s", identity_file, exc)
 
 
 def _load_capauth(card: IdentityCard) -> None:
@@ -172,15 +175,15 @@ def _load_capauth(card: IdentityCard) -> None:
                 card.email = entity["email"]
             if not card.fingerprint and key_info.get("fingerprint"):
                 card.fingerprint = key_info["fingerprint"]
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load CapAuth profile from %s: %s", profile_path, exc)
 
     pub_key_path = capauth_dir / "public.asc"
     if pub_key_path.exists():
         try:
             card.public_key = pub_key_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("Failed to read public key from %s: %s", pub_key_path, exc)
 
 
 def _load_runtime(home: Path, card: IdentityCard) -> None:
@@ -207,8 +210,8 @@ def _load_runtime(home: Path, card: IdentityCard) -> None:
 
         if m.name and m.name != "Unknown":
             card.name = m.name
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to load runtime state: %s", exc)
 
 
 def _load_memory_count(home: Path, card: IdentityCard) -> None:
@@ -223,8 +226,8 @@ def _load_memory_count(home: Path, card: IdentityCard) -> None:
 
         stats = get_stats(home)
         card.memory_count = stats.total_memories
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to load memory count: %s", exc)
 
 
 def _load_capabilities(home: Path, card: IdentityCard) -> None:
@@ -240,25 +243,25 @@ def _load_capabilities(home: Path, card: IdentityCard) -> None:
         import capauth  # noqa: F401
         caps.append("capauth:identity")
     except ImportError:
-        pass
+        logger.debug("capauth not installed — skipping capauth:identity capability")
 
     try:
         import skcomm  # noqa: F401
         caps.append("skcomm:messaging")
     except ImportError:
-        pass
+        logger.debug("skcomm not installed — skipping skcomm:messaging capability")
 
     try:
         import skchat  # noqa: F401
         caps.append("skchat:p2p-chat")
     except ImportError:
-        pass
+        logger.debug("skchat not installed — skipping skchat:p2p-chat capability")
 
     try:
         import skmemory  # noqa: F401
         caps.append("skmemory:persistence")
     except ImportError:
-        pass
+        logger.debug("skmemory not installed — skipping skmemory:persistence capability")
 
     skills_dir = home / "skills"
     if skills_dir.exists():
@@ -267,8 +270,8 @@ def _load_capabilities(home: Path, card: IdentityCard) -> None:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 name = data.get("name", f.stem)
                 caps.append(f"skill:{name}")
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Failed to load skill from %s: %s", f, exc)
 
     card.capabilities = caps
 

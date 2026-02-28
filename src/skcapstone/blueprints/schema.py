@@ -136,9 +136,11 @@ class StorageConfig(BaseModel):
         default=None,
         description="Shared vault name for the team",
     )
+    # Supported backends: "filesystem" (default, no deps) and "skvector" (via skmemory).
+    # "mem0" and "zep" are not yet implemented — no adapter classes exist.
     memory_backend: str = Field(
         default="filesystem",
-        description="Memory backend: filesystem, skvector, mem0, zep",
+        description="Memory backend: filesystem, skvector",
     )
     memory_sync: bool = Field(
         default=True,

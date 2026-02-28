@@ -258,8 +258,8 @@ def _build_identity_card(agent_home: Path) -> bytes:
                 "source": "capauth",
             }
             return json.dumps(card, indent=2).encode("utf-8")
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to read CapAuth profile for identity card: %s", exc)
 
     # Fall back to manifest
     manifest_path = agent_home / "manifest.json"
@@ -273,8 +273,8 @@ def _build_identity_card(agent_home: Path) -> bytes:
                 "source": "manifest",
             }
             return json.dumps(card, indent=2).encode("utf-8")
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to read manifest for identity card: %s", exc)
 
     return json.dumps({"name": "unknown", "fingerprint": "", "source": "fallback"}).encode("utf-8")
 
@@ -296,8 +296,8 @@ def _build_fingerprint_txt(agent_home: Path) -> bytes:
             fp = data.get("fingerprint", "")
             if fp:
                 return (fp + "\n").encode("utf-8")
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to read CapAuth profile for fingerprint: %s", exc)
 
     # Try manifest
     manifest_path = agent_home / "manifest.json"
@@ -307,8 +307,8 @@ def _build_fingerprint_txt(agent_home: Path) -> bytes:
             fp = data.get("identity", {}).get("fingerprint", "")
             if fp:
                 return (fp + "\n").encode("utf-8")
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to read manifest for fingerprint: %s", exc)
 
     return b"(no fingerprint)\n"
 
@@ -1009,8 +1009,8 @@ class FUSEDaemon:
                     parts = line.split()
                     if len(parts) >= 2 and parts[1] == mount_str:
                         return True
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("Failed to read /proc/mounts: %s", exc)
             return False
 
         # macOS / other: use mount command

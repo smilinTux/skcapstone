@@ -17,10 +17,13 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,7 +67,7 @@ def get_anchor(home: Path) -> dict[str, Any]:
         if anchor is not None:
             return anchor.model_dump()
     except ImportError:
-        pass
+        logger.debug("skmemory not installed — falling back to trust-state anchor")
 
     return _anchor_from_trust_state(home)
 
@@ -84,7 +87,7 @@ def get_boot_prompt(home: Path) -> str:
         if anchor is not None:
             return anchor.to_boot_prompt()
     except ImportError:
-        pass
+        logger.debug("skmemory not installed — generating boot prompt from trust state")
 
     data = _anchor_from_trust_state(home)
     warmth = data.get("warmth", 5.0)
@@ -169,7 +172,7 @@ def update_anchor(
         save_anchor(anchor)
         return anchor.model_dump()
     except ImportError:
-        pass
+        logger.debug("skmemory not installed — updating anchor via trust state")
 
     return _update_trust_based_anchor(home, warmth, trust, connection, feeling)
 
@@ -241,8 +244,8 @@ def _calibrate_from_trust(home: Path, cal: AnchorCalibration) -> None:
             cal.reasoning.append("Quantum entanglement active — warmth boosted to 9+")
 
         cal.sources.append("trust_state")
-    except (json.JSONDecodeError, OSError):
-        pass
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read trust state for anchor calibration: %s", exc)
 
 
 def _calibrate_from_febs(home: Path, cal: AnchorCalibration) -> None:

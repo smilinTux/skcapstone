@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -95,7 +96,7 @@ class TeamDeployment(BaseModel):
 # Provider interface (abstract base)
 # ---------------------------------------------------------------------------
 
-class ProviderBackend:
+class ProviderBackend(ABC):
     """Abstract base for infrastructure providers.
 
     Each provider (local, proxmox, hetzner, aws, gcp, docker) implements
@@ -104,6 +105,7 @@ class ProviderBackend:
 
     provider_type: ProviderType = ProviderType.LOCAL
 
+    @abstractmethod
     def provision(
         self,
         agent_name: str,
@@ -120,8 +122,8 @@ class ProviderBackend:
         Returns:
             Dict with provider-specific details (host, port, pid, container_id, etc.)
         """
-        raise NotImplementedError
 
+    @abstractmethod
     def configure(
         self,
         agent_name: str,
@@ -138,8 +140,8 @@ class ProviderBackend:
         Returns:
             True if configuration succeeded.
         """
-        raise NotImplementedError
 
+    @abstractmethod
     def start(self, agent_name: str, provision_result: Dict[str, Any]) -> bool:
         """Start the agent process/container.
 
@@ -150,8 +152,8 @@ class ProviderBackend:
         Returns:
             True if the agent started successfully.
         """
-        raise NotImplementedError
 
+    @abstractmethod
     def stop(self, agent_name: str, provision_result: Dict[str, Any]) -> bool:
         """Stop a running agent.
 
@@ -162,8 +164,8 @@ class ProviderBackend:
         Returns:
             True if the agent stopped successfully.
         """
-        raise NotImplementedError
 
+    @abstractmethod
     def destroy(self, agent_name: str, provision_result: Dict[str, Any]) -> bool:
         """Destroy agent infrastructure entirely.
 
@@ -174,8 +176,8 @@ class ProviderBackend:
         Returns:
             True if destruction succeeded.
         """
-        raise NotImplementedError
 
+    @abstractmethod
     def health_check(self, agent_name: str, provision_result: Dict[str, Any]) -> AgentStatus:
         """Check the health of a deployed agent.
 
@@ -186,7 +188,6 @@ class ProviderBackend:
         Returns:
             Current AgentStatus.
         """
-        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------

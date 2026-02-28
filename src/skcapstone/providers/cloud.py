@@ -6,8 +6,8 @@ Each cloud gets a thin adapter; the provider interface stays the same.
 
 Currently supports:
 - Hetzner Cloud (via hcloud API)
-- AWS EC2 (via boto3) — planned
-- GCP Compute (via google-cloud) — planned
+- AWS EC2 (via boto3)
+- GCP Compute (via google-cloud-compute)
 
 The pattern: provision a VM/container, install the agent runtime,
 configure via cloud-init or SSH, register on the Tailscale mesh.
@@ -58,7 +58,16 @@ class CloudProvider(ProviderBackend):
         config: Cloud-specific configuration dict.
     """
 
-    provider_type = ProviderType.HETZNER
+    _CLOUD_TO_PROVIDER_TYPE = {
+        "hetzner": ProviderType.HETZNER,
+        "aws": ProviderType.AWS,
+        "gcp": ProviderType.GCP,
+    }
+
+    @property
+    def provider_type(self) -> ProviderType:
+        """Return the ProviderType matching the selected cloud adapter."""
+        return self._CLOUD_TO_PROVIDER_TYPE.get(self._cloud, ProviderType.HETZNER)
 
     def __init__(
         self,

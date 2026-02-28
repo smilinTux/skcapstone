@@ -12,6 +12,7 @@ Local: Plain filesystem copy. For USB drives, NAS, etc.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -303,6 +304,198 @@ class LocalBackend(SyncBackend):
         return self.target.exists()
 
 
+class GDriveBackend(SyncBackend):
+    """Google Drive sync backend.
+
+    Uploads vault archives to a Google Drive folder via the Drive v3 API.
+    Uses a service account JSON key for authentication.
+
+    Credential discovery order:
+    1. ``GDRIVE_CREDENTIALS_FILE`` env var (path to service account JSON).
+    2. ``~/.config/skcapstone/gdrive_credentials.json``.
+    """
+
+    _SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+    _CREDS_ENV = "GDRIVE_CREDENTIALS_FILE"
+    _DEFAULT_CREDS = (
+        Path.home() / ".config" / "skcapstone" / "gdrive_credentials.json"
+    )
+
+    def __init__(self, config: SyncBackendConfig, agent_home: Path):
+        self.config = config
+        self.agent_home = agent_home
+        self._service = None
+
+    @property
+    def name(self) -> str:
+        return "gdrive"
+
+    def _creds_path(self) -> Optional[Path]:
+        env_val = os.environ.get(self._CREDS_ENV)
+        if env_val:
+            p = Path(env_val)
+            if p.exists():
+                return p
+        if self._DEFAULT_CREDS.exists():
+            return self._DEFAULT_CREDS
+        return None
+
+    def _get_service(self):
+        """Build (or return cached) Drive v3 service."""
+        if self._service is not None:
+            return self._service
+        try:
+            from google.oauth2 import service_account  # type: ignore
+            from googleapiclient.discovery import build  # type: ignore
+        except ImportError:
+            logger.error(
+                "google-api-python-client not installed. "
+                "Run: pip install skcapstone[gdrive]"
+            )
+            return None
+
+        creds_path = self._creds_path()
+        if not creds_path:
+            logger.error(
+                "No GDrive credentials found. Set %s env var or place "
+                "service account JSON at %s",
+                self._CREDS_ENV,
+                self._DEFAULT_CREDS,
+            )
+            return None
+
+        try:
+            creds = service_account.Credentials.from_service_account_file(
+                str(creds_path), scopes=self._SCOPES
+            )
+            self._service = build(
+                "drive", "v3", credentials=creds, cache_discovery=False
+            )
+            return self._service
+        except Exception as exc:
+            logger.error("GDrive service initialisation failed: %s", exc)
+            return None
+
+    def _upload_file(self, service, local_path: Path, folder_id: str) -> bool:
+        """Upload *local_path* to *folder_id*; update if it already exists."""
+        try:
+            from googleapiclient.http import MediaFileUpload  # type: ignore
+        except ImportError:
+            return False
+
+        media = MediaFileUpload(
+            str(local_path), mimetype="application/octet-stream", resumable=True
+        )
+
+        # Avoid duplicates: update the file if one with the same name exists.
+        query = (
+            f"name = '{local_path.name}' "
+            f"and '{folder_id}' in parents "
+            "and trashed = false"
+        )
+        existing = (
+            service.files()
+            .list(q=query, fields="files(id, name)", spaces="drive")
+            .execute()
+        )
+        existing_files = existing.get("files", [])
+
+        if existing_files:
+            service.files().update(
+                fileId=existing_files[0]["id"],
+                media_body=media,
+            ).execute()
+        else:
+            service.files().create(
+                body={"name": local_path.name, "parents": [folder_id]},
+                media_body=media,
+                fields="id",
+            ).execute()
+
+        return True
+
+    def _download_file(self, service, file_id: str, dest: Path) -> None:
+        """Stream *file_id* from Drive to *dest*."""
+        from googleapiclient.http import MediaIoBaseDownload  # type: ignore
+
+        request = service.files().get_media(fileId=file_id)
+        with dest.open("wb") as fh:
+            downloader = MediaIoBaseDownload(io.FileIO(fh.name, "wb"), request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+
+    def push(self, vault_path: Path, manifest_path: Path) -> bool:
+        service = self._get_service()
+        if not service:
+            return False
+
+        folder_id = self.config.gdrive_folder_id
+        if not folder_id:
+            logger.error("gdrive_folder_id not configured")
+            return False
+
+        try:
+            ok_vault = self._upload_file(service, vault_path, folder_id)
+            ok_manifest = self._upload_file(service, manifest_path, folder_id)
+            if ok_vault and ok_manifest:
+                logger.info("Vault pushed to GDrive folder: %s", folder_id)
+                return True
+            return False
+        except Exception as exc:
+            logger.error("GDrive push failed: %s", exc)
+            return False
+
+    def pull(self, target_dir: Path) -> Optional[Path]:
+        service = self._get_service()
+        if not service:
+            return None
+
+        folder_id = self.config.gdrive_folder_id
+        if not folder_id:
+            logger.error("gdrive_folder_id not configured")
+            return None
+
+        try:
+            query = (
+                f"name contains 'vault-' "
+                f"and '{folder_id}' in parents "
+                "and trashed = false"
+            )
+            results = (
+                service.files()
+                .list(
+                    q=query,
+                    orderBy="modifiedTime desc",
+                    pageSize=1,
+                    fields="files(id, name)",
+                    spaces="drive",
+                )
+                .execute()
+            )
+            files = results.get("files", [])
+            if not files:
+                logger.info("No vaults found in GDrive folder")
+                return None
+
+            latest = files[0]
+            dest = target_dir / latest["name"]
+            self._download_file(service, latest["id"], dest)
+            logger.info("Vault pulled from GDrive: %s", latest["name"])
+            return dest
+        except Exception as exc:
+            logger.error("GDrive pull failed: %s", exc)
+            return None
+
+    def available(self) -> bool:
+        try:
+            import google.oauth2  # type: ignore  # noqa: F401
+            import googleapiclient  # type: ignore  # noqa: F401
+        except ImportError:
+            return False
+        return self._creds_path() is not None
+
+
 def create_backend(
     config: SyncBackendConfig, agent_home: Path
 ) -> SyncBackend:
@@ -322,6 +515,7 @@ def create_backend(
         SyncBackendType.SYNCTHING: SyncthingBackend,
         SyncBackendType.GITHUB: GitBackend,
         SyncBackendType.FORGEJO: GitBackend,
+        SyncBackendType.GDRIVE: GDriveBackend,
         SyncBackendType.LOCAL: LocalBackend,
     }
     factory = factories.get(config.backend_type)
