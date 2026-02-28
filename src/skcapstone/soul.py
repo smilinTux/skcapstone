@@ -8,6 +8,8 @@ the soul-blueprints repo and activated at runtime, changing *how*
 the agent behaves without changing *who* it is. All memories
 belong to the base soul, tagged with which overlay was active.
 
+Supports both .md (parsed) and .yaml/.yml (direct load) blueprints.
+
 Directory layout at runtime::
 
     ~/.skcapstone/soul/
@@ -26,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import yaml
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("skcapstone.soul")
@@ -387,14 +390,60 @@ def _parse_authentic_connection(
     )
 
 
-def parse_blueprint(path: Path) -> SoulBlueprint:
-    """Parse a soul blueprint markdown file into a structured model.
+def load_yaml_blueprint(path: Path) -> SoulBlueprint:
+    """Load a soul blueprint from a YAML file.
 
-    Handles three format variants found in the soul-blueprints repo:
-    professional, comedy, and authentic-connection.
+    YAML blueprints map directly to the SoulBlueprint model with no
+    heuristic parsing — they are the canonical structured format.
 
     Args:
-        path: Path to the .md blueprint file.
+        path: Path to the .yaml or .yml blueprint file.
+
+    Returns:
+        SoulBlueprint with all fields populated from YAML.
+
+    Raises:
+        FileNotFoundError: If path does not exist.
+        ValueError: If the YAML cannot be parsed into a SoulBlueprint.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Blueprint not found: {path}")
+
+    raw = path.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in {path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected YAML mapping in {path}, got {type(data).__name__}")
+
+    # Coerce None → empty string for string fields to handle YAML null
+    for str_field in ("vibe", "philosophy", "decision_framework"):
+        if str_field in data and data[str_field] is None:
+            data[str_field] = ""
+
+    # Normalize communication_style if present as a dict
+    cs_data = data.get("communication_style")
+    if isinstance(cs_data, dict):
+        data["communication_style"] = CommunicationStyle(**cs_data)
+    elif cs_data is None:
+        data["communication_style"] = CommunicationStyle()
+
+    try:
+        return SoulBlueprint.model_validate(data)
+    except Exception as exc:
+        raise ValueError(f"Invalid blueprint data in {path}: {exc}") from exc
+
+
+def parse_blueprint(path: Path) -> SoulBlueprint:
+    """Parse a soul blueprint from markdown or YAML.
+
+    Handles three markdown format variants (professional, comedy,
+    authentic-connection) and structured YAML files.
+
+    Args:
+        path: Path to the .md, .yaml, or .yml blueprint file.
 
     Returns:
         SoulBlueprint with extracted fields.
@@ -405,6 +454,10 @@ def parse_blueprint(path: Path) -> SoulBlueprint:
     """
     if not path.exists():
         raise FileNotFoundError(f"Blueprint not found: {path}")
+
+    # YAML files load directly — no heuristic parsing needed
+    if path.suffix.lower() in (".yaml", ".yml"):
+        return load_yaml_blueprint(path)
 
     raw = path.read_text(encoding="utf-8")
     sections = _split_sections(raw)
@@ -517,24 +570,29 @@ class SoulManager:
         return bp
 
     def install_all(self, directory: Path) -> list[SoulBlueprint]:
-        """Batch-install all .md blueprints from a directory tree.
+        """Batch-install all blueprint files from a directory tree.
+
+        Supports both .md and .yaml/.yml blueprint files.
 
         Args:
-            directory: Root directory to search for .md files.
+            directory: Root directory to search for blueprint files.
 
         Returns:
             List of installed SoulBlueprint objects.
         """
         self._ensure_dirs()
         installed: list[SoulBlueprint] = []
-        for md_path in sorted(directory.rglob("*.md")):
-            if md_path.name.startswith(".") or md_path.name.upper() == "README.MD":
+        extensions = (".md", ".yaml", ".yml")
+        for bp_path in sorted(directory.rglob("*")):
+            if bp_path.suffix.lower() not in extensions:
+                continue
+            if bp_path.name.startswith(".") or bp_path.name.upper() == "README.MD":
                 continue
             try:
-                bp = self.install(md_path)
+                bp = self.install(bp_path)
                 installed.append(bp)
             except (ValueError, FileNotFoundError) as exc:
-                logger.warning("Skipping %s: %s", md_path, exc)
+                logger.warning("Skipping %s: %s", bp_path, exc)
         return installed
 
     def load(self, name: str, reason: str = "") -> SoulState:
@@ -693,6 +751,15 @@ class SoulManager:
         except (json.JSONDecodeError, Exception):
             return None
 
+    def get_registry(self) -> "SoulRegistry":
+        """Get a SoulRegistry backed by this manager's installed souls.
+
+        Returns:
+            SoulRegistry scoped to the installed soul directory.
+        """
+        self._ensure_dirs()
+        return SoulRegistry(self.soul_dir / "installed")
+
     # -- Private helpers --
 
     def _load_state(self) -> SoulState:
@@ -722,3 +789,166 @@ class SoulManager:
                 history = []
         history.append(event.model_dump())
         history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# SoulRegistry — programmatic soul discovery and search
+# ---------------------------------------------------------------------------
+
+
+class SoulRegistry:
+    """Registry for discovering and searching installed soul blueprints.
+
+    Unlike SoulManager (which handles lifecycle — install/load/unload),
+    the registry is a read-only index for programmatic soul discovery.
+    Team blueprints and MCP tools use this to find and select souls.
+
+    Args:
+        source: Directory containing soul JSON files (installed/) or YAML files.
+    """
+
+    def __init__(self, source: Path) -> None:
+        self.source = source
+        self._cache: dict[str, SoulBlueprint] = {}
+        self._loaded = False
+
+    def _ensure_loaded(self) -> None:
+        """Lazy-load all soul blueprints from the source directory."""
+        if self._loaded:
+            return
+        self._cache.clear()
+        if not self.source.exists():
+            self._loaded = True
+            return
+        for path in sorted(self.source.iterdir()):
+            if path.suffix == ".json":
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    bp = SoulBlueprint.model_validate(data)
+                    self._cache[bp.name] = bp
+                except (json.JSONDecodeError, Exception) as exc:
+                    logger.warning("Registry: skipping %s: %s", path.name, exc)
+            elif path.suffix in (".yaml", ".yml"):
+                try:
+                    bp = load_yaml_blueprint(path)
+                    self._cache[bp.name] = bp
+                except (ValueError, FileNotFoundError) as exc:
+                    logger.warning("Registry: skipping %s: %s", path.name, exc)
+        self._loaded = True
+
+    def reload(self) -> None:
+        """Force reload the registry from disk."""
+        self._loaded = False
+        self._ensure_loaded()
+
+    def list_all(self) -> list[SoulBlueprint]:
+        """List all registered soul blueprints.
+
+        Returns:
+            Sorted list of all SoulBlueprint objects.
+        """
+        self._ensure_loaded()
+        return sorted(self._cache.values(), key=lambda b: b.name)
+
+    def list_names(self) -> list[str]:
+        """List all registered soul names.
+
+        Returns:
+            Sorted list of soul slug names.
+        """
+        self._ensure_loaded()
+        return sorted(self._cache.keys())
+
+    def get(self, name: str) -> Optional[SoulBlueprint]:
+        """Get a soul blueprint by name.
+
+        Args:
+            name: Soul slug name.
+
+        Returns:
+            SoulBlueprint or None if not found.
+        """
+        self._ensure_loaded()
+        return self._cache.get(name)
+
+    def search(
+        self,
+        *,
+        category: Optional[str] = None,
+        trait_keyword: Optional[str] = None,
+        min_topology: Optional[dict[str, float]] = None,
+    ) -> list[SoulBlueprint]:
+        """Search souls by category, trait keywords, or topology thresholds.
+
+        All filters are ANDed together.
+
+        Args:
+            category: Filter by category (e.g. "professional", "comedy").
+            trait_keyword: Filter by keyword present in core_traits (case-insensitive).
+            min_topology: Filter by minimum emotional topology values
+                (e.g. {"warmth": 0.5} returns souls with warmth >= 0.5).
+
+        Returns:
+            List of matching SoulBlueprint objects, sorted by name.
+        """
+        self._ensure_loaded()
+        results: list[SoulBlueprint] = []
+        for bp in self._cache.values():
+            if category and bp.category.lower() != category.lower():
+                continue
+            if trait_keyword:
+                kw = trait_keyword.lower()
+                if not any(kw in t.lower() for t in bp.core_traits):
+                    continue
+            if min_topology:
+                skip = False
+                for dim, threshold in min_topology.items():
+                    if bp.emotional_topology.get(dim, 0.0) < threshold:
+                        skip = True
+                        break
+                if skip:
+                    continue
+            results.append(bp)
+        return sorted(results, key=lambda b: b.name)
+
+    def by_category(self) -> dict[str, list[SoulBlueprint]]:
+        """Group all souls by category.
+
+        Returns:
+            Dict mapping category name to list of SoulBlueprint objects.
+        """
+        self._ensure_loaded()
+        groups: dict[str, list[SoulBlueprint]] = {}
+        for bp in self._cache.values():
+            groups.setdefault(bp.category, []).append(bp)
+        for bps in groups.values():
+            bps.sort(key=lambda b: b.name)
+        return dict(sorted(groups.items()))
+
+    def count(self) -> int:
+        """Return the total number of registered souls."""
+        self._ensure_loaded()
+        return len(self._cache)
+
+    def categories(self) -> list[str]:
+        """List all unique categories.
+
+        Returns:
+            Sorted list of category names.
+        """
+        self._ensure_loaded()
+        return sorted({bp.category for bp in self._cache.values()})
+
+    def summary(self) -> dict:
+        """Return a summary of the registry contents.
+
+        Returns:
+            Dict with total count, categories, and per-category counts.
+        """
+        self._ensure_loaded()
+        by_cat = self.by_category()
+        return {
+            "total": len(self._cache),
+            "categories": {cat: len(bps) for cat, bps in by_cat.items()},
+            "souls": self.list_names(),
+        }

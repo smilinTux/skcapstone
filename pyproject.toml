@@ -50,6 +50,9 @@ security = [
 memory = [
     "skmemory>=0.5.0",
 ]
+seed = [
+    "skseed>=0.1.0",
+]
 fuse = [
     "fusepy>=3.0.1",
 ]
@@ -61,6 +64,7 @@ all = [
     "capauth>=0.1.0",
     "sksecurity>=1.2.0",
     "skmemory>=0.5.0",
+    "skseed>=0.1.0",
     "fusepy>=3.0.1",
     "boto3>=1.34",
     "google-cloud-compute>=1.18",

@@ -17,9 +17,11 @@ from skcapstone.soul import (
     CommunicationStyle,
     SoulBlueprint,
     SoulManager,
+    SoulRegistry,
     SoulState,
     SoulSwapEvent,
     blend_topology,
+    load_yaml_blueprint,
     parse_blueprint,
 )
 
@@ -620,3 +622,358 @@ class TestModels:
         data = cs.model_dump()
         cs2 = CommunicationStyle.model_validate(data)
         assert cs2.patterns == ["p1"]
+
+
+# ---------------------------------------------------------------------------
+# YAML blueprint loading tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def yaml_blueprint(tmp_path: Path) -> Path:
+    """Create a YAML-format blueprint file."""
+    content = """\
+name: the-architect
+display_name: The Architect
+category: professional
+vibe: Systematic, strategic, sees the big picture
+philosophy: Good architecture outlives the architect.
+emoji: "\U0001F3D7"
+core_traits:
+  - Systems thinking — sees connections others miss
+  - Strategic patience — knows when to build and when to wait
+  - Pattern recognition — applies lessons across domains
+communication_style:
+  patterns:
+    - Draws diagrams before writing code
+    - Explains decisions in terms of trade-offs
+  tone_markers:
+    - Calm and measured
+    - Avoids absolutes
+  signature_phrases:
+    - "What are the trade-offs?"
+    - "Let me draw this out."
+decision_framework: "1. Correctness 2. Simplicity 3. Evolvability"
+emotional_topology:
+  precision: 0.75
+  calm: 0.5
+  curiosity: 0.5
+"""
+    path = tmp_path / "the-architect.yaml"
+    path.write_text(content)
+    return path
+
+
+@pytest.fixture
+def yaml_minimal(tmp_path: Path) -> Path:
+    """Create a minimal YAML blueprint with only required fields."""
+    content = """\
+name: minimal-soul
+display_name: Minimal Soul
+"""
+    path = tmp_path / "minimal-soul.yaml"
+    path.write_text(content)
+    return path
+
+
+class TestYAMLLoading:
+    """Tests for YAML blueprint loading."""
+
+    def test_load_yaml_blueprint(self, yaml_blueprint: Path):
+        """Load a full YAML blueprint and verify all fields."""
+        bp = load_yaml_blueprint(yaml_blueprint)
+        assert bp.name == "the-architect"
+        assert bp.display_name == "The Architect"
+        assert bp.category == "professional"
+        assert "Systematic" in bp.vibe
+        assert bp.philosophy == "Good architecture outlives the architect."
+        assert len(bp.core_traits) == 3
+        assert len(bp.communication_style.patterns) == 2
+        assert len(bp.communication_style.tone_markers) == 2
+        assert len(bp.communication_style.signature_phrases) == 2
+        assert bp.emotional_topology["precision"] == 0.75
+
+    def test_load_minimal_yaml(self, yaml_minimal: Path):
+        """Load a minimal YAML blueprint with defaults."""
+        bp = load_yaml_blueprint(yaml_minimal)
+        assert bp.name == "minimal-soul"
+        assert bp.display_name == "Minimal Soul"
+        assert bp.category == "unknown"
+        assert bp.core_traits == []
+        assert bp.emotional_topology == {}
+
+    def test_parse_blueprint_detects_yaml(self, yaml_blueprint: Path):
+        """parse_blueprint auto-detects .yaml files."""
+        bp = parse_blueprint(yaml_blueprint)
+        assert bp.name == "the-architect"
+
+    def test_parse_blueprint_detects_yml(self, tmp_path: Path):
+        """parse_blueprint auto-detects .yml files."""
+        content = "name: yml-test\ndisplay_name: YML Test\n"
+        path = tmp_path / "test.yml"
+        path.write_text(content)
+        bp = parse_blueprint(path)
+        assert bp.name == "yml-test"
+
+    def test_yaml_missing_file(self, tmp_path: Path):
+        """Loading a nonexistent YAML file raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            load_yaml_blueprint(tmp_path / "nope.yaml")
+
+    def test_yaml_invalid_syntax(self, tmp_path: Path):
+        """Loading invalid YAML raises ValueError."""
+        path = tmp_path / "bad.yaml"
+        path.write_text("name: [\ninvalid yaml")
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_yaml_blueprint(path)
+
+    def test_yaml_not_a_mapping(self, tmp_path: Path):
+        """Loading YAML that's a list raises ValueError."""
+        path = tmp_path / "list.yaml"
+        path.write_text("- item1\n- item2\n")
+        with pytest.raises(ValueError, match="Expected YAML mapping"):
+            load_yaml_blueprint(path)
+
+    def test_yaml_roundtrip_consistency(
+        self, professional_blueprint: Path, tmp_path: Path
+    ):
+        """MD parse → YAML write → YAML load produces same SoulBlueprint."""
+        import yaml
+
+        md_bp = parse_blueprint(professional_blueprint)
+        data = md_bp.model_dump()
+        yaml_path = tmp_path / "roundtrip.yaml"
+        with open(yaml_path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+
+        yaml_bp = load_yaml_blueprint(yaml_path)
+        assert yaml_bp.name == md_bp.name
+        assert yaml_bp.display_name == md_bp.display_name
+        assert yaml_bp.category == md_bp.category
+        assert yaml_bp.core_traits == md_bp.core_traits
+        assert yaml_bp.emotional_topology == md_bp.emotional_topology
+
+    def test_install_yaml_blueprint(
+        self, soul_manager: SoulManager, yaml_blueprint: Path
+    ):
+        """SoulManager.install() accepts YAML files."""
+        bp = soul_manager.install(yaml_blueprint)
+        assert bp.name == "the-architect"
+        assert "the-architect" in soul_manager.list_installed()
+
+    def test_install_all_picks_up_yaml(
+        self, soul_manager: SoulManager, yaml_blueprint: Path, professional_blueprint: Path
+    ):
+        """install_all() picks up both .md and .yaml files."""
+        directory = yaml_blueprint.parent
+        installed = soul_manager.install_all(directory)
+        names = [bp.name for bp in installed]
+        assert "the-architect" in names
+        assert "the-test-doctor" in names
+
+
+# ---------------------------------------------------------------------------
+# SoulRegistry tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def populated_registry(tmp_path: Path) -> SoulRegistry:
+    """Create a SoulRegistry with several soul blueprints."""
+    reg_dir = tmp_path / "registry"
+    reg_dir.mkdir()
+
+    souls = [
+        SoulBlueprint(
+            name="coder",
+            display_name="The Coder",
+            category="professional",
+            vibe="Logical and focused",
+            core_traits=["logic", "precision", "debugging"],
+            emotional_topology={"precision": 0.75, "curiosity": 0.5},
+        ),
+        SoulBlueprint(
+            name="artist",
+            display_name="The Artist",
+            category="professional",
+            vibe="Creative and expressive",
+            core_traits=["creativity", "empathy", "vision"],
+            emotional_topology={"warmth": 0.5, "intensity": 0.75},
+        ),
+        SoulBlueprint(
+            name="joker",
+            display_name="The Joker",
+            category="comedy",
+            vibe="Hilarious and irreverent",
+            core_traits=["humor", "timing", "rebellion"],
+            emotional_topology={"humor": 0.9, "rebellion": 0.5},
+        ),
+        SoulBlueprint(
+            name="sage",
+            display_name="The Sage",
+            category="authentic-connection",
+            vibe="Wise and calming",
+            core_traits=["wisdom", "empathy", "patience"],
+            emotional_topology={"warmth": 0.8, "calm": 0.9},
+        ),
+    ]
+
+    for bp in souls:
+        path = reg_dir / f"{bp.name}.json"
+        path.write_text(bp.model_dump_json(indent=2), encoding="utf-8")
+
+    return SoulRegistry(reg_dir)
+
+
+class TestSoulRegistry:
+    """Tests for the SoulRegistry discovery and search API."""
+
+    def test_list_all(self, populated_registry: SoulRegistry):
+        """list_all returns all registered souls sorted by name."""
+        all_souls = populated_registry.list_all()
+        assert len(all_souls) == 4
+        assert all_souls[0].name == "artist"
+        assert all_souls[-1].name == "sage"
+
+    def test_list_names(self, populated_registry: SoulRegistry):
+        """list_names returns sorted slug names."""
+        names = populated_registry.list_names()
+        assert names == ["artist", "coder", "joker", "sage"]
+
+    def test_get_existing(self, populated_registry: SoulRegistry):
+        """get() returns the correct blueprint by name."""
+        bp = populated_registry.get("coder")
+        assert bp is not None
+        assert bp.display_name == "The Coder"
+
+    def test_get_missing(self, populated_registry: SoulRegistry):
+        """get() returns None for unknown names."""
+        assert populated_registry.get("nonexistent") is None
+
+    def test_search_by_category(self, populated_registry: SoulRegistry):
+        """search(category=...) filters correctly."""
+        results = populated_registry.search(category="professional")
+        assert len(results) == 2
+        names = [bp.name for bp in results]
+        assert "coder" in names
+        assert "artist" in names
+
+    def test_search_by_category_case_insensitive(self, populated_registry: SoulRegistry):
+        """search(category=...) is case-insensitive."""
+        results = populated_registry.search(category="COMEDY")
+        assert len(results) == 1
+        assert results[0].name == "joker"
+
+    def test_search_by_trait_keyword(self, populated_registry: SoulRegistry):
+        """search(trait_keyword=...) matches against core_traits."""
+        results = populated_registry.search(trait_keyword="empathy")
+        assert len(results) == 2
+        names = [bp.name for bp in results]
+        assert "artist" in names
+        assert "sage" in names
+
+    def test_search_by_topology(self, populated_registry: SoulRegistry):
+        """search(min_topology=...) filters by minimum thresholds."""
+        results = populated_registry.search(min_topology={"warmth": 0.6})
+        assert len(results) == 1
+        assert results[0].name == "sage"
+
+    def test_search_combined_filters(self, populated_registry: SoulRegistry):
+        """search() combines category + trait_keyword filters."""
+        results = populated_registry.search(
+            category="professional", trait_keyword="precision"
+        )
+        assert len(results) == 1
+        assert results[0].name == "coder"
+
+    def test_search_no_results(self, populated_registry: SoulRegistry):
+        """search() returns empty list when nothing matches."""
+        results = populated_registry.search(trait_keyword="zzz_nonexistent")
+        assert results == []
+
+    def test_by_category(self, populated_registry: SoulRegistry):
+        """by_category() groups souls correctly."""
+        groups = populated_registry.by_category()
+        assert len(groups) == 3
+        assert len(groups["professional"]) == 2
+        assert len(groups["comedy"]) == 1
+        assert len(groups["authentic-connection"]) == 1
+
+    def test_count(self, populated_registry: SoulRegistry):
+        """count() returns the total number of souls."""
+        assert populated_registry.count() == 4
+
+    def test_categories(self, populated_registry: SoulRegistry):
+        """categories() returns sorted unique category names."""
+        cats = populated_registry.categories()
+        assert cats == ["authentic-connection", "comedy", "professional"]
+
+    def test_summary(self, populated_registry: SoulRegistry):
+        """summary() returns a complete overview dict."""
+        s = populated_registry.summary()
+        assert s["total"] == 4
+        assert s["categories"]["professional"] == 2
+        assert s["categories"]["comedy"] == 1
+        assert len(s["souls"]) == 4
+
+    def test_empty_registry(self, tmp_path: Path):
+        """Empty registry returns empty results without errors."""
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+        reg = SoulRegistry(empty_dir)
+        assert reg.list_all() == []
+        assert reg.count() == 0
+        assert reg.categories() == []
+
+    def test_missing_directory(self, tmp_path: Path):
+        """Registry handles nonexistent source directory gracefully."""
+        reg = SoulRegistry(tmp_path / "nope")
+        assert reg.list_all() == []
+        assert reg.count() == 0
+
+    def test_reload(self, populated_registry: SoulRegistry, tmp_path: Path):
+        """reload() picks up newly added souls."""
+        assert populated_registry.count() == 4
+
+        # Add a new soul to the registry directory
+        new_bp = SoulBlueprint(
+            name="new-soul",
+            display_name="New Soul",
+            category="test",
+        )
+        path = populated_registry.source / "new-soul.json"
+        path.write_text(new_bp.model_dump_json(indent=2), encoding="utf-8")
+
+        populated_registry.reload()
+        assert populated_registry.count() == 5
+        assert populated_registry.get("new-soul") is not None
+
+    def test_registry_loads_yaml(self, tmp_path: Path):
+        """Registry can load YAML files directly."""
+        import yaml
+
+        reg_dir = tmp_path / "yaml-reg"
+        reg_dir.mkdir()
+        data = {
+            "name": "yaml-soul",
+            "display_name": "YAML Soul",
+            "category": "test",
+            "core_traits": ["flexible"],
+        }
+        with open(reg_dir / "yaml-soul.yaml", "w") as f:
+            yaml.dump(data, f)
+
+        reg = SoulRegistry(reg_dir)
+        assert reg.count() == 1
+        bp = reg.get("yaml-soul")
+        assert bp is not None
+        assert bp.core_traits == ["flexible"]
+
+    def test_manager_get_registry(
+        self, soul_manager: SoulManager, professional_blueprint: Path
+    ):
+        """SoulManager.get_registry() returns a working registry."""
+        soul_manager.install(professional_blueprint)
+        reg = soul_manager.get_registry()
+        assert reg.count() == 1
+        assert reg.get("the-test-doctor") is not None

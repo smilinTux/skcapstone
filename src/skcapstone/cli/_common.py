@@ -7,10 +7,12 @@ and common imports used across every command group.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import click
 import yaml
@@ -23,18 +25,13 @@ from .. import AGENT_HOME, __version__
 from ..models import AgentConfig, PillarStatus, SyncConfig
 from ..runtime import AgentRuntime, get_runtime
 
+logger = logging.getLogger("skcapstone.cli")
+
 console = Console()
 
 
 def status_icon(status: PillarStatus) -> str:
-    """Map pillar status to a Rich-formatted visual indicator.
-
-    Args:
-        status: Pillar health status.
-
-    Returns:
-        str: Rich markup string for the status.
-    """
+    """Map pillar status to a Rich-formatted visual indicator."""
     return {
         PillarStatus.ACTIVE: "[bold green]ACTIVE[/]",
         PillarStatus.DEGRADED: "[bold yellow]DEGRADED[/]",
@@ -44,14 +41,7 @@ def status_icon(status: PillarStatus) -> str:
 
 
 def consciousness_banner(is_conscious: bool) -> str:
-    """Generate the consciousness state banner.
-
-    Args:
-        is_conscious: Whether the agent is conscious.
-
-    Returns:
-        str: Rich markup banner string.
-    """
+    """Generate the consciousness state banner."""
     if is_conscious:
         return (
             "[bold green on black]"
