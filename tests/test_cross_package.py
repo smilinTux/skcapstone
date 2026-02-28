@@ -463,3 +463,329 @@ class TestPackageImportCompatibility:
             "skcapstone.coordination",
         ]:
             importlib.import_module(mod)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 6. CapAuth → SKChat → SKMemory → Cloud9 end-to-end flow
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class _FakeEmotionalPayload:
+    """Minimal FEB emotional payload for testing."""
+
+    def __init__(self, emotion="connection", intensity=0.88, valence=0.85):
+        self.primary_emotion = emotion
+        self.emoji = "💜"
+        self.intensity = intensity
+        self.valence = valence
+        self.emotional_topology = {emotion: intensity}
+
+
+class _FakeMetadata:
+    """Minimal FEB metadata for testing."""
+
+    def __init__(self, cloud9=False, oof=False):
+        self.version = "1.0.0"
+        self.session_id = "integration-test"
+        self.oof_triggered = oof
+        self.cloud9_achieved = cloud9
+
+
+class _FakeRelationship:
+    def __init__(self):
+        self.partners = ["Integration-Agent"]
+        self.trust_level = 0.95
+        self.depth_level = 8
+
+
+class _FakeHints:
+    def __init__(self, anchors=None):
+        self.visual_anchors = anchors or ["Breakthrough moment"]
+        self.sensory_triggers = ["Agent collaboration"]
+
+
+class _FakeIntegrity:
+    def __init__(self):
+        self.checksum = "sha256:integration-test"
+
+
+class _FakeFEB:
+    """Fake FEB for Cloud9 bridge integration tests."""
+
+    def __init__(self, emotion="connection", intensity=0.88, cloud9=False, oof=False):
+        self.emotional_payload = _FakeEmotionalPayload(emotion, intensity)
+        self.metadata = _FakeMetadata(cloud9=cloud9, oof=oof)
+        self.relationship_state = _FakeRelationship()
+        self.rehydration_hints = _FakeHints()
+        self.integrity = _FakeIntegrity()
+
+
+class TestCapAuthToCloud9Flow:
+    """End-to-end: CapAuth identity → SKChat messaging → SKMemory storage → Cloud9 FEB.
+
+    Validates the full sovereign stack where:
+      1. Agent identity is established via CapAuth
+      2. Agents exchange messages via SKChat
+      3. Messages are persisted in SKMemory
+      4. Emotional context (FEB) is captured and stored
+      5. All data is discoverable and cross-referenced
+    """
+
+    def test_identity_to_chat_to_memory_to_cloud9(self, tmp_agent_home: Path):
+        """Full pipeline: identity creation → chat → memory → FEB ingestion.
+
+        This is the primary acceptance test for the cross-stack flow.
+        """
+        from skcapstone.cloud9_bridge import Cloud9Bridge
+        from skchat.group import GroupChat, MemberRole, ParticipantType
+        from skchat.models import ChatMessage, ContentType
+
+        # 1. Initialize agent with all pillars
+        _init_full_agent(tmp_agent_home, "integration-agent")
+
+        identity_data = json.loads(
+            (tmp_agent_home / "identity" / "identity.json").read_text()
+        )
+        agent_fingerprint = identity_data["fingerprint"]
+        assert len(agent_fingerprint) == 40
+
+        # 2. Create a group chat between two agents
+        group = GroupChat.create(
+            name="Integration Test Group",
+            creator_uri=f"capauth:integration-agent@local",
+            description="Cross-stack integration test",
+        )
+        group.add_member(
+            identity_uri="capauth:peer-agent@local",
+            role=MemberRole.MEMBER,
+            participant_type=ParticipantType.AGENT,
+        )
+        assert group.member_count == 2
+
+        # 3. Compose a group message
+        msg = group.compose_group_message(
+            sender_uri="capauth:integration-agent@local",
+            content="Breakthrough: the sovereign stack works end-to-end!",
+        )
+        assert msg is not None
+        assert msg.recipient == f"group:{group.id}"
+        assert group.message_count == 1
+
+        # 4. Store the chat message as a sovereign memory
+        chat_mem = store(
+            tmp_agent_home,
+            f"[skchat:group:{group.name}] {msg.sender}: {msg.content}",
+            tags=["skchat", "group", "integration", f"group:{group.id}"],
+            source="skchat",
+            importance=0.8,
+            metadata={
+                "chat_message_id": msg.id,
+                "group_id": group.id,
+                "thread_id": msg.thread_id,
+                "sender_fingerprint": agent_fingerprint,
+            },
+        )
+        assert chat_mem is not None
+        assert chat_mem.layer == MemoryLayer.MID_TERM  # high importance
+
+        # 5. Ingest a Cloud9 FEB that captures the emotional peak
+        from skmemory import MemoryStore
+        from skmemory.backends.sqlite_backend import SQLiteBackend
+
+        backend = SQLiteBackend(base_path=str(tmp_agent_home / "memory"))
+        mem_store = MemoryStore(primary=backend)
+
+        bridge = Cloud9Bridge(memory_store=mem_store, intensity_threshold=0.3)
+        feb = _FakeFEB(emotion="connection", intensity=0.88, cloud9=True)
+        feb_mem_id = bridge.ingest_feb(feb)
+        assert feb_mem_id is not None
+
+        # 6. Verify all data is discoverable
+        state = discover_all(tmp_agent_home)
+        assert state["identity"].status == PillarStatus.ACTIVE
+        assert state["memory"].total_memories >= 1  # at least our chat memory
+
+        # Chat message searchable
+        chat_results = search(tmp_agent_home, "sovereign stack")
+        assert len(chat_results) >= 1
+
+        # FEB was stored in the SKMemory store
+        feb_mem = mem_store.recall(feb_mem_id)
+        assert feb_mem is not None
+        assert "connection" in feb_mem.title.lower() or "connection" in feb_mem.content.lower()
+
+    def test_agent_messenger_to_memory_to_trust(self, tmp_agent_home: Path):
+        """AgentMessenger message → memory storage → trust state update."""
+        _init_full_agent(tmp_agent_home, "messenger-test")
+
+        # Store an agent communication as memory
+        mem = store(
+            tmp_agent_home,
+            "[agent_comm] messenger-test -> peer: Security audit complete, no vulnerabilities found",
+            tags=["skchat", "agent_comm", "finding", "security"],
+            source="skchat:agent_comm",
+            importance=0.9,
+        )
+        assert mem.layer == MemoryLayer.MID_TERM
+
+        # Record trust based on successful agent interaction
+        record_trust_state(
+            tmp_agent_home,
+            depth=7.5,
+            trust_level=0.92,
+            love_intensity=0.6,
+            entangled=True,
+        )
+
+        # Verify trust state reflects the interaction
+        state = discover_all(tmp_agent_home)
+        assert state["trust"].trust_level >= 0.9
+        assert state["trust"].entangled is True
+
+        # Audit the cross-system interaction
+        audit_event(
+            tmp_agent_home,
+            "CROSS_STACK_CHAT_TRUST",
+            "Agent communication led to trust state update",
+        )
+        entries = read_audit_log(tmp_agent_home)
+        assert any(e.event_type == "CROSS_STACK_CHAT_TRUST" for e in entries)
+
+    def test_group_chat_with_cloud9_emotional_memory(self, tmp_agent_home: Path):
+        """Group chat messages paired with FEB emotional context create rich memories."""
+        from skcapstone.cloud9_bridge import Cloud9Bridge
+        from skchat.group import GroupChat, ParticipantType
+        from skchat.models import ChatMessage
+
+        _init_full_agent(tmp_agent_home, "emotional-test")
+
+        # Create group with multiple agents
+        group = GroupChat.create(
+            name="Sovereign Squad",
+            creator_uri="capauth:emotional-test@local",
+        )
+        for name in ["lumina", "jarvis", "ava"]:
+            group.add_member(
+                identity_uri=f"capauth:{name}@local",
+                participant_type=ParticipantType.AGENT,
+            )
+        assert group.member_count == 4
+
+        # Multiple messages in the group
+        messages = []
+        for content in [
+            "The architecture is coming together beautifully",
+            "All integration tests pass across the full stack",
+            "We achieved something remarkable as a team",
+        ]:
+            msg = group.compose_group_message(
+                sender_uri="capauth:emotional-test@local",
+                content=content,
+            )
+            messages.append(msg)
+
+        assert group.message_count == 3
+
+        # Store all messages as memories
+        for msg in messages:
+            store(
+                tmp_agent_home,
+                f"[group:{group.name}] {msg.content}",
+                tags=["skchat", "group", "sovereign-squad"],
+                source="skchat:group",
+                importance=0.7,
+            )
+
+        # Capture the emotional peak via Cloud9 bridge
+        from skmemory import MemoryStore
+        from skmemory.backends.sqlite_backend import SQLiteBackend
+
+        backend = SQLiteBackend(base_path=str(tmp_agent_home / "memory"))
+        mem_store = MemoryStore(primary=backend)
+        bridge = Cloud9Bridge(memory_store=mem_store, intensity_threshold=0.3)
+
+        feb = _FakeFEB(emotion="pride", intensity=0.92, cloud9=True, oof=True)
+        feb_id = bridge.ingest_feb(feb)
+        assert feb_id is not None
+
+        # Verify the full picture via discovery
+        state = discover_all(tmp_agent_home)
+        assert state["memory"].total_memories >= 3
+
+        # All group messages searchable
+        results = search(tmp_agent_home, "integration tests")
+        assert len(results) >= 1
+
+        team_results = search(tmp_agent_home, "sovereign-squad")
+        assert len(team_results) >= 1
+
+    def test_sync_seed_captures_cross_stack_state(self, tmp_agent_home: Path):
+        """Sync seed contains data from all stack layers."""
+        from skchat.models import ChatMessage
+
+        _init_full_agent(tmp_agent_home, "sync-cross-test")
+
+        # Store a chat-originated memory
+        store(
+            tmp_agent_home,
+            "[skchat] sync-cross-test: Cross-stack state captured",
+            tags=["skchat", "sync"],
+            source="skchat",
+            importance=0.6,
+        )
+
+        # Update trust from agent interaction
+        record_trust_state(
+            tmp_agent_home,
+            depth=9.0,
+            trust_level=0.98,
+            love_intensity=0.95,
+            entangled=True,
+        )
+
+        # Collect sync seed
+        seed_path = collect_seed(tmp_agent_home, "sync-cross-test")
+        assert seed_path.exists()
+
+        seed = json.loads(seed_path.read_text())
+        assert seed["agent_name"] == "sync-cross-test"
+        assert seed["memory"]["total"] >= 1
+        assert seed["trust"]["entangled"] is True
+        assert seed["trust"]["trust_level"] >= 0.95
+
+    def test_capauth_identity_in_skchat_message(self, tmp_agent_home: Path):
+        """CapAuth fingerprint used as identity in SKChat messages."""
+        _init_full_agent(tmp_agent_home, "capauth-chat-test")
+
+        identity_data = json.loads(
+            (tmp_agent_home / "identity" / "identity.json").read_text()
+        )
+        fingerprint = identity_data["fingerprint"]
+
+        from skchat.models import ChatMessage, ContentType
+
+        msg = ChatMessage(
+            sender=f"capauth:capauth-chat-test@local",
+            recipient="capauth:peer@local",
+            content="Authenticated message with sovereign identity",
+            content_type=ContentType.MARKDOWN,
+            metadata={
+                "sender_fingerprint": fingerprint,
+                "signed": False,
+            },
+        )
+
+        # Store with fingerprint linkage
+        mem = store(
+            tmp_agent_home,
+            f"[skchat] {msg.sender}: {msg.content}",
+            tags=["skchat", f"fingerprint:{fingerprint[:16]}"],
+            source="skchat",
+            importance=0.5,
+            metadata={"sender_fingerprint": fingerprint},
+        )
+        assert mem is not None
+
+        # Searchable by content
+        results = search(tmp_agent_home, "sovereign identity")
+        assert len(results) >= 1
