@@ -49,8 +49,58 @@ _LAYER_FROM_SKMEMORY = {
 }
 
 
+def _try_endpoint_selector() -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Try to resolve backend URLs via EndpointSelector.
+
+    Returns:
+        Tuple of (qdrant_url, qdrant_key, falkordb_url) from the selector,
+        or (None, None, None) if the selector is not available/configured.
+    """
+    try:
+        from skmemory.config import load_config, build_endpoint_list
+        from skmemory.endpoint_selector import EndpointSelector, RoutingConfig
+
+        cfg = load_config()
+        if cfg is None:
+            return None, None, None
+
+        qdrant_url = os.environ.get("SKMEMORY_QDRANT_URL") or cfg.qdrant_url
+        qdrant_key = os.environ.get("SKMEMORY_QDRANT_KEY") or cfg.qdrant_key
+        falkordb_url = os.environ.get("SKMEMORY_FALKORDB_URL") or cfg.falkordb_url
+
+        qdrant_eps = build_endpoint_list(qdrant_url, cfg.qdrant_endpoints)
+        falkordb_eps = build_endpoint_list(falkordb_url, cfg.falkordb_endpoints)
+
+        if len(qdrant_eps) <= 1 and len(falkordb_eps) <= 1 and not cfg.heartbeat_discovery:
+            return None, None, None
+
+        selector = EndpointSelector(
+            qdrant_endpoints=qdrant_eps,
+            falkordb_endpoints=falkordb_eps,
+            config=RoutingConfig(strategy=cfg.routing_strategy),
+        )
+
+        if cfg.heartbeat_discovery:
+            selector.discover_from_heartbeats()
+
+        best_qdrant = selector.select_qdrant()
+        best_falkordb = selector.select_falkordb()
+
+        return (
+            best_qdrant.url if best_qdrant else qdrant_url,
+            qdrant_key,
+            best_falkordb.url if best_falkordb else falkordb_url,
+        )
+    except Exception as e:
+        logger.debug("EndpointSelector not available: %s", e)
+        return None, None, None
+
+
 def _get_store() -> Optional["skmemory.MemoryStore"]:
     """Create a MemoryStore with all available backends based on env vars.
+
+    When multi-endpoint config exists, uses EndpointSelector to pick the
+    best URLs.  Falls back to single-URL env var behavior otherwise.
 
     Returns:
         MemoryStore or None if skmemory is not available.
@@ -62,20 +112,24 @@ def _get_store() -> Optional["skmemory.MemoryStore"]:
         from skmemory.store import MemoryStore
         from skmemory.backends.sqlite_backend import SQLiteBackend
 
+        # Try endpoint selector first for HA routing
+        sel_qdrant, sel_key, sel_falkordb = _try_endpoint_selector()
+
+        qdrant_url = sel_qdrant or os.environ.get("SKMEMORY_QDRANT_URL")
+        qdrant_key = sel_key or os.environ.get("SKMEMORY_QDRANT_KEY")
+        falkordb_url = sel_falkordb or os.environ.get("SKMEMORY_FALKORDB_URL")
+
         vector = None
-        qdrant_url = os.environ.get("SKMEMORY_QDRANT_URL")
         if qdrant_url:
             try:
                 from skmemory.backends.qdrant_backend import QdrantBackend
 
-                qdrant_key = os.environ.get("SKMEMORY_QDRANT_KEY")
                 vector = QdrantBackend(url=qdrant_url, api_key=qdrant_key)
                 logger.info("Qdrant backend enabled at %s", qdrant_url)
             except Exception as e:
                 logger.warning("Could not initialize Qdrant backend: %s", e)
 
         graph = None
-        falkordb_url = os.environ.get("SKMEMORY_FALKORDB_URL")
         if falkordb_url:
             try:
                 from skmemory.backends.falkordb_backend import FalkorDBBackend

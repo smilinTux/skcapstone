@@ -46,6 +46,14 @@ DEFAULT_TTL_SECONDS = 300  # 5 minutes
 # ---------------------------------------------------------------------------
 
 
+class HeartbeatService(BaseModel):
+    """A backend service advertised in the heartbeat."""
+
+    name: str        # "qdrant", "falkordb"
+    port: int        # 6333, 6379
+    protocol: str = "http"  # http, redis
+
+
 class AgentCapability(BaseModel):
     """A single agent capability."""
 
@@ -93,6 +101,10 @@ class Heartbeat(BaseModel):
     fingerprint: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    # Service advertisement (optional — old heartbeats without these still parse)
+    services: list[HeartbeatService] = Field(default_factory=list)
+    tailscale_ip: str = ""
+
     @property
     def is_alive(self) -> bool:
         """Whether this heartbeat is still valid (within TTL)."""
@@ -117,6 +129,8 @@ class PeerInfo(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     soul_active: str = ""
     claimed_tasks: int = 0
+    services: list[str] = Field(default_factory=list)
+    tailscale_ip: str = ""
 
 
 class MeshHealth(BaseModel):
@@ -170,6 +184,8 @@ class HeartbeatBeacon:
         loaded_model: str = "",
         capabilities: Optional[list[AgentCapability]] = None,
         metadata: Optional[dict[str, Any]] = None,
+        services: Optional[list[HeartbeatService]] = None,
+        tailscale_ip: Optional[str] = None,
     ) -> Heartbeat:
         """Publish a heartbeat beacon.
 
@@ -182,6 +198,8 @@ class HeartbeatBeacon:
             loaded_model: Currently loaded AI model.
             capabilities: Agent capabilities list.
             metadata: Additional metadata.
+            services: Backend services to advertise.  Auto-detected if None.
+            tailscale_ip: Tailscale IP address.  Auto-detected if None.
 
         Returns:
             The published Heartbeat.
@@ -206,6 +224,8 @@ class HeartbeatBeacon:
             fingerprint=self._detect_fingerprint(),
             soul_active=self._detect_soul(),
             metadata=metadata or {},
+            services=services if services is not None else self._detect_services(),
+            tailscale_ip=tailscale_ip if tailscale_ip is not None else self._detect_tailscale_ip(),
         )
 
         path = self._heartbeat_dir / f"{self._agent}.json"
@@ -272,6 +292,8 @@ class HeartbeatBeacon:
                     capabilities=[c.name for c in hb.capabilities if c.enabled],
                     soul_active=hb.soul_active,
                     claimed_tasks=len(hb.claimed_tasks),
+                    services=[s.name for s in hb.services],
+                    tailscale_ip=hb.tailscale_ip,
                 ))
             except Exception as exc:
                 logger.warning("Cannot parse heartbeat %s: %s", f.name, exc)
@@ -417,4 +439,63 @@ class HeartbeatBeacon:
                 return data.get("active_soul", "")
             except Exception:
                 pass
+        return ""
+
+    def _detect_services(self) -> list[HeartbeatService]:
+        """Auto-detect locally running backend services.
+
+        Checks if well-known ports are listening on localhost.
+
+        Returns:
+            List of detected HeartbeatService entries.
+        """
+        import socket as _socket
+
+        services: list[HeartbeatService] = []
+        checks = [
+            ("qdrant", 6333, "http"),
+            ("falkordb", 6379, "redis"),
+        ]
+
+        for name, port, protocol in checks:
+            try:
+                s = _socket.create_connection(("127.0.0.1", port), timeout=1)
+                s.close()
+                services.append(HeartbeatService(
+                    name=name, port=port, protocol=protocol,
+                ))
+            except (OSError, _socket.timeout):
+                pass
+
+        return services
+
+    def _detect_tailscale_ip(self) -> str:
+        """Best-effort Tailscale IP detection.
+
+        Runs ``tailscale status --json`` and extracts the self IP.
+        Fails silently if Tailscale is not installed or not running.
+
+        Returns:
+            Tailscale IPv4 address or empty string.
+        """
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["tailscale", "status", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                ts_ips = data.get("Self", {}).get("TailscaleIPs", [])
+                # Prefer IPv4
+                for ip in ts_ips:
+                    if "." in ip:
+                        return ip
+                if ts_ips:
+                    return ts_ips[0]
+        except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+            pass
         return ""
