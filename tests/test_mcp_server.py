@@ -76,7 +76,7 @@ class TestToolListing:
     async def test_list_tools_returns_all(self):
         """list_tools returns all registered tools."""
         tools = await list_tools()
-        assert len(tools) == 38
+        assert len(tools) == 58
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -122,6 +122,32 @@ class TestToolListing:
             "skchat_inbox",
             "skchat_group_create",
             "skchat_group_send",
+            # Heartbeat
+            "heartbeat_pulse",
+            "heartbeat_peers",
+            "heartbeat_health",
+            "heartbeat_find_capable",
+            # File transfer
+            "file_send",
+            "file_receive",
+            "file_list",
+            "file_status",
+            # Pub/sub
+            "pubsub_publish",
+            "pubsub_subscribe",
+            "pubsub_poll",
+            "pubsub_topics",
+            # Memory fortress
+            "fortress_verify",
+            "fortress_seal_existing",
+            "fortress_status",
+            # Memory promoter
+            "promoter_sweep",
+            "promoter_history",
+            # KMS
+            "kms_status",
+            "kms_list_keys",
+            "kms_rotate",
         }
         assert names == expected
 
@@ -943,3 +969,418 @@ class TestSKChatTools:
         assert parsed["group_id"] == "grp-abc"
         assert parsed["group_name"] == "Test Group"
         assert parsed["stored"] is True
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: heartbeat tools
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatTools:
+    """Tests for heartbeat MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_pulse(self, tmp_path):
+        """heartbeat_pulse publishes a heartbeat."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("heartbeat_pulse", {"status": "alive"})
+        parsed = _extract_json(result)
+        assert parsed["agent_name"] == "opus"
+        assert parsed["status"] == "alive"
+        assert parsed["capacity"]["cpu_count"] > 0
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_peers(self, tmp_path):
+        """heartbeat_peers discovers mesh peers."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            # Pulse first to create own heartbeat
+            await call_tool("heartbeat_pulse", {})
+            result = await call_tool("heartbeat_peers", {"include_self": True})
+        parsed = _extract_json(result)
+        assert len(parsed) >= 1
+        assert parsed[0]["agent_name"] == "opus"
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_health(self, tmp_path):
+        """heartbeat_health returns mesh summary."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            await call_tool("heartbeat_pulse", {})
+            result = await call_tool("heartbeat_health", {})
+        parsed = _extract_json(result)
+        assert parsed["total_peers"] >= 1
+        assert parsed["alive_peers"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_find_capable(self, tmp_path):
+        """heartbeat_find_capable searches by capability."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool(
+                "heartbeat_find_capable", {"capability": "nonexistent"},
+            )
+        parsed = _extract_json(result)
+        assert parsed["capability"] == "nonexistent"
+        assert parsed["peers"] == []
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: file transfer tools
+# ---------------------------------------------------------------------------
+
+
+class TestFileTransferTools:
+    """Tests for file transfer MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_file_send(self, tmp_path):
+        """file_send creates a transfer."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "security").mkdir()
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Hello world!", encoding="utf-8")
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("file_send", {
+                "file_path": str(test_file),
+                "recipient": "lumina",
+                "encrypt": False,
+            })
+        parsed = _extract_json(result)
+        assert parsed["filename"] == "test.txt"
+        assert parsed["sender"] == "opus"
+        assert parsed["recipient"] == "lumina"
+        assert parsed["total_chunks"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_file_list_empty(self, tmp_path):
+        """file_list returns empty for fresh system."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus"}), encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("file_list", {})
+        parsed = _extract_json(result)
+        assert parsed == []
+
+    @pytest.mark.asyncio
+    async def test_file_status(self, tmp_path):
+        """file_status returns subsystem summary."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus"}), encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("file_status", {})
+        parsed = _extract_json(result)
+        assert "outbox_transfers" in parsed
+        assert "inbox_transfers" in parsed
+
+    @pytest.mark.asyncio
+    async def test_file_send_and_receive(self, tmp_path):
+        """file_send then file_receive round-trips correctly."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "security").mkdir()
+
+        test_file = tmp_path / "roundtrip.txt"
+        test_file.write_text("Round trip test data!", encoding="utf-8")
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            send_result = await call_tool("file_send", {
+                "file_path": str(test_file),
+                "recipient": "lumina",
+                "encrypt": False,
+            })
+            transfer_id = _extract_json(send_result)["transfer_id"]
+
+            recv_result = await call_tool("file_receive", {
+                "transfer_id": transfer_id,
+                "output_dir": str(tmp_path / "downloads"),
+            })
+        parsed = _extract_json(recv_result)
+        assert parsed["transfer_id"] == transfer_id
+        output = Path(parsed["output_path"])
+        assert output.read_text(encoding="utf-8") == "Round trip test data!"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: pub/sub tools
+# ---------------------------------------------------------------------------
+
+
+class TestPubSubTools:
+    """Tests for pub/sub MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_pubsub_publish(self, tmp_path):
+        """pubsub_publish sends a message to a topic."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus"}), encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("pubsub_publish", {
+                "topic": "test.events",
+                "payload": {"event": "hello"},
+            })
+        parsed = _extract_json(result)
+        assert parsed["topic"] == "test.events"
+        assert parsed["sender"] == "opus"
+        assert "message_id" in parsed
+
+    @pytest.mark.asyncio
+    async def test_pubsub_subscribe(self, tmp_path):
+        """pubsub_subscribe creates a subscription."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus"}), encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("pubsub_subscribe", {"pattern": "test.*"})
+        parsed = _extract_json(result)
+        assert parsed["pattern"] == "test.*"
+
+    @pytest.mark.asyncio
+    async def test_pubsub_poll(self, tmp_path):
+        """pubsub_poll retrieves messages."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus"}), encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            # Subscribe and publish
+            await call_tool("pubsub_subscribe", {"pattern": "test.*"})
+            await call_tool("pubsub_publish", {
+                "topic": "test.events",
+                "payload": {"event": "ping"},
+            })
+            result = await call_tool("pubsub_poll", {})
+        parsed = _extract_json(result)
+        assert len(parsed) >= 1
+        assert parsed[0]["topic"] == "test.events"
+
+    @pytest.mark.asyncio
+    async def test_pubsub_topics(self, tmp_path):
+        """pubsub_topics lists available topics."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus"}), encoding="utf-8",
+        )
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            await call_tool("pubsub_publish", {
+                "topic": "agent.status",
+                "payload": {"status": "alive"},
+            })
+            result = await call_tool("pubsub_topics", {})
+        parsed = _extract_json(result)
+        assert len(parsed) >= 1
+        topics = [t["topic"] for t in parsed]
+        assert "agent.status" in topics
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: fortress tools
+# ---------------------------------------------------------------------------
+
+
+class TestFortressTools:
+    """Tests for memory fortress MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_fortress_status(self, tmp_path):
+        """fortress_status returns fortress state."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "security").mkdir()
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("fortress_status", {})
+        parsed = _extract_json(result)
+        assert "seal_key_source" in parsed
+
+    @pytest.mark.asyncio
+    async def test_fortress_seal_existing(self, tmp_path):
+        """fortress_seal_existing seals unsealed memories."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "security").mkdir()
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("fortress_seal_existing", {})
+        parsed = _extract_json(result)
+        assert "sealed" in parsed
+        assert parsed["sealed"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_fortress_verify_empty(self, tmp_path):
+        """fortress_verify on empty memory returns zero."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "security").mkdir()
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("fortress_verify", {})
+        parsed = _extract_json(result)
+        assert parsed["total"] == 0
+        assert parsed["tampered"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: promoter tools
+# ---------------------------------------------------------------------------
+
+
+class TestPromoterTools:
+    """Tests for memory promoter MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_promoter_sweep_empty(self, tmp_path):
+        """promoter_sweep on empty memory evaluates zero."""
+        (tmp_path / "memory").mkdir()
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("promoter_sweep", {"dry_run": True})
+        parsed = _extract_json(result)
+        assert parsed["evaluated"] == 0
+        assert parsed["dry_run"] is True
+
+    @pytest.mark.asyncio
+    async def test_promoter_history_empty(self, tmp_path):
+        """promoter_history returns empty for fresh system."""
+        (tmp_path / "memory").mkdir()
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("promoter_history", {})
+        parsed = _extract_json(result)
+        assert parsed == []
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: KMS tools
+# ---------------------------------------------------------------------------
+
+
+class TestKmsTools:
+    """Tests for KMS MCP tools."""
+
+    @pytest.mark.asyncio
+    async def test_kms_status(self, tmp_path):
+        """kms_status returns key management state."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234567890AB"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "security").mkdir()
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            result = await call_tool("kms_status", {})
+        parsed = _extract_json(result)
+        assert "master_key" in parsed
+        assert "total_keys" in parsed
+
+    @pytest.mark.asyncio
+    async def test_kms_list_keys(self, tmp_path):
+        """kms_list_keys returns key inventory."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234567890AB"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "security").mkdir()
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            # Initialize KMS to create master key
+            await call_tool("kms_status", {})
+            result = await call_tool("kms_list_keys", {})
+        parsed = _extract_json(result)
+        assert len(parsed) >= 1  # At least the master key
+
+    @pytest.mark.asyncio
+    async def test_kms_rotate(self, tmp_path):
+        """kms_rotate rotates a key."""
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234567890AB"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "security").mkdir()
+
+        with patch("skcapstone.mcp_server._home", return_value=tmp_path):
+            # Initialize to get master key
+            status_result = await call_tool("kms_status", {})
+            status = _extract_json(status_result)
+            master_id = status["master_key"]
+
+            result = await call_tool("kms_rotate", {
+                "key_id": master_id,
+                "reason": "test rotation",
+            })
+        parsed = _extract_json(result)
+        assert parsed["version"] == 2
+        assert "rotated" in parsed["message"]

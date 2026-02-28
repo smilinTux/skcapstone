@@ -34,6 +34,26 @@ Tools:
     trustee_monitor — Single autonomous monitoring pass
     trustee_logs    — Get agent log lines
     trustee_deployments — List all deployments
+    heartbeat_pulse — Publish agent heartbeat beacon
+    heartbeat_peers — Discover peers in the mesh
+    heartbeat_health — Mesh health summary
+    heartbeat_find_capable — Find peers with a capability
+    file_send       — Send encrypted file to agent
+    file_receive    — Receive and reassemble transfer
+    file_list       — List all file transfers
+    file_status     — File transfer subsystem status
+    pubsub_publish  — Publish message to topic
+    pubsub_subscribe — Subscribe to topic pattern
+    pubsub_poll     — Poll for new messages
+    pubsub_topics   — List all topics
+    fortress_verify — Verify memory integrity seals
+    fortress_seal_existing — Seal unsealed memories
+    fortress_status — Memory fortress status
+    promoter_sweep  — Run memory promotion sweep
+    promoter_history — View promotion history
+    kms_status      — KMS key management status
+    kms_list_keys   — List all KMS keys
+    kms_rotate      — Rotate a KMS key
 
 Invocation (all equivalent):
     skcapstone mcp serve                     # CLI entry point
@@ -102,6 +122,18 @@ def _text_response(text: str) -> list[TextContent]:
 def _error_response(message: str) -> list[TextContent]:
     """Return an error message as text content."""
     return [TextContent(type="text", text=json.dumps({"error": message}))]
+
+
+def _get_agent_name(home: Path) -> str:
+    """Read the agent name from identity file."""
+    identity_path = home / "identity" / "identity.json"
+    if identity_path.exists():
+        try:
+            data = json.loads(identity_path.read_text(encoding="utf-8"))
+            return data.get("name", "anonymous")
+        except Exception:
+            pass
+    return "anonymous"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -909,6 +941,351 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
+        # ── Heartbeat tools ──────────────────────────────────
+        Tool(
+            name="heartbeat_pulse",
+            description=(
+                "Publish a heartbeat beacon for this agent. "
+                "Writes the agent's current state, capacity, and capabilities "
+                "to the shared heartbeats directory so peers can discover it."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "Agent status: alive, busy, draining, offline (default: alive)",
+                    },
+                    "claimed_tasks": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Currently claimed task IDs",
+                    },
+                    "loaded_model": {
+                        "type": "string",
+                        "description": "Currently loaded AI model name",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="heartbeat_peers",
+            description=(
+                "Discover all peers in the agent mesh from heartbeat files. "
+                "Returns name, status, alive/stale, capabilities, and age "
+                "for each peer. Stale heartbeats (past TTL) are marked offline."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include_self": {
+                        "type": "boolean",
+                        "description": "Include own heartbeat (default: false)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="heartbeat_health",
+            description=(
+                "Get overall mesh health summary: total peers, alive/offline "
+                "counts, aggregated capabilities across all live nodes."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="heartbeat_find_capable",
+            description=(
+                "Find alive peers with a specific capability. "
+                "Use this to locate agents that can perform a task."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "capability": {
+                        "type": "string",
+                        "description": "The capability name to search for",
+                    },
+                },
+                "required": ["capability"],
+            },
+        ),
+        # ── File transfer tools ──────────────────────────────
+        Tool(
+            name="file_send",
+            description=(
+                "Prepare a file for encrypted transfer to another agent. "
+                "Splits into 256KB chunks, encrypts with KMS key, writes to outbox."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Absolute path to the file to send",
+                    },
+                    "recipient": {
+                        "type": "string",
+                        "description": "Recipient agent name",
+                    },
+                    "encrypt": {
+                        "type": "boolean",
+                        "description": "Whether to encrypt chunks (default: true)",
+                    },
+                },
+                "required": ["file_path", "recipient"],
+            },
+        ),
+        Tool(
+            name="file_receive",
+            description=(
+                "Receive and reassemble a file transfer. "
+                "Decrypts chunks, verifies integrity (SHA-256), writes assembled file."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "transfer_id": {
+                        "type": "string",
+                        "description": "The transfer ID to receive",
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Output directory (optional, defaults to inbox)",
+                    },
+                },
+                "required": ["transfer_id"],
+            },
+        ),
+        Tool(
+            name="file_list",
+            description=(
+                "List all file transfers with progress info. "
+                "Shows filename, size, direction, progress for each transfer."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "description": "Filter: 'send' or 'receive' (omit for all)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="file_status",
+            description=(
+                "Get file transfer subsystem status: outbox/inbox/completed counts."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # ── Pub/sub tools ────────────────────────────────────
+        Tool(
+            name="pubsub_publish",
+            description=(
+                "Publish a message to a topic. "
+                "Creates the topic if it doesn't exist. "
+                "Messages are distributed via Syncthing to all subscribers."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Topic name (e.g., 'agent.status', 'task.updates')",
+                    },
+                    "payload": {
+                        "type": "object",
+                        "description": "Message payload (any JSON object)",
+                    },
+                    "ttl_seconds": {
+                        "type": "integer",
+                        "description": "Message TTL in seconds (default: 3600)",
+                    },
+                },
+                "required": ["topic", "payload"],
+            },
+        ),
+        Tool(
+            name="pubsub_subscribe",
+            description=(
+                "Subscribe to a topic pattern. "
+                "Supports wildcards: 'agent.*' matches 'agent.status', 'agent.health'. "
+                "Subscription persists across sessions."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Topic pattern (supports * wildcards)",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        ),
+        Tool(
+            name="pubsub_poll",
+            description=(
+                "Poll for new messages on subscribed topics. "
+                "Returns messages since the last poll or a given timestamp."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Specific topic to poll (omit for all subscribed)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max messages to return (default: 50)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="pubsub_topics",
+            description=(
+                "List all known topics with message counts and last activity."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # ── Memory fortress tools ────────────────────────────
+        Tool(
+            name="fortress_verify",
+            description=(
+                "Verify integrity of all memories in a layer. "
+                "Checks HMAC-SHA256 seals to detect tampering."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "layer": {
+                        "type": "string",
+                        "description": "Memory layer: short-term, mid-term, or long-term (omit for all)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="fortress_seal_existing",
+            description=(
+                "Seal all unsealed memories with HMAC-SHA256 integrity seals. "
+                "Idempotent — already-sealed memories are skipped."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="fortress_status",
+            description=(
+                "Get Memory Fortress status: seal key source, "
+                "encryption enabled, total sealed/verified counts."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # ── Memory promoter tools ────────────────────────────
+        Tool(
+            name="promoter_sweep",
+            description=(
+                "Run a memory promotion sweep. Evaluates memories using "
+                "weighted scoring (access frequency, importance, emotion, age, tags) "
+                "and promotes qualifying entries to higher tiers."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview promotions without applying (default: false)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max memories to evaluate (default: unlimited)",
+                    },
+                    "layer": {
+                        "type": "string",
+                        "description": "Only evaluate this layer: short-term or mid-term",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="promoter_history",
+            description=(
+                "View recent memory promotion history — "
+                "shows which memories were promoted, scores, and timestamps."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max entries to return (default: 20)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        # ── KMS tools ────────────────────────────────────────
+        Tool(
+            name="kms_status",
+            description=(
+                "Get KMS (Key Management Service) status: master key state, "
+                "total keys, active/revoked counts, service key inventory."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="kms_list_keys",
+            description=(
+                "List all keys in the KMS. Shows key ID, type, status, "
+                "label, creation date, and rotation count."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key_type": {
+                        "type": "string",
+                        "description": "Filter by type: master, service, team, sub (omit for all)",
+                    },
+                    "include_revoked": {
+                        "type": "boolean",
+                        "description": "Include revoked keys (default: false)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="kms_rotate",
+            description=(
+                "Rotate a KMS key. Generates a new version of the key "
+                "and marks the old version as rotated. The old key material "
+                "remains available for decryption."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key_id": {
+                        "type": "string",
+                        "description": "The key ID to rotate",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Reason for rotation (default: 'scheduled')",
+                    },
+                },
+                "required": ["key_id"],
+            },
+        ),
     ]
 
 
@@ -959,6 +1336,32 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "trustee_monitor": _handle_trustee_monitor,
         "trustee_logs": _handle_trustee_logs,
         "trustee_deployments": _handle_trustee_deployments,
+        # Heartbeat
+        "heartbeat_pulse": _handle_heartbeat_pulse,
+        "heartbeat_peers": _handle_heartbeat_peers,
+        "heartbeat_health": _handle_heartbeat_health,
+        "heartbeat_find_capable": _handle_heartbeat_find_capable,
+        # File transfer
+        "file_send": _handle_file_send,
+        "file_receive": _handle_file_receive,
+        "file_list": _handle_file_list,
+        "file_status": _handle_file_status,
+        # Pub/sub
+        "pubsub_publish": _handle_pubsub_publish,
+        "pubsub_subscribe": _handle_pubsub_subscribe,
+        "pubsub_poll": _handle_pubsub_poll,
+        "pubsub_topics": _handle_pubsub_topics,
+        # Memory fortress
+        "fortress_verify": _handle_fortress_verify,
+        "fortress_seal_existing": _handle_fortress_seal_existing,
+        "fortress_status": _handle_fortress_status,
+        # Memory promoter
+        "promoter_sweep": _handle_promoter_sweep,
+        "promoter_history": _handle_promoter_history,
+        # KMS
+        "kms_status": _handle_kms_status,
+        "kms_list_keys": _handle_kms_list_keys,
+        "kms_rotate": _handle_kms_rotate,
     }
     handler = handlers.get(name)
     if handler is None:
@@ -2072,6 +2475,456 @@ async def _handle_trustee_deployments(_args: dict) -> list[TextContent]:
             }
             for d in deployments
         ],
+    })
+
+
+# ═══════════════════════════════════════════════════════════
+# Heartbeat Handlers
+# ═══════════════════════════════════════════════════════════
+
+
+async def _handle_heartbeat_pulse(args: dict) -> list[TextContent]:
+    """Publish a heartbeat beacon."""
+    from .heartbeat import HeartbeatBeacon
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    beacon = HeartbeatBeacon(home, agent_name=agent_name)
+    beacon.initialize()
+
+    hb = beacon.pulse(
+        status=args.get("status", "alive"),
+        claimed_tasks=args.get("claimed_tasks"),
+        loaded_model=args.get("loaded_model", ""),
+    )
+    return _json_response({
+        "agent_name": hb.agent_name,
+        "status": hb.status,
+        "hostname": hb.hostname,
+        "platform": hb.platform,
+        "ttl_seconds": hb.ttl_seconds,
+        "uptime_hours": hb.uptime_hours,
+        "capabilities": [c.name for c in hb.capabilities],
+        "fingerprint": hb.fingerprint,
+        "capacity": {
+            "cpu_count": hb.capacity.cpu_count,
+            "memory_total_mb": hb.capacity.memory_total_mb,
+            "disk_free_gb": hb.capacity.disk_free_gb,
+            "gpu_available": hb.capacity.gpu_available,
+        },
+    })
+
+
+async def _handle_heartbeat_peers(args: dict) -> list[TextContent]:
+    """Discover peers in the mesh."""
+    from .heartbeat import HeartbeatBeacon
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    beacon = HeartbeatBeacon(home, agent_name=agent_name)
+    beacon.initialize()
+
+    peers = beacon.discover_peers(include_self=args.get("include_self", False))
+    return _json_response([
+        {
+            "agent_name": p.agent_name,
+            "status": p.status,
+            "alive": p.alive,
+            "age_seconds": p.age_seconds,
+            "hostname": p.hostname,
+            "capabilities": p.capabilities,
+            "claimed_tasks": p.claimed_tasks,
+        }
+        for p in peers
+    ])
+
+
+async def _handle_heartbeat_health(_args: dict) -> list[TextContent]:
+    """Get mesh health summary."""
+    from .heartbeat import HeartbeatBeacon
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    beacon = HeartbeatBeacon(home, agent_name=agent_name)
+    beacon.initialize()
+
+    health = beacon.mesh_health()
+    return _json_response({
+        "total_peers": health.total_peers,
+        "alive_peers": health.alive_peers,
+        "offline_peers": health.offline_peers,
+        "busy_peers": health.busy_peers,
+        "total_capabilities": health.total_capabilities,
+        "peers": [
+            {"agent_name": p.agent_name, "status": p.status, "alive": p.alive}
+            for p in health.peers
+        ],
+    })
+
+
+async def _handle_heartbeat_find_capable(args: dict) -> list[TextContent]:
+    """Find peers with a specific capability."""
+    from .heartbeat import HeartbeatBeacon
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    beacon = HeartbeatBeacon(home, agent_name=agent_name)
+    beacon.initialize()
+
+    capability = args["capability"]
+    peers = beacon.find_capable(capability)
+    return _json_response({
+        "capability": capability,
+        "peers": [
+            {"agent_name": p.agent_name, "status": p.status, "capabilities": p.capabilities}
+            for p in peers
+        ],
+    })
+
+
+# ═══════════════════════════════════════════════════════════
+# File Transfer Handlers
+# ═══════════════════════════════════════════════════════════
+
+
+async def _handle_file_send(args: dict) -> list[TextContent]:
+    """Send a file to another agent."""
+    from .file_transfer import FileTransfer
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    ft = FileTransfer(home, agent_name=agent_name)
+    ft.initialize()
+
+    file_path = Path(args["file_path"])
+    manifest = ft.send(
+        file_path,
+        recipient=args["recipient"],
+        encrypt=args.get("encrypt", True),
+    )
+    return _json_response({
+        "transfer_id": manifest.transfer_id,
+        "filename": manifest.filename,
+        "file_size": manifest.file_size,
+        "total_chunks": manifest.total_chunks,
+        "sender": manifest.sender,
+        "recipient": manifest.recipient,
+        "file_sha256": manifest.file_sha256[:16] + "...",
+    })
+
+
+async def _handle_file_receive(args: dict) -> list[TextContent]:
+    """Receive and reassemble a file transfer."""
+    from .file_transfer import FileTransfer
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    ft = FileTransfer(home, agent_name=agent_name)
+    ft.initialize()
+
+    output_dir = Path(args["output_dir"]) if args.get("output_dir") else None
+    output_path = ft.receive(args["transfer_id"], output_dir=output_dir)
+    return _json_response({
+        "transfer_id": args["transfer_id"],
+        "output_path": str(output_path),
+        "file_size": output_path.stat().st_size,
+    })
+
+
+async def _handle_file_list(args: dict) -> list[TextContent]:
+    """List file transfers."""
+    from .file_transfer import FileTransfer
+
+    home = _home()
+    ft = FileTransfer(home, agent_name=_get_agent_name(home))
+    ft.initialize()
+
+    transfers = ft.list_transfers(direction=args.get("direction"))
+    return _json_response([
+        {
+            "transfer_id": t.transfer_id,
+            "filename": t.filename,
+            "file_size": t.file_size,
+            "direction": t.direction,
+            "progress": round(t.progress, 2),
+            "chunks_done": t.chunks_done,
+            "total_chunks": t.total_chunks,
+            "sender": t.sender,
+            "recipient": t.recipient,
+        }
+        for t in transfers
+    ])
+
+
+async def _handle_file_status(_args: dict) -> list[TextContent]:
+    """Get file transfer subsystem status."""
+    from .file_transfer import FileTransfer
+
+    home = _home()
+    ft = FileTransfer(home, agent_name=_get_agent_name(home))
+    ft.initialize()
+    return _json_response(ft.status())
+
+
+# ═══════════════════════════════════════════════════════════
+# Pub/Sub Handlers
+# ═══════════════════════════════════════════════════════════
+
+
+async def _handle_pubsub_publish(args: dict) -> list[TextContent]:
+    """Publish a message to a topic."""
+    from .pubsub import PubSub
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    ps = PubSub(home, agent_name=agent_name)
+    ps.initialize()
+
+    msg = ps.publish(
+        topic=args["topic"],
+        payload=args["payload"],
+        ttl_seconds=args.get("ttl_seconds", 3600),
+    )
+    return _json_response({
+        "message_id": msg.message_id,
+        "topic": msg.topic,
+        "sender": msg.sender,
+        "published_at": str(msg.published_at),
+    })
+
+
+async def _handle_pubsub_subscribe(args: dict) -> list[TextContent]:
+    """Subscribe to a topic pattern."""
+    from .pubsub import PubSub
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    ps = PubSub(home, agent_name=agent_name)
+    ps.initialize()
+
+    sub = ps.subscribe(args["pattern"])
+    return _json_response({
+        "pattern": sub.pattern,
+        "agent": agent_name,
+        "subscribed_at": str(sub.subscribed_at),
+    })
+
+
+async def _handle_pubsub_poll(args: dict) -> list[TextContent]:
+    """Poll for new messages."""
+    from .pubsub import PubSub
+
+    home = _home()
+    agent_name = _get_agent_name(home)
+    ps = PubSub(home, agent_name=agent_name)
+    ps.initialize()
+
+    messages = ps.poll(
+        topic=args.get("topic"),
+        limit=args.get("limit", 50),
+    )
+    return _json_response([
+        {
+            "message_id": m.message_id,
+            "topic": m.topic,
+            "sender": m.sender,
+            "payload": m.payload,
+            "published_at": str(m.published_at),
+        }
+        for m in messages
+    ])
+
+
+async def _handle_pubsub_topics(_args: dict) -> list[TextContent]:
+    """List all known topics."""
+    from .pubsub import PubSub
+
+    home = _home()
+    ps = PubSub(home, agent_name=_get_agent_name(home))
+    ps.initialize()
+    return _json_response(ps.list_topics())
+
+
+# ═══════════════════════════════════════════════════════════
+# Memory Fortress Handlers
+# ═══════════════════════════════════════════════════════════
+
+
+async def _handle_fortress_verify(args: dict) -> list[TextContent]:
+    """Verify memory integrity."""
+    from .memory_fortress import MemoryFortress
+
+    home = _home()
+    fortress = MemoryFortress(home)
+    fortress.initialize()
+
+    layer = args.get("layer")
+    if layer:
+        layer_dir = home / "memory" / layer
+        if not layer_dir.is_dir():
+            return _error_response(f"Layer directory not found: {layer}")
+        results = []
+        for f in sorted(layer_dir.glob("*.json")):
+            _, seal_result = fortress.verify_and_load(f)
+            results.append({
+                "memory_id": seal_result.memory_id,
+                "verified": seal_result.verified,
+                "tampered": seal_result.tampered,
+                "sealed": seal_result.sealed,
+            })
+    else:
+        seal_results = fortress.verify_all(home)
+        results = [
+            {
+                "memory_id": r.memory_id,
+                "verified": r.verified,
+                "tampered": r.tampered,
+                "sealed": r.sealed,
+            }
+            for r in seal_results
+        ]
+
+    tampered = sum(1 for r in results if r.get("tampered"))
+    verified = sum(1 for r in results if r.get("verified"))
+    return _json_response({
+        "total": len(results),
+        "verified": verified,
+        "tampered": tampered,
+        "unsealed": len(results) - verified - tampered,
+        "details": results,
+    })
+
+
+async def _handle_fortress_seal_existing(_args: dict) -> list[TextContent]:
+    """Seal all unsealed memories."""
+    from .memory_fortress import MemoryFortress
+
+    home = _home()
+    fortress = MemoryFortress(home)
+    fortress.initialize()
+
+    sealed_count = fortress.seal_existing(home)
+    return _json_response({
+        "sealed": sealed_count,
+        "message": f"Sealed {sealed_count} previously unsealed memories",
+    })
+
+
+async def _handle_fortress_status(_args: dict) -> list[TextContent]:
+    """Get Memory Fortress status."""
+    from .memory_fortress import MemoryFortress
+
+    home = _home()
+    fortress = MemoryFortress(home)
+    fortress.initialize()
+    return _json_response(fortress.status())
+
+
+# ═══════════════════════════════════════════════════════════
+# Memory Promoter Handlers
+# ═══════════════════════════════════════════════════════════
+
+
+async def _handle_promoter_sweep(args: dict) -> list[TextContent]:
+    """Run a memory promotion sweep."""
+    from .memory_promoter import PromotionEngine
+
+    home = _home()
+    engine = PromotionEngine(home)
+
+    result = engine.sweep(
+        dry_run=args.get("dry_run", False),
+        limit=args.get("limit"),
+        layer=args.get("layer"),
+    )
+    return _json_response({
+        "scanned": result.scanned,
+        "promoted": result.promoted,
+        "skipped": result.skipped,
+        "dry_run": result.dry_run,
+        "by_layer": result.by_layer,
+        "promotions": [
+            {
+                "memory_id": c.memory_id,
+                "current_layer": c.current_layer,
+                "target_layer": c.target_layer,
+                "score": round(c.score, 3),
+                "promoted": c.promoted,
+            }
+            for c in result.candidates
+            if c.promoted or result.dry_run
+        ],
+    })
+
+
+async def _handle_promoter_history(args: dict) -> list[TextContent]:
+    """View promotion history."""
+    from .memory_promoter import PromotionEngine
+
+    home = _home()
+    engine = PromotionEngine(home)
+    history = engine.get_history(limit=args.get("limit", 20))
+    return _json_response(history)
+
+
+# ═══════════════════════════════════════════════════════════
+# KMS Handlers
+# ═══════════════════════════════════════════════════════════
+
+
+async def _handle_kms_status(_args: dict) -> list[TextContent]:
+    """Get KMS status."""
+    from .kms import KeyStore
+
+    home = _home()
+    store = KeyStore(home)
+    store.initialize()
+    return _json_response(store.status())
+
+
+async def _handle_kms_list_keys(args: dict) -> list[TextContent]:
+    """List all KMS keys."""
+    from .kms import KeyStore
+
+    home = _home()
+    store = KeyStore(home)
+    store.initialize()
+
+    key_type = args.get("key_type")
+    include_revoked = args.get("include_revoked", False)
+    keys = store.list_keys(key_type=key_type, include_revoked=include_revoked)
+    return _json_response([
+        {
+            "key_id": k.key_id,
+            "key_type": k.key_type,
+            "status": k.status,
+            "label": k.label,
+            "created_at": str(k.created_at),
+            "version": k.version,
+            "rotation_count": k.rotation_count,
+        }
+        for k in keys
+    ])
+
+
+async def _handle_kms_rotate(args: dict) -> list[TextContent]:
+    """Rotate a KMS key."""
+    from .kms import KeyStore
+
+    home = _home()
+    store = KeyStore(home)
+    store.initialize()
+
+    new_key = store.rotate_key(
+        key_id=args["key_id"],
+        reason=args.get("reason", "scheduled"),
+    )
+    return _json_response({
+        "key_id": new_key.key_id,
+        "version": new_key.version,
+        "status": new_key.status,
+        "rotation_count": new_key.rotation_count,
+        "message": f"Key rotated to version {new_key.version}",
     })
 
 
