@@ -1,8 +1,13 @@
-"""Tests for SKSecurity KMS — sovereign key management."""
+"""Tests for SKSecurity KMS — sovereign key management.
+
+Tests the skcapstone KMS wrapper which delegates crypto operations
+to sksecurity.kms (AES-256-GCM key wrapping, HKDF-SHA256 derivation).
+"""
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -13,9 +18,9 @@ from skcapstone.kms import (
     KeyStore,
     KeyType,
     RotationEntry,
+    _decrypt_at_rest,
     _derive_key,
-    _fernet_decrypt,
-    _fernet_encrypt,
+    _encrypt_at_rest,
     _key_fingerprint,
     _key_id,
 )
@@ -75,22 +80,28 @@ class TestCryptoHelpers:
         assert len(k16) == 16
         assert len(k64) == 64
 
-    def test_fernet_roundtrip(self) -> None:
+    def test_aes_gcm_roundtrip(self) -> None:
         """Encrypt then decrypt returns original plaintext."""
         key = _derive_key(b"test", b"enc", length=32)
         plaintext = b"sovereign secrets"
-        ct = _fernet_encrypt(plaintext, key)
-        assert _fernet_decrypt(ct, key) == plaintext
+        ct = _encrypt_at_rest(plaintext, key)
+        assert _decrypt_at_rest(ct, key) == plaintext
 
-    def test_fernet_wrong_key_fails(self) -> None:
+    def test_aes_gcm_ciphertext_format(self) -> None:
+        """AES-256-GCM output is nonce (12) + ciphertext + tag (16)."""
+        key = os.urandom(32)
+        plaintext = b"test data"
+        ct = _encrypt_at_rest(plaintext, key)
+        # nonce=12, plaintext_len=9, tag=16 → total=37
+        assert len(ct) == 12 + len(plaintext) + 16
+
+    def test_aes_gcm_wrong_key_fails(self) -> None:
         """Decrypting with wrong key raises an error."""
-        from cryptography.fernet import InvalidToken
-
         key1 = _derive_key(b"key1", b"enc", length=32)
         key2 = _derive_key(b"key2", b"enc", length=32)
-        ct = _fernet_encrypt(b"data", key1)
-        with pytest.raises(InvalidToken):
-            _fernet_decrypt(ct, key2)
+        ct = _encrypt_at_rest(b"data", key1)
+        with pytest.raises(Exception):
+            _decrypt_at_rest(ct, key2)
 
     def test_key_fingerprint_deterministic(self) -> None:
         """Same material produces same fingerprint."""
@@ -143,6 +154,11 @@ class TestKeyStoreInit:
         master = store.initialize()
         assert master.key_type == KeyType.MASTER
         assert master.status == KeyStatus.ACTIVE
+
+    def test_algorithm_uses_aes_256_gcm(self, store: KeyStore) -> None:
+        """Default algorithm is HKDF-SHA256+AES-256-GCM."""
+        key = store.derive_service_key("test-algo")
+        assert "AES-256-GCM" in key.algorithm
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +394,7 @@ class TestListingAndStatus:
         assert status["active"] >= 3  # master + service + team
         assert "service" in status["by_type"]
         assert "team" in status["by_type"]
+        assert "backend_available" in status
 
     def test_get_key_material(self, store: KeyStore) -> None:
         """Raw key material can be retrieved."""
@@ -391,6 +408,47 @@ class TestListingAndStatus:
         store.revoke_key(key.key_id)
         with pytest.raises(ValueError, match="revoked"):
             store.get_key_material(key.key_id)
+
+
+# ---------------------------------------------------------------------------
+# Backend integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestBackendIntegration:
+    """Tests for sksecurity KMS backend integration."""
+
+    def test_backend_property_available(self, store: KeyStore) -> None:
+        """Backend property returns KMS when sksecurity is installed."""
+        from skcapstone.kms import _HAS_BACKEND
+        if _HAS_BACKEND:
+            assert store.backend is not None
+            assert store.backend.is_unsealed
+        else:
+            assert store.backend is None
+
+    def test_status_reports_backend(self, store: KeyStore) -> None:
+        """Status includes backend availability information."""
+        status = store.status()
+        assert "backend_available" in status
+        assert "backend_unsealed" in status
+
+    def test_backend_4_tier_operations(self, store: KeyStore) -> None:
+        """When backend is available, 4-tier operations work."""
+        from skcapstone.kms import _HAS_BACKEND
+        if not _HAS_BACKEND:
+            pytest.skip("sksecurity not installed")
+
+        backend = store.backend
+        team_key = backend.create_team_key("backend-team")
+        assert team_key.team_id == "backend-team"
+
+        agent_key = backend.create_agent_key("backend-team", "agent-01")
+        assert agent_key.agent_id == "agent-01"
+
+        dek = backend.create_dek("backend-team", "agent-01", purpose="test")
+        raw_dek = backend.unwrap_dek(dek.key_id)
+        assert len(raw_dek) == 32
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +470,16 @@ class TestModels:
         assert record.status == KeyStatus.ACTIVE
         assert record.version == 1
         assert record.members == []
+
+    def test_key_record_default_algorithm(self) -> None:
+        """KeyRecord default algorithm is AES-256-GCM based."""
+        record = KeyRecord(
+            key_id="test",
+            key_type=KeyType.SERVICE,
+            label="test",
+            fingerprint="abc",
+        )
+        assert "AES-256-GCM" in record.algorithm
 
     def test_rotation_entry_serializes(self) -> None:
         """RotationEntry can be serialized to JSON."""

@@ -1,9 +1,9 @@
 """
 SKSecurity KMS — Sovereign Key Management Service.
 
-Manages cryptographic keys for agents and teams: derivation, rotation,
-team membership, and audited access. Built on HKDF for derivation and
-Fernet (AES-128-CBC + HMAC-SHA256) for key-at-rest encryption.
+Wraps sksecurity.kms.KMS for cryptographic operations while providing
+agent-specific features: service key derivation, team member ACLs,
+label-based lookup, and key expiry management.
 
 Every operation is logged to the security audit trail.
 
@@ -14,18 +14,28 @@ Key hierarchy:
         ├── Team keys (shared keys with member ACL)
         └── Subkeys (delegatable, revocable)
 
+Crypto backend: sksecurity.kms — AES-256-GCM key wrapping,
+HKDF-SHA256 derivation, scrypt master key sealing.
+
 Storage layout:
     ~/.skcapstone/security/kms/
     ├── keystore.json          # Key metadata (KeyRecord list)
     ├── keys/                  # Encrypted key material
-    │   └── <key_id>.key.enc   # Fernet-encrypted raw key bytes
-    └── rotation-log.json      # Key rotation history
+    │   └── <key_id>.key.enc   # AES-256-GCM encrypted raw key bytes
+    ├── rotation-log.json      # Key rotation history
+    └── backend/               # sksecurity KMS 4-tier hierarchy
+        ├── keys/              # Wrapped keys (master→team→agent→DEK)
+        └── audit.log          # Backend audit trail
 
 Usage:
     store = KeyStore(home)
     key = store.derive_service_key("api-gateway")
     team_key = store.create_team_key("dev-team", members=["opus", "lumina"])
     store.rotate_key(key.key_id)
+
+    # Access the full sksecurity 4-tier KMS backend:
+    backend = store.backend
+    backend.create_team_key("deployment-alpha")
 """
 
 from __future__ import annotations
@@ -43,6 +53,25 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("skcapstone.kms")
+
+
+# ---------------------------------------------------------------------------
+# sksecurity backend integration
+# ---------------------------------------------------------------------------
+
+try:
+    from sksecurity.kms import (
+        KMS as BackendKMS,
+        FileKeyStore as BackendFileKeyStore,
+        _hkdf_derive as _backend_hkdf,
+        _aes_gcm_encrypt as _backend_encrypt,
+        _aes_gcm_decrypt as _backend_decrypt,
+    )
+    _HAS_BACKEND = True
+except ImportError:
+    _HAS_BACKEND = False
+    BackendKMS = None  # type: ignore[assignment,misc]
+    BackendFileKeyStore = None  # type: ignore[assignment,misc]
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +101,7 @@ class KeyRecord(BaseModel):
 
     key_id: str = Field(description="Unique key identifier (SHA-256 hash)")
     key_type: KeyType
-    algorithm: str = Field(default="HKDF-SHA256+Fernet")
+    algorithm: str = Field(default="HKDF-SHA256+AES-256-GCM")
     label: str = Field(description="Human-readable label (e.g., 'api-gateway', 'dev-team')")
     parent_key_id: Optional[str] = Field(default=None, description="Parent key for derivations")
     fingerprint: str = Field(description="SHA-256 of the raw key material")
@@ -98,11 +127,14 @@ class RotationEntry(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Cryptographic helpers
+# Cryptographic helpers — delegates to sksecurity when available
 # ---------------------------------------------------------------------------
 
 def _derive_key(master_material: bytes, info: bytes, length: int = 32) -> bytes:
     """Derive a key using HKDF-SHA256.
+
+    Delegates to sksecurity.kms._hkdf_derive when available, otherwise
+    uses the cryptography library directly.
 
     Args:
         master_material: Input keying material.
@@ -112,6 +144,10 @@ def _derive_key(master_material: bytes, info: bytes, length: int = 32) -> bytes:
     Returns:
         Derived key bytes.
     """
+    if _HAS_BACKEND:
+        info_str = info.decode("utf-8") if isinstance(info, bytes) else info
+        return _backend_hkdf(master_material, info_str, length)
+
     from cryptography.hazmat.primitives.hashes import SHA256
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -124,41 +160,51 @@ def _derive_key(master_material: bytes, info: bytes, length: int = 32) -> bytes:
     return hkdf.derive(master_material)
 
 
-def _fernet_encrypt(data: bytes, key_material: bytes) -> bytes:
-    """Encrypt data with Fernet (AES-128-CBC + HMAC-SHA256).
+def _encrypt_at_rest(data: bytes, key_material: bytes) -> bytes:
+    """Encrypt data for at-rest storage using AES-256-GCM.
 
-    The Fernet key is derived from the first 32 bytes of the key
-    material, base64-url-encoded to meet Fernet's 32-byte requirement.
+    Returns nonce (12 bytes) || ciphertext || tag (16 bytes).
+    Delegates to sksecurity.kms._aes_gcm_encrypt when available.
 
     Args:
         data: Plaintext bytes.
-        key_material: At least 32 bytes of key material.
+        key_material: 32-byte AES key.
 
     Returns:
-        Ciphertext bytes (Fernet token).
+        Ciphertext bytes (nonce || ciphertext || tag).
     """
-    import base64
-    from cryptography.fernet import Fernet
+    if _HAS_BACKEND:
+        return _backend_encrypt(key_material, data)
 
-    fernet_key = base64.urlsafe_b64encode(key_material[:32])
-    return Fernet(fernet_key).encrypt(data)
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    nonce = os.urandom(12)
+    aesgcm = AESGCM(key_material[:32])
+    ct = aesgcm.encrypt(nonce, data, None)
+    return nonce + ct
 
 
-def _fernet_decrypt(token: bytes, key_material: bytes) -> bytes:
-    """Decrypt a Fernet token.
+def _decrypt_at_rest(token: bytes, key_material: bytes) -> bytes:
+    """Decrypt data from at-rest AES-256-GCM storage.
+
+    Expects nonce (12 bytes) || ciphertext || tag (16 bytes).
+    Delegates to sksecurity.kms._aes_gcm_decrypt when available.
 
     Args:
-        token: Ciphertext bytes (Fernet token).
-        key_material: Same key material used for encryption.
+        token: Ciphertext bytes (nonce || ciphertext || tag).
+        key_material: 32-byte AES key.
 
     Returns:
         Plaintext bytes.
     """
-    import base64
-    from cryptography.fernet import Fernet
+    if _HAS_BACKEND:
+        return _backend_decrypt(key_material, token)
 
-    fernet_key = base64.urlsafe_b64encode(key_material[:32])
-    return Fernet(fernet_key).decrypt(token)
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    nonce, ct = token[:12], token[12:]
+    aesgcm = AESGCM(key_material[:32])
+    return aesgcm.decrypt(nonce, ct, None)
 
 
 def _key_fingerprint(raw: bytes) -> str:
@@ -179,9 +225,14 @@ def _key_id(label: str, key_type: KeyType, version: int = 1) -> str:
 class KeyStore:
     """Sovereign key management store.
 
-    Manages the full lifecycle of cryptographic keys: derivation,
-    storage, rotation, team membership, and revocation. All operations
-    are audited via the security pillar.
+    Wraps sksecurity.kms.KMS for cryptographic operations while
+    providing agent-specific key lifecycle management: derivation,
+    storage, rotation, team membership, and revocation.
+
+    When sksecurity is installed, the full 4-tier key hierarchy
+    (master -> team -> agent -> DEK) is available via the ``backend``
+    property. The agent-level API (service keys, team ACLs, subkeys)
+    is always available regardless of sksecurity availability.
 
     Args:
         home: Agent home directory (~/.skcapstone).
@@ -194,12 +245,25 @@ class KeyStore:
         self._keystore_file = self._kms_dir / "keystore.json"
         self._rotation_log = self._kms_dir / "rotation-log.json"
         self._master_material: Optional[bytes] = None
+        self._backend_kms: Optional[Any] = None
+
+    @property
+    def backend(self) -> Optional[Any]:
+        """Access the sksecurity KMS backend for 4-tier operations.
+
+        Returns the underlying sksecurity.kms.KMS instance (unsealed)
+        for direct team/agent/DEK key management. Returns None if
+        sksecurity is not installed or backend initialization failed.
+        """
+        return self._backend_kms
 
     def initialize(self) -> KeyRecord:
         """Initialize the KMS and derive the master key.
 
         The master key is derived from the agent's identity fingerprint
         via HKDF. If no identity exists, a random master is generated.
+        When sksecurity is available, also initializes the 4-tier
+        backend KMS.
 
         Returns:
             KeyRecord for the master key.
@@ -211,6 +275,7 @@ class KeyStore:
         master = next((r for r in existing if r.key_type == KeyType.MASTER), None)
         if master and master.status == KeyStatus.ACTIVE:
             self._master_material = self._load_key_material(master.key_id)
+            self._init_backend()
             return master
 
         identity_material = self._get_identity_material()
@@ -226,6 +291,7 @@ class KeyStore:
 
         self._save_key_material(record.key_id, raw_master)
         self._append_record(record)
+        self._init_backend()
         self._audit("KMS_INIT", f"KMS initialized, master key {record.key_id}")
 
         return record
@@ -353,7 +419,7 @@ class KeyStore:
             label=team_name,
             fingerprint=_key_fingerprint(raw),
             members=members or [],
-            algorithm="random+Fernet",
+            algorithm="random+AES-256-GCM",
         )
 
         self._save_key_material(record.key_id, raw)
@@ -644,11 +710,37 @@ class KeyStore:
             "by_type": by_type,
             "expiring_soon": [r.label for r in expiring_soon],
             "kms_dir": str(self._kms_dir),
+            "backend_available": _HAS_BACKEND,
+            "backend_unsealed": (
+                self._backend_kms.is_unsealed if self._backend_kms else False
+            ),
         }
 
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
+
+    def _init_backend(self) -> None:
+        """Initialize the sksecurity KMS backend if available."""
+        if not _HAS_BACKEND or self._backend_kms is not None:
+            return
+
+        try:
+            backend_dir = self._kms_dir / "backend"
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            store = BackendFileKeyStore(store_dir=backend_dir / "keys")
+            self._backend_kms = BackendKMS(
+                store=store,
+                audit_path=backend_dir / "audit.log",
+            )
+            passphrase = hashlib.sha256(
+                self._get_identity_material()
+            ).hexdigest()
+            self._backend_kms.unseal(passphrase)
+            logger.debug("sksecurity KMS backend initialized and unsealed")
+        except Exception as exc:
+            logger.warning("Failed to initialize sksecurity KMS backend: %s", exc)
+            self._backend_kms = None
 
     def _ensure_master(self) -> KeyRecord:
         """Ensure the master key is loaded."""
@@ -760,10 +852,10 @@ class KeyStore:
         return matches[-1] if matches else None
 
     def _save_key_material(self, key_id: str, raw: bytes) -> None:
-        """Encrypt and save raw key material to disk."""
+        """Encrypt and save raw key material to disk using AES-256-GCM."""
         self._keys_dir.mkdir(parents=True, exist_ok=True)
         enc_key = self._get_encryption_key()
-        encrypted = _fernet_encrypt(raw, enc_key)
+        encrypted = _encrypt_at_rest(raw, enc_key)
         (self._keys_dir / f"{key_id}.key.enc").write_bytes(encrypted)
 
     def _load_key_material(self, key_id: str) -> bytes:
@@ -772,7 +864,7 @@ class KeyStore:
         if not key_file.exists():
             raise ValueError(f"Key material not found for '{key_id}'")
         enc_key = self._get_encryption_key()
-        return _fernet_decrypt(key_file.read_bytes(), enc_key)
+        return _decrypt_at_rest(key_file.read_bytes(), enc_key)
 
     def _get_encryption_key(self) -> bytes:
         """Get the encryption key for at-rest key storage.
