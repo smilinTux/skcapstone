@@ -54,6 +54,7 @@ Tools:
     kms_status      — KMS key management status
     kms_list_keys   — List all KMS keys
     kms_rotate      — Rotate a KMS key
+    model_route     — Route task to optimal model tier/name
 
 Invocation (all equivalent):
     skcapstone mcp serve                     # CLI entry point
@@ -1404,6 +1405,51 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # Model Router
+        Tool(
+            name="model_route",
+            description=(
+                "Route a task to the optimal model tier and concrete model name. "
+                "Accepts a task description, optional tags, privacy/localhost flags, "
+                "and token estimate. Returns the selected tier (fast/code/reason/"
+                "nuance/local), model name, and reasoning. Use this to automatically "
+                "select the best model for any task based on complexity, type, and "
+                "constraints."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "What the task is about",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Classification tags (e.g. ['code', 'refactor']). "
+                            "Used for rule-based tier matching."
+                        ),
+                    },
+                    "requires_localhost": {
+                        "type": "boolean",
+                        "description": "Force LOCAL tier on originating node (default: false)",
+                    },
+                    "privacy_sensitive": {
+                        "type": "boolean",
+                        "description": "Force LOCAL tier — data never leaves node (default: false)",
+                    },
+                    "estimated_tokens": {
+                        "type": "integer",
+                        "description": (
+                            "Rough token budget hint. Tasks > 16000 tokens "
+                            "default to REASON tier when no tag rule matches."
+                        ),
+                    },
+                },
+                "required": ["description"],
+            },
+        ),
     ]
 
 
@@ -1486,6 +1532,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "skseed_philosopher": _handle_skseed_philosopher,
         "skseed_truth_check": _handle_skseed_truth_check,
         "skseed_alignment": _handle_skseed_alignment,
+        # Model Router
+        "model_route": _handle_model_route,
     }
     handler = handlers.get(name)
     if handler is None:
@@ -1498,7 +1546,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 def _get_memory_backend_health() -> dict:
-    """Get health status of all memory backends (sqlite, qdrant, falkordb)."""
+    """Get health status of all memory backends (sqlite, skvector, skgraph)."""
     try:
         from .memory_adapter import get_unified
 
@@ -1511,9 +1559,9 @@ def _get_memory_backend_health() -> dict:
         if "primary" in health:
             backends["sqlite"] = "ok" if health["primary"].get("ok") else "error"
         if "vector" in health:
-            backends["qdrant"] = "ok" if health["vector"].get("ok") else "error"
+            backends["skvector"] = "ok" if health["vector"].get("ok") else "error"
         if "graph" in health:
-            backends["falkordb"] = "ok" if health["graph"].get("ok") else "error"
+            backends["skgraph"] = "ok" if health["graph"].get("ok") else "error"
         return backends or {"json": "ok"}
     except Exception:
         return {"json": "ok"}
@@ -3122,6 +3170,25 @@ async def _handle_skseed_alignment(args: dict) -> list[TextContent]:
         action=args.get("action", "status"),
     )
     return _json_response(result)
+
+
+# ── Model Router ──────────────────────────────────────────
+
+
+async def _handle_model_route(args: dict) -> list[TextContent]:
+    """Route a task to the optimal model tier and name."""
+    from .model_router import ModelRouter, TaskSignal
+
+    signal = TaskSignal(
+        description=args.get("description", ""),
+        tags=args.get("tags", []),
+        requires_localhost=args.get("requires_localhost", False),
+        privacy_sensitive=args.get("privacy_sensitive", False),
+        estimated_tokens=args.get("estimated_tokens", 0),
+    )
+    router = ModelRouter()
+    decision = router.route(signal)
+    return _json_response(decision.model_dump())
 
 
 # ═══════════════════════════════════════════════════════════

@@ -71,7 +71,7 @@ agents:
       cores: 2
       disk: "15g"
     soul_blueprint: "souls/dev-beta.yaml"
-    skills: [sql, qdrant, supabase, backup]
+    skills: [sql, skvector, supabase, backup]
     depends_on: [sentinel]
 
   watchdog:

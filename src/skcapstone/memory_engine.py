@@ -223,7 +223,7 @@ def search(
 ) -> list[MemoryEntry]:
     """Search memories by content and/or tags.
 
-    Uses unified backend (semantic search via Qdrant) if available,
+    Uses unified backend (semantic search via SKVector) if available,
     falls back to regex matching on JSON files.
 
     Args:

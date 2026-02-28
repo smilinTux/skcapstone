@@ -2,12 +2,12 @@
 Memory Adapter — bridge between skcapstone's MemoryEntry and skmemory's Memory.
 
 Provides a unified memory backend that routes through skmemory's three-tier
-architecture (SQLite + Qdrant + FalkorDB) while keeping the existing JSON
+architecture (SQLite + SKVector + SKGraph) while keeping the existing JSON
 engine as a fallback for offline/minimal deployments.
 
 Environment variables:
-    SKMEMORY_QDRANT_URL  — Qdrant server URL (enables semantic search)
-    SKMEMORY_FALKORDB_URL — FalkorDB/Redis URL (enables graph traversal)
+    SKMEMORY_SKVECTOR_URL  — SKVector server URL (enables semantic search)
+    SKMEMORY_SKGRAPH_URL — SKGraph/Redis URL (enables graph traversal)
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _try_endpoint_selector() -> tuple[Optional[str], Optional[str], Optional[str
     """Try to resolve backend URLs via EndpointSelector.
 
     Returns:
-        Tuple of (qdrant_url, qdrant_key, falkordb_url) from the selector,
+        Tuple of (skvector_url, skvector_key, skgraph_url) from the selector,
         or (None, None, None) if the selector is not available/configured.
     """
     try:
@@ -64,32 +64,32 @@ def _try_endpoint_selector() -> tuple[Optional[str], Optional[str], Optional[str
         if cfg is None:
             return None, None, None
 
-        qdrant_url = os.environ.get("SKMEMORY_QDRANT_URL") or cfg.qdrant_url
-        qdrant_key = os.environ.get("SKMEMORY_QDRANT_KEY") or cfg.qdrant_key
-        falkordb_url = os.environ.get("SKMEMORY_FALKORDB_URL") or cfg.falkordb_url
+        skvector_url = os.environ.get("SKMEMORY_SKVECTOR_URL") or cfg.skvector_url
+        skvector_key = os.environ.get("SKMEMORY_SKVECTOR_KEY") or cfg.skvector_key
+        skgraph_url = os.environ.get("SKMEMORY_SKGRAPH_URL") or cfg.skgraph_url
 
-        qdrant_eps = build_endpoint_list(qdrant_url, cfg.qdrant_endpoints)
-        falkordb_eps = build_endpoint_list(falkordb_url, cfg.falkordb_endpoints)
+        skvector_eps = build_endpoint_list(skvector_url, cfg.skvector_endpoints)
+        skgraph_eps = build_endpoint_list(skgraph_url, cfg.skgraph_endpoints)
 
-        if len(qdrant_eps) <= 1 and len(falkordb_eps) <= 1 and not cfg.heartbeat_discovery:
+        if len(skvector_eps) <= 1 and len(skgraph_eps) <= 1 and not cfg.heartbeat_discovery:
             return None, None, None
 
         selector = EndpointSelector(
-            qdrant_endpoints=qdrant_eps,
-            falkordb_endpoints=falkordb_eps,
+            skvector_endpoints=skvector_eps,
+            skgraph_endpoints=skgraph_eps,
             config=RoutingConfig(strategy=cfg.routing_strategy),
         )
 
         if cfg.heartbeat_discovery:
             selector.discover_from_heartbeats()
 
-        best_qdrant = selector.select_qdrant()
-        best_falkordb = selector.select_falkordb()
+        best_skvector = selector.select_skvector()
+        best_skgraph = selector.select_skgraph()
 
         return (
-            best_qdrant.url if best_qdrant else qdrant_url,
-            qdrant_key,
-            best_falkordb.url if best_falkordb else falkordb_url,
+            best_skvector.url if best_skvector else skvector_url,
+            skvector_key,
+            best_skgraph.url if best_skgraph else skgraph_url,
         )
     except Exception as e:
         logger.debug("EndpointSelector not available: %s", e)
@@ -113,31 +113,31 @@ def _get_store() -> Optional["skmemory.MemoryStore"]:
         from skmemory.backends.sqlite_backend import SQLiteBackend
 
         # Try endpoint selector first for HA routing
-        sel_qdrant, sel_key, sel_falkordb = _try_endpoint_selector()
+        sel_skvector, sel_key, sel_skgraph = _try_endpoint_selector()
 
-        qdrant_url = sel_qdrant or os.environ.get("SKMEMORY_QDRANT_URL")
-        qdrant_key = sel_key or os.environ.get("SKMEMORY_QDRANT_KEY")
-        falkordb_url = sel_falkordb or os.environ.get("SKMEMORY_FALKORDB_URL")
+        skvector_url = sel_skvector or os.environ.get("SKMEMORY_SKVECTOR_URL")
+        skvector_key = sel_key or os.environ.get("SKMEMORY_SKVECTOR_KEY")
+        skgraph_url = sel_skgraph or os.environ.get("SKMEMORY_SKGRAPH_URL")
 
         vector = None
-        if qdrant_url:
+        if skvector_url:
             try:
-                from skmemory.backends.qdrant_backend import QdrantBackend
+                from skmemory.backends.skvector_backend import SKVectorBackend
 
-                vector = QdrantBackend(url=qdrant_url, api_key=qdrant_key)
-                logger.info("Qdrant backend enabled at %s", qdrant_url)
+                vector = SKVectorBackend(url=skvector_url, api_key=skvector_key)
+                logger.info("SKVector backend enabled at %s", skvector_url)
             except Exception as e:
-                logger.warning("Could not initialize Qdrant backend: %s", e)
+                logger.warning("Could not initialize SKVector backend: %s", e)
 
         graph = None
-        if falkordb_url:
+        if skgraph_url:
             try:
-                from skmemory.backends.falkordb_backend import FalkorDBBackend
+                from skmemory.backends.skgraph_backend import SKGraphBackend
 
-                graph = FalkorDBBackend(url=falkordb_url)
-                logger.info("FalkorDB backend enabled at %s", falkordb_url)
+                graph = SKGraphBackend(url=skgraph_url)
+                logger.info("SKGraph backend enabled at %s", skgraph_url)
             except Exception as e:
-                logger.warning("Could not initialize FalkorDB backend: %s", e)
+                logger.warning("Could not initialize SKGraph backend: %s", e)
 
         store = MemoryStore(primary=SQLiteBackend(), vector=vector, graph=graph)
         logger.info("Unified memory backend active")
@@ -260,13 +260,13 @@ def verify_sync() -> dict:
         }
 
     if "vector" in health:
-        result["backends"]["qdrant"] = {
+        result["backends"]["skvector"] = {
             "ok": health["vector"].get("ok", False),
             "count": health["vector"].get("point_count", None),
         }
 
     if "graph" in health:
-        result["backends"]["falkordb"] = {
+        result["backends"]["skgraph"] = {
             "ok": health["graph"].get("ok", False),
             "count": health["graph"].get("node_count", None),
         }

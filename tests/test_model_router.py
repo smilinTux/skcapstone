@@ -6,6 +6,8 @@ Covers:
 - Token-based fallback to REASON
 - Tag-rule priority conflict resolution
 - Config load from YAML
+- Model name resolution per tier
+- MCP tool handler integration
 """
 
 from __future__ import annotations
@@ -331,3 +333,214 @@ class TestRouteDecisionContent:
         signal = TaskSignal(description="Regular coding task", tags=["implement"])
         decision = router.route(signal)
         assert decision.preferred_node is None
+
+
+# ---------------------------------------------------------------------------
+# Model name resolution
+# ---------------------------------------------------------------------------
+
+
+class TestModelNameResolution:
+    """Verify the correct concrete model is selected per tier."""
+
+    def test_default_fast_model(self, router: ModelRouter) -> None:
+        signal = TaskSignal(description="quick task", tags=["simple"])
+        decision = router.route(signal)
+        assert decision.model_name == "nemotron-49b"
+
+    def test_default_code_model(self, router: ModelRouter) -> None:
+        signal = TaskSignal(description="implement feature", tags=["code"])
+        decision = router.route(signal)
+        assert decision.model_name == "devstral"
+
+    def test_default_reason_model(self, router: ModelRouter) -> None:
+        signal = TaskSignal(description="system design", tags=["architecture"])
+        decision = router.route(signal)
+        assert decision.model_name == "deepseek-r1"
+
+    def test_default_nuance_model(self, router: ModelRouter) -> None:
+        signal = TaskSignal(description="write copy", tags=["marketing"])
+        decision = router.route(signal)
+        assert decision.model_name == "kimi-k2.5"
+
+    def test_default_local_model(self, router: ModelRouter) -> None:
+        signal = TaskSignal(description="private task", privacy_sensitive=True)
+        decision = router.route(signal)
+        assert decision.model_name == "llama-3.3-70b-local"
+
+    def test_unknown_tier_sentinel(self) -> None:
+        """Missing tier config produces an unknown-{tier} sentinel."""
+        config = ModelRouterConfig(tier_models={}, tag_rules=[])
+        router = ModelRouter(config=config)
+        signal = TaskSignal(description="task")
+        decision = router.route(signal)
+        assert decision.model_name == "unknown-fast"
+
+    def test_custom_model_name(self) -> None:
+        config = ModelRouterConfig(
+            tier_models={"code": ["my-custom-coder"]},
+            tag_rules=[TagRule(keywords=["code"], tier=ModelTier.CODE, priority=10)],
+        )
+        router = ModelRouter(config=config)
+        signal = TaskSignal(description="code task", tags=["code"])
+        decision = router.route(signal)
+        assert decision.model_name == "my-custom-coder"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestEdgeCases:
+    """Boundary conditions and unusual inputs."""
+
+    def test_empty_description(self, router: ModelRouter) -> None:
+        signal = TaskSignal(description="", tags=["code"])
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.CODE
+
+    def test_token_boundary_16000_is_fast(self, router: ModelRouter) -> None:
+        """Exactly 16000 tokens (not strictly >) stays FAST."""
+        signal = TaskSignal(description="boundary", estimated_tokens=16_000)
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+    def test_token_boundary_16001_is_reason(self, router: ModelRouter) -> None:
+        signal = TaskSignal(description="boundary", estimated_tokens=16_001)
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.REASON
+
+    def test_model_dump_serializable(self, router: ModelRouter) -> None:
+        """RouteDecision.model_dump() produces JSON-serializable dict."""
+        import json
+
+        signal = TaskSignal(description="test", tags=["code"])
+        decision = router.route(signal)
+        dumped = decision.model_dump()
+        serialized = json.dumps(dumped)
+        assert isinstance(serialized, str)
+        parsed = json.loads(serialized)
+        assert parsed["tier"] == "code"
+
+    def test_all_tag_keywords_covered(self, router: ModelRouter) -> None:
+        """Each default tag rule keyword individually routes to its tier."""
+        tier_keywords = {
+            ModelTier.CODE: ["code", "refactor", "debug", "test", "implement"],
+            ModelTier.REASON: ["architecture", "design", "analyze", "research", "plan"],
+            ModelTier.NUANCE: [
+                "marketing", "creative", "email", "copy", "comms", "writing",
+            ],
+            ModelTier.FAST: ["format", "rename", "lint", "simple", "trivial"],
+        }
+        for expected_tier, keywords in tier_keywords.items():
+            for kw in keywords:
+                signal = TaskSignal(description=f"task-{kw}", tags=[kw])
+                decision = router.route(signal)
+                assert decision.tier == expected_tier, (
+                    f"keyword '{kw}' routed to {decision.tier}, expected {expected_tier}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# MCP tool handler integration
+# ---------------------------------------------------------------------------
+
+
+class TestMCPModelRouteHandler:
+    """Test the _handle_model_route MCP tool handler."""
+
+    @pytest.fixture(autouse=True)
+    def _import_handler(self):
+        from skcapstone.mcp_server import _handle_model_route
+
+        self.handler = _handle_model_route
+
+    @pytest.mark.asyncio
+    async def test_basic_route(self) -> None:
+        result = await self.handler({"description": "implement login"})
+        assert len(result) == 1
+        import json
+
+        data = json.loads(result[0].text)
+        assert "tier" in data
+        assert "model_name" in data
+        assert "reasoning" in data
+
+    @pytest.mark.asyncio
+    async def test_route_with_tags(self) -> None:
+        import json
+
+        result = await self.handler({
+            "description": "refactor auth module",
+            "tags": ["code", "refactor"],
+        })
+        data = json.loads(result[0].text)
+        assert data["tier"] == "code"
+
+    @pytest.mark.asyncio
+    async def test_route_privacy_sensitive(self) -> None:
+        import json
+
+        result = await self.handler({
+            "description": "process medical records",
+            "privacy_sensitive": True,
+        })
+        data = json.loads(result[0].text)
+        assert data["tier"] == "local"
+
+    @pytest.mark.asyncio
+    async def test_route_localhost(self) -> None:
+        import json
+
+        result = await self.handler({
+            "description": "local benchmark",
+            "requires_localhost": True,
+        })
+        data = json.loads(result[0].text)
+        assert data["tier"] == "local"
+        assert data["preferred_node"] == "localhost"
+
+    @pytest.mark.asyncio
+    async def test_route_with_token_estimate(self) -> None:
+        import json
+
+        result = await self.handler({
+            "description": "big analysis",
+            "estimated_tokens": 30_000,
+        })
+        data = json.loads(result[0].text)
+        assert data["tier"] == "reason"
+
+    @pytest.mark.asyncio
+    async def test_route_minimal_args(self) -> None:
+        """Handler works with only the required 'description' field."""
+        import json
+
+        result = await self.handler({"description": "anything"})
+        data = json.loads(result[0].text)
+        assert data["tier"] == "fast"
+
+    @pytest.mark.asyncio
+    async def test_route_empty_description(self) -> None:
+        import json
+
+        result = await self.handler({"description": ""})
+        data = json.loads(result[0].text)
+        assert "tier" in data
+
+    @pytest.mark.asyncio
+    async def test_route_all_fields(self) -> None:
+        """Handler accepts all optional fields together."""
+        import json
+
+        result = await self.handler({
+            "description": "sensitive local code review",
+            "tags": ["code"],
+            "requires_localhost": False,
+            "privacy_sensitive": True,
+            "estimated_tokens": 50_000,
+        })
+        data = json.loads(result[0].text)
+        # privacy_sensitive takes precedence
+        assert data["tier"] == "local"

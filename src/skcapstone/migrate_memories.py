@@ -3,7 +3,7 @@ Memory Migration — move JSON memories to the unified three-tier backend.
 
 Scans ~/.skcapstone/memory/{short-term,mid-term,long-term}/*.json,
 converts each MemoryEntry to a skmemory Memory, and writes to
-SQLite (primary) + Qdrant (vector) + FalkorDB (graph).
+SQLite (primary) + SKVector (vector) + SKGraph (graph).
 
 Safe to re-run: deduplicates by memory_id.
 

@@ -49,7 +49,7 @@ DEFAULT_TTL_SECONDS = 300  # 5 minutes
 class HeartbeatService(BaseModel):
     """A backend service advertised in the heartbeat."""
 
-    name: str        # "qdrant", "falkordb"
+    name: str        # "skvector", "skgraph"
     port: int        # 6333, 6379
     protocol: str = "http"  # http, redis
 
@@ -453,8 +453,8 @@ class HeartbeatBeacon:
 
         services: list[HeartbeatService] = []
         checks = [
-            ("qdrant", 6333, "http"),
-            ("falkordb", 6379, "redis"),
+            ("skvector", 6333, "http"),
+            ("skgraph", 6379, "redis"),
         ]
 
         for name, port, protocol in checks:

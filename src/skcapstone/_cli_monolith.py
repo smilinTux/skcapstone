@@ -2166,7 +2166,7 @@ def memory_migrate(home: str, dry_run: bool, verify: bool):
     """Migrate JSON memories to the unified three-tier backend.
 
     Moves memories from ~/.skcapstone/memory/ JSON files into
-    SQLite + Qdrant (vector) + FalkorDB (graph). Safe to re-run.
+    SQLite + SKVector (vector) + SKGraph (graph). Safe to re-run.
 
     Examples:
 
@@ -2217,7 +2217,7 @@ def memory_migrate(home: str, dry_run: bool, verify: bool):
 def memory_verify(home: str):
     """Check consistency across memory backends.
 
-    Compares memory counts in SQLite, Qdrant, and FalkorDB.
+    Compares memory counts in SQLite, SKVector, and SKGraph.
     """
     from .memory_adapter import verify_sync
 

@@ -320,8 +320,8 @@ class TestMigrate:
         mock_store.list_memories.return_value = []
         mock_store.vector = MagicMock()
         mock_store.graph = MagicMock()
-        mock_store.vector.save.side_effect = RuntimeError("qdrant down")
-        mock_store.graph.index_memory.side_effect = RuntimeError("falkordb down")
+        mock_store.vector.save.side_effect = RuntimeError("skvector down")
+        mock_store.graph.index_memory.side_effect = RuntimeError("skgraph down")
         mock_get.return_value = mock_store
 
         mock_memory = MagicMock()
