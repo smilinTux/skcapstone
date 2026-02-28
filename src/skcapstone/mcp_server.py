@@ -2891,8 +2891,8 @@ async def _handle_kms_list_keys(args: dict) -> list[TextContent]:
     store.initialize()
 
     key_type = args.get("key_type")
-    include_revoked = args.get("include_revoked", False)
-    keys = store.list_keys(key_type=key_type, include_revoked=include_revoked)
+    include_inactive = args.get("include_revoked", False)
+    keys = store.list_keys(key_type=key_type, include_inactive=include_inactive)
     return _json_response([
         {
             "key_id": k.key_id,
@@ -2901,7 +2901,7 @@ async def _handle_kms_list_keys(args: dict) -> list[TextContent]:
             "label": k.label,
             "created_at": str(k.created_at),
             "version": k.version,
-            "rotation_count": k.rotation_count,
+            "algorithm": k.algorithm,
         }
         for k in keys
     ])
@@ -2923,7 +2923,6 @@ async def _handle_kms_rotate(args: dict) -> list[TextContent]:
         "key_id": new_key.key_id,
         "version": new_key.version,
         "status": new_key.status,
-        "rotation_count": new_key.rotation_count,
         "message": f"Key rotated to version {new_key.version}",
     })
 

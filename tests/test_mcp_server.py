@@ -1250,7 +1250,8 @@ class TestFortressTools:
         with patch("skcapstone.mcp_server._home", return_value=tmp_path):
             result = await call_tool("fortress_status", {})
         parsed = _extract_json(result)
-        assert "seal_key_source" in parsed
+        assert "enabled" in parsed
+        assert "seal_algorithm" in parsed
 
     @pytest.mark.asyncio
     async def test_fortress_seal_existing(self, tmp_path):
@@ -1303,7 +1304,7 @@ class TestPromoterTools:
         with patch("skcapstone.mcp_server._home", return_value=tmp_path):
             result = await call_tool("promoter_sweep", {"dry_run": True})
         parsed = _extract_json(result)
-        assert parsed["evaluated"] == 0
+        assert parsed["scanned"] == 0
         assert parsed["dry_run"] is True
 
     @pytest.mark.asyncio
@@ -1339,8 +1340,9 @@ class TestKmsTools:
         with patch("skcapstone.mcp_server._home", return_value=tmp_path):
             result = await call_tool("kms_status", {})
         parsed = _extract_json(result)
-        assert "master_key" in parsed
+        assert "initialized" in parsed
         assert "total_keys" in parsed
+        assert parsed["initialized"] is True
 
     @pytest.mark.asyncio
     async def test_kms_list_keys(self, tmp_path):
@@ -1372,10 +1374,11 @@ class TestKmsTools:
         (tmp_path / "security").mkdir()
 
         with patch("skcapstone.mcp_server._home", return_value=tmp_path):
-            # Initialize to get master key
-            status_result = await call_tool("kms_status", {})
-            status = _extract_json(status_result)
-            master_id = status["master_key"]
+            # Initialize and list keys to find master key
+            await call_tool("kms_status", {})
+            keys_result = await call_tool("kms_list_keys", {})
+            keys = _extract_json(keys_result)
+            master_id = keys[0]["key_id"]  # First key is master
 
             result = await call_tool("kms_rotate", {
                 "key_id": master_id,
