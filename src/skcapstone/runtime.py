@@ -94,6 +94,7 @@ class AgentRuntime:
         self.manifest.trust = pillars["trust"]
         self.manifest.security = pillars["security"]
         self.manifest.sync = pillars["sync"]
+        self.manifest.skills = pillars["skills"]
 
         self.manifest.last_awakened = datetime.now(timezone.utc)
         self._awakened = True
@@ -163,6 +164,61 @@ class AgentRuntime:
         self.manifest.connectors.append(connector)
         self.save_manifest()
         return connector
+
+    def load_skills(self, agent: Optional[str] = None) -> Optional[object]:
+        """Load SKSkills for this agent session via the SkillLoader.
+
+        Discovers installed skills for the agent namespace and loads them
+        into a SkillLoader so their tools and hooks are available at runtime.
+
+        The SkillLoader is returned so callers can call tools, fire hooks,
+        and enumerate resources directly.
+
+        Args:
+            agent: Agent namespace to load skills for. Defaults to the
+                   configured agent name (or 'global' as fallback).
+
+        Returns:
+            skskills.loader.SkillLoader with skills loaded, or None if
+            skskills is not installed.
+        """
+        try:
+            from skskills.loader import SkillLoader
+            from skskills.registry import SkillRegistry
+        except ImportError:
+            logger.debug("skskills not installed — skill loading unavailable")
+            return None
+
+        agent_name = agent or self.config.agent_name or "global"
+        registry = SkillRegistry()
+        loader = SkillLoader()
+
+        skills = registry.list_skills(agent_name)
+        if agent_name != "global":
+            skills.extend(registry.list_skills("global"))
+
+        loaded = 0
+        seen: set[str] = set()
+        for skill in skills:
+            name = skill.manifest.name
+            if name in seen:
+                continue
+            seen.add(name)
+            try:
+                loader.load(Path(skill.install_path))
+                loaded += 1
+            except Exception as exc:
+                logger.warning("Failed to load skill '%s': %s", name, exc)
+
+        # Sync loaded count back to manifest skills state
+        self.manifest.skills.loaded = loaded
+        self.manifest.skills.tools_available = len(loader.all_tools())
+
+        logger.info(
+            "Loaded %d skills for agent '%s' (%d tools available)",
+            loaded, agent_name, self.manifest.skills.tools_available,
+        )
+        return loader
 
     @property
     def is_initialized(self) -> bool:

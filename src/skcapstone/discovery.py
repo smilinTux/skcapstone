@@ -20,6 +20,7 @@ from .models import (
     MemoryState,
     PillarStatus,
     SecurityState,
+    SkillsState,
     SyncState,
     TrustState,
 )
@@ -322,14 +323,53 @@ def discover_sync(home: Path) -> SyncState:
     return _discover(home)
 
 
+def discover_skills(home: Path) -> SkillsState:
+    """Probe for SKSkills installations.
+
+    Checks ~/.skskills/installed/ for skills with a valid skill.yaml.
+    Reports installed count and skill names.
+
+    Args:
+        home: The agent home directory (~/.skcapstone). Unused directly but
+              kept for API consistency with other discover functions.
+
+    Returns:
+        SkillsState with current skill installation information.
+    """
+    import os
+
+    state = SkillsState()
+    skskills_home = Path(os.environ.get("SKSKILLS_HOME", "~/.skskills")).expanduser()
+    state.skskills_home = skskills_home
+
+    if not skskills_home.exists():
+        return state
+
+    installed_dir = skskills_home / "installed"
+    if installed_dir.exists():
+        skill_dirs = [
+            d for d in installed_dir.iterdir()
+            if d.is_dir() and (d / "skill.yaml").exists()
+        ]
+        state.installed = len(skill_dirs)
+        state.skill_names = sorted(d.name for d in skill_dirs)
+
+    if state.installed > 0:
+        state.status = PillarStatus.ACTIVE
+    elif skskills_home.exists():
+        state.status = PillarStatus.DEGRADED
+
+    return state
+
+
 def discover_all(home: Path) -> dict:
-    """Run full discovery across all pillars including sync.
+    """Run full discovery across all pillars including sync and skills.
 
     Args:
         home: The agent home directory (~/.skcapstone).
 
     Returns:
-        Dict with identity, memory, trust, security, sync states.
+        Dict with identity, memory, trust, security, sync, skills states.
     """
     return {
         "identity": discover_identity(home),
@@ -337,4 +377,5 @@ def discover_all(home: Path) -> dict:
         "trust": discover_trust(home),
         "security": discover_security(home),
         "sync": discover_sync(home),
+        "skills": discover_skills(home),
     }

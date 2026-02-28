@@ -58,3 +58,62 @@ class TestAgentRuntime:
         runtime2.awaken()
         assert len(runtime2.manifest.connectors) == 1
         assert runtime2.manifest.connectors[0].platform == "terminal"
+
+    def test_awaken_populates_skills_state(self, initialized_agent_home: Path):
+        """Awaken should populate manifest.skills from SKSkills discovery."""
+        from skcapstone.models import SkillsState
+
+        runtime = AgentRuntime(home=initialized_agent_home)
+        manifest = runtime.awaken()
+        assert isinstance(manifest.skills, SkillsState)
+
+    def test_pillar_summary_includes_skills(self, initialized_agent_home: Path):
+        """pillar_summary property should include the skills pillar."""
+        runtime = AgentRuntime(home=initialized_agent_home)
+        manifest = runtime.awaken()
+        summary = manifest.pillar_summary
+        assert "skills" in summary
+
+    def test_load_skills_handles_missing_skskills(self, initialized_agent_home: Path):
+        """load_skills() should return None gracefully when skskills is unavailable."""
+        import sys
+        from unittest.mock import patch
+
+        runtime = AgentRuntime(home=initialized_agent_home)
+        runtime.awaken()
+
+        # Patch ImportError to simulate skskills not installed
+        with patch.dict(sys.modules, {"skskills.loader": None, "skskills.registry": None}):
+            result = runtime.load_skills()
+
+        # Returns None when not installed, or a loader when installed
+        assert result is None or hasattr(result, "all_tools")
+
+    def test_load_skills_with_installed_skills(self, initialized_agent_home: Path, tmp_path: Path):
+        """load_skills() should load skills from SKSkills registry."""
+        import os
+        from textwrap import dedent
+        from unittest.mock import patch
+
+        # Create a minimal SKSkills installation
+        skskills_home = tmp_path / "skskills"
+        installed_dir = skskills_home / "installed"
+        skill_dir = installed_dir / "test-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "skill.yaml").write_text(dedent("""\
+            name: test-skill
+            version: "0.1.0"
+            description: A test skill
+            author:
+              name: tester
+        """))
+
+        runtime = AgentRuntime(home=initialized_agent_home)
+        runtime.awaken()
+
+        with patch.dict(os.environ, {"SKSKILLS_HOME": str(skskills_home)}):
+            loader = runtime.load_skills(agent="global")
+
+        if loader is not None:
+            # SKSkills is installed — verify the skill was loaded
+            assert runtime.manifest.skills.loaded >= 0

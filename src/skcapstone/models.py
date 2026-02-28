@@ -88,6 +88,21 @@ class SyncState(BaseModel):
     status: PillarStatus = PillarStatus.MISSING
 
 
+class SkillsState(BaseModel):
+    """SKSkills state — what the agent can DO.
+
+    Reflects the SKSkills installation at ~/.skskills/ and
+    the tools available to this agent via the skills registry.
+    """
+
+    installed: int = 0
+    loaded: int = 0
+    tools_available: int = 0
+    skill_names: list[str] = Field(default_factory=list)
+    skskills_home: Optional[Path] = None
+    status: PillarStatus = PillarStatus.MISSING
+
+
 class MemoryLayer(str, Enum):
     """Memory tier — determines retention and promotion."""
 
@@ -159,6 +174,7 @@ class AgentManifest(BaseModel):
     trust: TrustState = Field(default_factory=TrustState)
     security: SecurityState = Field(default_factory=SecurityState)
     sync: SyncState = Field(default_factory=SyncState)
+    skills: SkillsState = Field(default_factory=SkillsState)
 
     connectors: list[ConnectorInfo] = Field(default_factory=list)
 
@@ -188,13 +204,14 @@ class AgentManifest(BaseModel):
 
     @property
     def pillar_summary(self) -> dict[str, PillarStatus]:
-        """Quick view of all pillars including sync."""
+        """Quick view of all pillars including sync and skills."""
         return {
             "identity": self.identity.status,
             "memory": self.memory.status,
             "trust": self.trust.status,
             "security": self.security.status,
             "sync": self.sync.status,
+            "skills": self.skills.status,
         }
 
 
