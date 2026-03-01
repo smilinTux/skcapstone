@@ -16,6 +16,7 @@ from typing import Optional
 import click
 
 from ._common import AGENT_HOME, console, get_runtime
+from ._validators import validate_agent_name
 
 from rich.table import Table
 
@@ -99,6 +100,8 @@ def register_chat_commands(main: click.Group) -> None:
         """
         from ..chat import AgentChat
 
+        validate_agent_name(peer)
+
         home_path = Path(home).expanduser()
         if not home_path.exists():
             console.print("[bold red]No agent found.[/] Run skcapstone init first.")
@@ -131,6 +134,8 @@ def register_chat_commands(main: click.Group) -> None:
           skcapstone chat send opus "Deploy update ready" --thread deploy-01
         """
         from ..chat import AgentChat
+
+        validate_agent_name(peer)
 
         home_path = Path(home).expanduser()
         runtime = get_runtime(home_path)

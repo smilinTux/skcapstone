@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 
 from ._common import AGENT_HOME, console, status_icon
+from ._validators import validate_task_id
 from ..pillars.security import audit_event
 
 from rich.panel import Panel
@@ -165,6 +166,8 @@ def register_memory_commands(main: click.Group) -> None:
         """Recall a specific memory by ID."""
         from ..memory_engine import recall as mem_recall
 
+        validate_task_id(memory_id)  # memory IDs are hex UUIDs
+
         home_path = Path(home).expanduser()
         if not home_path.exists():
             console.print("[bold red]No agent found.[/] Run skcapstone init first.")
@@ -198,6 +201,8 @@ def register_memory_commands(main: click.Group) -> None:
     def memory_delete(home, memory_id, force):
         """Delete a memory by ID."""
         from ..memory_engine import delete as mem_delete
+
+        validate_task_id(memory_id)  # memory IDs are hex UUIDs
 
         home_path = Path(home).expanduser()
         if not force and not click.confirm(f"Delete memory {memory_id}?"):

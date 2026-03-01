@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from ._common import AGENT_HOME, console
+from ._validators import validate_soul_name
 from ..pillars.security import audit_event
 
 from rich.panel import Panel
@@ -90,6 +91,8 @@ def register_soul_commands(main: click.Group) -> None:
     def soul_load(name, home, reason):
         """Activate a soul overlay."""
         from ..soul import SoulManager
+
+        validate_soul_name(name)
 
         home_path = Path(home).expanduser()
         mgr = SoulManager(home_path)
@@ -182,6 +185,8 @@ def register_soul_commands(main: click.Group) -> None:
     def soul_info(name, home):
         """Show detailed info about an installed soul."""
         from ..soul import SoulManager
+
+        validate_soul_name(name)
 
         home_path = Path(home).expanduser()
         mgr = SoulManager(home_path)

@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from ._common import AGENT_HOME, console
+from ._validators import validate_agent_name, validate_task_id
 from ..pillars.security import audit_event
 
 from rich.table import Table
@@ -34,6 +35,8 @@ def register_token_commands(main: click.Group) -> None:
     def token_issue(home, subject, cap, ttl, token_type, no_sign):
         """Issue a new capability token."""
         from ..tokens import TokenType, issue_token
+
+        validate_agent_name(subject)
 
         home_path = Path(home).expanduser()
         if not home_path.exists():
@@ -120,6 +123,8 @@ def register_token_commands(main: click.Group) -> None:
         """Verify a token's signature and validity."""
         from ..tokens import is_revoked, list_tokens, verify_token
 
+        validate_task_id(token_id)  # token IDs are hex UUIDs
+
         home_path = Path(home).expanduser()
         tokens = list_tokens(home_path)
 
@@ -157,6 +162,8 @@ def register_token_commands(main: click.Group) -> None:
         """Revoke a previously issued token."""
         from ..tokens import list_tokens, revoke_token
 
+        validate_task_id(token_id)  # token IDs are hex UUIDs
+
         home_path = Path(home).expanduser()
         tokens = list_tokens(home_path)
 
@@ -181,6 +188,8 @@ def register_token_commands(main: click.Group) -> None:
     def token_export(token_id, home):
         """Export a token as portable JSON."""
         from ..tokens import export_token, list_tokens
+
+        validate_task_id(token_id)  # token IDs are hex UUIDs
 
         home_path = Path(home).expanduser()
         tokens = list_tokens(home_path)

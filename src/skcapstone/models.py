@@ -93,6 +93,8 @@ class SkillsState(BaseModel):
 
     Reflects the SKSkills installation at ~/.skskills/ and
     the tools available to this agent via the skills registry.
+    Also tracks connectivity to the remote skills-registry at
+    skills.smilintux.org when available.
     """
 
     installed: int = 0
@@ -100,6 +102,9 @@ class SkillsState(BaseModel):
     tools_available: int = 0
     skill_names: list[str] = Field(default_factory=list)
     skskills_home: Optional[Path] = None
+    registry_url: Optional[str] = None
+    registry_available: bool = False
+    remote_skill_count: int = 0
     status: PillarStatus = PillarStatus.MISSING
 
 

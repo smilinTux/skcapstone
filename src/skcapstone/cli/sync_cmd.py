@@ -10,6 +10,7 @@ from typing import Optional
 import click
 
 from ._common import AGENT_HOME, console, status_icon, logger
+from ._validators import validate_file_path
 from ..pillars.security import audit_event
 from ..pillars.sync import discover_sync, push_seed, pull_seeds, save_sync_state
 from ..runtime import get_runtime
@@ -252,6 +253,8 @@ def register_sync_commands(main: click.Group) -> None:
         """Import a peer's GPG public key and register it for encrypted sync."""
         import shutil
         import subprocess as sp
+
+        validate_file_path(keyfile)
 
         home_path = Path(home).expanduser()
         key_path = Path(keyfile).expanduser()

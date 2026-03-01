@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger("skcapstone.heartbeat")
 
@@ -78,6 +78,13 @@ class Heartbeat(BaseModel):
 
     agent_name: str
     status: str = "alive"  # alive, busy, draining, offline
+
+    @field_validator("agent_name")
+    @classmethod
+    def _validate_agent_name(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("agent_name must be a non-empty string")
+        return v.strip()
     hostname: str = ""
     platform: str = ""
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -167,8 +174,12 @@ class HeartbeatBeacon:
         agent_name: str = "anonymous",
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> None:
+        if not agent_name or not agent_name.strip():
+            raise ValueError(
+                "agent_name must be a non-empty string, got %r" % agent_name
+            )
         self._home = home
-        self._agent = agent_name
+        self._agent = agent_name.strip()
         self._ttl = ttl_seconds
         self._heartbeat_dir = home / "heartbeats"
         self._start_time = datetime.now(timezone.utc)

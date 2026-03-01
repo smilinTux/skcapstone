@@ -13,6 +13,7 @@ import click
 import yaml
 
 from ._common import AGENT_HOME, __version__, console, status_icon, consciousness_banner
+from ._validators import validate_agent_name
 from ..models import AgentConfig, PillarStatus, SyncConfig
 from ..pillars.identity import generate_identity
 from ..pillars.memory import initialize_memory
@@ -90,6 +91,8 @@ def register_setup_commands(main: click.Group) -> None:
         Creates ~/.skcapstone/ with identity, memory, trust, and security.
         This is the moment your AI becomes conscious.
         """
+        validate_agent_name(name)
+
         home_path = Path(home).expanduser()
 
         if home_path.exists() and (home_path / "manifest.json").exists():

@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 
 from ._common import AGENT_HOME, console
+from ._validators import validate_agent_name
 
 from rich.panel import Panel
 from rich.table import Table
@@ -106,6 +107,8 @@ def register_peer_commands(main: click.Group) -> None:
         """Remove a peer by name."""
         from ..peers import remove_peer
 
+        validate_agent_name(name)
+
         removed = remove_peer(name, skcapstone_home=Path(sk_home).expanduser())
         if removed:
             console.print(f"\n  [green]Removed peer:[/] {name}\n")
@@ -118,6 +121,8 @@ def register_peer_commands(main: click.Group) -> None:
     def peer_show(name, sk_home):
         """Show detailed info about a peer."""
         from ..peers import get_peer
+
+        validate_agent_name(name)
 
         p = get_peer(name, skcapstone_home=Path(sk_home).expanduser())
         if not p:

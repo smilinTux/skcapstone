@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from ._common import AGENT_HOME, console
+from ._validators import validate_agent_name, validate_task_id
 
 from rich.panel import Panel
 from rich.table import Table
@@ -100,6 +101,10 @@ def register_coord_commands(main: click.Group) -> None:
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
 
+        validate_agent_name(by)
+        for d in dep:
+            validate_task_id(d)
+
         home_path = Path(home).expanduser()
         board = Board(home_path)
         task = Task(title=title, description=desc, priority=TaskPriority(priority),
@@ -115,6 +120,9 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_claim(task_id, home, agent):
         """Claim a task for an agent."""
         from ..coordination import Board
+
+        validate_task_id(task_id)
+        validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
@@ -132,6 +140,9 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_complete(task_id, home, agent):
         """Mark a task as completed."""
         from ..coordination import Board
+
+        validate_task_id(task_id)
+        validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
         board = Board(home_path)

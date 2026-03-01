@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from ._common import AGENT_HOME, console
+from ._validators import validate_file_path
 
 from rich.panel import Panel
 from rich.table import Table
@@ -77,6 +78,8 @@ def register_backup_commands(main: click.Group) -> None:
             skcapstone backup restore /mnt/usb/backup.tar.gz --home ~/.skcapstone-new
         """
         from ..backup import restore_backup
+
+        validate_file_path(archive)
 
         target = Path(home).expanduser()
 

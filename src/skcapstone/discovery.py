@@ -323,6 +323,37 @@ def discover_sync(home: Path) -> SyncState:
     return _discover(home)
 
 
+def _probe_remote_registry(state: SkillsState) -> None:
+    """Probe the remote skills-registry for availability.
+
+    Uses the skskills RemoteRegistry client when available.
+    Falls back gracefully if the skskills package is missing or
+    the remote registry is unreachable.
+
+    Args:
+        state: SkillsState to update with remote info (mutated in place).
+    """
+    try:
+        from skskills.remote import RemoteRegistry, DEFAULT_REGISTRY_URL
+    except ImportError:
+        return
+
+    import os
+
+    registry_url = os.environ.get("SKSKILLS_REGISTRY_URL", DEFAULT_REGISTRY_URL)
+    state.registry_url = registry_url
+
+    try:
+        remote = RemoteRegistry(registry_url=registry_url)
+        index = remote.fetch_index()
+        state.registry_available = True
+        state.remote_skill_count = len(index.skills)
+    except Exception:
+        # Remote unreachable — cached index may still work; that is
+        # handled by RemoteRegistry.fetch_index() internally.
+        state.registry_available = False
+
+
 def discover_skills(home: Path, agent: Optional[str] = None) -> SkillsState:
     """Probe for SKSkills installations.
 
@@ -330,6 +361,7 @@ def discover_skills(home: Path, agent: Optional[str] = None) -> SkillsState:
     1. Per-agent skcapstone skills at ~/.skcapstone/skills/agents/<agent>/
     2. Global registry at ~/.skskills/installed/
     3. Per-agent registry at ~/.skskills/agents/<agent>/
+    4. Remote skills-registry at skills.smilintux.org (optional)
 
     Args:
         home: The agent home directory (~/.skcapstone).
@@ -360,6 +392,8 @@ def discover_skills(home: Path, agent: Optional[str] = None) -> SkillsState:
         state.skill_names = sorted(skill_names)
         if skill_names:
             state.status = PillarStatus.ACTIVE
+        # Still check remote even if no local skills home
+        _probe_remote_registry(state)
         return state
 
     # 2. Global registry
@@ -384,6 +418,9 @@ def discover_skills(home: Path, agent: Optional[str] = None) -> SkillsState:
         state.status = PillarStatus.ACTIVE
     elif skskills_home.exists():
         state.status = PillarStatus.DEGRADED
+
+    # 4. Remote skills-registry (non-blocking, best-effort)
+    _probe_remote_registry(state)
 
     return state
 

@@ -33,11 +33,11 @@ classifiers = [
 ]
 
 dependencies = [
-    "click>=8.1",
-    "mcp>=1.0",
-    "pydantic>=2.0",
-    "pyyaml>=6.0",
-    "rich>=13.0",
+    "click>=8.1,<9.0",
+    "mcp>=1.0,<2.0",
+    "pydantic>=2.0,<3.0",
+    "pyyaml>=6.0,<7.0",
+    "rich>=13.0,<14.0",
 ]
 
 [project.optional-dependencies]
