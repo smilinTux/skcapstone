@@ -44,7 +44,7 @@ COPY skcapstone /src/skcapstone
 COPY skcomm /src/skcomm
 
 RUN pip install --no-cache-dir pydantic pyyaml httpx \
-    && pip install --no-cache-dir -e /src/skcapstone \
+    && pip install --no-cache-dir -e '/src/skcapstone[all]' \
     && pip install --no-cache-dir -e /src/skcomm
 
 # --- Directories -----------------------------------------------------------
