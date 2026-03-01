@@ -61,19 +61,38 @@ def register_memory_commands(main: click.Group) -> None:
     @click.option("--tag", "-t", multiple=True, help="Filter by tag.")
     @click.option("--layer", "-l", type=click.Choice(["short-term", "mid-term", "long-term"]), default=None)
     @click.option("--limit", "-n", default=20, help="Max results.")
-    def memory_search(home, query, tag, layer, limit):
+    @click.option("--json-out", is_flag=True, help="Output results as JSON.")
+    def memory_search(home, query, tag, layer, limit, json_out):
         """Search memories by content and tags."""
         from ..memory_engine import search as mem_search
         from ..models import MemoryLayer
 
         home_path = Path(home).expanduser()
         if not home_path.exists():
+            if json_out:
+                print(json.dumps([]))
+                return
             console.print("[bold red]No agent found.[/] Run skcapstone init first.")
             sys.exit(1)
 
         lyr = MemoryLayer(layer) if layer else None
         tags = list(tag) if tag else None
         results = mem_search(home=home_path, query=query, layer=lyr, tags=tags, limit=limit)
+
+        if json_out:
+            output = [
+                {
+                    "id": entry.memory_id,
+                    "content": entry.content,
+                    "tags": entry.tags,
+                    "importance": entry.importance,
+                    "layer": entry.layer.value,
+                    "created_at": entry.created_at.isoformat() if entry.created_at else None,
+                }
+                for entry in results
+            ]
+            print(json.dumps(output))
+            return
 
         if not results:
             console.print(f"\n  [dim]No memories match '[/]{query}[dim]'[/]\n")

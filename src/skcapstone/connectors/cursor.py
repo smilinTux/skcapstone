@@ -1,38 +1,37 @@
 """
-CursorConnector — sovereign agent viewport into Cursor editor.
+CursorConnector — sovereign agent viewport into the Cursor editor.
 
-Cursor is an Electron-based VS Code fork.  The connector follows the
-same socket protocol as VSCodeConnector: the SKCapstone Cursor extension
-writes its socket path to ~/.skcapstone/connectors/cursor.sock.
+Cursor is an Electron-based VS Code fork.  The connector follows the same
+Unix domain socket protocol as :class:`VSCodeConnector`: the agent binds
+``~/.skcapstone/connectors/cursor.sock`` and the Cursor extension connects.
 
-Status: STUB — the extension protocol is not yet defined.
-        connect() returns False (UNAVAILABLE) until the Cursor extension
-        publishes its socket path.
+Protocol
+--------
+Wire format: 4-byte big-endian uint32 length prefix + UTF-8 JSON-RPC 2.0 body.
+See :class:`~skcapstone.connectors.base.UnixSocketConnector` for details.
 
-Extension contract (planned):
-  - Extension writes socket path to ~/.skcapstone/connectors/cursor.sock
-  - Agent connects, exchanges newline-delimited JSON messages
-  - Each message: {"type": "...", "payload": {...}}
+Extension contract:
+  - Extension connects to ``~/.skcapstone/connectors/cursor.sock``.
+  - Both sides exchange length-framed JSON-RPC 2.0 messages.
+  - Notifications (no ``"id"`` field) are fire-and-forget.
+  - Requests carry an ``"id"`` and expect a matching ``"result"`` response.
 """
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Optional
 
-from .base import ConnectorBackend, ConnectorStatus, ConnectorType
-
-logger = logging.getLogger(__name__)
+from .base import ConnectorStatus, ConnectorType, UnixSocketConnector
 
 _DEFAULT_SOCKET_PATH = Path("~/.skcapstone/connectors/cursor.sock")
 
 
-class CursorConnector(ConnectorBackend):
+class CursorConnector(UnixSocketConnector):
     """Connect the sovereign agent to the Cursor editor.
 
-    Reads the extension socket path from ``~/.skcapstone/connectors/cursor.sock``.
-    Returns UNAVAILABLE until the Cursor extension is installed and running.
+    Binds a Unix domain socket at ``~/.skcapstone/connectors/cursor.sock``
+    and waits for the SKCapstone Cursor extension to connect.
 
     Args:
         socket_path: Override the default socket file location.
@@ -41,82 +40,15 @@ class CursorConnector(ConnectorBackend):
     connector_type = ConnectorType.CURSOR
 
     def __init__(self, socket_path: Optional[Path] = None) -> None:
-        self._socket_path = (socket_path or _DEFAULT_SOCKET_PATH).expanduser()
-        self._connected = False
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
-    def connect(self) -> bool:
-        """Attempt to connect to the Cursor extension socket.
-
-        Returns:
-            False — stub not yet implemented.  Logs a notice with setup
-            instructions.
-        """
-        if not self._socket_path.exists():
-            logger.info(
-                "CursorConnector: socket not found at %s. "
-                "Install the SKCapstone Cursor extension to enable this connector.",
-                self._socket_path,
-            )
-            return False
-
-        # TODO: implement unix socket / HTTP connection to extension
-        logger.warning(
-            "CursorConnector.connect() is a stub — socket exists at %s "
-            "but protocol is not yet implemented.",
-            self._socket_path,
-        )
-        return False
-
-    def disconnect(self) -> bool:
-        """No-op disconnect for the stub.
-
-        Returns:
-            True always.
-        """
-        self._connected = False
-        return True
-
-    # ------------------------------------------------------------------
-    # Messaging
-    # ------------------------------------------------------------------
-
-    def send(self, message: str) -> bool:
-        """Not implemented — Cursor connector is a stub.
-
-        Args:
-            message: Ignored.
-
-        Returns:
-            False always.
-        """
-        logger.debug("CursorConnector.send() called but connector is a stub.")
-        return False
-
-    def receive(self) -> Optional[str]:
-        """Not implemented — Cursor connector is a stub.
-
-        Returns:
-            None always.
-        """
-        return None
-
-    # ------------------------------------------------------------------
-    # Health
-    # ------------------------------------------------------------------
+        super().__init__(socket_path or _DEFAULT_SOCKET_PATH)
 
     def health_check(self) -> ConnectorStatus:
-        """Return UNAVAILABLE until the extension socket is present.
+        """Return the current connector status.
 
-        Returns:
-            CONNECTED if connected, UNAVAILABLE if socket missing,
-            DISCONNECTED otherwise.
+        Returns UNAVAILABLE when neither connected nor the socket dir exists,
+        so callers can tell whether the extension has ever been set up.
         """
-        if self._connected:
-            return ConnectorStatus.CONNECTED
-        if not self._socket_path.exists():
+        status = super().health_check()
+        if status == ConnectorStatus.DISCONNECTED and not self._socket_path.parent.exists():
             return ConnectorStatus.UNAVAILABLE
-        return ConnectorStatus.DISCONNECTED
+        return status

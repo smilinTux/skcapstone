@@ -54,7 +54,14 @@ seed = [
     "skseed>=0.1.0",
 ]
 chat = [
+    "skchat>=0.1.0",
     "prompt_toolkit>=3.0",
+]
+comms = [
+    "skcomm>=0.1.0",
+]
+skills = [
+    "skskills>=0.1.0",
 ]
 shell = [
     "prompt_toolkit>=3.0",
@@ -82,6 +89,9 @@ all = [
     "sksecurity>=1.2.0",
     "skmemory>=0.5.0",
     "skseed>=0.1.0",
+    "skchat>=0.1.0",
+    "skcomm>=0.1.0",
+    "skskills>=0.1.0",
     "prompt_toolkit>=3.0",
     "fusepy>=3.0.1",
     "docker>=6.0",

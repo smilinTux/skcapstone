@@ -4,8 +4,8 @@
 # Each container runs an AI session (via claude CLI) with the full sovereign
 # stack wired in: skcapstone MCP, SKComm transport, soul blueprint.
 #
-# Build:
-#   docker build -t skcapstone-agent:latest .
+# Build (from repo root):
+#   docker build -f skcapstone/docker/Dockerfile -t skcapstone-agent:latest .
 #
 # Environment variables expected at runtime:
 #   AGENT_NAME          — unique agent instance name
@@ -39,13 +39,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # --- Claude CLI ------------------------------------------------------------
 RUN npm install -g @anthropic-ai/claude-code
 
-# --- Python sovereign stack ------------------------------------------------
-RUN pip install --no-cache-dir \
-        skcapstone \
-        skcomm \
-        pydantic \
-        pyyaml \
-        httpx
+# --- Python sovereign stack (local source) ----------------------------------
+COPY skcapstone /src/skcapstone
+COPY skcomm /src/skcomm
+
+RUN pip install --no-cache-dir pydantic pyyaml httpx \
+    && pip install --no-cache-dir -e /src/skcapstone \
+    && pip install --no-cache-dir -e /src/skcomm
 
 # --- Directories -----------------------------------------------------------
 RUN mkdir -p /agent/memory /agent/scratch /skcomm /run/skcapstone
@@ -55,7 +55,7 @@ VOLUME ["/agent", "/skcomm"]
 WORKDIR /agent
 
 # --- Entrypoint ------------------------------------------------------------
-COPY entrypoint.sh /entrypoint.sh
+COPY skcapstone/docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
