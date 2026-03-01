@@ -432,8 +432,8 @@ class MemoryFortress:
                 data = json.loads(identity_path.read_text(encoding="utf-8"))
                 fp = data.get("fingerprint", "skcapstone-default")
                 return hashlib.sha256(fp.encode()).digest()
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.debug("Cannot read identity for fallback key: %s", exc)
         return hashlib.sha256(b"skcapstone-memory-fortress-default").digest()
 
     def _ensure_encryption_key(self) -> None:
@@ -493,8 +493,8 @@ class MemoryFortress:
             try:
                 data = json.loads(config_path.read_text(encoding="utf-8"))
                 return FortressConfig.model_validate(data)
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError, ValueError) as exc:
+                logger.warning("Failed to load fortress config: %s", exc)
         return FortressConfig(encryption_enabled=self._encryption_enabled)
 
     def _save_config(self, config: FortressConfig) -> None:
@@ -525,5 +525,5 @@ class MemoryFortress:
                 agent="memory-fortress",
                 metadata=metadata,
             )
-        except Exception:
-            logger.debug("Audit event skipped: %s", event_type)
+        except (ImportError, OSError) as exc:
+            logger.debug("Audit event skipped (%s): %s", event_type, exc)

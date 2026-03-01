@@ -15,6 +15,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -147,20 +148,26 @@ def _get_store() -> Optional["skmemory.MemoryStore"]:
         return None
 
 
-# Module-level lazy singleton
+# Module-level lazy singleton (thread-safe with double-checked locking)
 _unified_store: Optional[object] = None
 _unified_checked: bool = False
+_unified_lock = threading.Lock()
 
 
 def get_unified() -> Optional["skmemory.MemoryStore"]:
     """Get or create the unified MemoryStore singleton.
 
+    Uses double-checked locking to avoid races when multiple threads
+    call this concurrently during startup.
+
     Returns None if skmemory is not available or store creation fails.
     """
     global _unified_store, _unified_checked
     if not _unified_checked:
-        _unified_store = _get_store()
-        _unified_checked = True
+        with _unified_lock:
+            if not _unified_checked:
+                _unified_store = _get_store()
+                _unified_checked = True
     return _unified_store
 
 

@@ -13,9 +13,12 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("skcapstone.summary")
 
 
 def gather_briefing(home: Path) -> dict:
@@ -67,7 +70,8 @@ def _agent_info(home: Path) -> dict:
             "consciousness": consciousness,
             "home": str(m.home),
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load agent info: %s", exc)
         return {"name": "unknown", "consciousness": "UNKNOWN", "home": str(home)}
 
 
@@ -79,7 +83,8 @@ def _pillar_summary(home: Path) -> dict:
         runtime = get_runtime(home)
         m = runtime.manifest
         return {k: v.value for k, v in m.pillar_summary.items()}
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load pillar summary: %s", exc)
         return {}
 
 
@@ -103,7 +108,8 @@ def _memory_summary(home: Path) -> dict:
             "long_term": stats.long_term,
             "recent": recent_titles,
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load memory summary: %s", exc)
         return {"total": 0, "recent": []}
 
 
@@ -132,7 +138,8 @@ def _board_summary(home: Path) -> dict:
             "in_progress": in_progress,
             "active_tasks": active_tasks,
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load board summary: %s", exc)
         return {"total": 0, "done": 0, "open": 0, "in_progress": 0, "active_tasks": []}
 
 
@@ -144,7 +151,8 @@ def _peer_summary(home: Path) -> dict:
         peers = list_peers(skcapstone_home=home)
         names = [p.name for p in peers[:5]]
         return {"count": len(peers), "names": names}
-    except Exception:
+    except Exception as exc:
+        logger.debug("Peer discovery unavailable: %s", exc)
         peers_dir = home / "peers"
         if peers_dir.exists():
             count = sum(1 for f in peers_dir.glob("*.json"))
@@ -166,7 +174,8 @@ def _backup_summary(home: Path) -> dict:
                 "encrypted": latest.get("encrypted", False),
             }
         return {"count": 0, "latest": None}
-    except Exception:
+    except Exception as exc:
+        logger.debug("Backup info unavailable: %s", exc)
         return {"count": 0, "latest": None}
 
 
@@ -182,7 +191,8 @@ def _health_summary(home: Path) -> dict:
             "total": report.total_count,
             "all_passed": report.all_passed,
         }
-    except Exception:
+    except Exception as exc:
+        logger.debug("Doctor diagnostics unavailable: %s", exc)
         return {"passed": 0, "failed": 0, "total": 0, "all_passed": False}
 
 
@@ -225,7 +235,8 @@ def _sync_summary(home: Path) -> dict:
             "last_push": sy.last_push.isoformat() if sy.last_push else None,
         }
         return result
-    except Exception:
+    except Exception as exc:
+        logger.debug("Sync summary from runtime unavailable: %s", exc)
         # Fallback: inspect sync directory directly
         sync_dir = home / "sync"
         seeds = list(sync_dir.glob("*.tar.gz*")) if sync_dir.exists() else []
@@ -254,5 +265,6 @@ def _journal_summary() -> dict:
                     break
 
         return {"entries": count, "latest_title": latest}
-    except Exception:
+    except Exception as exc:
+        logger.debug("Journal unavailable: %s", exc)
         return {"entries": 0, "latest_title": ""}

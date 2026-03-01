@@ -24,10 +24,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import logging
+
 from .coordination import Board
 from .discovery import discover_all
 from .memory_engine import list_memories, search
 from .runtime import get_runtime
+
+logger = logging.getLogger("skcapstone.context_loader")
 
 
 def gather_context(home: Path, memory_limit: int = 10) -> dict[str, Any]:
@@ -69,7 +73,8 @@ def _gather_agent(home: Path) -> dict[str, Any]:
             "last_awakened": m.last_awakened.isoformat() if m.last_awakened else None,
             "connectors": [c.platform for c in m.connectors if c.active],
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to gather agent metadata: %s", exc)
         return {"name": "unknown", "error": "Agent not initialized"}
 
 
@@ -78,7 +83,8 @@ def _gather_pillars(home: Path) -> dict[str, str]:
     try:
         states = discover_all(home)
         return {name: state.status.value for name, state in states.items()}
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to gather pillar status: %s", exc)
         return {}
 
 
@@ -114,7 +120,8 @@ def _gather_board(home: Path) -> dict[str, Any]:
                 for a in agents
             ],
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to gather coordination board: %s", exc)
         return {"total": 0, "active_tasks": [], "agents": []}
 
 
@@ -132,7 +139,8 @@ def _gather_memories(home: Path, limit: int) -> list[dict[str, Any]]:
             }
             for e in entries
         ]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to gather memories: %s", exc)
         return []
 
 
@@ -148,7 +156,8 @@ def _gather_soul(home: Path) -> dict[str, Any]:
             "base": data.get("base_soul", "default"),
             "activated_at": data.get("activated_at"),
         }
-    except Exception:
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read soul overlay: %s", exc)
         return {"active": None, "base": "default"}
 
 
@@ -162,7 +171,8 @@ def _gather_mcp_status(home: Path) -> dict[str, Any]:
             "server_name": server.name,
             "tool_count": len(TOOLS) if hasattr(TOOLS, "__len__") else 0,
         }
-    except Exception:
+    except Exception as exc:
+        logger.debug("MCP server not available: %s", exc)
         return {"available": False}
 
 

@@ -8,12 +8,15 @@ No corporate SSO. No OAuth dance. Cryptographic proof of self.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from ..models import IdentityState, PillarStatus
+
+logger = logging.getLogger("skcapstone.identity")
 
 
 def generate_identity(
@@ -97,8 +100,8 @@ def _try_init_capauth(
         )
     except ImportError:
         return None
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not load existing CapAuth profile: %s", exc)
 
     # No existing profile — try creating one
     try:
@@ -116,8 +119,8 @@ def _try_init_capauth(
             email=profile.entity.email,
             status=PillarStatus.ACTIVE,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not create CapAuth profile: %s", exc)
 
     # Legacy fallback: capauth.keys.generate_keypair
     try:
@@ -135,7 +138,8 @@ def _try_init_capauth(
             email=email,
             status=PillarStatus.ACTIVE,
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("CapAuth keypair generation failed: %s", exc)
         return None
 
 

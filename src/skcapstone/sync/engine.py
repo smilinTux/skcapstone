@@ -275,7 +275,9 @@ class SyncEngine:
             from ..pillars.security import audit_event
             audit_event(self.agent_home, event_type, detail)
         except ImportError:
-            pass
+            logger.debug("Security audit module not available, skipping audit event")
+        except Exception as exc:
+            logger.debug("Audit event failed: %s", exc)
 
 
 def init_sync(

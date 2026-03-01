@@ -51,6 +51,7 @@ from .agents import register_agents_commands
 from .mount import register_mount_commands
 from .shell_cmd import register_shell_commands
 from .crush_cmd import register_crush_commands
+from .housekeeping import register_housekeeping_commands
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -74,3 +75,4 @@ register_daemon_commands(main)
 register_agents_commands(main)
 register_mount_commands(main)
 register_crush_commands(main)
+register_housekeeping_commands(main)

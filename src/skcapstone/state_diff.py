@@ -16,10 +16,13 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("skcapstone.state_diff")
 
 
 @dataclass
@@ -256,7 +259,8 @@ def _snapshot_memories(home: Path) -> dict[str, Any]:
                 for e in entries
             ],
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to snapshot memories: %s", exc)
         return {"count": 0, "ids": [], "entries": []}
 
 
@@ -286,7 +290,8 @@ def _snapshot_tasks(home: Path) -> dict[str, Any]:
                 for v in views
             ],
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to snapshot tasks: %s", exc)
         return {"total": 0, "done_ids": [], "all_ids": [], "tasks": []}
 
 
@@ -296,7 +301,8 @@ def _snapshot_pillars(home: Path) -> dict[str, str]:
     try:
         states = discover_all(home)
         return {name: state.status.value for name, state in states.items()}
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to snapshot pillars: %s", exc)
         return {}
 
 

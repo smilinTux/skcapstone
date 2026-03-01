@@ -181,6 +181,7 @@ class DaemonService:
             ("poll", self._poll_loop),
             ("health", self._health_loop),
             ("sync", self._sync_loop),
+            ("housekeeping", self._housekeeping_loop),
         ]
         for name, target in workers:
             t = threading.Thread(target=target, name=f"daemon-{name}", daemon=True)
@@ -298,6 +299,32 @@ class DaemonService:
                 except Exception as exc:
                     logger.error("Sync push error: %s", exc)
                     self.state.record_error(f"Sync: {exc}")
+
+    def _housekeeping_loop(self) -> None:
+        """Periodically prune stale ACKs, envelopes, and seeds (hourly)."""
+        while not self._stop_event.is_set():
+            self._stop_event.wait(timeout=3600)
+            if self._stop_event.is_set():
+                break
+
+            try:
+                from .housekeeping import run_housekeeping
+
+                results = run_housekeeping(
+                    skcapstone_home=self.config.home,
+                )
+                summary = results.get("summary", {})
+                deleted = summary.get("total_deleted", 0)
+                freed_mb = summary.get("total_freed_mb", 0)
+                if deleted > 0:
+                    logger.info(
+                        "Housekeeping: pruned %d files, freed %.1f MB",
+                        deleted,
+                        freed_mb,
+                    )
+            except Exception as exc:
+                logger.error("Housekeeping error: %s", exc)
+                self.state.record_error(f"Housekeeping: {exc}")
 
     def _process_messages(self, envelopes: list) -> None:
         """Handle received messages (logging + future hooks).

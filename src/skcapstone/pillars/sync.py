@@ -349,7 +349,7 @@ def pull_seeds(home: Path, decrypt: bool = True) -> list[dict]:
                         if imported:
                             logger.info("Imported %d memories from seed %s", imported, seed_path.name)
                     except Exception as exc:
-                        logger.debug("Could not import seed memories: %s", exc)
+                        logger.warning("Could not import memories from seed %s: %s", seed_path.name, exc)
 
                 if "febs" in data:
                     try:
@@ -359,7 +359,7 @@ def pull_seeds(home: Path, decrypt: bool = True) -> list[dict]:
                         if feb_imported:
                             logger.info("Imported %d FEB(s) from seed %s", feb_imported, seed_path.name)
                     except Exception as exc:
-                        logger.debug("Could not import seed FEBs: %s", exc)
+                        logger.warning("Could not import FEBs from seed %s: %s", seed_path.name, exc)
 
                 archive.mkdir(exist_ok=True)
                 seed_path.rename(archive / seed_path.name)
@@ -511,8 +511,8 @@ def _load_sync_timestamps(sync_dir: Path, state: SyncState) -> None:
             if data.get("last_pull"):
                 state.last_pull = datetime.fromisoformat(data["last_pull"])
             state.peers_known = data.get("peers_known", 0)
-        except (json.JSONDecodeError, OSError, ValueError):
-            pass
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
+            logger.debug("Could not load sync timestamps: %s", exc)
 
 
 def save_sync_state(sync_dir: Path, state: SyncState) -> None:

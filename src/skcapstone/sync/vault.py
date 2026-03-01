@@ -316,7 +316,7 @@ class Vault:
 
                 rotated.append(new_encrypted)
                 logger.info("Encrypted plaintext vault: %s", new_encrypted.name)
-            except Exception as exc:
+            except (RuntimeError, OSError) as exc:
                 logger.error(
                     "Failed to encrypt %s: %s", vault_file.name, exc
                 )

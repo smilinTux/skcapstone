@@ -389,7 +389,8 @@ class HeartbeatBeacon:
                 gpu_available=gpu_available,
                 gpu_name=gpu_name,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to detect node capacity: %s", exc)
             return NodeCapacity()
 
     def _detect_capabilities(self) -> list[AgentCapability]:
@@ -416,7 +417,8 @@ class HeartbeatBeacon:
         try:
             from . import __version__
             return __version__
-        except Exception:
+        except Exception as exc:
+            logger.debug("Version detection failed: %s", exc)
             return "unknown"
 
     def _detect_fingerprint(self) -> str:
@@ -426,8 +428,8 @@ class HeartbeatBeacon:
             try:
                 data = json.loads(identity_path.read_text(encoding="utf-8"))
                 return data.get("fingerprint", "")[:16]
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.debug("Cannot read identity for fingerprint: %s", exc)
         return ""
 
     def _detect_soul(self) -> str:
@@ -437,8 +439,8 @@ class HeartbeatBeacon:
             try:
                 data = json.loads(active_path.read_text(encoding="utf-8"))
                 return data.get("active_soul", "")
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.debug("Cannot read soul overlay: %s", exc)
         return ""
 
     def _detect_services(self) -> list[HeartbeatService]:

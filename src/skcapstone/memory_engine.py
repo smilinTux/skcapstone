@@ -40,7 +40,8 @@ def _get_unified():
         from .memory_adapter import get_unified
 
         return get_unified()
-    except Exception:
+    except Exception as exc:
+        logger.debug("Unified memory backend unavailable: %s", exc)
         return None
 
 
@@ -106,7 +107,8 @@ def _detect_active_soul(home: Path) -> Optional[str]:
     try:
         data = json.loads(active_path.read_text(encoding="utf-8"))
         return data.get("active_soul")
-    except (json.JSONDecodeError, Exception):
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("Cannot read active soul: %s", exc)
         return None
 
 
@@ -170,13 +172,13 @@ def store(
             if unified.vector:
                 try:
                     unified.vector.save(memory)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Vector dual-write failed (non-fatal): %s", exc)
             if unified.graph:
                 try:
                     unified.graph.index_memory(memory)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Graph dual-write failed (non-fatal): %s", exc)
             logger.debug("Dual-write to unified backend for %s", entry.memory_id)
         except Exception as e:
             logger.debug("Unified dual-write failed (non-fatal): %s", e)
