@@ -76,7 +76,7 @@ class TestToolListing:
     async def test_list_tools_returns_all(self):
         """list_tools returns all registered tools."""
         tools = await list_tools()
-        assert len(tools) == 58
+        assert len(tools) == 64
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -148,6 +148,14 @@ class TestToolListing:
             "kms_status",
             "kms_list_keys",
             "kms_rotate",
+            # SKSeed (Logic Kernel)
+            "skseed_collide",
+            "skseed_audit",
+            "skseed_philosopher",
+            "skseed_truth_check",
+            "skseed_alignment",
+            # Model Router
+            "model_route",
         }
         assert names == expected
 
