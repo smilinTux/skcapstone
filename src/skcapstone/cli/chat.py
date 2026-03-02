@@ -1,14 +1,17 @@
-"""Agent-to-agent chat commands: send, inbox, live, open.
+"""Agent-to-agent chat commands: send, inbox, live, open, list.
 
-skcapstone chat <peer>          Open interactive session (shortcut)
-skcapstone chat open <peer>     Open interactive prompt_toolkit session
+skcapstone chat <peer>          Open interactive LLM session (shortcut)
+skcapstone chat open <peer>     Open interactive LLM session
 skcapstone chat send <peer> <m> One-shot send
 skcapstone chat inbox           Browse messages
 skcapstone chat live <peer>     Alias for 'open'
+skcapstone chat list            List peers with conversation history
+skcapstone chat --list          Same as 'list'
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Optional
@@ -22,7 +25,7 @@ from rich.table import Table
 
 
 # Known sub-command names; anything else is treated as a peer name.
-_KNOWN_SUBCOMMANDS = {"send", "inbox", "live", "open", "--help", "-h", "--version"}
+_KNOWN_SUBCOMMANDS = {"send", "inbox", "live", "open", "list", "--help", "-h", "--version"}
 
 
 class _ChatGroup(click.Group):
@@ -32,12 +35,88 @@ class _ChatGroup(click.Group):
 
         skcapstone chat lumina        # same as: skcapstone chat open lumina
         skcapstone chat send lumina … # normal subcommand routing
+        skcapstone chat --list        # same as: skcapstone chat list
     """
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-        if args and not args[0].startswith("-") and args[0] not in _KNOWN_SUBCOMMANDS:
+        if "--list" in args:
+            remaining = [a for a in args if a != "--list"]
+            args = ["list"] + remaining
+        elif args and not args[0].startswith("-") and args[0] not in _KNOWN_SUBCOMMANDS:
             args = ["open"] + args
         return super().parse_args(ctx, args)
+
+
+def _run_llm_chat(peer: str, home_path: Path, identity: str) -> None:
+    """Run an LLM-powered interactive terminal chat session.
+
+    Args:
+        peer: Peer name used as conversation context key.
+        home_path: Agent home directory.
+        identity: Local agent name shown in the prompt.
+    """
+    from ..consciousness_loop import (
+        ConsciousnessConfig,
+        LLMBridge,
+        SystemPromptBuilder,
+        _classify_message,
+    )
+
+    config = ConsciousnessConfig()
+    bridge = LLMBridge(config)
+    builder = SystemPromptBuilder(home=home_path)
+
+    # Show last 5 messages from existing history
+    conv_file = home_path / "conversations" / f"{peer}.json"
+    console.print()
+    if conv_file.exists():
+        try:
+            history = json.loads(conv_file.read_text(encoding="utf-8"))
+            if history:
+                console.print(
+                    f"[dim]--- {len(history)} previous message(s) with {peer} ---[/]\n"
+                )
+                for msg in history[-5:]:
+                    if msg.get("role") == "user":
+                        label = f"[cyan]{identity}[/]"
+                    else:
+                        label = f"[green]{peer}[/]"
+                    content = msg.get("content", "")[:100]
+                    console.print(f"  {label}: {content}")
+                console.print()
+        except Exception:
+            pass
+
+    console.print(f"[bold]Chat with [cyan]{peer}[/][/]  [dim]Ctrl+C or /quit to exit[/]\n")
+
+    try:
+        while True:
+            try:
+                user_msg = console.input(f"[cyan]{identity}[/] > ").strip()
+            except EOFError:
+                break
+
+            if not user_msg:
+                continue
+            if user_msg.lower() in ("/quit", "/exit", "/q"):
+                break
+
+            builder.add_to_history(peer, "user", user_msg)
+
+            system_prompt = builder.build(peer_name=peer)
+            signal = _classify_message(user_msg)
+
+            with console.status("[dim]thinking...[/]"):
+                try:
+                    response = bridge.generate(system_prompt, user_msg, signal)
+                except Exception as exc:
+                    response = f"[Error: {exc}]"
+
+            console.print(f"[green]{peer}[/]: {response}\n")
+            builder.add_to_history(peer, "assistant", response)
+
+    except KeyboardInterrupt:
+        console.print("\n[dim]Session ended.[/]")
 
 
 def register_chat_commands(main: click.Group) -> None:
@@ -73,33 +152,22 @@ def register_chat_commands(main: click.Group) -> None:
         help="Seconds between incoming message polls.",
     )
     def chat_open(peer: str, home: str, thread: Optional[str], poll_interval: float):
-        """Open an interactive chat session with a peer.
+        """Open an interactive LLM-powered chat session.
 
-        Uses prompt_toolkit for a rich terminal experience: command
-        history, auto-suggest, slash-command completion, and a status
-        bar. Falls back to a plain readline loop if prompt_toolkit is
-        not installed.
+        Starts a terminal chat loop that uses the local LLM (via
+        LLMBridge) to generate responses. Conversation history is
+        shown at startup and saved to conversations/{peer}.json.
 
         \b
-        Slash commands inside the session:
-          /attach <path>   Send a file attachment (max 10 MB)
-          /thread <id>     Switch conversation thread
-          /reply           Switch to the last received thread
-          /inbox           Preview last 5 messages
-          /whoami          Show your identity
-          /emoji           Emoji quick reference
-          /quit            Exit  (/exit or /q also work)
-
-        Emoji is fully supported — just type directly: 🎉 🚀 ❤️
+        Slash commands:
+          /quit  /exit  /q   — exit the session
 
         \b
         Examples:
           skcapstone chat lumina
-          skcapstone chat open lumina --thread deploy-v3
-          skcapstone chat open opus --poll-interval 5
+          skcapstone chat open lumina
+          skcapstone chat open opus
         """
-        from ..chat import AgentChat
-
         validate_agent_name(peer)
 
         home_path = Path(home).expanduser()
@@ -110,8 +178,7 @@ def register_chat_commands(main: click.Group) -> None:
         runtime = get_runtime(home_path)
         identity = runtime.manifest.name or "unknown"
 
-        agent_chat = AgentChat(home=home_path, identity=identity)
-        agent_chat.interactive_session(peer, poll_interval=poll_interval, thread_id=thread)
+        _run_llm_chat(peer, home_path, identity)
 
     # ------------------------------------------------------------------
     # send — one-shot message
@@ -219,6 +286,62 @@ def register_chat_commands(main: click.Group) -> None:
 
         console.print(table)
         console.print("")
+
+    # ------------------------------------------------------------------
+    # list — show peers with conversation history
+    # ------------------------------------------------------------------
+
+    @chat.command("list")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def chat_list(home: str):
+        """List all peers with conversation history.
+
+        Shows each peer that has a saved conversation file, along with
+        the message count and a preview of the most recent message.
+
+        \b
+        Examples:
+          skcapstone chat list
+          skcapstone chat --list
+        """
+        home_path = Path(home).expanduser()
+        conversations_dir = home_path / "conversations"
+
+        if not conversations_dir.exists():
+            console.print("\n  [dim]No conversations yet.[/]\n")
+            return
+
+        conv_files = sorted(conversations_dir.glob("*.json"))
+        if not conv_files:
+            console.print("\n  [dim]No conversations yet.[/]\n")
+            return
+
+        table = Table(
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
+            title=f"Conversations ({len(conv_files)} peer{'s' if len(conv_files) != 1 else ''})",
+        )
+        table.add_column("Peer", style="cyan")
+        table.add_column("Messages", justify="right", style="dim")
+        table.add_column("Last message", max_width=60)
+
+        for conv_file in conv_files:
+            peer = conv_file.stem
+            try:
+                data = json.loads(conv_file.read_text(encoding="utf-8"))
+                count = str(len(data)) if isinstance(data, list) else "?"
+                last = ""
+                if isinstance(data, list) and data:
+                    last = str(data[-1].get("content", ""))[:60]
+                table.add_row(peer, count, last)
+            except Exception:
+                table.add_row(peer, "?", "[dim][corrupted][/]")
+
+        console.print()
+        console.print(table)
+        console.print()
 
     # ------------------------------------------------------------------
     # live — alias for open (backwards compat)

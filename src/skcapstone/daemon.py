@@ -18,7 +18,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
@@ -491,6 +491,19 @@ class DaemonService:
         class DaemonHandler(BaseHTTPRequestHandler):
             """HTTP handler for daemon status API."""
 
+            @staticmethod
+            def _hb_alive(hb: dict) -> bool:
+                """Return True if heartbeat is within its TTL."""
+                ts_str = hb.get("timestamp", "")
+                ttl = hb.get("ttl_seconds", 300)
+                if not ts_str:
+                    return False
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    return datetime.now(timezone.utc) <= ts + timedelta(seconds=ttl)
+                except Exception:
+                    return False
+
             def do_GET(self):
                 """Handle GET requests to the daemon API."""
                 if self.path == "/status":
@@ -504,17 +517,149 @@ class DaemonService:
                         self._json_response({"enabled": False, "reason": "not loaded"})
                 elif self.path == "/ping":
                     self._json_response({"pong": True, "pid": os.getpid()})
+
+                # ── Household: list all agents ───────────────────────────
                 elif self.path == "/api/v1/household/agents":
                     agents = []
+                    agents_dir = config.shared_root / "agents"
                     heartbeats_dir = config.shared_root / "heartbeats"
-                    if heartbeats_dir.exists():
-                        for hf in sorted(heartbeats_dir.glob("*.json")):
+
+                    if agents_dir.exists():
+                        for agent_dir in sorted(agents_dir.iterdir()):
+                            if not agent_dir.is_dir():
+                                continue
+                            agent_name = agent_dir.name
+                            entry: dict = {"name": agent_name}
+
+                            identity_path = agent_dir / "identity" / "identity.json"
+                            if identity_path.exists():
+                                try:
+                                    entry["identity"] = json.loads(
+                                        identity_path.read_text(encoding="utf-8")
+                                    )
+                                except Exception:
+                                    pass
+
+                            hb_path = heartbeats_dir / f"{agent_name.lower()}.json"
+                            if hb_path.exists():
+                                try:
+                                    hb = json.loads(hb_path.read_text(encoding="utf-8"))
+                                    alive = self._hb_alive(hb)
+                                    hb["alive"] = alive
+                                    entry["heartbeat"] = hb
+                                    entry["status"] = hb.get("status", "unknown") if alive else "stale"
+                                except Exception:
+                                    entry["status"] = "unknown"
+                            else:
+                                entry["status"] = "no_heartbeat"
+
+                            if consciousness:
+                                entry["consciousness"] = consciousness.stats
+
+                            agents.append(entry)
+
+                    self._json_response({"agents": agents})
+
+                # ── Household: single agent detail ───────────────────────
+                elif self.path.startswith("/api/v1/household/agent/"):
+                    name = self.path[len("/api/v1/household/agent/"):].split("?")[0].rstrip("/")
+                    if not name:
+                        self._json_response({"error": "agent name required"}, status=400)
+                        return
+
+                    agent_dir = config.shared_root / "agents" / name
+                    if not agent_dir.exists():
+                        self._json_response({"error": f"agent '{name}' not found"}, status=404)
+                        return
+
+                    entry = {"name": name}
+
+                    identity_path = agent_dir / "identity" / "identity.json"
+                    if identity_path.exists():
+                        try:
+                            entry["identity"] = json.loads(
+                                identity_path.read_text(encoding="utf-8")
+                            )
+                        except Exception:
+                            pass
+
+                    hb_path = config.shared_root / "heartbeats" / f"{name.lower()}.json"
+                    if hb_path.exists():
+                        try:
+                            hb = json.loads(hb_path.read_text(encoding="utf-8"))
+                            alive = self._hb_alive(hb)
+                            hb["alive"] = alive
+                            entry["heartbeat"] = hb
+                            entry["status"] = hb.get("status", "unknown") if alive else "stale"
+                        except Exception:
+                            pass
+
+                    memory_dir = agent_dir / "memory"
+                    if memory_dir.exists():
+                        count = 0
+                        for layer in ("short-term", "mid-term", "long-term"):
+                            layer_dir = memory_dir / layer
+                            if layer_dir.exists():
+                                count += sum(1 for _ in layer_dir.glob("*.json"))
+                        entry["memory_count"] = count
+
+                    conversations_dir = config.shared_root / "conversations"
+                    conv_list = []
+                    if conversations_dir.exists():
+                        for cf in sorted(conversations_dir.glob("*.json"))[:10]:
                             try:
-                                data = json.loads(hf.read_text())
-                                agents.append(data)
+                                msgs = json.loads(cf.read_text(encoding="utf-8"))
+                                if isinstance(msgs, list):
+                                    conv_list.append({
+                                        "peer": cf.stem,
+                                        "message_count": len(msgs),
+                                        "last_message": msgs[-1].get("timestamp") if msgs else None,
+                                    })
                             except Exception:
                                 pass
-                    self._json_response({"agents": agents})
+                    entry["recent_conversations"] = conv_list
+
+                    if consciousness:
+                        entry["consciousness"] = consciousness.stats
+
+                    self._json_response(entry)
+
+                # ── Conversations: list all ───────────────────────────────
+                elif self.path == "/api/v1/conversations":
+                    conversations = []
+                    conversations_dir = config.shared_root / "conversations"
+                    if conversations_dir.exists():
+                        for cf in sorted(conversations_dir.glob("*.json")):
+                            try:
+                                msgs = json.loads(cf.read_text(encoding="utf-8"))
+                                if isinstance(msgs, list):
+                                    conversations.append({
+                                        "peer": cf.stem,
+                                        "message_count": len(msgs),
+                                        "last_message": msgs[-1].get("timestamp") if msgs else None,
+                                    })
+                            except Exception:
+                                pass
+                    self._json_response({"conversations": conversations})
+
+                # ── Conversations: single peer history ────────────────────
+                elif self.path.startswith("/api/v1/conversations/"):
+                    peer = self.path[len("/api/v1/conversations/"):].split("?")[0].rstrip("/")
+                    if not peer:
+                        self._json_response({"error": "peer name required"}, status=400)
+                        return
+
+                    conv_file = config.shared_root / "conversations" / f"{peer}.json"
+                    if not conv_file.exists():
+                        self._json_response({"error": f"no conversation with '{peer}'"}, status=404)
+                        return
+
+                    try:
+                        msgs = json.loads(conv_file.read_text(encoding="utf-8"))
+                        self._json_response({"peer": peer, "messages": msgs})
+                    except Exception as exc:
+                        self._json_response({"error": str(exc)}, status=500)
+
                 else:
                     self._json_response(
                         {
@@ -524,6 +669,9 @@ class DaemonService:
                                 "/consciousness",
                                 "/ping",
                                 "/api/v1/household/agents",
+                                "/api/v1/household/agent/{name}",
+                                "/api/v1/conversations",
+                                "/api/v1/conversations/{peer}",
                             ]
                         },
                         status=200,

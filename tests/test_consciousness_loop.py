@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -460,3 +462,144 @@ class TestProcessEnvelopeACK:
 
         assert result is None, "ACK-type messages should be skipped (return None)"
         mock_skcomm.send.assert_not_called()
+
+
+class TestSystemPromptBuilderCache:
+    """Section cache TTL tests for SystemPromptBuilder."""
+
+    def test_get_cached_calls_loader_once(self, tmp_path):
+        """_get_cached calls the loader only once within TTL."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        call_count = 0
+
+        def loader():
+            nonlocal call_count
+            call_count += 1
+            return "section_value"
+
+        result1 = builder._get_cached("test_key", loader, ttl=60)
+        result2 = builder._get_cached("test_key", loader, ttl=60)
+
+        assert result1 == result2 == "section_value"
+        assert call_count == 1, "Loader should be called only once within TTL"
+
+    def test_get_cached_reloads_after_ttl(self, tmp_path):
+        """_get_cached reloads the value once TTL has expired."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        call_count = 0
+
+        def loader():
+            nonlocal call_count
+            call_count += 1
+            return f"value_{call_count}"
+
+        builder._get_cached("key", loader, ttl=60)
+        # Expire the cache entry manually
+        val, _ = builder._section_cache["key"]
+        builder._section_cache["key"] = (val, time.monotonic() - 1)
+        builder._get_cached("key", loader, ttl=60)
+
+        assert call_count == 2, "Loader should be called again after TTL expires"
+
+    def test_build_caches_identity_section(self, tmp_path):
+        """build() serves identity from cache on second call."""
+        home = tmp_path / ".skcapstone"
+        identity_dir = home / "identity"
+        identity_dir.mkdir(parents=True)
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "opus", "fingerprint": "ABCD1234"})
+        )
+
+        builder = SystemPromptBuilder(home)
+        with patch.object(builder, "_load_identity", wraps=builder._load_identity) as mock_id:
+            builder.build()
+            builder.build()
+
+        assert mock_id.call_count == 1, "_load_identity should be called once (cached)"
+
+    def test_build_caches_context_section(self, tmp_path):
+        """build() serves context from cache on second call."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+
+        builder = SystemPromptBuilder(home)
+        with patch.object(builder, "_load_context", wraps=builder._load_context) as mock_ctx:
+            builder.build()
+            builder.build()
+
+        assert mock_ctx.call_count == 1, "_load_context should be called once (cached)"
+
+    def test_cache_key_isolation(self, tmp_path):
+        """Different section keys are cached independently."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        a_calls, b_calls = 0, 0
+
+        def loader_a():
+            nonlocal a_calls
+            a_calls += 1
+            return "a"
+
+        def loader_b():
+            nonlocal b_calls
+            b_calls += 1
+            return "b"
+
+        builder._get_cached("a", loader_a)
+        builder._get_cached("b", loader_b)
+        builder._get_cached("a", loader_a)
+        builder._get_cached("b", loader_b)
+
+        assert a_calls == 1
+        assert b_calls == 1
+
+
+class TestProcessEnvelopeTiming:
+    """Timing instrumentation emitted by process_envelope."""
+
+    def _make_loop(self, tmp_path):
+        config = ConsciousnessConfig(fallback_chain=["passthrough"])
+        loop = ConsciousnessLoop(config, home=tmp_path / ".skcapstone")
+        loop._bridge = MagicMock()
+        loop._bridge.generate.return_value = "response"
+        return loop
+
+    def _make_envelope(self, content="hello"):
+        data = {"sender": "peer", "payload": {"content": content, "content_type": "text"}}
+        return _SimpleEnvelope(data)
+
+    def test_timing_log_emitted(self, tmp_path, caplog):
+        """process_envelope logs 'Pipeline timing' with all four phase labels."""
+        loop = self._make_loop(tmp_path)
+        with caplog.at_level(logging.INFO, logger="skcapstone.consciousness"):
+            loop.process_envelope(self._make_envelope())
+
+        timing_msgs = [r.message for r in caplog.records if "Pipeline timing" in r.message]
+        assert timing_msgs, "Expected 'Pipeline timing' log entry"
+        msg = timing_msgs[0]
+        assert "classify:" in msg
+        assert "prompt_build:" in msg
+        assert "llm:" in msg
+        assert "send:" in msg
+
+    def test_timing_values_are_non_negative(self, tmp_path, caplog):
+        """All reported timing values must be >= 0."""
+        import re as _re
+
+        loop = self._make_loop(tmp_path)
+        with caplog.at_level(logging.INFO, logger="skcapstone.consciousness"):
+            loop.process_envelope(self._make_envelope())
+
+        timing_msgs = [r.message for r in caplog.records if "Pipeline timing" in r.message]
+        assert timing_msgs
+        numbers = [float(n) for n in _re.findall(r"[\d.]+(?=ms)", timing_msgs[0])]
+        assert len(numbers) == 4, f"Expected 4 timing values, got: {numbers}"
+        assert all(n >= 0 for n in numbers), f"Negative timing value: {numbers}"

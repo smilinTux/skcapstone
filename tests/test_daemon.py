@@ -332,6 +332,202 @@ class TestHeartbeatBeaconWiring:
         )
 
 
+class TestHouseholdAPI:
+    """Tests for the household and conversation HTTP endpoints."""
+
+    def _start_server(self, daemon_home):
+        """Start the API server on a free port and return the service."""
+        config = DaemonConfig(home=daemon_home, shared_root=daemon_home, port=0, poll_interval=60)
+        svc = DaemonService(config)
+        svc.state.running = True
+        with patch.object(svc, "_load_components"):
+            svc.config.port = _find_free_port()
+            svc._write_pid()
+            svc._start_api_server()
+        time.sleep(0.3)
+        return svc
+
+    def _get(self, port, path):
+        url = f"http://127.0.0.1:{port}{path}"
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            return resp.status, json.loads(resp.read())
+
+    def _get_404(self, port, path):
+        import urllib.error
+        url = f"http://127.0.0.1:{port}{path}"
+        try:
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    # ── /api/v1/household/agents ─────────────────────────────────────────
+
+    def test_household_agents_empty(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, data = self._get(svc.config.port, "/api/v1/household/agents")
+            assert status == 200
+            assert data["agents"] == []
+        finally:
+            svc.stop()
+
+    def test_household_agents_with_identity(self, daemon_home):
+        agent_dir = daemon_home / "agents" / "testbot"
+        (agent_dir / "identity").mkdir(parents=True)
+        (agent_dir / "identity" / "identity.json").write_text(
+            json.dumps({"name": "Testbot", "fingerprint": "ABC123"})
+        )
+        svc = self._start_server(daemon_home)
+        try:
+            _, data = self._get(svc.config.port, "/api/v1/household/agents")
+            assert len(data["agents"]) == 1
+            agent = data["agents"][0]
+            assert agent["name"] == "testbot"
+            assert agent["identity"]["fingerprint"] == "ABC123"
+            assert agent["status"] == "no_heartbeat"
+        finally:
+            svc.stop()
+
+    def test_household_agents_with_fresh_heartbeat(self, daemon_home):
+        from datetime import datetime, timezone
+        agent_dir = daemon_home / "agents" / "alivebot"
+        (agent_dir / "identity").mkdir(parents=True)
+        (agent_dir / "identity" / "identity.json").write_text(
+            json.dumps({"name": "Alivebot"})
+        )
+        hb_dir = daemon_home / "heartbeats"
+        hb_dir.mkdir(parents=True, exist_ok=True)
+        (hb_dir / "alivebot.json").write_text(json.dumps({
+            "agent_name": "Alivebot",
+            "status": "alive",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ttl_seconds": 300,
+        }))
+        svc = self._start_server(daemon_home)
+        try:
+            _, data = self._get(svc.config.port, "/api/v1/household/agents")
+            agent = data["agents"][0]
+            assert agent["heartbeat"]["alive"] is True
+            assert agent["status"] == "alive"
+        finally:
+            svc.stop()
+
+    def test_household_agents_stale_heartbeat(self, daemon_home):
+        agent_dir = daemon_home / "agents" / "stalebot"
+        (agent_dir / "identity").mkdir(parents=True)
+        (agent_dir / "identity" / "identity.json").write_text(json.dumps({"name": "Stalebot"}))
+        hb_dir = daemon_home / "heartbeats"
+        hb_dir.mkdir(parents=True, exist_ok=True)
+        (hb_dir / "stalebot.json").write_text(json.dumps({
+            "agent_name": "Stalebot",
+            "status": "alive",
+            "timestamp": "2020-01-01T00:00:00+00:00",
+            "ttl_seconds": 300,
+        }))
+        svc = self._start_server(daemon_home)
+        try:
+            _, data = self._get(svc.config.port, "/api/v1/household/agents")
+            agent = data["agents"][0]
+            assert agent["heartbeat"]["alive"] is False
+            assert agent["status"] == "stale"
+        finally:
+            svc.stop()
+
+    # ── /api/v1/household/agent/{name} ───────────────────────────────────
+
+    def test_single_agent_not_found(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, data = self._get_404(svc.config.port, "/api/v1/household/agent/nobody")
+            assert status == 404
+            assert "not found" in data["error"]
+        finally:
+            svc.stop()
+
+    def test_single_agent_detail(self, daemon_home):
+        agent_dir = daemon_home / "agents" / "opus"
+        (agent_dir / "identity").mkdir(parents=True)
+        (agent_dir / "identity" / "identity.json").write_text(
+            json.dumps({"name": "Opus", "fingerprint": "DEADBEEF"})
+        )
+        mem_dir = agent_dir / "memory" / "short-term"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "mem1.json").write_text("{}")
+        (mem_dir / "mem2.json").write_text("{}")
+
+        svc = self._start_server(daemon_home)
+        try:
+            status, data = self._get(svc.config.port, "/api/v1/household/agent/opus")
+            assert status == 200
+            assert data["name"] == "opus"
+            assert data["identity"]["fingerprint"] == "DEADBEEF"
+            assert data["memory_count"] == 2
+            assert "recent_conversations" in data
+        finally:
+            svc.stop()
+
+    # ── /api/v1/conversations ────────────────────────────────────────────
+
+    def test_conversations_empty(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, data = self._get(svc.config.port, "/api/v1/conversations")
+            assert status == 200
+            assert data["conversations"] == []
+        finally:
+            svc.stop()
+
+    def test_conversations_list(self, daemon_home):
+        conv_dir = daemon_home / "conversations"
+        conv_dir.mkdir(parents=True)
+        msgs = [
+            {"role": "user", "content": "hi", "timestamp": "2026-03-01T10:00:00+00:00"},
+            {"role": "assistant", "content": "hello", "timestamp": "2026-03-01T10:00:01+00:00"},
+        ]
+        (conv_dir / "alice.json").write_text(json.dumps(msgs))
+
+        svc = self._start_server(daemon_home)
+        try:
+            _, data = self._get(svc.config.port, "/api/v1/conversations")
+            assert len(data["conversations"]) == 1
+            c = data["conversations"][0]
+            assert c["peer"] == "alice"
+            assert c["message_count"] == 2
+            assert c["last_message"] == "2026-03-01T10:00:01+00:00"
+        finally:
+            svc.stop()
+
+    # ── /api/v1/conversations/{peer} ─────────────────────────────────────
+
+    def test_conversation_peer_not_found(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, data = self._get_404(svc.config.port, "/api/v1/conversations/nobody")
+            assert status == 404
+            assert "nobody" in data["error"]
+        finally:
+            svc.stop()
+
+    def test_conversation_peer_history(self, daemon_home):
+        conv_dir = daemon_home / "conversations"
+        conv_dir.mkdir(parents=True)
+        msgs = [
+            {"role": "user", "content": "ping", "timestamp": "2026-03-01T09:00:00+00:00"},
+        ]
+        (conv_dir / "bob.json").write_text(json.dumps(msgs))
+
+        svc = self._start_server(daemon_home)
+        try:
+            status, data = self._get(svc.config.port, "/api/v1/conversations/bob")
+            assert status == 200
+            assert data["peer"] == "bob"
+            assert len(data["messages"]) == 1
+            assert data["messages"][0]["content"] == "ping"
+        finally:
+            svc.stop()
+
+
 def _find_free_port() -> int:
     """Find an available port for testing."""
     import socket

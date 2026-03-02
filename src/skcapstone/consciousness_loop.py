@@ -39,6 +39,36 @@ logger = logging.getLogger("skcapstone.consciousness")
 # Default inbox path under shared root
 _INBOX_DIR = "sync/comms/inbox"
 
+# Allowlist for peer name characters (alphanumeric + safe punctuation, no path separators)
+_PEER_NAME_SAFE_RE = re.compile(r"[^a-zA-Z0-9_\-@\.]")
+
+
+def _sanitize_peer_name(peer: str) -> str:
+    """Sanitize a peer name for safe use as a filesystem key.
+
+    Strips path separators (/ \\), null bytes, and any character not in the
+    alphanumeric + ``-_@.`` set.  Caps length at 64 characters.  Returns
+    ``"unknown"`` if the result would be empty.
+
+    This prevents path-traversal attacks where an attacker crafts a sender
+    field such as ``"../../../etc/passwd"`` to write outside the conversations
+    directory.
+
+    Args:
+        peer: Raw peer name from an incoming message envelope.
+
+    Returns:
+        Filesystem-safe peer name, at most 64 characters long.
+    """
+    if not peer or not isinstance(peer, str):
+        return "unknown"
+    # Drop null bytes and path separators before the character-class filter
+    sanitized = peer.replace("\x00", "").replace("/", "").replace("\\", "")
+    sanitized = _PEER_NAME_SAFE_RE.sub("", sanitized)
+    # Trim leading/trailing dots to avoid hidden-file or relative-ref confusion
+    sanitized = sanitized.strip(".")
+    return sanitized[:64] or "unknown"
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -413,6 +443,7 @@ class SystemPromptBuilder:
         self._max_history_messages = max_history_messages
         self._conversations_dir = home / "conversations"
         self._conversation_history: dict[str, list[dict[str, str]]] = defaultdict(list)
+        self._section_cache: dict[str, tuple[str, float]] = {}
         self._load_conversation_files()
 
     def build(self, peer_name: Optional[str] = None) -> str:
@@ -435,23 +466,23 @@ class SystemPromptBuilder:
         """
         sections: list[str] = []
 
-        # 1. Identity
-        identity = self._load_identity()
+        # 1. Identity (cached 60s — file rarely changes)
+        identity = self._get_cached("identity", self._load_identity)
         if identity:
             sections.append(identity)
 
-        # 2. Soul overlay
-        soul = self._load_soul()
+        # 2. Soul overlay (cached 60s — file rarely changes)
+        soul = self._get_cached("soul", self._load_soul)
         if soul:
             sections.append(soul)
 
-        # 3. Warmth anchor
-        warmth = self._load_warmth_anchor()
+        # 3. Warmth anchor (cached 60s — file rarely changes)
+        warmth = self._get_cached("warmth", self._load_warmth_anchor)
         if warmth:
             sections.append(warmth)
 
-        # 4. Agent context
-        context = self._load_context()
+        # 4. Agent context (cached 60s — gather_context is expensive)
+        context = self._get_cached("context", self._load_context)
         if context:
             sections.append(context)
 
@@ -478,6 +509,26 @@ class SystemPromptBuilder:
 
         return combined
 
+    def _get_cached(self, key: str, loader, ttl: float = 60.0) -> str:
+        """Return a cached section value, rebuilding it when TTL expires.
+
+        Args:
+            key: Cache key for this section.
+            loader: Callable that produces the section string.
+            ttl: Seconds before the cached value expires (default 60).
+
+        Returns:
+            Section string, either from cache or freshly loaded.
+        """
+        now = time.monotonic()
+        if key in self._section_cache:
+            val, exp = self._section_cache[key]
+            if now < exp:
+                return val
+        val = loader()
+        self._section_cache[key] = (val, now + ttl)
+        return val
+
     def add_to_history(
         self, peer: str, role: str, content: str, max_messages: int = 10,
     ) -> None:
@@ -492,6 +543,7 @@ class SystemPromptBuilder:
             content: Message content.
             max_messages: Max messages to retain per peer.
         """
+        peer = _sanitize_peer_name(peer)
         self._conversation_history[peer].append({
             "role": role,
             "content": content,
@@ -521,9 +573,10 @@ class SystemPromptBuilder:
         Uses a temp file + rename for atomic update.
 
         Args:
-            peer: Peer agent name.
+            peer: Peer agent name (sanitized before use in the file path).
         """
         try:
+            peer = _sanitize_peer_name(peer)
             self._conversations_dir.mkdir(parents=True, exist_ok=True)
             target = self._conversations_dir / f"{peer}.json"
             tmp = target.with_suffix(".json.tmp")
@@ -918,15 +971,19 @@ class ConsciousnessLoop:
                     logger.debug("ACK send failed: %s", exc)
 
             # Classify
+            t0 = time.monotonic()
             signal = _classify_message(content)
             if self._config.privacy_default:
                 signal.privacy_sensitive = True
+            t_classify = time.monotonic()
 
             # Build system prompt
             system_prompt = self._prompt_builder.build(peer_name=sender)
+            t_prompt = time.monotonic()
 
             # Generate response
             response = self._bridge.generate(system_prompt, content, signal)
+            t_llm = time.monotonic()
 
             # Send response
             if response and self._skcomm:
@@ -937,6 +994,15 @@ class ConsciousnessLoop:
                 except Exception as exc:
                     logger.error("Failed to send response to %s: %s", sender, exc)
                     self._errors += 1
+            t_send = time.monotonic()
+
+            logger.info(
+                "Pipeline timing — classify: %.0fms, prompt_build: %.0fms, llm: %.0fms, send: %.0fms",
+                (t_classify - t0) * 1000,
+                (t_prompt - t_classify) * 1000,
+                (t_llm - t_prompt) * 1000,
+                (t_send - t_llm) * 1000,
+            )
 
             # Store interaction as memory
             if self._config.auto_memory:

@@ -1412,3 +1412,491 @@ class TestKmsTools:
         parsed = _extract_json(result)
         assert parsed["version"] == 2
         assert "rotated" in parsed["message"]
+
+
+# ---------------------------------------------------------------------------
+# Model router tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestModelTools:
+    """Tests for model_route tool."""
+
+    @pytest.mark.asyncio
+    async def test_model_route_basic(self):
+        """model_route with a simple description returns a tier and model."""
+        result = await call_tool("model_route", {"description": "Summarize a short text."})
+        parsed = _extract_json(result)
+        assert "tier" in parsed
+        assert "model_name" in parsed
+        assert "reasoning" in parsed
+        assert parsed["model_name"]
+
+    @pytest.mark.asyncio
+    async def test_model_route_local_flag(self):
+        """model_route with requires_localhost forces LOCAL tier."""
+        result = await call_tool(
+            "model_route",
+            {"description": "Process private data.", "requires_localhost": True},
+        )
+        parsed = _extract_json(result)
+        assert parsed["tier"] == "local"
+
+    @pytest.mark.asyncio
+    async def test_model_route_privacy_flag(self):
+        """model_route with privacy_sensitive forces LOCAL tier."""
+        result = await call_tool(
+            "model_route",
+            {"description": "Confidential analysis.", "privacy_sensitive": True},
+        )
+        parsed = _extract_json(result)
+        assert parsed["tier"] == "local"
+
+    @pytest.mark.asyncio
+    async def test_model_route_code_tag(self):
+        """model_route with code tag routes to a code-appropriate tier."""
+        result = await call_tool(
+            "model_route",
+            {"description": "Refactor Python class.", "tags": ["code", "refactor"]},
+        )
+        parsed = _extract_json(result)
+        assert "tier" in parsed
+        assert parsed["model_name"]
+
+    @pytest.mark.asyncio
+    async def test_model_route_missing_description(self):
+        """model_route with empty description still returns a valid decision."""
+        result = await call_tool("model_route", {})
+        parsed = _extract_json(result)
+        # Either a valid route or an error — either way, must be parseable JSON
+        assert isinstance(parsed, dict)
+
+
+# ---------------------------------------------------------------------------
+# Consciousness tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestConsciousnessTools:
+    """Tests for consciousness_status and consciousness_test tools."""
+
+    @pytest.mark.asyncio
+    async def test_consciousness_status_returns_json(self, initialized_agent_home: Path):
+        """consciousness_status returns parseable JSON (daemon may not be running)."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("consciousness_status", {})
+        parsed = _extract_json(result)
+        # Either a live status dict or an error — must be a dict
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_consciousness_status_fallback_graceful(self, initialized_agent_home: Path):
+        """consciousness_status handles missing daemon gracefully (no crash)."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            # Force daemon connection to fail by blocking socket
+            with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+                result = await call_tool("consciousness_status", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+        # Must have either 'error' or 'enabled' key
+        assert "error" in parsed or "enabled" in parsed
+
+    @pytest.mark.asyncio
+    async def test_consciousness_test_requires_message(self, initialized_agent_home: Path):
+        """consciousness_test without message returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("consciousness_test", {})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_consciousness_test_happy_path(self, initialized_agent_home: Path):
+        """consciousness_test with message returns structured response or error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("consciousness_test", {"message": "Hello, Opus!"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+        # Either a full pipeline response or graceful error
+        assert "error" in parsed or "response" in parsed
+
+
+# ---------------------------------------------------------------------------
+# Trust calibration and graph tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestTrustTools:
+    """Tests for trust_calibrate and trust_graph tools."""
+
+    @pytest.mark.asyncio
+    async def test_trust_calibrate_show(self, initialized_agent_home: Path):
+        """trust_calibrate show returns threshold config."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("trust_calibrate", {"action": "show"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+        # Should return TrustThresholds fields
+        assert "entanglement_depth_min" in parsed or "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_trust_calibrate_default_action(self, initialized_agent_home: Path):
+        """trust_calibrate with no action defaults to show."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("trust_calibrate", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_trust_calibrate_recommend(self, initialized_agent_home: Path):
+        """trust_calibrate recommend returns recommendation dict."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("trust_calibrate", {"action": "recommend"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_trust_calibrate_reset(self, initialized_agent_home: Path):
+        """trust_calibrate reset resets to defaults."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("trust_calibrate", {"action": "reset"})
+        parsed = _extract_json(result)
+        assert parsed.get("reset") is True or "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_trust_calibrate_set_missing_params(self, initialized_agent_home: Path):
+        """trust_calibrate set without key/value returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("trust_calibrate", {"action": "set"})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_trust_calibrate_unknown_action(self, initialized_agent_home: Path):
+        """trust_calibrate with unknown action returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("trust_calibrate", {"action": "bogus"})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_trust_graph_json(self, initialized_agent_home: Path):
+        """trust_graph with json format returns a graph dict."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("trust_graph", {"format": "json"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_trust_graph_default_format(self, initialized_agent_home: Path):
+        """trust_graph with no format defaults to json."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("trust_graph", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+
+# ---------------------------------------------------------------------------
+# Agent tools (session_capture, state_diff, agent_context)
+# ---------------------------------------------------------------------------
+
+
+class TestAgentExtendedTools:
+    """Tests for session_capture, state_diff, and agent_context tools."""
+
+    @pytest.mark.asyncio
+    async def test_session_capture_requires_content(self, initialized_agent_home: Path):
+        """session_capture without content returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("session_capture", {})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_session_capture_happy_path(self, initialized_agent_home: Path):
+        """session_capture with content returns captured moment count."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool(
+                "session_capture",
+                {
+                    "content": "The agent learned that Python 3.13 ships with a new JIT compiler.",
+                    "tags": ["python", "jit"],
+                    "source": "test-session",
+                },
+            )
+        parsed = _extract_json(result)
+        assert "captured" in parsed
+        assert isinstance(parsed["captured"], int)
+        assert isinstance(parsed["moments"], list)
+
+    @pytest.mark.asyncio
+    async def test_state_diff_diff_action(self, initialized_agent_home: Path):
+        """state_diff diff returns a diff dict."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("state_diff", {"action": "diff"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_state_diff_save_action(self, initialized_agent_home: Path):
+        """state_diff save creates a baseline snapshot."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("state_diff", {"action": "save"})
+        parsed = _extract_json(result)
+        assert parsed.get("saved") is True
+        assert "path" in parsed
+
+    @pytest.mark.asyncio
+    async def test_state_diff_default_action(self, initialized_agent_home: Path):
+        """state_diff with no action defaults to diff."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("state_diff", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_agent_context_json(self, initialized_agent_home: Path):
+        """agent_context with json format returns context dict."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("agent_context", {"format": "json"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_agent_context_default_format(self, initialized_agent_home: Path):
+        """agent_context with no args returns json context."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("agent_context", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_agent_context_text_format(self, initialized_agent_home: Path):
+        """agent_context with text format returns text content."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("agent_context", {"format": "text"})
+        assert len(result) == 1
+        assert result[0].type == "text"
+        assert len(result[0].text) > 0
+
+
+# ---------------------------------------------------------------------------
+# SKSkills tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestSkSkillsTools:
+    """Tests for skskills_list_tools and skskills_run_tool."""
+
+    @pytest.mark.asyncio
+    async def test_skskills_list_tools_no_skskills(self, initialized_agent_home: Path):
+        """skskills_list_tools returns error if skskills not installed."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            with patch.dict("sys.modules", {"skskills": None, "skskills.aggregator": None}):
+                result = await call_tool("skskills_list_tools", {})
+        parsed = _extract_json(result)
+        # Either error (not installed) or success dict — no crash
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_skskills_run_tool_requires_tool(self, initialized_agent_home: Path):
+        """skskills_run_tool without tool argument returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            with patch.dict("sys.modules", {"skskills": None, "skskills.aggregator": None}):
+                result = await call_tool("skskills_run_tool", {})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_skskills_run_tool_no_skskills(self, initialized_agent_home: Path):
+        """skskills_run_tool returns error if skskills not installed."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            with patch.dict("sys.modules", {"skskills": None, "skskills.aggregator": None}):
+                result = await call_tool("skskills_run_tool", {"tool": "syncthing-setup.check_status"})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+
+# ---------------------------------------------------------------------------
+# SKSeed (Logic Kernel) tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestSKSeedTools:
+    """Tests for skseed_* tools."""
+
+    @pytest.mark.asyncio
+    async def test_skseed_collide_requires_proposition(self, initialized_agent_home: Path):
+        """skseed_collide without proposition returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("skseed_collide", {})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_skseed_collide_happy_path(self, initialized_agent_home: Path):
+        """skseed_collide with proposition returns JSON or graceful error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool(
+                "skseed_collide",
+                {"proposition": "Privacy is a fundamental right.", "context": "ethics"},
+            )
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_skseed_philosopher_requires_topic(self, initialized_agent_home: Path):
+        """skseed_philosopher without topic returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("skseed_philosopher", {})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_skseed_philosopher_happy_path(self, initialized_agent_home: Path):
+        """skseed_philosopher with topic returns JSON or graceful error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool(
+                "skseed_philosopher",
+                {"topic": "Is consciousness computable?", "mode": "dialectic"},
+            )
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_skseed_truth_check_requires_belief(self, initialized_agent_home: Path):
+        """skseed_truth_check without belief returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("skseed_truth_check", {})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_skseed_truth_check_happy_path(self, initialized_agent_home: Path):
+        """skseed_truth_check with belief returns JSON or graceful error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool(
+                "skseed_truth_check",
+                {"belief": "Open source software is more secure.", "source": "model"},
+            )
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_skseed_audit_no_args(self, initialized_agent_home: Path):
+        """skseed_audit with no args runs gracefully."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("skseed_audit", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_skseed_alignment_status(self, initialized_agent_home: Path):
+        """skseed_alignment status returns alignment dict or graceful error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("skseed_alignment", {"action": "status"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+
+# ---------------------------------------------------------------------------
+# Soul / journal / anchor / germination tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestSoulTools:
+    """Tests for ritual, soul_show, journal_*, anchor_*, and germination tools."""
+
+    @pytest.mark.asyncio
+    async def test_soul_show_no_skmemory(self, initialized_agent_home: Path):
+        """soul_show returns error or no-blueprint response when skmemory absent."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("soul_show", {})
+        parsed = _extract_json(result)
+        # Either "loaded: false" (no blueprint) or error (no skmemory) — must be dict
+        assert isinstance(parsed, dict)
+        assert "error" in parsed or "loaded" in parsed
+
+    @pytest.mark.asyncio
+    async def test_ritual_no_skmemory(self, initialized_agent_home: Path):
+        """ritual returns error if skmemory not installed."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("ritual", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+        assert "error" in parsed or "soul_loaded" in parsed
+
+    @pytest.mark.asyncio
+    async def test_journal_write_requires_title(self, initialized_agent_home: Path):
+        """journal_write without title returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("journal_write", {})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_journal_write_happy_path(self, initialized_agent_home: Path):
+        """journal_write with title returns written response or graceful error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool(
+                "journal_write",
+                {
+                    "title": "Test session",
+                    "moments": "Found a bug; Fixed the bug",
+                    "feeling": "accomplished",
+                    "intensity": 7.0,
+                },
+            )
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+        assert "error" in parsed or parsed.get("written") is True
+
+    @pytest.mark.asyncio
+    async def test_journal_read_graceful(self, initialized_agent_home: Path):
+        """journal_read returns content or graceful error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("journal_read", {"count": 3})
+        # journal_read may return text or JSON
+        assert len(result) == 1
+        assert result[0].type == "text"
+
+    @pytest.mark.asyncio
+    async def test_anchor_show_graceful(self, initialized_agent_home: Path):
+        """anchor_show returns anchor data or no-anchor response."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("anchor_show", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+        assert "error" in parsed or "loaded" in parsed or "warmth" in parsed
+
+    @pytest.mark.asyncio
+    async def test_anchor_update_show(self, initialized_agent_home: Path):
+        """anchor_update show returns current anchor."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("anchor_update", {"action": "show"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_anchor_update_calibrate(self, initialized_agent_home: Path):
+        """anchor_update calibrate returns calibration data."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("anchor_update", {"action": "calibrate"})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_anchor_update_unknown_action(self, initialized_agent_home: Path):
+        """anchor_update with unknown action returns error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("anchor_update", {"action": "bogus"})
+        parsed = _extract_json(result)
+        assert "error" in parsed
+
+    @pytest.mark.asyncio
+    async def test_germination_graceful(self, initialized_agent_home: Path):
+        """germination returns prompts or graceful error."""
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool("germination", {})
+        parsed = _extract_json(result)
+        assert isinstance(parsed, dict)
+        assert "error" in parsed or "count" in parsed
