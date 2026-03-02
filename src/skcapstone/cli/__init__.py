@@ -18,11 +18,21 @@ from .. import __version__
 
 @click.group()
 @click.version_option(version=__version__, prog_name="skcapstone")
-def main():
+@click.option(
+    "--agent", envvar="SKCAPSTONE_AGENT", default="",
+    help="Agent name — resolves home to {root}/agents/{name}/",
+)
+@click.pass_context
+def main(ctx, agent):
     """SKCapstone — Sovereign Agent Framework.
 
     Your agent. Everywhere. Secured. Remembering.
     """
+    ctx.ensure_object(dict)
+    ctx.obj["agent"] = agent
+    if agent:
+        from ._common import apply_agent_override
+        apply_agent_override(agent)
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +62,8 @@ from .mount import register_mount_commands
 from .shell_cmd import register_shell_commands
 from .crush_cmd import register_crush_commands
 from .housekeeping import register_housekeeping_commands
+from .migrate import register_migrate_commands
+from .consciousness import register_consciousness_commands
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -76,3 +88,5 @@ register_agents_commands(main)
 register_mount_commands(main)
 register_crush_commands(main)
 register_housekeeping_commands(main)
+register_migrate_commands(main)
+register_consciousness_commands(main)

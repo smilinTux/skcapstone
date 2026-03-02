@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
-from . import AGENT_HOME
+from . import AGENT_HOME, SHARED_ROOT
 
 logger = logging.getLogger("skcapstone.daemon")
 
@@ -36,27 +36,36 @@ class DaemonConfig:
     """Configuration for the daemon process.
 
     Attributes:
-        home: Agent home directory.
+        home: Per-agent home directory.
+        shared_root: Shared root for coordination, heartbeats, peers.
         poll_interval: Seconds between inbox polls.
         sync_interval: Seconds between vault sync pushes.
         health_interval: Seconds between transport health checks.
         port: HTTP API port for local queries.
         log_file: Path for daemon log output.
+        consciousness_enabled: Whether to start the consciousness loop.
+        consciousness_config_path: Optional path to consciousness config.
     """
 
     def __init__(
         self,
         home: Optional[Path] = None,
+        shared_root: Optional[Path] = None,
         poll_interval: int = 10,
         sync_interval: int = 300,
         health_interval: int = 60,
         port: int = DEFAULT_PORT,
+        consciousness_enabled: bool = True,
+        consciousness_config_path: Optional[Path] = None,
     ):
         self.home = (home or Path(AGENT_HOME)).expanduser()
+        self.shared_root = (shared_root or Path(SHARED_ROOT)).expanduser()
         self.poll_interval = poll_interval
         self.sync_interval = sync_interval
         self.health_interval = health_interval
         self.port = port
+        self.consciousness_enabled = consciousness_enabled
+        self.consciousness_config_path = consciousness_config_path
 
         log_dir = self.home / LOG_DIR
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -81,6 +90,8 @@ class DaemonState:
         self.health_reports: dict = {}
         self.errors: list[str] = []
         self.running: bool = False
+        self.consciousness_stats: dict = {}
+        self.self_healing_report: dict = {}
 
     def snapshot(self) -> dict:
         """Return a serializable snapshot of current state.
@@ -103,6 +114,8 @@ class DaemonState:
                 "messages_received": self.messages_received,
                 "syncs_completed": self.syncs_completed,
                 "transport_health": self.health_reports,
+                "consciousness": self.consciousness_stats,
+                "self_healing": self.self_healing_report,
                 "recent_errors": self.errors[-10:],
                 "pid": os.getpid(),
             }
@@ -153,6 +166,9 @@ class DaemonService:
         self._server: Optional[HTTPServer] = None
         self._skcomm = None
         self._runtime = None
+        self._consciousness = None
+        self._healer = None
+        self._beacon = None
 
     def start(self) -> None:
         """Start the daemon and all background workers.
@@ -188,6 +204,21 @@ class DaemonService:
             t.start()
             self._threads.append(t)
 
+        # Start consciousness loop threads
+        if self._consciousness:
+            consciousness_threads = self._consciousness.start()
+            self._threads.extend(consciousness_threads)
+
+        # Start self-healing loop
+        if self._healer:
+            t = threading.Thread(
+                target=self._healing_loop,
+                name="daemon-healing",
+                daemon=True,
+            )
+            t.start()
+            self._threads.append(t)
+
         self._start_api_server()
 
         logger.info("Daemon started — PID %d", os.getpid())
@@ -197,6 +228,9 @@ class DaemonService:
         logger.info("Daemon stopping...")
         self._stop_event.set()
         self.state.running = False
+
+        if self._consciousness:
+            self._consciousness.stop()
 
         if self._server:
             self._server.shutdown()
@@ -221,7 +255,7 @@ class DaemonService:
             self.stop()
 
     def _load_components(self) -> None:
-        """Attempt to load SKComm and AgentRuntime."""
+        """Attempt to load SKComm, AgentRuntime, and ConsciousnessLoop."""
         try:
             from skcomm.core import SKComm
             self._skcomm = SKComm.from_config()
@@ -239,6 +273,53 @@ class DaemonService:
         except Exception as exc:
             logger.warning("Runtime failed to load: %s", exc)
             self.state.record_error(f"Runtime load: {exc}")
+
+        try:
+            from .heartbeat import HeartbeatBeacon
+            agent_name = self._runtime.manifest.name if self._runtime else "anonymous"
+            self._beacon = HeartbeatBeacon(self.config.home, agent_name)
+            logger.info("HeartbeatBeacon initialized for '%s'", agent_name)
+        except Exception as exc:
+            logger.warning("HeartbeatBeacon failed to init: %s", exc)
+            self.state.record_error(f"Heartbeat init: {exc}")
+
+        # Load consciousness loop
+        if self.config.consciousness_enabled:
+            try:
+                from .consciousness_config import load_consciousness_config
+                from .consciousness_loop import ConsciousnessLoop
+
+                cli_disabled = not self.config.consciousness_enabled
+                c_config = load_consciousness_config(
+                    self.config.home,
+                    cli_disabled=cli_disabled,
+                    config_path=self.config.consciousness_config_path,
+                )
+                if c_config.enabled:
+                    self._consciousness = ConsciousnessLoop(
+                        c_config, self.state,
+                        home=self.config.home,
+                        shared_root=self.config.shared_root,
+                    )
+                    if self._skcomm:
+                        self._consciousness.set_skcomm(self._skcomm)
+                    logger.info("Consciousness loop loaded")
+                else:
+                    logger.info("Consciousness loop disabled by config")
+            except Exception as exc:
+                logger.warning("Consciousness loop failed to load: %s", exc)
+                self.state.record_error(f"Consciousness load: {exc}")
+
+        # Load self-healing doctor
+        try:
+            from .self_healing import SelfHealingDoctor
+            self._healer = SelfHealingDoctor(
+                self.config.home, consciousness_loop=self._consciousness,
+            )
+            logger.info("Self-healing doctor loaded")
+        except Exception as exc:
+            logger.warning("Self-healing doctor failed to load: %s", exc)
+            self.state.record_error(f"Self-healing load: {exc}")
 
     def _poll_loop(self) -> None:
         """Continuously poll SKComm inbox for new messages."""
@@ -279,6 +360,12 @@ class DaemonService:
                     logger.error("Health check error: %s", exc)
                     self.state.record_error(f"Health: {exc}")
 
+            if self._beacon:
+                try:
+                    self._beacon.pulse(consciousness_active=bool(self._consciousness))
+                except Exception as exc:
+                    logger.warning("Heartbeat pulse failed: %s", exc)
+
             self._stop_event.wait(timeout=self.config.health_interval)
 
     def _sync_loop(self) -> None:
@@ -311,7 +398,7 @@ class DaemonService:
                 from .housekeeping import run_housekeeping
 
                 results = run_housekeeping(
-                    skcapstone_home=self.config.home,
+                    skcapstone_home=self.config.shared_root,
                 )
                 summary = results.get("summary", {})
                 deleted = summary.get("total_deleted", 0)
@@ -327,7 +414,7 @@ class DaemonService:
                 self.state.record_error(f"Housekeeping: {exc}")
 
     def _process_messages(self, envelopes: list) -> None:
-        """Handle received messages (logging + future hooks).
+        """Handle received messages — delegates to consciousness loop.
 
         Args:
             envelopes: List of received MessageEnvelope objects.
@@ -339,11 +426,40 @@ class DaemonService:
                 env.payload.content[:50],
                 env.payload.content_type.value,
             )
+            if self._consciousness and self._consciousness._config.enabled:
+                self._consciousness.process_envelope(env)
+
+    def _healing_loop(self) -> None:
+        """Periodically run self-healing diagnostics (every 5 min)."""
+        while not self._stop_event.is_set():
+            self._stop_event.wait(timeout=300)
+            if self._stop_event.is_set():
+                break
+
+            if self._healer:
+                try:
+                    report = self._healer.diagnose_and_heal()
+                    self.state.self_healing_report = report
+                    if report.get("auto_fixed", 0) > 0:
+                        logger.info(
+                            "Self-healing: %d checks, %d fixed, %d broken",
+                            report.get("checks_run", 0),
+                            report.get("auto_fixed", 0),
+                            report.get("still_broken", 0),
+                        )
+                except Exception as exc:
+                    logger.error("Self-healing error: %s", exc)
+                    self.state.record_error(f"Self-healing: {exc}")
+
+            # Update consciousness stats
+            if self._consciousness:
+                self.state.consciousness_stats = self._consciousness.stats
 
     def _start_api_server(self) -> None:
         """Start the local HTTP API server in a background thread."""
         state = self.state
         config = self.config
+        consciousness = self._consciousness
 
         class DaemonHandler(BaseHTTPRequestHandler):
             """HTTP handler for daemon status API."""
@@ -354,11 +470,16 @@ class DaemonService:
                     self._json_response(state.snapshot())
                 elif self.path == "/health":
                     self._json_response(state.health_reports)
+                elif self.path == "/consciousness":
+                    if consciousness:
+                        self._json_response(consciousness.stats)
+                    else:
+                        self._json_response({"enabled": False, "reason": "not loaded"})
                 elif self.path == "/ping":
                     self._json_response({"pong": True, "pid": os.getpid()})
                 else:
                     self._json_response(
-                        {"endpoints": ["/status", "/health", "/ping"]},
+                        {"endpoints": ["/status", "/health", "/consciousness", "/ping"]},
                         status=200,
                     )
 

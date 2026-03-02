@@ -63,6 +63,9 @@ comms = [
 skills = [
     "skskills>=0.1.0",
 ]
+consciousness = [
+    "watchdog>=4.0",
+]
 shell = [
     "prompt_toolkit>=3.0",
 ]
@@ -100,6 +103,7 @@ all = [
     "requests>=2.31",
     "boto3>=1.34",
     "google-cloud-compute>=1.18",
+    "watchdog>=4.0",
 ]
 dev = [
     "pytest>=7.0",

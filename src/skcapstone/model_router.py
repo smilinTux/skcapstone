@@ -111,10 +111,10 @@ class ModelRouterConfig(BaseModel):
         """
         return cls(
             tier_models={
-                ModelTier.FAST.value: ["nemotron-49b", "claude-haiku-3-5"],
-                ModelTier.CODE.value: ["devstral", "qwen3-coder"],
-                ModelTier.REASON.value: ["deepseek-r1", "claude-opus-4-5"],
-                ModelTier.NUANCE.value: ["kimi-k2.5", "claude-sonnet-4-5"],
+                ModelTier.FAST.value: ["nemotron-49b", "grok-3-mini", "claude-haiku-3-5"],
+                ModelTier.CODE.value: ["devstral", "qwen3-coder", "grok-3"],
+                ModelTier.REASON.value: ["deepseek-r1", "claude-opus-4-5", "grok-3"],
+                ModelTier.NUANCE.value: ["kimi-k2.5", "claude-sonnet-4-5", "moonshot-v1-128k"],
                 ModelTier.LOCAL.value: ["llama-3.3-70b-local", "mistral-7b-local"],
             },
             tag_rules=[

@@ -96,6 +96,7 @@ class Heartbeat(BaseModel):
     claimed_tasks: list[str] = Field(default_factory=list)
     loaded_model: str = ""
     session_active: bool = False
+    consciousness_active: bool = False
 
     # Resources
     capacity: NodeCapacity = Field(default_factory=NodeCapacity)
@@ -173,6 +174,7 @@ class HeartbeatBeacon:
         home: Path,
         agent_name: str = "anonymous",
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
+        heartbeats_dir: Optional[Path] = None,
     ) -> None:
         if not agent_name or not agent_name.strip():
             raise ValueError(
@@ -181,7 +183,7 @@ class HeartbeatBeacon:
         self._home = home
         self._agent = agent_name.strip()
         self._ttl = ttl_seconds
-        self._heartbeat_dir = home / "heartbeats"
+        self._heartbeat_dir = Path(heartbeats_dir) if heartbeats_dir else home / "heartbeats"
         self._start_time = datetime.now(timezone.utc)
 
     def initialize(self) -> None:
@@ -197,6 +199,7 @@ class HeartbeatBeacon:
         metadata: Optional[dict[str, Any]] = None,
         services: Optional[list[HeartbeatService]] = None,
         tailscale_ip: Optional[str] = None,
+        consciousness_active: bool = False,
     ) -> Heartbeat:
         """Publish a heartbeat beacon.
 
@@ -229,6 +232,7 @@ class HeartbeatBeacon:
             claimed_tasks=claimed_tasks or [],
             loaded_model=loaded_model,
             session_active=True,
+            consciousness_active=consciousness_active,
             capacity=self._detect_capacity(),
             capabilities=capabilities or self._detect_capabilities(),
             version=self._detect_version(),
@@ -239,7 +243,7 @@ class HeartbeatBeacon:
             tailscale_ip=tailscale_ip if tailscale_ip is not None else self._detect_tailscale_ip(),
         )
 
-        path = self._heartbeat_dir / f"{self._agent}.json"
+        path = self._heartbeat_dir / f"{self._agent.lower()}.json"
         tmp_path = path.with_suffix(".json.tmp")
         tmp_path.write_text(
             heartbeat.model_dump_json(indent=2),

@@ -31,13 +31,17 @@ def register_daemon_commands(main: click.Group) -> None:
     @click.option("--poll", default=10, help="Inbox poll interval in seconds.")
     @click.option("--sync-interval", "sync_int", default=300, help="Vault sync interval in seconds.")
     @click.option("--foreground", is_flag=True, help="Run in foreground (don't daemonize).")
-    def daemon_start(home: str, port: int, poll: int, sync_int: int, foreground: bool):
+    @click.option("--no-consciousness", "no_consciousness", is_flag=True,
+                  help="Disable the consciousness loop.")
+    def daemon_start(home: str, port: int, poll: int, sync_int: int,
+                     foreground: bool, no_consciousness: bool):
         """Start the sovereign agent daemon.
 
         Runs continuously, polling for messages, syncing vault state,
         and exposing a local HTTP API at http://127.0.0.1:<port>.
 
         Use --foreground for debugging or systemd integration.
+        Use --no-consciousness to disable autonomous message processing.
         """
         from ..daemon import DaemonConfig, DaemonService, is_running
 
@@ -55,11 +59,14 @@ def register_daemon_commands(main: click.Group) -> None:
             poll_interval=poll,
             sync_interval=sync_int,
             port=port,
+            consciousness_enabled=not no_consciousness,
         )
         svc = DaemonService(config)
 
         console.print(f"\n  [green]Starting daemon[/] on port [cyan]{port}[/]")
         console.print(f"  Poll: {poll}s | Sync: {sync_int}s")
+        consciousness_label = "[red]disabled[/]" if no_consciousness else "[green]enabled[/]"
+        console.print(f"  Consciousness: {consciousness_label}")
         console.print(f"  Log: {config.log_file}")
         console.print(f"  PID: {os.getpid()}")
 

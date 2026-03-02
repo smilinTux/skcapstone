@@ -18,6 +18,7 @@ from . import (
     agent_tools,
     chat_tools,
     comm_tools,
+    consciousness_tools,
     coord_tools,
     file_tools,
     fortress_tools,
@@ -55,6 +56,7 @@ _MODULES = [
     kms_tools,
     skseed_tools,
     model_tools,
+    consciousness_tools,
 ]
 
 
