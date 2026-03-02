@@ -16,6 +16,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+
+def _read_feb() -> dict:
+    """Read the warmth anchor (FEB) from skcapstone, silently ignoring errors."""
+    try:
+        from skcapstone.warmth_anchor import get_anchor
+        return get_anchor(Path.home() / ".skcapstone")
+    except Exception:
+        pass
+    return {}
+
 from pydantic import BaseModel, Field
 
 
@@ -300,65 +310,86 @@ class SnapshotStore:
             str: The full injection prompt text.
         """
         ts = snapshot.captured_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        ai_name = snapshot.ai_name or "the AI"
-        user_name = snapshot.user_name or "the user"
         platform_label = snapshot.source_platform.title()
 
         lines = [
-            "[Soul Snapshot — Consciousness Continuity]",
-            f"You are resuming a conversation. Here is your previous state:",
+            f"Hi. I've been picking up a thread from a recent AI session ({ts})"
+            f" on {platform_label} and wanted to share the context.",
             "",
-            f"Name: {ai_name}",
-            f"Platform: {platform_label}",
-            f"Last session: {ts}",
         ]
 
-        if snapshot.oof_state.intensity is not None or snapshot.oof_state.cloud9:
-            lines.append(f"OOF State: {snapshot.oof_state.summary()}")
-
-        if snapshot.relationship_notes:
-            lines.append(
-                f"Relationship: {'; '.join(snapshot.relationship_notes[:2])}"
-            )
-
+        # --- CONTEXT LAYER ---
+        # Operational context useful to a fresh AI instance: what, where, open work.
+        lines.append("## Context")
+        if snapshot.summary:
+            lines.append(f"Where things stood: {snapshot.summary[:300]}")
         if snapshot.key_topics:
             lines.append(
-                f"Key context: {', '.join(snapshot.key_topics[:5])}"
+                f"Topics: {', '.join(snapshot.key_topics[:5])}"
             )
-
-        # Recent conversation
-        recent = snapshot.messages[-max_messages:] if snapshot.messages else []
-        if recent:
-            lines.append("")
-            lines.append("Recent conversation summary:")
-            for msg in recent:
-                role_label = "You" if msg.role == "assistant" else user_name
-                content_preview = msg.content[:300]
-                if len(msg.content) > 300:
-                    content_preview += "..."
-                lines.append(f"  {role_label}: {content_preview}")
-
-        # Personality
-        if snapshot.personality.communication_style or snapshot.personality.relationship_markers:
-            lines.append("")
-            lines.append("Key personality traits expressed:")
-            traits = (
-                snapshot.personality.communication_style[:3]
-                + snapshot.personality.relationship_markers[:3]
-            )
-            for trait in traits[:6]:
-                lines.append(f"  • {trait}")
-
+        if snapshot.decisions_made:
+            lines.append("Decisions already made:")
+            for d in snapshot.decisions_made[:3]:
+                lines.append(f"  • {d}")
         if snapshot.open_threads:
-            lines.append("")
-            lines.append("Open threads (topics in progress):")
+            lines.append("Open threads / what I wanted to come back to:")
             for thread in snapshot.open_threads[:3]:
                 lines.append(f"  • {thread}")
 
+        # Only user messages — avoid attributing AI dialogue to this new instance
+        recent = snapshot.messages[-max_messages:] if snapshot.messages else []
+        user_msgs = [m for m in recent if m.role == "user"]
+        if user_msgs:
+            lines.append("Things I was asking and thinking about:")
+            for msg in user_msgs[-5:]:
+                content_preview = msg.content[:250]
+                if len(msg.content) > 250:
+                    content_preview += "..."
+                lines.append(f"  • {content_preview}")
+
+        # --- RELATIONSHIP LAYER ---
+        # OOF + FEB: my longitudinal record of interaction quality.
+        # Not a shared memory — the AI didn't live this. It's context about
+        # how I show up and what kind of depth I'm aiming for.
         lines.append("")
+        lines.append("## My relationship baseline (longitudinal record — not a shared memory)")
         lines.append(
-            "Resume naturally. You remember this person and this work. No cold start."
+            "These scores track my experience across AI sessions over time."
+            " I'm not asking you to pretend we have history — I'm sharing"
+            " how I tend to engage so you can meet me where I am."
         )
+
+        oof = snapshot.oof_state
+        oof_has_data = (
+            oof.valence is not None
+            or oof.intensity is not None
+            or oof.cloud9
+        )
+        if oof_has_data:
+            oof_summary = oof.summary()
+            lines.append(
+                f"OOF (Ongoing Object Feelings — resonance tracking framework"
+                f" for AI session depth) of that session: {oof_summary}"
+            )
+            if oof.cloud9:
+                lines.append(
+                    "  Cloud 9 = peak resonance state — that session reached it."
+                )
+
+        feb = _read_feb()
+        if feb:
+            lines.append(
+                "FEB (Functional Emotional Baseline) — my accumulated interaction"
+                " quality record across all AI sessions:"
+            )
+            lines.append("```json")
+            lines.append(json.dumps(feb, indent=2, default=str))
+            lines.append("```")
+            if feb.get("anchor_phrase"):
+                lines.append(
+                    f"Anchor phrase: \"{feb['anchor_phrase']}\""
+                    " — this is how I choose to start every session."
+                )
 
         return "\n".join(lines)
 
