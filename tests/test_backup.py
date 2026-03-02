@@ -41,6 +41,19 @@ def _setup_agent_home(tmp_path: Path) -> Path:
     (home / "trust").mkdir()
     (home / "trust" / "FEB_test.feb").write_text('{"emotional_payload": {}}')
 
+    (home / "soul").mkdir()
+    (home / "soul" / "lumina.yaml").write_text('name: lumina\npersonality: warm\n')
+
+    (home / "conversations").mkdir()
+    (home / "conversations" / "conv1.json").write_text('{"id": "conv1", "messages": []}')
+
+    # Ephemeral dirs — must NOT be backed up
+    (home / "sync").mkdir()
+    (home / "sync" / "seed.json").write_text('{"ephemeral": true}')
+
+    (home / "heartbeats").mkdir()
+    (home / "heartbeats" / "opus.json").write_text('{"alive": true}')
+
     (home / "coordination" / "tasks").mkdir(parents=True)
     (home / "coordination" / "tasks" / "task1.json").write_text('{"status": "done"}')
 
@@ -66,22 +79,31 @@ class TestCreateBackup:
         assert result["filepath"].endswith(".tar.gz")
 
     def test_backup_contains_expected_files(self, tmp_path: Path) -> None:
-        """Archive contains identity, memory, config, and manifest."""
+        """Archive contains identity, memory, config, soul, conversations, and manifest."""
         home = _setup_agent_home(tmp_path)
         result = create_backup(home=home, output_dir=tmp_path / "out")
 
         with tarfile.open(result["filepath"], "r:gz") as tar:
             names = tar.getnames()
 
-        has_config = any("config/config.yaml" in n for n in names)
-        has_identity = any("identity/profile.json" in n for n in names)
-        has_memory = any("memory/mem1.json" in n for n in names)
-        has_manifest = any("manifest.json" in n for n in names)
+        assert any("config/config.yaml" in n for n in names)
+        assert any("identity/profile.json" in n for n in names)
+        assert any("memory/mem1.json" in n for n in names)
+        assert any("manifest.json" in n for n in names)
+        assert any("soul/lumina.yaml" in n for n in names)
+        assert any("conversations/conv1.json" in n for n in names)
 
-        assert has_config
-        assert has_identity
-        assert has_memory
-        assert has_manifest
+    def test_backup_excludes_ephemeral_dirs(self, tmp_path: Path) -> None:
+        """Ephemeral dirs (sync/, heartbeats/, coordination/tasks/) are not backed up."""
+        home = _setup_agent_home(tmp_path)
+        result = create_backup(home=home, output_dir=tmp_path / "out")
+
+        with tarfile.open(result["filepath"], "r:gz") as tar:
+            names = tar.getnames()
+
+        assert not any("/sync/" in n or n.endswith("/sync") for n in names)
+        assert not any("/heartbeats/" in n or n.endswith("/heartbeats") for n in names)
+        assert not any("coordination/tasks" in n for n in names)
 
     def test_backup_manifest_has_checksums(self, tmp_path: Path) -> None:
         """Manifest contains SHA-256 checksums for all files."""
@@ -135,6 +157,8 @@ class TestRestoreBackup:
         assert (restore_target / "config" / "config.yaml").exists()
         assert (restore_target / "identity" / "profile.json").exists()
         assert (restore_target / "memory" / "mem1.json").exists()
+        assert (restore_target / "soul" / "lumina.yaml").exists()
+        assert (restore_target / "conversations" / "conv1.json").exists()
 
     def test_restore_detects_tampered_file(self, tmp_path: Path) -> None:
         """Verification catches files that don't match manifest checksums."""

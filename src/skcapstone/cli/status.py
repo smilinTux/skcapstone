@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +18,90 @@ from ..runtime import get_runtime
 
 from rich.panel import Panel
 from rich.table import Table
+
+
+def _probe_llm_backends() -> dict[str, bool]:
+    """Probe LLM backend availability.
+
+    Checks ollama via HTTP and all cloud providers via env vars.
+
+    Returns:
+        Dict mapping backend name to availability bool.
+    """
+    import urllib.request
+
+    backends: dict[str, bool] = {
+        "ollama": False,
+        "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "grok": bool(os.environ.get("XAI_API_KEY")),
+        "kimi": bool(os.environ.get("MOONSHOT_API_KEY")),
+        "nvidia": bool(os.environ.get("NVIDIA_API_KEY")),
+    }
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(f"{host}/api/tags"), timeout=2
+        ):
+            backends["ollama"] = True
+    except Exception:
+        pass
+    return backends
+
+
+def _get_daemon_info(home: Path) -> dict:
+    """Return daemon running state, PID, uptime, and message count.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Dict with 'running' bool and optional 'pid', 'uptime', 'messages'.
+    """
+    try:
+        from ..daemon import read_pid, get_daemon_status
+
+        pid = read_pid(home)
+        if pid is None:
+            return {"running": False}
+        info: dict = {"running": True, "pid": pid}
+        ds = get_daemon_status(home)
+        if ds:
+            uptime_s = int(ds.get("uptime_seconds", 0))
+            h, rem = divmod(uptime_s, 3600)
+            m, s = divmod(rem, 60)
+            info["uptime"] = f"{h}h {m}m" if h else f"{m}m {s}s" if m else f"{s}s"
+            msgs = ds.get("messages_received", 0)
+            if msgs:
+                info["messages"] = msgs
+        return info
+    except Exception:
+        return {"running": False}
+
+
+def _get_last_conversation(home: Path) -> Optional[dict]:
+    """Find the most recently modified peer conversation file.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Dict with 'peer' and 'when' strings, or None if no conversations.
+    """
+    conv_dir = home / "conversations"
+    if not conv_dir.exists():
+        return None
+    files = list(conv_dir.glob("*.json"))
+    if not files:
+        return None
+    latest = max(files, key=lambda f: f.stat().st_mtime)
+    age_s = datetime.now().timestamp() - latest.stat().st_mtime
+    if age_s < 3600:
+        when = f"{int(age_s / 60)}m ago"
+    elif age_s < 86400:
+        when = f"{int(age_s / 3600)}h ago"
+    else:
+        when = datetime.fromtimestamp(latest.stat().st_mtime).strftime("%m/%d %H:%M")
+    return {"peer": latest.stem, "when": when}
 
 
 def _print_consciousness_metrics(console) -> None:
@@ -136,8 +223,55 @@ def register_status_commands(main: click.Group) -> None:
                 active_str = "[green]active[/]" if c.active else "[dim]inactive[/]"
                 console.print(f"  {c.platform}: {active_str}")
 
-        # Consciousness metrics
+        # ── Daemon status ────────────────────────────────────────────────────
+        console.print()
+        daemon = _get_daemon_info(home_path)
+        if daemon["running"]:
+            pid = daemon.get("pid", "?")
+            uptime = daemon.get("uptime", "unknown")
+            msgs = daemon.get("messages", 0)
+            msg_part = f"  [dim]msgs={msgs}[/]" if msgs else ""
+            console.print(
+                f"  Daemon: [green]RUNNING[/]  "
+                f"[dim]pid={pid}  up={uptime}{msg_part}[/]"
+            )
+        else:
+            console.print(
+                "  Daemon: [red]STOPPED[/]  "
+                "[dim](skcapstone daemon start)[/]"
+            )
+
+        # ── LLM backends ─────────────────────────────────────────────────────
+        backends = _probe_llm_backends()
+        parts = []
+        for name, avail in backends.items():
+            if avail:
+                parts.append(f"[green]{name}[/]")
+            else:
+                parts.append(f"[red]{name}[/]")
+        console.print(f"  Backends: {'  '.join(parts)}")
+
+        # ── Consciousness metrics ─────────────────────────────────────────────
         _print_consciousness_metrics(console)
+
+        # ── Last conversation ─────────────────────────────────────────────────
+        conv = _get_last_conversation(home_path)
+        if conv:
+            console.print(
+                f"  Last convo: [cyan]{conv['peer']}[/]  "
+                f"[dim]{conv['when']}[/]"
+            )
+
+        # ── Disk space warning ────────────────────────────────────────────────
+        try:
+            free_gb = shutil.disk_usage(home_path).free / (1024 ** 3)
+            if free_gb < 5.0:
+                console.print(
+                    f"\n  [bold yellow]WARNING:[/] [yellow]Low disk space: "
+                    f"{free_gb:.1f} GB free[/]"
+                )
+        except Exception:
+            pass
 
         console.print()
         console.print(f"  [dim]Home: {m.home}[/]")

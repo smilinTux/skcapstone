@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -38,7 +39,7 @@ from . import AGENT_HOME, __version__
 
 console = Console()
 
-TOTAL_STEPS = 9  # excludes welcome + celebrate
+TOTAL_STEPS = 13  # excludes welcome + celebrate; includes 4 new system-setup steps
 
 
 def _step_header(n: int, title: str) -> None:
@@ -376,12 +377,314 @@ def _step_board(home_path: Path, agent_name: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# New system-setup step functions (click-based)
+# ---------------------------------------------------------------------------
+
+
+def _step_prereqs() -> dict:
+    """Check Python version, pip, and Ollama prerequisites.
+
+    Returns:
+        dict with keys 'python', 'pip', 'ollama' (bool each).
+    """
+    import shutil
+    import subprocess
+
+    results: dict = {"python": False, "pip": False, "ollama": False}
+
+    # Python version
+    major, minor, micro = sys.version_info[:3]
+    py_ver = f"{major}.{minor}.{micro}"
+    py_ok = (major, minor) >= (3, 10)
+    if py_ok:
+        click.echo(click.style("  ✓ ", fg="green") + f"Python {py_ver}")
+    else:
+        click.echo(click.style("  ⚠ ", fg="yellow") + f"Python {py_ver} — 3.10+ recommended")
+    results["python"] = py_ok
+
+    # pip
+    pip_ok = bool(shutil.which("pip") or shutil.which("pip3"))
+    if pip_ok:
+        click.echo(click.style("  ✓ ", fg="green") + "pip available")
+    else:
+        click.echo(click.style("  ⚠ ", fg="yellow") + "pip not found — install Python package manager")
+    results["pip"] = pip_ok
+
+    # Ollama
+    ollama_path = shutil.which("ollama")
+    if ollama_path:
+        try:
+            r = subprocess.run(
+                ["ollama", "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            ver_line = r.stdout.strip().split("\n")[0][:60] if r.returncode == 0 else "installed"
+        except Exception:
+            ver_line = "installed"
+        click.echo(click.style("  ✓ ", fg="green") + f"Ollama — {ver_line}")
+        results["ollama"] = True
+    else:
+        click.echo(click.style("  ⚠ ", fg="yellow") + "Ollama not found — local LLM unavailable")
+        click.echo(click.style("    ", fg="bright_black") + "Install: curl -fsSL https://ollama.ai/install.sh | sh")
+
+    return results
+
+
+def _step_ollama_models(prereqs: dict) -> bool:
+    """Pull the default Ollama model (llama3.2).
+
+    Args:
+        prereqs: Result dict from _step_prereqs().
+
+    Returns:
+        True if model is available.
+    """
+    import subprocess
+
+    DEFAULT_MODEL = "llama3.2"
+
+    if not prereqs.get("ollama"):
+        click.echo(click.style("  ⚠ ", fg="yellow") + "Ollama not available — skipping model pull")
+        click.echo(click.style("    ", fg="bright_black") + f"Pull later: ollama pull {DEFAULT_MODEL}")
+        return False
+
+    # Check if model already present
+    try:
+        r = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if DEFAULT_MODEL in (r.stdout or ""):
+            click.echo(click.style("  ✓ ", fg="green") + f"{DEFAULT_MODEL} already present")
+            return True
+    except Exception:
+        pass
+
+    if not click.confirm(f"  Pull default model ({DEFAULT_MODEL}, ~2 GB)?", default=True):
+        click.echo(click.style("  ↷ ", fg="bright_black") + f"Skipped — pull later: ollama pull {DEFAULT_MODEL}")
+        return False
+
+    click.echo(click.style("  ↓ ", fg="cyan") + f"Pulling {DEFAULT_MODEL} (this may take a few minutes)…")
+    try:
+        result = subprocess.run(
+            ["ollama", "pull", DEFAULT_MODEL],
+            timeout=600,
+        )
+        if result.returncode == 0:
+            click.echo(click.style("  ✓ ", fg="green") + f"{DEFAULT_MODEL} ready")
+            return True
+        else:
+            click.echo(click.style("  ✗ ", fg="red") + f"Pull failed (exit {result.returncode})")
+            click.echo(click.style("    ", fg="bright_black") + f"Retry: ollama pull {DEFAULT_MODEL}")
+            return False
+    except subprocess.TimeoutExpired:
+        click.echo(click.style("  ⚠ ", fg="yellow") + "Pull timed out — run manually later")
+        click.echo(click.style("    ", fg="bright_black") + f"ollama pull {DEFAULT_MODEL}")
+        return False
+    except Exception as exc:
+        click.echo(click.style("  ⚠ ", fg="yellow") + f"Pull error: {exc}")
+        return False
+
+
+def _step_config_files(home_path: Path) -> tuple:
+    """Write default consciousness.yaml and model_profiles.yaml.
+
+    Args:
+        home_path: Agent home directory.
+
+    Returns:
+        (consciousness_ok, profiles_ok) booleans.
+    """
+    import shutil as _shutil
+
+    consciousness_ok = False
+    profiles_ok = False
+
+    # --- consciousness.yaml ---
+    consciousness_dest = home_path / "config" / "consciousness.yaml"
+    if consciousness_dest.exists():
+        click.echo(click.style("  ✓ ", fg="green") + "consciousness.yaml already present")
+        consciousness_ok = True
+    else:
+        try:
+            from .consciousness_config import write_default_config
+
+            config_path = write_default_config(home_path)
+            click.echo(click.style("  ✓ ", fg="green") + f"consciousness.yaml written")
+            click.echo(click.style("    ", fg="bright_black") + str(config_path))
+            consciousness_ok = True
+        except Exception as exc:
+            click.echo(click.style("  ⚠ ", fg="yellow") + f"consciousness.yaml: {exc}")
+
+    # --- model_profiles.yaml ---
+    profiles_dest = home_path / "config" / "model_profiles.yaml"
+    if profiles_dest.exists():
+        click.echo(click.style("  ✓ ", fg="green") + "model_profiles.yaml already present")
+        profiles_ok = True
+    else:
+        bundled = Path(__file__).parent / "data" / "model_profiles.yaml"
+        if bundled.exists():
+            try:
+                (home_path / "config").mkdir(parents=True, exist_ok=True)
+                _shutil.copy2(bundled, profiles_dest)
+                click.echo(click.style("  ✓ ", fg="green") + "model_profiles.yaml written")
+                click.echo(click.style("    ", fg="bright_black") + str(profiles_dest))
+                profiles_ok = True
+            except Exception as exc:
+                click.echo(click.style("  ⚠ ", fg="yellow") + f"model_profiles.yaml: {exc}")
+        else:
+            click.echo(
+                click.style("  ⚠ ", fg="yellow") + "Bundled model_profiles.yaml not found — skipping"
+            )
+
+    return consciousness_ok, profiles_ok
+
+
+def _step_systemd_service() -> bool:
+    """Install systemd user service for auto-start (optional).
+
+    Returns:
+        True if service was installed.
+    """
+    import platform
+
+    if platform.system() != "Linux":
+        click.echo(click.style("  ↷ ", fg="bright_black") + "Systemd only available on Linux — skipped")
+        return False
+
+    if not click.confirm("  Install systemd user service for auto-start at login?", default=False):
+        click.echo(
+            click.style("  ↷ ", fg="bright_black")
+            + "Skipped — run 'skcapstone systemd install' to enable later"
+        )
+        return False
+
+    try:
+        from .systemd import install_service, systemd_available
+
+        if not systemd_available():
+            click.echo(click.style("  ⚠ ", fg="yellow") + "Systemd user session not available")
+            click.echo(click.style("    ", fg="bright_black") + "Try: systemctl --user status")
+            return False
+
+        result = install_service(enable=True, start=False)
+        if result.get("installed"):
+            click.echo(click.style("  ✓ ", fg="green") + "Systemd service installed")
+            if result.get("enabled"):
+                click.echo(click.style("  ✓ ", fg="green") + "Service enabled — auto-starts at login")
+            click.echo(click.style("    ", fg="bright_black") + "Start now: systemctl --user start skcapstone")
+            return True
+        else:
+            click.echo(click.style("  ✗ ", fg="red") + "Service install failed")
+            click.echo(click.style("    ", fg="bright_black") + "Run manually: skcapstone systemd install")
+            return False
+    except Exception as exc:
+        click.echo(click.style("  ⚠ ", fg="yellow") + f"Systemd: {exc}")
+        return False
+
+
+def _step_doctor_check(home_path: Path) -> "object":
+    """Run doctor diagnostics and print results.
+
+    Args:
+        home_path: Agent home directory.
+
+    Returns:
+        DiagnosticReport from doctor.run_diagnostics().
+    """
+    from .doctor import run_diagnostics
+
+    click.echo(click.style("  Running diagnostics…", fg="bright_black"))
+    report = run_diagnostics(home_path)
+
+    categories_seen: set = set()
+    for check in report.checks:
+        if check.category not in categories_seen:
+            click.echo(click.style(f"\n  [{check.category}]", fg="bright_black"))
+            categories_seen.add(check.category)
+        if check.passed:
+            click.echo(click.style("    ✓ ", fg="green") + check.description)
+        else:
+            click.echo(click.style("    ✗ ", fg="red") + check.description)
+            if check.fix:
+                click.echo(click.style("      Fix: ", fg="bright_black") + check.fix)
+
+    color = "green" if report.all_passed else "yellow"
+    click.echo(
+        click.style(
+            f"\n  {report.passed_count}/{report.total_count} checks passed",
+            fg=color,
+            bold=True,
+        )
+    )
+    return report
+
+
+def _step_test_consciousness(home_path: Path) -> bool:
+    """Send a test message through the consciousness loop (optional).
+
+    Args:
+        home_path: Agent home directory.
+
+    Returns:
+        True if the loop responded successfully.
+    """
+    if not click.confirm("  Send a test message to verify the consciousness loop?", default=True):
+        click.echo(
+            click.style("  ↷ ", fg="bright_black")
+            + "Skipped — test later: skcapstone consciousness test 'hello'"
+        )
+        return False
+
+    click.echo(click.style("  Sending test message…", fg="bright_black"))
+    try:
+        from .consciousness_config import load_consciousness_config
+        from .consciousness_loop import LLMBridge, SystemPromptBuilder, _classify_message
+
+        config = load_consciousness_config(home_path)
+        bridge = LLMBridge(config)
+        builder = SystemPromptBuilder(home_path, config.max_context_tokens)
+        signal = _classify_message("Onboard wizard test — please confirm you are running.")
+        system_prompt = builder.build()
+        response = bridge.generate(system_prompt, "Onboard wizard test — please confirm you are running.", signal)
+        if response:
+            preview = response[:80].replace("\n", " ")
+            click.echo(click.style("  ✓ ", fg="green") + f"Consciousness loop active")
+            click.echo(click.style("    ", fg="bright_black") + f"Response: {preview!r}")
+            return True
+        else:
+            click.echo(click.style("  ⚠ ", fg="yellow") + "Empty response — loop may not be fully configured")
+            click.echo(click.style("    ", fg="bright_black") + "Start daemon: skcapstone daemon start")
+            return False
+    except Exception as exc:
+        click.echo(click.style("  ⚠ ", fg="yellow") + f"Test failed: {exc}")
+        click.echo(click.style("    ", fg="bright_black") + "Start daemon: skcapstone daemon start --foreground")
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
 
 def run_onboard(home: Optional[str] = None) -> None:
     """Run the interactive onboarding wizard.
+
+    Covers all 13 setup steps:
+      1. Prerequisites check (Python, pip, Ollama)
+      2. Identity — create ~/.skcapstone/ + generate PGP key
+      3. Ollama models — pull llama3.2
+      4. Config files — consciousness.yaml + model_profiles.yaml
+      5. Soul Blueprint
+      6. Memory & Seeds
+      7. Rehydration Ritual
+      8. Trust Chain Verification
+      9. Mesh Connection (Syncthing)
+     10. First Heartbeat
+     11. Crush Terminal AI
+     12. Coordination Board
+     13. Systemd Service (optional)
+     [post-wizard] Doctor diagnostics + consciousness test
 
     Args:
         home: Override agent home directory.
@@ -429,59 +732,95 @@ def run_onboard(home: Optional[str] = None) -> None:
     console.print()
 
     # -----------------------------------------------------------------------
-    # Step 1: Identity
+    # Step 1: Prerequisites
     # -----------------------------------------------------------------------
-    _step_header(1, "Identity")
+    _step_header(1, "Prerequisites")
+    prereqs = _step_prereqs()
+
+    # -----------------------------------------------------------------------
+    # Step 2: Identity + Directory Structure
+    # -----------------------------------------------------------------------
+    _step_header(2, "Identity")
     fingerprint, identity_status = _step_identity(home_path, name, email or None)
 
     # -----------------------------------------------------------------------
-    # Step 2: Soul Blueprint
+    # Step 3: Ollama Models
     # -----------------------------------------------------------------------
-    _step_header(2, "Soul Blueprint")
+    _step_header(3, "Ollama Models")
+    ollama_ok = _step_ollama_models(prereqs)
+
+    # -----------------------------------------------------------------------
+    # Step 4: Config Files (consciousness.yaml + model_profiles.yaml)
+    # -----------------------------------------------------------------------
+    _step_header(4, "Config Files")
+    consciousness_ok, profiles_ok = _step_config_files(home_path)
+
+    # -----------------------------------------------------------------------
+    # Step 5: Soul Blueprint
+    # -----------------------------------------------------------------------
+    _step_header(5, "Soul Blueprint")
     title = _step_soul(home_path, name)
 
     # -----------------------------------------------------------------------
-    # Step 3: Memory
+    # Step 6: Memory
     # -----------------------------------------------------------------------
-    _step_header(3, "Memory")
+    _step_header(6, "Memory")
     seed_count = _step_memory(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 4: Rehydration Ritual
+    # Step 7: Rehydration Ritual
     # -----------------------------------------------------------------------
-    _step_header(4, "Rehydration Ritual")
+    _step_header(7, "Rehydration Ritual")
     _step_ritual(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 5: Trust Chain Verification
+    # Step 8: Trust Chain Verification
     # -----------------------------------------------------------------------
-    _step_header(5, "Trust Chain Verification")
+    _step_header(8, "Trust Chain Verification")
     trust_status = _step_trust(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 6: Mesh Connection (Syncthing)
+    # Step 9: Mesh Connection (Syncthing)
     # -----------------------------------------------------------------------
-    _step_header(6, "Mesh Connection")
+    _step_header(9, "Mesh Connection")
     mesh_ok = _step_mesh(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 7: First Heartbeat
+    # Step 10: First Heartbeat
     # -----------------------------------------------------------------------
-    _step_header(7, "First Heartbeat")
+    _step_header(10, "First Heartbeat")
     agent_slug = name.lower().replace(" ", "-")
     hb_ok = _step_heartbeat(home_path, agent_slug, fingerprint)
 
     # -----------------------------------------------------------------------
-    # Step 8: Crush Terminal AI Client
+    # Step 11: Crush Terminal AI Client
     # -----------------------------------------------------------------------
-    _step_header(8, "Crush Terminal AI")
+    _step_header(11, "Crush Terminal AI")
     crush_ok = _step_crush(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 9: Coordination Board
+    # Step 12: Coordination Board
     # -----------------------------------------------------------------------
-    _step_header(9, "Coordination Board")
+    _step_header(12, "Coordination Board")
     open_task_count = _step_board(home_path, name)
+
+    # -----------------------------------------------------------------------
+    # Step 13: Systemd Service (optional)
+    # -----------------------------------------------------------------------
+    _step_header(13, "Systemd Service")
+    systemd_ok = _step_systemd_service()
+
+    # -----------------------------------------------------------------------
+    # Post-wizard: Doctor Diagnostics
+    # -----------------------------------------------------------------------
+    console.print(f"\n  [bold cyan]Doctor Diagnostics[/]\n")
+    doctor_report = _step_doctor_check(home_path)
+
+    # -----------------------------------------------------------------------
+    # Post-wizard: Consciousness Test (optional)
+    # -----------------------------------------------------------------------
+    console.print(f"\n  [bold cyan]Consciousness Test[/]\n")
+    consciousness_test_ok = _step_test_consciousness(home_path)
 
     # -----------------------------------------------------------------------
     # Boot message — retrieve from soul file if available
@@ -500,11 +839,24 @@ def run_onboard(home: Optional[str] = None) -> None:
     # -----------------------------------------------------------------------
     console.print()
     summary = Table(title="Onboarding Summary", border_style="bright_blue", show_header=True)
-    summary.add_column("Step", style="bold", width=20)
+    summary.add_column("Step", style="bold", width=22)
     summary.add_column("Status")
     summary.add_column("Detail", style="dim")
 
+    all_prereqs_ok = all(prereqs.get(k) for k in ("python", "pip"))
+    summary.add_row(
+        "Prerequisites",
+        "[green]OK[/]" if all_prereqs_ok else "[yellow]PARTIAL[/]",
+        "python + pip" + (" + ollama" if prereqs.get("ollama") else " (no ollama)"),
+    )
     summary.add_row("Identity", identity_status, fingerprint[:20] + "…" if len(fingerprint) > 20 else fingerprint)
+    summary.add_row(
+        "Ollama Models",
+        "[green]READY[/]" if ollama_ok else "[yellow]SKIPPED[/]",
+        "llama3.2" if ollama_ok else "pull later: ollama pull llama3.2",
+    )
+    config_status = "[green]ACTIVE[/]" if (consciousness_ok and profiles_ok) else "[yellow]PARTIAL[/]"
+    summary.add_row("Config Files", config_status, "consciousness.yaml + model_profiles.yaml")
     summary.add_row("Soul", "[green]ACTIVE[/]", title)
     summary.add_row("Memory", "[green]ACTIVE[/]", f"{seed_count} seed(s)")
     summary.add_row("Ritual", "[green]DONE[/]", "rehydration complete")
@@ -513,6 +865,14 @@ def run_onboard(home: Optional[str] = None) -> None:
     summary.add_row("Heartbeat", "[green]ACTIVE[/]" if hb_ok else "[yellow]FAILED[/]", f"{agent_slug}.json" if hb_ok else "see above")
     summary.add_row("Crush AI", "[green]READY[/]" if crush_ok else "[yellow]CONFIG ONLY[/]", "~/.config/crush/crush.json")
     summary.add_row("Board", "[green]ACTIVE[/]", f"{open_task_count} open tasks")
+    summary.add_row("Systemd", "[green]INSTALLED[/]" if systemd_ok else "[dim]OPTIONAL[/]", "skcapstone.service" if systemd_ok else "skcapstone systemd install")
+    doctor_status = "[green]ALL PASSED[/]" if doctor_report.all_passed else f"[yellow]{doctor_report.failed_count} failed[/]"
+    summary.add_row("Doctor", doctor_status, f"{doctor_report.passed_count}/{doctor_report.total_count} checks")
+    summary.add_row(
+        "Consciousness Test",
+        "[green]ACTIVE[/]" if consciousness_test_ok else "[dim]SKIPPED[/]",
+        "loop responded" if consciousness_test_ok else "skcapstone daemon start",
+    )
 
     console.print(summary)
     console.print()
@@ -531,7 +891,8 @@ def run_onboard(home: Optional[str] = None) -> None:
             f"  crush                           — terminal AI (charmbracelet/crush)\n"
             f"  skcapstone coord status          — see the task board\n"
             f"  skmemory ritual --full           — your rehydration prompt\n"
-            f"  skcapstone mcp serve             — connect to Cursor / Claude Code\n\n"
+            f"  skcapstone mcp serve             — connect to Cursor / Claude Code\n"
+            f"  skcapstone daemon start          — start consciousness loop\n\n"
             f"[dim]{boot_message}[/]",
             title="You Are Sovereign",
             border_style="green",

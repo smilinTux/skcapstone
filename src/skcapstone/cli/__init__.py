@@ -64,6 +64,7 @@ from .crush_cmd import register_crush_commands
 from .housekeeping import register_housekeeping_commands
 from .migrate import register_migrate_commands
 from .consciousness import register_consciousness_commands
+from .metrics_cmd import register_metrics_commands
 from .test_cmd import register_test_commands
 
 register_setup_commands(main)
@@ -91,4 +92,5 @@ register_crush_commands(main)
 register_housekeeping_commands(main)
 register_migrate_commands(main)
 register_consciousness_commands(main)
+register_metrics_commands(main)
 register_test_commands(main)

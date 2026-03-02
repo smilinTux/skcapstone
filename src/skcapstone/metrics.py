@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -593,3 +594,168 @@ class MetricsCollector:
             )
         except Exception as exc:
             report.errors.append(f"backup: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Consciousness loop runtime metrics
+# ---------------------------------------------------------------------------
+
+
+class ConsciousnessMetrics:
+    """Thread-safe runtime metrics for the consciousness loop.
+
+    Tracks per-message counters, a response-time histogram (min/max/avg/p99),
+    per-backend and per-tier usage counters, and per-peer message counts.
+    Persists daily snapshots to ``{home}/metrics/daily/{date}.json`` every
+    *persist_interval* seconds and loads the current-day snapshot on startup.
+
+    Args:
+        home: Agent home directory (default: ``~/.skcapstone``).
+        persist_interval: Seconds between auto-saves. Pass ``0`` to disable
+            the background thread (useful in tests).
+    """
+
+    def __init__(
+        self, home: Optional[Path] = None, persist_interval: int = 300
+    ) -> None:
+        self._lock = threading.Lock()
+        self._home = (home or Path("~/.skcapstone")).expanduser()
+        self._persist_interval = persist_interval
+
+        # Counters
+        self._messages_processed: int = 0
+        self._responses_sent: int = 0
+        self._errors: int = 0
+
+        # Response-time histogram samples (ms) — capped at 1 000 entries
+        self._response_times: list[float] = []
+
+        # Per-backend, per-tier, per-peer counters
+        self._backend_usage: dict[str, int] = {}
+        self._tier_usage: dict[str, int] = {}
+        self._messages_per_peer: dict[str, int] = {}
+
+        # Session start
+        self._session_start = datetime.now(timezone.utc)
+
+        # Load today's persisted data before starting background thread
+        self._load_today()
+
+        # Background persist thread (daemon so it never blocks process exit)
+        self._stop_event = threading.Event()
+        if persist_interval > 0:
+            t = threading.Thread(
+                target=self._persist_loop,
+                name="metrics-persist",
+                daemon=True,
+            )
+            t.start()
+
+    # ------------------------------------------------------------------
+    # Public record methods
+    # ------------------------------------------------------------------
+
+    def record_message(self, peer: str) -> None:
+        """Record an incoming message from *peer*."""
+        safe_peer = peer[:64]
+        with self._lock:
+            self._messages_processed += 1
+            self._messages_per_peer[safe_peer] = (
+                self._messages_per_peer.get(safe_peer, 0) + 1
+            )
+
+    def record_response(
+        self, response_time_ms: float, backend: str, tier: str
+    ) -> None:
+        """Record a successful response: timing, backend, and tier."""
+        with self._lock:
+            self._responses_sent += 1
+            self._response_times.append(response_time_ms)
+            # Bound memory — keep the most recent 1 000 samples
+            if len(self._response_times) > 1000:
+                self._response_times = self._response_times[-1000:]
+            self._backend_usage[backend] = self._backend_usage.get(backend, 0) + 1
+            self._tier_usage[tier] = self._tier_usage.get(tier, 0) + 1
+
+    def record_error(self) -> None:
+        """Record a processing error."""
+        with self._lock:
+            self._errors += 1
+
+    # ------------------------------------------------------------------
+    # Snapshot / persistence
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serializable snapshot of today's metrics."""
+        with self._lock:
+            return {
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "session_start": self._session_start.isoformat(),
+                "messages_processed": self._messages_processed,
+                "responses_sent": self._responses_sent,
+                "errors": self._errors,
+                "response_time_ms": self._histogram_stats(),
+                "backend_usage": dict(self._backend_usage),
+                "tier_usage": dict(self._tier_usage),
+                "messages_per_peer": dict(self._messages_per_peer),
+            }
+
+    def _histogram_stats(self) -> dict:
+        """Compute histogram stats (caller must hold self._lock)."""
+        if not self._response_times:
+            return {"min": 0.0, "max": 0.0, "avg": 0.0, "p99": 0.0, "count": 0}
+        times = sorted(self._response_times)
+        count = len(times)
+        # ceil(count * 0.99) - 1 gives the 0-based index for the p99 value:
+        # e.g. 100 samples → index 98 → the 99th-fastest value.
+        p99_idx = max(0, min(count - 1, int(count * 0.99) - 1))
+        return {
+            "min": round(times[0], 1),
+            "max": round(times[-1], 1),
+            "avg": round(sum(times) / count, 1),
+            "p99": round(times[p99_idx], 1),
+            "count": count,
+        }
+
+    def _daily_path(self) -> Path:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return self._home / "metrics" / "daily" / f"{date_str}.json"
+
+    def save(self) -> None:
+        """Persist today's metrics to disk."""
+        try:
+            path = self._daily_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = self.to_dict()
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to save consciousness metrics: %s", exc)
+
+    def _load_today(self) -> None:
+        """Load today's persisted counters on startup (skips histogram)."""
+        try:
+            path = self._daily_path()
+            if not path.exists():
+                return
+            data = json.loads(path.read_text(encoding="utf-8"))
+            with self._lock:
+                self._messages_processed = int(data.get("messages_processed", 0))
+                self._responses_sent = int(data.get("responses_sent", 0))
+                self._errors = int(data.get("errors", 0))
+                self._backend_usage = dict(data.get("backend_usage", {}))
+                self._tier_usage = dict(data.get("tier_usage", {}))
+                self._messages_per_peer = dict(data.get("messages_per_peer", {}))
+                # response_times are session-only; do not restore
+        except Exception as exc:
+            logger.warning("Failed to load historical metrics: %s", exc)
+
+    def _persist_loop(self) -> None:
+        """Background thread: save every persist_interval seconds."""
+        while not self._stop_event.wait(self._persist_interval):
+            self.save()
+
+    def stop(self) -> None:
+        """Stop background persistence and flush a final save."""
+        self._stop_event.set()
+        self.save()

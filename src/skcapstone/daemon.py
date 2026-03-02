@@ -487,6 +487,7 @@ class DaemonService:
         state = self.state
         config = self.config
         consciousness = self._consciousness
+        runtime = self._runtime
 
         class DaemonHandler(BaseHTTPRequestHandler):
             """HTTP handler for daemon status API."""
@@ -504,9 +505,298 @@ class DaemonService:
                 except Exception:
                     return False
 
+            @staticmethod
+            def _get_system_stats() -> dict:
+                """Collect memory and disk usage statistics."""
+                import shutil
+                stats: dict = {}
+                try:
+                    usage = shutil.disk_usage("/")
+                    stats["disk_total_gb"] = round(usage.total / (1024 ** 3), 1)
+                    stats["disk_used_gb"] = round(usage.used / (1024 ** 3), 1)
+                    stats["disk_free_gb"] = round(usage.free / (1024 ** 3), 1)
+                except Exception:
+                    stats.update(disk_total_gb=0, disk_used_gb=0, disk_free_gb=0)
+                try:
+                    meminfo: dict = {}
+                    with open("/proc/meminfo") as fh:
+                        for line in fh:
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                meminfo[parts[0].rstrip(":")] = int(parts[1])
+                    total_kb = meminfo.get("MemTotal", 0)
+                    avail_kb = meminfo.get("MemAvailable", 0)
+                    stats["memory_total_mb"] = round(total_kb / 1024)
+                    stats["memory_used_mb"] = round((total_kb - avail_kb) / 1024)
+                    stats["memory_free_mb"] = round(avail_kb / 1024)
+                except Exception:
+                    stats.update(memory_total_mb=0, memory_used_mb=0, memory_free_mb=0)
+                return stats
+
+            def _build_dashboard_data(self) -> dict:
+                """Assemble all dashboard data into a single dict."""
+                snap = state.snapshot()
+
+                # Agent identity — try runtime first, then identity.json
+                agent_name = "unknown"
+                agent_fingerprint = ""
+                if runtime and hasattr(runtime, "manifest"):
+                    try:
+                        agent_name = runtime.manifest.name or agent_name
+                        agent_fingerprint = getattr(runtime.manifest, "fingerprint", "")
+                    except Exception:
+                        pass
+                identity_file = config.home / "identity" / "identity.json"
+                if identity_file.exists():
+                    try:
+                        ident = json.loads(identity_file.read_text(encoding="utf-8"))
+                        agent_name = ident.get("name", agent_name)
+                        agent_fingerprint = ident.get("fingerprint", agent_fingerprint)
+                    except Exception:
+                        pass
+
+                # Consciousness stats
+                c_stats: dict = snap.get("consciousness", {})
+                if consciousness:
+                    c_stats = consciousness.stats
+
+                # Recent conversations (last 5 by mtime)
+                conversations: list = []
+                conversations_dir = config.shared_root / "conversations"
+                if conversations_dir.exists():
+                    try:
+                        conv_files = sorted(
+                            conversations_dir.glob("*.json"),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True,
+                        )[:5]
+                        for cf in conv_files:
+                            try:
+                                msgs = json.loads(cf.read_text(encoding="utf-8"))
+                                if isinstance(msgs, list):
+                                    conversations.append({
+                                        "peer": cf.stem,
+                                        "message_count": len(msgs),
+                                        "last_message": msgs[-1].get("timestamp") if msgs else None,
+                                    })
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                return {
+                    "agent": {
+                        "name": agent_name,
+                        "fingerprint": agent_fingerprint,
+                    },
+                    "daemon": {
+                        "running": snap["running"],
+                        "uptime_seconds": snap["uptime_seconds"],
+                        "pid": snap["pid"],
+                        "messages_received": snap["messages_received"],
+                        "syncs_completed": snap["syncs_completed"],
+                    },
+                    "consciousness": c_stats,
+                    "backends": snap.get("transport_health", {}),
+                    "conversations": conversations,
+                    "system": self._get_system_stats(),
+                    "recent_errors": snap.get("recent_errors", [])[-5:],
+                }
+
+            @staticmethod
+            def _render_html(data: dict) -> str:
+                """Render dashboard data as a self-contained dark-theme HTML page."""
+                agent = data.get("agent", {})
+                d = data.get("daemon", {})
+                cons = data.get("consciousness", {})
+                backends = data.get("backends", {})
+                conversations = data.get("conversations", [])
+                system = data.get("system", {})
+                errors = data.get("recent_errors", [])
+
+                # Uptime formatting
+                secs = float(d.get("uptime_seconds", 0))
+                if secs < 60:
+                    uptime_str = f"{int(secs)}s"
+                elif secs < 3600:
+                    uptime_str = f"{int(secs // 60)}m {int(secs % 60)}s"
+                else:
+                    uptime_str = f"{int(secs // 3600)}h {int((secs % 3600) // 60)}m"
+
+                # Fingerprint — shorten for display
+                fp = agent.get("fingerprint", "")
+                fp_short = f"{fp[:8]}\u2026{fp[-8:]}" if len(fp) > 20 else fp
+
+                # Consciousness card
+                c_enabled = cons.get("enabled", False)
+                c_dot = "dot-green" if c_enabled else "dot-red"
+                c_inotify = cons.get("inotify_active", False)
+                c_backends = cons.get("backends", [])
+                c_backends_str = ", ".join(c_backends) if c_backends else "none"
+                c_html = (
+                    f'<div class="stat-row"><span class="stat-label">'
+                    f'<span class="dot {c_dot}"></span>Status</span>'
+                    f'<span class="stat-value">{"active" if c_enabled else "disabled"}</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">Processed</span>'
+                    f'<span class="stat-value">{cons.get("messages_processed", 0)}</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">Responses sent</span>'
+                    f'<span class="stat-value">{cons.get("responses_sent", 0)}</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">Errors</span>'
+                    f'<span class="stat-value">{cons.get("errors", 0)}</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">iNotify</span>'
+                    f'<span class="stat-value">{"yes" if c_inotify else "no"}</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">LLM backends</span>'
+                    f'<span class="stat-value" style="font-size:12px">{c_backends_str}</span></div>'
+                )
+
+                # Backend health card
+                if backends:
+                    b_rows = []
+                    for bname, binfo in backends.items():
+                        avail = binfo.get("available", False) if isinstance(binfo, dict) else False
+                        dot = "dot-green" if avail else "dot-red"
+                        b_rows.append(
+                            f'<div class="stat-row"><span class="stat-label">'
+                            f'<span class="dot {dot}"></span>{bname}</span>'
+                            f'<span class="stat-value">{"ok" if avail else "down"}</span></div>'
+                        )
+                    b_html = "\n".join(b_rows)
+                else:
+                    b_html = '<div style="color:#484f58;padding:4px 0;font-size:13px">No transports configured</div>'
+
+                # Conversations card
+                if conversations:
+                    c_rows = []
+                    for conv in conversations:
+                        peer = conv.get("peer", "?")
+                        count = conv.get("message_count", 0)
+                        last = (conv.get("last_message") or "")[:10]
+                        c_rows.append(
+                            f'<div class="peer-row">'
+                            f'<span class="peer-name">{peer}</span>'
+                            f'<div><span class="peer-count">{count}</span>'
+                            f'<span style="color:#484f58;font-size:11px;margin-left:6px">{last}</span>'
+                            f'</div></div>'
+                        )
+                    conv_html = "\n".join(c_rows)
+                else:
+                    conv_html = '<div style="color:#484f58;padding:4px 0">No conversations yet</div>'
+
+                # System stats card
+                mem_used = system.get("memory_used_mb", 0)
+                mem_total = system.get("memory_total_mb", 0)
+                disk_free = system.get("disk_free_gb", 0)
+                disk_total = system.get("disk_total_gb", 0)
+                mem_pct = int(mem_used / mem_total * 100) if mem_total else 0
+                disk_used_pct = int((disk_total - disk_free) / disk_total * 100) if disk_total else 0
+                sys_html = (
+                    f'<div class="stat-row"><span class="stat-label">RAM used</span>'
+                    f'<span class="stat-value">{int(mem_used):,} / {int(mem_total):,} MB ({mem_pct}%)</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">Disk used</span>'
+                    f'<span class="stat-value">{disk_total - disk_free:.1f} / {disk_total:.1f} GB</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">Disk free</span>'
+                    f'<span class="stat-value">{disk_free:.1f} GB ({100 - disk_used_pct}%)</span></div>'
+                )
+
+                # Errors card
+                if errors:
+                    err_lines = "\n".join(
+                        f'<div class="error-line">{str(e)[-100:]}</div>'
+                        for e in errors[-5:]
+                    )
+                    err_html = f'<div class="error-list">{err_lines}</div>'
+                else:
+                    err_html = '<div style="color:#3fb950;font-size:13px">No recent errors</div>'
+
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                agent_name = agent.get("name", "SKCapstone")
+                pid = d.get("pid", "?")
+                msg_count = d.get("messages_received", 0)
+                syncs = d.get("syncs_completed", 0)
+
+                # CSS stored as plain string to avoid f-string brace escaping
+                css = (
+                    "*{box-sizing:border-box;margin:0;padding:0}"
+                    "body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px}"
+                    "h1{font-size:20px;font-weight:600;color:#58a6ff}"
+                    "h2{font-size:11px;font-weight:600;color:#8b949e;text-transform:uppercase;"
+                    "letter-spacing:.08em;margin-bottom:10px}"
+                    "header{padding:14px 24px;border-bottom:1px solid #21262d;"
+                    "display:flex;align-items:center;gap:12px;flex-wrap:wrap}"
+                    ".badge{font-size:11px;background:#161b22;border:1px solid #30363d;"
+                    "border-radius:4px;padding:2px 8px;color:#8b949e}"
+                    ".badge.ok{border-color:#238636;color:#3fb950}"
+                    "main{padding:20px 24px;display:grid;"
+                    "grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}"
+                    ".card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:16px}"
+                    ".stat-row{display:flex;justify-content:space-between;align-items:center;"
+                    "padding:5px 0;border-bottom:1px solid #21262d}"
+                    ".stat-row:last-child{border-bottom:none}"
+                    ".stat-label{color:#8b949e;font-size:13px}"
+                    ".stat-value{color:#e6edf3;font-family:monospace;font-size:13px;"
+                    "text-align:right;max-width:55%}"
+                    ".dot{display:inline-block;width:7px;height:7px;border-radius:50%;"
+                    "margin-right:5px;vertical-align:middle}"
+                    ".dot-green{background:#3fb950;box-shadow:0 0 4px #3fb95077}"
+                    ".dot-red{background:#f85149;box-shadow:0 0 4px #f8514977}"
+                    ".peer-row{display:flex;justify-content:space-between;align-items:center;"
+                    "padding:6px 0;border-bottom:1px solid #21262d}"
+                    ".peer-row:last-child{border-bottom:none}"
+                    ".peer-name{color:#58a6ff;font-family:monospace;font-size:13px}"
+                    ".peer-count{background:#1f6feb22;color:#79c0ff;border-radius:10px;"
+                    "padding:1px 7px;font-size:12px}"
+                    ".error-list{font-family:monospace;font-size:11px;color:#f85149}"
+                    ".error-line{padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
+                    "footer{padding:10px 24px;border-top:1px solid #21262d;"
+                    "color:#484f58;font-size:11px;text-align:center}"
+                )
+
+                fp_badge = (
+                    f'<span class="badge" style="font-size:10px;font-family:monospace">{fp_short}</span>'
+                    if fp_short else ""
+                )
+
+                return (
+                    f'<!DOCTYPE html><html lang="en"><head>'
+                    f'<meta charset="UTF-8">'
+                    f'<meta name="viewport" content="width=device-width,initial-scale=1.0">'
+                    f'<title>SKCapstone \u2014 {agent_name}</title>'
+                    f'<meta http-equiv="refresh" content="30">'
+                    f'<style>{css}</style>'
+                    f'</head><body>'
+                    f'<header>'
+                    f'<h1>&#9670; {agent_name}</h1>'
+                    f'<span class="badge ok">DAEMON RUNNING</span>'
+                    f'<span class="badge">PID {pid}</span>'
+                    f'{fp_badge}'
+                    f'<span style="margin-left:auto;color:#484f58;font-size:11px">auto-refresh 30s</span>'
+                    f'</header>'
+                    f'<main>'
+                    f'<div class="card"><h2>Daemon</h2>'
+                    f'<div class="stat-row"><span class="stat-label">Uptime</span>'
+                    f'<span class="stat-value">{uptime_str}</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">Messages received</span>'
+                    f'<span class="stat-value">{msg_count}</span></div>'
+                    f'<div class="stat-row"><span class="stat-label">Syncs completed</span>'
+                    f'<span class="stat-value">{syncs}</span></div>'
+                    f'</div>'
+                    f'<div class="card"><h2>Consciousness</h2>{c_html}</div>'
+                    f'<div class="card"><h2>Backends</h2>{b_html}</div>'
+                    f'<div class="card"><h2>Recent Conversations</h2>{conv_html}</div>'
+                    f'<div class="card"><h2>System</h2>{sys_html}</div>'
+                    f'<div class="card"><h2>Recent Errors</h2>{err_html}</div>'
+                    f'</main>'
+                    f'<footer>SKCapstone Daemon \u00b7 {ts}</footer>'
+                    f'</body></html>'
+                )
+
             def do_GET(self):
                 """Handle GET requests to the daemon API."""
-                if self.path == "/status":
+                if self.path == "/":
+                    self._html_response(self._render_html(self._build_dashboard_data()))
+                elif self.path == "/api/v1/dashboard":
+                    self._json_response(self._build_dashboard_data())
+                elif self.path == "/status":
                     self._json_response(state.snapshot())
                 elif self.path == "/health":
                     self._json_response(state.health_reports)
@@ -660,10 +950,19 @@ class DaemonService:
                     except Exception as exc:
                         self._json_response({"error": str(exc)}, status=500)
 
+                # ── Metrics: consciousness loop runtime stats ─────────────
+                elif self.path == "/api/v1/metrics":
+                    if consciousness:
+                        self._json_response(consciousness.metrics.to_dict())
+                    else:
+                        self._json_response({"error": "consciousness not loaded"}, status=503)
+
                 else:
                     self._json_response(
                         {
                             "endpoints": [
+                                "/ (HTML dashboard)",
+                                "/api/v1/dashboard",
                                 "/status",
                                 "/health",
                                 "/consciousness",
@@ -672,6 +971,7 @@ class DaemonService:
                                 "/api/v1/household/agent/{name}",
                                 "/api/v1/conversations",
                                 "/api/v1/conversations/{peer}",
+                                "/api/v1/metrics",
                             ]
                         },
                         status=200,
@@ -682,6 +982,14 @@ class DaemonService:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(data, indent=2, default=str).encode())
+
+            def _html_response(self, html: str, status: int = 200):
+                body = html.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
 
             def log_message(self, format, *args):
                 logger.debug("API: %s", format % args)

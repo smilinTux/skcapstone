@@ -31,6 +31,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from skcapstone.blueprints.schema import ModelTier
+from skcapstone.metrics import ConsciousnessMetrics
 from skcapstone.model_router import ModelRouter, ModelRouterConfig, RouteDecision, TaskSignal
 from skcapstone.prompt_adapter import AdaptedPrompt, PromptAdapter
 
@@ -93,6 +94,48 @@ class ConsciousnessConfig(BaseModel):
             "ollama", "grok", "kimi", "nvidia", "anthropic", "openai", "passthrough",
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Backend inference helper
+# ---------------------------------------------------------------------------
+
+_OLLAMA_MODEL_PATTERNS = (
+    "llama", "mistral", "nemotron", "devstral",
+    "deepseek", "qwen", "codestral",
+)
+
+
+def _backend_from_model(model_name: str, tier: ModelTier) -> str:
+    """Infer the backend provider from a model name and routing tier.
+
+    Mirrors the pattern-matching logic in :meth:`LLMBridge._resolve_callback`
+    so callers can record which backend was actually used.
+
+    Args:
+        model_name: Concrete model name (e.g. ``"claude-3-5-sonnet-20241022"``).
+        tier: The :class:`ModelTier` used for this request.
+
+    Returns:
+        Backend string: ``"ollama"``, ``"anthropic"``, ``"openai"``, ``"grok"``,
+        ``"kimi"``, ``"nvidia"``, ``"passthrough"``, or ``"unknown"``.
+    """
+    if tier == ModelTier.LOCAL:
+        return "ollama"
+    name_base = model_name.lower().split(":")[0]
+    if "claude" in name_base:
+        return "anthropic"
+    if any(x in name_base for x in ("gpt", "o1", "o3", "o4")):
+        return "openai"
+    if "grok" in name_base:
+        return "grok"
+    if "kimi" in name_base or "moonshot" in name_base:
+        return "kimi"
+    if "nvidia" in name_base:
+        return "nvidia"
+    if any(p in name_base for p in _OLLAMA_MODEL_PATTERNS):
+        return "ollama"
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +342,7 @@ class LLMBridge:
         system_prompt: str,
         user_message: str,
         signal: TaskSignal,
+        _out_info: Optional[dict] = None,
     ) -> str:
         """Route via ModelRouter, adapt prompt, call LLM, cascade on failure.
 
@@ -306,6 +350,8 @@ class LLMBridge:
             system_prompt: The agent's system context.
             user_message: The incoming message to respond to.
             signal: Task classification signal.
+            _out_info: Optional dict populated with ``backend`` and ``tier``
+                keys indicating which provider served the request.
 
         Returns:
             LLM response text, or a fallback error message.
@@ -344,7 +390,11 @@ class LLMBridge:
         # Try primary model
         try:
             callback = self._resolve_callback(decision.tier, decision.model_name)
-            return self._timed_call(callback, adapted, decision.tier)
+            result = self._timed_call(callback, adapted, decision.tier)
+            if _out_info is not None:
+                _out_info["backend"] = _backend_from_model(decision.model_name, decision.tier)
+                _out_info["tier"] = decision.tier.value
+            return result
         except Exception as exc:
             logger.warning(
                 "Primary model %s failed: %s", decision.model_name, exc
@@ -359,7 +409,11 @@ class LLMBridge:
                     system_prompt, user_message, alt_model, decision.tier,
                 )
                 callback = self._resolve_callback(decision.tier, alt_model)
-                return self._timed_call(callback, alt_adapted, decision.tier)
+                result = self._timed_call(callback, alt_adapted, decision.tier)
+                if _out_info is not None:
+                    _out_info["backend"] = _backend_from_model(alt_model, decision.tier)
+                    _out_info["tier"] = decision.tier.value
+                return result
             except Exception as exc:
                 logger.warning("Alt model %s failed: %s", alt_model, exc)
 
@@ -373,7 +427,11 @@ class LLMBridge:
                         system_prompt, user_message, fast_model, ModelTier.FAST,
                     )
                     callback = self._resolve_callback(ModelTier.FAST, fast_model)
-                    return self._timed_call(callback, fast_adapted, ModelTier.FAST)
+                    result = self._timed_call(callback, fast_adapted, ModelTier.FAST)
+                    if _out_info is not None:
+                        _out_info["backend"] = _backend_from_model(fast_model, ModelTier.FAST)
+                        _out_info["tier"] = ModelTier.FAST.value
+                    return result
                 except Exception as exc:
                     logger.warning("FAST model %s failed: %s", fast_model, exc)
 
@@ -400,11 +458,18 @@ class LLMBridge:
                     callback = self._make_passthrough_callback()
                 else:
                     continue
-                return self._timed_call(callback, adapted, ModelTier.FAST)
+                result = self._timed_call(callback, adapted, ModelTier.FAST)
+                if _out_info is not None:
+                    _out_info["backend"] = backend
+                    _out_info["tier"] = ModelTier.FAST.value
+                return result
             except Exception as exc:
                 logger.warning("Fallback %s failed: %s", backend, exc)
 
         # Last resort
+        if _out_info is not None:
+            _out_info["backend"] = "none"
+            _out_info["tier"] = "none"
         return (
             "I'm currently experiencing connectivity issues with my language models. "
             "Your message has been received and I'll respond as soon as service is restored."
@@ -852,6 +917,9 @@ class ConsciousnessLoop:
         self._bridge = LLMBridge(config, adapter=self._adapter)
         self._prompt_builder = SystemPromptBuilder(self._home, config.max_context_tokens)
 
+        # Metrics collector (persist every 5 min)
+        self._metrics = ConsciousnessMetrics(home=self._home)
+
         # Agent identity for inbox filtering
         self._agent_name = self._resolve_agent_name()
 
@@ -902,6 +970,7 @@ class ConsciousnessLoop:
             except Exception:
                 pass
         self._executor.shutdown(wait=False)
+        self._metrics.stop()
         logger.info("Consciousness loop stopped.")
 
     def _run_inotify_restart(self) -> None:
@@ -962,6 +1031,7 @@ class ConsciousnessLoop:
             logger.info("Processing message from %s: %s", sender, content[:80])
             self._messages_processed += 1
             self._last_activity = datetime.now(timezone.utc)
+            self._metrics.record_message(sender)
 
             # Send ACK
             if self._config.auto_ack and self._skcomm:
@@ -981,9 +1051,20 @@ class ConsciousnessLoop:
             system_prompt = self._prompt_builder.build(peer_name=sender)
             t_prompt = time.monotonic()
 
-            # Generate response
-            response = self._bridge.generate(system_prompt, content, signal)
+            # Generate response — capture backend/tier via _out_info
+            _route_info: dict = {}
+            response = self._bridge.generate(
+                system_prompt, content, signal, _out_info=_route_info
+            )
             t_llm = time.monotonic()
+
+            # Record response metrics
+            response_time_ms = (t_llm - t0) * 1000
+            self._metrics.record_response(
+                response_time_ms,
+                backend=_route_info.get("backend", "unknown"),
+                tier=_route_info.get("tier", "unknown"),
+            )
 
             # Send response
             if response and self._skcomm:
@@ -994,6 +1075,7 @@ class ConsciousnessLoop:
                 except Exception as exc:
                     logger.error("Failed to send response to %s: %s", sender, exc)
                     self._errors += 1
+                    self._metrics.record_error()
             t_send = time.monotonic()
 
             logger.info(
@@ -1018,6 +1100,7 @@ class ConsciousnessLoop:
         except Exception as exc:
             logger.error("Consciousness processing error: %s", exc, exc_info=True)
             self._errors += 1
+            self._metrics.record_error()
             return None
 
     def _store_interaction_memory(
@@ -1082,6 +1165,56 @@ class ConsciousnessLoop:
             pass
         return ""
 
+    def _verify_message_signature(self, data: dict) -> str:
+        """Verify a PGP signature on an incoming envelope payload.
+
+        Looks for ``payload.signature`` in the envelope dict.  If present,
+        resolves the sender's public key from the peer store and verifies via
+        the capauth crypto backend.
+
+        Args:
+            data: Parsed envelope dict from an ``.skc.json`` file.
+
+        Returns:
+            ``"verified"`` — signature present and valid.
+            ``"failed"``   — signature present but invalid, or key unavailable.
+            ``"unsigned"`` — no signature field in the payload.
+        """
+        payload = data.get("payload", data)
+        signature = payload.get("signature", "")
+        if not signature:
+            return "unsigned"
+
+        content = payload.get("content", payload.get("message", ""))
+        sender = _sanitize_peer_name(data.get("sender", data.get("from", "")))
+        if not sender or sender == "unknown":
+            logger.debug("Cannot verify signature — sender unknown")
+            return "failed"
+
+        try:
+            from skcapstone.peers import get_peer
+            peer = get_peer(sender, skcapstone_home=self._home)
+            if not peer or not peer.public_key:
+                logger.debug(
+                    "No public key for peer %s — cannot verify signature", sender
+                )
+                return "failed"
+
+            from capauth.crypto import get_backend
+            backend = get_backend()
+            content_bytes = (
+                content.encode("utf-8") if isinstance(content, str) else content
+            )
+            ok = backend.verify(
+                data=content_bytes,
+                signature_armor=signature,
+                public_key_armor=peer.public_key,
+            )
+            return "verified" if ok else "failed"
+        except Exception as exc:
+            logger.debug("Signature verification error for %s: %s", sender, exc)
+            return "failed"
+
     def _on_inbox_file(self, path: Path) -> None:
         """Handle a new file detected in the inbox.
 
@@ -1141,12 +1274,24 @@ class ConsciousnessLoop:
             except Exception:
                 pass  # _work_queue might not exist in all Python versions
 
+            # PGP signature verification (soft enforcement — log only)
+            sig_sender = _sanitize_peer_name(
+                data.get("sender", data.get("from", "unknown"))
+            )
+            sig_status = self._verify_message_signature(data)
+            logger.info("Message from %s signature: %s", sig_sender, sig_status)
+
             # Construct a minimal envelope-like object
             envelope = _SimpleEnvelope(data)
             self._executor.submit(self.process_envelope, envelope)
 
         except Exception as exc:
             logger.warning("Failed to process inbox file %s: %s", path, exc)
+
+    @property
+    def metrics(self) -> ConsciousnessMetrics:
+        """Live metrics collector for this consciousness loop."""
+        return self._metrics
 
     @property
     def stats(self) -> dict[str, Any]:

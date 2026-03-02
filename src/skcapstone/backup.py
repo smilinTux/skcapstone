@@ -60,14 +60,15 @@ class BackupManifest(BaseModel):
     total_size: int = 0
 
 
-# Directories relative to agent home to include in backup
+# Directories relative to agent home to include in backup.
+# Excludes ephemeral runtime dirs: sync/, heartbeats/, coordination/tasks/
 BACKUP_DIRS = [
     "config",
     "identity",
     "memory",
+    "soul",
+    "conversations",
     "trust",
-    "coordination",
-    "logs",
 ]
 
 # Individual files relative to agent home

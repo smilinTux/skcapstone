@@ -1511,9 +1511,13 @@ class TestConsciousnessTools:
 
     @pytest.mark.asyncio
     async def test_consciousness_test_happy_path(self, initialized_agent_home: Path):
-        """consciousness_test with message returns structured response or error."""
+        """consciousness_test with message returns structured response (LLM mocked)."""
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
-            result = await call_tool("consciousness_test", {"message": "Hello, Opus!"})
+            with patch(
+                "skcapstone.consciousness_loop.LLMBridge.generate",
+                return_value="Mocked consciousness response.",
+            ):
+                result = await call_tool("consciousness_test", {"message": "Hello, Opus!"})
         parsed = _extract_json(result)
         assert isinstance(parsed, dict)
         # Either a full pipeline response or graceful error
@@ -1535,8 +1539,8 @@ class TestTrustTools:
             result = await call_tool("trust_calibrate", {"action": "show"})
         parsed = _extract_json(result)
         assert isinstance(parsed, dict)
-        # Should return TrustThresholds fields
-        assert "entanglement_depth_min" in parsed or "error" in parsed
+        # Should return TrustThresholds fields (entanglement_depth is the real field name)
+        assert "entanglement_depth" in parsed or "error" in parsed
 
     @pytest.mark.asyncio
     async def test_trust_calibrate_default_action(self, initialized_agent_home: Path):

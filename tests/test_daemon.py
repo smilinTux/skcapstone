@@ -528,6 +528,176 @@ class TestHouseholdAPI:
             svc.stop()
 
 
+class TestDashboardAPI:
+    """Tests for GET / (HTML dashboard) and GET /api/v1/dashboard (JSON)."""
+
+    def _start_server(self, daemon_home, shared_root=None):
+        root = shared_root or daemon_home
+        config = DaemonConfig(
+            home=daemon_home, shared_root=root, port=0, poll_interval=60
+        )
+        svc = DaemonService(config)
+        svc.state.running = True
+        with patch.object(svc, "_load_components"):
+            svc.config.port = _find_free_port()
+            svc._write_pid()
+            svc._start_api_server()
+        time.sleep(0.3)
+        return svc
+
+    def _get(self, port, path):
+        url = f"http://127.0.0.1:{port}{path}"
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            return resp.status, resp.read(), resp.headers.get("Content-Type", "")
+
+    # ── GET /api/v1/dashboard ────────────────────────────────────────────
+
+    def test_dashboard_json_returns_200(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, body, ct = self._get(svc.config.port, "/api/v1/dashboard")
+            assert status == 200
+            assert "application/json" in ct
+            data = json.loads(body)
+            assert "agent" in data
+            assert "daemon" in data
+            assert "consciousness" in data
+            assert "backends" in data
+            assert "conversations" in data
+            assert "system" in data
+            assert "recent_errors" in data
+        finally:
+            svc.stop()
+
+    def test_dashboard_json_daemon_fields(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        svc.state.record_poll(7)
+        try:
+            _, body, _ = self._get(svc.config.port, "/api/v1/dashboard")
+            data = json.loads(body)
+            assert data["daemon"]["running"] is True
+            assert data["daemon"]["messages_received"] == 7
+            assert "uptime_seconds" in data["daemon"]
+            assert "pid" in data["daemon"]
+        finally:
+            svc.stop()
+
+    def test_dashboard_json_system_stats(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            _, body, _ = self._get(svc.config.port, "/api/v1/dashboard")
+            data = json.loads(body)
+            sys_stats = data["system"]
+            assert "disk_total_gb" in sys_stats
+            assert "memory_total_mb" in sys_stats
+            assert sys_stats["disk_total_gb"] > 0
+        finally:
+            svc.stop()
+
+    def test_dashboard_json_conversations_last5(self, daemon_home):
+        conv_dir = daemon_home / "conversations"
+        conv_dir.mkdir(parents=True)
+        for i in range(7):
+            msgs = [{"role": "user", "content": f"msg{i}", "timestamp": f"2026-03-0{i % 9 + 1}T10:00:00+00:00"}]
+            (conv_dir / f"peer{i}.json").write_text(json.dumps(msgs))
+
+        svc = self._start_server(daemon_home, shared_root=daemon_home)
+        try:
+            _, body, _ = self._get(svc.config.port, "/api/v1/dashboard")
+            data = json.loads(body)
+            assert len(data["conversations"]) <= 5
+        finally:
+            svc.stop()
+
+    def test_dashboard_json_identity_from_file(self, daemon_home):
+        (daemon_home / "identity").mkdir(parents=True, exist_ok=True)
+        (daemon_home / "identity" / "identity.json").write_text(
+            json.dumps({"name": "TestAgent", "fingerprint": "DEADBEEF12345678"})
+        )
+        svc = self._start_server(daemon_home)
+        try:
+            _, body, _ = self._get(svc.config.port, "/api/v1/dashboard")
+            data = json.loads(body)
+            assert data["agent"]["name"] == "TestAgent"
+            assert data["agent"]["fingerprint"] == "DEADBEEF12345678"
+        finally:
+            svc.stop()
+
+    # ── GET / (HTML dashboard) ───────────────────────────────────────────
+
+    def test_dashboard_html_returns_200(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, body, ct = self._get(svc.config.port, "/")
+            assert status == 200
+            assert "text/html" in ct
+            html = body.decode("utf-8")
+            assert "<!DOCTYPE html>" in html
+        finally:
+            svc.stop()
+
+    def test_dashboard_html_dark_theme(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            _, body, _ = self._get(svc.config.port, "/")
+            html = body.decode("utf-8")
+            assert "#0d1117" in html  # GitHub dark background
+        finally:
+            svc.stop()
+
+    def test_dashboard_html_auto_refresh(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            _, body, _ = self._get(svc.config.port, "/")
+            html = body.decode("utf-8")
+            assert 'http-equiv="refresh"' in html
+            assert "content=\"30\"" in html
+        finally:
+            svc.stop()
+
+    def test_dashboard_html_contains_agent_section(self, daemon_home):
+        (daemon_home / "identity").mkdir(parents=True, exist_ok=True)
+        (daemon_home / "identity" / "identity.json").write_text(
+            json.dumps({"name": "Opus", "fingerprint": "ABCD1234ABCD1234ABCD1234"})
+        )
+        svc = self._start_server(daemon_home)
+        try:
+            _, body, _ = self._get(svc.config.port, "/")
+            html = body.decode("utf-8")
+            assert "Opus" in html
+            assert "Daemon" in html
+            assert "Consciousness" in html
+            assert "Backends" in html
+            assert "System" in html
+        finally:
+            svc.stop()
+
+    def test_dashboard_html_dot_indicators(self, daemon_home):
+        """Verify green/red dot CSS classes are present."""
+        svc = self._start_server(daemon_home)
+        try:
+            _, body, _ = self._get(svc.config.port, "/")
+            html = body.decode("utf-8")
+            assert "dot-green" in html
+            assert "dot-red" in html
+        finally:
+            svc.stop()
+
+    def test_dashboard_html_shows_conversation_peers(self, daemon_home):
+        conv_dir = daemon_home / "conversations"
+        conv_dir.mkdir(parents=True)
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2026-03-01T10:00:00+00:00"}]
+        (conv_dir / "alice.json").write_text(json.dumps(msgs))
+
+        svc = self._start_server(daemon_home, shared_root=daemon_home)
+        try:
+            _, body, _ = self._get(svc.config.port, "/")
+            html = body.decode("utf-8")
+            assert "alice" in html
+        finally:
+            svc.stop()
+
+
 def _find_free_port() -> int:
     """Find an available port for testing."""
     import socket

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from skcapstone.metrics import (
+    ConsciousnessMetrics,
     MetricsCollector,
     MetricsReport,
     FortressMetrics,
@@ -410,3 +413,220 @@ class TestModels:
         k = KmsMetrics()
         assert k.available is False
         assert k.active_keys == 0
+
+
+# ---------------------------------------------------------------------------
+# ConsciousnessMetrics
+# ---------------------------------------------------------------------------
+
+
+class TestConsciousnessMetrics:
+    """Tests for the consciousness loop runtime metrics collector."""
+
+    @pytest.fixture
+    def cm(self, tmp_path: Path) -> ConsciousnessMetrics:
+        """ConsciousnessMetrics with no background thread."""
+        return ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+
+    # ------------------------------------------------------------------
+    # Basic counters
+    # ------------------------------------------------------------------
+
+    def test_initial_counters_zero(self, cm: ConsciousnessMetrics) -> None:
+        """All counters start at zero."""
+        d = cm.to_dict()
+        assert d["messages_processed"] == 0
+        assert d["responses_sent"] == 0
+        assert d["errors"] == 0
+
+    def test_record_message_increments(self, cm: ConsciousnessMetrics) -> None:
+        """record_message increments messages_processed and peer counter."""
+        cm.record_message("alice")
+        cm.record_message("alice")
+        cm.record_message("bob")
+        d = cm.to_dict()
+        assert d["messages_processed"] == 3
+        assert d["messages_per_peer"]["alice"] == 2
+        assert d["messages_per_peer"]["bob"] == 1
+
+    def test_record_response_increments(self, cm: ConsciousnessMetrics) -> None:
+        """record_response increments responses_sent, backend, and tier."""
+        cm.record_response(120.5, "ollama", "fast")
+        cm.record_response(80.0, "anthropic", "standard")
+        cm.record_response(95.0, "ollama", "fast")
+        d = cm.to_dict()
+        assert d["responses_sent"] == 3
+        assert d["backend_usage"]["ollama"] == 2
+        assert d["backend_usage"]["anthropic"] == 1
+        assert d["tier_usage"]["fast"] == 2
+        assert d["tier_usage"]["standard"] == 1
+
+    def test_record_error_increments(self, cm: ConsciousnessMetrics) -> None:
+        """record_error increments the errors counter."""
+        cm.record_error()
+        cm.record_error()
+        assert cm.to_dict()["errors"] == 2
+
+    # ------------------------------------------------------------------
+    # Histogram
+    # ------------------------------------------------------------------
+
+    def test_histogram_stats_empty(self, cm: ConsciousnessMetrics) -> None:
+        """Histogram returns zeros when no samples."""
+        stats = cm.to_dict()["response_time_ms"]
+        assert stats["count"] == 0
+        assert stats["min"] == 0.0
+        assert stats["avg"] == 0.0
+        assert stats["p99"] == 0.0
+
+    def test_histogram_min_max_avg(self, cm: ConsciousnessMetrics) -> None:
+        """Histogram computes min/max/avg correctly."""
+        for ms in [10.0, 20.0, 30.0, 40.0, 50.0]:
+            cm.record_response(ms, "passthrough", "fast")
+        stats = cm.to_dict()["response_time_ms"]
+        assert stats["min"] == 10.0
+        assert stats["max"] == 50.0
+        assert stats["avg"] == 30.0
+        assert stats["count"] == 5
+
+    def test_histogram_p99_single(self, cm: ConsciousnessMetrics) -> None:
+        """p99 of a single sample equals that sample."""
+        cm.record_response(42.0, "passthrough", "fast")
+        stats = cm.to_dict()["response_time_ms"]
+        assert stats["p99"] == 42.0
+
+    def test_histogram_p99_hundred_samples(self, cm: ConsciousnessMetrics) -> None:
+        """p99 of 100 evenly-spaced samples is the 99th value."""
+        for i in range(1, 101):
+            cm.record_response(float(i), "passthrough", "fast")
+        stats = cm.to_dict()["response_time_ms"]
+        # p99_idx = min(99, int(100 * 0.99)) = 98 → sorted[98] = 99.0
+        assert stats["p99"] == 99.0
+
+    def test_histogram_capped_at_1000(self, cm: ConsciousnessMetrics) -> None:
+        """Histogram caps sample list at 1 000 to bound memory."""
+        for i in range(1200):
+            cm.record_response(float(i), "passthrough", "fast")
+        assert cm.to_dict()["response_time_ms"]["count"] == 1000
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def test_save_and_reload(self, tmp_path: Path) -> None:
+        """save() writes JSON; a new instance with the same home loads it."""
+        cm1 = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        cm1.record_message("peer-a")
+        cm1.record_response(55.0, "ollama", "fast")
+        cm1.record_error()
+        cm1.save()
+
+        cm2 = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        d = cm2.to_dict()
+        assert d["messages_processed"] == 1
+        assert d["responses_sent"] == 1
+        assert d["errors"] == 1
+        assert d["backend_usage"]["ollama"] == 1
+        assert d["tier_usage"]["fast"] == 1
+        assert d["messages_per_peer"]["peer-a"] == 1
+
+    def test_save_creates_daily_file(self, tmp_path: Path) -> None:
+        """save() creates the daily JSON file under metrics/daily/."""
+        from datetime import datetime, timezone
+        cm = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        cm.record_message("x")
+        cm.save()
+
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        daily = tmp_path / "metrics" / "daily" / f"{date_str}.json"
+        assert daily.exists()
+        data = json.loads(daily.read_text(encoding="utf-8"))
+        assert data["messages_processed"] == 1
+
+    def test_load_missing_file_doesnt_crash(self, tmp_path: Path) -> None:
+        """Creating ConsciousnessMetrics when no file exists doesn't fail."""
+        cm = ConsciousnessMetrics(home=tmp_path / "nonexistent", persist_interval=0)
+        assert cm.to_dict()["messages_processed"] == 0
+
+    def test_load_corrupt_file_doesnt_crash(self, tmp_path: Path) -> None:
+        """Corrupt daily JSON is silently ignored."""
+        from datetime import datetime, timezone
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        daily = tmp_path / "metrics" / "daily" / f"{date_str}.json"
+        daily.parent.mkdir(parents=True)
+        daily.write_text("not json {{{", encoding="utf-8")
+        cm = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        assert cm.to_dict()["messages_processed"] == 0
+
+    # ------------------------------------------------------------------
+    # Thread safety
+    # ------------------------------------------------------------------
+
+    def test_concurrent_record_message(self, cm: ConsciousnessMetrics) -> None:
+        """Concurrent record_message calls produce correct total."""
+        n = 200
+        barrier = threading.Barrier(n)
+
+        def _record():
+            barrier.wait()
+            cm.record_message("stress-peer")
+
+        threads = [threading.Thread(target=_record) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        d = cm.to_dict()
+        assert d["messages_processed"] == n
+        assert d["messages_per_peer"]["stress-peer"] == n
+
+    def test_concurrent_record_response(self, cm: ConsciousnessMetrics) -> None:
+        """Concurrent record_response calls produce correct total."""
+        n = 100
+        barrier = threading.Barrier(n)
+
+        def _record():
+            barrier.wait()
+            cm.record_response(10.0, "passthrough", "fast")
+
+        threads = [threading.Thread(target=_record) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert cm.to_dict()["responses_sent"] == n
+
+    # ------------------------------------------------------------------
+    # to_dict structure
+    # ------------------------------------------------------------------
+
+    def test_to_dict_keys(self, cm: ConsciousnessMetrics) -> None:
+        """to_dict returns all required keys."""
+        d = cm.to_dict()
+        required = {
+            "date", "session_start", "messages_processed", "responses_sent",
+            "errors", "response_time_ms", "backend_usage", "tier_usage",
+            "messages_per_peer",
+        }
+        assert required.issubset(d.keys())
+
+    def test_to_dict_json_serializable(self, cm: ConsciousnessMetrics) -> None:
+        """to_dict output can be serialized to JSON."""
+        cm.record_message("peer")
+        cm.record_response(50.0, "ollama", "local")
+        data = json.dumps(cm.to_dict())
+        assert isinstance(data, str)
+
+    # ------------------------------------------------------------------
+    # Peer name sanitization
+    # ------------------------------------------------------------------
+
+    def test_peer_name_truncated_to_64(self, cm: ConsciousnessMetrics) -> None:
+        """Peer names longer than 64 chars are truncated in the counter key."""
+        long_peer = "a" * 100
+        cm.record_message(long_peer)
+        d = cm.to_dict()
+        assert "a" * 64 in d["messages_per_peer"]
+        assert long_peer not in d["messages_per_peer"]

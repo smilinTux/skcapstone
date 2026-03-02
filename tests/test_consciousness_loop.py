@@ -603,3 +603,134 @@ class TestProcessEnvelopeTiming:
         numbers = [float(n) for n in _re.findall(r"[\d.]+(?=ms)", timing_msgs[0])]
         assert len(numbers) == 4, f"Expected 4 timing values, got: {numbers}"
         assert all(n >= 0 for n in numbers), f"Negative timing value: {numbers}"
+
+
+class TestVerifyMessageSignature:
+    """Tests for ConsciousnessLoop._verify_message_signature."""
+
+    def _make_loop(self, tmp_path):
+        config = ConsciousnessConfig(fallback_chain=["passthrough"])
+        return ConsciousnessLoop(config, home=tmp_path / ".skcapstone")
+
+    def test_unsigned_when_no_signature(self, tmp_path):
+        """Returns 'unsigned' when payload has no signature field."""
+        loop = self._make_loop(tmp_path)
+        data = {"sender": "jarvis", "payload": {"content": "hello"}}
+        assert loop._verify_message_signature(data) == "unsigned"
+
+    def test_unsigned_empty_signature(self, tmp_path):
+        """Returns 'unsigned' when signature field is empty string."""
+        loop = self._make_loop(tmp_path)
+        data = {"sender": "jarvis", "payload": {"content": "hello", "signature": ""}}
+        assert loop._verify_message_signature(data) == "unsigned"
+
+    def test_failed_when_no_peer_key(self, tmp_path):
+        """Returns 'failed' when sender has no public key in peer store."""
+        loop = self._make_loop(tmp_path)
+        data = {
+            "sender": "unknown-peer",
+            "payload": {"content": "hello", "signature": "-----BEGIN PGP MESSAGE-----\nfake\n-----END PGP MESSAGE-----"},
+        }
+        # No peer registered → get_peer returns None → failed
+        assert loop._verify_message_signature(data) == "failed"
+
+    def test_failed_when_unknown_sender(self, tmp_path):
+        """Returns 'failed' when sender resolves to 'unknown'."""
+        loop = self._make_loop(tmp_path)
+        data = {
+            # No sender/from key → sanitizer returns "unknown"
+            "payload": {"content": "hi", "signature": "sig"},
+        }
+        assert loop._verify_message_signature(data) == "failed"
+
+    @patch("skcapstone.consciousness_loop.ConsciousnessLoop._verify_message_signature")
+    def test_on_inbox_file_logs_sig_status(self, mock_verify, tmp_path, caplog):
+        """_on_inbox_file logs the signature status returned by _verify_message_signature."""
+        mock_verify.return_value = "unsigned"
+
+        loop = self._make_loop(tmp_path)
+        loop._executor = MagicMock()  # don't submit real work
+
+        # Write a valid envelope file
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+        msg_file = inbox / "test.skc.json"
+        msg_file.write_text(json.dumps({
+            "sender": "jarvis",
+            "payload": {"content": "hello", "content_type": "text"},
+        }))
+
+        with caplog.at_level(logging.INFO, logger="skcapstone.consciousness"):
+            loop._on_inbox_file(msg_file)
+
+        sig_logs = [r.message for r in caplog.records if "signature:" in r.message]
+        assert sig_logs, "Expected a 'signature:' log entry from _on_inbox_file"
+        assert "unsigned" in sig_logs[0]
+
+    def test_verified_with_mock_backend(self, tmp_path):
+        """Returns 'verified' when capauth backend confirms the signature."""
+        loop = self._make_loop(tmp_path)
+
+        # Register a peer with a public key
+        peer_dir = (tmp_path / ".skcapstone") / "peers"
+        peer_dir.mkdir(parents=True)
+        peer_data = {
+            "name": "jarvis",
+            "fingerprint": "ABCD1234",
+            "public_key": "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----",
+            "trust_level": "verified",
+        }
+        (peer_dir / "jarvis.json").write_text(json.dumps(peer_data))
+
+        data = {
+            "sender": "jarvis",
+            "payload": {
+                "content": "hello",
+                "signature": "-----BEGIN PGP MESSAGE-----\nfake\n-----END PGP MESSAGE-----",
+            },
+        }
+
+        with patch("capauth.crypto.get_backend") as mock_get_backend:
+            mock_backend = MagicMock()
+            mock_backend.verify.return_value = True
+            mock_get_backend.return_value = mock_backend
+
+            result = loop._verify_message_signature(data)
+
+        assert result == "verified"
+        mock_backend.verify.assert_called_once_with(
+            data=b"hello",
+            signature_armor="-----BEGIN PGP MESSAGE-----\nfake\n-----END PGP MESSAGE-----",
+            public_key_armor=peer_data["public_key"],
+        )
+
+    def test_failed_with_bad_signature(self, tmp_path):
+        """Returns 'failed' when capauth backend rejects the signature."""
+        loop = self._make_loop(tmp_path)
+
+        peer_dir = (tmp_path / ".skcapstone") / "peers"
+        peer_dir.mkdir(parents=True)
+        peer_data = {
+            "name": "jarvis",
+            "fingerprint": "ABCD1234",
+            "public_key": "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----",
+            "trust_level": "verified",
+        }
+        (peer_dir / "jarvis.json").write_text(json.dumps(peer_data))
+
+        data = {
+            "sender": "jarvis",
+            "payload": {
+                "content": "hello",
+                "signature": "-----BEGIN PGP MESSAGE-----\nfake\n-----END PGP MESSAGE-----",
+            },
+        }
+
+        with patch("capauth.crypto.get_backend") as mock_get_backend:
+            mock_backend = MagicMock()
+            mock_backend.verify.return_value = False
+            mock_get_backend.return_value = mock_backend
+
+            result = loop._verify_message_signature(data)
+
+        assert result == "failed"
