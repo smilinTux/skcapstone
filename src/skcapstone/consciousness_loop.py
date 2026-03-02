@@ -220,15 +220,18 @@ class LLMBridge:
     def _tier_timeout(self, tier: ModelTier) -> int:
         """Return response timeout in seconds for the given tier.
 
+        FAST and LOCAL are 180s because the machine runs CPU-only inference
+        (Intel i7, no GPU) and even llama3.2 (3.2B) takes 60-180s.
+
         Returns:
-            Seconds: FAST=60, CODE=300, REASON=300, NUANCE=120, LOCAL=180,
+            Seconds: FAST=180, CODE=300, REASON=300, NUANCE=180, LOCAL=180,
             default=120.
         """
         _map = {
-            ModelTier.FAST: 60,
+            ModelTier.FAST: 180,
             ModelTier.CODE: 300,
             ModelTier.REASON: 300,
-            ModelTier.NUANCE: 120,
+            ModelTier.NUANCE: 180,
             ModelTier.LOCAL: 180,
         }
         return _map.get(tier, 120)
@@ -291,6 +294,12 @@ class LLMBridge:
             "Routed to tier=%s model=%s: %s",
             decision.tier.value, decision.model_name, decision.reasoning,
         )
+
+        # For FAST tier (CPU-only Ollama), truncate system prompt to ~2000 chars
+        # so the model spends its cycles on the response, not processing a giant context.
+        if decision.tier == ModelTier.FAST and len(system_prompt) > 2000:
+            system_prompt = system_prompt[:2000] + "..."
+            logger.debug("FAST tier: system prompt truncated to 2000 chars")
 
         # Adapt prompt for the target model
         adapted = self._adapter.adapt(

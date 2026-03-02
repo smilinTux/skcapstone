@@ -304,6 +304,22 @@ class DaemonService:
                     if self._skcomm:
                         self._consciousness.set_skcomm(self._skcomm)
                     logger.info("Consciousness loop loaded")
+
+                    # Preload Ollama model into RAM so first real message is fast
+                    def _ollama_warmup():
+                        try:
+                            from skseed.llm import ollama_callback
+                            cb = ollama_callback(model="llama3.2")
+                            cb("warmup")
+                            logger.info("Ollama warmup complete — llama3.2 loaded")
+                        except Exception as exc:
+                            logger.debug("Ollama warmup skipped: %s", exc)
+
+                    threading.Thread(
+                        target=_ollama_warmup,
+                        name="daemon-ollama-warmup",
+                        daemon=True,
+                    ).start()
                 else:
                     logger.info("Consciousness loop disabled by config")
             except Exception as exc:
