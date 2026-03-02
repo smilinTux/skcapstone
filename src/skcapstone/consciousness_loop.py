@@ -799,6 +799,13 @@ class ConsciousnessLoop:
         self._bridge = LLMBridge(config, adapter=self._adapter)
         self._prompt_builder = SystemPromptBuilder(self._home, config.max_context_tokens)
 
+        # Agent identity for inbox filtering
+        self._agent_name = self._resolve_agent_name()
+
+        # Deduplication state
+        self._processed_ids: set[str] = set()
+        self._processed_ids_lock = threading.Lock()
+
     def set_skcomm(self, skcomm) -> None:
         """Inject SKComm instance for sending responses.
 
@@ -844,6 +851,24 @@ class ConsciousnessLoop:
         self._executor.shutdown(wait=False)
         logger.info("Consciousness loop stopped.")
 
+    def _run_inotify_restart(self) -> None:
+        """Restart the inotify observer after it dies."""
+        if self._observer:
+            try:
+                self._observer.stop()
+                self._observer.join(timeout=5)
+            except Exception:
+                pass
+            self._observer = None
+
+        # Re-launch inotify in a new thread
+        t = threading.Thread(
+            target=self._run_inotify,
+            name="consciousness-inotify-restart",
+            daemon=True,
+        )
+        t.start()
+
     def process_envelope(self, envelope) -> Optional[str]:
         """Process a single message envelope — the heart of consciousness.
 
@@ -888,7 +913,7 @@ class ConsciousnessLoop:
             # Send ACK
             if self._config.auto_ack and self._skcomm:
                 try:
-                    self._skcomm.send(sender, "ACK", content_type="ack")
+                    self._skcomm.send(sender, "ACK", message_type="ack")
                 except Exception as exc:
                     logger.debug("ACK send failed: %s", exc)
 
@@ -980,14 +1005,75 @@ class ConsciousnessLoop:
         except Exception as exc:
             logger.error("Inotify watcher error: %s", exc)
 
+    def _resolve_agent_name(self) -> str:
+        """Get this agent's name from identity.json."""
+        try:
+            identity_path = self._home / "identity" / "identity.json"
+            if identity_path.exists():
+                data = json.loads(identity_path.read_text(encoding="utf-8"))
+                return data.get("name", "").lower()
+        except Exception:
+            pass
+        return ""
+
     def _on_inbox_file(self, path: Path) -> None:
         """Handle a new file detected in the inbox.
 
         Args:
             path: Path to the new .skc.json file.
         """
+        # Size cap: reject files larger than 1MB
+        try:
+            file_size = path.stat().st_size
+            if file_size > 1_000_000:
+                logger.warning("Inbox file too large (%d bytes): %s", file_size, path)
+                return
+        except OSError:
+            return
+
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+
+            if not isinstance(data, dict):
+                logger.warning("Invalid envelope format (not a dict): %s", path)
+                return
+
+            # Require sender field
+            if not data.get("sender") and not data.get("from"):
+                logger.warning("Envelope missing sender: %s", path)
+                return
+
+            # Filter by recipient — skip messages not addressed to this agent
+            recipient = data.get("recipient", "")
+            if self._agent_name and recipient and recipient.lower() != self._agent_name:
+                logger.debug("Skipping message for %s (we are %s)", recipient, self._agent_name)
+                return
+
+            # Deduplication by message_id
+            message_id = data.get("message_id") or data.get("envelope_id", "")
+            if message_id:
+                with self._processed_ids_lock:
+                    if message_id in self._processed_ids:
+                        logger.debug("Skipping duplicate message: %s", message_id)
+                        return
+                    self._processed_ids.add(message_id)
+                    # Cap at 1000 entries to prevent unbounded growth
+                    if len(self._processed_ids) > 1000:
+                        # Remove oldest (but sets are unordered, so just clear half)
+                        to_keep = list(self._processed_ids)[-500:]
+                        self._processed_ids = set(to_keep)
+
+            # Rate limiting: check executor queue depth
+            try:
+                queue_size = self._executor._work_queue.qsize()
+                if queue_size >= self._config.max_concurrent_requests * 2:
+                    logger.warning(
+                        "Consciousness executor backlogged (%d pending), dropping message",
+                        queue_size,
+                    )
+                    return
+            except Exception:
+                pass  # _work_queue might not exist in all Python versions
 
             # Construct a minimal envelope-like object
             envelope = _SimpleEnvelope(data)
