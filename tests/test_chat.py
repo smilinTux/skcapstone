@@ -195,8 +195,7 @@ class TestAgentChatReceive:
 class TestCLIChatCommands:
     """Integration tests for the CLI chat commands."""
 
-    @patch("skcapstone.cli.get_runtime")
-    def test_chat_send_help(self, mock_runtime):
+    def test_chat_send_help(self):
         """chat send --help works."""
         from skcapstone.cli import main
 
@@ -206,8 +205,7 @@ class TestCLIChatCommands:
         assert "PEER" in result.output
         assert "MESSAGE" in result.output
 
-    @patch("skcapstone.cli.get_runtime")
-    def test_chat_inbox_help(self, mock_runtime):
+    def test_chat_inbox_help(self):
         """chat inbox --help works."""
         from skcapstone.cli import main
 
@@ -217,8 +215,7 @@ class TestCLIChatCommands:
         assert "--poll" in result.output
         assert "--limit" in result.output
 
-    @patch("skcapstone.cli.get_runtime")
-    def test_chat_live_help(self, mock_runtime):
+    def test_chat_live_help(self):
         """chat live --help works."""
         from skcapstone.cli import main
 
