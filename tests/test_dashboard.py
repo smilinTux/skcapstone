@@ -3,6 +3,9 @@
 Covers:
 - DashboardHandler serves HTML at /
 - API endpoints return valid JSON (/api/status, /api/doctor, /api/board, /api/memory)
+- /api/daemon returns Flutter-ready JSON with all required fields
+- _get_daemon_json returns correct structure when daemon is offline
+- skcapstone dashboard --json emits valid JSON to stdout
 - 404 for unknown paths
 - start_dashboard creates a server
 - Dashboard HTML contains essential elements
@@ -26,6 +29,7 @@ from skcapstone.dashboard import (
     _get_agent_status,
     _get_board_state,
     _get_doctor_report,
+    _get_daemon_json,
     _get_memory_stats,
     start_dashboard,
 )
@@ -227,3 +231,224 @@ class TestHTTPServer:
 
         assert resp.getheader("Access-Control-Allow-Origin") == "*"
         conn.close()
+
+
+class TestGetDaemonJson:
+    """Unit tests for _get_daemon_json() — the Flutter-ready status blob."""
+
+    def test_returns_all_required_keys(self, agent_home):
+        """_get_daemon_json always returns all top-level keys even when daemon is offline."""
+        result = _get_daemon_json(agent_home, daemon_port=19999)  # unused port
+
+        assert "generated_at" in result
+        assert "daemon" in result
+        assert "consciousness" in result
+        assert "backend_health" in result
+        assert "active_conversations" in result
+        assert "system" in result
+
+    def test_daemon_offline_returns_safe_defaults(self, agent_home):
+        """When daemon is unreachable, daemon section shows running=False with zero counts."""
+        result = _get_daemon_json(agent_home, daemon_port=19999)
+
+        daemon = result["daemon"]
+        assert daemon["running"] is False
+        assert daemon["messages_received"] == 0
+        assert daemon["error_count"] == 0
+        assert daemon["uptime_seconds"] == 0
+        assert isinstance(daemon["recent_errors"], list)
+
+    def test_consciousness_offline_returns_disabled(self, agent_home):
+        """When daemon is unreachable, consciousness section shows enabled=False."""
+        result = _get_daemon_json(agent_home, daemon_port=19999)
+
+        assert result["consciousness"].get("enabled") is False
+
+    def test_backend_health_has_expected_backends(self, agent_home):
+        """backend_health contains at least the standard five backends."""
+        result = _get_daemon_json(agent_home, daemon_port=19999)
+
+        bh = result["backend_health"]
+        for key in ("ollama", "anthropic", "grok", "kimi", "nvidia"):
+            assert key in bh, f"Missing backend key: {key}"
+            assert isinstance(bh[key], bool)
+
+    def test_generated_at_is_iso_timestamp(self, agent_home):
+        """generated_at is a valid ISO 8601 timestamp string."""
+        from datetime import datetime
+
+        result = _get_daemon_json(agent_home, daemon_port=19999)
+        ts = result["generated_at"]
+        # Should not raise
+        datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+    def test_daemon_running_returns_full_snapshot(self, agent_home):
+        """When daemon HTTP returns a valid snapshot, all fields are populated."""
+        fake_snap = {
+            "running": True,
+            "pid": 42,
+            "uptime_seconds": 3725,
+            "started_at": "2026-03-02T10:00:00+00:00",
+            "messages_received": 17,
+            "syncs_completed": 3,
+            "recent_errors": ["err1"],
+            "inflight_count": 2,
+        }
+        fake_consciousness = {
+            "enabled": True,
+            "messages_processed": 10,
+            "messages_processed_24h": 5,
+            "responses_sent": 9,
+            "errors": 1,
+            "backends": {"ollama": True, "grok": False},
+        }
+
+        import urllib.request
+
+        class _FakeResponse:
+            def __init__(self, data):
+                self._data = json.dumps(data).encode()
+
+            def read(self):
+                return self._data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+        call_count = {"n": 0}
+
+        def fake_urlopen(url_or_req, timeout=None):
+            url = url_or_req if isinstance(url_or_req, str) else url_or_req.full_url
+            call_count["n"] += 1
+            if "/status" in url:
+                return _FakeResponse(fake_snap)
+            if "/consciousness" in url:
+                return _FakeResponse(fake_consciousness)
+            raise OSError("not available")
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = _get_daemon_json(agent_home, daemon_port=7777)
+
+        daemon = result["daemon"]
+        assert daemon["running"] is True
+        assert daemon["pid"] == 42
+        assert daemon["messages_received"] == 17
+        assert daemon["error_count"] == 1
+        assert daemon["uptime_human"] == "1h 2m"
+
+        csc = result["consciousness"]
+        assert csc["enabled"] is True
+        assert csc["messages_processed"] == 10
+
+
+class TestDaemonApiEndpoint:
+    """Test the /api/daemon HTTP endpoint on the dashboard server."""
+
+    def test_api_daemon_json(self, dashboard_server):
+        """GET /api/daemon returns valid JSON with all required top-level keys."""
+        server, port = dashboard_server
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/api/daemon")
+        resp = conn.getresponse()
+
+        assert resp.status == 200
+        assert "application/json" in resp.getheader("Content-Type")
+        data = json.loads(resp.read())
+        for key in ("generated_at", "daemon", "consciousness", "backend_health",
+                    "active_conversations", "system"):
+            assert key in data, f"Missing key in /api/daemon response: {key}"
+        conn.close()
+
+    def test_api_daemon_cors_header(self, dashboard_server):
+        """/api/daemon includes the CORS header for cross-origin Flutter access."""
+        server, port = dashboard_server
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/api/daemon")
+        resp = conn.getresponse()
+
+        assert resp.getheader("Access-Control-Allow-Origin") == "*"
+        conn.close()
+
+    def test_api_daemon_backend_health_keys(self, dashboard_server):
+        """/api/daemon backend_health contains all standard backend names."""
+        server, port = dashboard_server
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/api/daemon")
+        resp = conn.getresponse()
+
+        data = json.loads(resp.read())
+        bh = data.get("backend_health", {})
+        for key in ("ollama", "anthropic", "grok", "kimi", "nvidia"):
+            assert key in bh
+        conn.close()
+
+
+class TestDashboardJsonCLI:
+    """Test the skcapstone dashboard --json CLI flag."""
+
+    def test_json_flag_outputs_valid_json(self, agent_home):
+        """dashboard --json prints JSON to stdout and exits without starting a server."""
+        from click.testing import CliRunner
+        from skcapstone.cli.status import register_status_commands
+        import click
+
+        @click.group()
+        def _cli():
+            pass
+
+        register_status_commands(_cli)
+        runner = CliRunner()
+        result = runner.invoke(
+            _cli,
+            ["dashboard", "--json", f"--home={agent_home}"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert "daemon" in data
+        assert "consciousness" in data
+        assert "backend_health" in data
+
+    def test_json_flag_contains_generated_at(self, agent_home):
+        """dashboard --json output includes a generated_at timestamp."""
+        from click.testing import CliRunner
+        from skcapstone.cli.status import register_status_commands
+        import click
+
+        @click.group()
+        def _cli():
+            pass
+
+        register_status_commands(_cli)
+        runner = CliRunner()
+        result = runner.invoke(
+            _cli,
+            ["dashboard", "--json", f"--home={agent_home}"],
+            catch_exceptions=False,
+        )
+        data = json.loads(result.output)
+        assert "generated_at" in data
+
+    def test_json_flag_daemon_offline_still_exits_zero(self, agent_home):
+        """dashboard --json exits 0 even when daemon is unreachable (daemon offline)."""
+        from click.testing import CliRunner
+        from skcapstone.cli.status import register_status_commands
+        import click
+
+        @click.group()
+        def _cli():
+            pass
+
+        register_status_commands(_cli)
+        runner = CliRunner()
+        result = runner.invoke(
+            _cli,
+            ["dashboard", "--json", "--daemon-port=19999", f"--home={agent_home}"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["daemon"]["running"] is False

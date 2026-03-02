@@ -392,18 +392,6 @@ class TestProviderBackend:
     """Tests for the abstract provider interface."""
 
     def test_abstract_methods_raise(self) -> None:
-        """Abstract methods raise NotImplementedError."""
-        provider = ProviderBackend()
-        spec = MagicMock()
-        with pytest.raises(NotImplementedError):
-            provider.provision("test", spec, "team")
-        with pytest.raises(NotImplementedError):
-            provider.configure("test", spec, {})
-        with pytest.raises(NotImplementedError):
-            provider.start("test", {})
-        with pytest.raises(NotImplementedError):
-            provider.stop("test", {})
-        with pytest.raises(NotImplementedError):
-            provider.destroy("test", {})
-        with pytest.raises(NotImplementedError):
-            provider.health_check("test", {})
+        """ProviderBackend is an ABC — cannot be instantiated directly."""
+        with pytest.raises(TypeError):
+            ProviderBackend()  # type: ignore[abstract]

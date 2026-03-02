@@ -11,6 +11,7 @@ import click
 
 from ._common import AGENT_HOME, console
 
+from rich.console import Console
 from rich.panel import Panel
 
 from .. import AGENT_PORTS, DEFAULT_PORT, SKCAPSTONE_ROOT
@@ -37,6 +38,60 @@ def _resolve_agent_port(agent: str | None, explicit_port: int | None) -> int:
     return DEFAULT_PORT
 
 
+_DEV_AUTH_BANNER = """\
+[bold red]WARNING: SKCAPSTONE_DEV_AUTH is enabled[/]
+
+[red]Dev-auth mode bypasses cryptographic identity verification.[/]
+[red]Any caller can claim any agent identity without a valid PGP token.[/]
+
+[yellow]This is only safe on a fully isolated development machine.[/]
+[yellow]NEVER run with SKCAPSTONE_DEV_AUTH=true in production.[/]"""
+
+
+def _warn_dev_auth(auto_confirm: bool) -> None:
+    """Print a prominent warning when dev-auth mode is active.
+
+    If *auto_confirm* is False and neither CI nor SKCAPSTONE_YES env vars are
+    set, block until the operator presses Enter to confirm they understand the
+    risk.  This gives the operator a chance to abort (Ctrl+C) before the daemon
+    starts accepting unauthenticated requests.
+    """
+    raw = os.environ.get("SKCAPSTONE_DEV_AUTH", "").strip().lower()
+    if raw not in ("1", "true", "yes"):
+        return
+
+    stderr_console = Console(stderr=True, highlight=False)
+    stderr_console.print()
+    stderr_console.print(
+        Panel(
+            _DEV_AUTH_BANNER,
+            title="[bold red on white] !! DEV AUTH MODE !! [/]",
+            border_style="bold red",
+            padding=(1, 4),
+        )
+    )
+    stderr_console.print()
+
+    skip = (
+        auto_confirm
+        or os.environ.get("CI", "").strip().lower() in ("1", "true", "yes")
+        or os.environ.get("SKCAPSTONE_YES", "").strip().lower() in ("1", "true", "yes")
+    )
+    if skip:
+        stderr_console.print(
+            "[yellow]Dev-auth warning acknowledged automatically (--yes / CI mode).[/]\n"
+        )
+        return
+
+    try:
+        input("  Press Enter to acknowledge and continue, or Ctrl+C to abort... ")
+    except (KeyboardInterrupt, EOFError):
+        stderr_console.print("\n[red]Aborted.[/]")
+        sys.exit(1)
+
+    stderr_console.print()
+
+
 def register_daemon_commands(main: click.Group) -> None:
     """Register the daemon command group."""
 
@@ -57,8 +112,10 @@ def register_daemon_commands(main: click.Group) -> None:
     @click.option("--foreground", is_flag=True, help="Run in foreground (don't daemonize).")
     @click.option("--no-consciousness", "no_consciousness", is_flag=True,
                   help="Disable the consciousness loop.")
+    @click.option("--yes", "-y", "auto_confirm", is_flag=True,
+                  help="Skip interactive confirmation prompts (for CI/automation).")
     def daemon_start(agent: str | None, home: str, port: int | None, poll: int, sync_int: int,
-                     foreground: bool, no_consciousness: bool):
+                     foreground: bool, no_consciousness: bool, auto_confirm: bool):
         """Start the sovereign agent daemon.
 
         Runs continuously, polling for messages, syncing vault state,
@@ -93,6 +150,8 @@ def register_daemon_commands(main: click.Group) -> None:
         if is_running(home_path):
             console.print("[yellow]Daemon is already running.[/]")
             sys.exit(0)
+
+        _warn_dev_auth(auto_confirm)
 
         config = DaemonConfig(
             home=home_path,
@@ -264,6 +323,90 @@ def register_daemon_commands(main: click.Group) -> None:
             console.print("[green]  Service disabled.[/]")
         if result["removed"]:
             console.print("[green]  Unit files removed.[/]")
+        console.print()
+
+    @daemon.command("components")
+    @click.option("--agent", default=None, help="Named agent to query.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--port", default=None, type=int, help="API port to query.")
+    @click.option("--json-out", is_flag=True, help="Output as JSON.")
+    def daemon_components(agent: str | None, home: str, port: int | None, json_out: bool):
+        """Show per-component health (alive/dead/restarting).
+
+        Queries the running daemon for the status of each subsystem:
+        poll, health, sync, housekeeping, healing, consciousness,
+        scheduler, and heartbeat.
+
+        Examples:
+
+            skcapstone daemon components
+
+            skcapstone daemon components --json-out
+        """
+        import urllib.error
+        import urllib.request
+
+        home_path = _resolve_agent_home(agent, home)
+        effective_port = _resolve_agent_port(agent, port)
+
+        try:
+            url = f"http://127.0.0.1:{effective_port}/api/v1/components"
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read())
+        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+            if json_out:
+                click.echo(json.dumps({"error": str(exc)}))
+            else:
+                console.print(f"\n  [red]Cannot reach daemon on port {effective_port}.[/]")
+                console.print("  [dim]Is the daemon running? Try: skcapstone daemon start[/]\n")
+            return
+
+        if json_out:
+            click.echo(json.dumps(data, indent=2))
+            return
+
+        components = data.get("components", {})
+        if not components:
+            console.print("\n  [yellow]No component data returned.[/]\n")
+            return
+
+        from rich.table import Table
+
+        table = Table(title="Daemon Components", border_style="dim")
+        table.add_column("Component", style="cyan", no_wrap=True)
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Restarts", justify="right")
+        table.add_column("Heartbeat age", justify="right")
+        table.add_column("Auto-restart", justify="center")
+        table.add_column("Last error", style="dim", max_width=40)
+
+        status_colors = {
+            "alive": "green",
+            "dead": "red",
+            "restarting": "yellow",
+            "disabled": "dim",
+            "pending": "blue",
+        }
+
+        for name, info in sorted(components.items()):
+            status = info.get("status", "unknown")
+            color = status_colors.get(status, "white")
+            restarts = str(info.get("restart_count", 0))
+            age = info.get("heartbeat_age_seconds")
+            age_str = f"{age}s" if age is not None else "—"
+            auto = "[green]yes[/]" if info.get("auto_restart") else "[dim]no[/]"
+            last_error = (info.get("last_error") or "")[:40] or "—"
+            table.add_row(
+                name,
+                f"[{color}]{status}[/]",
+                restarts,
+                age_str,
+                auto,
+                last_error,
+            )
+
+        console.print()
+        console.print(table)
         console.print()
 
     @daemon.command("logs")

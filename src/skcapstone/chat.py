@@ -19,6 +19,7 @@ import json
 import logging
 import threading as _threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -234,6 +235,85 @@ class AgentChat:
                 return [history._memory_to_chat_dict(m) for m in memories]
             except Exception:
                 return []
+
+    def forward(
+        self,
+        original_msg: dict,
+        target_peer: str,
+        thread_id: Optional[str] = None,
+    ) -> dict:
+        """Forward a message to another peer, preserving original sender/timestamp.
+
+        Wraps the original message in a forward envelope that records the
+        original sender and timestamp, then delivers it to target_peer via
+        SKComm and stores it locally in history.
+
+        Args:
+            original_msg: Original message dict (from inbox or receive).
+            target_peer: Peer agent to forward the message to.
+            thread_id: Optional thread ID for the forwarded message.
+
+        Returns:
+            dict: Result with 'stored', 'delivered', 'transport', 'forwarded_id' keys.
+        """
+        result: dict = {
+            "stored": False,
+            "delivered": False,
+            "transport": None,
+            "forwarded_id": None,
+            "error": None,
+        }
+
+        fwd_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+
+        payload = json.dumps({
+            "skchat_version": "1.0.0",
+            "skchat_forward": True,
+            "message_id": fwd_id,
+            "sender": self.identity,
+            "recipient": target_peer,
+            "content": original_msg.get("content", ""),
+            "thread_id": thread_id,
+            "timestamp": now,
+            "forwarded_from": original_msg.get("sender", "unknown"),
+            "forwarded_at": original_msg.get("timestamp", ""),
+            "original_message_id": original_msg.get("message_id", ""),
+        })
+
+        result["forwarded_id"] = fwd_id
+
+        history = self._ensure_history()
+        if history:
+            try:
+                from skchat.models import ChatMessage, DeliveryStatus
+
+                fwd_msg = ChatMessage(
+                    sender=self.identity,
+                    recipient=target_peer,
+                    content=payload,
+                    thread_id=thread_id,
+                    delivery_status=DeliveryStatus.PENDING,
+                )
+                history.store_message(fwd_msg)
+                result["stored"] = True
+            except Exception as exc:
+                result["error"] = str(exc)
+
+        if self._ensure_comm():
+            try:
+                report = self._comm.send(
+                    recipient=target_peer,
+                    message=payload,
+                    thread_id=thread_id,
+                )
+                if getattr(report, "delivered", False):
+                    result["delivered"] = True
+                    result["transport"] = getattr(report, "successful_transport", None)
+            except Exception as exc:
+                result["error"] = str(exc)
+
+        return result
 
     # ------------------------------------------------------------------
     # Interactive sessions

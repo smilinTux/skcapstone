@@ -808,10 +808,10 @@ class TestUnsupportedBackend:
     """Edge case: unsupported backend type."""
 
     def test_factory_rejects_gdrive(self, agent_home: Path):
-        """GDrive backend should raise ValueError (not implemented)."""
-        from skcapstone.sync.backends import create_backend
+        """GDrive backend is now supported — factory returns a GDriveBackend instance."""
+        from skcapstone.sync.backends import GDriveBackend, create_backend
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
 
         config = SyncBackendConfig(backend_type=SyncBackendType.GDRIVE)
-        with pytest.raises(ValueError, match="Unsupported"):
-            create_backend(config, agent_home)
+        backend = create_backend(config, agent_home)
+        assert isinstance(backend, GDriveBackend)

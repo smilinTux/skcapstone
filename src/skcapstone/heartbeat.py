@@ -98,6 +98,13 @@ class Heartbeat(BaseModel):
     session_active: bool = False
     consciousness_active: bool = False
 
+    # Live metrics (new in v2.1)
+    uptime_seconds: float = 0.0
+    cpu_load_1min: float = 0.0
+    memory_used_mb: int = 0
+    active_conversations: int = 0
+    messages_processed_24h: int = 0
+
     # Resources
     capacity: NodeCapacity = Field(default_factory=NodeCapacity)
 
@@ -200,6 +207,8 @@ class HeartbeatBeacon:
         services: Optional[list[HeartbeatService]] = None,
         tailscale_ip: Optional[str] = None,
         consciousness_active: bool = False,
+        active_conversations: int = 0,
+        messages_processed_24h: int = 0,
     ) -> Heartbeat:
         """Publish a heartbeat beacon.
 
@@ -220,7 +229,9 @@ class HeartbeatBeacon:
         """
         self.initialize()
 
-        uptime = (datetime.now(timezone.utc) - self._start_time).total_seconds() / 3600
+        uptime_secs = (datetime.now(timezone.utc) - self._start_time).total_seconds()
+        uptime_hours = uptime_secs / 3600
+        cpu_load, mem_used_mb = self._detect_cpu_and_mem()
 
         heartbeat = Heartbeat(
             agent_name=self._agent,
@@ -228,11 +239,16 @@ class HeartbeatBeacon:
             hostname=platform.node(),
             platform=f"{platform.system()} {platform.machine()}",
             ttl_seconds=self._ttl,
-            uptime_hours=round(uptime, 2),
+            uptime_hours=round(uptime_hours, 2),
             claimed_tasks=claimed_tasks or [],
             loaded_model=loaded_model,
             session_active=True,
             consciousness_active=consciousness_active,
+            uptime_seconds=round(uptime_secs, 1),
+            cpu_load_1min=cpu_load,
+            memory_used_mb=mem_used_mb,
+            active_conversations=active_conversations,
+            messages_processed_24h=messages_processed_24h,
             capacity=self._detect_capacity(),
             capabilities=capabilities or self._detect_capabilities(),
             version=self._detect_version(),
@@ -365,6 +381,48 @@ class HeartbeatBeacon:
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
+
+    def _detect_cpu_and_mem(self) -> tuple[float, int]:
+        """Return (cpu_load_1min, memory_used_mb) using psutil or /proc fallback.
+
+        Returns:
+            Tuple of (1-minute CPU load average, memory used in MB).
+        """
+        cpu_load = 0.0
+        mem_used_mb = 0
+
+        try:
+            import psutil
+            loads = psutil.getloadavg()
+            cpu_load = round(loads[0], 2)
+            mem = psutil.virtual_memory()
+            mem_used_mb = (mem.total - mem.available) // (1024 * 1024)
+        except ImportError:
+            # Fallback: /proc on Linux
+            try:
+                loadavg = Path("/proc/loadavg")
+                if loadavg.exists():
+                    parts = loadavg.read_text().split()
+                    cpu_load = round(float(parts[0]), 2)
+            except Exception as exc:
+                logger.debug("CPU load fallback failed: %s", exc)
+            try:
+                meminfo = Path("/proc/meminfo")
+                if meminfo.exists():
+                    info: dict[str, int] = {}
+                    for line in meminfo.read_text().splitlines():
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            info[parts[0].rstrip(":")] = int(parts[1])
+                    total_kb = info.get("MemTotal", 0)
+                    avail_kb = info.get("MemAvailable", 0)
+                    mem_used_mb = (total_kb - avail_kb) // 1024
+            except Exception as exc:
+                logger.debug("Memory fallback failed: %s", exc)
+        except Exception as exc:
+            logger.debug("CPU/mem detection failed: %s", exc)
+
+        return cpu_load, mem_used_mb
 
     def _detect_capacity(self) -> NodeCapacity:
         """Detect current node resource capacity."""

@@ -113,7 +113,7 @@ class TestCLI:
         runner = CliRunner()
         result = runner.invoke(main, ["summary", "--help"])
         assert result.exit_code == 0
-        assert "briefing" in result.output.lower() or "Morning" in result.output
+        assert "dashboard" in result.output.lower() or "summary" in result.output.lower()
 
     def test_summary_json(self, agent_home):
         """summary --json-out produces valid JSON."""

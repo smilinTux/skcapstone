@@ -1,12 +1,13 @@
-"""Agent-to-agent chat commands: send, inbox, live, open, list.
+"""Agent-to-agent chat commands: send, inbox, live, open, list, summary.
 
-skcapstone chat <peer>          Open interactive LLM session (shortcut)
-skcapstone chat open <peer>     Open interactive LLM session
-skcapstone chat send <peer> <m> One-shot send
-skcapstone chat inbox           Browse messages
-skcapstone chat live <peer>     Alias for 'open'
-skcapstone chat list            List peers with conversation history
-skcapstone chat --list          Same as 'list'
+skcapstone chat <peer>              Open interactive LLM session (shortcut)
+skcapstone chat open <peer>         Open interactive LLM session
+skcapstone chat send <peer> <m>     One-shot send
+skcapstone chat inbox               Browse messages
+skcapstone chat live <peer>         Alias for 'open'
+skcapstone chat list                List peers with conversation history
+skcapstone chat --list              Same as 'list'
+skcapstone chat summary <peer>      LLM-powered conversation summary
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from rich.table import Table
 
 
 # Known sub-command names; anything else is treated as a peer name.
-_KNOWN_SUBCOMMANDS = {"send", "inbox", "live", "open", "list", "--help", "-h", "--version"}
+_KNOWN_SUBCOMMANDS = {"send", "inbox", "live", "open", "list", "history", "summary", "forward", "--help", "-h", "--version"}
 
 
 class _ChatGroup(click.Group):
@@ -189,7 +190,8 @@ def register_chat_commands(main: click.Group) -> None:
     @click.argument("message")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--thread", "-t", default=None, help="Thread ID for conversation grouping.")
-    def chat_send(peer: str, message: str, home: str, thread: Optional[str]):
+    @click.option("--encrypt", is_flag=True, default=False, help="Encrypt message with AES-256-GCM (key from KMS).")
+    def chat_send(peer: str, message: str, home: str, thread: Optional[str], encrypt: bool):
         """Send a message to a peer agent.
 
         Stores locally and delivers via SKComm if transports
@@ -199,6 +201,7 @@ def register_chat_commands(main: click.Group) -> None:
         Examples:
           skcapstone chat send lumina "Hello from the sovereign side!"
           skcapstone chat send opus "Deploy update ready" --thread deploy-01
+          skcapstone chat send lumina "Secret plan" --encrypt
         """
         from ..chat import AgentChat
 
@@ -208,8 +211,18 @@ def register_chat_commands(main: click.Group) -> None:
         runtime = get_runtime(home_path)
         identity = runtime.manifest.name or "unknown"
 
+        payload = message
+        if encrypt:
+            try:
+                from ..message_crypto import encrypt_content
+                payload = encrypt_content(message, home_path)
+                console.print("  [dim]Message encrypted (AES-256-GCM)[/]")
+            except Exception as exc:
+                console.print(f"  [bold red]Encryption failed:[/] {exc}")
+                sys.exit(1)
+
         agent_chat = AgentChat(home=home_path, identity=identity)
-        result = agent_chat.send(peer, message, thread_id=thread)
+        result = agent_chat.send(peer, payload, thread_id=thread)
 
         console.print("")
         if result["delivered"]:
@@ -230,16 +243,19 @@ def register_chat_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--limit", "-n", default=20, help="Max messages to show.")
     @click.option("--poll", is_flag=True, help="Poll transports for new messages first.")
-    def chat_inbox(home: str, limit: int, poll: bool):
+    @click.option("--decrypt", is_flag=True, default=False, help="Decrypt encrypted messages using KMS key.")
+    def chat_inbox(home: str, limit: int, poll: bool, decrypt: bool):
         """Show recent messages.
 
         Displays messages from local history. Use --poll to check
-        SKComm transports for new messages first.
+        SKComm transports for new messages first. Use --decrypt to
+        automatically decrypt AES-256-GCM encrypted messages.
 
         \b
         Examples:
           skcapstone chat inbox
           skcapstone chat inbox --poll --limit 5
+          skcapstone chat inbox --decrypt
         """
         from ..chat import AgentChat
 
@@ -263,6 +279,7 @@ def register_chat_commands(main: click.Group) -> None:
             return
 
         from ..chat import _format_content
+        from ..message_crypto import decrypt_content, is_encrypted_content
 
         table = Table(
             show_header=True,
@@ -277,7 +294,13 @@ def register_chat_commands(main: click.Group) -> None:
 
         for msg in messages:
             sender = msg.get("sender", "?")
-            content = _format_content(msg.get("content", ""))
+            raw_content = msg.get("content", "")
+            if decrypt and is_encrypted_content(raw_content):
+                try:
+                    raw_content = decrypt_content(raw_content, home_path)
+                except Exception as exc:
+                    raw_content = f"[decrypt failed: {exc}]"
+            content = _format_content(raw_content)
             preview = content[:50] + ("…" if len(content) > 50 else "")
             ts = str(msg.get("timestamp", ""))
             if len(ts) > 19:
@@ -342,6 +365,200 @@ def register_chat_commands(main: click.Group) -> None:
         console.print()
         console.print(table)
         console.print()
+
+    # ------------------------------------------------------------------
+    # history — full conversation transcript for a peer
+    # ------------------------------------------------------------------
+
+    @chat.command("history")
+    @click.argument("peer")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--limit", "-n", default=0, help="Show last N messages (0 = all).")
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False,
+        help="Output raw JSON instead of a formatted table.",
+    )
+    def chat_history(peer: str, home: str, limit: int, as_json: bool):
+        """Show the full conversation history with PEER.
+
+        Reads the persisted conversation file and displays every message
+        exchanged with the named peer, oldest first.  Use --limit to
+        restrict to the most recent N messages.
+
+        \b
+        Examples:
+          skcapstone chat history lumina
+          skcapstone chat history opus --limit 10
+          skcapstone chat history jarvis --json
+        """
+        from ..conversation_store import ConversationStore
+
+        validate_agent_name(peer)
+
+        home_path = Path(home).expanduser()
+        store = ConversationStore(home_path)
+        messages = store.load(peer)
+
+        if not messages:
+            console.print(f"\n  [dim]No conversation history with {peer}.[/]\n")
+            return
+
+        if limit > 0:
+            messages = messages[-limit:]
+
+        if as_json:
+            import json as _json
+            console.print(_json.dumps(messages, ensure_ascii=False, indent=2))
+            return
+
+        title = f"Conversation with {peer} ({len(messages)} message{'s' if len(messages) != 1 else ''})"
+        table = Table(
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
+            title=title,
+        )
+        table.add_column("Role", style="cyan", width=12)
+        table.add_column("Message")
+        table.add_column("Time", style="dim", width=20)
+
+        for msg in messages:
+            role = msg.get("role", "?")
+            role_color = "green" if role == "assistant" else "cyan"
+            content = msg.get("content", "")
+            ts = str(msg.get("timestamp", ""))
+            if len(ts) > 19:
+                ts = ts[:19]
+            table.add_row(
+                f"[{role_color}]{role}[/]",
+                content,
+                ts,
+            )
+
+        console.print()
+        console.print(table)
+        console.print()
+
+    # ------------------------------------------------------------------
+    # forward — re-send a message to another peer
+    # ------------------------------------------------------------------
+
+    @chat.command("forward")
+    @click.argument("peer")
+    @click.argument("msg_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--thread", "-t", default=None, help="Thread ID for the forwarded message.")
+    def chat_forward(peer: str, msg_id: str, home: str, thread: Optional[str]):
+        """Forward a message to another peer agent.
+
+        Looks up MSG_ID in the local inbox and forwards it to PEER,
+        preserving the original sender and timestamp in the forward
+        envelope. The forwarding agent is recorded as the new sender.
+
+        \b
+        Examples:
+          skcapstone chat forward opus msg-abc123
+          skcapstone chat forward lumina msg-xyz --thread fwd-thread-01
+        """
+        from ..chat import AgentChat
+
+        validate_agent_name(peer)
+
+        home_path = Path(home).expanduser()
+        runtime = get_runtime(home_path)
+        identity = runtime.manifest.name or "unknown"
+
+        agent_chat = AgentChat(home=home_path, identity=identity)
+
+        messages = agent_chat.get_inbox(limit=200)
+        original = next(
+            (m for m in messages if m.get("message_id") == msg_id),
+            None,
+        )
+
+        if original is None:
+            console.print(f"\n  [red]Message not found:[/] {msg_id}\n")
+            sys.exit(1)
+
+        result = agent_chat.forward(original, peer, thread_id=thread)
+
+        console.print("")
+        if result["delivered"]:
+            console.print(
+                f"  [green]Forwarded[/] to [cyan]{peer}[/] via {result['transport']}  "
+                f"[dim](id: {result['forwarded_id']})[/]"
+            )
+        elif result["stored"]:
+            console.print(
+                f"  [yellow]Stored locally[/] for [cyan]{peer}[/]  "
+                f"[dim](id: {result['forwarded_id']})[/]"
+            )
+            if result.get("error"):
+                console.print(f"  [dim]{result['error']}[/]")
+        else:
+            console.print(f"  [red]Failed[/] — {result.get('error', 'unknown error')}")
+        console.print("")
+
+    # ------------------------------------------------------------------
+    # summary — LLM-powered conversation summarizer
+    # ------------------------------------------------------------------
+
+    @chat.command("summary")
+    @click.argument("peer")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--last", "-n", default=20, show_default=True,
+        help="Number of recent messages to include in the summary.",
+    )
+    @click.option(
+        "--show-stored", is_flag=True, default=False,
+        help="Show the previously stored summary instead of generating a new one.",
+    )
+    def chat_summary(peer: str, home: str, last: int, show_stored: bool):
+        """Summarize a conversation with PEER using the LLM.
+
+        Reads the last N messages with PEER, calls the local LLM to
+        produce a 2-3 sentence summary, and stores it under
+        ~/.skcapstone/summaries/{peer}.json for future reference.
+
+        \b
+        Examples:
+          skcapstone chat summary lumina
+          skcapstone chat summary opus --last 50
+          skcapstone chat summary lumina --show-stored
+        """
+        from ..conversation_summarizer import ConversationSummarizer
+
+        validate_agent_name(peer)
+        home_path = Path(home).expanduser()
+
+        summarizer = ConversationSummarizer(home=home_path)
+
+        if show_stored:
+            stored = summarizer.load_summary(peer)
+            if stored is None:
+                console.print(f"\n  [yellow]No stored summary for[/] [cyan]{peer}[/].\n")
+                console.print("  Run without --show-stored to generate one.\n")
+                return
+            console.print(f"\n[bold]Stored summary for [cyan]{peer}[/][/]")
+            console.print(f"[dim]{stored.generated_at[:19]}  ({stored.message_count} messages)[/]\n")
+            console.print(stored.text)
+            console.print()
+            return
+
+        console.print(f"\n[dim]Summarizing last {last} messages with {peer}...[/]")
+        with console.status("[dim]calling LLM...[/]"):
+            try:
+                result = summarizer.summarize(peer, n=last)
+            except ValueError as exc:
+                console.print(f"\n  [red]Error:[/] {exc}\n")
+                return
+
+        console.print(f"\n[bold]Summary of conversation with [cyan]{peer}[/][/]")
+        console.print(f"[dim]{result.generated_at[:19]}  ({result.message_count} messages summarized)[/]\n")
+        console.print(result.text)
+        console.print(f"\n[dim]Saved to: {home_path}/summaries/{peer}.json[/]\n")
 
     # ------------------------------------------------------------------
     # live — alias for open (backwards compat)

@@ -16,16 +16,18 @@ Architecture:
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -34,9 +36,12 @@ from pydantic import BaseModel, Field
 
 from skcapstone.blueprints.schema import ModelTier
 from skcapstone.conversation_manager import ConversationManager
+from skcapstone.conversation_store import ConversationStore
+from skcapstone.fallback_tracker import FallbackEvent, FallbackTracker
 from skcapstone.metrics import ConsciousnessMetrics
 from skcapstone.model_router import ModelRouter, ModelRouterConfig, RouteDecision, TaskSignal
 from skcapstone.prompt_adapter import AdaptedPrompt, PromptAdapter
+from skcapstone.response_cache import ResponseCache, hash_prompt
 
 logger = logging.getLogger("skcapstone.consciousness")
 
@@ -227,6 +232,8 @@ class LLMBridge:
         config: Consciousness configuration.
         router_config: Optional custom model router config.
         adapter: Optional PromptAdapter for per-model formatting.
+        cache: Optional ResponseCache.  When provided, generate() checks the
+            cache before calling an LLM and stores successful results.
     """
 
     def __init__(
@@ -234,12 +241,15 @@ class LLMBridge:
         config: ConsciousnessConfig,
         router_config: Optional[ModelRouterConfig] = None,
         adapter: Optional[PromptAdapter] = None,
+        cache: Optional[ResponseCache] = None,
     ) -> None:
         self._router = ModelRouter(config=router_config)
         self._adapter = adapter or PromptAdapter()
         self._fallback_chain = config.fallback_chain
         self._timeout = config.response_timeout
         self._available: dict[str, bool] = {}
+        self._cache: Optional[ResponseCache] = cache
+        self._fallback_tracker = FallbackTracker()
         self._ollama_pool = _OllamaPool(
             os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         )
@@ -419,6 +429,7 @@ class LLMBridge:
         user_message: str,
         signal: TaskSignal,
         _out_info: Optional[dict] = None,
+        skip_cache: bool = False,
     ) -> str:
         """Route via ModelRouter, adapt prompt, call LLM, cascade on failure.
 
@@ -428,6 +439,9 @@ class LLMBridge:
             signal: Task classification signal.
             _out_info: Optional dict populated with ``backend`` and ``tier``
                 keys indicating which provider served the request.
+            skip_cache: When True, bypass the response cache entirely.  Set
+                this for real-time conversation messages whose system prompt
+                embeds dynamic peer history that changes per exchange.
 
         Returns:
             LLM response text, or a fallback error message.
@@ -447,6 +461,18 @@ class LLMBridge:
             decision.tier.value, decision.model_name, decision.reasoning,
         )
 
+        # Cache look-up (before any LLM call)
+        _prompt_hash: Optional[str] = None
+        if self._cache is not None and not skip_cache:
+            _prompt_hash = hash_prompt(system_prompt, user_message)
+            cached = self._cache.get(_prompt_hash, decision.model_name)
+            if cached is not None:
+                logger.info("Cache hit — skipping LLM call (model=%s)", decision.model_name)
+                if _out_info is not None:
+                    _out_info["backend"] = "cache"
+                    _out_info["tier"] = decision.tier.value
+                return cached
+
         # For FAST tier (CPU-only Ollama), truncate system prompt to ~2000 chars
         # so the model spends its cycles on the response, not processing a giant context.
         if decision.tier == ModelTier.FAST and len(system_prompt) > 2000:
@@ -463,13 +489,19 @@ class LLMBridge:
             adapted.profile_used, adapted.adaptations_applied,
         )
 
+        # Capture primary model identity for fallback tracking
+        _primary_model = decision.model_name
+        _primary_backend = _backend_from_model(decision.model_name, decision.tier)
+
         # Try primary model
         try:
             callback = self._resolve_callback(decision.tier, decision.model_name)
             result = self._timed_call(callback, adapted, decision.tier)
             if _out_info is not None:
-                _out_info["backend"] = _backend_from_model(decision.model_name, decision.tier)
+                _out_info["backend"] = _primary_backend
                 _out_info["tier"] = decision.tier.value
+            if self._cache is not None and not skip_cache and _prompt_hash is not None:
+                self._cache.put(_prompt_hash, decision.model_name, decision.tier, result)
             return result
         except Exception as exc:
             logger.warning(
@@ -479,6 +511,7 @@ class LLMBridge:
         # Try alternate models in same tier
         tier_models = self._router.config.tier_models.get(decision.tier.value, [])
         for alt_model in tier_models[1:]:
+            alt_backend = _backend_from_model(alt_model, decision.tier)
             try:
                 logger.info("Trying alt model: %s", alt_model)
                 alt_adapted = self._adapter.adapt(
@@ -487,16 +520,33 @@ class LLMBridge:
                 callback = self._resolve_callback(decision.tier, alt_model)
                 result = self._timed_call(callback, alt_adapted, decision.tier)
                 if _out_info is not None:
-                    _out_info["backend"] = _backend_from_model(alt_model, decision.tier)
+                    _out_info["backend"] = alt_backend
                     _out_info["tier"] = decision.tier.value
+                self._fallback_tracker.record(FallbackEvent(
+                    primary_model=_primary_model,
+                    primary_backend=_primary_backend,
+                    fallback_model=alt_model,
+                    fallback_backend=alt_backend,
+                    reason=f"primary model {_primary_model!r} failed; trying same-tier alt",
+                    success=True,
+                ))
                 return result
             except Exception as exc:
                 logger.warning("Alt model %s failed: %s", alt_model, exc)
+                self._fallback_tracker.record(FallbackEvent(
+                    primary_model=_primary_model,
+                    primary_backend=_primary_backend,
+                    fallback_model=alt_model,
+                    fallback_backend=alt_backend,
+                    reason=f"primary model {_primary_model!r} failed; alt {alt_model!r} also failed: {exc}",
+                    success=False,
+                ))
 
         # Tier downgrade: try FAST tier
         if decision.tier != ModelTier.FAST:
             fast_models = self._router.config.tier_models.get(ModelTier.FAST.value, [])
             for fast_model in fast_models:
+                fast_backend = _backend_from_model(fast_model, ModelTier.FAST)
                 try:
                     logger.info("Downgrading to FAST tier: %s", fast_model)
                     fast_adapted = self._adapter.adapt(
@@ -505,11 +555,27 @@ class LLMBridge:
                     callback = self._resolve_callback(ModelTier.FAST, fast_model)
                     result = self._timed_call(callback, fast_adapted, ModelTier.FAST)
                     if _out_info is not None:
-                        _out_info["backend"] = _backend_from_model(fast_model, ModelTier.FAST)
+                        _out_info["backend"] = fast_backend
                         _out_info["tier"] = ModelTier.FAST.value
+                    self._fallback_tracker.record(FallbackEvent(
+                        primary_model=_primary_model,
+                        primary_backend=_primary_backend,
+                        fallback_model=fast_model,
+                        fallback_backend=fast_backend,
+                        reason=f"tier downgrade: {decision.tier.value} exhausted; using FAST model {fast_model!r}",
+                        success=True,
+                    ))
                     return result
                 except Exception as exc:
                     logger.warning("FAST model %s failed: %s", fast_model, exc)
+                    self._fallback_tracker.record(FallbackEvent(
+                        primary_model=_primary_model,
+                        primary_backend=_primary_backend,
+                        fallback_model=fast_model,
+                        fallback_backend=fast_backend,
+                        reason=f"tier downgrade: FAST model {fast_model!r} failed: {exc}",
+                        success=False,
+                    ))
 
         # Cross-provider cascade via fallback chain — direct backend mapping,
         # no _resolve_callback, to avoid infinite regression on unknown names.
@@ -538,14 +604,38 @@ class LLMBridge:
                 if _out_info is not None:
                     _out_info["backend"] = backend
                     _out_info["tier"] = ModelTier.FAST.value
+                self._fallback_tracker.record(FallbackEvent(
+                    primary_model=_primary_model,
+                    primary_backend=_primary_backend,
+                    fallback_model=backend,
+                    fallback_backend=backend,
+                    reason=f"cross-provider cascade: all tier models exhausted; using {backend!r}",
+                    success=True,
+                ))
                 return result
             except Exception as exc:
                 logger.warning("Fallback %s failed: %s", backend, exc)
+                self._fallback_tracker.record(FallbackEvent(
+                    primary_model=_primary_model,
+                    primary_backend=_primary_backend,
+                    fallback_model=backend,
+                    fallback_backend=backend,
+                    reason=f"cross-provider cascade: {backend!r} failed: {exc}",
+                    success=False,
+                ))
 
         # Last resort
         if _out_info is not None:
             _out_info["backend"] = "none"
             _out_info["tier"] = "none"
+        self._fallback_tracker.record(FallbackEvent(
+            primary_model=_primary_model,
+            primary_backend=_primary_backend,
+            fallback_model="none",
+            fallback_backend="none",
+            reason="all backends exhausted — returning connectivity error message",
+            success=False,
+        ))
         return (
             "I'm currently experiencing connectivity issues with my language models. "
             "Your message has been received and I'll respond as soon as service is restored."
@@ -584,17 +674,22 @@ class SystemPromptBuilder:
         max_tokens: int = 8000,
         max_history_messages: int = 10,
         conv_manager: Optional[ConversationManager] = None,
+        conv_store: Optional[ConversationStore] = None,
     ) -> None:
         self._home = home
         self._max_tokens = max_tokens
         self._max_history_messages = max_history_messages
         self._section_cache: dict[str, tuple[str, float]] = {}
+        self._conv_store = conv_store
         if conv_manager is not None:
             self._conv_manager = conv_manager
         else:
             self._conv_manager = ConversationManager(
                 home, max_history_messages=max_history_messages
             )
+        # Prompt versioning
+        self._prompt_versions_dir = Path(home) / "prompt_versions"
+        self._last_prompt_hash: Optional[str] = None
 
     @property
     def _conversation_history(self) -> dict:
@@ -667,7 +762,64 @@ class SystemPromptBuilder:
         if len(combined) > max_chars:
             combined = combined[:max_chars] + "\n[...truncated]"
 
+        # Prompt versioning — hash and persist when content changes
+        self._track_prompt_version(combined)
+
         return combined
+
+    def _track_prompt_version(self, prompt: str) -> None:
+        """Hash the prompt and persist a version file when it changes.
+
+        Args:
+            prompt: The fully assembled system prompt text.
+        """
+        new_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        if new_hash == self._last_prompt_hash:
+            return
+
+        if self._last_prompt_hash is not None:
+            logger.info(
+                "System prompt changed: %s → %s",
+                self._last_prompt_hash[:12],
+                new_hash[:12],
+            )
+        else:
+            logger.debug("System prompt initialized with hash %s", new_hash[:12])
+
+        self._last_prompt_hash = new_hash
+        self._persist_prompt_version(new_hash, prompt)
+
+    def _persist_prompt_version(self, prompt_hash: str, prompt: str) -> None:
+        """Write a prompt version record to ~/.skcapstone/prompt_versions/.
+
+        File name: ``{iso_timestamp}_{hash[:8]}.json``
+
+        Args:
+            prompt_hash: Full SHA-256 hex digest of the prompt.
+            prompt: The prompt text to store.
+        """
+        try:
+            self._prompt_versions_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).isoformat()
+            safe_ts = ts.replace(":", "-").replace("+", "Z")
+            fname = f"{safe_ts}_{prompt_hash[:8]}.json"
+            record = {
+                "hash": prompt_hash,
+                "timestamp": ts,
+                "prompt": prompt,
+            }
+            (self._prompt_versions_dir / fname).write_text(
+                json.dumps(record, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.debug("Prompt version saved: %s", fname)
+        except Exception as exc:
+            logger.warning("Could not persist prompt version: %s", exc)
+
+    @property
+    def current_prompt_hash(self) -> Optional[str]:
+        """SHA-256 hex digest of the most recently built system prompt."""
+        return self._last_prompt_hash
 
     def _get_cached(self, key: str, loader, ttl: float = 60.0) -> str:
         """Return a cached section value, rebuilding it when TTL expires.
@@ -700,33 +852,51 @@ class SystemPromptBuilder:
     ) -> None:
         """Add a message to the per-peer conversation history.
 
-        Appends to the in-memory history, caps it, then atomically persists
-        to {home}/conversations/{peer}.json via ConversationManager.
+        When a :class:`~skcapstone.conversation_store.ConversationStore` was
+        provided at construction time it is used for persistence (atomic file
+        write).  In-memory state in ``ConversationManager`` is also updated so
+        prompt-building works within the same session without a disk round-trip.
+
+        Falls back to the legacy ``ConversationManager``-only path when no
+        ``conv_store`` is available (e.g. when called from CLI tools that
+        construct :class:`SystemPromptBuilder` directly without a store).
 
         Args:
             peer: Peer agent name.
             role: "user" or "assistant".
             content: Message content.
-            max_messages: Max messages to retain per peer (ignored; manager
-                uses its own cap from ``max_history_messages``).
+            max_messages: Ignored; the store/manager cap is used instead.
             thread_id: Optional thread identifier for grouping related messages.
             in_reply_to: Optional message ID this message is replying to.
         """
         peer = _sanitize_peer_name(peer)
-        entry: dict[str, str] = {
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        if thread_id:
-            entry["thread_id"] = thread_id
-        if in_reply_to:
-            entry["in_reply_to"] = in_reply_to
-        self._conv_manager._history[peer].append(entry)
-        cap = self._max_history_messages
-        if len(self._conv_manager._history[peer]) > cap:
-            self._conv_manager._history[peer] = self._conv_manager._history[peer][-cap:]
-        self._conv_manager._persist(peer)
+        if self._conv_store is not None:
+            # Persist via ConversationStore (atomic file I/O)
+            self._conv_store.append(
+                peer, role, content,
+                thread_id=thread_id,
+                in_reply_to=in_reply_to,
+            )
+            # Refresh in-memory snapshot for same-session prompt building
+            self._conv_manager._history[peer] = self._conv_store.get_last(
+                peer, self._max_history_messages
+            )
+        else:
+            # Legacy path: ConversationManager handles both memory and persistence
+            entry: dict[str, str] = {
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            if thread_id:
+                entry["thread_id"] = thread_id
+            if in_reply_to:
+                entry["in_reply_to"] = in_reply_to
+            self._conv_manager._history[peer].append(entry)
+            cap = self._max_history_messages
+            if len(self._conv_manager._history[peer]) > cap:
+                self._conv_manager._history[peer] = self._conv_manager._history[peer][-cap:]
+            self._conv_manager._persist(peer)
 
     # -------------------------------------------------------------------
     # Private loaders
@@ -847,7 +1017,10 @@ class SystemPromptBuilder:
         Returns:
             Formatted conversation history or empty string.
         """
-        history = self._conversation_history.get(peer, [])
+        if self._conv_store is not None:
+            history = self._conv_store.get_last(peer, self._max_history_messages)
+        else:
+            history = self._conversation_history.get(peer, [])
         if not history:
             return ""
 
@@ -1015,13 +1188,19 @@ class ConsciousnessLoop:
         self._responses_sent = 0
         self._errors = 0
         self._last_activity: Optional[datetime] = None
+        # Rolling 24h message timestamps (thread-safe via lock)
+        self._message_timestamps: deque[datetime] = deque()
+        # Prompt version → response count
+        self._prompt_version_responses: dict[str, int] = defaultdict(int)
 
         # Build components
         adapter_path = self._home / "config" / "model_profiles.yaml"
         self._adapter = PromptAdapter(
             profiles_path=adapter_path if adapter_path.exists() else None
         )
-        self._bridge = LLMBridge(config, adapter=self._adapter)
+        self._response_cache = ResponseCache()
+        self._bridge = LLMBridge(config, adapter=self._adapter, cache=self._response_cache)
+        self._conv_store = ConversationStore(self._home)
         self._conv_manager = ConversationManager(
             self._home, max_history_messages=config.max_history_messages
         )
@@ -1029,10 +1208,18 @@ class ConsciousnessLoop:
             self._home, config.max_context_tokens,
             max_history_messages=config.max_history_messages,
             conv_manager=self._conv_manager,
+            conv_store=self._conv_store,
         )
 
         # Metrics collector (persist every 5 min)
         self._metrics = ConsciousnessMetrics(home=self._home)
+
+        # Mood tracker — updated after each processed message cycle
+        try:
+            from skcapstone.mood import MoodTracker
+            self._mood_tracker: Optional[Any] = MoodTracker(home=self._home)
+        except Exception:
+            self._mood_tracker = None
 
         # Agent identity for inbox filtering
         self._agent_name = self._resolve_agent_name()
@@ -1129,10 +1316,11 @@ class ConsciousnessLoop:
             2. Send ACK if auto_ack
             3. Classify message → TaskSignal
             4. Build system prompt
-            5. Call LLMBridge.generate()
-            6. Send response via SKComm
-            7. Store interaction as memory
-            8. Update conversation history
+            5. Search memories for sender context (top 3, appended to system prompt)
+            6. Call LLMBridge.generate()
+            7. Send response via SKComm
+            8. Store interaction as memory
+            9. Update conversation history
 
         Args:
             envelope: A MessageEnvelope from SKComm.
@@ -1166,7 +1354,9 @@ class ConsciousnessLoop:
             if thread_id:
                 logger.debug("Message thread_id=%s in_reply_to=%s", thread_id, in_reply_to)
             self._messages_processed += 1
-            self._last_activity = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
+            self._last_activity = now
+            self._message_timestamps.append(now)
 
             # Update peer directory with last-seen timestamp
             if self._peer_dir is not None:
@@ -1204,6 +1394,10 @@ class ConsciousnessLoop:
                 peer_name=sender,
                 thread_id=thread_id or None,
             )
+            # Enrich system prompt with top-3 memories relevant to sender/content
+            _mem_ctx = self._fetch_sender_memories(sender, content)
+            if _mem_ctx:
+                system_prompt = system_prompt + "\n\n" + _mem_ctx
             t_prompt = time.monotonic()
 
             # Send typing indicator before generation so peer UI shows animation
@@ -1224,7 +1418,8 @@ class ConsciousnessLoop:
             # Generate response — capture backend/tier via _out_info
             _route_info: dict = {}
             response = self._bridge.generate(
-                system_prompt, content, signal, _out_info=_route_info
+                system_prompt, content, signal, _out_info=_route_info,
+                skip_cache=True,  # conversation messages have dynamic context
             )
             t_llm = time.monotonic()
 
@@ -1251,11 +1446,29 @@ class ConsciousnessLoop:
                 tier=_route_info.get("tier", "unknown"),
             )
 
+            # Score response quality and accumulate in metrics
+            try:
+                from skcapstone.response_scorer import score_response as _score_response
+                _quality = _score_response(content, response, response_time_ms)
+                self._metrics.record_quality(_quality)
+                logger.debug(
+                    "Quality score — overall=%.2f length=%.2f coherence=%.2f latency=%.2f",
+                    _quality.overall,
+                    _quality.length_score,
+                    _quality.coherence_score,
+                    _quality.latency_score,
+                )
+            except Exception as _sq_exc:
+                logger.debug("Quality scoring failed (non-fatal): %s", _sq_exc)
+
             # Send response
             if response and self._skcomm:
                 try:
                     self._skcomm.send(sender, response)
                     self._responses_sent += 1
+                    _ph = self._prompt_builder.current_prompt_hash
+                    if _ph:
+                        self._prompt_version_responses[_ph] += 1
                     logger.info("Response sent to %s (%d chars)", sender, len(response))
                 except Exception as exc:
                     logger.error("Failed to send response to %s: %s", sender, exc)
@@ -1282,10 +1495,26 @@ class ConsciousnessLoop:
                 in_reply_to=in_reply_to or None,
             )
             if response:
+                try:
+                    subprocess.Popen(
+                        ["notify-send", "Opus", response[:100]],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception as _notify_exc:
+                    logger.debug("notify-send failed (non-fatal): %s", _notify_exc)
+
                 self._prompt_builder.add_to_history(
                     sender, "assistant", response,
                     thread_id=thread_id or None,
                 )
+
+            # Update mood after each cycle
+            if self._mood_tracker is not None:
+                try:
+                    self._mood_tracker.update_from_metrics(self._metrics)
+                except Exception as _mood_exc:
+                    logger.debug("Mood update failed (non-fatal): %s", _mood_exc)
 
             return response
 
@@ -1318,6 +1547,63 @@ class ConsciousnessLoop:
             )
         except Exception as exc:
             logger.debug("Failed to store interaction memory: %s", exc)
+
+    def _fetch_sender_memories(self, sender: str, content: str) -> str:
+        """Search memories relevant to the sender and incoming message content.
+
+        Performs two searches:
+        1. Memories tagged with the sender peer (past interactions).
+        2. Memories topically relevant to the message content.
+
+        Merges and deduplicates results, returns the top 3 formatted as a
+        context block ready to be appended to the system prompt.
+
+        Args:
+            sender: Name of the peer who sent the message.
+            content: The incoming message text (up to 200 chars are used as query).
+
+        Returns:
+            Formatted memory context string, or empty string if none found or
+            if the memory engine is unavailable.
+        """
+        try:
+            from skcapstone.memory_engine import search as _mem_search
+
+            # 1. Memories specifically about this peer
+            by_sender = _mem_search(
+                self._home,
+                query=sender,
+                tags=[f"peer:{sender}"],
+                limit=5,
+            )
+            # 2. Memories topically relevant to the message content
+            by_content = _mem_search(
+                self._home,
+                query=content[:200],
+                limit=5,
+            )
+
+            # Merge, deduplicate by memory_id, keep top 3
+            seen_ids: set[str] = set()
+            combined: list = []
+            for entry in by_sender + by_content:
+                if entry.memory_id not in seen_ids:
+                    seen_ids.add(entry.memory_id)
+                    combined.append(entry)
+                if len(combined) == 3:
+                    break
+
+            if not combined:
+                return ""
+
+            lines = ["Relevant memories:"]
+            for i, entry in enumerate(combined, 1):
+                lines.append(f"  [{i}] {entry.content[:200]}")
+            return "\n".join(lines)
+
+        except Exception as exc:
+            logger.debug("Failed to fetch sender memories: %s", exc)
+            return ""
 
     def _reload_config(self) -> None:
         """Reload consciousness.yaml and apply changes in-place.
@@ -1554,7 +1840,18 @@ class ConsciousnessLoop:
             return
 
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            # Retry reading up to 5 times with 50 ms delays: inotify IN_CREATE fires
+            # before file content is flushed on some filesystems (race with writer).
+            raw = ""
+            for _attempt in range(5):
+                raw = path.read_text(encoding="utf-8").strip()
+                if raw:
+                    break
+                time.sleep(0.05)
+            if not raw:
+                logger.debug("Inbox file still empty after retries, skipping: %s", path)
+                return
+            data = json.loads(raw)
 
             if not isinstance(data, dict):
                 logger.warning("Invalid envelope format (not a dict): %s", path)
@@ -1619,9 +1916,15 @@ class ConsciousnessLoop:
     @property
     def stats(self) -> dict[str, Any]:
         """Current consciousness loop statistics."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        # Prune timestamps older than 24h
+        while self._message_timestamps and self._message_timestamps[0] < cutoff:
+            self._message_timestamps.popleft()
+        msgs_24h = len(self._message_timestamps)
         return {
             "enabled": self._config.enabled,
             "messages_processed": self._messages_processed,
+            "messages_processed_24h": msgs_24h,
             "responses_sent": self._responses_sent,
             "errors": self._errors,
             "last_activity": self._last_activity.isoformat() if self._last_activity else None,
@@ -1630,6 +1933,8 @@ class ConsciousnessLoop:
                 self._observer.is_alive() if hasattr(self._observer, "is_alive") else False
             ),
             "max_concurrent": self._config.max_concurrent_requests,
+            "current_prompt_hash": self._prompt_builder.current_prompt_hash,
+            "prompt_version_responses": dict(self._prompt_version_responses),
         }
 
 

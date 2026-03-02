@@ -79,6 +79,14 @@ TOOLS: list[Tool] = [
         ),
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
+    Tool(
+        name="pubsub_stats",
+        description=(
+            "Show per-topic pub/sub statistics: live message count and oldest "
+            "message age in seconds. Expired messages are excluded from counts."
+        ),
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
 ]
 
 
@@ -156,9 +164,20 @@ async def _handle_pubsub_topics(_args: dict) -> list[TextContent]:
     return _json_response(ps.list_topics())
 
 
+async def _handle_pubsub_stats(_args: dict) -> list[TextContent]:
+    """Return per-topic stats: live message count and oldest message age."""
+    from ..pubsub import PubSub
+
+    home = _home()
+    ps = PubSub(_shared_root(), agent_name=_get_agent_name(home))
+    ps.initialize()
+    return _json_response(ps.topic_stats())
+
+
 HANDLERS: dict = {
     "pubsub_publish": _handle_pubsub_publish,
     "pubsub_subscribe": _handle_pubsub_subscribe,
     "pubsub_poll": _handle_pubsub_poll,
     "pubsub_topics": _handle_pubsub_topics,
+    "pubsub_stats": _handle_pubsub_stats,
 }

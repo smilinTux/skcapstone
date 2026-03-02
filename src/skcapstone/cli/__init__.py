@@ -75,6 +75,15 @@ from .benchmark import register_benchmark_commands
 from .logs_cmd import register_logs_commands
 from .export_cmd import register_export_commands
 from .config_cmd import register_config_commands
+from .upgrade_cmd import register_upgrade_commands
+from .test_connection import register_test_connection_commands
+from .version_cmd import register_version_commands
+from .profile_cmd import register_profile_commands
+from .errors_cmd import register_errors_commands
+from .archive_cmd import register_archive_commands
+from .usage_cmd import register_usage_commands
+from .search_cmd import register_search_commands
+from .mood_cmd import register_mood_commands
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -112,3 +121,12 @@ register_logs_commands(main)
 register_benchmark_commands(main)
 register_export_commands(main)
 register_config_commands(main)
+register_upgrade_commands(main)
+register_test_connection_commands(main)
+register_version_commands(main)
+register_profile_commands(main)
+register_errors_commands(main)
+register_archive_commands(main)
+register_usage_commands(main)
+register_search_commands(main)
+register_mood_commands(main)

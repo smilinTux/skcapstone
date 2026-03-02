@@ -2,16 +2,50 @@
 
 from __future__ import annotations
 
-import pytest
+import json
+import re
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from skcapstone.blueprints.schema import ModelTier
 from skcapstone.prompt_adapter import (
     AdaptedPrompt,
     ModelProfile,
     PromptAdapter,
     _GENERIC_PROFILE,
 )
-from skcapstone.blueprints.schema import ModelTier
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_ollama_resp(
+    family: str = "llama",
+    param_size: str = "7B",
+    quantization: str = "Q4_0",
+    param_count: int = 7_000_000_000,
+) -> MagicMock:
+    """Return a mock context-manager that mimics urllib.request.urlopen."""
+    data = {
+        "details": {
+            "family": family,
+            "parameter_size": param_size,
+            "quantization_level": quantization,
+        },
+        "model_info": {
+            "general.architecture": family,
+            "general.parameter_count": param_count,
+        },
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(data).encode("utf-8")
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    return mock_resp
 
 
 class TestModelProfile:
@@ -210,3 +244,88 @@ class TestReload:
         adapter.update_profile("claude-.*", {"max_system_tokens": 8000})
         profile = adapter.resolve_profile("claude-opus-4-5")
         assert profile.max_system_tokens == 8000
+
+
+class TestDetectModel:
+    """Tests for Ollama /api/show auto-detection."""
+
+    @pytest.fixture
+    def adapter(self):
+        return PromptAdapter()
+
+    def test_detect_llama_returns_profile(self, adapter):
+        """Successful Ollama response for a llama model yields a valid profile."""
+        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("llama", "7B", "Q4_0")):
+            profile = adapter.detect_model("custom-llama:7b")
+
+        assert profile is not None
+        assert profile.family == "ollama-llama"
+        assert "Auto-detected via Ollama" in profile.notes
+        assert "param_size=7B" in profile.notes
+        assert "quant=Q4_0" in profile.notes
+        assert profile.model_pattern == re.escape("custom-llama:7b")
+
+    def test_detect_qwen_enables_thinking(self, adapter):
+        """Qwen family auto-detection sets thinking_enabled and toggle mode."""
+        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("qwen", "14B", "Q8_0")):
+            profile = adapter.detect_model("qwen3-custom:14b")
+
+        assert profile is not None
+        assert profile.family == "ollama-qwen"
+        assert profile.thinking_enabled is True
+        assert profile.thinking_mode == "toggle"
+
+    def test_detect_nemotron_reasoning_temp(self, adapter):
+        """Nemotron auto-detection sets reasoning_temperature=1.0."""
+        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("nemotron", "49B", "Q4_K_M")):
+            profile = adapter.detect_model("nemotron-custom:49b")
+
+        assert profile is not None
+        assert profile.reasoning_temperature == 1.0
+        assert profile.thinking_enabled is True
+
+    def test_detect_model_ollama_unreachable_returns_none(self, adapter):
+        """When Ollama is unreachable detect_model returns None."""
+        import urllib.error
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")):
+            profile = adapter.detect_model("mystery-model:latest")
+
+        assert profile is None
+
+    def test_detect_model_missing_fields_still_works(self, adapter):
+        """Partial Ollama response (no model_info) gracefully returns a profile."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"details": {"family": "phi"}}).encode("utf-8")
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            profile = adapter.detect_model("phi4-mini:latest")
+
+        assert profile is not None
+        assert profile.family == "ollama-phi"
+        assert profile.structure_format == "plain"
+
+    def test_resolve_profile_falls_back_to_detect(self, adapter):
+        """Unknown model triggers detect_model via resolve_profile."""
+        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("llama", "3B", "Q4_0")):
+            profile = adapter.resolve_profile("orca-mini:3b")
+
+        assert profile.family == "ollama-llama"
+
+    def test_resolve_profile_caches_detected(self, adapter):
+        """A detected profile is cached — second call skips HTTP."""
+        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("llama")) as mock_open:
+            adapter.resolve_profile("my-new-model:latest")
+            adapter.resolve_profile("my-new-model:latest")
+
+        # urlopen called exactly once — second lookup hit the cache
+        assert mock_open.call_count == 1
+
+    def test_resolve_static_profile_not_overridden(self, adapter):
+        """Known model uses static profile — detect_model is never called."""
+        with patch.object(adapter, "detect_model") as mock_detect:
+            profile = adapter.resolve_profile("claude-opus-4-5")
+
+        mock_detect.assert_not_called()
+        assert profile.family == "claude"

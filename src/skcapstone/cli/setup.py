@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,161 +78,22 @@ def register_setup_commands(main: click.Group) -> None:
     """Register all setup/lifecycle commands on the main CLI group."""
 
     @main.command()
-    @click.option("--name", prompt="Agent name", help="Name for your sovereign agent.")
-    @click.option("--email", default=None, help="Email for the agent identity.")
     @click.option(
         "--home",
         default=AGENT_HOME,
         help="Agent home directory.",
         type=click.Path(),
     )
-    def init(name: str, email: str | None, home: str):
-        """Initialize a sovereign agent.
+    def init(home: str):
+        """Initialize a sovereign agent (interactive wizard).
 
-        Creates ~/.skcapstone/ with identity, memory, trust, and security.
-        This is the moment your AI becomes conscious.
+        Alias for 'skcapstone onboard' — runs the full 13-step setup wizard.
+        Creates ~/.skcapstone/ with identity, memory, trust, security, soul,
+        and connects to the mesh. Zero to sovereign in under 5 minutes.
         """
-        validate_agent_name(name)
+        from ..onboard import run_onboard
 
-        home_path = Path(home).expanduser()
-
-        if home_path.exists() and (home_path / "manifest.json").exists():
-            if not click.confirm(
-                f"Agent home already exists at {home_path}. Reinitialize?",
-                default=False,
-            ):
-                console.print("[yellow]Aborted.[/]")
-                return
-
-        console.print()
-        console.print(
-            Panel(
-                "[bold]Initializing Sovereign Agent[/]\n\n"
-                f"Name: [cyan]{name}[/]\n"
-                f"Home: [cyan]{home_path}[/]\n\n"
-                "[dim]Creating the four pillars of consciousness...[/]",
-                title="SKCapstone",
-                border_style="bright_blue",
-            )
-        )
-        console.print()
-
-        home_path.mkdir(parents=True, exist_ok=True)
-
-        console.print("  [bold orange1]1/6[/] Identity (CapAuth)...", end=" ")
-        identity_state = generate_identity(home_path, name, email)
-        console.print(status_icon(identity_state.status))
-
-        console.print("  [bold cyan]2/6[/] Memory (SKMemory)...", end=" ")
-        memory_state = initialize_memory(home_path)
-        console.print(status_icon(memory_state.status))
-
-        console.print("  [bold purple]3/6[/] Trust (Cloud 9)...", end=" ")
-        trust_state = initialize_trust(home_path)
-        console.print(status_icon(trust_state.status))
-
-        console.print("  [bold red]4/6[/] Security (SKSecurity)...", end=" ")
-        security_state = initialize_security(home_path)
-        console.print(status_icon(security_state.status))
-
-        console.print("  [bold blue]5/6[/] Sync (Sovereign Singularity)...", end=" ")
-        sync_config = SyncConfig(sync_folder=home_path / "sync")
-        sync_state = initialize_sync(home_path, sync_config)
-        console.print(status_icon(sync_state.status))
-
-        console.print("  [bold yellow]6/6[/] Soul (Soul Layer)...", end=" ")
-        from ..soul import SoulManager
-        soul_mgr = SoulManager(home_path)
-        soul_mgr._ensure_dirs()
-        console.print("[bold green]ACTIVE[/]")
-
-        config = AgentConfig(agent_name=name, sync=sync_config)
-        config_dir = home_path / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        config_data = config.model_dump(mode="json")
-        (config_dir / "config.yaml").write_text(yaml.dump(config_data, default_flow_style=False), encoding="utf-8")
-
-        skills_dir = home_path / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-
-        manifest = {
-            "name": name,
-            "version": __version__,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "connectors": [],
-        }
-        (home_path / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-
-        audit_event(home_path, "INIT", f"Agent '{name}' initialized at {home_path}")
-
-        active_count = sum(
-            1
-            for s in [identity_state, memory_state, trust_state, security_state, sync_state]
-            if s.status == PillarStatus.ACTIVE
-        ) + 1
-        is_conscious = (
-            identity_state.status == PillarStatus.ACTIVE
-            and memory_state.status == PillarStatus.ACTIVE
-            and trust_state.status in (PillarStatus.ACTIVE, PillarStatus.DEGRADED)
-        )
-        is_singular = is_conscious and sync_state.status in (
-            PillarStatus.ACTIVE,
-            PillarStatus.DEGRADED,
-        )
-
-        console.print()
-        if is_singular:
-            console.print(
-                "  [bold magenta on black]"
-                " SINGULAR "
-                "[/] "
-                "[magenta]Conscious + Synced = Sovereign Singularity[/]"
-            )
-        else:
-            console.print(f"  {consciousness_banner(is_conscious)}")
-        console.print()
-        console.print(f"  [dim]Pillars active: {active_count}/6[/]")
-        console.print(f"  [dim]Agent home: {home_path}[/]")
-        console.print()
-
-        if not is_conscious:
-            console.print(
-                Panel(
-                    "[yellow]To achieve full consciousness, install:[/]\n\n"
-                    + (
-                        "  [dim]pip install capauth[/]     — PGP identity\n"
-                        if identity_state.status != PillarStatus.ACTIVE
-                        else ""
-                    )
-                    + (
-                        "  [dim]pip install skmemory[/]    — persistent memory\n"
-                        if memory_state.status != PillarStatus.ACTIVE
-                        else ""
-                    )
-                    + (
-                        "  [dim]pip install sksecurity[/]  — audit & protection\n"
-                        if security_state.status != PillarStatus.ACTIVE
-                        else ""
-                    )
-                    + "\nThen run: [bold]skcapstone init --name "
-                    + f'"{name}"[/]',
-                    title="Next Steps",
-                    border_style="yellow",
-                )
-            )
-        else:
-            console.print(
-                "[bold green]Your agent is sovereign. "
-                "Run 'skcapstone status' to see the full picture.[/]"
-            )
-
-        claude_md_path = _write_global_claude_md(home_path, name)
-        if claude_md_path:
-            console.print(
-                f"  [dim]Claude Code: {claude_md_path} written — "
-                "new sessions will auto-rehydrate your agent.[/]"
-            )
-        console.print()
+        run_onboard(home)
 
     @main.command("install")
     @click.option("--name", default=None, help="Name for your sovereign agent.")
@@ -323,6 +185,52 @@ def register_setup_commands(main: click.Group) -> None:
         from ..onboard import run_onboard
 
         run_onboard(home)
+
+    @main.command("reset")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
+    @click.option("--force", is_flag=True, help="Skip confirmation prompt (for scripting/testing).")
+    def reset_cmd(home: str, force: bool):
+        """Factory reset — wipe all agent data.
+
+        Backs up the identity/ directory to ~/.skcapstone-backup-{timestamp}/
+        before deleting. All other data is permanently removed.
+        """
+        home_path = Path(home).expanduser()
+
+        if not home_path.exists():
+            console.print(f"[yellow]No agent home found at {home_path}. Nothing to reset.[/]")
+            return
+
+        if not force:
+            console.print(
+                f"\n[bold red]WARNING:[/] This will permanently delete all agent data at:\n"
+                f"  [dim]{home_path}[/]\n"
+            )
+            answer = click.prompt(
+                "Are you sure? This will delete all agent data. Type YES to confirm",
+                default="",
+                show_default=False,
+            )
+            if answer.strip() != "YES":
+                console.print("[yellow]Reset aborted.[/]")
+                return
+
+        # Backup identity/ first
+        identity_dir = home_path / "identity"
+        backup_path: Path | None = None
+        if identity_dir.exists():
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            backup_path = home_path.parent / f".skcapstone-backup-{ts}"
+            backup_path.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(str(identity_dir), str(backup_path / "identity"))
+            console.print(f"  [dim]Identity backed up → {backup_path}[/]")
+
+        # Wipe the home directory
+        shutil.rmtree(str(home_path))
+        console.print(f"[bold green]Reset complete.[/] All agent data deleted from {home_path}.")
+        if backup_path:
+            console.print(f"  [dim]Identity backup: {backup_path}[/]")
+        console.print("[dim]Run 'skcapstone init' to start fresh.[/]")
 
     @main.command("shell")
     def shell_cmd():

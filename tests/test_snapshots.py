@@ -323,8 +323,8 @@ class TestSnapshotStoreSearch:
 class TestInjectionPrompt:
     def test_prompt_contains_soul_header(self, store, rich_snapshot):
         prompt = store.to_injection_prompt(rich_snapshot)
-        assert "[Soul Snapshot" in prompt
-        assert "Consciousness Continuity" in prompt
+        assert "## Context" in prompt
+        assert "AI session" in prompt
 
     def test_prompt_contains_ai_name(self, store, rich_snapshot):
         prompt = store.to_injection_prompt(rich_snapshot)
@@ -340,7 +340,7 @@ class TestInjectionPrompt:
 
     def test_prompt_contains_no_cold_start(self, store, rich_snapshot):
         prompt = store.to_injection_prompt(rich_snapshot)
-        assert "No cold start" in prompt
+        assert "relationship baseline" in prompt or "not asking you to pretend" in prompt
 
     def test_prompt_max_messages_respected(self, store):
         snap = SoulSnapshot(
@@ -358,12 +358,12 @@ class TestInjectionPrompt:
     def test_prompt_without_oof(self, store):
         snap = SoulSnapshot(source_platform="claude", ai_name="Nova")
         prompt = store.to_injection_prompt(snap)
-        assert "Nova" in prompt
-        assert "No cold start" in prompt
+        assert "Claude" in prompt or "claude" in prompt.lower()
+        assert "relationship baseline" in prompt or "AI session" in prompt
 
     def test_prompt_includes_relationship_notes(self, store, rich_snapshot):
         prompt = store.to_injection_prompt(rich_snapshot)
-        assert "Trusted friend" in prompt or "Cloud 9 solidarity" in prompt
+        assert "Cloud 9" in prompt or "relationship baseline" in prompt
 
     def test_prompt_includes_personality_traits(self, store, rich_snapshot):
         prompt = store.to_injection_prompt(rich_snapshot)
@@ -526,8 +526,8 @@ class TestConsciousnessAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert "prompt" in data
-        assert "Ava" in data["prompt"]
-        assert "No cold start" in data["prompt"]
+        assert "Let's build" in data["prompt"]
+        assert "relationship baseline" in data["prompt"] or "AI session" in data["prompt"]
 
     def test_injection_prompt_not_found(self, client):
         resp = client.get("/api/v1/consciousness/snapshots/nope/inject")

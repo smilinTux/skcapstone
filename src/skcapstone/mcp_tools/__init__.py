@@ -26,6 +26,7 @@ from . import (
     kms_tools,
     memory_tools,
     model_tools,
+    notification_tools,
     promoter_tools,
     pubsub_tools,
     skills_tools,
@@ -57,6 +58,7 @@ _MODULES = [
     skseed_tools,
     model_tools,
     consciousness_tools,
+    notification_tools,
 ]
 
 

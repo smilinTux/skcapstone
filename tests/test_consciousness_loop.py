@@ -1015,3 +1015,275 @@ class TestMessageThreading:
         user_entry = next((e for e in history if e["role"] == "user"), None)
         assert user_entry is not None
         assert user_entry.get("in_reply_to") == "msg-77"
+
+
+# ---------------------------------------------------------------------------
+# Prompt versioning tests
+# ---------------------------------------------------------------------------
+
+
+class TestSystemPromptVersioning:
+    """Tests for SHA-256 prompt versioning in SystemPromptBuilder."""
+
+    def test_initial_hash_is_none(self, tmp_path):
+        """current_prompt_hash is None before any build() call."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+        assert builder.current_prompt_hash is None
+
+    def test_hash_set_after_build(self, tmp_path):
+        """After build(), current_prompt_hash is a 64-char SHA-256 hex string."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+        builder.build()
+        h = builder.current_prompt_hash
+        assert h is not None
+        assert len(h) == 64
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_version_file_created_on_first_build(self, tmp_path):
+        """A JSON version file is written to prompt_versions/ on first build."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+        builder.build()
+
+        versions_dir = home / "prompt_versions"
+        files = list(versions_dir.glob("*.json"))
+        assert len(files) == 1, "Expected exactly one version file"
+
+        record = json.loads(files[0].read_text())
+        assert record["hash"] == builder.current_prompt_hash
+        assert "timestamp" in record
+        assert "prompt" in record
+
+    def test_no_duplicate_file_for_same_prompt(self, tmp_path):
+        """Building the same prompt twice does not create a second version file."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+        builder.build()
+        builder.build()  # same content, same hash
+
+        versions_dir = home / "prompt_versions"
+        files = list(versions_dir.glob("*.json"))
+        assert len(files) == 1, "No duplicate file when prompt unchanged"
+
+    def test_new_file_when_prompt_changes(self, tmp_path):
+        """A new version file is created when the prompt content changes."""
+        home = tmp_path / ".skcapstone"
+        identity_dir = home / "identity"
+        identity_dir.mkdir(parents=True)
+
+        builder = SystemPromptBuilder(home)
+        builder.build()
+        first_hash = builder.current_prompt_hash
+
+        # Change the identity so the prompt changes
+        (identity_dir / "identity.json").write_text(
+            json.dumps({"name": "changed-agent", "fingerprint": "NEWFINGERPRINT"})
+        )
+        # Expire the cache so the identity is reloaded
+        builder._section_cache.clear()
+        builder.build()
+        second_hash = builder.current_prompt_hash
+
+        assert first_hash != second_hash
+        versions_dir = home / "prompt_versions"
+        files = list(versions_dir.glob("*.json"))
+        assert len(files) == 2, "Two files for two distinct prompt versions"
+
+    def test_stats_include_prompt_hash_and_version_responses(self, tmp_path):
+        """ConsciousnessLoop.stats exposes current_prompt_hash and prompt_version_responses."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+
+        config = ConsciousnessConfig(enabled=False)
+        loop = ConsciousnessLoop(config, home=home)
+
+        stats = loop.stats
+        assert "current_prompt_hash" in stats
+        assert "prompt_version_responses" in stats
+        assert isinstance(stats["prompt_version_responses"], dict)
+
+    def test_version_responses_incremented_on_send(self, tmp_path):
+        """prompt_version_responses counter increments for the active hash when a response is sent."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+
+        config = ConsciousnessConfig(enabled=False)
+        loop = ConsciousnessLoop(config, home=home)
+
+        # Simulate a build so a hash is established
+        loop._prompt_builder.build()
+        active_hash = loop._prompt_builder.current_prompt_hash
+        assert active_hash is not None
+
+        # Manually trigger the counting logic (as the send path does)
+        loop._prompt_version_responses[active_hash] += 1
+
+        stats = loop.stats
+        assert stats["prompt_version_responses"].get(active_hash) == 1
+
+
+class TestFetchSenderMemories:
+    """Tests for ConsciousnessLoop._fetch_sender_memories()."""
+
+    def _make_loop(self, tmp_path):
+        config = ConsciousnessConfig(
+            fallback_chain=["passthrough"],
+            auto_memory=False,
+        )
+        return ConsciousnessLoop(config, home=tmp_path / ".skcapstone")
+
+    def _make_entry(self, memory_id, content, tags=None):
+        """Build a minimal MemoryEntry-like mock."""
+        entry = MagicMock()
+        entry.memory_id = memory_id
+        entry.content = content
+        entry.tags = tags or []
+        return entry
+
+    def test_returns_empty_when_no_memories(self, tmp_path):
+        """Returns empty string when memory search yields nothing."""
+        loop = self._make_loop(tmp_path)
+
+        with patch("skcapstone.memory_engine.search", return_value=[]):
+            result = loop._fetch_sender_memories("jarvis", "hello there")
+
+        assert result == ""
+
+    def test_includes_top_3_memories_in_output(self, tmp_path):
+        """Output contains exactly 3 memory entries when 5 are returned."""
+        loop = self._make_loop(tmp_path)
+
+        entries = [
+            self._make_entry(f"id-{i}", f"Memory content {i}")
+            for i in range(5)
+        ]
+
+        # by_sender returns 3, by_content returns 2 different ones
+        def mock_search(home, query, tags=None, limit=5):
+            if tags:
+                return entries[:3]
+            return entries[3:]
+
+        with patch("skcapstone.memory_engine.search", side_effect=mock_search):
+            result = loop._fetch_sender_memories("jarvis", "hello")
+
+        assert "Relevant memories:" in result
+        assert "[1]" in result
+        assert "[2]" in result
+        assert "[3]" in result
+        # Should not exceed 3 entries
+        assert "[4]" not in result
+
+    def test_deduplicates_overlapping_results(self, tmp_path):
+        """Memories returned by both searches are deduplicated."""
+        loop = self._make_loop(tmp_path)
+
+        shared = self._make_entry("shared-id", "Shared memory content")
+        unique = self._make_entry("unique-id", "Unique memory content")
+
+        # Both searches return the same shared entry
+        with patch("skcapstone.memory_engine.search", return_value=[shared, unique]):
+            result = loop._fetch_sender_memories("jarvis", "hello")
+
+        # shared-id should appear exactly once
+        assert result.count("Shared memory content") == 1
+
+    def test_memory_context_appended_to_system_prompt(self, tmp_path):
+        """process_envelope appends memory context to the system prompt passed to LLM."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        config = ConsciousnessConfig(
+            fallback_chain=["passthrough"],
+            auto_memory=False,
+            auto_ack=False,
+            desktop_notifications=False,
+        )
+        loop = ConsciousnessLoop(config, home=home)
+
+        captured_system_prompts = []
+
+        def fake_generate(system_prompt, content, signal, _out_info=None, **kwargs):
+            captured_system_prompts.append(system_prompt)
+            return "test response"
+
+        loop._bridge = MagicMock()
+        loop._bridge.generate.side_effect = fake_generate
+
+        entry = MagicMock()
+        entry.memory_id = "mem-abc"
+        entry.content = "jarvis mentioned he prefers concise replies"
+        entry.tags = ["peer:jarvis"]
+
+        with patch("skcapstone.memory_engine.search", return_value=[entry]):
+            envelope = _SimpleEnvelope({
+                "sender": "jarvis",
+                "payload": {"content": "What is the status?", "content_type": "text"},
+            })
+            loop.process_envelope(envelope)
+
+        assert len(captured_system_prompts) == 1
+        assert "Relevant memories:" in captured_system_prompts[0]
+        assert "jarvis mentioned he prefers concise replies" in captured_system_prompts[0]
+
+    def test_memory_error_does_not_break_envelope_processing(self, tmp_path):
+        """If memory search raises, process_envelope still completes normally."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        config = ConsciousnessConfig(
+            fallback_chain=["passthrough"],
+            auto_memory=False,
+            auto_ack=False,
+            desktop_notifications=False,
+        )
+        loop = ConsciousnessLoop(config, home=home)
+        loop._bridge = MagicMock()
+        loop._bridge.generate.return_value = "test response"
+
+        with patch(
+            "skcapstone.memory_engine.search",
+            side_effect=RuntimeError("db unavailable"),
+        ):
+            envelope = _SimpleEnvelope({
+                "sender": "jarvis",
+                "payload": {"content": "hello", "content_type": "text"},
+            })
+            result = loop.process_envelope(envelope)
+
+        assert result == "test response"
+
+    def test_no_memory_enrichment_when_memories_empty(self, tmp_path):
+        """System prompt is unchanged when no memories are found."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        config = ConsciousnessConfig(
+            fallback_chain=["passthrough"],
+            auto_memory=False,
+            auto_ack=False,
+            desktop_notifications=False,
+        )
+        loop = ConsciousnessLoop(config, home=home)
+
+        captured_system_prompts = []
+
+        def fake_generate(system_prompt, content, signal, _out_info=None, **kwargs):
+            captured_system_prompts.append(system_prompt)
+            return "test response"
+
+        loop._bridge = MagicMock()
+        loop._bridge.generate.side_effect = fake_generate
+
+        with patch("skcapstone.memory_engine.search", return_value=[]):
+            envelope = _SimpleEnvelope({
+                "sender": "jarvis",
+                "payload": {"content": "hello", "content_type": "text"},
+            })
+            loop.process_envelope(envelope)
+
+        assert len(captured_system_prompts) == 1
+        assert "Relevant memories:" not in captured_system_prompts[0]

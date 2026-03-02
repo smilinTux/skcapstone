@@ -122,6 +122,16 @@ async def _handle_memory_store(args: dict) -> list[TextContent]:
         source=args.get("source", "mcp"),
         importance=args.get("importance", 0.5),
     )
+    try:
+        from .. import activity
+        activity.push("memory.stored", {
+            "memory_id": entry.memory_id,
+            "layer": entry.layer.value,
+            "importance": entry.importance,
+            "tags": entry.tags,
+        })
+    except Exception:
+        pass
     return _json_response({
         "memory_id": entry.memory_id,
         "layer": entry.layer.value,

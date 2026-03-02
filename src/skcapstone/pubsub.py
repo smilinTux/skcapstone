@@ -31,6 +31,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import json
 import logging
@@ -381,6 +382,75 @@ class PubSub:
             "callbacks_registered": sum(len(cbs) for cbs in self._callbacks.values()),
             "pubsub_dir": str(self._pubsub_dir),
         }
+
+    def topic_stats(self) -> list[dict[str, Any]]:
+        """Return per-topic statistics for live (non-expired) messages.
+
+        Returns:
+            List of dicts with:
+              - topic: topic name
+              - message_count: number of live (non-expired) messages
+              - oldest_message_age_seconds: seconds since oldest live message,
+                or None if no live messages exist
+        """
+        self.initialize()
+        stats: list[dict[str, Any]] = []
+
+        if not self._topics_dir.is_dir():
+            return stats
+
+        now = datetime.now(timezone.utc)
+
+        for topic_dir in sorted(self._topics_dir.iterdir()):
+            if not topic_dir.is_dir():
+                continue
+
+            live_timestamps: list[datetime] = []
+            for msg_file in topic_dir.glob("msg-*.json"):
+                try:
+                    data = json.loads(msg_file.read_text(encoding="utf-8"))
+                    msg = TopicMessage.model_validate(data)
+                    if not msg.is_expired:
+                        live_timestamps.append(msg.published_at)
+                except (json.JSONDecodeError, Exception):
+                    pass
+
+            oldest_age: Optional[float] = None
+            if live_timestamps:
+                oldest_age = (now - min(live_timestamps)).total_seconds()
+
+            stats.append({
+                "topic": _unsanitize_topic(topic_dir.name),
+                "message_count": len(live_timestamps),
+                "oldest_message_age_seconds": oldest_age,
+            })
+
+        return stats
+
+    async def start_expiry_task(self, interval: int = 300) -> None:
+        """Periodically purge expired messages from all topics.
+
+        Designed to be launched as a long-running asyncio background task::
+
+            asyncio.create_task(bus.start_expiry_task())
+
+        The first sweep runs after ``interval`` seconds, then repeats.
+        File I/O is offloaded to the default executor so the event loop
+        is not blocked.
+
+        Args:
+            interval: Seconds between expiry sweeps (default 300).
+        """
+        logger.info("PubSub expiry task started (interval=%ds)", interval)
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                removed = await loop.run_in_executor(None, self.purge_expired)
+                if removed:
+                    logger.info("Expiry sweep removed %d messages", removed)
+            except Exception as exc:
+                logger.error("Expiry sweep failed: %s", exc)
 
     # -------------------------------------------------------------------
     # Internal helpers

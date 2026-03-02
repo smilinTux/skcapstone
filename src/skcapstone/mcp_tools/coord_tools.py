@@ -146,6 +146,11 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
     board = Board(_shared_root())
     try:
         agent = board.claim_task(agent_name, task_id)
+        try:
+            from .. import activity
+            activity.push("task.claimed", {"task_id": task_id, "agent": agent_name})
+        except Exception:
+            pass
         return _json_response({
             "claimed": True,
             "task_id": task_id,
@@ -167,6 +172,11 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
 
     board = Board(_shared_root())
     agent = board.complete_task(agent_name, task_id)
+    try:
+        from .. import activity
+        activity.push("task.completed", {"task_id": task_id, "agent": agent_name})
+    except Exception:
+        pass
     return _json_response({
         "completed": True,
         "task_id": task_id,

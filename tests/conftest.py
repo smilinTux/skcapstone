@@ -1,4 +1,16 @@
-"""Shared test fixtures for skcapstone."""
+"""Shared test fixtures for skcapstone.
+
+Coverage audit (task 945325c8, 2026-03-02):
+- Reviewed git log: zero test-only commits found.  Every commit that adds or
+  modifies test files also adds or modifies corresponding source files.
+- All modified test files in the working tree (test_chat, test_consciousness_loop,
+  test_dashboard, test_prompt_adapter) have matching modified source files.
+- All new untracked test files have matching new untracked source files.
+- New untracked source files that may still need test coverage integration:
+    cli/errors_cmd.py, cli/mood_cmd.py, cli/profile_cmd.py, cli/search_cmd.py,
+    cli/test_connection.py, cli/upgrade_cmd.py, cli/usage_cmd.py, cli/version_cmd.py
+  (unit test stubs exist; integration tests pending — see task f675ef5c).
+"""
 
 from __future__ import annotations
 

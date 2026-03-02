@@ -21,9 +21,17 @@ from skcapstone.log_config import JsonFormatter, configure_logging
 
 @pytest.fixture(autouse=True)
 def _reset_log_config(monkeypatch):
-    """Reset the _CONFIGURED flag and remove test-added handlers after each test."""
+    """Reset the _CONFIGURED flag and remove rotating file handlers before/after each test."""
     monkeypatch.setattr(log_config_module, "_CONFIGURED", False)
     root = logging.getLogger()
+    # Remove any RotatingFileHandlers left by previous tests before this test runs.
+    for h in list(root.handlers):
+        if isinstance(h, logging.handlers.RotatingFileHandler):
+            root.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
     handlers_before = list(root.handlers)
     yield
     # Tear down any handlers added during the test.

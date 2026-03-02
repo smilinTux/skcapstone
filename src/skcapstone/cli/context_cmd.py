@@ -45,12 +45,14 @@ def register_context_commands(main: click.Group) -> None:
             skcapstone context show --format claude-md > CLAUDE.md
             skcapstone context show --format cursor-rules > .cursor/rules/agent.mdc
         """
-        from ..context_loader import FORMATTERS, gather_context
-
         home_path = Path(home).expanduser()
-        ctx = gather_context(home_path, memory_limit=memories)
-        formatter = FORMATTERS[fmt]
-        click.echo(formatter(ctx))
+        if fmt == "claude-md":
+            from ..claude_md import generate_claude_md
+            click.echo(generate_claude_md(home_path, memory_limit=memories))
+        else:
+            from ..context_loader import FORMATTERS, gather_context
+            ctx = gather_context(home_path, memory_limit=memories)
+            click.echo(FORMATTERS[fmt](ctx))
 
     @context.command("generate")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
@@ -91,3 +93,50 @@ def register_context_commands(main: click.Group) -> None:
             console.print(f"  [green]Written:[/] {rules_path}")
 
         console.print()
+
+    @main.command("refresh-context")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--memories", "-n", default=10, help="Max recent memories to embed.")
+    @click.option(
+        "--dest",
+        default=None,
+        type=click.Path(),
+        help="Destination path for CLAUDE.md (default: repo root or cwd).",
+    )
+    @click.option("--backup", is_flag=True, default=False, help="Rename existing CLAUDE.md to .bak before writing.")
+    def refresh_context(home: str, memories: int, dest: str | None, backup: bool):
+        """Regenerate CLAUDE.md from current agent state.
+
+        Writes CLAUDE.md to the git repository root (or cwd if not in a
+        git repository). Useful as a pre-commit hook or alias.
+
+        Examples:
+            skcapstone refresh-context
+            skcapstone refresh-context --dest /path/to/project/CLAUDE.md
+            skcapstone refresh-context --backup
+        """
+        import subprocess
+
+        from ..claude_md import write_claude_md
+
+        home_path = Path(home).expanduser()
+
+        if dest:
+            target = Path(dest).expanduser().resolve()
+            if target.is_dir():
+                target = target / "CLAUDE.md"
+        else:
+            # Walk up from cwd to find git root; fall back to cwd.
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                target = Path(result.stdout.strip()) / "CLAUDE.md"
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                target = Path.cwd() / "CLAUDE.md"
+
+        write_claude_md(home_path, target, memory_limit=memories, backup=backup)
+        console.print(f"  [green]Written:[/] {target}")

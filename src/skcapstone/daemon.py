@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import re
 import signal
 import struct
@@ -29,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import AGENT_HOME, SHARED_ROOT
+from . import activity as _activity
 
 logger = logging.getLogger("skcapstone.daemon")
 
@@ -127,7 +129,365 @@ def _ws_read_frame(sock):
     if raw is None:
         return None
     return opcode, raw
+
+
 SHUTDOWN_STATE_FILE = "shutdown_state.json"
+
+# ── Component health tracking ─────────────────────────────────────────────────
+
+
+class ComponentHealth:
+    """Health record for a single daemon subsystem component.
+
+    Tracks status, heartbeat timestamps, and restart history in a thread-safe way.
+
+    Args:
+        name: Component identifier (e.g. "poll", "consciousness").
+        auto_restart: Whether the watchdog should auto-restart this component.
+        heartbeat_timeout: Seconds without a heartbeat before marking dead.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        auto_restart: bool = False,
+        heartbeat_timeout: int = 120,
+    ):
+        self.name = name
+        self.auto_restart = auto_restart
+        self.heartbeat_timeout = heartbeat_timeout
+        self.status: str = "pending"
+        self.started_at: Optional[datetime] = None
+        self.last_heartbeat: Optional[datetime] = None
+        self.restart_count: int = 0
+        self.last_error: Optional[str] = None
+        self._lock = threading.Lock()
+
+    def mark_started(self) -> None:
+        """Transition to alive and record start time."""
+        with self._lock:
+            self.status = "alive"
+            now = datetime.now(timezone.utc)
+            self.started_at = now
+            self.last_heartbeat = now
+
+    def pulse(self) -> None:
+        """Record a heartbeat — component is alive and working."""
+        with self._lock:
+            self.last_heartbeat = datetime.now(timezone.utc)
+            if self.status != "alive":
+                self.status = "alive"
+
+    def mark_dead(self, error: str = "") -> None:
+        """Transition to dead, optionally recording the error."""
+        with self._lock:
+            self.status = "dead"
+            if error:
+                self.last_error = error
+
+    def mark_restarting(self) -> None:
+        """Transition to restarting and increment the restart counter."""
+        with self._lock:
+            self.status = "restarting"
+            self.restart_count += 1
+
+    def mark_disabled(self) -> None:
+        """Mark component as permanently disabled (not started)."""
+        with self._lock:
+            self.status = "disabled"
+
+    def mark_alive(self) -> None:
+        """Mark a passive component as alive (no auto-restart)."""
+        with self._lock:
+            self.status = "alive"
+            if not self.started_at:
+                self.started_at = datetime.now(timezone.utc)
+            self.last_heartbeat = datetime.now(timezone.utc)
+
+    def snapshot(self) -> dict:
+        """Return a JSON-serializable snapshot of this component's health.
+
+        Returns:
+            Dict with name, status, timestamps, restart_count, last_error.
+        """
+        with self._lock:
+            age: Optional[int] = None
+            if self.last_heartbeat:
+                age = round(
+                    (datetime.now(timezone.utc) - self.last_heartbeat).total_seconds()
+                )
+            return {
+                "name": self.name,
+                "status": self.status,
+                "auto_restart": self.auto_restart,
+                "started_at": self.started_at.isoformat() if self.started_at else None,
+                "last_heartbeat": (
+                    self.last_heartbeat.isoformat() if self.last_heartbeat else None
+                ),
+                "heartbeat_age_seconds": age,
+                "restart_count": self.restart_count,
+                "last_error": self.last_error,
+            }
+
+
+class ComponentManager:
+    """Tracks health and auto-restarts daemon subsystem components.
+
+    Each restartable component is registered with a loop callable.  A watchdog
+    thread periodically checks liveness and restarts any component whose thread
+    has exited or whose heartbeat has timed out.
+
+    Args:
+        stop_event: Shared stop event — when set the watchdog exits cleanly.
+    """
+
+    WATCHDOG_INTERVAL = 30  # seconds between watchdog checks
+    MAX_RESTARTS = 5  # maximum auto-restart attempts per component
+
+    def __init__(self, stop_event: threading.Event):
+        self._stop_event = stop_event
+        self._health: dict[str, ComponentHealth] = {}
+        self._factories: dict[str, callable] = {}
+        self._threads: dict[str, threading.Thread] = {}
+        self._lock = threading.Lock()
+
+    def register(
+        self,
+        name: str,
+        target: callable,
+        *,
+        disabled: bool = False,
+        heartbeat_timeout: int = 120,
+    ) -> ComponentHealth:
+        """Register a restartable component loop.
+
+        Args:
+            name: Unique component identifier.
+            target: Callable that implements the component's loop (runs until
+                    stop_event is set).
+            disabled: If True, mark as disabled and do not start.
+            heartbeat_timeout: Seconds without a heartbeat before the watchdog
+                               considers the component dead.
+
+        Returns:
+            The ComponentHealth tracker for this component.
+        """
+        comp = ComponentHealth(name, auto_restart=True, heartbeat_timeout=heartbeat_timeout)
+        if disabled:
+            comp.mark_disabled()
+        with self._lock:
+            self._health[name] = comp
+            self._factories[name] = target
+        return comp
+
+    def register_passive(self, name: str, *, status: str = "alive") -> ComponentHealth:
+        """Register a non-restartable component (e.g. consciousness, scheduler).
+
+        These are tracked for status display but not auto-restarted because they
+        manage their own internal threads.
+
+        Args:
+            name: Unique component identifier.
+            status: Initial status ("alive", "disabled", "dead").
+
+        Returns:
+            The ComponentHealth tracker.
+        """
+        comp = ComponentHealth(name, auto_restart=False)
+        comp.status = status
+        if status == "alive":
+            comp.started_at = datetime.now(timezone.utc)
+            comp.last_heartbeat = datetime.now(timezone.utc)
+        with self._lock:
+            self._health[name] = comp
+        return comp
+
+    def heartbeat(self, name: str) -> None:
+        """Signal that a component is alive. Call this inside component loops.
+
+        Args:
+            name: Component identifier.
+        """
+        with self._lock:
+            comp = self._health.get(name)
+        if comp:
+            comp.pulse()
+
+    def mark_dead(self, name: str, error: str = "") -> None:
+        """Explicitly mark a component dead.
+
+        Args:
+            name: Component identifier.
+            error: Optional error message.
+        """
+        with self._lock:
+            comp = self._health.get(name)
+        if comp:
+            comp.mark_dead(error)
+
+    def mark_alive(self, name: str) -> None:
+        """Mark a passive component alive (e.g. after successful load).
+
+        Args:
+            name: Component identifier.
+        """
+        with self._lock:
+            comp = self._health.get(name)
+        if comp:
+            comp.mark_alive()
+
+    def mark_disabled(self, name: str) -> None:
+        """Mark a component as disabled.
+
+        Args:
+            name: Component identifier.
+        """
+        with self._lock:
+            comp = self._health.get(name)
+        if comp:
+            comp.mark_disabled()
+
+    def start_all(self) -> list:
+        """Start all registered non-disabled components and the watchdog.
+
+        Returns:
+            List of started threading.Thread objects.
+        """
+        with self._lock:
+            names = list(self._health.keys())
+            factories = dict(self._factories)
+
+        threads = []
+        for name in names:
+            with self._lock:
+                comp = self._health.get(name)
+            if comp and comp.status != "disabled" and name in factories:
+                t = self._launch(name, factories[name])
+                threads.append(t)
+
+        watchdog = threading.Thread(
+            target=self._watchdog_loop,
+            name="daemon-watchdog",
+            daemon=True,
+        )
+        watchdog.start()
+        threads.append(watchdog)
+        return threads
+
+    def _launch(self, name: str, target: callable) -> threading.Thread:
+        """Launch a component thread, wrapping it to detect crashes.
+
+        Args:
+            name: Component identifier.
+            target: Loop callable.
+
+        Returns:
+            The started Thread.
+        """
+        with self._lock:
+            comp = self._health.get(name)
+        if comp:
+            comp.mark_started()
+
+        def _wrapper():
+            try:
+                target()
+            except Exception as exc:
+                logger.error("Component '%s' crashed: %s", name, exc)
+                with self._lock:
+                    c = self._health.get(name)
+                if c:
+                    c.mark_dead(str(exc))
+            else:
+                if not self._stop_event.is_set():
+                    logger.warning("Component '%s' exited unexpectedly", name)
+                    with self._lock:
+                        c = self._health.get(name)
+                    if c:
+                        c.mark_dead("exited unexpectedly")
+
+        t = threading.Thread(target=_wrapper, name=f"daemon-{name}", daemon=True)
+        t.start()
+        with self._lock:
+            self._threads[name] = t
+        return t
+
+    def _check_components(self) -> None:
+        """Inspect all auto-restart components and restart any that are dead.
+
+        Called by the watchdog loop and also usable directly in tests.
+        """
+        with self._lock:
+            comps = dict(self._health)
+            factories = dict(self._factories)
+            threads = dict(self._threads)
+
+        for name, comp in comps.items():
+            if not comp.auto_restart:
+                continue
+            if comp.status in ("disabled", "restarting"):
+                continue
+
+            t = threads.get(name)
+            needs_restart = False
+
+            if comp.status == "dead":
+                needs_restart = True
+            elif t is not None and not t.is_alive() and comp.status == "alive":
+                logger.warning("Component '%s' thread exited", name)
+                comp.mark_dead("thread exited")
+                needs_restart = True
+            elif comp.last_heartbeat:
+                age = (
+                    datetime.now(timezone.utc) - comp.last_heartbeat
+                ).total_seconds()
+                if age > comp.heartbeat_timeout:
+                    logger.warning(
+                        "Component '%s' heartbeat timeout (%.0fs old)", name, age
+                    )
+                    comp.mark_dead("heartbeat timeout")
+                    needs_restart = True
+
+            if not needs_restart:
+                continue
+
+            if comp.restart_count >= self.MAX_RESTARTS:
+                logger.error(
+                    "Component '%s' exceeded max restarts (%d) — giving up",
+                    name,
+                    self.MAX_RESTARTS,
+                )
+                continue
+
+            target = factories.get(name)
+            if target:
+                logger.warning(
+                    "Watchdog auto-restarting '%s' (attempt %d/%d)",
+                    name,
+                    comp.restart_count + 1,
+                    self.MAX_RESTARTS,
+                )
+                comp.mark_restarting()
+                self._launch(name, target)
+
+    def _watchdog_loop(self) -> None:
+        """Periodically check component health and restart dead components."""
+        while not self._stop_event.is_set():
+            self._stop_event.wait(timeout=self.WATCHDOG_INTERVAL)
+            if self._stop_event.is_set():
+                break
+            self._check_components()
+
+    def snapshot(self) -> dict:
+        """Return a serializable snapshot of all component health records.
+
+        Returns:
+            Dict mapping component name → health snapshot dict.
+        """
+        with self._lock:
+            comps = dict(self._health)
+        return {name: comp.snapshot() for name, comp in comps.items()}
 
 
 class DaemonConfig:
@@ -143,6 +503,10 @@ class DaemonConfig:
         log_file: Path for daemon log output.
         consciousness_enabled: Whether to start the consciousness loop.
         consciousness_config_path: Optional path to consciousness config.
+        tls_enabled: When True the API server uses HTTPS (set via
+            ``SKCAPSTONE_TLS=true``).  A self-signed certificate is
+            auto-generated under ``~/.skcapstone/tls/`` on first start.
+        tls_dir: Directory for TLS certificate and key files.
     """
 
     def __init__(
@@ -155,6 +519,8 @@ class DaemonConfig:
         port: int = DEFAULT_PORT,
         consciousness_enabled: bool = True,
         consciousness_config_path: Optional[Path] = None,
+        tls_enabled: Optional[bool] = None,
+        tls_dir: Optional[Path] = None,
     ):
         self.home = (home or Path(AGENT_HOME)).expanduser()
         self.shared_root = (shared_root or Path(SHARED_ROOT)).expanduser()
@@ -164,6 +530,12 @@ class DaemonConfig:
         self.port = port
         self.consciousness_enabled = consciousness_enabled
         self.consciousness_config_path = consciousness_config_path
+
+        # TLS: env var SKCAPSTONE_TLS=true overrides the constructor arg
+        if tls_enabled is None:
+            tls_enabled = os.environ.get("SKCAPSTONE_TLS", "").lower() in ("1", "true", "yes")
+        self.tls_enabled: bool = tls_enabled
+        self.tls_dir: Path = (tls_dir or self.home / "tls").expanduser()
 
         log_dir = self.home / LOG_DIR
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -322,6 +694,8 @@ class DaemonService:
         # WebSocket clients: set of raw sockets for connected /ws clients
         self._ws_clients: set = set()
         self._ws_lock = threading.Lock()
+        # Component health manager — populated in start()
+        self._component_mgr = ComponentManager(self._stop_event)
 
     def start(self) -> None:
         """Start the daemon and all background workers.
@@ -348,33 +722,48 @@ class DaemonService:
         self._load_components()
         self._load_startup_state()
 
-        workers = [
-            ("poll", self._poll_loop),
-            ("health", self._health_loop),
-            ("sync", self._sync_loop),
-            ("housekeeping", self._housekeeping_loop),
-        ]
-        for name, target in workers:
-            t = threading.Thread(target=target, name=f"daemon-{name}", daemon=True)
-            t.start()
-            self._threads.append(t)
+        # ── Register restartable core loops with the component manager ─────────
+        poll_timeout = max(self.config.poll_interval * 3 + 30, 60)
+        health_timeout = max(self.config.health_interval * 3 + 30, 60)
+        sync_timeout = max(self.config.sync_interval * 3 + 30, 120)
 
-        # Start consciousness loop threads
+        self._component_mgr.register("poll", self._poll_loop, heartbeat_timeout=poll_timeout)
+        self._component_mgr.register("health", self._health_loop, heartbeat_timeout=health_timeout)
+        self._component_mgr.register("sync", self._sync_loop, heartbeat_timeout=sync_timeout)
+        self._component_mgr.register(
+            "housekeeping", self._housekeeping_loop, heartbeat_timeout=7230
+        )
+        self._component_mgr.register(
+            "healing",
+            self._healing_loop,
+            disabled=not bool(self._healer),
+            heartbeat_timeout=930,
+        )
+
+        # ── Register passive components (managed externally) ──────────────────
+        self._component_mgr.register_passive(
+            "consciousness",
+            status="alive" if self._consciousness else "disabled",
+        )
+        self._component_mgr.register_passive(
+            "scheduler",
+            status="alive" if self._scheduler else "disabled",
+        )
+        self._component_mgr.register_passive(
+            "heartbeat",
+            status="alive" if self._beacon else "disabled",
+        )
+
+        # Start all registered components (core loops + watchdog)
+        component_threads = self._component_mgr.start_all()
+        self._threads.extend(component_threads)
+
+        # Start consciousness loop threads (manages own threads internally)
         if self._consciousness:
             consciousness_threads = self._consciousness.start()
             self._threads.extend(consciousness_threads)
 
-        # Start self-healing loop
-        if self._healer:
-            t = threading.Thread(
-                target=self._healing_loop,
-                name="daemon-healing",
-                daemon=True,
-            )
-            t.start()
-            self._threads.append(t)
-
-        # Start task scheduler
+        # Start task scheduler (manages its own thread internally)
         if self._scheduler:
             scheduler_thread = self._scheduler.start()
             self._threads.append(scheduler_thread)
@@ -562,6 +951,7 @@ class DaemonService:
     def _poll_loop(self) -> None:
         """Continuously poll SKComm inbox for new messages."""
         while not self._stop_event.is_set():
+            self._component_mgr.heartbeat("poll")
             if self._skcomm:
                 try:
                     envelopes = self._skcomm.receive()
@@ -581,6 +971,7 @@ class DaemonService:
     def _health_loop(self) -> None:
         """Periodically check transport health."""
         while not self._stop_event.is_set():
+            self._component_mgr.heartbeat("health")
             if self._skcomm:
                 try:
                     report = self._skcomm.status()
@@ -600,7 +991,20 @@ class DaemonService:
 
             if self._beacon:
                 try:
-                    self._beacon.pulse(consciousness_active=bool(self._consciousness))
+                    c_stats = self._consciousness.stats if self._consciousness else {}
+                    conv_dir = self.config.shared_root / "conversations"
+                    active_convs = len(list(conv_dir.glob("*.json"))) if conv_dir.exists() else 0
+                    self._beacon.pulse(
+                        consciousness_active=bool(self._consciousness),
+                        active_conversations=active_convs,
+                        messages_processed_24h=c_stats.get("messages_processed_24h", 0),
+                    )
+                    _activity.push("heartbeat.published", {
+                        "status": "alive",
+                        "consciousness_active": bool(self._consciousness),
+                        "active_conversations": active_convs,
+                        "messages_processed_24h": c_stats.get("messages_processed_24h", 0),
+                    })
                 except Exception as exc:
                     logger.warning("Heartbeat pulse failed: %s", exc)
 
@@ -626,7 +1030,7 @@ class DaemonService:
             self._stop_event.wait(timeout=self.config.sync_interval)
             if self._stop_event.is_set():
                 break
-
+            self._component_mgr.heartbeat("sync")
             if self._runtime and self._runtime.is_initialized:
                 try:
                     from .pillars.sync import push_seed
@@ -645,7 +1049,7 @@ class DaemonService:
             self._stop_event.wait(timeout=3600)
             if self._stop_event.is_set():
                 break
-
+            self._component_mgr.heartbeat("housekeeping")
             try:
                 from .housekeeping import run_housekeeping
 
@@ -681,34 +1085,72 @@ class DaemonService:
                     if hasattr(env.payload.content_type, "value")
                     else str(env.payload.content_type)
                 )
+                sender = getattr(env, "sender", "unknown")
                 self.state.add_inflight(msg_id, {
                     "message_id": msg_id,
-                    "sender": getattr(env, "sender", "unknown"),
+                    "sender": sender,
                     "content": content,
                     "content_type": content_type,
                     "received_at": datetime.now(timezone.utc).isoformat(),
                 })
                 logger.info(
                     "Message from %s: %s [%s]",
-                    env.sender,
+                    sender,
                     content_preview,
                     content_type,
                 )
                 if self._consciousness and self._consciousness._config.enabled:
                     self._consciousness.process_envelope(env)
+                # Activity bus: consciousness processed event
+                _activity.push("consciousness.processed", {
+                    "sender": sender,
+                    "content_type": content_type,
+                    "preview": content_preview,
+                })
                 # Stream the new message to any connected WebSocket clients
                 self._ws_broadcast({
                     "type": "message",
-                    "sender": getattr(env, "sender", "unknown"),
+                    "sender": sender,
                     "content": content,
                     "content_type": content_type,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
+                self._journal_incoming(sender, content_preview)
                 self.state.remove_inflight(msg_id)
             except Exception as exc:
                 self.state.remove_inflight(msg_id)
                 logger.warning("Failed to process message from %s: %s", getattr(env, "sender", "?"), exc)
                 self.state.record_error(f"Process message: {exc}")
+
+    def _journal_incoming(self, sender: str, preview: str) -> None:
+        """Auto-journal an incoming SKComm message and store a tagged memory.
+
+        Writes a journal entry (title='From {sender}', moments=[preview]) and
+        stores a short-term memory tagged 'skcomm-received'.  Both operations
+        are best-effort: failures are logged at DEBUG level and never bubble up.
+        """
+        try:
+            from skmemory.journal import Journal, JournalEntry
+            entry = JournalEntry(
+                title=f"From {sender}",
+                moments=[preview] if preview else [],
+            )
+            Journal().write_entry(entry)
+            logger.debug("Journal entry written for incoming message from %s", sender)
+        except Exception as exc:
+            logger.debug("Auto-journal write failed: %s", exc)
+
+        try:
+            from .memory_engine import store as mem_store
+            mem_store(
+                self.config.home,
+                f"Received message from {sender}: {preview}",
+                tags=["skcomm-received"],
+                source="daemon",
+            )
+            logger.debug("Memory stored for incoming message from %s", sender)
+        except Exception as exc:
+            logger.debug("Auto-journal memory store failed: %s", exc)
 
     def _healing_loop(self) -> None:
         """Periodically run self-healing diagnostics (every 5 min)."""
@@ -716,7 +1158,7 @@ class DaemonService:
             self._stop_event.wait(timeout=300)
             if self._stop_event.is_set():
                 break
-
+            self._component_mgr.heartbeat("healing")
             if self._healer:
                 try:
                     report = self._healer.diagnose_and_heal()
@@ -896,6 +1338,115 @@ class DaemonService:
                     "conversations": conversations,
                     "system": self._get_system_stats(),
                     "recent_errors": snap.get("recent_errors", [])[-5:],
+                }
+
+            def _build_capstone_data(self) -> dict:
+                """Assemble data for the GET /dashboard page.
+
+                Returns pillar status, memory stats, coordination board
+                summary + active tasks, and consciousness stats in one shot.
+                """
+                # ── Agent identity ────────────────────────────────────────
+                agent: dict = {"name": "unknown", "fingerprint": "",
+                               "consciousness": "AWAKENING",
+                               "is_conscious": False, "is_singular": False}
+                if runtime and hasattr(runtime, "manifest"):
+                    try:
+                        m = runtime.manifest
+                        agent["name"] = m.name or agent["name"]
+                        agent["fingerprint"] = getattr(m, "fingerprint", "") or ""
+                        agent["is_conscious"] = bool(m.is_conscious)
+                        agent["is_singular"] = bool(m.is_singular)
+                        if m.is_singular:
+                            agent["consciousness"] = "SINGULAR"
+                        elif m.is_conscious:
+                            agent["consciousness"] = "CONSCIOUS"
+                    except Exception:
+                        pass
+                identity_file = config.home / "identity" / "identity.json"
+                if identity_file.exists():
+                    try:
+                        ident = json.loads(identity_file.read_text(encoding="utf-8"))
+                        agent["name"] = ident.get("name", agent["name"])
+                        agent["fingerprint"] = ident.get("fingerprint", agent["fingerprint"])
+                    except Exception:
+                        pass
+
+                # ── Pillar status ─────────────────────────────────────────
+                pillars: dict = {}
+                if runtime and hasattr(runtime, "manifest"):
+                    try:
+                        pillars = {
+                            k: v.value
+                            for k, v in runtime.manifest.pillar_summary.items()
+                        }
+                    except Exception:
+                        pass
+
+                # ── Memory stats ──────────────────────────────────────────
+                memory: dict = {}
+                try:
+                    from .memory_engine import get_stats as _mem_stats
+                    ms = _mem_stats(config.home)
+                    memory = {
+                        "total": ms.total_memories,
+                        "short_term": ms.short_term,
+                        "mid_term": ms.mid_term,
+                        "long_term": ms.long_term,
+                        "status": ms.status.value,
+                    }
+                except Exception:
+                    pass
+
+                # ── Coordination board ────────────────────────────────────
+                board: dict = {"summary": {}, "active": []}
+                try:
+                    from .coordination import Board
+                    brd = Board(config.home)
+                    views = brd.get_task_views()
+                    total = len(views)
+                    done = sum(1 for v in views if v.status.value == "done")
+                    in_prog = sum(1 for v in views if v.status.value == "in_progress")
+                    claimed = sum(1 for v in views if v.status.value == "claimed")
+                    open_ = sum(1 for v in views if v.status.value == "open")
+                    active_tasks = [
+                        {
+                            "id": v.task.id,
+                            "title": v.task.title,
+                            "priority": v.task.priority.value,
+                            "status": v.status.value,
+                            "claimed_by": v.claimed_by,
+                        }
+                        for v in views
+                        if v.status.value in ("in_progress", "claimed")
+                    ]
+                    board = {
+                        "summary": {
+                            "total": total,
+                            "done": done,
+                            "in_progress": in_prog,
+                            "claimed": claimed,
+                            "open": open_,
+                        },
+                        "active": active_tasks,
+                    }
+                except Exception:
+                    pass
+
+                # ── Consciousness stats ───────────────────────────────────
+                c_stats: dict = {}
+                if consciousness:
+                    try:
+                        c_stats = dict(consciousness.stats)
+                    except Exception:
+                        pass
+
+                return {
+                    "agent": agent,
+                    "pillars": pillars,
+                    "memory": memory,
+                    "board": board,
+                    "consciousness": c_stats,
                 }
 
             @staticmethod
@@ -1124,7 +1675,11 @@ class DaemonService:
                         "memory_usage_mb": sys_stats.get("memory_used_mb", 0),
                     })
                 elif self.path == "/status":
-                    self._json_response(state.snapshot())
+                    snap = state.snapshot()
+                    snap["components"] = service._component_mgr.snapshot()
+                    self._json_response(snap)
+                elif self.path == "/api/v1/components":
+                    self._json_response({"components": service._component_mgr.snapshot()})
                 elif self.path == "/health":
                     self._json_response(state.health_reports)
                 elif self.path == "/consciousness":
@@ -1134,6 +1689,51 @@ class DaemonService:
                         self._json_response({"enabled": False, "reason": "not loaded"})
                 elif self.path == "/ping":
                     self._json_response({"pong": True, "pid": os.getpid()})
+
+                # ── Activity SSE stream ───────────────────────────────────
+                elif self.path == "/api/v1/activity":
+                    q: queue.Queue = queue.Queue(maxsize=200)
+                    _activity.register_client(q)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "keep-alive")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self._add_cors_headers()
+                    self.end_headers()
+                    try:
+                        # Replay history so late-joining clients see context
+                        for chunk in _activity.get_history_encoded():
+                            self.wfile.write(chunk)
+                        self.wfile.flush()
+                        # Stream live events; send keep-alive comments on timeout
+                        while not service._stop_event.is_set():
+                            try:
+                                chunk = q.get(timeout=15)
+                                self.wfile.write(chunk)
+                                self.wfile.flush()
+                            except queue.Empty:
+                                self.wfile.write(b": heartbeat\n\n")
+                                self.wfile.flush()
+                    except OSError:
+                        pass
+                    finally:
+                        _activity.unregister_client(q)
+                    return
+
+                # ── Vanilla-JS dashboard (single-file HTML) ───────────────
+                elif self.path == "/dashboard":
+                    html_file = Path(__file__).parent / "dashboard.html"
+                    if html_file.exists():
+                        self._html_response(html_file.read_text(encoding="utf-8"))
+                    else:
+                        self._html_response(
+                            "<h1>dashboard.html not found</h1>", status=404
+                        )
+
+                # ── Capstone API (pillars + memory + board + consciousness) ─
+                elif self.path == "/api/v1/capstone":
+                    self._json_response(self._build_capstone_data())
 
                 # ── WebSocket streaming endpoint ─────────────────────────
                 elif self.path == "/ws":
@@ -1196,6 +1796,143 @@ class DaemonService:
                     finally:
                         with service._ws_lock:
                             service._ws_clients.discard(sock)
+
+                # ── Log stream WebSocket endpoint (CapAuth required) ─────
+                elif self.path == "/api/v1/logs":
+                    key = self.headers.get("Sec-WebSocket-Key", "")
+                    if self.headers.get("Upgrade", "").lower() != "websocket" or not key:
+                        self._json_response(
+                            {"error": "WebSocket upgrade required", "hint": "use ws://"},
+                            status=400,
+                        )
+                        return
+
+                    # Validate CapAuth bearer token before upgrading
+                    auth_header = self.headers.get("Authorization", "")
+                    token_str = auth_header[7:].strip() if auth_header.startswith("Bearer ") else None
+
+                    fingerprint: Optional[str] = None
+                    try:
+                        from skcomm.capauth_validator import CapAuthValidator
+                        fingerprint = CapAuthValidator(require_auth=True).validate(token_str)
+                    except ImportError:
+                        # skcomm not installed — fall back to skcapstone signed tokens
+                        if token_str:
+                            try:
+                                from .tokens import import_token, verify_token
+                                tok = import_token(token_str)
+                                if verify_token(tok, home=config.home):
+                                    fingerprint = tok.payload.issuer
+                            except Exception:
+                                fingerprint = None
+
+                    if fingerprint is None:
+                        self.send_response(401)
+                        self.send_header("Content-Type", "application/json")
+                        self._add_cors_headers()
+                        self.end_headers()
+                        self.wfile.write(b'{"error": "unauthorized"}')
+                        return
+
+                    # Perform WebSocket upgrade
+                    accept = _ws_accept_key(key)
+                    try:
+                        self.wfile.flush()
+                    except OSError:
+                        return
+                    try:
+                        self.request.sendall((
+                            "HTTP/1.1 101 Switching Protocols\r\n"
+                            "Upgrade: websocket\r\n"
+                            "Connection: Upgrade\r\n"
+                            f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+                        ).encode("ascii"))
+                    except OSError:
+                        return
+
+                    sock = self.request
+                    log_file = config.log_file
+                    stop = service._stop_event
+
+                    # Send the last 50 lines from daemon.log, record EOF offset
+                    tail_offset: int = 0
+                    try:
+                        if log_file.exists():
+                            from collections import deque as _deque
+                            with open(log_file, encoding="utf-8", errors="replace") as _fh:
+                                tail_lines = list(_deque(_fh, maxlen=50))
+                                tail_offset = _fh.tell()
+                            for _line in tail_lines:
+                                _line = _line.rstrip("\n")
+                                _frame = _ws_encode_frame(
+                                    json.dumps(
+                                        {"type": "line", "line": _line}, default=str
+                                    ).encode("utf-8")
+                                )
+                                sock.sendall(_frame)
+                    except OSError:
+                        return
+
+                    # Per-client tail thread: stream new log lines as they arrive
+                    def _tail_and_send(
+                        _sock=sock,
+                        _log=log_file,
+                        _stop=stop,
+                        _offset=tail_offset,
+                    ):
+                        try:
+                            # Wait for the log file if it doesn't exist yet
+                            while not _stop.is_set() and not _log.exists():
+                                _stop.wait(timeout=1.0)
+                            if _stop.is_set():
+                                return
+                            with open(_log, encoding="utf-8", errors="replace") as _fh:
+                                _fh.seek(_offset)
+                                while not _stop.is_set():
+                                    chunk = _fh.read()
+                                    if chunk:
+                                        for _ln in chunk.splitlines():
+                                            _f = _ws_encode_frame(
+                                                json.dumps(
+                                                    {"type": "line", "line": _ln},
+                                                    default=str,
+                                                ).encode("utf-8")
+                                            )
+                                            try:
+                                                _sock.sendall(_f)
+                                            except OSError:
+                                                return
+                                    _stop.wait(timeout=0.5)
+                        except OSError:
+                            pass
+
+                    threading.Thread(
+                        target=_tail_and_send,
+                        name="ws-logs-tail",
+                        daemon=True,
+                    ).start()
+
+                    # Read loop: keep alive and detect client disconnect / close frame
+                    sock.settimeout(30)
+                    try:
+                        while not service._stop_event.is_set():
+                            try:
+                                result = _ws_read_frame(sock)
+                            except TimeoutError:
+                                continue
+                            except OSError:
+                                break
+                            if result is None:
+                                break
+                            opcode, _ = result
+                            if opcode == 0x8:  # close frame
+                                try:
+                                    sock.sendall(_ws_encode_close())
+                                except OSError:
+                                    pass
+                                break
+                    finally:
+                        pass  # tail thread is daemon — exits when socket closes
 
                 # ── Household: list all agents ───────────────────────────
                 elif self.path == "/api/v1/household/agents":
@@ -1363,6 +2100,8 @@ class DaemonService:
                         {
                             "endpoints": [
                                 "/ (HTML dashboard)",
+                                "/dashboard (vanilla-JS polling dashboard)",
+                                "/api/v1/capstone (pillars + memory + board + consciousness)",
                                 "/api/v1/dashboard",
                                 "/api/v1/health",
                                 "/status",
@@ -1375,8 +2114,11 @@ class DaemonService:
                                 "/api/v1/conversations/{peer}",
                                 "POST /api/v1/conversations/{peer}/send",
                                 "DELETE /api/v1/conversations/{peer}",
+                                "/api/v1/components",
+                                "/api/v1/activity (SSE activity stream)",
                                 "/api/v1/metrics",
                                 "/ws (WebSocket streaming)",
+                                "/api/v1/logs (WebSocket log stream, CapAuth required)",
                             ]
                         },
                         status=200,
@@ -1518,6 +2260,25 @@ class DaemonService:
 
         try:
             self._server = ThreadingHTTPServer(("127.0.0.1", config.port), DaemonHandler)
+
+            if config.tls_enabled:
+                from .tls import build_ssl_context, cert_fingerprint_sha256, ensure_tls_cert
+
+                cert_path, key_path = ensure_tls_cert(config.tls_dir)
+                ssl_ctx = build_ssl_context(cert_path, key_path)
+                self._server.socket = ssl_ctx.wrap_socket(
+                    self._server.socket, server_side=True
+                )
+                fingerprint = cert_fingerprint_sha256(cert_path)
+                logger.info(
+                    "TLS enabled — certificate: %s  fingerprint(SHA-256): %s",
+                    cert_path,
+                    fingerprint,
+                )
+                scheme = "https"
+            else:
+                scheme = "http"
+
             t = threading.Thread(
                 target=self._server.serve_forever,
                 name="daemon-api",
@@ -1525,7 +2286,7 @@ class DaemonService:
             )
             t.start()
             self._threads.append(t)
-            logger.info("API server listening on http://127.0.0.1:%d", config.port)
+            logger.info("API server listening on %s://127.0.0.1:%d", scheme, config.port)
         except OSError as exc:
             logger.error("Failed to start API server: %s", exc)
             self.state.record_error(f"API server: {exc}")

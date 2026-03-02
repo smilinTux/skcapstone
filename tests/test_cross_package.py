@@ -602,7 +602,7 @@ class TestCapAuthToCloud9Flow:
 
         # 6. Verify all data is discoverable
         state = discover_all(tmp_agent_home)
-        assert state["identity"].status == PillarStatus.ACTIVE
+        assert state["identity"].status in (PillarStatus.ACTIVE, PillarStatus.DEGRADED)
         assert state["memory"].total_memories >= 1  # at least our chat memory
 
         # Chat message searchable

@@ -197,6 +197,99 @@ def register_consciousness_commands(main: click.Group) -> None:
         console.print(f"  {inotify_line}")
         console.print()
 
+    @consciousness.command("quality")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
+    @click.option("--json-out", is_flag=True, help="Output as JSON.")
+    @click.option("--port", default=7777, help="Daemon API port (tries live daemon first).")
+    def consciousness_quality(home: str, json_out: bool, port: int):
+        """Show average response quality scores for today.
+
+        Reads quality metrics from today's daily metrics file.
+        Dimensions: length appropriateness, coherence, latency, overall.
+        """
+        import urllib.request
+        import urllib.error
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        quality: dict = {}
+
+        # Try live daemon first — it may have unsaved in-memory data
+        try:
+            url = f"http://127.0.0.1:{port}/consciousness"
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                data = json.loads(resp.read())
+                if "quality_avg" in data:
+                    quality = data["quality_avg"]
+        except Exception:
+            pass  # Daemon unreachable — fall through to file
+
+        # Fall back to daily metrics file
+        if not quality:
+            home_path = Path(home).expanduser()
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily = home_path / "metrics" / "daily" / f"{date_str}.json"
+            if daily.exists():
+                try:
+                    file_data = json.loads(daily.read_text(encoding="utf-8"))
+                    quality = file_data.get("quality_avg", {})
+                except Exception:
+                    pass
+
+        if not quality or quality.get("count", 0) == 0:
+            if json_out:
+                click.echo(json.dumps({"count": 0, "message": "No quality data for today"}))
+            else:
+                console.print("\n  [yellow]No quality metrics recorded today.[/]\n")
+            return
+
+        if json_out:
+            click.echo(json.dumps(quality, indent=2))
+            return
+
+        from rich.panel import Panel
+        from rich.table import Table
+
+        count = quality.get("count", 0)
+        overall = quality.get("overall", 0.0)
+        color = "green" if overall >= 0.7 else ("yellow" if overall >= 0.4 else "red")
+
+        def _bar(score: float) -> str:
+            filled = int(round(score * 10))
+            return "█" * filled + "░" * (10 - filled)
+
+        table = Table(title=f"Response Quality — {count} response(s) today", show_header=True)
+        table.add_column("Dimension", style="bold")
+        table.add_column("Score", justify="right")
+        table.add_column("Bar")
+        table.add_column("Description", style="dim")
+
+        dims = [
+            ("Length", quality.get("length", 0.0), "Response is appropriate length for question"),
+            ("Coherence", quality.get("coherence", 0.0), "Keywords from question appear in response"),
+            ("Latency", quality.get("latency", 0.0), "Response generated quickly"),
+            ("Overall", overall, "Weighted average (coherence 40%, length 30%, latency 30%)"),
+        ]
+
+        for name, score, desc in dims:
+            s_color = "green" if score >= 0.7 else ("yellow" if score >= 0.4 else "red")
+            table.add_row(
+                name,
+                f"[{s_color}]{score:.3f}[/]",
+                f"[{s_color}]{_bar(score)}[/]",
+                desc,
+            )
+
+        console.print()
+        console.print(table)
+        console.print(
+            Panel(
+                f"Overall quality: [{color}]{overall:.3f}[/]  ({count} responses today)",
+                border_style=color,
+            )
+        )
+        console.print()
+
     @consciousness.command("profiles")
     @click.option("--show", "do_show", is_flag=True, help="List all profiles.")
     @click.option("--stale", "do_stale", is_flag=True, help="Show profiles older than 90 days.")
@@ -269,4 +362,60 @@ def register_consciousness_commands(main: click.Group) -> None:
 
         console.print()
         console.print(table)
+        console.print()
+
+    @consciousness.command("fallbacks")
+    @click.option("--limit", default=20, show_default=True, help="Number of recent events to show.")
+    @click.option("--json-out", is_flag=True, help="Output as JSON.")
+    @click.option("--clear", "do_clear", is_flag=True, help="Clear all stored fallback events.")
+    def consciousness_fallbacks(limit: int, json_out: bool, do_clear: bool):
+        """Show LLM fallback history — when and why the agent degraded.
+
+        Each entry records the primary model that failed, the backend that
+        was tried next, whether the fallback succeeded, and the reason.
+        Events are stored in ~/.skcapstone/fallbacks.json.
+        """
+        from ..fallback_tracker import FallbackTracker
+
+        tracker = FallbackTracker()
+
+        if do_clear:
+            count = tracker.clear()
+            console.print(f"\n  [green]Cleared {count} fallback event(s).[/]\n")
+            return
+
+        events = tracker.load_events(limit=limit)
+
+        if json_out:
+            click.echo(
+                json.dumps([e.model_dump() for e in events], indent=2)
+            )
+            return
+
+        if not events:
+            console.print(
+                f"\n  [dim]No fallback events recorded yet.[/]\n"
+                f"  Events are written to: {tracker.path}\n"
+            )
+            return
+
+        from rich.table import Table
+
+        table = Table(title=f"LLM Fallback History (last {len(events)})", show_lines=True)
+        table.add_column("Time", style="dim", no_wrap=True)
+        table.add_column("Primary", style="bold")
+        table.add_column("→ Fallback")
+        table.add_column("OK?", justify="center")
+        table.add_column("Reason")
+
+        for evt in events:
+            ts = evt.timestamp[:19].replace("T", " ")  # YYYY-MM-DD HH:MM:SS
+            ok_str = "[green]✓[/]" if evt.success else "[red]✗[/]"
+            primary = f"{evt.primary_model}\n[dim]{evt.primary_backend}[/]"
+            fallback = f"{evt.fallback_model}\n[dim]{evt.fallback_backend}[/]"
+            table.add_row(ts, primary, fallback, ok_str, evt.reason)
+
+        console.print()
+        console.print(table)
+        console.print(f"  [dim]Source: {tracker.path}[/]")
         console.print()

@@ -104,11 +104,46 @@ def _get_last_conversation(home: Path) -> Optional[dict]:
     return {"peer": latest.stem, "when": when}
 
 
-def _print_consciousness_metrics(console) -> None:
+def _read_local_heartbeat(home: Path) -> Optional[dict]:
+    """Read the local agent heartbeat file.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Heartbeat dict or None if not found.
+    """
+    # Heartbeats are stored in shared_root/heartbeats/<agent>.json
+    # Agent name is in identity.json
+    try:
+        identity_path = home / "identity" / "identity.json"
+        agent_name = "opus"
+        if identity_path.exists():
+            ident = json.loads(identity_path.read_text())
+            agent_name = ident.get("name", agent_name).lower()
+        # Try shared root first, fall back to home
+        from .. import SHARED_ROOT
+        shared = Path(SHARED_ROOT).expanduser()
+        hb_path = shared / "heartbeats" / f"{agent_name}.json"
+        if not hb_path.exists():
+            hb_path = home / "heartbeats" / f"{agent_name}.json"
+        if hb_path.exists():
+            return json.loads(hb_path.read_text())
+    except Exception:
+        pass
+    return None
+
+
+def _print_consciousness_metrics(console, home: Optional[Path] = None) -> None:
     """Fetch and print consciousness loop stats from the daemon.
 
     Tries http://localhost:7777/consciousness. Shows stats on success,
     or 'Consciousness: INACTIVE' if the daemon is unreachable.
+    Also displays heartbeat system metrics when available.
+
+    Args:
+        console: Rich console instance.
+        home: Agent home directory (used to read heartbeat for system metrics).
     """
     import urllib.request
     import urllib.error
@@ -118,6 +153,7 @@ def _print_consciousness_metrics(console) -> None:
             data = json.loads(resp.read().decode("utf-8"))
         enabled = data.get("enabled", False)
         messages = data.get("messages_processed", 0)
+        msgs_24h = data.get("messages_processed_24h", 0)
         responses = data.get("responses_sent", 0)
         errors = data.get("errors", 0)
         backends = data.get("backends", {})
@@ -127,12 +163,32 @@ def _print_consciousness_metrics(console) -> None:
         console.print()
         console.print(
             f"  Consciousness: {status_str}  "
-            f"[dim]msgs={messages} resp={responses} err={errors}  "
+            f"[dim]msgs={messages} (24h:{msgs_24h}) resp={responses} err={errors}  "
             f"backends=[{backends_str}][/]"
         )
     except Exception:
         console.print()
         console.print("  Consciousness: [dim]INACTIVE[/]")
+
+    # Show heartbeat system metrics
+    if home is not None:
+        hb = _read_local_heartbeat(home)
+        if hb:
+            uptime_s = hb.get("uptime_seconds", 0)
+            cpu = hb.get("cpu_load_1min", 0.0)
+            mem_mb = hb.get("memory_used_mb", 0)
+            active_convs = hb.get("active_conversations", 0)
+            if uptime_s >= 3600:
+                uptime_str = f"{int(uptime_s // 3600)}h {int((uptime_s % 3600) // 60)}m"
+            elif uptime_s >= 60:
+                uptime_str = f"{int(uptime_s // 60)}m {int(uptime_s % 60)}s"
+            else:
+                uptime_str = f"{int(uptime_s)}s"
+            console.print(
+                f"  Heartbeat: [dim]up={uptime_str}  "
+                f"cpu={cpu:.2f}  mem={mem_mb}MB  "
+                f"convs={active_convs}[/]"
+            )
 
 
 def register_status_commands(main: click.Group) -> None:
@@ -252,7 +308,7 @@ def register_status_commands(main: click.Group) -> None:
         console.print(f"  Backends: {'  '.join(parts)}")
 
         # ── Consciousness metrics ─────────────────────────────────────────────
-        _print_consciousness_metrics(console)
+        _print_consciousness_metrics(console, home=home_path)
 
         # ── Last conversation ─────────────────────────────────────────────────
         conv = _get_last_conversation(home_path)
@@ -454,13 +510,18 @@ def register_status_commands(main: click.Group) -> None:
     @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
     @click.option("--fix", "auto_fix", is_flag=True,
                   help="Attempt to auto-fix failing checks (mkdir, write defaults, rebuild index).")
-    def doctor(home: str, json_out: bool, auto_fix: bool):
+    @click.option("--verbose", "-v", is_flag=True,
+                  help="Show detailed output for ALL checks, including passing ones.")
+    def doctor(home: str, json_out: bool, auto_fix: bool, verbose: bool):
         """Diagnose sovereign stack health.
 
         With --fix, automatically remediate fixable failures: create missing
         directories, write default configs, and rebuild the memory index.
         Non-fixable checks (package installs, key generation, transport
         config) are reported but skipped.
+
+        With --verbose, every check is printed in full — including passing
+        ones — with its check name, category, detail, and any available fix.
         """
         from ..doctor import run_diagnostics, run_fixes
 
@@ -518,14 +579,33 @@ def register_status_commands(main: click.Group) -> None:
                 continue
 
             label = category_labels.get(cat_key, cat_key)
-            console.print(f"  [bold]{label}[/]")
 
-            for c in checks:
-                icon = "[green]\u2713[/]" if c.passed else "[red]\u2717[/]"
-                detail = f" [dim]({c.detail})[/]" if c.detail else ""
-                console.print(f"    {icon} {c.description}{detail}")
-                if not c.passed and c.fix:
-                    console.print(f"      [yellow]Fix: {c.fix}[/]")
+            if verbose:
+                # Verbose: always print every check with full detail
+                console.print(f"  [bold]{label}[/]")
+                for c in checks:
+                    icon = "[green]\u2713[/]" if c.passed else "[red]\u2717[/]"
+                    detail_str = f"  [dim]{c.detail}[/]" if c.detail else ""
+                    name_str = f"  [dim dim]({c.name})[/]"
+                    console.print(f"    {icon} {c.description}{detail_str}{name_str}")
+                    if not c.passed and c.fix:
+                        console.print(f"      [yellow]Fix:[/] {c.fix}")
+            else:
+                # Normal: collapse fully-passing categories into one line
+                failing = [c for c in checks if not c.passed]
+                if not failing:
+                    count = len(checks)
+                    console.print(
+                        f"  [bold]{label}[/]  "
+                        f"[dim green]\u2713 {count}/{count} passed[/]"
+                    )
+                else:
+                    console.print(f"  [bold]{label}[/]")
+                    for c in failing:
+                        detail = f" [dim]({c.detail})[/]" if c.detail else ""
+                        console.print(f"    [red]\u2717[/] {c.description}{detail}")
+                        if c.fix:
+                            console.print(f"      [yellow]Fix: {c.fix}[/]")
 
             console.print()
 
@@ -533,7 +613,15 @@ def register_status_commands(main: click.Group) -> None:
         failed = report.failed_count
         total = report.total_count
 
-        if report.all_passed:
+        if verbose:
+            fail_color = "red" if failed else "dim"
+            console.print(
+                f"  [bold]Summary:[/] "
+                f"[green]{passed} passed[/]  "
+                f"[{fail_color}]{failed} failed[/]  "
+                f"[dim]{total} total[/]"
+            )
+        elif report.all_passed:
             console.print(
                 f"  [bold green]\u2713 All {total} checks passed.[/] "
                 "Your sovereign stack is healthy."
@@ -586,11 +674,31 @@ def register_status_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--port", default=7778, help="Port for the dashboard (default: 7778).")
     @click.option("--no-open", is_flag=True, help="Don't attempt to open a browser.")
-    def dashboard(home: str, port: int, no_open: bool):
-        """Launch the sovereign agent web dashboard."""
-        from ..dashboard import start_dashboard
+    @click.option(
+        "--json", "json_mode", is_flag=True,
+        help="Print daemon status as JSON and exit (no server). For Flutter app consumption.",
+    )
+    @click.option(
+        "--daemon-port", default=7777, show_default=True,
+        help="Daemon HTTP API port (used with --json).",
+    )
+    def dashboard(home: str, port: int, no_open: bool, json_mode: bool, daemon_port: int):
+        """Launch the sovereign agent web dashboard.
+
+        With --json, prints a machine-readable JSON snapshot of daemon
+        status, consciousness stats, backend health, active conversations,
+        message counts, and error count — then exits without starting a
+        server.  Designed for Flutter app consumption.
+        """
+        from ..dashboard import start_dashboard, _get_daemon_json
 
         home_path = Path(home).expanduser()
+
+        if json_mode:
+            data = _get_daemon_json(home_path, daemon_port=daemon_port)
+            click.echo(json.dumps(data, indent=2, default=str))
+            return
+
         if not home_path.exists():
             console.print("[bold red]No agent found.[/] Run skcapstone init first.")
             sys.exit(1)

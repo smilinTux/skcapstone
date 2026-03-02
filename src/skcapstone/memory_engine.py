@@ -239,8 +239,13 @@ def search(
     Returns:
         List of matching MemoryEntry objects, ranked by relevance.
     """
-    # Try unified backend first (semantic search)
-    unified = _get_unified()
+    # Try unified backend first (semantic search), but only when home matches
+    # the global agent home so tests with temporary directories stay isolated.
+    from . import AGENT_HOME
+
+    _agent_home_resolved = Path(AGENT_HOME).expanduser().resolve()
+    _search_home_resolved = Path(home).resolve()
+    unified = _get_unified() if _search_home_resolved == _agent_home_resolved else None
     if unified:
         try:
             from .memory_adapter import memory_to_entry

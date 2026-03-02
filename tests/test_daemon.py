@@ -157,10 +157,11 @@ class TestDaemonService:
         config = DaemonConfig(home=daemon_home, port=0, poll_interval=60)
         svc = DaemonService(config)
 
-        # Patch _load_components to avoid importing skcomm/runtime
-        with patch.object(svc, "_load_components"):
-            with patch.object(svc, "_start_api_server"):
-                svc.start()
+        # Patch preflight + component loading to avoid fs/network deps in tests
+        with patch.object(svc, "_run_preflight"):
+            with patch.object(svc, "_load_components"):
+                with patch.object(svc, "_start_api_server"):
+                    svc.start()
                 assert svc.state.running is True
                 assert (daemon_home / "daemon.pid").exists()
 
@@ -494,7 +495,7 @@ class TestHouseholdAPI:
             c = data["conversations"][0]
             assert c["peer"] == "alice"
             assert c["message_count"] == 2
-            assert c["last_message"] == "2026-03-01T10:00:01+00:00"
+            assert c["last_message_time"] == "2026-03-01T10:00:01+00:00"
         finally:
             svc.stop()
 

@@ -11,10 +11,12 @@ Serves:
     GET /api/doctor -> JSON diagnostic report
     GET /api/board  -> JSON coordination board state
     GET /api/memory -> JSON memory stats
+    GET /api/daemon -> JSON daemon status for Flutter app consumption
 
 Usage:
     skcapstone dashboard              # opens localhost:7778
     skcapstone dashboard --port 9000  # custom port
+    skcapstone dashboard --json       # print daemon JSON and exit (no server)
 """
 
 from __future__ import annotations
@@ -182,6 +184,126 @@ def _get_memory_stats(home: Path) -> dict:
         return {"error": str(exc)}
 
 
+def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
+    """Collect full daemon status for Flutter app consumption.
+
+    Queries the running daemon's HTTP API (``/status`` and
+    ``/consciousness``) and the local heartbeat file to assemble a
+    single JSON-serializable snapshot suitable for machine consumers
+    such as the SKChat Flutter app.
+
+    Gracefully handles a stopped or unreachable daemon — all sections
+    fall back to safe defaults so callers always get a complete dict.
+
+    Args:
+        home: Agent home directory.
+        daemon_port: Port for the daemon HTTP API (default: 7777).
+
+    Returns:
+        dict: Snapshot with keys ``daemon``, ``consciousness``,
+            ``backend_health``, ``active_conversations``, ``system``,
+            and ``generated_at``.
+    """
+    import os
+    import urllib.request
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # ── Daemon /status ────────────────────────────────────────────────────────
+    daemon_info: dict = {"running": False, "pid": None, "uptime_seconds": 0,
+                         "uptime_human": "0s", "started_at": None,
+                         "messages_received": 0, "syncs_completed": 0,
+                         "error_count": 0, "recent_errors": [], "inflight_count": 0}
+    try:
+        url = f"http://127.0.0.1:{daemon_port}/status"
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            snap = json.loads(resp.read())
+        uptime_s = int(snap.get("uptime_seconds", 0))
+        h, rem = divmod(uptime_s, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            uptime_human = f"{h}h {m}m"
+        elif m:
+            uptime_human = f"{m}m {s}s"
+        else:
+            uptime_human = f"{uptime_s}s"
+        recent_errors = snap.get("recent_errors", [])
+        daemon_info = {
+            "running": snap.get("running", True),
+            "pid": snap.get("pid"),
+            "uptime_seconds": snap.get("uptime_seconds", 0),
+            "uptime_human": uptime_human,
+            "started_at": snap.get("started_at"),
+            "messages_received": snap.get("messages_received", 0),
+            "syncs_completed": snap.get("syncs_completed", 0),
+            "error_count": len(recent_errors),
+            "recent_errors": recent_errors,
+            "inflight_count": snap.get("inflight_count", 0),
+        }
+    except Exception:
+        pass
+
+    # ── Daemon /consciousness ─────────────────────────────────────────────────
+    consciousness_info: dict = {"enabled": False}
+    try:
+        url = f"http://127.0.0.1:{daemon_port}/consciousness"
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            consciousness_info = json.loads(resp.read())
+    except Exception:
+        pass
+
+    # ── LLM backend availability ──────────────────────────────────────────────
+    backend_health: dict = {
+        "ollama": False,
+        "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "grok": bool(os.environ.get("XAI_API_KEY")),
+        "kimi": bool(os.environ.get("MOONSHOT_API_KEY")),
+        "nvidia": bool(os.environ.get("NVIDIA_API_KEY")),
+    }
+    ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(f"{ollama_host}/api/tags"), timeout=2
+        ):
+            backend_health["ollama"] = True
+    except Exception:
+        pass
+
+    # ── Heartbeat (system metrics + active conversations) ─────────────────────
+    system_info: dict = {}
+    active_conversations: int = 0
+    try:
+        from . import SHARED_ROOT
+        identity_path = home / "identity" / "identity.json"
+        agent_name = "opus"
+        if identity_path.exists():
+            ident = json.loads(identity_path.read_text(encoding="utf-8"))
+            agent_name = ident.get("name", agent_name).lower()
+        shared = Path(SHARED_ROOT).expanduser()
+        hb_path = shared / "heartbeats" / f"{agent_name}.json"
+        if not hb_path.exists():
+            hb_path = home / "heartbeats" / f"{agent_name}.json"
+        if hb_path.exists():
+            hb = json.loads(hb_path.read_text(encoding="utf-8"))
+            active_conversations = hb.get("active_conversations", 0)
+            system_info = {
+                "uptime_seconds": hb.get("uptime_seconds", 0),
+                "cpu_load_1min": hb.get("cpu_load_1min", 0.0),
+                "memory_used_mb": hb.get("memory_used_mb", 0),
+            }
+    except Exception:
+        pass
+
+    return {
+        "generated_at": now,
+        "daemon": daemon_info,
+        "consciousness": consciousness_info,
+        "backend_health": backend_health,
+        "active_conversations": active_conversations,
+        "system": system_info,
+    }
+
+
 _DASHBOARD_HTML = """\
 <!DOCTYPE html>
 <html lang="en">
@@ -308,6 +430,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_json(_get_board_state(self.home))
         elif self.path == "/api/memory":
             self._serve_json(_get_memory_stats(self.home))
+        elif self.path == "/api/daemon":
+            self._serve_json(_get_daemon_json(self.home))
         else:
             self.send_error(404, "Not found")
 

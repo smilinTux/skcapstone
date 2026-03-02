@@ -207,6 +207,47 @@ def _decrypt_at_rest(token: bytes, key_material: bytes) -> bytes:
     return aesgcm.decrypt(nonce, ct, None)
 
 
+def _fernet_encrypt(data: bytes, key: bytes) -> bytes:
+    """Encrypt data using Fernet (AES-128-CBC + HMAC-SHA256).
+
+    Derives a 32-byte Fernet key from the provided key material using SHA-256,
+    then encodes it as URL-safe base64 as Fernet requires.
+
+    Args:
+        data: Plaintext bytes.
+        key: Raw key material (any length).
+
+    Returns:
+        Fernet token bytes.
+    """
+    import base64
+
+    from cryptography.fernet import Fernet
+
+    key32 = hashlib.sha256(key).digest()
+    fernet_key = base64.urlsafe_b64encode(key32)
+    return Fernet(fernet_key).encrypt(data)
+
+
+def _fernet_decrypt(token: bytes, key: bytes) -> bytes:
+    """Decrypt a Fernet token.
+
+    Args:
+        token: Fernet token bytes produced by :func:`_fernet_encrypt`.
+        key: Raw key material (any length) — must match the key used to encrypt.
+
+    Returns:
+        Decrypted plaintext bytes.
+    """
+    import base64
+
+    from cryptography.fernet import Fernet
+
+    key32 = hashlib.sha256(key).digest()
+    fernet_key = base64.urlsafe_b64encode(key32)
+    return Fernet(fernet_key).decrypt(token)
+
+
 def _key_fingerprint(raw: bytes) -> str:
     """Compute SHA-256 fingerprint of raw key material."""
     return hashlib.sha256(raw).hexdigest()

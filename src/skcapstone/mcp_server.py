@@ -55,6 +55,7 @@ Tools:
     kms_list_keys   — List all KMS keys
     kms_rotate      — Rotate a KMS key
     model_route     — Route task to optimal model tier/name
+    send_notification — Send desktop notification via notify-send
 
 Invocation (all equivalent):
     skcapstone mcp serve                     # CLI entry point
@@ -156,8 +157,25 @@ def main() -> None:
 
 async def _run_server() -> None:
     """Async entry point for the stdio MCP server."""
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    from .mcp_tools._helpers import _get_agent_name, _home, _shared_root
+    from .pubsub import PubSub
+
+    home = _home()
+    ps = PubSub(_shared_root(), agent_name=_get_agent_name(home))
+    ps.initialize()
+    expiry_task = asyncio.create_task(
+        ps.start_expiry_task(interval=300),
+        name="pubsub-expiry",
+    )
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+    finally:
+        expiry_task.cancel()
+        try:
+            await expiry_task
+        except asyncio.CancelledError:
+            pass
 
 
 if __name__ == "__main__":

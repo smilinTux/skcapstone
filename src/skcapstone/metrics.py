@@ -635,6 +635,13 @@ class ConsciousnessMetrics:
         self._tier_usage: dict[str, int] = {}
         self._messages_per_peer: dict[str, int] = {}
 
+        # Quality score accumulators (running sums + count for avg)
+        self._quality_sum_length: float = 0.0
+        self._quality_sum_coherence: float = 0.0
+        self._quality_sum_latency: float = 0.0
+        self._quality_sum_overall: float = 0.0
+        self._quality_count: int = 0
+
         # Session start
         self._session_start = datetime.now(timezone.utc)
 
@@ -682,6 +689,47 @@ class ConsciousnessMetrics:
         with self._lock:
             self._errors += 1
 
+    def record_quality(self, score: Any) -> None:
+        """Record a response quality score from :class:`ResponseScore`.
+
+        Args:
+            score: A ``ResponseScore`` instance (or any object with
+                ``length_score``, ``coherence_score``, ``latency_score``,
+                and ``overall`` float attributes).
+        """
+        with self._lock:
+            self._quality_sum_length += score.length_score
+            self._quality_sum_coherence += score.coherence_score
+            self._quality_sum_latency += score.latency_score
+            self._quality_sum_overall += score.overall
+            self._quality_count += 1
+
+    def quality_avg(self) -> dict:
+        """Return average quality scores across all recorded responses.
+
+        Returns:
+            Dict with keys ``length``, ``coherence``, ``latency``,
+            ``overall``, and ``count``.  All averages are 0.0 when no
+            responses have been scored yet.
+        """
+        with self._lock:
+            n = self._quality_count
+            if n == 0:
+                return {
+                    "length": 0.0,
+                    "coherence": 0.0,
+                    "latency": 0.0,
+                    "overall": 0.0,
+                    "count": 0,
+                }
+            return {
+                "length": round(self._quality_sum_length / n, 4),
+                "coherence": round(self._quality_sum_coherence / n, 4),
+                "latency": round(self._quality_sum_latency / n, 4),
+                "overall": round(self._quality_sum_overall / n, 4),
+                "count": n,
+            }
+
     # ------------------------------------------------------------------
     # Snapshot / persistence
     # ------------------------------------------------------------------
@@ -689,6 +737,14 @@ class ConsciousnessMetrics:
     def to_dict(self) -> dict:
         """Return a JSON-serializable snapshot of today's metrics."""
         with self._lock:
+            n = self._quality_count
+            quality_avg = {
+                "length": round(self._quality_sum_length / n, 4) if n else 0.0,
+                "coherence": round(self._quality_sum_coherence / n, 4) if n else 0.0,
+                "latency": round(self._quality_sum_latency / n, 4) if n else 0.0,
+                "overall": round(self._quality_sum_overall / n, 4) if n else 0.0,
+                "count": n,
+            }
             return {
                 "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "session_start": self._session_start.isoformat(),
@@ -699,6 +755,14 @@ class ConsciousnessMetrics:
                 "backend_usage": dict(self._backend_usage),
                 "tier_usage": dict(self._tier_usage),
                 "messages_per_peer": dict(self._messages_per_peer),
+                "quality_avg": quality_avg,
+                "quality_sums": {
+                    "length": self._quality_sum_length,
+                    "coherence": self._quality_sum_coherence,
+                    "latency": self._quality_sum_latency,
+                    "overall": self._quality_sum_overall,
+                    "count": n,
+                },
             }
 
     def _histogram_stats(self) -> dict:
@@ -747,6 +811,13 @@ class ConsciousnessMetrics:
                 self._tier_usage = dict(data.get("tier_usage", {}))
                 self._messages_per_peer = dict(data.get("messages_per_peer", {}))
                 # response_times are session-only; do not restore
+                # Restore quality score accumulators
+                sums = data.get("quality_sums", {})
+                self._quality_sum_length = float(sums.get("length", 0.0))
+                self._quality_sum_coherence = float(sums.get("coherence", 0.0))
+                self._quality_sum_latency = float(sums.get("latency", 0.0))
+                self._quality_sum_overall = float(sums.get("overall", 0.0))
+                self._quality_count = int(sums.get("count", 0))
         except Exception as exc:
             logger.warning("Failed to load historical metrics: %s", exc)
 

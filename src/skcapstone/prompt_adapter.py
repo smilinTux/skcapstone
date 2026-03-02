@@ -14,8 +14,11 @@ Architecture:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,6 +30,20 @@ from skcapstone.blueprints.schema import ModelTier
 logger = logging.getLogger("skcapstone.prompt_adapter")
 
 _BUNDLED_PROFILES = Path(__file__).parent / "data" / "model_profiles.yaml"
+_OLLAMA_BASE_URL = "http://localhost:11434"
+
+# Family-specific defaults applied when auto-building a profile from Ollama metadata.
+_FAMILY_OVERRIDES: dict[str, dict[str, Any]] = {
+    "qwen": {"thinking_enabled": True, "thinking_mode": "toggle"},
+    "phi": {"structure_format": "plain"},
+    "mistral": {"tool_format": "mistral"},
+    "nemotron": {
+        "thinking_enabled": True,
+        "thinking_mode": "toggle",
+        "reasoning_temperature": 1.0,
+    },
+    "deepseek": {"default_temperature": 0.6},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +159,8 @@ class PromptAdapter:
     def resolve_profile(self, model_name: str) -> ModelProfile:
         """Match model_name against profiles via regex.
 
-        Falls back to a generic profile if nothing matches.
+        Falls back to Ollama auto-detection for unknown models, then to a
+        generic profile if Ollama is also unreachable.
 
         Args:
             model_name: The model identifier (e.g. "claude-opus-4-5").
@@ -156,7 +174,73 @@ class PromptAdapter:
                     return profile
             except re.error:
                 continue
+
+        # No static profile matched — try Ollama auto-detection.
+        detected = self.detect_model(model_name)
+        if detected is not None:
+            # Cache so subsequent lookups skip the HTTP round-trip.
+            self._profiles.append(detected)
+            return detected
+
         return _GENERIC_PROFILE
+
+    def detect_model(self, model_name: str) -> Optional[ModelProfile]:
+        """Query Ollama /api/show for model metadata and synthesize a ModelProfile.
+
+        Used as a fallback when no static profile matches model_name.
+        Extracts the model family, parameter count, and quantization level
+        from the Ollama response to build an appropriate profile.
+
+        Args:
+            model_name: The Ollama model name (e.g. "llama3.2:3b").
+
+        Returns:
+            A synthesized ModelProfile on success, or None if Ollama is
+            unreachable or returns an error.
+        """
+        url = f"{_OLLAMA_BASE_URL}/api/show"
+        payload = json.dumps({"name": model_name}).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            logger.debug("Ollama /api/show unavailable for %s: %s", model_name, exc)
+            return None
+
+        details = data.get("details", {})
+        model_info = data.get("model_info", {})
+
+        family = (
+            details.get("family")
+            or model_info.get("general.architecture")
+            or "generic"
+        ).lower()
+
+        param_size: str = details.get("parameter_size", "")
+        quantization: str = details.get("quantization_level", "")
+        param_count: Optional[int] = model_info.get("general.parameter_count")
+
+        profile = self._build_profile_from_ollama(
+            model_name=model_name,
+            family=family,
+            param_size=param_size,
+            quantization=quantization,
+            param_count=param_count,
+        )
+        logger.info(
+            "Auto-detected Ollama profile for %s: family=%s param_size=%s quant=%s",
+            model_name,
+            family,
+            param_size,
+            quantization,
+        )
+        return profile
 
     def adapt(
         self,
@@ -257,6 +341,43 @@ class PromptAdapter:
     # -------------------------------------------------------------------
     # Private helpers
     # -------------------------------------------------------------------
+
+    def _build_profile_from_ollama(
+        self,
+        model_name: str,
+        family: str,
+        param_size: str = "",
+        quantization: str = "",
+        param_count: Optional[int] = None,
+    ) -> ModelProfile:
+        """Synthesize a ModelProfile from Ollama /api/show metadata.
+
+        Args:
+            model_name: Exact Ollama model name used as the regex pattern.
+            family: Model architecture family (e.g. "llama", "qwen").
+            param_size: Human-readable parameter count (e.g. "7B").
+            quantization: Quantization level string (e.g. "Q4_0").
+            param_count: Raw integer parameter count if available.
+
+        Returns:
+            A ModelProfile with family-appropriate defaults.
+        """
+        notes_parts = ["Auto-detected via Ollama"]
+        if param_size:
+            notes_parts.append(f"param_size={param_size}")
+        if quantization:
+            notes_parts.append(f"quant={quantization}")
+        if param_count is not None:
+            notes_parts.append(f"params={param_count:,}")
+
+        overrides = dict(_FAMILY_OVERRIDES.get(family, {}))
+
+        return ModelProfile(
+            model_pattern=re.escape(model_name),
+            family=f"ollama-{family}",
+            notes=" ".join(notes_parts),
+            **overrides,
+        )
 
     def _format_system_for_model(
         self,
