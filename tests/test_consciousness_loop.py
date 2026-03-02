@@ -119,6 +119,45 @@ class TestLLMBridge:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    @patch("skseed.llm.ollama_callback")
+    def test_generate_passthrough_cascade_returns_user_content(self, mock_ollama):
+        """When all LLM backends fail, cascade reaches passthrough and returns user content.
+
+        Verifies the fallback cascade uses direct backend mapping (not _resolve_callback)
+        so passthrough is reached without infinite regression, and that the returned
+        value is the original user message — NOT the canned connectivity-error string.
+        """
+        from skcapstone.model_router import ModelRouterConfig
+
+        # Ollama callback always raises — covers primary + alt model calls
+        mock_ollama.return_value = MagicMock(side_effect=RuntimeError("ollama unavailable"))
+
+        # Single model in FAST tier so there are no alt-model iterations,
+        # and the tier-downgrade path is skipped (already FAST).
+        router_cfg = ModelRouterConfig(
+            tier_models={
+                ModelTier.FAST.value: ["llama3.2"],
+                ModelTier.CODE.value: ["devstral"],
+                ModelTier.REASON.value: ["deepseek-r1:8b"],
+                ModelTier.NUANCE.value: ["moonshot-v1-128k"],
+                ModelTier.LOCAL.value: ["llama3.2"],
+            },
+            tag_rules=[],
+        )
+        config = ConsciousnessConfig(fallback_chain=["ollama", "passthrough"])
+        bridge = LLMBridge(config, router_config=router_cfg)
+        # All backends unavailable except passthrough
+        bridge._available = {k: False for k in bridge._available}
+        bridge._available["passthrough"] = True
+
+        signal = TaskSignal(description="test", tags=["general"])
+        result = bridge.generate("system prompt", "hello world", signal)
+
+        assert result == "hello world", (
+            f"Expected passthrough to return user message 'hello world', got: {result!r}"
+        )
+        assert "connectivity issues" not in result
+
 
 class TestSystemPromptBuilder:
     """System prompt builder tests."""

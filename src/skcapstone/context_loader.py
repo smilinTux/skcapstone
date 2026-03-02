@@ -411,6 +411,21 @@ def format_claude_md(ctx: dict[str, Any]) -> str:
             lines.append(f"- [{m['layer']}] {m['content'][:120]} {tags}")
         lines.append("")
 
+    consciousness = ctx.get("consciousness", {})
+    if consciousness:
+        enabled_str = "ACTIVE" if consciousness.get("enabled") else "INACTIVE"
+        backends = consciousness.get("backends_available", [])
+        lines.extend([
+            "## Consciousness",
+            "",
+            f"- **Status**: {enabled_str}",
+            f"- **Backends**: {', '.join(backends) if backends else 'none'}",
+            f"- **Messages processed**: {consciousness.get('messages_processed', 0)}",
+            f"- **Active conversations**: {consciousness.get('active_conversations', 0)}",
+            f"- **Inotify active**: {consciousness.get('inotify_active', False)}",
+            "",
+        ])
+
     lines.extend([
         "## CLI Reference",
         "",

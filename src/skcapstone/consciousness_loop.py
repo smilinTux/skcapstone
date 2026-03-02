@@ -176,7 +176,7 @@ class LLMBridge:
             if not self._available.get(backend, False):
                 continue
             if backend == "ollama":
-                return ollama_callback(model="llama3.1")
+                return ollama_callback(model="llama3.2")
             elif backend == "anthropic":
                 return anthropic_callback()
             elif backend == "openai":
@@ -217,6 +217,50 @@ class LLMBridge:
 
         return _wrapper
 
+    def _tier_timeout(self, tier: ModelTier) -> int:
+        """Return response timeout in seconds for the given tier.
+
+        Returns:
+            Seconds: FAST=60, CODE=300, REASON=300, NUANCE=120, LOCAL=180,
+            default=120.
+        """
+        _map = {
+            ModelTier.FAST: 60,
+            ModelTier.CODE: 300,
+            ModelTier.REASON: 300,
+            ModelTier.NUANCE: 120,
+            ModelTier.LOCAL: 180,
+        }
+        return _map.get(tier, 120)
+
+    def _timed_call(self, callback, prompt: Any, tier: ModelTier) -> str:
+        """Execute a callback with a tier-appropriate timeout.
+
+        Uses a single-worker ThreadPoolExecutor so the calling thread is
+        never blocked indefinitely. On timeout, the background thread is
+        abandoned (not cancellable) and a TimeoutError propagates to the
+        caller so it can continue to the next fallback.
+
+        Args:
+            callback: LLM callback to invoke.
+            prompt: Prompt (str or AdaptedPrompt) to pass to the callback.
+            tier: Model tier used to select the timeout.
+
+        Returns:
+            LLM response string.
+
+        Raises:
+            concurrent.futures.TimeoutError: If the call exceeds the limit.
+            Exception: Any other exception raised by the callback.
+        """
+        timeout = self._tier_timeout(tier)
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(callback, prompt)
+            return future.result(timeout=timeout)
+        finally:
+            executor.shutdown(wait=False)
+
     def generate(
         self,
         system_prompt: str,
@@ -233,6 +277,15 @@ class LLMBridge:
         Returns:
             LLM response text, or a fallback error message.
         """
+        from skseed.llm import (
+            anthropic_callback,
+            grok_callback,
+            kimi_callback,
+            nvidia_callback,
+            ollama_callback,
+            openai_callback,
+        )
+
         decision = self._router.route(signal)
         logger.info(
             "Routed to tier=%s model=%s: %s",
@@ -252,7 +305,7 @@ class LLMBridge:
         # Try primary model
         try:
             callback = self._resolve_callback(decision.tier, decision.model_name)
-            return callback(adapted)
+            return self._timed_call(callback, adapted, decision.tier)
         except Exception as exc:
             logger.warning(
                 "Primary model %s failed: %s", decision.model_name, exc
@@ -267,7 +320,7 @@ class LLMBridge:
                     system_prompt, user_message, alt_model, decision.tier,
                 )
                 callback = self._resolve_callback(decision.tier, alt_model)
-                return callback(alt_adapted)
+                return self._timed_call(callback, alt_adapted, decision.tier)
             except Exception as exc:
                 logger.warning("Alt model %s failed: %s", alt_model, exc)
 
@@ -281,18 +334,34 @@ class LLMBridge:
                         system_prompt, user_message, fast_model, ModelTier.FAST,
                     )
                     callback = self._resolve_callback(ModelTier.FAST, fast_model)
-                    return callback(fast_adapted)
+                    return self._timed_call(callback, fast_adapted, ModelTier.FAST)
                 except Exception as exc:
                     logger.warning("FAST model %s failed: %s", fast_model, exc)
 
-        # Cross-provider cascade via fallback chain
+        # Cross-provider cascade via fallback chain — direct backend mapping,
+        # no _resolve_callback, to avoid infinite regression on unknown names.
         for backend in self._fallback_chain:
             if not self._available.get(backend, False):
                 continue
             try:
                 logger.info("Fallback cascade: %s", backend)
-                callback = self._resolve_callback(ModelTier.FAST, f"{backend}-fallback")
-                return callback(adapted)
+                if backend == "ollama":
+                    callback = ollama_callback(model="llama3.2")
+                elif backend == "anthropic":
+                    callback = anthropic_callback()
+                elif backend == "grok":
+                    callback = grok_callback()
+                elif backend == "kimi":
+                    callback = kimi_callback()
+                elif backend == "nvidia":
+                    callback = nvidia_callback()
+                elif backend == "openai":
+                    callback = openai_callback()
+                elif backend == "passthrough":
+                    callback = self._make_passthrough_callback()
+                else:
+                    continue
+                return self._timed_call(callback, adapted, ModelTier.FAST)
             except Exception as exc:
                 logger.warning("Fallback %s failed: %s", backend, exc)
 
