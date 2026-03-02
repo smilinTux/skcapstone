@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("skcapstone.doctor")
 
 
 @dataclass
@@ -164,7 +167,9 @@ def _check_system_tools() -> list[Check]:
     checks = []
 
     # Git (required for clone/setup) — platform-aware download link
-    git_installed, _, git_detail = check_git()
+    git_check = check_git()
+    git_installed = git_check.installed
+    git_detail = git_check.version or ""
     git_fix = git_install_hint_for_doctor() if not git_installed else ""
     checks.append(Check(
         name="tool:git",
@@ -430,6 +435,7 @@ def _check_transport() -> list[Check]:
             category="transport",
         ))
     except Exception as exc:
+        logger.warning("SKComm health check failed: %s", exc)
         checks.append(Check(
             name="transport:skcomm",
             description="SKComm engine",
@@ -532,6 +538,6 @@ def _get_tool_version(tool: str) -> Optional[str]:
         if result.returncode == 0:
             first_line = result.stdout.strip().split("\n")[0]
             return first_line[:80]
-    except (subprocess.TimeoutExpired, OSError):
-        pass
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("Could not get version for %s: %s", tool, exc)
     return None

@@ -230,10 +230,16 @@ class DaemonService:
         self.state.running = False
 
         if self._consciousness:
-            self._consciousness.stop()
+            try:
+                self._consciousness.stop()
+            except Exception as exc:
+                logger.warning("Consciousness stop error: %s", exc)
 
         if self._server:
-            self._server.shutdown()
+            try:
+                self._server.shutdown()
+            except Exception as exc:
+                logger.warning("API server shutdown error: %s", exc)
 
         for t in self._threads:
             t.join(timeout=5)
@@ -436,14 +442,19 @@ class DaemonService:
             envelopes: List of received MessageEnvelope objects.
         """
         for env in envelopes:
-            logger.info(
-                "Message from %s: %s [%s]",
-                env.sender,
-                env.payload.content[:50],
-                env.payload.content_type.value,
-            )
-            if self._consciousness and self._consciousness._config.enabled:
-                self._consciousness.process_envelope(env)
+            try:
+                content_preview = (env.payload.content or "")[:50]
+                logger.info(
+                    "Message from %s: %s [%s]",
+                    env.sender,
+                    content_preview,
+                    env.payload.content_type.value,
+                )
+                if self._consciousness and self._consciousness._config.enabled:
+                    self._consciousness.process_envelope(env)
+            except Exception as exc:
+                logger.warning("Failed to process message from %s: %s", getattr(env, "sender", "?"), exc)
+                self.state.record_error(f"Process message: {exc}")
 
     def _healing_loop(self) -> None:
         """Periodically run self-healing diagnostics (every 5 min)."""
@@ -493,9 +504,28 @@ class DaemonService:
                         self._json_response({"enabled": False, "reason": "not loaded"})
                 elif self.path == "/ping":
                     self._json_response({"pong": True, "pid": os.getpid()})
+                elif self.path == "/api/v1/household/agents":
+                    agents = []
+                    heartbeats_dir = config.shared_root / "heartbeats"
+                    if heartbeats_dir.exists():
+                        for hf in sorted(heartbeats_dir.glob("*.json")):
+                            try:
+                                data = json.loads(hf.read_text())
+                                agents.append(data)
+                            except Exception:
+                                pass
+                    self._json_response({"agents": agents})
                 else:
                     self._json_response(
-                        {"endpoints": ["/status", "/health", "/consciousness", "/ping"]},
+                        {
+                            "endpoints": [
+                                "/status",
+                                "/health",
+                                "/consciousness",
+                                "/ping",
+                                "/api/v1/household/agents",
+                            ]
+                        },
                         status=200,
                     )
 

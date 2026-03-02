@@ -173,7 +173,8 @@ class SelfHealingDoctor:
                             "layer": layer_dir,
                             "tags": entry.get("tags", []),
                         })
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("Skipping malformed memory file %s: %s", f, exc)
                         continue
 
         index_path.write_text(
@@ -247,7 +248,8 @@ class SelfHealingDoctor:
             try:
                 self._consciousness._run_inotify_restart()
                 logger.info("Restarted inotify observer")
-            except Exception:
+            except Exception as exc:
+                logger.debug("Inotify restart failed: %s", exc)
                 issues.append("Inotify thread dead — restart failed")
 
         if issues:
@@ -329,7 +331,7 @@ class SelfHealingDoctor:
                 from skchat.messenger import AgentMessenger
                 messenger = AgentMessenger.from_config()
                 messenger.send("chef", message)
-            except Exception:
-                pass  # Escalation is best-effort
+            except Exception as exc:
+                logger.debug("SKChat escalation failed (best-effort): %s", exc)
         except Exception as exc:
             logger.debug("Escalation failed: %s", exc)

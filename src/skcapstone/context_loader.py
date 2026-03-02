@@ -197,8 +197,8 @@ def _gather_consciousness(home: Path) -> dict[str, Any]:
             "active_conversations": data.get("active_conversations", 0),
             "inotify_active": data.get("inotify_active", False),
         }
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Consciousness status endpoint unreachable: %s", exc)
 
     # Fallback: check config file presence
     config_path = home / "config" / "consciousness.yaml"

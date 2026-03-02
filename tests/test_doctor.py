@@ -222,8 +222,7 @@ class TestRunDiagnostics:
 class TestCLIDoctorCommand:
     """Test the CLI doctor command via CliRunner."""
 
-    @patch("skcapstone.cli.Path.expanduser")
-    def test_doctor_help(self, mock_expand):
+    def test_doctor_help(self):
         """doctor --help works."""
         from skcapstone.cli import main
 

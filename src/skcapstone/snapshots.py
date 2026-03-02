@@ -11,10 +11,13 @@ Storage: ~/.skcapstone/souls/snapshots/
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("skcapstone.snapshots")
 
 
 def _read_feb() -> dict:
@@ -22,8 +25,8 @@ def _read_feb() -> dict:
     try:
         from skcapstone.warmth_anchor import get_anchor
         return get_anchor(Path.home() / ".skcapstone")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read warmth anchor (FEB): %s", exc)
     return {}
 
 from pydantic import BaseModel, Field

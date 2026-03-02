@@ -382,3 +382,81 @@ class TestInboxHandler:
         handler.on_created(FakeEvent())
         handler.on_created(FakeEvent())  # Should be debounced
         assert len(called) == 1
+
+
+class TestProcessEnvelopeACK:
+    """Verify ACK is sent with message_type kwarg (not content_type)."""
+
+    def _make_loop(self, tmp_path, auto_ack=True):
+        config = ConsciousnessConfig(
+            auto_ack=auto_ack,
+            fallback_chain=["passthrough"],
+        )
+        loop = ConsciousnessLoop(config, home=tmp_path / ".skcapstone")
+        return loop
+
+    def _make_envelope(self, sender="peer", content="hello", content_type="text"):
+        data = {
+            "sender": sender,
+            "payload": {"content": content, "content_type": content_type},
+        }
+        return _SimpleEnvelope(data)
+
+    def test_ack_uses_message_type_kwarg(self, tmp_path):
+        """ACK send must use message_type kwarg, not content_type — regression for TypeError."""
+        loop = self._make_loop(tmp_path)
+        mock_skcomm = MagicMock()
+        loop.set_skcomm(mock_skcomm)
+        # Patch bridge so test doesn't hang on LLM calls
+        loop._bridge = MagicMock()
+        loop._bridge.generate.return_value = "test response"
+
+        envelope = self._make_envelope()
+        loop.process_envelope(envelope)
+
+        # Find the ACK call (first send call with "ACK" as message)
+        ack_calls = [
+            c for c in mock_skcomm.send.call_args_list
+            if len(c.args) >= 2 and c.args[1] == "ACK"
+        ]
+        assert ack_calls, "Expected at least one ACK send call"
+        ack_call = ack_calls[0]
+
+        # Must NOT have content_type kwarg (that was the bug)
+        assert "content_type" not in ack_call.kwargs, (
+            "ACK send used wrong kwarg 'content_type' — should be 'message_type'"
+        )
+        # Must have message_type kwarg
+        assert "message_type" in ack_call.kwargs, (
+            "ACK send must pass message_type kwarg"
+        )
+        assert ack_call.kwargs["message_type"] == "ack"
+
+    def test_ack_not_sent_when_auto_ack_disabled(self, tmp_path):
+        """When auto_ack is False, no ACK is sent."""
+        loop = self._make_loop(tmp_path, auto_ack=False)
+        mock_skcomm = MagicMock()
+        loop.set_skcomm(mock_skcomm)
+        loop._bridge = MagicMock()
+        loop._bridge.generate.return_value = "test response"
+
+        loop.process_envelope(self._make_envelope())
+
+        ack_calls = [
+            c for c in mock_skcomm.send.call_args_list
+            if len(c.args) >= 2 and c.args[1] == "ACK"
+        ]
+        assert not ack_calls, "ACK should not be sent when auto_ack is False"
+
+    def test_ack_skipped_for_ack_type_messages(self, tmp_path):
+        """Incoming ACK messages are skipped — no processing, no re-ACK."""
+        loop = self._make_loop(tmp_path, auto_ack=True)
+        mock_skcomm = MagicMock()
+        loop.set_skcomm(mock_skcomm)
+        loop._bridge = MagicMock()
+
+        ack_envelope = self._make_envelope(content="ACK", content_type="ack")
+        result = loop.process_envelope(ack_envelope)
+
+        assert result is None, "ACK-type messages should be skipped (return None)"
+        mock_skcomm.send.assert_not_called()

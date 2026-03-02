@@ -151,3 +151,115 @@ class TestAutoCallback:
                     assert callable(result)
             except ImportError:
                 pass
+
+
+class TestOllamaCallback:
+    """Tests for ollama_callback streaming/retry fixes."""
+
+    def _make_urlopen_cm(self, body: bytes):
+        """Return a mock suitable as the return value of urlopen(...)."""
+        inner = MagicMock()
+        inner.read.return_value = body
+        cm = MagicMock()
+        cm.__enter__.return_value = inner
+        cm.__exit__.return_value = False
+        return cm
+
+    def test_single_json_chat_response(self):
+        """Parses a single JSON /api/chat response correctly."""
+        body = b'{"model":"llama3.2","message":{"role":"assistant","content":"Hello!"},"done":true}'
+        cb = ollama_callback(model="llama3.2")
+        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)):
+            result = cb("hi")
+        assert result == "Hello!"
+
+    def test_single_json_generate_response(self):
+        """Parses a single JSON /api/generate response correctly."""
+        body = b'{"model":"llama3.2","response":"Hello world","done":true}'
+        cb = ollama_callback(model="llama3.2")
+        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)):
+            result = cb("hi")
+        assert result == "Hello world"
+
+    def test_ndjson_streaming_aggregation(self):
+        """Aggregates NDJSON chunks when Ollama returns a streaming body."""
+        lines = [
+            b'{"message":{"role":"assistant","content":"Hel"},"done":false}',
+            b'{"message":{"role":"assistant","content":"lo!"},"done":false}',
+            b'{"message":{"role":"assistant","content":""},"done":true}',
+        ]
+        body = b"\n".join(lines)
+        cb = ollama_callback(model="llama3.2")
+        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)):
+            result = cb("hi")
+        assert result == "Hello!"
+
+    def test_retry_on_empty_response(self):
+        """Retries once when first response is empty; returns second attempt."""
+        empty_body = b'{"message":{"role":"assistant","content":""},"done":true}'
+        good_body = b'{"message":{"role":"assistant","content":"Retry worked!"},"done":true}'
+        cb = ollama_callback(model="llama3.2", max_retries=1)
+        side_effects = [
+            self._make_urlopen_cm(empty_body),
+            self._make_urlopen_cm(good_body),
+        ]
+        with patch("urllib.request.urlopen", side_effect=side_effects):
+            result = cb("hi")
+        assert result == "Retry worked!"
+
+    def test_no_retry_when_max_retries_zero(self):
+        """Returns empty string when max_retries=0 and response is empty."""
+        empty_body = b'{"message":{"role":"assistant","content":""},"done":true}'
+        cb = ollama_callback(model="llama3.2", max_retries=0)
+        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(empty_body)):
+            result = cb("hi")
+        assert result == ""
+
+    def test_none_content_guard(self):
+        """Handles None content field without crashing."""
+        body = b'{"model":"llama3.2","message":{"role":"assistant","content":null},"done":true}'
+        cb = ollama_callback(model="llama3.2", max_retries=0)
+        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)):
+            result = cb("hi")
+        assert result == ""
+
+    def test_adapted_prompt_uses_chat_endpoint(self):
+        """AdaptedPrompt routes to /api/chat."""
+        class FakeAdapted:
+            messages = [{"role": "user", "content": "hi"}]
+            system_param = "You are helpful."
+            temperature = 0.7
+            extra_params: dict = {}
+
+        body = b'{"message":{"role":"assistant","content":"Hi there!"},"done":true}'
+        cb = ollama_callback(model="llama3.2")
+        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)) as mock_open:
+            result = cb(FakeAdapted())
+        assert result == "Hi there!"
+        req = mock_open.call_args[0][0]
+        assert "/api/chat" in req.full_url
+
+    def test_plain_prompt_uses_generate_endpoint(self):
+        """Plain string routes to /api/generate."""
+        body = b'{"response":"Hi!","done":true}'
+        cb = ollama_callback(model="llama3.2")
+        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)) as mock_open:
+            result = cb("hi")
+        assert result == "Hi!"
+        req = mock_open.call_args[0][0]
+        assert "/api/generate" in req.full_url
+
+    def test_max_retries_default_is_one(self):
+        """Default max_retries is 1."""
+        import inspect
+        sig = inspect.signature(ollama_callback)
+        assert sig.parameters["max_retries"].default == 1
+
+    def test_exception_retried_then_raised(self):
+        """Exceptions are retried; final exception is re-raised."""
+        import urllib.error
+        cb = ollama_callback(model="llama3.2", max_retries=1)
+        err = urllib.error.URLError("connection refused")
+        with patch("urllib.request.urlopen", side_effect=err):
+            with pytest.raises(urllib.error.URLError):
+                cb("hi")
