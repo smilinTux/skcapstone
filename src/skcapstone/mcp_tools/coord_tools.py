@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mcp.types import TextContent, Tool
 
-from ._helpers import _error_response, _home, _json_response
+from ._helpers import _error_response, _home, _json_response, _shared_root
 
 TOOLS: list[Tool] = [
     Tool(
@@ -97,7 +97,7 @@ async def _handle_coord_status(_args: dict) -> list[TextContent]:
     """Return coordination board status."""
     from ..coordination import Board
 
-    board = Board(_home())
+    board = Board(_shared_root())
     views = board.get_task_views()
     agents = board.load_agents()
 
@@ -143,7 +143,7 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
     if not task_id or not agent_name:
         return _error_response("task_id and agent_name are required")
 
-    board = Board(_home())
+    board = Board(_shared_root())
     try:
         agent = board.claim_task(agent_name, task_id)
         return _json_response({
@@ -165,7 +165,7 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
     if not task_id or not agent_name:
         return _error_response("task_id and agent_name are required")
 
-    board = Board(_home())
+    board = Board(_shared_root())
     agent = board.complete_task(agent_name, task_id)
     return _json_response({
         "completed": True,
@@ -183,7 +183,7 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
     if not title:
         return _error_response("title is required")
 
-    board = Board(_home())
+    board = Board(_shared_root())
     task = Task(
         title=title,
         description=args.get("description", ""),

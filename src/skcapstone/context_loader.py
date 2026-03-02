@@ -26,6 +26,7 @@ from typing import Any, Optional
 
 import logging
 
+from . import SHARED_ROOT
 from .coordination import Board
 from .discovery import discover_all
 from .memory_engine import list_memories, search
@@ -55,6 +56,7 @@ def gather_context(home: Path, memory_limit: int = 10) -> dict[str, Any]:
     ctx["memories"] = _gather_memories(home, memory_limit)
     ctx["soul"] = _gather_soul(home)
     ctx["mcp"] = _gather_mcp_status(home)
+    ctx["consciousness"] = _gather_consciousness(home)
 
     return ctx
 
@@ -89,9 +91,14 @@ def _gather_pillars(home: Path) -> dict[str, str]:
 
 
 def _gather_board(home: Path) -> dict[str, Any]:
-    """Gather coordination board snapshot."""
+    """Gather coordination board snapshot.
+
+    Uses SHARED_ROOT so all agents see the same board regardless
+    of which per-agent home is active.
+    """
     try:
-        board = Board(home)
+        shared = Path(SHARED_ROOT).expanduser()
+        board = Board(shared)
         views = board.get_task_views()
         agents = board.load_agents()
 
@@ -159,6 +166,58 @@ def _gather_soul(home: Path) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to read soul overlay: %s", exc)
         return {"active": None, "base": "default"}
+
+
+def _gather_consciousness(home: Path) -> dict[str, Any]:
+    """Gather consciousness loop stats from the daemon or config fallback.
+
+    First tries the live daemon at http://localhost:7777/consciousness.
+    Falls back to checking whether a consciousness config file exists.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Dict with: enabled, backends_available, messages_processed,
+        active_conversations, inotify_active.
+    """
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(
+            "http://localhost:7777/consciousness", timeout=2
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        backends = data.get("backends", {})
+        backends_available = [k for k, v in backends.items() if v]
+        return {
+            "enabled": data.get("enabled", False),
+            "backends_available": backends_available,
+            "messages_processed": data.get("messages_processed", 0),
+            "active_conversations": data.get("active_conversations", 0),
+            "inotify_active": data.get("inotify_active", False),
+        }
+    except Exception:
+        pass
+
+    # Fallback: check config file presence
+    config_path = home / "config" / "consciousness.yaml"
+    if config_path.exists():
+        return {
+            "enabled": True,
+            "backends_available": [],
+            "messages_processed": 0,
+            "active_conversations": 0,
+            "inotify_active": False,
+        }
+
+    return {
+        "enabled": False,
+        "backends_available": [],
+        "messages_processed": 0,
+        "active_conversations": 0,
+        "inotify_active": False,
+    }
 
 
 def _gather_mcp_status(home: Path) -> dict[str, Any]:
@@ -234,6 +293,18 @@ def format_text(ctx: dict[str, Any]) -> str:
     if soul.get("active"):
         lines.append("")
         lines.append(f"## Soul: {soul['active']} (base: {soul.get('base', 'default')})")
+
+    consciousness = ctx.get("consciousness", {})
+    if consciousness:
+        lines.append("")
+        lines.append("## Consciousness")
+        enabled_str = "ACTIVE" if consciousness.get("enabled") else "INACTIVE"
+        lines.append(f"  Status: {enabled_str}")
+        backends = consciousness.get("backends_available", [])
+        lines.append(f"  Backends: {', '.join(backends) if backends else 'none'}")
+        lines.append(f"  Messages processed: {consciousness.get('messages_processed', 0)}")
+        lines.append(f"  Active conversations: {consciousness.get('active_conversations', 0)}")
+        lines.append(f"  Inotify active: {consciousness.get('inotify_active', False)}")
 
     lines.append("")
     return "\n".join(lines)

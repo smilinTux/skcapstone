@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from .. import SHARED_ROOT
 from ..models import PillarStatus, SyncConfig, SyncState, SyncTransport
 
 logger = logging.getLogger("skcapstone.sync")
@@ -88,9 +89,7 @@ def collect_seed(home: Path, agent_name: str) -> Path:
     Returns:
         Path to the generated seed file in the outbox.
     """
-    sync_dir = (home / "sync").expanduser() if not (home / "sync").is_absolute() else home / "sync"
-    if not sync_dir.exists():
-        sync_dir = Path("~/.skcapstone/sync").expanduser()
+    sync_dir = _resolve_sync_dir(home)
     outbox = sync_dir / "outbox"
     outbox.mkdir(parents=True, exist_ok=True)
 
@@ -170,7 +169,7 @@ def gpg_encrypt(
         logger.error("gpg not found in PATH — cannot encrypt")
         return None
 
-    agent_home = home or Path("~/.skcapstone").expanduser()
+    agent_home = home or Path(SHARED_ROOT).expanduser()
 
     if recipient is None:
         recipient = _detect_gpg_key(agent_home)
@@ -415,11 +414,19 @@ def discover_sync(home: Path) -> SyncState:
 
 
 def _resolve_sync_dir(home: Path) -> Path:
-    """Resolve the sync directory path."""
+    """Resolve the sync directory path.
+
+    Prefers the explicitly-passed home/sync (used by tests and
+    single-agent mode), then falls back to SHARED_ROOT/sync for
+    multi-agent mode.
+    """
     sync_dir = home / "sync"
     if sync_dir.exists():
         return sync_dir
-    return Path("~/.skcapstone/sync").expanduser()
+    shared_sync = Path(SHARED_ROOT).expanduser() / "sync"
+    if shared_sync.exists():
+        return shared_sync
+    return sync_dir
 
 
 def _detect_gpg_key(home: Path) -> Optional[str]:

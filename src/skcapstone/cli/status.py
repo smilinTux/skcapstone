@@ -17,6 +17,37 @@ from rich.panel import Panel
 from rich.table import Table
 
 
+def _print_consciousness_metrics(console) -> None:
+    """Fetch and print consciousness loop stats from the daemon.
+
+    Tries http://localhost:7777/consciousness. Shows stats on success,
+    or 'Consciousness: INACTIVE' if the daemon is unreachable.
+    """
+    import urllib.request
+    import urllib.error
+
+    try:
+        with urllib.request.urlopen("http://localhost:7777/consciousness", timeout=2) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        enabled = data.get("enabled", False)
+        messages = data.get("messages_processed", 0)
+        responses = data.get("responses_sent", 0)
+        errors = data.get("errors", 0)
+        backends = data.get("backends", {})
+        active_backends = [k for k, v in backends.items() if v]
+        backends_str = ", ".join(active_backends) if active_backends else "none"
+        status_str = "[green]ACTIVE[/]" if enabled else "[yellow]DISABLED[/]"
+        console.print()
+        console.print(
+            f"  Consciousness: {status_str}  "
+            f"[dim]msgs={messages} resp={responses} err={errors}  "
+            f"backends=[{backends_str}][/]"
+        )
+    except Exception:
+        console.print()
+        console.print("  Consciousness: [dim]INACTIVE[/]")
+
+
 def register_status_commands(main: click.Group) -> None:
     """Register all status/overview commands on the main CLI group."""
 
@@ -104,6 +135,9 @@ def register_status_commands(main: click.Group) -> None:
             for c in m.connectors:
                 active_str = "[green]active[/]" if c.active else "[dim]inactive[/]"
                 console.print(f"  {c.platform}: {active_str}")
+
+        # Consciousness metrics
+        _print_consciousness_metrics(console)
 
         console.print()
         console.print(f"  [dim]Home: {m.home}[/]")

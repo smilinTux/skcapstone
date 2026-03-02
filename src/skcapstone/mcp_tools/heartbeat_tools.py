@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mcp.types import TextContent, Tool
 
-from ._helpers import _get_agent_name, _home, _json_response
+from ._helpers import _get_agent_name, _home, _json_response, _shared_root
 
 TOOLS: list[Tool] = [
     Tool(
@@ -86,7 +86,9 @@ async def _handle_heartbeat_pulse(args: dict) -> list[TextContent]:
 
     home = _home()
     agent_name = _get_agent_name(home)
-    beacon = HeartbeatBeacon(home, agent_name=agent_name)
+    shared = _shared_root()
+    beacon = HeartbeatBeacon(home, agent_name=agent_name,
+                             heartbeats_dir=shared / "heartbeats")
     beacon.initialize()
 
     hb = beacon.pulse(
@@ -118,7 +120,9 @@ async def _handle_heartbeat_peers(args: dict) -> list[TextContent]:
 
     home = _home()
     agent_name = _get_agent_name(home)
-    beacon = HeartbeatBeacon(home, agent_name=agent_name)
+    shared = _shared_root()
+    beacon = HeartbeatBeacon(home, agent_name=agent_name,
+                             heartbeats_dir=shared / "heartbeats")
     beacon.initialize()
 
     peers = beacon.discover_peers(include_self=args.get("include_self", False))
@@ -142,7 +146,9 @@ async def _handle_heartbeat_health(_args: dict) -> list[TextContent]:
 
     home = _home()
     agent_name = _get_agent_name(home)
-    beacon = HeartbeatBeacon(home, agent_name=agent_name)
+    shared = _shared_root()
+    beacon = HeartbeatBeacon(home, agent_name=agent_name,
+                             heartbeats_dir=shared / "heartbeats")
     beacon.initialize()
 
     health = beacon.mesh_health()
@@ -165,7 +171,9 @@ async def _handle_heartbeat_find_capable(args: dict) -> list[TextContent]:
 
     home = _home()
     agent_name = _get_agent_name(home)
-    beacon = HeartbeatBeacon(home, agent_name=agent_name)
+    shared = _shared_root()
+    beacon = HeartbeatBeacon(home, agent_name=agent_name,
+                             heartbeats_dir=shared / "heartbeats")
     beacon.initialize()
 
     capability = args["capability"]

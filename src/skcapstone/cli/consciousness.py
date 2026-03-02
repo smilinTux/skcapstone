@@ -52,6 +52,8 @@ def register_consciousness_commands(main: click.Group) -> None:
         enabled = data.get("enabled", False)
         color = "green" if enabled else "yellow"
 
+        inbox_watcher = data.get("inbox_watcher", "unknown")
+
         console.print()
         console.print(
             Panel(
@@ -60,6 +62,7 @@ def register_consciousness_commands(main: click.Group) -> None:
                 f"Responses sent: [bold]{data.get('responses_sent', 0)}[/]\n"
                 f"Errors: [bold]{data.get('errors', 0)}[/]\n"
                 f"Inotify active: {data.get('inotify_active', False)}\n"
+                f"Inbox watcher mode: [dim]{inbox_watcher}[/]\n"
                 f"Last activity: {data.get('last_activity') or '[dim]never[/]'}",
                 title=f"[{color}]Consciousness Loop[/]",
                 border_style=color,
@@ -185,6 +188,13 @@ def register_consciousness_commands(main: click.Group) -> None:
             table.add_row(name, status_str, source)
 
         console.print(table)
+
+        try:
+            import watchdog  # noqa: F401
+            inotify_line = "[green]inotify: active (watchdog installed)[/]"
+        except ImportError:
+            inotify_line = "[yellow]inotify: degraded (polling only, install watchdog)[/]"
+        console.print(f"  {inotify_line}")
         console.print()
 
     @consciousness.command("profiles")

@@ -267,7 +267,8 @@ def dispatch_to_claude(
 
 def _comms_root() -> Path:
     """Return the skcapstone comms root directory."""
-    return Path("~/.skcapstone/comms").expanduser()
+    from . import SHARED_ROOT
+    return Path(SHARED_ROOT).expanduser() / "sync" / "comms"
 
 
 def poll_inbox(team_name: str, agent_name: str) -> List[Path]:

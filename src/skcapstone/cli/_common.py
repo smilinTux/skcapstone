@@ -21,13 +21,44 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .. import AGENT_HOME, __version__
+import skcapstone as _pkg
+from .. import AGENT_HOME, SHARED_ROOT, SKCAPSTONE_AGENT, __version__
 from ..models import AgentConfig, PillarStatus, SyncConfig
 from ..runtime import AgentRuntime, get_runtime
 
 logger = logging.getLogger("skcapstone.cli")
 
 console = Console()
+
+
+def resolve_agent_home(agent: str) -> Path:
+    """Resolve the agent home directory for a given agent name.
+
+    Args:
+        agent: Agent name (e.g., 'opus', 'jarvis'). Empty for legacy mode.
+
+    Returns:
+        Resolved Path to the agent's home directory.
+    """
+    if agent:
+        return Path(SHARED_ROOT).expanduser() / "agents" / agent
+    return Path(AGENT_HOME).expanduser()
+
+
+def apply_agent_override(agent: str) -> None:
+    """Override the global AGENT_HOME when --agent is specified.
+
+    Mutates the package-level AGENT_HOME so that all downstream code
+    (MCP tools, pillars, etc.) uses the correct per-agent directory.
+
+    Args:
+        agent: Agent name from the --agent CLI option or env var.
+    """
+    if agent:
+        new_home = str(Path(SHARED_ROOT) / "agents" / agent)
+        _pkg.AGENT_HOME = new_home
+        _pkg.SKCAPSTONE_AGENT = agent
+        os.environ["SKCAPSTONE_AGENT"] = agent
 
 
 def status_icon(status: PillarStatus) -> str:

@@ -13,6 +13,7 @@ import yaml
 
 from skcapstone.context_loader import (
     FORMATTERS,
+    _gather_consciousness,
     format_claude_md,
     format_cursor_rules,
     format_json,
@@ -254,3 +255,56 @@ class TestFormattersRegistry:
         """All formatters are callable."""
         for name, fn in FORMATTERS.items():
             assert callable(fn), f"Formatter '{name}' is not callable"
+
+
+class TestGatherConsciousness:
+    """Tests for _gather_consciousness() fallback logic."""
+
+    def test_returns_expected_keys(self, tmp_agent_home: Path):
+        """_gather_consciousness returns all required keys."""
+        result = _gather_consciousness(tmp_agent_home)
+
+        for key in ("enabled", "backends_available", "messages_processed",
+                    "active_conversations", "inotify_active"):
+            assert key in result, f"missing key: {key}"
+
+    def test_no_daemon_no_config_returns_disabled(self, tmp_agent_home: Path):
+        """Without daemon or config, enabled is False and lists are empty."""
+        from unittest.mock import patch
+        import urllib.error
+
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError("connection refused"),
+        ):
+            result = _gather_consciousness(tmp_agent_home)
+
+        assert result["enabled"] is False
+        assert result["backends_available"] == []
+        assert result["messages_processed"] == 0
+        assert result["active_conversations"] == 0
+        assert result["inotify_active"] is False
+
+    def test_config_file_triggers_enabled(self, tmp_agent_home: Path):
+        """If consciousness.yaml exists, enabled is True (config fallback)."""
+        config_dir = tmp_agent_home / "config"
+        config_dir.mkdir(exist_ok=True)
+        (config_dir / "consciousness.yaml").write_text("enabled: true\n")
+
+        result = _gather_consciousness(tmp_agent_home)
+
+        assert result["enabled"] is True
+
+    def test_gather_context_includes_consciousness_key(self, tmp_agent_home: Path):
+        """gather_context() output includes the 'consciousness' key."""
+        ctx = gather_context(tmp_agent_home)
+        assert "consciousness" in ctx
+
+    def test_format_text_includes_consciousness_section(self, tmp_agent_home: Path):
+        """format_text() output includes a Consciousness section."""
+        _init_agent(tmp_agent_home)
+        ctx = gather_context(tmp_agent_home)
+        output = format_text(ctx)
+
+        assert "Consciousness" in output
+        assert "Status:" in output

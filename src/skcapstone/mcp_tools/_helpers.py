@@ -9,14 +9,19 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from .. import AGENT_HOME
+from .. import AGENT_HOME, SHARED_ROOT
 
 logger = logging.getLogger("skcapstone.mcp")
 
 
 def _home() -> Path:
-    """Resolve the agent home directory."""
+    """Resolve the per-agent home directory."""
     return Path(AGENT_HOME).expanduser()
+
+
+def _shared_root() -> Path:
+    """Resolve the shared agent root (coordination, heartbeats, peers)."""
+    return Path(SHARED_ROOT).expanduser()
 
 
 def _json_response(data: Any) -> list[TextContent]:

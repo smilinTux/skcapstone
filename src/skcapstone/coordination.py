@@ -140,6 +140,8 @@ class Board:
 
     Args:
         home: Path to ~/.skcapstone (or test equivalent).
+              In multi-agent mode, pass the shared root (not the
+              per-agent home) so all agents see the same board.
     """
 
     def __init__(self, home: Path) -> None:

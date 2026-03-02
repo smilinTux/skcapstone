@@ -233,6 +233,105 @@ class TestDaemonAPI:
                 svc.stop()
 
 
+class TestHeartbeatBeaconWiring:
+    """Tests that HeartbeatBeacon is wired into the daemon health loop."""
+
+    def test_beacon_defaults_to_none(self, daemon_home):
+        """_beacon is None before _load_components runs."""
+        config = DaemonConfig(home=daemon_home, port=0)
+        svc = DaemonService(config)
+        assert svc._beacon is None
+
+    def test_health_loop_pulses_beacon_consciousness_active(self, daemon_home):
+        """_health_loop calls beacon.pulse(consciousness_active=True) when consciousness is set."""
+        config = DaemonConfig(home=daemon_home, port=0, health_interval=60)
+        svc = DaemonService(config)
+
+        mock_beacon = MagicMock()
+        svc._beacon = mock_beacon
+        svc._consciousness = MagicMock()  # truthy → consciousness_active=True
+
+        svc._stop_event = threading.Event()
+        t = threading.Thread(target=svc._health_loop, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        svc._stop_event.set()
+        t.join(timeout=2)
+
+        mock_beacon.pulse.assert_called_once()
+        _, kwargs = mock_beacon.pulse.call_args
+        assert kwargs["consciousness_active"] is True
+
+    def test_health_loop_pulses_beacon_consciousness_inactive(self, daemon_home):
+        """_health_loop calls beacon.pulse(consciousness_active=False) when consciousness is None."""
+        config = DaemonConfig(home=daemon_home, port=0, health_interval=60)
+        svc = DaemonService(config)
+
+        mock_beacon = MagicMock()
+        svc._beacon = mock_beacon
+        svc._consciousness = None  # falsy → consciousness_active=False
+
+        svc._stop_event = threading.Event()
+        t = threading.Thread(target=svc._health_loop, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        svc._stop_event.set()
+        t.join(timeout=2)
+
+        mock_beacon.pulse.assert_called_once()
+        _, kwargs = mock_beacon.pulse.call_args
+        assert kwargs["consciousness_active"] is False
+
+    def test_health_loop_skips_pulse_when_no_beacon(self, daemon_home):
+        """_health_loop does not crash when _beacon is None."""
+        config = DaemonConfig(home=daemon_home, port=0, health_interval=60)
+        svc = DaemonService(config)
+        svc._beacon = None
+
+        svc._stop_event = threading.Event()
+        t = threading.Thread(target=svc._health_loop, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        svc._stop_event.set()
+        t.join(timeout=2)
+        # No exception → test passes
+
+    def test_load_components_initializes_beacon(self, daemon_home):
+        """_load_components sets _beacon using sys.modules patching."""
+        import sys
+
+        config = DaemonConfig(home=daemon_home, port=0, consciousness_enabled=False)
+        svc = DaemonService(config)
+
+        mock_runtime = MagicMock()
+        mock_runtime.manifest.name = "test-agent"
+        mock_runtime.is_initialized = True
+
+        mock_runtime_mod = MagicMock()
+        mock_runtime_mod.get_runtime.return_value = mock_runtime
+
+        mock_beacon_instance = MagicMock()
+        mock_heartbeat_mod = MagicMock()
+        mock_heartbeat_mod.HeartbeatBeacon.return_value = mock_beacon_instance
+
+        patched = {
+            "skcomm": MagicMock(),
+            "skcomm.core": MagicMock(),
+            "skcapstone.runtime": mock_runtime_mod,
+            "skcapstone.heartbeat": mock_heartbeat_mod,
+            "skcapstone.consciousness_config": MagicMock(),
+            "skcapstone.consciousness_loop": MagicMock(),
+            "skcapstone.self_healing": MagicMock(),
+        }
+        with patch.dict(sys.modules, patched):
+            svc._load_components()
+
+        assert svc._beacon is mock_beacon_instance
+        mock_heartbeat_mod.HeartbeatBeacon.assert_called_once_with(
+            config.home, "test-agent"
+        )
+
+
 def _find_free_port() -> int:
     """Find an available port for testing."""
     import socket

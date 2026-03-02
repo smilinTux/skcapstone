@@ -346,7 +346,7 @@ class TestModelNameResolution:
     def test_default_fast_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="quick task", tags=["simple"])
         decision = router.route(signal)
-        assert decision.model_name == "nemotron-49b"
+        assert decision.model_name == "llama3.1"
 
     def test_default_code_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="implement feature", tags=["code"])
@@ -356,17 +356,17 @@ class TestModelNameResolution:
     def test_default_reason_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="system design", tags=["architecture"])
         decision = router.route(signal)
-        assert decision.model_name == "deepseek-r1"
+        assert decision.model_name == "deepseek-r1:8b"
 
     def test_default_nuance_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="write copy", tags=["marketing"])
         decision = router.route(signal)
-        assert decision.model_name == "kimi-k2.5"
+        assert decision.model_name == "moonshot-v1-128k"
 
     def test_default_local_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="private task", privacy_sensitive=True)
         decision = router.route(signal)
-        assert decision.model_name == "llama-3.3-70b-local"
+        assert decision.model_name == "llama3.1"
 
     def test_unknown_tier_sentinel(self) -> None:
         """Missing tier config produces an unknown-{tier} sentinel."""
@@ -452,7 +452,7 @@ class TestMCPModelRouteHandler:
 
     @pytest.fixture(autouse=True)
     def _import_handler(self):
-        from skcapstone.mcp_server import _handle_model_route
+        from skcapstone.mcp_tools.model_tools import _handle_model_route
 
         self.handler = _handle_model_route
 

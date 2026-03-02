@@ -210,9 +210,10 @@ def generate_soul_instructions() -> str:
         except Exception as exc:
             logger.debug("Could not load skmemory soul.yaml: %s", exc)
 
-    # Fallback: skcapstone soul/base.json
+    # Fallback: skcapstone soul/base.json (per-agent home)
     if not soul_data:
-        base_json = Path("~/.skcapstone/soul/base.json").expanduser()
+        from . import AGENT_HOME
+        base_json = Path(AGENT_HOME).expanduser() / "soul" / "base.json"
         if base_json.is_file():
             try:
                 soul_data = json.loads(base_json.read_text(encoding="utf-8"))
@@ -285,7 +286,8 @@ def _get_fingerprint() -> str:
     try:
         from .pillars.identity import get_identity_state
 
-        state = get_identity_state(Path("~/.skcapstone").expanduser())
+        from . import AGENT_HOME
+        state = get_identity_state(Path(AGENT_HOME).expanduser())
         return state.fingerprint or "unknown"
     except Exception:
         return "unknown"

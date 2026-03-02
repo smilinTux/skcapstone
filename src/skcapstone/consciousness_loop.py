@@ -143,21 +143,23 @@ class LLMBridge:
         )
 
         name_lower = model_name.lower()
+        # Strip Ollama :tag suffix for pattern matching (e.g. "deepseek-r1:8b" -> "deepseek-r1")
+        name_base = name_lower.split(":")[0]
 
         # LOCAL tier always goes to Ollama
         if tier == ModelTier.LOCAL:
             return ollama_callback(model=model_name)
 
-        # Pattern matching on model name
-        if "claude" in name_lower:
+        # Pattern matching on model name (use name_base to handle :tag suffixes)
+        if "claude" in name_base:
             return anthropic_callback(model=model_name)
-        if "gpt" in name_lower or "o1" in name_lower or "o3" in name_lower or "o4" in name_lower:
+        if "gpt" in name_base or "o1" in name_base or "o3" in name_base or "o4" in name_base:
             return openai_callback(model=model_name)
-        if "grok" in name_lower:
+        if "grok" in name_base:
             return grok_callback(model=model_name)
-        if "kimi" in name_lower or "moonshot" in name_lower:
+        if "kimi" in name_base or "moonshot" in name_base:
             return kimi_callback(model=model_name)
-        if "nvidia" in name_lower:
+        if "nvidia" in name_base:
             return nvidia_callback(model=model_name)
 
         # Models that run on Ollama (local inference)
@@ -166,7 +168,7 @@ class LLMBridge:
             "deepseek", "qwen", "codestral",
         )
         for pattern in ollama_patterns:
-            if pattern in name_lower:
+            if pattern in name_base:
                 return ollama_callback(model=model_name)
 
         # Walk fallback chain for first available backend
@@ -186,9 +188,34 @@ class LLMBridge:
             elif backend == "nvidia":
                 return nvidia_callback()
             elif backend == "passthrough":
-                return passthrough_callback()
+                return self._make_passthrough_callback()
 
-        return passthrough_callback()
+        return self._make_passthrough_callback()
+
+    @staticmethod
+    def _make_passthrough_callback():
+        """Return a passthrough callback that always produces a plain str.
+
+        The skseed passthrough_callback() expects a str, but generate() passes
+        an AdaptedPrompt object.  This wrapper extracts the user message content
+        from AdaptedPrompt so the callback never raises a TypeError or hangs.
+
+        Returns:
+            Callable that accepts str or AdaptedPrompt and returns str.
+        """
+        from skseed.llm import passthrough_callback
+        _pt = passthrough_callback()
+
+        def _wrapper(prompt):
+            if hasattr(prompt, "messages"):
+                # Extract user message from AdaptedPrompt
+                for msg in prompt.messages:
+                    if msg.get("role") == "user":
+                        return str(msg.get("content", ""))
+                return str(prompt)
+            return _pt(str(prompt))
+
+        return _wrapper
 
     def generate(
         self,

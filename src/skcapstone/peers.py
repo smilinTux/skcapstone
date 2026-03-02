@@ -27,6 +27,8 @@ from typing import Optional
 import yaml
 from pydantic import BaseModel, Field
 
+from . import SHARED_ROOT
+
 logger = logging.getLogger("skcapstone.peers")
 
 
@@ -113,7 +115,7 @@ def add_peer_from_card(
         source="card",
     )
 
-    sk_home = skcapstone_home or Path.home() / ".skcapstone"
+    sk_home = skcapstone_home or Path(SHARED_ROOT).expanduser()
     sc_home = skcomm_home or Path.home() / ".skcomm"
 
     _save_skcapstone_peer(sk_home, peer)
@@ -157,7 +159,7 @@ def add_peer_manual(
         trust_level="verified" if public_key else "unknown",
     )
 
-    sk_home = skcapstone_home or Path.home() / ".skcapstone"
+    sk_home = skcapstone_home or Path(SHARED_ROOT).expanduser()
     sc_home = skcomm_home or Path.home() / ".skcomm"
 
     _save_skcapstone_peer(sk_home, peer)
@@ -177,7 +179,7 @@ def list_peers(
     Returns:
         list[PeerRecord]: All registered peers.
     """
-    sk_home = skcapstone_home or Path.home() / ".skcapstone"
+    sk_home = skcapstone_home or Path(SHARED_ROOT).expanduser()
     peers_dir = sk_home / "peers"
     if not peers_dir.exists():
         return []
@@ -206,7 +208,7 @@ def get_peer(
     Returns:
         PeerRecord or None if not found.
     """
-    sk_home = skcapstone_home or Path.home() / ".skcapstone"
+    sk_home = skcapstone_home or Path(SHARED_ROOT).expanduser()
     peer_file = sk_home / "peers" / f"{_safe_filename(name)}.json"
     if not peer_file.exists():
         return None
@@ -233,7 +235,7 @@ def remove_peer(
     Returns:
         bool: True if the peer was found and removed.
     """
-    sk_home = skcapstone_home or Path.home() / ".skcapstone"
+    sk_home = skcapstone_home or Path(SHARED_ROOT).expanduser()
     sc_home = skcomm_home or Path.home() / ".skcomm"
     safe = _safe_filename(name)
     removed = False
