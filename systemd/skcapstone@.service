@@ -1,0 +1,50 @@
+# SKCapstone multi-agent systemd template unit.
+#
+# Each named agent runs as a separate service instance:
+#
+#   systemctl --user enable skcapstone@opus skcapstone@jarvis
+#   systemctl --user start  skcapstone@opus skcapstone@jarvis
+#
+# The instance name (%i) is passed to --agent so the daemon picks up
+# ~/.skcapstone/agents/%i/ as its home directory and auto-assigns a port.
+#
+# Stop a single agent:
+#   systemctl --user stop skcapstone@jarvis
+
+[Unit]
+Description=SKCapstone Sovereign Agent — %i
+Documentation=https://github.com/smilinTux/skcapstone
+After=network-online.target ollama.service syncthing.service
+Wants=network-online.target
+# Multiple instances may coexist; no conflicts between them.
+
+[Service]
+Type=notify
+ExecStart=skcapstone daemon start --agent %i --foreground
+ExecStop=skcapstone daemon stop --agent %i
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+# Watchdog: daemon must call sd_notify("WATCHDOG=1") at least every 5 minutes
+WatchdogSec=300
+# Pass instance name as env var so imported modules that read SKCAPSTONE_AGENT
+# resolve the correct per-agent home even before the CLI flag is processed.
+Environment=PYTHONUNBUFFERED=1
+Environment=OLLAMA_KEEP_ALIVE=5m
+Environment=SKCAPSTONE_AGENT=%i
+# Journal logging — logs appear under skcapstone@<instance>
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=skcapstone@%i
+
+# Security hardening (same as single-agent unit)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone %h/.skmemory %h/.capauth %h/.cloud9 %h/.skcomm %h/.skchat
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=default.target

@@ -423,3 +423,248 @@ def git_install_hint_for_doctor() -> str:
     if check.installed:
         return ""
     return f"Install Git: {check.download_url}"
+
+
+# ---------------------------------------------------------------------------
+# Daemon preflight checker
+# ---------------------------------------------------------------------------
+
+import sys
+from typing import Literal
+
+CheckStatus = Literal["ok", "warn", "fail"]
+
+
+@dataclass
+class CheckResult:
+    """Result of a single daemon preflight check."""
+
+    name: str
+    status: CheckStatus
+    message: str
+    critical: bool = True
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok"
+
+    @property
+    def failed(self) -> bool:
+        return self.status == "fail"
+
+    @property
+    def warned(self) -> bool:
+        return self.status == "warn"
+
+
+class PreflightChecker:
+    """Daemon startup preflight checker.
+
+    Verifies that the environment is ready for the sovereign agent daemon
+    to start safely. Runs a set of named checks and aggregates results into
+    a summary dict.
+
+    Args:
+        home: Agent home directory (defaults to ``~/.skcapstone``).
+    """
+
+    def __init__(self, home: Optional[Path] = None):
+        from . import AGENT_HOME
+        self.home = (home or Path(AGENT_HOME)).expanduser()
+
+    # ------------------------------------------------------------------
+    # Individual checks
+    # ------------------------------------------------------------------
+
+    def check_python(self) -> CheckResult:
+        """Verify Python >= 3.11."""
+        vi = sys.version_info
+        version = f"{vi.major}.{vi.minor}.{vi.micro}"
+        if vi >= (3, 11):
+            return CheckResult("python", "ok", f"Python {version}")
+        return CheckResult(
+            "python", "fail",
+            f"Python {version} — 3.11+ required",
+            critical=True,
+        )
+
+    def check_packages(self) -> CheckResult:
+        """Verify skcapstone, skseed, and skcomm are importable."""
+        missing = []
+        for pkg in ("skcapstone", "skseed", "skcomm"):
+            try:
+                __import__(pkg)
+            except ImportError:
+                missing.append(pkg)
+        if not missing:
+            return CheckResult("packages", "ok", "skcapstone, skseed, skcomm all importable")
+        return CheckResult(
+            "packages", "fail",
+            f"Missing packages: {', '.join(missing)}",
+            critical=True,
+        )
+
+    def check_ollama(self) -> CheckResult:
+        """Verify Ollama is running and has at least one model."""
+        import urllib.request
+        import json as _json
+        try:
+            with urllib.request.urlopen(
+                "http://localhost:11434/api/tags", timeout=3
+            ) as resp:
+                data = _json.loads(resp.read())
+            models = data.get("models", [])
+            if not models:
+                return CheckResult(
+                    "ollama", "warn",
+                    "Ollama running but no models loaded — pull a model first",
+                    critical=False,
+                )
+            names = ", ".join(m.get("name", "?") for m in models[:3])
+            return CheckResult("ollama", "ok", f"Ollama running — models: {names}")
+        except OSError:
+            return CheckResult(
+                "ollama", "warn",
+                "Ollama not reachable on localhost:11434 — LLM responses will be unavailable",
+                critical=False,
+            )
+        except Exception as exc:
+            return CheckResult(
+                "ollama", "warn",
+                f"Ollama check failed: {exc}",
+                critical=False,
+            )
+
+    def check_identity(self) -> CheckResult:
+        """Verify a PGP identity exists in the agent home."""
+        identity_json = self.home / "identity" / "identity.json"
+        if identity_json.exists():
+            try:
+                import json as _json
+                data = _json.loads(identity_json.read_text(encoding="utf-8"))
+                name = data.get("name", "unknown")
+                fp = data.get("fingerprint", "")
+                fp_display = fp[-8:] if fp else "no fingerprint"
+                return CheckResult(
+                    "identity", "ok",
+                    f"Identity: {name} (…{fp_display})",
+                )
+            except Exception as exc:
+                return CheckResult(
+                    "identity", "fail",
+                    f"identity.json unreadable: {exc}",
+                )
+        # Try legacy manifest.json
+        manifest = self.home / "manifest.json"
+        if manifest.exists():
+            return CheckResult(
+                "identity", "warn",
+                "manifest.json found but no identity/identity.json — run skcapstone init",
+                critical=False,
+            )
+        return CheckResult(
+            "identity", "fail",
+            f"No identity found in {self.home}/identity/ — run skcapstone init",
+        )
+
+    def check_home_dirs(self) -> CheckResult:
+        """Verify expected ~/.skcapstone/ subdirectory structure exists."""
+        required = ["memory", "trust", "identity", "config"]
+        missing = [d for d in required if not (self.home / d).exists()]
+        if not missing:
+            return CheckResult("home_dirs", "ok", f"Home structure OK: {self.home}")
+        return CheckResult(
+            "home_dirs", "fail",
+            f"Missing directories in {self.home}: {', '.join(missing)} — run skcapstone init",
+        )
+
+    def check_config(self) -> CheckResult:
+        """Verify consciousness.yaml is parseable."""
+        config_path = self.home / "config" / "consciousness.yaml"
+        if not config_path.exists():
+            return CheckResult(
+                "config", "warn",
+                f"consciousness.yaml not found at {config_path} — using defaults",
+                critical=False,
+            )
+        try:
+            import yaml
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            if data is None:
+                return CheckResult(
+                    "config", "warn",
+                    "consciousness.yaml is empty — using defaults",
+                    critical=False,
+                )
+            return CheckResult("config", "ok", f"consciousness.yaml parsed OK ({config_path})")
+        except Exception as exc:
+            return CheckResult(
+                "config", "fail",
+                f"consciousness.yaml parse error: {exc}",
+            )
+
+    def check_disk_space(self) -> CheckResult:
+        """Warn if less than 5 GB free on the home directory filesystem."""
+        import shutil as _shutil
+        try:
+            usage = _shutil.disk_usage(self.home if self.home.exists() else Path.home())
+            free_gb = usage.free / (1024 ** 3)
+            if free_gb >= 5.0:
+                return CheckResult(
+                    "disk_space", "ok",
+                    f"{free_gb:.1f} GB free",
+                )
+            return CheckResult(
+                "disk_space", "warn",
+                f"Only {free_gb:.1f} GB free — less than 5 GB recommended",
+                critical=False,
+            )
+        except Exception as exc:
+            return CheckResult(
+                "disk_space", "warn",
+                f"Could not check disk space: {exc}",
+                critical=False,
+            )
+
+    # ------------------------------------------------------------------
+    # Aggregate
+    # ------------------------------------------------------------------
+
+    def run_all(self) -> dict:
+        """Run all preflight checks and return a summary dict.
+
+        Returns:
+            Dict with keys:
+                - ``checks``: list of dicts for each check result
+                - ``ok``: True if no critical failures
+                - ``warnings``: count of warn results
+                - ``failures``: count of fail results
+        """
+        methods = [
+            self.check_python,
+            self.check_packages,
+            self.check_ollama,
+            self.check_identity,
+            self.check_home_dirs,
+            self.check_config,
+            self.check_disk_space,
+        ]
+        results: list[CheckResult] = [m() for m in methods]
+        failures = [r for r in results if r.failed]
+        warnings = [r for r in results if r.warned]
+        critical_failures = [r for r in failures if r.critical]
+        return {
+            "ok": len(critical_failures) == 0,
+            "checks": [
+                {
+                    "name": r.name,
+                    "status": r.status,
+                    "message": r.message,
+                    "critical": r.critical,
+                }
+                for r in results
+            ],
+            "warnings": len(warnings),
+            "failures": len(failures),
+            "critical_failures": len(critical_failures),
+        }

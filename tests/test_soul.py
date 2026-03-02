@@ -527,6 +527,11 @@ class TestEdgeCases:
 class TestMemorySoulContext:
     """Test that memory engine correctly tags with soul_context."""
 
+    @pytest.fixture(autouse=True)
+    def no_unified_backend(self, monkeypatch):
+        """Disable the unified skmemory backend so tests use only file-based storage."""
+        monkeypatch.setattr("skcapstone.memory_engine._get_unified", lambda: None)
+
     def test_store_with_explicit_soul_context(self, tmp_home: Path):
         """Storing memory with explicit soul_context sets it."""
         from skcapstone.memory_engine import store

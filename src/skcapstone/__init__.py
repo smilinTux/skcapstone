@@ -32,6 +32,14 @@ else:
 # Shared root is always the top level (coordination, heartbeats, peers, etc.)
 SHARED_ROOT = SKCAPSTONE_ROOT
 
+# Port assignments for named agents.  Default (single-agent) uses 7777.
+# New agents get the next available port: max(AGENT_PORTS.values()) + 1.
+AGENT_PORTS: dict[str, int] = {
+    "opus": 7777,
+    "jarvis": 7778,
+}
+DEFAULT_PORT = 7777
+
 try:
     from .consciousness_loop import ConsciousnessLoop, ConsciousnessConfig, LLMBridge, SystemPromptBuilder
     from .self_healing import SelfHealingDoctor

@@ -16,6 +16,7 @@ from skcapstone.consciousness_loop import (
     LLMBridge,
     SystemPromptBuilder,
     _classify_message,
+    _OllamaPool,
     _SimpleEnvelope,
     InboxHandler,
 )
@@ -734,3 +735,283 @@ class TestVerifyMessageSignature:
             result = loop._verify_message_signature(data)
 
         assert result == "failed"
+
+
+class TestOllamaConnectionPool:
+    """Unit tests for _OllamaPool — connection reuse, TTL eviction, invalidation."""
+
+    def test_get_returns_same_connection_within_ttl(self):
+        """Two get() calls within TTL return the same connection object."""
+        pool = _OllamaPool("http://localhost:11434", ttl=60)
+        with patch("http.client.HTTPConnection") as mock_cls:
+            mock_conn = MagicMock()
+            mock_cls.return_value = mock_conn
+            conn1 = pool.get()
+            conn2 = pool.get()
+
+        assert conn1 is conn2, "Same connection should be returned within TTL"
+        assert mock_cls.call_count == 1, "HTTPConnection should be created only once"
+
+    def test_get_recreates_connection_after_ttl(self):
+        """get() creates a fresh connection once TTL has expired."""
+        pool = _OllamaPool("http://localhost:11434", ttl=60)
+        with patch("http.client.HTTPConnection") as mock_cls:
+            mock_cls.side_effect = [MagicMock(), MagicMock()]
+            pool.get()
+            # Manually expire the TTL
+            pool._created_at = time.monotonic() - 61
+            pool.get()
+
+        assert mock_cls.call_count == 2, "HTTPConnection should be recreated after TTL"
+
+    def test_invalidate_discards_connection(self):
+        """invalidate() closes and clears the cached connection."""
+        pool = _OllamaPool("http://localhost:11434", ttl=60)
+        with patch("http.client.HTTPConnection") as mock_cls:
+            mock_cls.side_effect = [MagicMock(), MagicMock()]
+            pool.get()
+            pool.invalidate()
+            assert pool._conn is None, "invalidate() should clear _conn"
+            pool.get()
+
+        assert mock_cls.call_count == 2, "New connection created after invalidate()"
+
+    def test_probe_ollama_uses_pool_connection(self):
+        """_probe_ollama routes the health check through the pool."""
+        config = ConsciousnessConfig()
+        bridge = LLMBridge(config)
+
+        mock_conn = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"models":[]}'
+        mock_conn.getresponse.return_value = mock_resp
+
+        with patch.object(bridge._ollama_pool, "get", return_value=mock_conn):
+            result = bridge._probe_ollama()
+
+        assert result is True
+        mock_conn.request.assert_called_once_with("GET", "/api/tags")
+        mock_resp.read.assert_called_once()  # body drained for keep-alive
+
+    def test_probe_ollama_invalidates_pool_on_error(self):
+        """_probe_ollama invalidates the pool when a connection error occurs."""
+        config = ConsciousnessConfig()
+        bridge = LLMBridge(config)
+
+        mock_conn = MagicMock()
+        mock_conn.request.side_effect = ConnectionError("refused")
+
+        with patch.object(bridge._ollama_pool, "get", return_value=mock_conn):
+            with patch.object(bridge._ollama_pool, "invalidate") as mock_invalidate:
+                result = bridge._probe_ollama()
+
+        assert result is False
+        mock_invalidate.assert_called_once()
+
+    def test_pool_host_port_parsing(self):
+        """_OllamaPool correctly parses host and port from the URL."""
+        pool = _OllamaPool("http://myhost:12345", ttl=30)
+        assert pool._host == "myhost"
+        assert pool._port == 12345
+
+    def test_pool_defaults_for_bare_localhost(self):
+        """_OllamaPool falls back to localhost:11434 for a bare URL."""
+        pool = _OllamaPool("http://localhost:11434")
+        assert pool._host == "localhost"
+        assert pool._port == 11434
+
+
+class TestMessageThreading:
+    """Tests for thread_id / in_reply_to envelope tracking and history grouping."""
+
+    # ------------------------------------------------------------------
+    # _SimpleEnvelope extraction
+    # ------------------------------------------------------------------
+
+    def test_envelope_extracts_thread_id_from_root(self):
+        """thread_id at envelope root is captured."""
+        data = {
+            "sender": "jarvis",
+            "thread_id": "thread-abc",
+            "payload": {"content": "hi", "content_type": "text"},
+        }
+        env = _SimpleEnvelope(data)
+        assert env.thread_id == "thread-abc"
+
+    def test_envelope_extracts_thread_id_from_payload(self):
+        """thread_id nested inside payload is captured."""
+        data = {
+            "sender": "jarvis",
+            "payload": {"content": "hi", "content_type": "text", "thread_id": "thread-xyz"},
+        }
+        env = _SimpleEnvelope(data)
+        assert env.thread_id == "thread-xyz"
+
+    def test_envelope_extracts_in_reply_to(self):
+        """in_reply_to at envelope root is captured."""
+        data = {
+            "sender": "lumina",
+            "in_reply_to": "msg-001",
+            "payload": {"content": "reply", "content_type": "text"},
+        }
+        env = _SimpleEnvelope(data)
+        assert env.in_reply_to == "msg-001"
+
+    def test_envelope_in_reply_to_from_payload(self):
+        """in_reply_to nested inside payload is captured."""
+        data = {
+            "sender": "lumina",
+            "payload": {"content": "reply", "content_type": "text", "in_reply_to": "msg-002"},
+        }
+        env = _SimpleEnvelope(data)
+        assert env.in_reply_to == "msg-002"
+
+    def test_envelope_defaults_empty_when_absent(self):
+        """thread_id and in_reply_to default to empty string when absent."""
+        data = {"sender": "ava", "payload": {"content": "hello", "content_type": "text"}}
+        env = _SimpleEnvelope(data)
+        assert env.thread_id == ""
+        assert env.in_reply_to == ""
+
+    # ------------------------------------------------------------------
+    # SystemPromptBuilder — add_to_history threading
+    # ------------------------------------------------------------------
+
+    def test_add_to_history_stores_thread_id(self, tmp_path):
+        """add_to_history stores thread_id in the history entry."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        builder.add_to_history("jarvis", "user", "Hello!", thread_id="t-001")
+
+        entry = builder._conversation_history["jarvis"][0]
+        assert entry["thread_id"] == "t-001"
+
+    def test_add_to_history_stores_in_reply_to(self, tmp_path):
+        """add_to_history stores in_reply_to in the history entry."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        builder.add_to_history("jarvis", "user", "Reply!", in_reply_to="msg-55")
+
+        entry = builder._conversation_history["jarvis"][0]
+        assert entry["in_reply_to"] == "msg-55"
+
+    def test_add_to_history_no_thread_fields_when_absent(self, tmp_path):
+        """No thread_id/in_reply_to keys in entry when not provided."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        builder.add_to_history("jarvis", "user", "Plain message")
+
+        entry = builder._conversation_history["jarvis"][0]
+        assert "thread_id" not in entry
+        assert "in_reply_to" not in entry
+
+    def test_thread_fields_persisted_to_json(self, tmp_path):
+        """thread_id and in_reply_to survive the round-trip through JSON persistence."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        builder.add_to_history("opus", "user", "Threaded msg", thread_id="t-99", in_reply_to="m-10")
+
+        conv_file = home / "conversations" / "opus.json"
+        data = json.loads(conv_file.read_text())
+        assert data[0]["thread_id"] == "t-99"
+        assert data[0]["in_reply_to"] == "m-10"
+
+    # ------------------------------------------------------------------
+    # SystemPromptBuilder.build — thread context in prompt
+    # ------------------------------------------------------------------
+
+    def test_build_shows_thread_label_when_thread_id_given(self, tmp_path):
+        """build() includes a [Thread: ...] label when thread_id is provided."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        builder.add_to_history("jarvis", "user", "Thread message", thread_id="t-alpha")
+        prompt = builder.build(peer_name="jarvis", thread_id="t-alpha")
+
+        assert "Thread: t-alpha" in prompt
+        assert "Thread message" in prompt
+
+    def test_build_groups_thread_and_other_messages(self, tmp_path):
+        """Thread messages appear under [Thread:...] and others under [Other recent messages:]."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        builder.add_to_history("ava", "user", "Thread msg", thread_id="t-1")
+        builder.add_to_history("ava", "user", "Unrelated msg")
+
+        prompt = builder.build(peer_name="ava", thread_id="t-1")
+
+        assert "Thread: t-1" in prompt
+        assert "Thread msg" in prompt
+        assert "Other recent messages" in prompt
+        assert "Unrelated msg" in prompt
+
+    def test_build_without_thread_id_shows_thread_labels_inline(self, tmp_path):
+        """Without thread_id, messages with threads show [thread:...] inline."""
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+        builder = SystemPromptBuilder(home)
+
+        builder.add_to_history("lumina", "user", "Inline threaded", thread_id="t-beta")
+        builder.add_to_history("lumina", "user", "Plain")
+
+        prompt = builder.build(peer_name="lumina")
+
+        assert "thread:t-beta" in prompt
+        assert "Inline threaded" in prompt
+        assert "Plain" in prompt
+
+    # ------------------------------------------------------------------
+    # ConsciousnessLoop.process_envelope — threading end-to-end
+    # ------------------------------------------------------------------
+
+    def test_process_envelope_stores_thread_id_in_history(self, tmp_path):
+        """process_envelope extracts thread_id and stores it in conversation history."""
+        config = ConsciousnessConfig(fallback_chain=["passthrough"])
+        loop = ConsciousnessLoop(config, home=tmp_path / ".skcapstone")
+        loop._bridge = MagicMock()
+        loop._bridge.generate.return_value = "hi back"
+
+        data = {
+            "sender": "jarvis",
+            "thread_id": "t-42",
+            "payload": {"content": "threaded hello", "content_type": "text"},
+        }
+        env = _SimpleEnvelope(data)
+        loop.process_envelope(env)
+
+        history = loop._prompt_builder._conversation_history.get("jarvis", [])
+        user_entry = next((e for e in history if e["role"] == "user"), None)
+        assert user_entry is not None
+        assert user_entry.get("thread_id") == "t-42"
+
+    def test_process_envelope_stores_in_reply_to_in_history(self, tmp_path):
+        """process_envelope extracts in_reply_to and stores it in conversation history."""
+        config = ConsciousnessConfig(fallback_chain=["passthrough"])
+        loop = ConsciousnessLoop(config, home=tmp_path / ".skcapstone")
+        loop._bridge = MagicMock()
+        loop._bridge.generate.return_value = "reply"
+
+        data = {
+            "sender": "ava",
+            "in_reply_to": "msg-77",
+            "payload": {"content": "reply message", "content_type": "text"},
+        }
+        env = _SimpleEnvelope(data)
+        loop.process_envelope(env)
+
+        history = loop._prompt_builder._conversation_history.get("ava", [])
+        user_entry = next((e for e in history if e["role"] == "user"), None)
+        assert user_entry is not None
+        assert user_entry.get("in_reply_to") == "msg-77"

@@ -53,13 +53,31 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## 2. Installation
 
-### Minimal install (CLI + daemon only)
+### One-command install (recommended)
+
+Clone the repo and run the install script — it installs all packages in the correct dependency order, pulls Ollama models if available, and runs a health check:
+
+```bash
+git clone https://github.com/skworld/smilintux-org.git
+cd smilintux-org/skcapstone
+bash scripts/install.sh
+```
+
+For development (adds `pytest`, `pytest-cov`, `ruff`):
+
+```bash
+bash scripts/dev-install.sh
+```
+
+### Manual / PyPI install
+
+#### Minimal install (CLI + daemon only)
 
 ```bash
 pip install skcapstone
 ```
 
-### With consciousness loop (recommended)
+#### With consciousness loop (recommended)
 
 ```bash
 pip install "skcapstone[consciousness,comms,seed]"
@@ -451,7 +469,9 @@ journalctl --user -u skcapstone -f
 skcapstone memory store "I prefer concise responses"   # store a memory
 skcapstone memory search "Ollama"                      # search memories
 skcapstone coord status                                # coordination board
-skcapstone soul show                                   # soul blueprint
+skcapstone soul status                                 # soul blueprint / active soul
 skcapstone sync push                                   # push state to peers
 skcapstone context show --format claude-md             # regenerate CLAUDE.md
+skcapstone skills list                                 # browse remote skills registry
+skcapstone skills install <name>                       # install a skill from the registry
 ```

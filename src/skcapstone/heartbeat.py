@@ -408,10 +408,43 @@ class HeartbeatBeacon:
             logger.warning("Failed to detect node capacity: %s", exc)
             return NodeCapacity()
 
+    def _load_config_capabilities(self) -> list[str]:
+        """Load capability names from the agent config file.
+
+        Reads ``{home}/config/config.yaml`` and returns the ``capabilities``
+        list.  Falls back to the ``AgentConfig`` defaults if the file is
+        absent or unparseable.
+
+        Returns:
+            List of capability name strings from config.
+        """
+        config_path = self._home / "config" / "config.yaml"
+        try:
+            if config_path.exists():
+                import yaml as _yaml
+                data = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                caps = data.get("capabilities")
+                if isinstance(caps, list):
+                    return [str(c) for c in caps if c]
+        except Exception as exc:
+            logger.debug("Cannot load capabilities from config: %s", exc)
+        # Fall back to AgentConfig defaults
+        from .models import AgentConfig
+        return AgentConfig().capabilities
+
     def _detect_capabilities(self) -> list[AgentCapability]:
-        """Detect available capabilities from installed packages."""
-        caps: list[AgentCapability] = []
-        cap_checks = [
+        """Build capabilities list from config, merging with detected packages.
+
+        Config capabilities (from ``{home}/config/config.yaml``) are always
+        included.  Additionally, known optional packages are probed via
+        ``import``; any that are present but not already listed by config are
+        appended.
+        """
+        config_caps = self._load_config_capabilities()
+        cap_names: list[str] = list(config_caps)
+
+        # Probe optional packages and add if not already declared in config
+        package_checks = [
             ("skcapstone", "skcapstone"),
             ("skmemory", "skmemory"),
             ("skchat", "skchat"),
@@ -419,13 +452,15 @@ class HeartbeatBeacon:
             ("capauth", "capauth"),
             ("cloud9", "cloud9"),
         ]
-        for name, module in cap_checks:
-            try:
-                __import__(module)
-                caps.append(AgentCapability(name=name))
-            except ImportError:
-                pass
-        return caps
+        for name, module in package_checks:
+            if name not in cap_names:
+                try:
+                    __import__(module)
+                    cap_names.append(name)
+                except ImportError:
+                    pass
+
+        return [AgentCapability(name=n) for n in cap_names]
 
     def _detect_version(self) -> str:
         """Detect skcapstone version."""

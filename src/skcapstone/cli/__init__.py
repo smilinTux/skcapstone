@@ -66,6 +66,15 @@ from .migrate import register_migrate_commands
 from .consciousness import register_consciousness_commands
 from .metrics_cmd import register_metrics_commands
 from .test_cmd import register_test_commands
+from .notify import register_notify_commands
+from .preflight_cmd import register_preflight_commands
+from .peers_dir import register_peers_dir_commands
+from .skills_cmd import register_skills_commands
+from .capabilities_cmd import register_capabilities_commands
+from .benchmark import register_benchmark_commands
+from .logs_cmd import register_logs_commands
+from .export_cmd import register_export_commands
+from .config_cmd import register_config_commands
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -94,3 +103,12 @@ register_migrate_commands(main)
 register_consciousness_commands(main)
 register_metrics_commands(main)
 register_test_commands(main)
+register_notify_commands(main)
+register_preflight_commands(main)
+register_peers_dir_commands(main)
+register_skills_commands(main)
+register_capabilities_commands(main)
+register_logs_commands(main)
+register_benchmark_commands(main)
+register_export_commands(main)
+register_config_commands(main)

@@ -452,20 +452,53 @@ def register_status_commands(main: click.Group) -> None:
     @main.command()
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
-    def doctor(home: str, json_out: bool):
-        """Diagnose sovereign stack health."""
-        from ..doctor import run_diagnostics
+    @click.option("--fix", "auto_fix", is_flag=True,
+                  help="Attempt to auto-fix failing checks (mkdir, write defaults, rebuild index).")
+    def doctor(home: str, json_out: bool, auto_fix: bool):
+        """Diagnose sovereign stack health.
+
+        With --fix, automatically remediate fixable failures: create missing
+        directories, write default configs, and rebuild the memory index.
+        Non-fixable checks (package installs, key generation, transport
+        config) are reported but skipped.
+        """
+        from ..doctor import run_diagnostics, run_fixes
 
         home_path = Path(home).expanduser()
         report = run_diagnostics(home_path)
 
+        # ── Auto-fix pass ─────────────────────────────────────────────────
+        fix_results = []
+        if auto_fix and report.failed_count > 0:
+            fix_results = run_fixes(report, home_path)
+            # Re-run diagnostics so the output reflects the fixed state.
+            report = run_diagnostics(home_path)
+
         if json_out:
-            click.echo(json.dumps(report.to_dict(), indent=2))
+            data = report.to_dict()
+            if fix_results:
+                data["fixes"] = [
+                    {"check": r.check_name, "success": r.success,
+                     "action": r.action, "error": r.error}
+                    for r in fix_results
+                ]
+            click.echo(json.dumps(data, indent=2))
             return
+
+        # ── Print fix summary ─────────────────────────────────────────────
+        if fix_results:
+            console.print()
+            console.print("  [bold cyan]Auto-fix results:[/]")
+            for r in fix_results:
+                if r.success:
+                    console.print(f"    [green]\u2713[/] {r.check_name}: {r.action}")
+                else:
+                    console.print(f"    [red]\u2717[/] {r.check_name}: {r.error}")
+            console.print()
 
         console.print()
 
-        categories = {}
+        categories: dict = {}
         for check in report.checks:
             categories.setdefault(check.category, []).append(check)
 

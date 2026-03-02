@@ -249,3 +249,6 @@ class AgentConfig(BaseModel):
     trust_home: Path = Path("~/.cloud9")
     default_connector: Optional[str] = None
     sync: SyncConfig = Field(default_factory=SyncConfig)
+    capabilities: list[str] = Field(
+        default_factory=lambda: ["consciousness", "code", "chat", "memory"]
+    )

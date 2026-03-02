@@ -698,6 +698,80 @@ class TestDashboardAPI:
             svc.stop()
 
 
+class TestCORSHeaders:
+    """Tests for CORS headers on all API responses (Flutter web access)."""
+
+    def _start_server(self, daemon_home):
+        config = DaemonConfig(home=daemon_home, shared_root=daemon_home, port=0, poll_interval=60)
+        svc = DaemonService(config)
+        svc.state.running = True
+        with patch.object(svc, "_load_components"):
+            svc.config.port = _find_free_port()
+            svc._write_pid()
+            svc._start_api_server()
+        time.sleep(0.3)
+        return svc
+
+    def _request(self, port, path, method="GET"):
+        import urllib.error
+        url = f"http://127.0.0.1:{port}{path}"
+        req = urllib.request.Request(url, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                return resp.status, resp.headers
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers
+
+    def test_options_preflight_returns_204(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, _ = self._request(svc.config.port, "/ping", method="OPTIONS")
+            assert status == 204
+        finally:
+            svc.stop()
+
+    def test_options_preflight_cors_headers(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            _, headers = self._request(svc.config.port, "/api/v1/status", method="OPTIONS")
+            assert headers.get("Access-Control-Allow-Origin") == "*"
+            allow_methods = headers.get("Access-Control-Allow-Methods", "")
+            assert "GET" in allow_methods
+            assert "POST" in allow_methods
+            assert "OPTIONS" in allow_methods
+            assert "Content-Type" in headers.get("Access-Control-Allow-Headers", "")
+        finally:
+            svc.stop()
+
+    def test_get_response_has_cors_origin(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, headers = self._request(svc.config.port, "/ping")
+            assert status == 200
+            assert headers.get("Access-Control-Allow-Origin") == "*"
+        finally:
+            svc.stop()
+
+    def test_json_response_has_cors_headers(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, headers = self._request(svc.config.port, "/api/v1/conversations")
+            assert status == 200
+            assert headers.get("Access-Control-Allow-Origin") == "*"
+            assert headers.get("Access-Control-Allow-Methods") is not None
+        finally:
+            svc.stop()
+
+    def test_html_response_has_cors_headers(self, daemon_home):
+        svc = self._start_server(daemon_home)
+        try:
+            status, headers = self._request(svc.config.port, "/")
+            assert status == 200
+            assert headers.get("Access-Control-Allow-Origin") == "*"
+        finally:
+            svc.stop()
+
+
 def _find_free_port() -> int:
     """Find an available port for testing."""
     import socket

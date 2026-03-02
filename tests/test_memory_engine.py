@@ -22,6 +22,12 @@ from skcapstone.memory_engine import (
 from skcapstone.models import MemoryEntry, MemoryLayer
 
 
+@pytest.fixture(autouse=True)
+def no_unified_backend(monkeypatch):
+    """Disable the unified skmemory backend so tests use only file-based storage."""
+    monkeypatch.setattr("skcapstone.memory_engine._get_unified", lambda: None)
+
+
 @pytest.fixture
 def agent_home(tmp_path: Path) -> Path:
     """Create a temporary agent home with memory directories."""

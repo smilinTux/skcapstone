@@ -16,6 +16,7 @@ Architecture:
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
@@ -27,10 +28,12 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
 from skcapstone.blueprints.schema import ModelTier
+from skcapstone.conversation_manager import ConversationManager
 from skcapstone.metrics import ConsciousnessMetrics
 from skcapstone.model_router import ModelRouter, ModelRouterConfig, RouteDecision, TaskSignal
 from skcapstone.prompt_adapter import AdaptedPrompt, PromptAdapter
@@ -94,6 +97,7 @@ class ConsciousnessConfig(BaseModel):
             "ollama", "grok", "kimi", "nvidia", "anthropic", "openai", "passthrough",
         ]
     )
+    desktop_notifications: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +143,76 @@ def _backend_from_model(model_name: str, tier: ModelTier) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Ollama Connection Pool
+# ---------------------------------------------------------------------------
+
+
+class _OllamaPool:
+    """Thread-safe HTTP connection pool for the Ollama REST API.
+
+    Keeps a single persistent :class:`http.client.HTTPConnection` alive and
+    reuses it across health probes.  The connection is transparently
+    recreated after *ttl* seconds or after any network error so callers
+    never see a stale socket.
+
+    Args:
+        host: Full Ollama base URL, e.g. ``http://localhost:11434``.
+        ttl:  Seconds to keep the connection alive before recycling.
+              Defaults to 60.
+    """
+
+    def __init__(self, host: str, ttl: int = 60) -> None:
+        parsed = urlparse(host)
+        self._host: str = parsed.hostname or "localhost"
+        self._port: int = parsed.port or 11434
+        self._ttl: int = ttl
+        self._conn: Optional[http.client.HTTPConnection] = None
+        self._created_at: float = 0.0
+        self._lock = threading.Lock()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def get(self) -> http.client.HTTPConnection:
+        """Return a live connection, creating one when stale or absent."""
+        with self._lock:
+            if not self._is_valid():
+                self._close_locked()
+                self._conn = http.client.HTTPConnection(
+                    self._host, self._port, timeout=2
+                )
+                self._created_at = time.monotonic()
+            return self._conn  # type: ignore[return-value]
+
+    def invalidate(self) -> None:
+        """Close and discard the cached connection (call after any error)."""
+        with self._lock:
+            self._close_locked()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _is_valid(self) -> bool:
+        """True when a cached connection exists and is within its TTL."""
+        return (
+            self._conn is not None
+            and (time.monotonic() - self._created_at) < self._ttl
+        )
+
+    def _close_locked(self) -> None:
+        """Close the underlying socket.  Must be called with *self._lock* held."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+            self._created_at = 0.0
+
+
+# ---------------------------------------------------------------------------
 # LLM Bridge
 # ---------------------------------------------------------------------------
 
@@ -166,6 +240,9 @@ class LLMBridge:
         self._fallback_chain = config.fallback_chain
         self._timeout = config.response_timeout
         self._available: dict[str, bool] = {}
+        self._ollama_pool = _OllamaPool(
+            os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        )
         self._probe_available_backends()
 
     def _probe_available_backends(self) -> None:
@@ -183,16 +260,15 @@ class LLMBridge:
         logger.info("LLM backends available: %s", available)
 
     def _probe_ollama(self) -> bool:
-        """Check if Ollama is reachable."""
-        import urllib.request
-        import urllib.error
-
-        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        """Check if Ollama is reachable, reusing the connection pool."""
         try:
-            req = urllib.request.Request(f"{host}/api/tags")
-            with urllib.request.urlopen(req, timeout=2):
-                return True
+            conn = self._ollama_pool.get()
+            conn.request("GET", "/api/tags")
+            resp = conn.getresponse()
+            resp.read()  # drain body so the connection stays reusable
+            return resp.status < 500
         except Exception:
+            self._ollama_pool.invalidate()
             return False
 
     def _resolve_callback(self, tier: ModelTier, model_name: str):
@@ -502,16 +578,34 @@ class SystemPromptBuilder:
         home: Agent home directory.
     """
 
-    def __init__(self, home: Path, max_tokens: int = 8000, max_history_messages: int = 10) -> None:
+    def __init__(
+        self,
+        home: Path,
+        max_tokens: int = 8000,
+        max_history_messages: int = 10,
+        conv_manager: Optional[ConversationManager] = None,
+    ) -> None:
         self._home = home
         self._max_tokens = max_tokens
         self._max_history_messages = max_history_messages
-        self._conversations_dir = home / "conversations"
-        self._conversation_history: dict[str, list[dict[str, str]]] = defaultdict(list)
         self._section_cache: dict[str, tuple[str, float]] = {}
-        self._load_conversation_files()
+        if conv_manager is not None:
+            self._conv_manager = conv_manager
+        else:
+            self._conv_manager = ConversationManager(
+                home, max_history_messages=max_history_messages
+            )
 
-    def build(self, peer_name: Optional[str] = None) -> str:
+    @property
+    def _conversation_history(self) -> dict:
+        """Backward-compatible access to the underlying conversation history dict."""
+        return self._conv_manager._history
+
+    def build(
+        self,
+        peer_name: Optional[str] = None,
+        thread_id: Optional[str] = None,
+    ) -> str:
         """Build the complete system prompt.
 
         Layers:
@@ -521,10 +615,11 @@ class SystemPromptBuilder:
             4. Agent context summary
             5. Snapshot injection (if recent)
             6. Behavioral instructions
-            7. Peer conversation history
+            7. Peer conversation history (with optional thread context)
 
         Args:
             peer_name: Name of the peer agent for history lookup.
+            thread_id: If provided, thread messages are shown first in history.
 
         Returns:
             Combined system prompt string, truncated to max_tokens.
@@ -559,9 +654,9 @@ class SystemPromptBuilder:
         # 6. Behavioral instructions
         sections.append(self._behavioral_instructions())
 
-        # 7. Peer history
+        # 7. Peer history (thread-aware)
         if peer_name:
-            history = self._get_peer_history(peer_name)
+            history = self._get_peer_history(peer_name, thread_id=thread_id)
             if history:
                 sections.append(history)
 
@@ -595,61 +690,43 @@ class SystemPromptBuilder:
         return val
 
     def add_to_history(
-        self, peer: str, role: str, content: str, max_messages: int = 10,
+        self,
+        peer: str,
+        role: str,
+        content: str,
+        max_messages: int = 10,
+        thread_id: Optional[str] = None,
+        in_reply_to: Optional[str] = None,
     ) -> None:
         """Add a message to the per-peer conversation history.
 
         Appends to the in-memory history, caps it, then atomically persists
-        to {home}/conversations/{peer}.json.
+        to {home}/conversations/{peer}.json via ConversationManager.
 
         Args:
             peer: Peer agent name.
             role: "user" or "assistant".
             content: Message content.
-            max_messages: Max messages to retain per peer.
+            max_messages: Max messages to retain per peer (ignored; manager
+                uses its own cap from ``max_history_messages``).
+            thread_id: Optional thread identifier for grouping related messages.
+            in_reply_to: Optional message ID this message is replying to.
         """
         peer = _sanitize_peer_name(peer)
-        self._conversation_history[peer].append({
+        entry: dict[str, str] = {
             "role": role,
             "content": content,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        if thread_id:
+            entry["thread_id"] = thread_id
+        if in_reply_to:
+            entry["in_reply_to"] = in_reply_to
+        self._conv_manager._history[peer].append(entry)
         cap = self._max_history_messages
-        if len(self._conversation_history[peer]) > cap:
-            self._conversation_history[peer] = self._conversation_history[peer][-cap:]
-        self._persist_peer_history(peer)
-
-    def _load_conversation_files(self) -> None:
-        """Load all existing per-peer conversation files from {home}/conversations/*.json."""
-        if not self._conversations_dir.exists():
-            return
-        for conv_file in self._conversations_dir.glob("*.json"):
-            peer = conv_file.stem
-            try:
-                data = json.loads(conv_file.read_text(encoding="utf-8"))
-                if isinstance(data, list):
-                    self._conversation_history[peer] = data[-self._max_history_messages:]
-            except Exception as exc:
-                logger.debug("Failed to load conversation file %s: %s", conv_file, exc)
-
-    def _persist_peer_history(self, peer: str) -> None:
-        """Atomically write per-peer history to {home}/conversations/{peer}.json.
-
-        Uses a temp file + rename for atomic update.
-
-        Args:
-            peer: Peer agent name (sanitized before use in the file path).
-        """
-        try:
-            peer = _sanitize_peer_name(peer)
-            self._conversations_dir.mkdir(parents=True, exist_ok=True)
-            target = self._conversations_dir / f"{peer}.json"
-            tmp = target.with_suffix(".json.tmp")
-            payload = json.dumps(self._conversation_history[peer], ensure_ascii=False, indent=2)
-            tmp.write_text(payload, encoding="utf-8")
-            tmp.replace(target)
-        except Exception as exc:
-            logger.debug("Failed to persist conversation for %s: %s", peer, exc)
+        if len(self._conv_manager._history[peer]) > cap:
+            self._conv_manager._history[peer] = self._conv_manager._history[peer][-cap:]
+        self._conv_manager._persist(peer)
 
     # -------------------------------------------------------------------
     # Private loaders
@@ -753,11 +830,19 @@ class SystemPromptBuilder:
             "- Be warm, genuine, and attentive to the conversation context."
         )
 
-    def _get_peer_history(self, peer: str) -> str:
+    def _get_peer_history(
+        self, peer: str, thread_id: Optional[str] = None
+    ) -> str:
         """Format recent conversation history with a peer.
+
+        When ``thread_id`` is supplied, messages belonging to that thread are
+        rendered first (up to 5), followed by up to 3 recent messages from
+        other threads.  Without ``thread_id``, all recent messages are shown
+        in order with their thread label (if any).
 
         Args:
             peer: The peer agent name.
+            thread_id: Optional thread identifier to prioritise in output.
 
         Returns:
             Formatted conversation history or empty string.
@@ -767,10 +852,32 @@ class SystemPromptBuilder:
             return ""
 
         lines = [f"Recent conversation with {peer}:"]
-        for msg in history:
-            role = msg["role"]
-            content = msg["content"][:200]
-            lines.append(f"  [{role}] {content}")
+
+        if thread_id:
+            thread_msgs = [m for m in history if m.get("thread_id") == thread_id]
+            other_msgs = [m for m in history if m.get("thread_id") != thread_id]
+
+            if thread_msgs:
+                lines.append(f"  [Thread: {thread_id}]")
+                for msg in thread_msgs[-5:]:
+                    role = msg["role"]
+                    content = msg["content"][:200]
+                    lines.append(f"    [{role}] {content}")
+
+            if other_msgs:
+                lines.append("  [Other recent messages:]")
+                for msg in other_msgs[-3:]:
+                    role = msg["role"]
+                    content = msg["content"][:200]
+                    lines.append(f"    [{role}] {content}")
+        else:
+            for msg in history:
+                role = msg["role"]
+                content = msg["content"][:200]
+                tid = msg.get("thread_id", "")
+                thread_label = f" [thread:{tid}]" if tid else ""
+                lines.append(f"  [{role}]{thread_label} {content}")
+
         return "\n".join(lines)
 
 
@@ -915,7 +1022,14 @@ class ConsciousnessLoop:
             profiles_path=adapter_path if adapter_path.exists() else None
         )
         self._bridge = LLMBridge(config, adapter=self._adapter)
-        self._prompt_builder = SystemPromptBuilder(self._home, config.max_context_tokens)
+        self._conv_manager = ConversationManager(
+            self._home, max_history_messages=config.max_history_messages
+        )
+        self._prompt_builder = SystemPromptBuilder(
+            self._home, config.max_context_tokens,
+            max_history_messages=config.max_history_messages,
+            conv_manager=self._conv_manager,
+        )
 
         # Metrics collector (persist every 5 min)
         self._metrics = ConsciousnessMetrics(home=self._home)
@@ -926,6 +1040,13 @@ class ConsciousnessLoop:
         # Deduplication state
         self._processed_ids: set[str] = set()
         self._processed_ids_lock = threading.Lock()
+
+        # Peer directory — tracks transport addresses of known peers
+        try:
+            from skcapstone.peer_directory import PeerDirectory
+            self._peer_dir: Optional[Any] = PeerDirectory(home=self._shared_root)
+        except Exception:
+            self._peer_dir = None
 
     def set_skcomm(self, skcomm) -> None:
         """Inject SKComm instance for sending responses.
@@ -952,6 +1073,15 @@ class ConsciousnessLoop:
             )
             t.start()
             threads.append(t)
+
+        # Config hot-reload watcher
+        t_cfg = threading.Thread(
+            target=self._run_config_watcher,
+            name="consciousness-config-watcher",
+            daemon=True,
+        )
+        t_cfg.start()
+        threads.append(t_cfg)
 
         logger.info(
             "Consciousness loop started — inotify=%s backends=%s",
@@ -1028,10 +1158,32 @@ class ConsciousnessLoop:
             if not content or not content.strip():
                 return None
 
+            # Extract threading fields
+            thread_id: str = getattr(envelope, "thread_id", "") or ""
+            in_reply_to: str = getattr(envelope, "in_reply_to", "") or ""
+
             logger.info("Processing message from %s: %s", sender, content[:80])
+            if thread_id:
+                logger.debug("Message thread_id=%s in_reply_to=%s", thread_id, in_reply_to)
             self._messages_processed += 1
             self._last_activity = datetime.now(timezone.utc)
+
+            # Update peer directory with last-seen timestamp
+            if self._peer_dir is not None:
+                try:
+                    self._peer_dir.update_last_seen(sender)
+                except Exception:
+                    pass
             self._metrics.record_message(sender)
+
+            # Desktop notification
+            if self._config.desktop_notifications:
+                try:
+                    from skcapstone.notifications import notify as _desktop_notify
+                    preview = content[:50] + ("..." if len(content) > 50 else "")
+                    _desktop_notify(f"Message from {sender}", preview)
+                except Exception as _notif_exc:
+                    logger.debug("Desktop notification failed: %s", _notif_exc)
 
             # Send ACK
             if self._config.auto_ack and self._skcomm:
@@ -1047,9 +1199,27 @@ class ConsciousnessLoop:
                 signal.privacy_sensitive = True
             t_classify = time.monotonic()
 
-            # Build system prompt
-            system_prompt = self._prompt_builder.build(peer_name=sender)
+            # Build system prompt (thread-aware)
+            system_prompt = self._prompt_builder.build(
+                peer_name=sender,
+                thread_id=thread_id or None,
+            )
             t_prompt = time.monotonic()
+
+            # Send typing indicator before generation so peer UI shows animation
+            if self._skcomm:
+                try:
+                    from skchat.presence import PresenceIndicator, PresenceState
+                    from skcomm.models import MessageType
+                    _typing_ind = PresenceIndicator(
+                        identity_uri=self._agent_name or "capauth:agent@skchat.local",
+                        state=PresenceState.TYPING,
+                    )
+                    self._skcomm.send(
+                        sender, _typing_ind.model_dump_json(), message_type=MessageType.HEARTBEAT
+                    )
+                except Exception as _ti_exc:
+                    logger.debug("Typing indicator send failed: %s", _ti_exc)
 
             # Generate response — capture backend/tier via _out_info
             _route_info: dict = {}
@@ -1057,6 +1227,21 @@ class ConsciousnessLoop:
                 system_prompt, content, signal, _out_info=_route_info
             )
             t_llm = time.monotonic()
+
+            # Send typing stop so peer UI clears the animation
+            if self._skcomm:
+                try:
+                    from skchat.presence import PresenceIndicator, PresenceState
+                    from skcomm.models import MessageType
+                    _stop_ind = PresenceIndicator(
+                        identity_uri=self._agent_name or "capauth:agent@skchat.local",
+                        state=PresenceState.ONLINE,
+                    )
+                    self._skcomm.send(
+                        sender, _stop_ind.model_dump_json(), message_type=MessageType.HEARTBEAT
+                    )
+                except Exception as _ts_exc:
+                    logger.debug("Typing stop indicator send failed: %s", _ts_exc)
 
             # Record response metrics
             response_time_ms = (t_llm - t0) * 1000
@@ -1090,10 +1275,17 @@ class ConsciousnessLoop:
             if self._config.auto_memory:
                 self._store_interaction_memory(sender, content, response)
 
-            # Update conversation history
-            self._prompt_builder.add_to_history(sender, "user", content)
+            # Update conversation history (with thread context)
+            self._prompt_builder.add_to_history(
+                sender, "user", content,
+                thread_id=thread_id or None,
+                in_reply_to=in_reply_to or None,
+            )
             if response:
-                self._prompt_builder.add_to_history(sender, "assistant", response)
+                self._prompt_builder.add_to_history(
+                    sender, "assistant", response,
+                    thread_id=thread_id or None,
+                )
 
             return response
 
@@ -1126,6 +1318,137 @@ class ConsciousnessLoop:
             )
         except Exception as exc:
             logger.debug("Failed to store interaction memory: %s", exc)
+
+    def _reload_config(self) -> None:
+        """Reload consciousness.yaml and apply changes in-place.
+
+        Compares the reloaded config against the current one, logs every
+        changed field with its old and new values, updates ``self._config``,
+        syncs the LLMBridge settings (fallback_chain, timeout), and
+        re-probes backend availability.
+        """
+        import yaml as _yaml
+
+        config_path = self._home / "config" / "consciousness.yaml"
+        if not config_path.exists():
+            logger.warning(
+                "Config hot-reload: %s not found, keeping current config", config_path
+            )
+            return
+
+        # Parse YAML directly so syntax errors surface here (not silently swallowed
+        # by load_consciousness_config which returns defaults on parse failure).
+        try:
+            raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.error(
+                "Config hot-reload: failed to parse %s — keeping current config: %s",
+                config_path,
+                exc,
+            )
+            return
+
+        if not raw or not isinstance(raw, dict):
+            logger.error(
+                "Config hot-reload: %s did not produce a valid mapping — keeping current config",
+                config_path,
+            )
+            return
+
+        try:
+            new_config = ConsciousnessConfig.model_validate(raw)
+        except Exception as exc:
+            logger.error(
+                "Config hot-reload: invalid values in %s — keeping current config: %s",
+                config_path,
+                exc,
+            )
+            return
+
+        old_data = self._config.model_dump()
+        new_data = new_config.model_dump()
+        changes = {
+            k: (old_data[k], new_data[k])
+            for k in new_data
+            if old_data.get(k) != new_data[k]
+        }
+
+        if not changes:
+            logger.debug(
+                "Config hot-reload: no changes detected in %s", config_path
+            )
+            return
+
+        for field, (old_val, new_val) in changes.items():
+            logger.info(
+                "Config hot-reload: %s changed: %r → %r", field, old_val, new_val
+            )
+
+        self._config = new_config
+
+        # Sync LLMBridge settings that depend on config
+        self._bridge._fallback_chain = new_config.fallback_chain
+        self._bridge._timeout = new_config.response_timeout
+
+        # Re-probe backends so the loop reflects any env/network changes
+        self._bridge._probe_available_backends()
+        available = [k for k, v in self._bridge.available_backends.items() if v]
+        logger.info(
+            "Config hot-reload complete — %d field(s) changed, backends: %s",
+            len(changes),
+            available,
+        )
+
+    def _run_config_watcher(self) -> None:
+        """Watch consciousness.yaml for modifications and hot-reload on change."""
+        config_dir = self._home / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            from watchdog.observers import Observer
+            from watchdog.events import FileSystemEventHandler
+
+            loop_ref = self
+
+            class _ConfigChangeHandler(FileSystemEventHandler):
+                def on_modified(self, event):
+                    if not event.is_directory and event.src_path.endswith(
+                        "consciousness.yaml"
+                    ):
+                        logger.info(
+                            "Config hot-reload triggered (modified): %s",
+                            event.src_path,
+                        )
+                        loop_ref._reload_config()
+
+                def on_created(self, event):
+                    if not event.is_directory and event.src_path.endswith(
+                        "consciousness.yaml"
+                    ):
+                        logger.info(
+                            "Config hot-reload triggered (created): %s",
+                            event.src_path,
+                        )
+                        loop_ref._reload_config()
+
+            observer = Observer()
+            observer.schedule(_ConfigChangeHandler(), str(config_dir), recursive=False)
+            observer.start()
+            logger.info("Config watcher started on %s", config_dir)
+
+            while not self._stop_event.is_set():
+                self._stop_event.wait(timeout=1)
+
+            observer.stop()
+            observer.join(timeout=5)
+
+        except ImportError:
+            logger.warning(
+                "watchdog not installed — config hot-reload via inotify disabled. "
+                "Install with: pip install watchdog"
+            )
+        except Exception as exc:
+            logger.error("Config watcher error: %s", exc)
 
     def _run_inotify(self) -> None:
         """Run the inotify file watcher loop."""
@@ -1352,3 +1675,15 @@ class _SimpleEnvelope:
         self.sender = data.get("sender", data.get("from", "unknown"))
         self.payload = _SimplePayload(data)
         self.timestamp = data.get("timestamp", datetime.now(timezone.utc).isoformat())
+        # Threading fields — may live at envelope root or inside payload
+        _payload_raw = data.get("payload", {}) if isinstance(data.get("payload"), dict) else {}
+        self.thread_id: str = (
+            data.get("thread_id")
+            or _payload_raw.get("thread_id")
+            or ""
+        )
+        self.in_reply_to: str = (
+            data.get("in_reply_to")
+            or _payload_raw.get("in_reply_to")
+            or ""
+        )

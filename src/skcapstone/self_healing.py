@@ -288,6 +288,10 @@ class SelfHealingDoctor:
                     stale.append(profile.family)
 
             if stale:
+                logger.warning(
+                    "Model profiles older than 90 days (manual update recommended): %s",
+                    ", ".join(stale),
+                )
                 return {
                     "name": "profile_freshness",
                     "status": "ok",  # Informational, not broken

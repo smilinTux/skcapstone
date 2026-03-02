@@ -112,6 +112,7 @@ class TestAgentChatSend:
         mock_history = MagicMock()
         mock_history.store_message.return_value = "mem-abc"
         agent._history = mock_history
+        agent._ensure_comm = lambda: False
 
         result = agent.send("lumina", "Hello!")
 
