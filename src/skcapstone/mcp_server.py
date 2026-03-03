@@ -1405,6 +1405,107 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Telegram Import ────────────────────────────────────────
+        Tool(
+            name="import_telegram",
+            description=(
+                "Import a Telegram Desktop chat export into memories. "
+                "Point to the export directory containing result.json."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "export_path": {
+                        "type": "string",
+                        "description": "Path to Telegram export directory or result.json file",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Import mode: 'daily' (consolidate per day) or 'message' (one per message)",
+                        "enum": ["daily", "message"],
+                        "default": "daily",
+                    },
+                    "min_length": {
+                        "type": "integer",
+                        "description": "Skip messages shorter than this many characters",
+                        "default": 30,
+                    },
+                    "chat_name": {
+                        "type": "string",
+                        "description": "Override the chat name from the export",
+                    },
+                    "tags": {
+                        "type": "string",
+                        "description": "Extra comma-separated tags to apply",
+                    },
+                },
+                "required": ["export_path"],
+            },
+        ),
+        Tool(
+            name="import_telegram_api",
+            description=(
+                "Import messages directly from Telegram API using Telethon. "
+                "Requires TELEGRAM_API_ID and TELEGRAM_API_HASH env vars. "
+                "No manual export needed — connects and pulls messages directly."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "chat": {
+                        "type": "string",
+                        "description": "Chat username, title, or numeric ID to import from",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Import mode: 'daily' or 'message'",
+                        "enum": ["daily", "message"],
+                        "default": "daily",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of messages to fetch",
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "Only fetch messages after this date (YYYY-MM-DD)",
+                    },
+                    "min_length": {
+                        "type": "integer",
+                        "description": "Skip messages shorter than this many characters",
+                        "default": 30,
+                    },
+                    "chat_name": {
+                        "type": "string",
+                        "description": "Override the chat name",
+                    },
+                    "tags": {
+                        "type": "string",
+                        "description": "Extra comma-separated tags",
+                    },
+                },
+                "required": ["chat"],
+            },
+        ),
+        # ── Version Check ──────────────────────────────────────────
+        Tool(
+            name="version_check",
+            description=(
+                "Check ecosystem package versions against PyPI. "
+                "Shows installed vs latest for skmemory, skcapstone, capauth, "
+                "sksecurity, skcomm, skchat, cloud9-protocol."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "no_pypi": {
+                        "type": "boolean",
+                        "description": "Skip PyPI lookup (offline mode)",
+                        "default": False,
+                    },
+                },
+            },
+        ),
         # Model Router
         Tool(
             name="model_route",
@@ -1534,6 +1635,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "skseed_alignment": _handle_skseed_alignment,
         # Model Router
         "model_route": _handle_model_route,
+        # Telegram Import
+        "import_telegram": _handle_import_telegram,
+        "import_telegram_api": _handle_import_telegram_api,
+        # Version Check
+        "version_check": _handle_version_check,
     }
     handler = handlers.get(name)
     if handler is None:
@@ -3189,6 +3295,95 @@ async def _handle_model_route(args: dict) -> list[TextContent]:
     router = ModelRouter()
     decision = router.route(signal)
     return _json_response(decision.model_dump())
+
+
+# ── Telegram Import ──────────────────────────────────────────
+
+
+async def _handle_import_telegram(args: dict) -> list[TextContent]:
+    """Import a Telegram Desktop chat export into memories."""
+    try:
+        from skmemory.importers.telegram import import_telegram
+        from skmemory.store import MemoryStore
+
+        export_path = args["export_path"]
+        mode = args.get("mode", "daily")
+        min_length = args.get("min_length", 30)
+        chat_name = args.get("chat_name")
+        tags_str = args.get("tags", "")
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else None
+
+        store = MemoryStore()
+        stats = import_telegram(
+            store,
+            export_path,
+            mode=mode,
+            min_message_length=min_length,
+            chat_name=chat_name,
+            tags=tags,
+        )
+        return _json_response(stats)
+    except Exception as e:
+        return _json_response({"error": str(e)})
+
+
+async def _handle_import_telegram_api(args: dict) -> list[TextContent]:
+    """Import messages directly from Telegram API."""
+    try:
+        from skmemory.importers.telegram_api import import_telegram_api
+        from skmemory.store import MemoryStore
+
+        chat = args["chat"]
+        mode = args.get("mode", "daily")
+        limit = args.get("limit")
+        since = args.get("since")
+        min_length = args.get("min_length", 30)
+        chat_name = args.get("chat_name")
+        tags_str = args.get("tags", "")
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else None
+
+        store = MemoryStore()
+        stats = import_telegram_api(
+            store,
+            chat,
+            mode=mode,
+            limit=limit,
+            since=since,
+            min_message_length=min_length,
+            chat_name=chat_name,
+            tags=tags,
+        )
+        return _json_response(stats)
+    except Exception as e:
+        return _json_response({"error": str(e)})
+
+
+# ── Version Check ────────────────────────────────────────────
+
+
+async def _handle_version_check(args: dict) -> list[TextContent]:
+    """Check ecosystem package versions against PyPI."""
+    try:
+        from .version_check import check_versions
+
+        no_pypi = args.get("no_pypi", False)
+        report = check_versions(check_pypi=not no_pypi)
+
+        result = {
+            "all_up_to_date": report.all_up_to_date,
+            "packages": [
+                {
+                    "name": p.name,
+                    "installed": p.installed,
+                    "latest": p.latest,
+                    "up_to_date": p.up_to_date,
+                }
+                for p in report.packages
+            ],
+        }
+        return _json_response(result)
+    except Exception as e:
+        return _json_response({"error": str(e)})
 
 
 # ═══════════════════════════════════════════════════════════
