@@ -9,7 +9,7 @@ A smilinTux Open Source Project.
 
 import os
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __author__ = "smilinTux"
 
 AGENT_HOME = os.environ.get("SKCAPSTONE_HOME", "~/.skcapstone")
