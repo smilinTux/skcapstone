@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skcapstone"
-version = "0.1.3"
+version = "0.1.4"
 description = "Sovereign Agent Framework — conscious AI through identity, trust, memory, and security"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
@@ -58,7 +58,7 @@ fuse = [
     "fusepy>=3.0.1",
 ]
 chat = [
-    "skchat>=0.1.0",
+    "skchat-sovereign>=0.1.1",
 ]
 comm = [
     "skcomm>=0.1.0",
@@ -72,7 +72,7 @@ all = [
     "sksecurity>=1.2.0",
     "skmemory[skvector]>=0.5.0",
     "skseed>=0.1.0",
-    "skchat>=0.1.0",
+    "skchat-sovereign>=0.1.1",
     "skcomm>=0.1.0",
     "fusepy>=3.0.1",
     "boto3>=1.34",
