@@ -117,6 +117,7 @@ def run_diagnostics(home: Path) -> DiagnosticReport:
     report.checks.extend(_check_memory(home))
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
+    report.checks.extend(_check_versions())
 
     return report
 
@@ -164,7 +165,9 @@ def _check_system_tools() -> list[Check]:
     checks = []
 
     # Git (required for clone/setup) — platform-aware download link
-    git_installed, _, git_detail = check_git()
+    git_check = check_git()
+    git_installed = git_check.installed
+    git_detail = git_check.version or "not found"
     git_fix = git_install_hint_for_doctor() if not git_installed else ""
     checks.append(Check(
         name="tool:git",
@@ -509,6 +512,33 @@ def _check_sync(home: Path) -> list[Check]:
             fix="skcapstone sync setup",
             category="sync",
         ))
+
+    return checks
+
+
+def _check_versions() -> list[Check]:
+    """Check for outdated ecosystem packages."""
+    checks = []
+
+    try:
+        from .version_check import check_versions
+
+        report = check_versions(check_pypi=True)
+        for pkg in report.packages:
+            if not pkg.installed:
+                continue
+            if pkg.up_to_date:
+                continue
+            checks.append(Check(
+                name=f"version:{pkg.name}",
+                description=f"{pkg.name} outdated ({pkg.installed} \u2192 {pkg.latest})",
+                passed=False,
+                detail=f"installed: {pkg.installed}, latest: {pkg.latest}",
+                fix=f"pip install --upgrade {pkg.name}",
+                category="packages",
+            ))
+    except Exception:
+        pass
 
     return checks
 

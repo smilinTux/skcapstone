@@ -25,9 +25,13 @@ logger = logging.getLogger("skcapstone.memory_adapter")
 
 @functools.lru_cache(maxsize=1)
 def _skmemory_available() -> bool:
-    """Check if skmemory is importable (cached)."""
+    """Check if skmemory is importable (cached).
+
+    Performs a deep import check to verify skmemory's core
+    module is accessible, not just the package __init__.
+    """
     try:
-        import skmemory  # noqa: F401
+        from skmemory.store import MemoryStore  # noqa: F401
 
         return True
     except ImportError:
