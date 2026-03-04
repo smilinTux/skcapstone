@@ -1,28 +1,179 @@
 #!/bin/bash
+# install.sh — Sovereign Agent Suite Installer
+#
+# Installs all SK* packages into a dedicated virtualenv at ~/.skenv.
+# This keeps the system Python clean and avoids --break-system-packages.
+#
+# Usage:
+#   bash scripts/install.sh           # Standard install
+#   bash scripts/install.sh --dev     # Include dev/test tools
+#   bash scripts/install.sh --force   # Recreate venv from scratch
+#
+# After install, add to your shell profile:
+#   export PATH="$HOME/.skenv/bin:$PATH"
+
 set -euo pipefail
-echo "=== Sovereign Agent Installer ==="
 
-# Check prerequisites
-python3 --version || { echo "Python 3.11+ required"; exit 1; }
-command -v pip3 >/dev/null || { echo "pip3 required"; exit 1; }
+SKENV="$HOME/.skenv"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+DEV_MODE=false
+FORCE=false
 
-# Install packages in dependency order
-cd "$(dirname "$0")/.."
-pip install -e ../skseed/ 2>/dev/null || pip install -e skseed/
-pip install -e ../skcomm/ 2>/dev/null || pip install -e skcomm/
-pip install -e .[all]
+for arg in "$@"; do
+    case "$arg" in
+        --dev)  DEV_MODE=true ;;
+        --force) FORCE=true ;;
+    esac
+done
 
-# Pull Ollama models (if Ollama installed)
-if command -v ollama >/dev/null; then
-  echo "Pulling Ollama models..."
-  ollama pull llama3.2 || true
+echo "=== Sovereign Agent Suite Installer ==="
+echo ""
+
+# ---------------------------------------------------------------------------
+# Step 1: Check prerequisites
+# ---------------------------------------------------------------------------
+PYTHON=""
+for candidate in python3.12 python3.11 python3; do
+    if command -v "$candidate" &>/dev/null; then
+        ver=$("$candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        major="${ver%%.*}"
+        minor="${ver##*.}"
+        if [[ "$major" -ge 3 ]] && [[ "$minor" -ge 10 ]]; then
+            PYTHON="$candidate"
+            break
+        fi
+    fi
+done
+
+if [[ -z "$PYTHON" ]]; then
+    echo "ERROR: Python 3.10+ required. Found none."
+    exit 1
 fi
 
-# Initialize home directory
-skcapstone doctor --fix 2>/dev/null || true
+echo "[1/5] Using $PYTHON ($($PYTHON --version 2>&1))"
 
-# Verify
-python -c "import skcapstone; print('skcapstone OK')"
-python -c "import skseed; print('skseed OK')"
-python -c "import skcomm; print('skcomm OK')"
-echo "=== Installation complete ==="
+# ---------------------------------------------------------------------------
+# Step 2: Create virtualenv
+# ---------------------------------------------------------------------------
+if [[ "$FORCE" == "true" ]] && [[ -d "$SKENV" ]]; then
+    echo "[2/5] Removing existing venv (--force)..."
+    rm -rf "$SKENV"
+fi
+
+if [[ ! -d "$SKENV" ]]; then
+    echo "[2/5] Creating virtualenv at $SKENV..."
+    "$PYTHON" -m venv "$SKENV"
+else
+    echo "[2/5] Virtualenv exists at $SKENV"
+fi
+
+PIP="$SKENV/bin/pip"
+$PIP install --upgrade pip -q 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# Step 3: Install SK* packages
+# ---------------------------------------------------------------------------
+echo "[3/5] Installing SK* packages..."
+
+# Helper: install editable if local dir exists, else from PyPI
+install_pkg() {
+    local name="$1"
+    local extras="${2:-}"
+    local paths="${3:-}"
+
+    for path in $paths; do
+        if [[ -d "$path" ]]; then
+            if [[ -n "$extras" ]]; then
+                $PIP install -e "${path}[${extras}]" -q 2>/dev/null && echo "  $name (editable: $path)" && return 0
+                # Retry without extras if they fail
+                $PIP install -e "$path" -q 2>/dev/null && echo "  $name (editable, no extras: $path)" && return 0
+            else
+                $PIP install -e "$path" -q 2>/dev/null && echo "  $name (editable: $path)" && return 0
+            fi
+        fi
+    done
+
+    # Fall back to PyPI
+    if [[ -n "$extras" ]]; then
+        $PIP install "${name}[${extras}]" -q 2>/dev/null && echo "  $name (PyPI)" && return 0
+        $PIP install "$name" -q 2>/dev/null && echo "  $name (PyPI, no extras)" && return 0
+    else
+        $PIP install "$name" -q 2>/dev/null && echo "  $name (PyPI)" && return 0
+    fi
+
+    echo "  $name (FAILED — skipping)" && return 1
+}
+
+# Parent dir of skcapstone (where sibling repos might live)
+PARENT="$(dirname "$REPO_ROOT")"
+PILLAR="$PARENT/pillar-repos"
+
+# Core packages (in dependency order)
+install_pkg "capauth"    "all"                   "$PILLAR/capauth $PARENT/capauth"
+install_pkg "skmemory"   ""                      "$PILLAR/skmemory $PARENT/skmemory"
+install_pkg "skcomm"     "cli,crypto,discovery,api" "$PILLAR/skcomm $PARENT/skcomm"
+install_pkg "skcapstone" ""                      "$REPO_ROOT"
+install_pkg "skchat-sovereign" "all"             "$PARENT/skchat"
+install_pkg "skseal"     ""                      "$PARENT/skseal"
+install_pkg "skskills"   ""                      "$PARENT/skskills"
+install_pkg "sksecurity" ""                      "$PARENT/sksecurity"
+
+# ---------------------------------------------------------------------------
+# Step 4: Dev tools (optional)
+# ---------------------------------------------------------------------------
+if [[ "$DEV_MODE" == "true" ]]; then
+    echo "[4/5] Installing dev tools..."
+    $PIP install pytest pytest-cov ruff black -q 2>/dev/null
+    echo "  pytest, pytest-cov, ruff, black"
+else
+    echo "[4/5] Skipping dev tools (use --dev to include)"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 5: PATH setup
+# ---------------------------------------------------------------------------
+echo "[5/5] Verifying installation..."
+
+failures=0
+for cmd in skcomm skcapstone capauth skmemory; do
+    if "$SKENV/bin/$cmd" --version &>/dev/null; then
+        echo "  $cmd OK"
+    else
+        echo "  $cmd FAILED"
+        failures=$((failures + 1))
+    fi
+done
+
+echo ""
+
+# Check if PATH is configured
+if echo "$PATH" | grep -q "$SKENV/bin"; then
+    echo "PATH already includes $SKENV/bin"
+else
+    echo "Add this to your ~/.bashrc (or ~/.zshrc):"
+    echo ""
+    echo "  export PATH=\"\$HOME/.skenv/bin:\$PATH\""
+    echo ""
+
+    # Auto-add if not present
+    for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        if [[ -f "$rcfile" ]] && ! grep -q ".skenv/bin" "$rcfile"; then
+            echo "" >> "$rcfile"
+            echo '# SK* sovereign suite — installed in dedicated venv' >> "$rcfile"
+            echo 'export PATH="$HOME/.skenv/bin:$PATH"' >> "$rcfile"
+            echo "  (Added to $rcfile)"
+        fi
+    done
+fi
+
+echo ""
+if [[ "$failures" -eq 0 ]]; then
+    echo "=== Installation complete ==="
+else
+    echo "=== Installation complete with $failures warning(s) ==="
+fi
+echo ""
+echo "Commands available: skcomm, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity"
+echo "Venv location:     $SKENV"
+echo "To activate:       source $SKENV/bin/activate"

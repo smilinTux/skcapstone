@@ -36,6 +36,56 @@ Three core axioms:
 
 ---
 
+## System Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "SKCapstone Agent"
+        CLI[CLI - skcapstone] --> Daemon[Agent Daemon]
+        MCP[MCP Server] --> Daemon
+        Daemon --> Memory[skmemory]
+        Daemon --> Identity[CapAuth Identity]
+        Daemon --> Comms[SKComm Transport]
+        Daemon --> Chat[SKChat Messaging]
+    end
+
+    subgraph "Identity Layer"
+        Identity --> PGP[PGP Keys]
+        Identity --> DID[DID Documents]
+        DID --> T1[Tier 1: did:key]
+        DID --> T2[Tier 2: did:web mesh]
+        DID --> T3[Tier 3: did:web public]
+    end
+
+    subgraph "Communication"
+        Comms --> Syncthing[Syncthing Transport]
+        Comms --> File[File Transport]
+        Chat --> Comms
+    end
+
+    subgraph "Storage"
+        Memory --> SQLite[SQLite Store]
+        Memory --> YAML[YAML Configs]
+        Daemon --> Coord[Coordination Board]
+    end
+```
+
+## Install Flow
+
+```mermaid
+graph LR
+    A[git clone skcapstone] --> B[bash scripts/install.sh]
+    B --> C{~/.skenv exists?}
+    C -->|No| D[python3 -m venv ~/.skenv]
+    C -->|Yes| E[Use existing venv]
+    D --> F[pip install SK* packages]
+    E --> F
+    F --> G[Add ~/.skenv/bin to PATH]
+    G --> H[skcapstone --version]
+```
+
+---
+
 ## Component Diagram
 
 ```mermaid
@@ -552,6 +602,30 @@ any coordination message.
 
 ---
 
+## DID Tools
+
+The `mcp_tools/did_tools.py` module exposes five MCP tools for managing the agent's
+Decentralized Identifier (DID) documents. These are available to Claude Code and any
+MCP-compatible client.
+
+| Tool | Description |
+|------|-------------|
+| `did_show` | Display the agent's current DID document |
+| `did_verify_peer` | Verify a peer's DID and validate their identity |
+| `did_publish` | Publish the agent's DID document to the configured tier |
+| `did_policy` | View or update the agent's DID publication policy |
+| `did_identity_card` | Generate a portable identity card from the agent's DID |
+
+### DID Tiers
+
+| Tier | Method | Scope |
+|------|--------|-------|
+| Tier 1 | `did:key` | Local / offline — derived from the agent's PGP key; no network required |
+| Tier 2 | `did:web` mesh | Household mesh — published to trusted peers via Syncthing |
+| Tier 3 | `did:web` public | Public web — discoverable by anyone with the agent's domain |
+
+---
+
 ## Configuration Hierarchy
 
 Configuration is resolved in priority order (first wins):
@@ -675,7 +749,8 @@ skcapstone/
 │   │   ├── memory_tools.py
 │   │   ├── agent_tools.py
 │   │   ├── comm_tools.py
-│   │   └── sync_tools.py
+│   │   ├── sync_tools.py
+│   │   └── did_tools.py        ← DID identity tools (did_show, did_verify_peer, did_publish, did_policy, did_identity_card)
 │   ├── connectors/
 │   │   ├── vscode.py
 │   │   ├── cursor.py

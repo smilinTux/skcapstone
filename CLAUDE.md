@@ -34,12 +34,34 @@ skcapstone coord briefing --format json      # Machine-readable protocol
 4. **Claim before working** — prevents duplicate effort across agents
 5. **Create discovered work** — if you find something that needs doing, add a task
 
+## Installation
+
+All SK* packages install into a dedicated virtualenv at `~/.skenv/`.
+
+```bash
+# Clone and install (creates ~/.skenv/ venv, installs all SK* packages)
+git clone https://github.com/smilintux-org/skcapstone.git
+cd skcapstone
+bash scripts/install.sh
+
+# Adds ~/.skenv/bin to PATH automatically
+# Or manually: export PATH="$HOME/.skenv/bin:$PATH"
+```
+
+**`scripts/install.sh`** — Creates `~/.skenv/` if it does not exist, then installs all SK* packages into the venv.
+
+**`scripts/dev-install.sh`** — Wrapper around `install.sh` for development workflows (editable installs, extra dev dependencies).
+
+Do NOT use `pip install --user` or system pip for SK* packages. Always use the venv.
+
 ## Project Structure
 
 - `src/skcapstone/` — Core framework (models, CLI, coordination, memory, sync)
 - `tests/` — Pytest tests mirroring src structure
 - `docs/` — Architecture, security design, sovereign singularity spec
 - `~/.skcapstone/coordination/` — Syncthing-synced task board (JSON files)
+- `cli/upgrade_cmd.py` — Upgrade command implementation
+- `mcp_tools/did_tools.py` — DID identity MCP tools
 
 ## Code Style
 
@@ -51,6 +73,21 @@ skcapstone coord briefing --format json      # Machine-readable protocol
 ## Running Tests
 
 ```bash
-cd /home/cbrd21/Nextcloud/p/smilintux-org/skcapstone
-python -m pytest tests/ -v
+# Using venv python
+~/.skenv/bin/python -m pytest tests/ -v
+# Or activate first:
+source ~/.skenv/bin/activate
+pytest tests/ -v
 ```
+
+## MCP Tools
+
+### DID Tools (`mcp_tools/did_tools.py`)
+
+| Tool | Description |
+|------|-------------|
+| `did_show` | Display the agent's current DID document |
+| `did_verify_peer` | Verify a peer's DID and validate their identity |
+| `did_publish` | Publish the agent's DID document to the configured tier |
+| `did_policy` | View or update the agent's DID publication policy |
+| `did_identity_card` | Generate a portable identity card from the agent's DID |

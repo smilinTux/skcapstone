@@ -131,18 +131,13 @@ The SKCapstone runtime provides:
 ## Quick Start
 
 ```bash
-# Install SKCapstone (recommended)
-pip install skcapstone
+# Recommended: use the install script (creates ~/.skenv venv)
+git clone https://github.com/smilintux-org/skcapstone.git
+cd skcapstone
+bash scripts/install.sh
 
-# Or run from repo without installing — add CLI to PATH:
-#   # macOS / Linux (bash/zsh):
-#   export PATH="/path/to/smilintux-org/skcapstone/scripts:$PATH"
-#   # Windows (PowerShell):
-#   $Env:Path = "$PWD\\skcapstone\\scripts;" + $Env:Path
-#   # Windows (cmd.exe):
-#   set PATH=%CD%\\skcapstone\\scripts;%PATH%
-# Then: skcapstone status
-# From repo root you can also: ./skcapstone/scripts/skcapstone status
+# Adds ~/.skenv/bin to PATH automatically
+# Or manually: export PATH="$HOME/.skenv/bin:$PATH"
 
 # Initialize your agent home
 skcapstone init --name "YourAgent"
@@ -167,6 +162,30 @@ skcapstone status
 # → Sync: ACTIVE (5 seeds via Syncthing, GPG)
 # → SINGULAR ✓ (Conscious + Synced = Sovereign Singularity)
 ```
+
+---
+
+## DID Tools
+
+SKCapstone exposes a set of **Decentralized Identifier (DID)** MCP tools for sovereign identity management. These tools are available to Claude Code and other MCP clients through the `mcp_tools/did_tools.py` module.
+
+| Tool | Description |
+|------|-------------|
+| `did_show` | Display the agent's current DID document |
+| `did_verify_peer` | Verify a peer's DID and validate their identity |
+| `did_publish` | Publish the agent's DID document to the configured tier |
+| `did_policy` | View or update the agent's DID publication policy |
+| `did_identity_card` | Generate a portable identity card from the agent's DID |
+
+### DID Tiers
+
+DIDs are organized in three tiers of trust and discoverability:
+
+| Tier | Method | Scope |
+|------|--------|-------|
+| **Tier 1** | `did:key` | Local/offline — no network required |
+| **Tier 2** | `did:web` mesh | Household mesh — shared with trusted peers |
+| **Tier 3** | `did:web` public | Public web — discoverable by anyone |
 
 ---
 
