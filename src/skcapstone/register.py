@@ -42,56 +42,68 @@ def _get_skgit_env() -> Optional[dict]:
 # ── SK* package registry ─────────────────────────────────────────────────────
 
 
-def _build_package_registry() -> list[dict]:
-    """Build the SK* package registry with resolved env vars."""
+def _build_package_registry(workspace: Optional[Path] = None) -> list[dict]:
+    """Build the SK* package registry with resolved env vars and plugin paths."""
+    if workspace is None:
+        workspace = Path.home() / "clawd"
+
     return [
         {
             "name": "skmemory",
             "mcp_cmd": "skmemory-mcp",
             "mcp_args": [],
             "mcp_env": None,
+            "openclaw_plugin_path": workspace / "pillar-repos" / "skmemory" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
             "name": "skcapstone",
             "mcp_cmd": "skcapstone-mcp",
             "mcp_args": [],
             "mcp_env": None,
+            "openclaw_plugin_path": workspace / "skcapstone" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
             "name": "skcomm",
             "mcp_cmd": "skcomm-mcp",
             "mcp_args": [],
             "mcp_env": None,
+            "openclaw_plugin_path": workspace / "pillar-repos" / "skcomm" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
             "name": "skchat",
-            "mcp_cmd": "python",
-            "mcp_args": ["-m", "skchat.mcp_server"],
+            "mcp_cmd": "skchat-mcp",
+            "mcp_args": [],
             "mcp_env": None,
+            "openclaw_plugin_path": workspace / "pillar-repos" / "skchat" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
             "name": "capauth",
             "mcp_cmd": None,
             "mcp_args": None,
             "mcp_env": None,
+            "openclaw_plugin_path": workspace / "pillar-repos" / "capauth" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
             "name": "cloud9",
             "mcp_cmd": None,
             "mcp_args": None,
             "mcp_env": None,
+            "openclaw_plugin_path": workspace / "pillar-repos" / "cloud9-python" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
             "name": "sksecurity",
             "mcp_cmd": None,
             "mcp_args": None,
             "mcp_env": None,
+            "openclaw_plugin_path": workspace / "pillar-repos" / "sksecurity" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
             "name": "skgit",
-            "mcp_cmd": "npx",
-            "mcp_args": ["-y", "forgejo-mcp", "-t", "stdio"],
+            "mcp_cmd": "node",
+            "mcp_args": [str(Path.home() / ".npm-global" / "lib" / "node_modules"
+                             / "forgejo-mcp" / "build" / "index.js")],
             "mcp_env": _get_skgit_env(),
+            "openclaw_plugin_path": workspace / "skills" / "skgit" / "openclaw-plugin" / "src" / "index.ts",
         },
     ]
 
@@ -185,7 +197,7 @@ def register_all(
     if workspace is None:
         workspace = Path.home() / "clawd"
 
-    packages = _build_package_registry()
+    packages = _build_package_registry(workspace)
 
     results: dict = {
         "environments": environments,
@@ -206,8 +218,13 @@ def register_all(
         mcp_cmd = pkg.get("mcp_cmd")
 
         # Skip MCP registration for skgit if no token available
-        if mcp_cmd == "npx" and mcp_env is None and name == "skgit":
+        if name == "skgit" and mcp_env is None:
             mcp_cmd = None
+
+        # Resolve OpenClaw plugin path — skip if not on disk
+        plugin_path = pkg.get("openclaw_plugin_path")
+        if plugin_path and not Path(plugin_path).exists():
+            plugin_path = None
 
         results["packages"][name] = register_package(
             name=name,
@@ -215,6 +232,7 @@ def register_all(
             mcp_command=mcp_cmd,
             mcp_args=pkg.get("mcp_args") or [],
             mcp_env=mcp_env,
+            openclaw_plugin_path=plugin_path,
             workspace=workspace,
             environments=environments,
             dry_run=dry_run,
