@@ -1,0 +1,11 @@
+[Unit]
+Description=SKCapstone Memory Compression Timer — run weekly
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

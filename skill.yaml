@@ -1,0 +1,34 @@
+name: skcapstone
+version: "0.1.0"
+description: >
+  Sovereign Agent Framework — memory, identity, trust, coordination, and
+  consciousness pillars. The main runtime for Opus and Lumina agents.
+  Includes MCP server with 80+ tools for agent management.
+
+author:
+  name: smilinTux.org
+  email: hello@smilintux.org
+
+tags: [agent, memory, identity, trust, coordination, consciousness, mcp, sovereign]
+category: core
+
+tools:
+  - name: agent_status
+    description: Get the sovereign agent's pillar status and health
+    entrypoint: skcapstone.skill:agent_status
+
+  - name: memory_store
+    description: Store a new agent memory
+    entrypoint: skcapstone.skill:memory_store
+
+  - name: memory_search
+    description: Search agent memories by query
+    entrypoint: skcapstone.skill:memory_search
+
+  - name: coord_status
+    description: Show the multi-agent coordination board
+    entrypoint: skcapstone.skill:coord_status
+
+  - name: consciousness_status
+    description: Get consciousness loop status and health
+    entrypoint: skcapstone.skill:consciousness_status
