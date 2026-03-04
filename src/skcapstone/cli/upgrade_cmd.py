@@ -289,7 +289,42 @@ def _run_upgrade(
         parts.append(f"[red]{len(failed)} failed[/]")
 
     console.print("  " + "  ".join(parts))
+
+    # Auto-register skills and MCP servers after successful upgrade
+    if not any_failed:
+        _run_auto_register()
+
     return not any_failed
+
+
+def _run_auto_register() -> None:
+    """Run auto-registration of SK* skills and MCP servers.
+
+    This is called as a final step after upgrading packages, ensuring
+    all SKILL.md symlinks and MCP server entries are in place.
+    """
+    console.print()
+    console.print("[bold]Registering skills & MCP servers...[/]")
+    try:
+        from skcapstone.register import register_all
+
+        results = register_all()
+        registered = 0
+        for _name, pkg_result in results.get("packages", {}).items():
+            skill = pkg_result.get("skill", {})
+            if skill.get("action") == "created":
+                registered += 1
+            mcp = pkg_result.get("mcp", {})
+            for _env, action in (mcp if isinstance(mcp, dict) else {}).items():
+                if action == "created":
+                    registered += 1
+
+        if registered > 0:
+            console.print(f"  [green]{registered} registration(s) applied[/]")
+        else:
+            console.print("  [dim]All registrations up to date[/]")
+    except Exception as exc:
+        console.print(f"  [yellow]Registration skipped[/] — {exc}")
 
 
 # ── Click commands ────────────────────────────────────────────────────────────

@@ -51,21 +51,21 @@ if [[ -z "$PYTHON" ]]; then
     exit 1
 fi
 
-echo "[1/5] Using $PYTHON ($($PYTHON --version 2>&1))"
+echo "[1/6] Using $PYTHON ($($PYTHON --version 2>&1))"
 
 # ---------------------------------------------------------------------------
 # Step 2: Create virtualenv
 # ---------------------------------------------------------------------------
 if [[ "$FORCE" == "true" ]] && [[ -d "$SKENV" ]]; then
-    echo "[2/5] Removing existing venv (--force)..."
+    echo "[2/6] Removing existing venv (--force)..."
     rm -rf "$SKENV"
 fi
 
 if [[ ! -d "$SKENV" ]]; then
-    echo "[2/5] Creating virtualenv at $SKENV..."
+    echo "[2/6] Creating virtualenv at $SKENV..."
     "$PYTHON" -m venv "$SKENV"
 else
-    echo "[2/5] Virtualenv exists at $SKENV"
+    echo "[2/6] Virtualenv exists at $SKENV"
 fi
 
 PIP="$SKENV/bin/pip"
@@ -74,7 +74,7 @@ $PIP install --upgrade pip -q 2>/dev/null
 # ---------------------------------------------------------------------------
 # Step 3: Install SK* packages
 # ---------------------------------------------------------------------------
-echo "[3/5] Installing SK* packages..."
+echo "[3/6] Installing SK* packages..."
 
 # Helper: install editable if local dir exists, else from PyPI
 install_pkg() {
@@ -123,17 +123,23 @@ install_pkg "sksecurity" ""                      "$PARENT/sksecurity"
 # Step 4: Dev tools (optional)
 # ---------------------------------------------------------------------------
 if [[ "$DEV_MODE" == "true" ]]; then
-    echo "[4/5] Installing dev tools..."
+    echo "[4/6] Installing dev tools..."
     $PIP install pytest pytest-cov ruff black -q 2>/dev/null
     echo "  pytest, pytest-cov, ruff, black"
 else
-    echo "[4/5] Skipping dev tools (use --dev to include)"
+    echo "[4/6] Skipping dev tools (use --dev to include)"
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5: PATH setup
+# Step 5: Register skills & MCP servers
 # ---------------------------------------------------------------------------
-echo "[5/5] Verifying installation..."
+echo "[5/6] Registering skills and MCP servers..."
+"$SKENV/bin/skcapstone" register 2>/dev/null && echo "  Registration complete" || echo "  (registration skipped — run 'skcapstone register' manually)"
+
+# ---------------------------------------------------------------------------
+# Step 6: PATH setup
+# ---------------------------------------------------------------------------
+echo "[6/6] Verifying installation..."
 
 failures=0
 for cmd in skcomm skcapstone capauth skmemory; do

@@ -84,6 +84,7 @@ from .archive_cmd import register_archive_commands
 from .usage_cmd import register_usage_commands
 from .search_cmd import register_search_commands
 from .mood_cmd import register_mood_commands
+from .register_cmd import register_register_commands
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -130,3 +131,4 @@ register_archive_commands(main)
 register_usage_commands(main)
 register_search_commands(main)
 register_mood_commands(main)
+register_register_commands(main)
