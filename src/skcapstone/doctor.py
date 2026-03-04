@@ -13,14 +13,11 @@ from __future__ import annotations
 
 import importlib
 import json
-import logging
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
-
-logger = logging.getLogger("skcapstone.doctor")
+from typing import Optional
 
 
 @dataclass
@@ -120,6 +117,7 @@ def run_diagnostics(home: Path) -> DiagnosticReport:
     report.checks.extend(_check_memory(home))
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
+    report.checks.extend(_check_versions())
 
     return report
 
@@ -169,7 +167,7 @@ def _check_system_tools() -> list[Check]:
     # Git (required for clone/setup) — platform-aware download link
     git_check = check_git()
     git_installed = git_check.installed
-    git_detail = git_check.version or ""
+    git_detail = git_check.version or "not found"
     git_fix = git_install_hint_for_doctor() if not git_installed else ""
     checks.append(Check(
         name="tool:git",
@@ -435,7 +433,6 @@ def _check_transport() -> list[Check]:
             category="transport",
         ))
     except Exception as exc:
-        logger.warning("SKComm health check failed: %s", exc)
         checks.append(Check(
             name="transport:skcomm",
             description="SKComm engine",
@@ -519,6 +516,33 @@ def _check_sync(home: Path) -> list[Check]:
     return checks
 
 
+def _check_versions() -> list[Check]:
+    """Check for outdated ecosystem packages."""
+    checks = []
+
+    try:
+        from .version_check import check_versions
+
+        report = check_versions(check_pypi=True)
+        for pkg in report.packages:
+            if not pkg.installed:
+                continue
+            if pkg.up_to_date:
+                continue
+            checks.append(Check(
+                name=f"version:{pkg.name}",
+                description=f"{pkg.name} outdated ({pkg.installed} \u2192 {pkg.latest})",
+                passed=False,
+                detail=f"installed: {pkg.installed}, latest: {pkg.latest}",
+                fix=f"pip install --upgrade {pkg.name}",
+                category="packages",
+            ))
+    except Exception:
+        pass
+
+    return checks
+
+
 def _get_tool_version(tool: str) -> Optional[str]:
     """Try to get a tool's version string.
 
@@ -538,153 +562,6 @@ def _get_tool_version(tool: str) -> Optional[str]:
         if result.returncode == 0:
             first_line = result.stdout.strip().split("\n")[0]
             return first_line[:80]
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.debug("Could not get version for %s: %s", tool, exc)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
     return None
-
-
-# ---------------------------------------------------------------------------
-# Auto-fix machinery
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class FixResult:
-    """Result of a single auto-fix attempt.
-
-    Attributes:
-        check_name: Name of the check that was attempted.
-        success: Whether the fix succeeded.
-        action: Human-readable description of the action taken.
-        error: Error message if the fix failed.
-    """
-
-    check_name: str
-    success: bool
-    action: str = ""
-    error: str = ""
-
-
-def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
-    """Attempt to auto-fix all failing checks in *report*.
-
-    Iterates over every failed check and, if a fix handler is registered
-    for that check name, calls it.  Checks that require human intervention
-    (package installs, identity key generation, transport config) are
-    silently skipped.
-
-    Args:
-        report: Diagnostic report produced by :func:`run_diagnostics`.
-        home: Agent home directory.
-
-    Returns:
-        List of :class:`FixResult` for each attempted fix.
-    """
-    results: list[FixResult] = []
-    for check in report.checks:
-        if check.passed:
-            continue
-        fix_fn = _FIXABLE.get(check.name)
-        if fix_fn is None:
-            continue
-        try:
-            action = fix_fn(check, home)
-            results.append(FixResult(check_name=check.name, success=True, action=action))
-        except Exception as exc:
-            logger.warning("Auto-fix failed for %s: %s", check.name, exc)
-            results.append(FixResult(check_name=check.name, success=False, error=str(exc)))
-    return results
-
-
-# ── Individual fix handlers ─────────────────────────────────────────────────
-
-def _fix_home_exists(check: Check, home: Path) -> str:
-    home.mkdir(parents=True, exist_ok=True)
-    return f"Created {home}"
-
-
-def _make_subdir_fix(dirname: str) -> Callable[[Check, Path], str]:
-    """Return a fix function that creates *dirname* inside home."""
-    def _fix(check: Check, home: Path) -> str:
-        d = home / dirname
-        d.mkdir(parents=True, exist_ok=True)
-        return f"Created {d}"
-    return _fix
-
-
-def _fix_manifest(check: Check, home: Path) -> str:
-    """Write a minimal default manifest.json when it is missing."""
-    manifest_path = home / "manifest.json"
-    if manifest_path.exists():
-        raise RuntimeError(
-            "manifest.json already exists (may be corrupt — delete it and run skcapstone init)"
-        )
-    default = {"name": home.name, "version": "0.1.0", "connectors": []}
-    manifest_path.write_text(json.dumps(default, indent=2), encoding="utf-8")
-    return f"Wrote default manifest to {manifest_path}"
-
-
-def _fix_memory_store(check: Check, home: Path) -> str:
-    """Create the memory directory and all three layer sub-directories."""
-    memory_dir = home / "memory"
-    created = []
-    for layer in ["short-term", "mid-term", "long-term"]:
-        layer_dir = memory_dir / layer
-        if not layer_dir.exists():
-            layer_dir.mkdir(parents=True, exist_ok=True)
-            created.append(layer)
-    if created:
-        return f"Created memory layer dirs: {', '.join(created)}"
-    return "Memory layer dirs already present"
-
-
-def _fix_memory_index(check: Check, home: Path) -> str:
-    """Rebuild index.json by scanning all memory JSON files."""
-    memory_dir = home / "memory"
-    if not memory_dir.exists():
-        memory_dir.mkdir(parents=True, exist_ok=True)
-    index: dict = {}
-    for layer in ["short-term", "mid-term", "long-term"]:
-        layer_dir = memory_dir / layer
-        if not layer_dir.exists():
-            continue
-        for f in layer_dir.glob("*.json"):
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                mem_id = data.get("memory_id", f.stem)
-                index[mem_id] = {
-                    "content_preview": data.get("content", "")[:200],
-                    "tags": data.get("tags", []),
-                    "layer": layer,
-                    "importance": data.get("importance", 0.5),
-                    "created_at": data.get("created_at", ""),
-                }
-            except (json.JSONDecodeError, OSError):
-                pass
-    index_path = memory_dir / "index.json"
-    index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
-    return f"Rebuilt memory index with {len(index)} entries → {index_path}"
-
-
-def _fix_sync_dir(check: Check, home: Path) -> str:
-    """Create the sync directory with outbox and inbox sub-directories."""
-    sync_dir = home / "sync"
-    sync_dir.mkdir(parents=True, exist_ok=True)
-    (sync_dir / "outbox").mkdir(exist_ok=True)
-    (sync_dir / "inbox").mkdir(exist_ok=True)
-    return f"Created {sync_dir} with outbox + inbox"
-
-
-# ── Fix registry ─────────────────────────────────────────────────────────────
-
-_FIXABLE: dict[str, Callable[[Check, Path], str]] = {
-    "home:exists": _fix_home_exists,
-    "home:manifest": _fix_manifest,
-    "memory:store": _fix_memory_store,
-    "memory:index": _fix_memory_index,
-    "sync:dir": _fix_sync_dir,
-}
-
-# Register a subdir-creation fix for each expected home subdirectory.
-for _dirname in ["identity", "memory", "trust", "security", "sync", "config"]:
-    _FIXABLE[f"home:{_dirname}"] = _make_subdir_fix(_dirname)

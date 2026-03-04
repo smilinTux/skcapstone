@@ -58,7 +58,7 @@ def initialize_security(home: Path) -> SecurityState:
     try:
         import sksecurity  # type: ignore[import-untyped]
 
-        state.status = PillarStatus.DEGRADED
+        sksecurity_version = getattr(sksecurity, "__version__", None)
     except ImportError:
         security_config = {
             "note": "Install sksecurity (pip install sksecurity) for full security",
@@ -71,10 +71,17 @@ def initialize_security(home: Path) -> SecurityState:
 
     _init_audit_log(security_dir)
 
+    audit_log = security_dir / AUDIT_LOG_NAME
+    if sksecurity_version and audit_log.exists():
+        state.status = PillarStatus.ACTIVE
+    else:
+        state.status = PillarStatus.DEGRADED
+
     baseline = {
         "threats_detected": 0,
         "last_scan": None,
         "audit_enabled": True,
+        "sksecurity_version": sksecurity_version,
         "initialized_at": datetime.now(timezone.utc).isoformat(),
     }
     (security_dir / "security.json").write_text(json.dumps(baseline, indent=2), encoding="utf-8")

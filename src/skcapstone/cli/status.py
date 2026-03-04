@@ -866,3 +866,70 @@ def register_status_commands(main: click.Group) -> None:
                             console.print(f"    {line}")
 
         console.print()
+
+    @main.command("version-check")
+    @click.option("--no-pypi", is_flag=True, help="Skip PyPI version lookup (offline mode).")
+    @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
+    def version_check(no_pypi: bool, json_out: bool):
+        """Check ecosystem package versions against PyPI."""
+        from ..version_check import check_versions
+
+        report = check_versions(check_pypi=not no_pypi)
+
+        if json_out:
+            data = {
+                "all_up_to_date": report.all_up_to_date,
+                "packages": [
+                    {
+                        "name": p.name,
+                        "installed": p.installed,
+                        "latest": p.latest,
+                        "up_to_date": p.up_to_date,
+                    }
+                    for p in report.packages
+                ],
+            }
+            click.echo(json.dumps(data, indent=2))
+            return
+
+        console.print()
+        table = Table(
+            show_header=True, header_style="bold", box=None, padding=(0, 2),
+            title="Ecosystem Package Versions",
+        )
+        table.add_column("Package", style="cyan")
+        table.add_column("Installed", justify="right")
+        table.add_column("Latest", justify="right")
+        table.add_column("Status")
+
+        for p in report.packages:
+            installed_str = p.installed or "[dim]not installed[/]"
+            latest_str = p.latest or "[dim]n/a[/]"
+
+            if not p.installed:
+                status_str = "[dim]\u2014[/]"
+            elif p.up_to_date:
+                status_str = "[green]\u2713[/]"
+            else:
+                status_str = "[yellow]update available[/]"
+
+            table.add_row(p.name, installed_str, latest_str, status_str)
+
+        console.print(table)
+        console.print()
+
+        if report.all_up_to_date:
+            console.print("  [green]All installed packages are up to date.[/]")
+        else:
+            outdated = report.outdated
+            if outdated:
+                names = ", ".join(p.name for p in outdated)
+                console.print(f"  [yellow]Outdated: {names}[/]")
+                console.print(f"  [dim]Update with: pip install --upgrade {names}[/]")
+
+        missing = report.missing
+        if missing:
+            names = ", ".join(p.name for p in missing)
+            console.print(f"  [dim]Not installed: {names}[/]")
+
+        console.print()

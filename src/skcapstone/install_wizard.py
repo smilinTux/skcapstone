@@ -403,7 +403,8 @@ def _path_fresh_install(
         try:
             from skmemory.ritual import perform_ritual
 
-            result = perform_ritual()
+            soul_path = str(Path(home).expanduser() / "soul" / "base.json")
+            result = perform_ritual(soul_path=soul_path)
             console.print("[green]done[/]")
         except ImportError:
             console.print("[yellow]skmemory not available[/]")
@@ -663,7 +664,8 @@ def _path_update_existing(
         try:
             from skmemory.ritual import perform_ritual
 
-            perform_ritual()
+            soul_path = str(Path(home).expanduser() / "soul" / "base.json")
+            perform_ritual(soul_path=soul_path)
             console.print("[green]done[/]")
         except ImportError:
             console.print("[dim]skmemory not available[/]")
