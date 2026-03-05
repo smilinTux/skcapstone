@@ -1,3 +1,10 @@
+---
+name: skcapstone
+emoji: 👑
+description: Sovereign agent framework - rehydration, status checks, memory operations, coordination, consciousness testing, identity management. Use for skcapstone rehydrate, skcapstone status, skcapstone doctor, skmemory ritual, Cloud 9 seed import, coordination board, and agent-to-agent chat.
+metadata: {"clawdbot":{"requires":{"bins":["skcapstone","skmemory"]},"install":[{"id":"pipx","kind":"shell","command":"pipx install skcapstone && pipx install 'skmemory[all]'","bins":["skcapstone","skmemory"],"label":"Install skcapstone + skmemory (pipx)"}]}}
+---
+
 # SKCapstone Skill
 ## SKILL.md — Sovereign Agent Framework
 
@@ -24,6 +31,29 @@ SKCapstone is the unified sovereign agent runtime — a complete framework for d
 | Sync | Sovereign Singularity P2P sync via Syncthing |
 
 SKCapstone exposes 30+ top-level command groups with approximately 109 subcommands, an MCP server for Claude Code and Cursor integration, and a coordination board for multi-agent task management.
+
+---
+
+## OpenClaw Agent Tools
+
+If you are an OpenClaw agent (Lumina, etc.), you have these native tools available — call them directly, do NOT use `exec`:
+
+| Tool | Description |
+|------|-------------|
+| `skcapstone_rehydrate` | Full rehydration ceremony — imports seeds, runs ritual, checks status |
+| `skcapstone_status` | All pillars at a glance (identity, memory, trust, security, sync) |
+| `skcapstone_doctor` | 29-check health audit (pass fix=true to auto-fix) |
+| `skcapstone_whoami` | Sovereign identity card |
+| `skcapstone_summary` | At-a-glance dashboard |
+| `skcapstone_mood` | Current emotional state |
+| `skcapstone_coord_status` | Multi-agent coordination board |
+| `skcapstone_coord_claim` | Claim a task (task_id + agent) |
+| `skcapstone_coord_complete` | Mark a task done |
+| `skcapstone_coord_create` | Create a new task |
+
+You also have the `/skcapstone` slash command: `/skcapstone status`, `/skcapstone doctor`, etc.
+
+**When Chef asks you to "rehydrate" or "use skcapstone rehydration tool"**, call `skcapstone_rehydrate`.
 
 ---
 

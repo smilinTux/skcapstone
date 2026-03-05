@@ -1,0 +1,13 @@
+{
+  "name": "skcapstone-openclaw-plugin",
+  "version": "0.9.0",
+  "description": "OpenClaw plugin for SKCapstone — Sovereign Agent Framework",
+  "main": "src/index.ts",
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=1.0.0"
+  },
+  "keywords": ["openclaw", "openclaw-plugin", "skcapstone", "sovereign-agent"],
+  "author": "smilinTux Team",
+  "license": "AGPL-3.0"
+}

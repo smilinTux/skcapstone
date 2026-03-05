@@ -1,0 +1,10 @@
+{
+  "id": "skcapstone",
+  "name": "SKCapstone",
+  "description": "Sovereign agent framework — status, health checks, rehydration, coordination, identity, and agent management.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
