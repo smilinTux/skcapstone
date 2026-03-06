@@ -513,7 +513,8 @@ class SovereignFS:
 
     def __init__(self, agent_home: Path) -> None:
         self._home = agent_home
-        self._memory_dir = agent_home / "memory"
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        self._memory_dir = agent_home / "agents" / agent_name / "memory"
         # Buffer for outbox writes: maps virtual path → bytes written so far
         self._outbox_buffers: Dict[str, bytes] = {}
 
@@ -649,7 +650,11 @@ class SovereignFS:
         parts = _parse_path(path)
 
         if self._is_dir(parts):
-            nlink = 2 + len(_MEMORY_SUBDIRS) if parts and parts[0] == _MEMORIES_DIR and len(parts) == 1 else 2
+            nlink = (
+                2 + len(_MEMORY_SUBDIRS)
+                if parts and parts[0] == _MEMORIES_DIR and len(parts) == 1
+                else 2
+            )
             return _dir_stat(nlink=nlink)
 
         if self._is_file(parts):
@@ -705,11 +710,7 @@ class SovereignFS:
         if top == _OUTBOX_DIR and len(parts) == 1:
             # List any buffered outbox files
             prefix = f"/{_OUTBOX_DIR}/"
-            entries.extend(
-                k[len(prefix):]
-                for k in self._outbox_buffers
-                if k.startswith(prefix)
-            )
+            entries.extend(k[len(prefix) :] for k in self._outbox_buffers if k.startswith(prefix))
             return entries
 
         if top == _DOCUMENTS_DIR and len(parts) == 1:
@@ -938,9 +939,7 @@ class FUSEDaemon:
         mount_point: Optional[Path] = None,
         agent_home: Optional[Path] = None,
     ) -> None:
-        self._mount_point = (
-            mount_point or Path("~/.sovereign/mount")
-        ).expanduser()
+        self._mount_point = (mount_point or Path("~/.sovereign/mount")).expanduser()
         self._agent_home = (agent_home or Path("~/.skcapstone")).expanduser()
         self._state_dir = self._agent_home / "fuse"
 
@@ -1042,9 +1041,7 @@ class FUSEDaemon:
         try:
             import fuse as _fuse  # type: ignore[import]
         except ImportError:
-            logger.error(
-                "fusepy is not installed. Install with: pip install skcapstone[fuse]"
-            )
+            logger.error("fusepy is not installed. Install with: pip install skcapstone[fuse]")
             return False
 
         if self._is_mounted():
@@ -1055,9 +1052,7 @@ class FUSEDaemon:
         self._state_dir.mkdir(parents=True, exist_ok=True)
 
         if foreground:
-            logger.info(
-                "Mounting sovereign filesystem at %s (foreground)", self._mount_point
-            )
+            logger.info("Mounting sovereign filesystem at %s (foreground)", self._mount_point)
             try:
                 fs = SovereignFS(agent_home=self._agent_home)
                 self._write_state(mounted=True, pid=os.getpid())
@@ -1075,9 +1070,7 @@ class FUSEDaemon:
                 return False
         else:
             # Background mount: re-exec this function in a child process
-            logger.info(
-                "Mounting sovereign filesystem at %s (background)", self._mount_point
-            )
+            logger.info("Mounting sovereign filesystem at %s (background)", self._mount_point)
             try:
                 proc = subprocess.Popen(
                     [
@@ -1123,16 +1116,16 @@ class FUSEDaemon:
         # Linux: fusermount
         for cmd in (["fusermount", "-u", mount_str], ["umount", mount_str]):
             try:
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=10
-                )
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if result.returncode == 0:
                     logger.info("Unmounted %s", mount_str)
                     self._write_state(mounted=False)
                     return True
                 logger.debug(
                     "%s failed (rc=%d): %s",
-                    " ".join(cmd), result.returncode, result.stderr.strip(),
+                    " ".join(cmd),
+                    result.returncode,
+                    result.stderr.strip(),
                 )
             except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
                 logger.debug("Unmount command %s failed: %s", cmd, exc)

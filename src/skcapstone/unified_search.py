@@ -33,18 +33,19 @@ MEMORY_LAYER_BOOST = {"long-term": 1.5, "mid-term": 1.2, "short-term": 1.0}
 class SearchResult:
     """A single result from the unified search."""
 
-    source: str           # "memory", "conversation", "message", "journal"
-    result_id: str        # Unique identifier within the source
-    title: str            # Human-readable label (peer name, memory ID, etc.)
-    preview: str          # Short text snippet showing the match context
-    score: float          # Composite relevance + recency score
-    timestamp: Optional[datetime]   # When the item was created/last modified
-    metadata: dict = field(default_factory=dict)   # Source-specific extras
+    source: str  # "memory", "conversation", "message", "journal"
+    result_id: str  # Unique identifier within the source
+    title: str  # Human-readable label (peer name, memory ID, etc.)
+    preview: str  # Short text snippet showing the match context
+    score: float  # Composite relevance + recency score
+    timestamp: Optional[datetime]  # When the item was created/last modified
+    metadata: dict = field(default_factory=dict)  # Source-specific extras
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _recency_weight(ts: Optional[datetime]) -> float:
     """Compute a recency weight in [0, 1] from an ISO timestamp.
@@ -92,7 +93,7 @@ def _snippet(text: str, pattern: re.Pattern, window: int = 80) -> str:
     """
     m = pattern.search(text)
     if m is None:
-        return text[:window * 2]
+        return text[: window * 2]
     start = max(0, m.start() - window)
     end = min(len(text), m.end() + window)
     snippet = text[start:end].strip()
@@ -124,6 +125,7 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
 # Per-source search functions
 # ---------------------------------------------------------------------------
 
+
 def _search_memories(
     home: Path,
     pattern: re.Pattern,
@@ -138,7 +140,8 @@ def _search_memories(
         List of SearchResult objects from the memory store.
     """
     results: list[SearchResult] = []
-    mem_dir = home / "memory"
+    agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+    mem_dir = home / "agents" / agent_name / "memory"
     if not mem_dir.exists():
         return results
 
@@ -168,20 +171,22 @@ def _search_memories(
             preview = _snippet(content, pattern)
             tag_str = ", ".join(data.get("tags", [])) if data.get("tags") else ""
 
-            results.append(SearchResult(
-                source="memory",
-                result_id=memory_id,
-                title=f"{memory_id} [{layer_name}]",
-                preview=preview,
-                score=score,
-                timestamp=ts,
-                metadata={
-                    "layer": layer_name,
-                    "importance": importance,
-                    "tags": tag_str,
-                    "source": data.get("source", ""),
-                },
-            ))
+            results.append(
+                SearchResult(
+                    source="memory",
+                    result_id=memory_id,
+                    title=f"{memory_id} [{layer_name}]",
+                    preview=preview,
+                    score=score,
+                    timestamp=ts,
+                    metadata={
+                        "layer": layer_name,
+                        "importance": importance,
+                        "tags": tag_str,
+                        "source": data.get("source", ""),
+                    },
+                )
+            )
 
     return results
 
@@ -228,15 +233,17 @@ def _search_conversations(
             score = matches * _recency_weight(ts)
             role = msg.get("role", "?")
 
-            results.append(SearchResult(
-                source="conversation",
-                result_id=f"{peer}:{idx}",
-                title=f"Conversation with {peer} [{role}]",
-                preview=_snippet(content, pattern),
-                score=score,
-                timestamp=ts,
-                metadata={"peer": peer, "role": role, "message_index": idx},
-            ))
+            results.append(
+                SearchResult(
+                    source="conversation",
+                    result_id=f"{peer}:{idx}",
+                    title=f"Conversation with {peer} [{role}]",
+                    preview=_snippet(content, pattern),
+                    score=score,
+                    timestamp=ts,
+                    metadata={"peer": peer, "role": role, "message_index": idx},
+                )
+            )
 
     return results
 
@@ -293,19 +300,21 @@ def _search_messages(
             sender = data.get("from_peer") or data.get("sender", "?")
             recipient = data.get("to_peer") or data.get("recipient", "?")
 
-            results.append(SearchResult(
-                source="message",
-                result_id=str(envelope_id),
-                title=f"Message {sender} → {recipient}",
-                preview=_snippet(text, pattern),
-                score=score,
-                timestamp=ts,
-                metadata={
-                    "sender": sender,
-                    "recipient": recipient,
-                    "file": f.name,
-                },
-            ))
+            results.append(
+                SearchResult(
+                    source="message",
+                    result_id=str(envelope_id),
+                    title=f"Message {sender} → {recipient}",
+                    preview=_snippet(text, pattern),
+                    score=score,
+                    timestamp=ts,
+                    metadata={
+                        "sender": sender,
+                        "recipient": recipient,
+                        "file": f.name,
+                    },
+                )
+            )
 
     return results
 
@@ -347,15 +356,17 @@ def _search_journal(
         ts = _parse_dt(data.get("created_at"))
         score = matches * _recency_weight(ts)
 
-        results.append(SearchResult(
-            source="journal",
-            result_id=f.stem,
-            title=f"Journal: {title_text or f.stem}",
-            preview=_snippet(content, pattern),
-            score=score,
-            timestamp=ts,
-            metadata={"file": f.name},
-        ))
+        results.append(
+            SearchResult(
+                source="journal",
+                result_id=f.stem,
+                title=f"Journal: {title_text or f.stem}",
+                preview=_snippet(content, pattern),
+                score=score,
+                timestamp=ts,
+                metadata={"file": f.name},
+            )
+        )
 
     return results
 

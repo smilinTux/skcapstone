@@ -139,21 +139,25 @@ def _check_packages() -> list[Check]:
         try:
             mod = importlib.import_module(pkg_name)
             version = getattr(mod, "__version__", "installed")
-            checks.append(Check(
-                name=f"pkg:{pkg_name}",
-                description=desc,
-                passed=True,
-                detail=f"v{version}",
-                category="packages",
-            ))
+            checks.append(
+                Check(
+                    name=f"pkg:{pkg_name}",
+                    description=desc,
+                    passed=True,
+                    detail=f"v{version}",
+                    category="packages",
+                )
+            )
         except ImportError:
-            checks.append(Check(
-                name=f"pkg:{pkg_name}",
-                description=desc,
-                passed=False,
-                fix=fix_cmd,
-                category="packages",
-            ))
+            checks.append(
+                Check(
+                    name=f"pkg:{pkg_name}",
+                    description=desc,
+                    passed=False,
+                    fix=fix_cmd,
+                    category="packages",
+                )
+            )
 
     return checks
 
@@ -169,41 +173,51 @@ def _check_system_tools() -> list[Check]:
     git_installed = git_check.installed
     git_detail = git_check.version or "not found"
     git_fix = git_install_hint_for_doctor() if not git_installed else ""
-    checks.append(Check(
-        name="tool:git",
-        description="Git (clone repo, dev workflow)",
-        passed=git_installed,
-        detail=git_detail if git_installed else "not found",
-        fix=git_fix,
-        category="system",
-    ))
+    checks.append(
+        Check(
+            name="tool:git",
+            description="Git (clone repo, dev workflow)",
+            passed=git_installed,
+            detail=git_detail if git_installed else "not found",
+            fix=git_fix,
+            category="system",
+        )
+    )
 
     tools = [
         ("gpg", "GnuPG for PGP operations", "sudo apt install gnupg2  # or: brew install gnupg"),
-        ("syncthing", "P2P file sync (optional)", "sudo apt install syncthing  # optional for sync"),
+        (
+            "syncthing",
+            "P2P file sync (optional)",
+            "sudo apt install syncthing  # optional for sync",
+        ),
     ]
 
     for tool_name, desc, fix_cmd in tools:
         path = shutil.which(tool_name)
         if path:
             version = _get_tool_version(tool_name)
-            checks.append(Check(
-                name=f"tool:{tool_name}",
-                description=desc,
-                passed=True,
-                detail=version or path,
-                category="system",
-            ))
+            checks.append(
+                Check(
+                    name=f"tool:{tool_name}",
+                    description=desc,
+                    passed=True,
+                    detail=version or path,
+                    category="system",
+                )
+            )
         else:
             is_optional = "optional" in desc.lower()
-            checks.append(Check(
-                name=f"tool:{tool_name}",
-                description=desc,
-                passed=is_optional,
-                detail="not found" + (" (optional)" if is_optional else ""),
-                fix=fix_cmd,
-                category="system",
-            ))
+            checks.append(
+                Check(
+                    name=f"tool:{tool_name}",
+                    description=desc,
+                    passed=is_optional,
+                    detail="not found" + (" (optional)" if is_optional else ""),
+                    fix=fix_cmd,
+                    category="system",
+                )
+            )
 
     return checks
 
@@ -213,64 +227,76 @@ def _check_agent_home(home: Path) -> list[Check]:
     checks = []
 
     if home.exists():
-        checks.append(Check(
-            name="home:exists",
-            description="Agent home directory",
-            passed=True,
-            detail=str(home),
-            category="agent",
-        ))
+        checks.append(
+            Check(
+                name="home:exists",
+                description="Agent home directory",
+                passed=True,
+                detail=str(home),
+                category="agent",
+            )
+        )
     else:
-        checks.append(Check(
-            name="home:exists",
-            description="Agent home directory",
-            passed=False,
-            fix="skcapstone init --name YourAgent",
-            category="agent",
-        ))
+        checks.append(
+            Check(
+                name="home:exists",
+                description="Agent home directory",
+                passed=False,
+                fix="skcapstone init --name YourAgent",
+                category="agent",
+            )
+        )
         return checks
 
     expected_dirs = ["identity", "memory", "trust", "security", "sync", "config"]
     for dirname in expected_dirs:
         dirpath = home / dirname
-        checks.append(Check(
-            name=f"home:{dirname}",
-            description=f"{dirname}/ directory",
-            passed=dirpath.exists(),
-            detail=str(dirpath) if dirpath.exists() else "missing",
-            fix=f"skcapstone init --name YourAgent" if not dirpath.exists() else "",
-            category="agent",
-        ))
+        checks.append(
+            Check(
+                name=f"home:{dirname}",
+                description=f"{dirname}/ directory",
+                passed=dirpath.exists(),
+                detail=str(dirpath) if dirpath.exists() else "missing",
+                fix=f"skcapstone init --name YourAgent" if not dirpath.exists() else "",
+                category="agent",
+            )
+        )
 
     manifest = home / "manifest.json"
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
             name = data.get("name", "unknown")
-            checks.append(Check(
-                name="home:manifest",
-                description="Agent manifest",
-                passed=True,
-                detail=f"Agent: {name}",
-                category="agent",
-            ))
+            checks.append(
+                Check(
+                    name="home:manifest",
+                    description="Agent manifest",
+                    passed=True,
+                    detail=f"Agent: {name}",
+                    category="agent",
+                )
+            )
         except (json.JSONDecodeError, OSError):
-            checks.append(Check(
+            checks.append(
+                Check(
+                    name="home:manifest",
+                    description="Agent manifest",
+                    passed=False,
+                    detail="corrupt",
+                    fix="Delete ~/.skcapstone/manifest.json and run skcapstone init",
+                    category="agent",
+                )
+            )
+    else:
+        checks.append(
+            Check(
                 name="home:manifest",
                 description="Agent manifest",
                 passed=False,
-                detail="corrupt",
-                fix="Delete ~/.skcapstone/manifest.json and run skcapstone init",
+                fix="skcapstone init --name YourAgent",
                 category="agent",
-            ))
-    else:
-        checks.append(Check(
-            name="home:manifest",
-            description="Agent manifest",
-            passed=False,
-            fix="skcapstone init --name YourAgent",
-            category="agent",
-        ))
+            )
+        )
 
     return checks
 
@@ -286,58 +312,70 @@ def _check_identity(home: Path) -> list[Check]:
             data = json.loads(identity_file.read_text(encoding="utf-8"))
             fp = data.get("fingerprint", "")
             managed = data.get("capauth_managed", False)
-            checks.append(Check(
-                name="identity:profile",
-                description="Agent identity",
-                passed=True,
-                detail=f"Fingerprint: {fp[:16]}... ({'CapAuth' if managed else 'placeholder'})",
-                category="identity",
-            ))
-            if not managed:
-                checks.append(Check(
-                    name="identity:capauth",
-                    description="CapAuth-managed keys",
-                    passed=False,
-                    detail="Using placeholder fingerprint",
-                    fix="capauth init --name YourName --email you@example.com",
+            checks.append(
+                Check(
+                    name="identity:profile",
+                    description="Agent identity",
+                    passed=True,
+                    detail=f"Fingerprint: {fp[:16]}... ({'CapAuth' if managed else 'placeholder'})",
                     category="identity",
-                ))
+                )
+            )
+            if not managed:
+                checks.append(
+                    Check(
+                        name="identity:capauth",
+                        description="CapAuth-managed keys",
+                        passed=False,
+                        detail="Using placeholder fingerprint",
+                        fix="capauth init --name YourName --email you@example.com",
+                        category="identity",
+                    )
+                )
         except (json.JSONDecodeError, OSError):
-            checks.append(Check(
+            checks.append(
+                Check(
+                    name="identity:profile",
+                    description="Agent identity",
+                    passed=False,
+                    fix="skcapstone init --name YourAgent",
+                    category="identity",
+                )
+            )
+    else:
+        checks.append(
+            Check(
                 name="identity:profile",
                 description="Agent identity",
                 passed=False,
                 fix="skcapstone init --name YourAgent",
                 category="identity",
-            ))
-    else:
-        checks.append(Check(
-            name="identity:profile",
-            description="Agent identity",
-            passed=False,
-            fix="skcapstone init --name YourAgent",
-            category="identity",
-        ))
+            )
+        )
         return checks
 
     capauth_dir = Path.home() / ".capauth" / "identity"
     pub_key = capauth_dir / "public.asc"
     if pub_key.exists():
-        checks.append(Check(
-            name="identity:pgp_key",
-            description="PGP public key",
-            passed=True,
-            detail=str(pub_key),
-            category="identity",
-        ))
+        checks.append(
+            Check(
+                name="identity:pgp_key",
+                description="PGP public key",
+                passed=True,
+                detail=str(pub_key),
+                category="identity",
+            )
+        )
     else:
-        checks.append(Check(
-            name="identity:pgp_key",
-            description="PGP public key",
-            passed=False,
-            fix="capauth init --name YourName --email you@example.com",
-            category="identity",
-        ))
+        checks.append(
+            Check(
+                name="identity:pgp_key",
+                description="PGP public key",
+                passed=False,
+                fix="capauth init --name YourName --email you@example.com",
+                category="identity",
+            )
+        )
 
     return checks
 
@@ -345,16 +383,19 @@ def _check_identity(home: Path) -> list[Check]:
 def _check_memory(home: Path) -> list[Check]:
     """Check memory store health."""
     checks = []
-    memory_dir = home / "memory"
+    agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+    memory_dir = home / "agents" / agent_name / "memory"
 
     if not memory_dir.exists():
-        checks.append(Check(
-            name="memory:store",
-            description="Memory store",
-            passed=False,
-            fix="skcapstone init --name YourAgent",
-            category="memory",
-        ))
+        checks.append(
+            Check(
+                name="memory:store",
+                description="Memory store",
+                passed=False,
+                fix="skcapstone init --name YourAgent",
+                category="memory",
+            )
+        )
         return checks
 
     total = 0
@@ -364,23 +405,29 @@ def _check_memory(home: Path) -> list[Check]:
             count = sum(1 for f in layer_dir.glob("*.json"))
             total += count
 
-    checks.append(Check(
-        name="memory:store",
-        description="Memory store",
-        passed=True,
-        detail=f"{total} memories across all layers",
-        category="memory",
-    ))
+    checks.append(
+        Check(
+            name="memory:store",
+            description="Memory store",
+            passed=True,
+            detail=f"{total} memories across all layers",
+            category="memory",
+        )
+    )
 
     index_file = memory_dir / "index.json"
-    checks.append(Check(
-        name="memory:index",
-        description="Memory search index",
-        passed=index_file.exists(),
-        detail="present" if index_file.exists() else "missing",
-        fix="skcapstone memory store 'test' to create index" if not index_file.exists() else "",
-        category="memory",
-    ))
+    checks.append(
+        Check(
+            name="memory:index",
+            description="Memory search index",
+            passed=index_file.exists(),
+            detail="present" if index_file.exists() else "missing",
+            fix=(
+                "skcapstone memory store 'test' to create index" if not index_file.exists() else ""
+            ),
+            category="memory",
+        )
+    )
 
     return checks
 
@@ -394,53 +441,63 @@ def _check_transport() -> list[Check]:
 
         comm = SKComm.from_config()
         transport_count = len(comm.router.transports)
-        checks.append(Check(
-            name="transport:skcomm",
-            description="SKComm engine",
-            passed=True,
-            detail=f"{transport_count} transport(s) configured",
-            category="transport",
-        ))
+        checks.append(
+            Check(
+                name="transport:skcomm",
+                description="SKComm engine",
+                passed=True,
+                detail=f"{transport_count} transport(s) configured",
+                category="transport",
+            )
+        )
 
         if transport_count == 0:
-            checks.append(Check(
-                name="transport:active",
-                description="Active transports",
-                passed=False,
-                detail="No transports configured",
-                fix="Configure transports in ~/.skcomm/config.yml",
-                category="transport",
-            ))
+            checks.append(
+                Check(
+                    name="transport:active",
+                    description="Active transports",
+                    passed=False,
+                    detail="No transports configured",
+                    fix="Configure transports in ~/.skcomm/config.yml",
+                    category="transport",
+                )
+            )
         else:
             health = comm.router.health_report()
             for name, info in health.items():
                 status = info.get("status", "unknown")
                 ok = status in ("available", "healthy", "online")
-                checks.append(Check(
-                    name=f"transport:{name}",
-                    description=f"Transport: {name}",
-                    passed=ok,
-                    detail=status,
-                    category="transport",
-                ))
+                checks.append(
+                    Check(
+                        name=f"transport:{name}",
+                        description=f"Transport: {name}",
+                        passed=ok,
+                        detail=status,
+                        category="transport",
+                    )
+                )
 
     except ImportError:
-        checks.append(Check(
-            name="transport:skcomm",
-            description="SKComm engine",
-            passed=False,
-            fix="pip install skcomm",
-            category="transport",
-        ))
+        checks.append(
+            Check(
+                name="transport:skcomm",
+                description="SKComm engine",
+                passed=False,
+                fix="pip install skcomm",
+                category="transport",
+            )
+        )
     except Exception as exc:
-        checks.append(Check(
-            name="transport:skcomm",
-            description="SKComm engine",
-            passed=False,
-            detail=str(exc),
-            fix="Check ~/.skcomm/config.yml",
-            category="transport",
-        ))
+        checks.append(
+            Check(
+                name="transport:skcomm",
+                description="SKComm engine",
+                passed=False,
+                detail=str(exc),
+                fix="Check ~/.skcomm/config.yml",
+                category="transport",
+            )
+        )
 
     return checks
 
@@ -451,67 +508,83 @@ def _check_sync(home: Path) -> list[Check]:
     sync_dir = home / "sync"
 
     if not sync_dir.exists():
-        checks.append(Check(
-            name="sync:dir",
-            description="Sync directory",
-            passed=False,
-            fix="skcapstone init --name YourAgent",
-            category="sync",
-        ))
+        checks.append(
+            Check(
+                name="sync:dir",
+                description="Sync directory",
+                passed=False,
+                fix="skcapstone init --name YourAgent",
+                category="sync",
+            )
+        )
         return checks
 
-    checks.append(Check(
-        name="sync:dir",
-        description="Sync directory",
-        passed=True,
-        detail=str(sync_dir),
-        category="sync",
-    ))
+    checks.append(
+        Check(
+            name="sync:dir",
+            description="Sync directory",
+            passed=True,
+            detail=str(sync_dir),
+            category="sync",
+        )
+    )
 
     outbox = sync_dir / "outbox"
     inbox = sync_dir / "inbox"
     outbox_count = sum(1 for _ in outbox.glob("*")) if outbox.exists() else 0
     inbox_count = sum(1 for _ in inbox.glob("*")) if inbox.exists() else 0
 
-    checks.append(Check(
-        name="sync:queues",
-        description="Sync queues",
-        passed=True,
-        detail=f"outbox: {outbox_count}, inbox: {inbox_count}",
-        category="sync",
-    ))
+    checks.append(
+        Check(
+            name="sync:queues",
+            description="Sync queues",
+            passed=True,
+            detail=f"outbox: {outbox_count}, inbox: {inbox_count}",
+            category="sync",
+        )
+    )
 
     manifest = sync_dir / "sync-manifest.json"
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
             backends = data.get("backends", [])
-            checks.append(Check(
-                name="sync:backends",
-                description="Sync backends",
-                passed=len(backends) > 0,
-                detail=f"{len(backends)} backend(s): {', '.join(b.get('type', '?') for b in backends)}" if backends else "none configured",
-                fix="skcapstone sync setup" if not backends else "",
-                category="sync",
-            ))
+            checks.append(
+                Check(
+                    name="sync:backends",
+                    description="Sync backends",
+                    passed=len(backends) > 0,
+                    detail=(
+                        f"{len(backends)} backend(s): {', '.join(b.get('type', '?') for b in backends)}"
+                        if backends
+                        else "none configured"
+                    ),
+                    fix="skcapstone sync setup" if not backends else "",
+                    category="sync",
+                )
+            )
         except (json.JSONDecodeError, OSError):
-            checks.append(Check(
+            checks.append(
+                Check(
+                    name="sync:backends",
+                    description="Sync backends",
+                    passed=False,
+                    detail="manifest corrupt",
+                    fix="skcapstone sync setup",
+                    category="sync",
+                )
+            )
+    else:
+        checks.append(
+            Check(
                 name="sync:backends",
                 description="Sync backends",
                 passed=False,
-                detail="manifest corrupt",
+                detail="no manifest",
                 fix="skcapstone sync setup",
                 category="sync",
-            ))
-    else:
-        checks.append(Check(
-            name="sync:backends",
-            description="Sync backends",
-            passed=False,
-            detail="no manifest",
-            fix="skcapstone sync setup",
-            category="sync",
-        ))
+            )
+        )
 
     return checks
 
@@ -529,14 +602,16 @@ def _check_versions() -> list[Check]:
                 continue
             if pkg.up_to_date:
                 continue
-            checks.append(Check(
-                name=f"version:{pkg.name}",
-                description=f"{pkg.name} outdated ({pkg.installed} \u2192 {pkg.latest})",
-                passed=False,
-                detail=f"installed: {pkg.installed}, latest: {pkg.latest}",
-                fix=f"pip install --upgrade {pkg.name}",
-                category="packages",
-            ))
+            checks.append(
+                Check(
+                    name=f"version:{pkg.name}",
+                    description=f"{pkg.name} outdated ({pkg.installed} \u2192 {pkg.latest})",
+                    passed=False,
+                    detail=f"installed: {pkg.installed}, latest: {pkg.latest}",
+                    fix=f"pip install --upgrade {pkg.name}",
+                    category="packages",
+                )
+            )
     except Exception:
         pass
 

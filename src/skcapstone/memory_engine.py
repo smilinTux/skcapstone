@@ -47,7 +47,9 @@ def _get_unified():
 
 def _memory_dir(home: Path) -> Path:
     """Resolve the memory directory, creating it if needed."""
-    mem = home / "memory"
+    # Use agent-specific memory directory if agent name is set
+    agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+    mem = home / "agents" / agent_name / "memory"
     mem.mkdir(parents=True, exist_ok=True)
     for layer in MemoryLayer:
         (mem / layer.value).mkdir(parents=True, exist_ok=True)
@@ -294,7 +296,9 @@ def search(
                 continue
 
             # Reason: rank by (matches * importance), boost long-term memories
-            layer_boost = {MemoryLayer.LONG_TERM: 1.5, MemoryLayer.MID_TERM: 1.2}.get(entry.layer, 1.0)
+            layer_boost = {MemoryLayer.LONG_TERM: 1.5, MemoryLayer.MID_TERM: 1.2}.get(
+                entry.layer, 1.0
+            )
             score = total_matches * entry.importance * layer_boost
             results.append((score, entry))
 
@@ -441,11 +445,16 @@ def export_for_seed(home: Path, max_entries: int = 50) -> list[dict]:
         List of dicts suitable for JSON serialization.
     """
     all_entries = list_memories(home, limit=500)
-    all_entries.sort(key=lambda e: (
-        {MemoryLayer.LONG_TERM: 3, MemoryLayer.MID_TERM: 2, MemoryLayer.SHORT_TERM: 1}[e.layer],
-        e.importance,
-        e.access_count,
-    ), reverse=True)
+    all_entries.sort(
+        key=lambda e: (
+            {MemoryLayer.LONG_TERM: 3, MemoryLayer.MID_TERM: 2, MemoryLayer.SHORT_TERM: 1}[
+                e.layer
+            ],
+            e.importance,
+            e.access_count,
+        ),
+        reverse=True,
+    )
 
     return [
         {
