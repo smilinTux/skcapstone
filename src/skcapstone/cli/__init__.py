@@ -89,6 +89,7 @@ from .gtd import register_gtd_commands
 from .skseed import register_skseed_commands
 from .service_cmd import register_service_commands
 from .telegram import register_telegram_commands
+from .joule_cmd import register_joule_commands
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -140,3 +141,4 @@ register_gtd_commands(main)
 register_skseed_commands(main)
 register_service_commands(main)
 register_telegram_commands(main)
+register_joule_commands(main)

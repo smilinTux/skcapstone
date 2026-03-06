@@ -1,0 +1,58 @@
+{
+  "name": "skcapstone-source",
+  "description": "SKCapstone sovereign agent framework source code. Contains the core Python packages (skcapstone CLI, coordination, memory, sync, security, identity), MCP tools, OpenClaw plugin, tests, and documentation.",
+  "version": "0.9.0",
+  "type": "source",
+  "languages": ["python", "typescript"],
+  "entryPoints": {
+    "cli": "src/skcapstone/cli/main.py",
+    "plugin": "openclaw-plugin/src/index.ts",
+    "mcp": "mcp_tools/did_tools.py"
+  },
+  "sourceDirectories": [
+    {
+      "path": "src/skcapstone",
+      "description": "Core framework — models, CLI, coordination, memory, sync, security modules",
+      "language": "python"
+    },
+    {
+      "path": "tests",
+      "description": "Pytest test suite mirroring src structure",
+      "language": "python"
+    },
+    {
+      "path": "mcp_tools",
+      "description": "MCP tool implementations (DID identity tools)",
+      "language": "python"
+    },
+    {
+      "path": "openclaw-plugin/src",
+      "description": "OpenClaw plugin that registers agent tools wrapping the skcapstone CLI",
+      "language": "typescript"
+    },
+    {
+      "path": "scripts",
+      "description": "Installation, dev setup, and utility scripts",
+      "language": "bash"
+    },
+    {
+      "path": "docs",
+      "description": "Architecture docs, security design, sovereign singularity spec",
+      "language": "markdown"
+    }
+  ],
+  "conventions": {
+    "python": "3.11+, PEP 8, type hints, black formatting, pydantic models, Google-style docstrings",
+    "testing": "pytest, minimum 3 tests per feature (happy path, edge case, failure)",
+    "venv": "~/.skenv/ (dedicated virtualenv, do NOT use system pip)"
+  },
+  "relatedRepos": [
+    "skmemory",
+    "skcomm",
+    "skchat",
+    "capauth",
+    "cloud9-python",
+    "sksecurity"
+  ],
+  "tags": ["skcapstone", "sovereign-agent", "sk-framework", "fiducia-communitatis"]
+}

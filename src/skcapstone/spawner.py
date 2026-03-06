@@ -380,6 +380,48 @@ class SubAgentSpawner:
                 error=str(exc),
             )
 
+    def spawn_baby(
+        self,
+        name: str,
+        provider: Optional[ProviderType] = None,
+    ) -> SpawnResult:
+        """Spawn a pre-defined baby agent by name.
+
+        Baby agents are the 12 lightweight daemons of the SK* ecosystem
+        (e.g., memory-curator, trust-guardian, health-monitor). Each has
+        a pre-configured role, model tier, skills, and default task.
+
+        Args:
+            name: Baby agent name (e.g., 'memory-curator').
+            provider: Override the default provider.
+
+        Returns:
+            SpawnResult with deployment details.
+
+        Raises:
+            ValueError: If the baby agent name is not recognized.
+        """
+        from .baby_agents import get_baby_agent
+
+        baby = get_baby_agent(name)
+        if baby is None:
+            from .baby_agents import BABY_AGENTS
+            available = ", ".join(sorted(BABY_AGENTS.keys()))
+            raise ValueError(
+                f"Unknown baby agent '{name}'. "
+                f"Available: {available}"
+            )
+
+        logger.info("Spawning baby agent: %s", baby.name)
+        return self.spawn(
+            task=baby.task,
+            provider=provider,
+            role=baby.role,
+            model=baby.model,
+            skills=baby.skills,
+            agent_name=baby.name,
+        )
+
     def spawn_batch(
         self,
         tasks: List[Dict[str, Any]],

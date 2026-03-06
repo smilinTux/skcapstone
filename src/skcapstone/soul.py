@@ -12,7 +12,8 @@ Supports both .md (parsed) and .yaml/.yml (direct load) blueprints.
 
 Directory layout at runtime::
 
-    ~/.skcapstone/soul/
+    ~/.skcapstone/agents/{profile}/soul/   (agent-scoped, preferred)
+    ~/.skcapstone/soul/                    (global fallback)
         base.json           # Permanent base soul definition
         active.json         # Current overlay state (or null = base)
         installed/          # Parsed soul blueprints (JSON)
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -519,11 +521,20 @@ class SoulManager:
 
     Args:
         home: Agent home directory (~/.skcapstone).
+        agent_name: Optional agent profile name. When set, soul data is
+            stored under ``~/.skcapstone/agents/{agent_name}/soul/``.
+            Falls back to the ``SKCAPSTONE_AGENT`` env var, then to
+            the global ``home/soul/`` directory.
     """
 
-    def __init__(self, home: Path) -> None:
+    def __init__(self, home: Path, agent_name: Optional[str] = None) -> None:
         self.home = home
-        self.soul_dir = home / "soul"
+        # Resolve agent-scoped soul directory
+        name = agent_name or os.environ.get("SKCAPSTONE_AGENT")
+        if name:
+            self.soul_dir = home / "agents" / name / "soul"
+        else:
+            self.soul_dir = home / "soul"
 
     def _ensure_dirs(self) -> None:
         """Create the soul directory structure if missing."""
@@ -735,6 +746,101 @@ class SoulManager:
         return sorted(
             p.stem for p in installed_dir.glob("*.json")
         )
+
+    def list_available(
+        self,
+        repo_path: Optional[Path] = None,
+    ) -> list[dict]:
+        """List all available souls from installed and the community repo.
+
+        Scans both the installed soul directory and the community blueprints
+        repository, returning a unified list with source information.
+
+        Args:
+            repo_path: Path to the community blueprints repo. Defaults to
+                ``~/clawd/soul-blueprints/blueprints/``.
+
+        Returns:
+            List of dicts with keys: name, category, source, description,
+            display_name. Sorted by category then name.
+        """
+        self._ensure_dirs()
+        if repo_path is None:
+            repo_path = Path.home() / "clawd" / "soul-blueprints" / "blueprints"
+
+        seen: dict[str, dict] = {}
+        installed_names = set(self.list_installed())
+
+        # 1) Installed souls
+        for name in installed_names:
+            info = self.get_info(name)
+            if info is None:
+                continue
+            desc = info.philosophy or info.vibe or ""
+            if desc:
+                desc = desc.split("\n")[0][:80]
+            seen[name] = {
+                "name": name,
+                "display_name": info.display_name,
+                "category": info.category,
+                "source": "installed",
+                "description": desc,
+            }
+
+        # 2) Community repo blueprints (lightweight header parsing)
+        if repo_path.is_dir():
+            extensions = (".md", ".yaml", ".yml")
+            for category_dir in sorted(repo_path.iterdir()):
+                if not category_dir.is_dir():
+                    continue
+                category = category_dir.name
+                for bp_file in sorted(category_dir.iterdir()):
+                    if bp_file.suffix.lower() not in extensions:
+                        continue
+                    if bp_file.name.startswith(".") or bp_file.name.upper() == "README.MD":
+                        continue
+
+                    stem = bp_file.stem
+                    slug = _slugify(stem.replace("_", " "))
+
+                    # Skip if already seen as installed
+                    if slug in seen:
+                        continue
+
+                    # Lightweight description extraction (first meaningful line)
+                    desc = ""
+                    try:
+                        with open(bp_file, encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line or line.startswith("#"):
+                                    continue
+                                if line.startswith(">"):
+                                    desc = line.lstrip("> ").strip()
+                                    break
+                                if line.startswith("**"):
+                                    # Extract value from **Key**: Value
+                                    if "vibe" in line.lower() or "essence" in line.lower():
+                                        parts = line.split(":", 1)
+                                        if len(parts) > 1:
+                                            desc = parts[1].strip().strip("*")
+                                            break
+                                if line.startswith("-") or line[0].isalpha():
+                                    desc = line[:80]
+                                    break
+                    except (OSError, UnicodeDecodeError):
+                        pass
+
+                    seen[slug] = {
+                        "name": slug,
+                        "display_name": stem.replace("_", " ").replace("-", " ").title(),
+                        "category": category,
+                        "source": "repo",
+                        "description": desc[:80] if desc else "",
+                    }
+
+        # Sort by category, then name
+        return sorted(seen.values(), key=lambda d: (d["category"], d["name"]))
 
     def get_active_soul_name(self) -> Optional[str]:
         """Get the name of the currently active soul overlay.

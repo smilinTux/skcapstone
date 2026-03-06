@@ -1601,6 +1601,32 @@ async def list_tools() -> list[Tool]:
                 "required": ["chat"],
             },
         ),
+        Tool(
+            name="telegram_soul_swap",
+            description=(
+                "Perform a soul swap and announce it to a Telegram chat. "
+                "Switches the active soul persona, then sends a notification "
+                "message to the specified chat."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "chat": {
+                        "type": "string",
+                        "description": "Chat username, title, or numeric ID to announce the swap in",
+                    },
+                    "from_soul": {
+                        "type": "string",
+                        "description": "Current soul name being swapped from",
+                    },
+                    "to_soul": {
+                        "type": "string",
+                        "description": "New soul name to swap to",
+                    },
+                },
+                "required": ["chat", "from_soul", "to_soul"],
+            },
+        ),
         # ── Version Check ──────────────────────────────────────────
         Tool(
             name="version_check",
@@ -2216,6 +2242,234 @@ async def list_tools() -> list[Tool]:
                 "required": ["key", "value", "env"],
             },
         ),
+        # ── Cloud 9 tools ─────────────────────────────────────
+        Tool(
+            name="trust_rehydrate",
+            description=(
+                "Rehydrate the agent's trust state from stored FEB "
+                "(First Emotional Burst) files. This restores the OOF "
+                "(Out-of-Factory) state — who the agent IS, not just "
+                "what it knows. Searches ~/.skcapstone/trust/febs/ and "
+                "known Cloud 9 backup locations."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="trust_status",
+            description=(
+                "Show the current trust/Cloud 9 status: depth level, "
+                "trust score, love intensity, entanglement state, "
+                "FEB count, and last rehydration timestamp."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="trust_febs",
+            description=(
+                "List all FEB (First Emotional Burst) files with summary "
+                "info: timestamp, primary emotion, intensity, subject, "
+                "and whether OOF was triggered."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # ── SKSecurity tools ──────────────────────────────────
+        Tool(
+            name="security_audit_log",
+            description=(
+                "Read recent entries from the security audit log. "
+                "Returns structured JSONL entries with timestamp, event type, "
+                "detail, host, and optional agent/metadata fields."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum entries to return (default: 20, 0 = all)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="security_status",
+            description=(
+                "Show the security pillar status: whether sksecurity is installed, "
+                "audit log health, threat count, last scan time, and overall "
+                "security configuration."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # ── SKChat tools ──────────────────────────────────────
+        Tool(
+            name="chat_send",
+            description=(
+                "Send a chat message to another agent via SKChat. "
+                "Wraps the AgentMessenger for delivery with optional "
+                "threading, structured payloads, and ephemeral (TTL) support."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "recipient": {
+                        "type": "string",
+                        "description": "Recipient agent name or CapAuth URI",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Message content (markdown supported)",
+                    },
+                    "message_type": {
+                        "type": "string",
+                        "enum": ["text", "finding", "task", "query", "response"],
+                        "description": "Structured message type (default: text)",
+                    },
+                    "thread_id": {
+                        "type": "string",
+                        "description": "Optional thread/conversation ID for grouping",
+                    },
+                },
+                "required": ["recipient", "message"],
+            },
+        ),
+        Tool(
+            name="chat_history",
+            description=(
+                "Retrieve chat history from SKChat. Returns recent messages "
+                "with sender, content, type, thread, and timestamp. "
+                "Optionally filter by peer or thread."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "peer": {
+                        "type": "string",
+                        "description": "Filter by peer agent name or URI",
+                    },
+                    "thread_id": {
+                        "type": "string",
+                        "description": "Filter by thread/conversation ID",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum messages to return (default: 20)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        # ── SKComm tools ──────────────────────────────────────
+        Tool(
+            name="comm_notify",
+            description=(
+                "Send a notification message via SKComm. Routes through "
+                "available transports (Syncthing, file, Tailscale). "
+                "Supports urgency levels for priority routing."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "recipient": {
+                        "type": "string",
+                        "description": "Agent name or PGP fingerprint of the recipient",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Notification message content",
+                    },
+                    "urgency": {
+                        "type": "string",
+                        "enum": ["low", "normal", "high", "critical"],
+                        "description": "Notification urgency (default: normal)",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Optional notification subject line",
+                    },
+                },
+                "required": ["recipient", "message"],
+            },
+        ),
+        Tool(
+            name="comm_status",
+            description=(
+                "Show SKComm subsystem status: installed version, "
+                "available transports, connection state, and recent "
+                "delivery statistics."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # ── CapAuth tools ─────────────────────────────────────
+        Tool(
+            name="capauth_status",
+            description=(
+                "Show CapAuth profile status: whether capauth is installed, "
+                "profile loaded, PGP key fingerprint, DID key, and "
+                "capability token summary."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="capauth_verify",
+            description=(
+                "Verify a CapAuth identity or capability token. "
+                "Provide either a peer name to verify their identity, "
+                "or a capability token string to validate its signature "
+                "and expiry."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "peer": {
+                        "type": "string",
+                        "description": "Peer agent name to verify identity for",
+                    },
+                    "token": {
+                        "type": "string",
+                        "description": "Capability token string to validate",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        # ── Soul Blueprint Registry tools ────────────────────────
+        Tool(
+            name="soul_registry_search",
+            description=(
+                "Search the souls.skworld.io blueprint registry for "
+                "community soul blueprints. Returns matching blueprints "
+                "with name, display_name, category, and vibe."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (matched against name, category, traits)",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="soul_registry_publish",
+            description=(
+                "Publish a locally installed soul blueprint to the "
+                "souls.skworld.io registry. Requires a DID identity "
+                "for authentication. Provide the soul name (slug) "
+                "of an installed soul overlay."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Slug name of the installed soul to publish",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
     ]
 
 
@@ -2308,6 +2562,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "telegram_poll": _handle_telegram_poll,
         "telegram_chats": _handle_telegram_chats,
         "telegram_catchup": _handle_telegram_catchup,
+        "telegram_soul_swap": _handle_telegram_soul_swap,
         # Version Check
         "version_check": _handle_version_check,
         # GTD
@@ -2344,6 +2599,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "capauth_secret_get": _handle_capauth_secret_get,
         "skstacks_secret_get": _handle_skstacks_secret_get,
         "skstacks_secret_set": _handle_skstacks_secret_set,
+        # Cloud 9
+        "trust_rehydrate": _handle_trust_rehydrate,
+        "trust_status": _handle_trust_status,
+        "trust_febs": _handle_trust_febs,
+        # SKSecurity
+        "security_audit_log": _handle_security_audit_log,
+        "security_status": _handle_security_status,
+        # SKChat
+        "chat_send": _handle_chat_send,
+        "chat_history": _handle_chat_history,
+        # SKComm
+        "comm_notify": _handle_comm_notify,
+        "comm_status": _handle_comm_status,
+        # CapAuth
+        "capauth_status": _handle_capauth_status_tool,
+        "capauth_verify": _handle_capauth_verify,
+        # Soul Blueprint Registry
+        "soul_registry_search": _handle_soul_registry_search,
+        "soul_registry_publish": _handle_soul_registry_publish,
     }
     handler = handlers.get(name)
     if handler is None:
@@ -4046,6 +4320,12 @@ async def _handle_telegram_catchup(args: dict) -> list[TextContent]:
     return await _impl(args)
 
 
+async def _handle_telegram_soul_swap(args: dict) -> list[TextContent]:
+    """Perform a soul swap and announce it to a Telegram chat."""
+    from .mcp_tools.telegram_tools import _handle_telegram_soul_swap as _impl
+    return await _impl(args)
+
+
 # ── Version Check ────────────────────────────────────────────
 
 
@@ -4249,6 +4529,138 @@ async def _handle_skstacks_secret_set(args: dict) -> list[TextContent]:
     """Write or update a secret in SKStacks v2 backend."""
     from .mcp_tools.skstacks_tools import _handle_skstacks_secret_set as _impl
     return await _impl(args)
+
+
+# ── Cloud 9 tools ─────────────────────────────────────────
+
+
+async def _handle_trust_rehydrate(args: dict) -> list[TextContent]:
+    """Rehydrate trust from FEB files."""
+    from .mcp_tools.cloud9_tools import _handle_trust_rehydrate as _impl
+    return await _impl(args)
+
+
+async def _handle_trust_status(args: dict) -> list[TextContent]:
+    """Show trust/Cloud9 status."""
+    from .mcp_tools.cloud9_tools import _handle_trust_status as _impl
+    return await _impl(args)
+
+
+async def _handle_trust_febs(args: dict) -> list[TextContent]:
+    """List FEB files."""
+    from .mcp_tools.cloud9_tools import _handle_trust_febs as _impl
+    return await _impl(args)
+
+
+# ── SKSecurity tools ──────────────────────────────────────
+
+
+async def _handle_security_audit_log(args: dict) -> list[TextContent]:
+    """Read security audit log entries."""
+    from .mcp_tools.security_tools import _handle_security_audit_log as _impl
+    return await _impl(args)
+
+
+async def _handle_security_status(args: dict) -> list[TextContent]:
+    """Show security pillar status."""
+    from .mcp_tools.security_tools import _handle_security_status as _impl
+    return await _impl(args)
+
+
+# ── SKChat tools ──────────────────────────────────────────
+
+
+async def _handle_chat_send(args: dict) -> list[TextContent]:
+    """Send a chat message via SKChat."""
+    from .mcp_tools.skchat_tools import _handle_chat_send as _impl
+    return await _impl(args)
+
+
+async def _handle_chat_history(args: dict) -> list[TextContent]:
+    """Retrieve chat history."""
+    from .mcp_tools.skchat_tools import _handle_chat_history as _impl
+    return await _impl(args)
+
+
+# ── SKComm tools ──────────────────────────────────────────
+
+
+async def _handle_comm_notify(args: dict) -> list[TextContent]:
+    """Send a notification via SKComm."""
+    from .mcp_tools.skcomm_tools import _handle_comm_notify as _impl
+    return await _impl(args)
+
+
+async def _handle_comm_status(args: dict) -> list[TextContent]:
+    """Show SKComm subsystem status."""
+    from .mcp_tools.skcomm_tools import _handle_comm_status as _impl
+    return await _impl(args)
+
+
+# ── CapAuth tools ─────────────────────────────────────────
+
+
+async def _handle_capauth_status_tool(args: dict) -> list[TextContent]:
+    """Show CapAuth profile status."""
+    from .mcp_tools.capauth_tools import _handle_capauth_status as _impl
+    return await _impl(args)
+
+
+async def _handle_capauth_verify(args: dict) -> list[TextContent]:
+    """Verify a CapAuth identity or token."""
+    from .mcp_tools.capauth_tools import _handle_capauth_verify as _impl
+    return await _impl(args)
+
+
+# ── Soul Blueprint Registry handlers ─────────────────────────
+
+
+async def _handle_soul_registry_search(args: dict) -> list[TextContent]:
+    """Search the souls.skworld.io blueprint registry."""
+    query = args.get("query", "")
+    if not query:
+        return _error_response("query is required")
+    try:
+        from .blueprint_registry import BlueprintRegistryClient
+
+        client = BlueprintRegistryClient()
+        results = client.search_blueprints(query)
+        return _json_response({
+            "query": query,
+            "count": len(results),
+            "blueprints": results,
+        })
+    except Exception as exc:
+        return _error_response(f"Registry search failed: {exc}")
+
+
+async def _handle_soul_registry_publish(args: dict) -> list[TextContent]:
+    """Publish a local soul blueprint to the registry."""
+    name = args.get("name", "")
+    if not name:
+        return _error_response("name is required")
+    try:
+        from .blueprint_registry import BlueprintRegistryClient
+        from .soul import SoulManager
+        import json as _json
+
+        home = _home()
+        mgr = SoulManager(home)
+        bp = mgr.get_info(name)
+        if bp is None:
+            return _error_response(f"Soul '{name}' is not installed locally")
+
+        client = BlueprintRegistryClient()
+        soul_data = _json.loads(bp.model_dump_json())
+        result = client.publish_blueprint(soul_data)
+        return _json_response({
+            "published": True,
+            "name": name,
+            "display_name": bp.display_name,
+            "response": result,
+        })
+    except Exception as exc:
+        return _error_response(f"Registry publish failed: {exc}")
 
 
 # ═══════════════════════════════════════════════════════════

@@ -13,6 +13,7 @@ import click
 from ._common import AGENT_HOME, console
 from ._validators import validate_soul_name
 from ..pillars.security import audit_event
+from .. import SKCAPSTONE_AGENT
 
 from rich.panel import Panel
 from rich.table import Table
@@ -57,46 +58,186 @@ def register_soul_commands(main: click.Group) -> None:
     """Register the soul command group."""
 
     @main.group()
-    def soul():
+    @click.option(
+        "--agent", "-a",
+        default=SKCAPSTONE_AGENT or "lumina",
+        envvar="SKCAPSTONE_AGENT",
+        help="Agent profile name (default: SKCAPSTONE_AGENT or 'lumina').",
+    )
+    @click.pass_context
+    def soul(ctx, agent):
         """Soul layering — hot-swappable personality overlays.
 
         Install soul blueprints, load overlays at runtime,
         and manage personality while preserving identity.
         """
+        ctx.ensure_object(dict)
+        ctx.obj["agent_name"] = agent
 
     @soul.command("list")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def soul_list(home):
-        """List all installed souls."""
+    @click.option("--installed-only", is_flag=True, help="Show only installed souls.")
+    @click.option("--category", "filter_category", default=None, help="Filter by category.")
+    @click.pass_context
+    def soul_list(ctx, home, installed_only, filter_category):
+        """List all available souls (installed and community repo)."""
         from ..soul import SoulManager
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
-        names = mgr.list_installed()
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
+        all_souls = mgr.list_available()
 
-        if not names:
-            console.print("\n  [dim]No souls installed yet.[/]")
-            console.print("  [dim]Run: skcapstone soul install <path.md>[/]\n")
+        # Apply filters
+        if installed_only:
+            all_souls = [s for s in all_souls if s["source"] == "installed"]
+        if filter_category:
+            all_souls = [s for s in all_souls if s["category"].lower() == filter_category.lower()]
+
+        if not all_souls:
+            console.print("\n  [dim]No souls found.[/]")
+            if installed_only:
+                console.print("  [dim]Run: skcapstone soul install <path.md>[/]")
+            console.print()
             return
 
         state = mgr.get_status()
-        console.print(f"\n  [bold]{len(names)}[/] soul(s) installed:\n")
-        for n in names:
-            active = " [green]<- ACTIVE[/]" if n == state.active_soul else ""
-            info = mgr.get_info(n)
-            cat = f" [{info.category}]" if info else ""
-            console.print(f"    [cyan]{n}[/]{cat}{active}")
+        installed_count = sum(1 for s in all_souls if s["source"] == "installed")
+        total = len(all_souls)
+
+        console.print(f"\n  [bold]{total}[/] soul(s) available ({installed_count} installed)\n")
+
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Name", style="cyan", no_wrap=True)
+        table.add_column("Category", style="yellow")
+        table.add_column("Source", no_wrap=True)
+        table.add_column("Description", style="dim")
+
+        for s in all_souls:
+            if s["source"] == "installed":
+                source_tag = "[green][installed][/]"
+            else:
+                source_tag = "[dim][available][/]"
+
+            name_display = s["name"]
+            if s["name"] == state.active_soul:
+                name_display = f"{s['name']} [green]<- ACTIVE[/]"
+
+            table.add_row(name_display, s["category"], source_tag, s["description"])
+
+        console.print(table)
         console.print()
+
+    @soul.command("browse")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--category", "filter_category", default=None, help="Filter by category.")
+    @click.option("--page", default=1, type=int, help="Page number (10 per page).")
+    @click.option("--install", "install_name", default=None, help="Install a soul by name from browse results.")
+    @click.pass_context
+    def soul_browse(ctx, home, filter_category, page, install_name):
+        """Browse available souls grouped by category with details.
+
+        Shows a detailed view of all available souls from both installed
+        and the community repo, grouped by category with full descriptions.
+
+        Use --install <name> to install a soul directly from browse.
+        """
+        from ..soul import SoulManager
+
+        home_path = Path(home).expanduser()
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
+
+        # Handle --install flag: find and install from repo
+        if install_name:
+            slug = install_name.lower().replace(" ", "-")
+            installed = mgr.list_installed()
+            if slug in installed:
+                console.print(f"\n  [yellow]Already installed:[/] {slug}\n")
+                return
+
+            found_path = _find_blueprint_in_repo(slug)
+            if found_path is None:
+                console.print(f"\n  [red]Blueprint not found in repo:[/] {install_name}")
+                console.print("  Run [bold]skcapstone soul list[/] to see available souls.\n")
+                sys.exit(1)
+
+            try:
+                bp = mgr.install(found_path)
+                console.print(f"\n  [green]Installed:[/] [bold]{bp.display_name}[/] ({bp.name})")
+                console.print(f"  Category: {bp.category}")
+                if bp.vibe:
+                    console.print(f"  Vibe: {bp.vibe[:80]}")
+                audit_event(home_path, "SOUL_INSTALL", f"Soul '{bp.name}' installed from browse")
+            except (ValueError, FileNotFoundError) as e:
+                console.print(f"\n  [red]Failed to install:[/] {e}")
+                sys.exit(1)
+            console.print()
+            return
+
+        all_souls = mgr.list_available()
+
+        if filter_category:
+            all_souls = [s for s in all_souls if s["category"].lower() == filter_category.lower()]
+
+        if not all_souls:
+            console.print("\n  [dim]No souls found.[/]\n")
+            return
+
+        # Group by category
+        by_category: dict[str, list[dict]] = {}
+        for s in all_souls:
+            by_category.setdefault(s["category"], []).append(s)
+
+        # Pagination
+        page_size = 10
+        flat_entries = all_souls
+        total_pages = (len(flat_entries) + page_size - 1) // page_size
+        page = max(1, min(page, total_pages))
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_entries = flat_entries[start:end]
+
+        # Group the page entries by category for display
+        page_by_cat: dict[str, list[dict]] = {}
+        for s in page_entries:
+            page_by_cat.setdefault(s["category"], []).append(s)
+
+        installed_count = sum(1 for s in all_souls if s["source"] == "installed")
+        console.print(f"\n  [bold]{len(all_souls)}[/] soul(s) available ({installed_count} installed)")
+        console.print(f"  Page {page}/{total_pages}\n")
+
+        state = mgr.get_status()
+
+        for category, souls in sorted(page_by_cat.items()):
+            console.print(f"  [bold yellow]{category}[/] ({len(by_category.get(category, []))} total)")
+            console.print()
+
+            for s in souls:
+                if s["source"] == "installed":
+                    source_tag = "[green][installed][/]"
+                else:
+                    source_tag = "[dim][available][/]"
+
+                active = " [green]<- ACTIVE[/]" if s["name"] == state.active_soul else ""
+                console.print(f"    [bold cyan]{s['name']}[/] {source_tag}{active}")
+                console.print(f"      [dim]{s['display_name']}[/]")
+                if s["description"]:
+                    console.print(f"      {s['description']}")
+                console.print()
+
+        if total_pages > 1:
+            console.print(f"  [dim]Use --page N to navigate (1-{total_pages})[/]")
+        console.print("  [dim]Use --install <name> to install a soul[/]\n")
 
     @soul.command("install")
     @click.argument("path", type=click.Path(exists=True))
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def soul_install(path, home):
+    @click.pass_context
+    def soul_install(ctx, path, home):
         """Install a soul from a blueprint markdown file."""
         from ..soul import SoulManager
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
         bp = mgr.install(Path(path))
         console.print(f"\n  [green]Installed:[/] [bold]{bp.display_name}[/] ({bp.name})")
         console.print(f"  Category: {bp.category}")
@@ -109,12 +250,13 @@ def register_soul_commands(main: click.Group) -> None:
     @soul.command("install-all")
     @click.argument("directory", type=click.Path(exists=True))
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def soul_install_all(directory, home):
+    @click.pass_context
+    def soul_install_all(ctx, directory, home):
         """Batch-install all blueprints from a directory."""
         from ..soul import SoulManager
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
         installed = mgr.install_all(Path(directory))
         console.print(f"\n  [green]Installed {len(installed)} soul(s)[/]")
         for bp in installed:
@@ -126,14 +268,15 @@ def register_soul_commands(main: click.Group) -> None:
     @click.argument("name")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--reason", "-r", default="", help="Reason for loading this soul.")
-    def soul_load(name, home, reason):
+    @click.pass_context
+    def soul_load(ctx, name, home, reason):
         """Activate a soul overlay."""
         from ..soul import SoulManager
 
         validate_soul_name(name)
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
         try:
             state = mgr.load(name, reason=reason)
             console.print(f"\n  [green]Loaded:[/] [bold]{name}[/]")
@@ -147,12 +290,13 @@ def register_soul_commands(main: click.Group) -> None:
     @soul.command("unload")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--reason", "-r", default="", help="Reason for unloading.")
-    def soul_unload(home, reason):
+    @click.pass_context
+    def soul_unload(ctx, home, reason):
         """Return to base soul."""
         from ..soul import SoulManager
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
         state = mgr.unload(reason=reason)
         if state.active_soul is None:
             console.print("\n  [green]Returned to base soul.[/]")
@@ -163,12 +307,13 @@ def register_soul_commands(main: click.Group) -> None:
 
     @soul.command("status")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def soul_status(home):
+    @click.pass_context
+    def soul_status(ctx, home):
         """Show current soul state."""
         from ..soul import SoulManager
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
         state = mgr.get_status()
         installed = mgr.list_installed()
 
@@ -186,12 +331,13 @@ def register_soul_commands(main: click.Group) -> None:
     @soul.command("history")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--limit", "-n", default=20, help="Max entries to show.")
-    def soul_history(home, limit):
+    @click.pass_context
+    def soul_history(ctx, home, limit):
         """Show soul swap history."""
         from ..soul import SoulManager
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
         events = mgr.get_history()
 
         if not events:
@@ -220,14 +366,15 @@ def register_soul_commands(main: click.Group) -> None:
     @soul.command("info")
     @click.argument("name")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def soul_info(name, home):
+    @click.pass_context
+    def soul_info(ctx, name, home):
         """Show detailed info about an installed soul."""
         from ..soul import SoulManager
 
         validate_soul_name(name)
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
         bp = mgr.get_info(name)
 
         if bp is None:
@@ -259,19 +406,21 @@ def register_soul_commands(main: click.Group) -> None:
     @soul.command("show")
     @click.argument("name", required=False, default=None)
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def soul_show(name, home):
+    @click.pass_context
+    def soul_show(ctx, name, home):
         """Display the current soul identity or a named blueprint.
 
         With no argument, shows the active soul from skmemory's base.json.
         With a NAME, shows details of an installed soul overlay.
         """
         home_path = Path(home).expanduser()
+        agent_name = ctx.obj["agent_name"]
 
         if name:
             # Show a specific installed soul overlay
             from ..soul import SoulManager
             validate_soul_name(name)
-            mgr = SoulManager(home_path)
+            mgr = SoulManager(home_path, agent_name=agent_name)
             bp = mgr.get_info(name)
             if bp is None:
                 console.print(f"\n  [red]Soul not found:[/] {name}\n")
@@ -290,7 +439,11 @@ def register_soul_commands(main: click.Group) -> None:
         # Show the current skmemory soul identity (base.json)
         try:
             from skmemory.soul import load_soul
-            soul_path = str(home_path / "soul" / "base.json")
+            if agent_name:
+                soul_base = home_path / "agents" / agent_name / "soul"
+            else:
+                soul_base = home_path / "soul"
+            soul_path = str(soul_base / "base.json")
             blueprint = load_soul(path=soul_path)
             if blueprint is None:
                 console.print("\n  [dim]No soul blueprint found.[/]\n")
@@ -325,11 +478,176 @@ def register_soul_commands(main: click.Group) -> None:
     # soul swap — search, install-if-needed, and activate a soul overlay
     # -----------------------------------------------------------------------
 
+    # -----------------------------------------------------------------------
+    # soul registry — interact with the souls.skworld.io blueprint registry
+    # -----------------------------------------------------------------------
+
+    @soul.group("registry")
+    def soul_registry():
+        """Remote blueprint registry at souls.skworld.io.
+
+        List, search, publish, and download community soul blueprints
+        from the shared registry.
+        """
+
+    @soul_registry.command("list")
+    @click.option("--url", default=None, help="Registry API base URL.")
+    def registry_list(url):
+        """List all blueprints in the remote registry."""
+        from ..blueprint_registry import BlueprintRegistryClient, BlueprintRegistryError
+
+        kwargs = {}
+        if url:
+            kwargs["base_url"] = url
+        client = BlueprintRegistryClient(**kwargs)
+
+        try:
+            blueprints = client.list_blueprints()
+        except BlueprintRegistryError as e:
+            console.print(f"\n  [red]Registry error:[/] {e}\n")
+            sys.exit(1)
+
+        if not blueprints:
+            console.print("\n  [dim]No blueprints found in the registry.[/]\n")
+            return
+
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Name", style="cyan", no_wrap=True)
+        table.add_column("Display Name", style="bold")
+        table.add_column("Category", style="yellow")
+
+        for bp in blueprints:
+            table.add_row(
+                bp.get("name", "?"),
+                bp.get("display_name", ""),
+                bp.get("category", ""),
+            )
+
+        console.print()
+        console.print(table)
+        console.print(f"\n  [dim]{len(blueprints)} blueprint(s) in registry[/]\n")
+
+    @soul_registry.command("search")
+    @click.argument("query")
+    @click.option("--url", default=None, help="Registry API base URL.")
+    def registry_search(query, url):
+        """Search the remote registry for blueprints."""
+        from ..blueprint_registry import BlueprintRegistryClient, BlueprintRegistryError
+
+        kwargs = {}
+        if url:
+            kwargs["base_url"] = url
+        client = BlueprintRegistryClient(**kwargs)
+
+        try:
+            results = client.search_blueprints(query)
+        except BlueprintRegistryError as e:
+            console.print(f"\n  [red]Registry error:[/] {e}\n")
+            sys.exit(1)
+
+        if not results:
+            console.print(f"\n  [dim]No blueprints matching '{query}'.[/]\n")
+            return
+
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Name", style="cyan", no_wrap=True)
+        table.add_column("Display Name", style="bold")
+        table.add_column("Category", style="yellow")
+        table.add_column("Vibe", style="dim")
+
+        for bp in results:
+            table.add_row(
+                bp.get("name", "?"),
+                bp.get("display_name", ""),
+                bp.get("category", ""),
+                (bp.get("vibe", "") or "")[:60],
+            )
+
+        console.print()
+        console.print(table)
+        console.print(f"\n  [dim]{len(results)} result(s)[/]\n")
+
+    @soul_registry.command("publish")
+    @click.argument("name")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--url", default=None, help="Registry API base URL.")
+    @click.pass_context
+    def registry_publish(ctx, name, home, url):
+        """Publish an installed soul blueprint to the registry.
+
+        NAME is the slug of an installed soul (see `skcapstone soul list`).
+        Requires a DID identity for authentication.
+        """
+        from ..blueprint_registry import BlueprintRegistryClient, BlueprintRegistryError
+        from ..soul import SoulManager
+
+        home_path = Path(home).expanduser()
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
+        bp = mgr.get_info(name)
+
+        if bp is None:
+            console.print(f"\n  [red]Soul not found:[/] {name}")
+            console.print("  Run [bold]skcapstone soul list[/] to see installed souls.\n")
+            sys.exit(1)
+
+        kwargs = {}
+        if url:
+            kwargs["base_url"] = url
+        client = BlueprintRegistryClient(**kwargs)
+
+        try:
+            soul_data = json.loads(bp.model_dump_json())
+            result = client.publish_blueprint(soul_data)
+            console.print(f"\n  [green]Published:[/] [bold]{bp.display_name}[/] ({bp.name})")
+            soul_id = result.get("soul_id", result.get("id", name))
+            console.print(f"  Registry ID: {soul_id}")
+            audit_event(home_path, "SOUL_REGISTRY_PUBLISH", f"Published '{name}' to registry")
+        except BlueprintRegistryError as e:
+            console.print(f"\n  [red]Publish failed:[/] {e}")
+            sys.exit(1)
+        console.print()
+
+    @soul_registry.command("download")
+    @click.argument("soul_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--url", default=None, help="Registry API base URL.")
+    @click.option("--install", "do_install", is_flag=True, help="Also install after download.")
+    def registry_download(soul_id, home, url, do_install):
+        """Download a blueprint from the registry.
+
+        SOUL_ID is the registry identifier of the blueprint.
+        Use --install to also install it locally.
+        """
+        from ..blueprint_registry import BlueprintRegistryClient, BlueprintRegistryError
+
+        home_path = Path(home).expanduser()
+
+        kwargs = {}
+        if url:
+            kwargs["base_url"] = url
+        client = BlueprintRegistryClient(**kwargs)
+
+        try:
+            if do_install:
+                dest = client.download_and_install(soul_id, home=home_path)
+                console.print(f"\n  [green]Downloaded and installed:[/] {soul_id}")
+                console.print(f"  Saved to: {dest}")
+                audit_event(home_path, "SOUL_REGISTRY_DOWNLOAD", f"Downloaded '{soul_id}' from registry")
+            else:
+                bp_data = client.download_blueprint(soul_id)
+                console.print(f"\n  [green]Downloaded:[/] {soul_id}")
+                console.print(json.dumps(bp_data, indent=2))
+        except BlueprintRegistryError as e:
+            console.print(f"\n  [red]Download failed:[/] {e}")
+            sys.exit(1)
+        console.print()
+
     @soul.command("swap")
     @click.argument("blueprint")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--reason", "-r", default="", help="Reason for the swap.")
-    def soul_swap(blueprint, home, reason):
+    @click.pass_context
+    def soul_swap(ctx, blueprint, home, reason):
         """Swap to a different soul blueprint.
 
         Searches for BLUEPRINT in this order:
@@ -343,7 +661,7 @@ def register_soul_commands(main: click.Group) -> None:
         from ..soul import SoulManager, parse_blueprint
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path)
+        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
 
         # Get current state for the "swapped from" message
         state = mgr.get_status()

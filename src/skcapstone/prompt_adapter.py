@@ -308,6 +308,95 @@ class PromptAdapter:
             adaptations_applied=adaptations,
         )
 
+    def adapt_tools(
+        self,
+        tools: list[dict[str, Any]],
+        model_name: str,
+    ) -> list[dict[str, Any]]:
+        """Translate MCP tool definitions to the target model's tool format.
+
+        MCP tools use a standard schema: {name, description, inputSchema}.
+        Different providers expect different wrapper structures.
+
+        Args:
+            tools: List of MCP tool definitions.
+            model_name: Target model name for profile lookup.
+
+        Returns:
+            List of tool definitions in the provider's expected format.
+        """
+        profile = self.resolve_profile(model_name)
+        fmt = profile.tool_format
+
+        translated: list[dict[str, Any]] = []
+        for tool in tools:
+            name = tool.get("name", "")
+            description = tool.get("description", "")
+            input_schema = tool.get("inputSchema", {})
+
+            if fmt == "anthropic":
+                translated.append({
+                    "name": name,
+                    "description": description,
+                    "input_schema": input_schema,
+                })
+            else:
+                # "openai" and "mistral" use the same wrapper structure
+                translated.append({
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": input_schema,
+                    },
+                })
+
+        return translated
+
+    def adapt_tool_result(
+        self,
+        tool_call: dict[str, Any],
+        model_name: str,
+    ) -> dict[str, Any]:
+        """Normalize a provider-specific tool call into a common format.
+
+        Different providers return tool calls in different shapes.
+        This method extracts {id, name, arguments} regardless of source.
+
+        Args:
+            tool_call: Raw tool call object from a provider response.
+            model_name: The model that produced the tool call.
+
+        Returns:
+            Normalized dict with keys: id, name, arguments.
+        """
+        profile = self.resolve_profile(model_name)
+        fmt = profile.tool_format
+
+        if fmt == "anthropic":
+            # Anthropic: {id, name, input}
+            return {
+                "id": tool_call.get("id", ""),
+                "name": tool_call.get("name", ""),
+                "arguments": tool_call.get("input", {}),
+            }
+        else:
+            # OpenAI / Mistral: {id, function: {name, arguments}}
+            func = tool_call.get("function", {})
+            raw_args = func.get("arguments", "{}")
+            if isinstance(raw_args, str):
+                try:
+                    parsed_args = json.loads(raw_args)
+                except (json.JSONDecodeError, TypeError):
+                    parsed_args = {}
+            else:
+                parsed_args = raw_args
+            return {
+                "id": tool_call.get("id", ""),
+                "name": func.get("name", ""),
+                "arguments": parsed_args,
+            }
+
     def reload_profiles(self, profiles_path: Optional[Path] = None) -> None:
         """Hot-reload profiles from YAML.
 

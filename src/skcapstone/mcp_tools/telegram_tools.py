@@ -215,6 +215,32 @@ TOOLS: list[Tool] = [
             "required": [],
         },
     ),
+    Tool(
+        name="telegram_soul_swap",
+        description=(
+            "Perform a soul swap and announce it to a Telegram chat. "
+            "Switches the active soul persona using the soul_switch module, "
+            "then sends a notification message to the specified chat."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "chat": {
+                    "type": "string",
+                    "description": "Chat username, title, or numeric ID to announce the swap in",
+                },
+                "from_soul": {
+                    "type": "string",
+                    "description": "Current soul name being swapped from",
+                },
+                "to_soul": {
+                    "type": "string",
+                    "description": "New soul name to swap to",
+                },
+            },
+            "required": ["chat", "from_soul", "to_soul"],
+        },
+    ),
 ]
 
 
@@ -399,6 +425,46 @@ async def _handle_telegram_chats(args: dict) -> list[TextContent]:
         return _json_response({"error": str(e)})
 
 
+async def _handle_telegram_soul_swap(args: dict) -> list[TextContent]:
+    """Perform a soul swap and announce it to a Telegram chat."""
+    try:
+        from ..soul_switch import set_active_switch
+        from skmemory.importers.telegram_api import send_message
+
+        from ._helpers import _home
+
+        chat = args["chat"]
+        from_soul = args["from_soul"]
+        to_soul = args["to_soul"]
+
+        home = _home()
+
+        # Perform the soul swap
+        blueprint = set_active_switch(home, to_soul)
+        display = blueprint.effective_agent_name()
+
+        # Send notification to Telegram
+        message = f"Soul swap: {from_soul} -> {to_soul} ({display})"
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            result = await asyncio.get_event_loop().run_in_executor(
+                pool,
+                lambda: asyncio.run(send_message(chat, message)),
+            )
+
+        return _json_response({
+            "status": "ok",
+            "from_soul": from_soul,
+            "to_soul": to_soul,
+            "display_name": display,
+            "chat": result.get("chat", chat),
+            "message_id": result.get("message_id"),
+        })
+    except Exception as e:
+        return _json_response({"error": str(e)})
+
+
 HANDLERS: dict = {
     "telegram_import": _handle_telegram_import,
     "telegram_import_api": _handle_telegram_import_api,
@@ -407,4 +473,5 @@ HANDLERS: dict = {
     "telegram_poll": _handle_telegram_poll,
     "telegram_catchup": _handle_telegram_catchup,
     "telegram_chats": _handle_telegram_chats,
+    "telegram_soul_swap": _handle_telegram_soul_swap,
 }

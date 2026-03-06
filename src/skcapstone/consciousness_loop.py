@@ -921,7 +921,31 @@ class SystemPromptBuilder:
             return ""
 
     def _load_soul(self) -> str:
-        """Load active soul overlay personality traits."""
+        """Load active soul overlay personality traits.
+
+        Resolution order for soul blueprints:
+        1. System B (soul_switch): ``~/.skcapstone/souls/`` via
+           :func:`get_active_switch_blueprint`.  If the blueprint carries a
+           ``system_prompt`` field the full prompt is injected directly.
+        2. Agent-specific installed soul:
+           ``~/.skcapstone/agents/{agent}/soul/installed/{name}.json``
+        3. Global installed soul: ``~/.skcapstone/soul/installed/{name}.json``
+        4. Agent-specific blueprint (legacy):
+           ``~/.skcapstone/agents/{agent}/soul/blueprints/{name}.json``
+        5. Global blueprint (legacy): ``~/.skcapstone/soul/blueprints/{name}.json``
+        """
+        # --- System B: soul_switch takes priority ---
+        try:
+            from skcapstone.soul_switch import get_active_switch_blueprint
+            switch_bp = get_active_switch_blueprint(self._home)
+            if switch_bp is not None:
+                if switch_bp.system_prompt:
+                    return switch_bp.system_prompt
+                return switch_bp.to_system_prompt_section()
+        except Exception as exc:
+            logger.debug("soul_switch lookup failed: %s", exc)
+
+        # --- Legacy System A: soul/active.json ---
         active_path = self._home / "soul" / "active.json"
         if not active_path.exists():
             return ""
@@ -931,19 +955,29 @@ class SystemPromptBuilder:
             if not soul_name:
                 return ""
 
-            # Try to load the soul blueprint
-            blueprint_path = self._home / "soul" / "blueprints" / f"{soul_name}.json"
-            if blueprint_path.exists():
-                bp = json.loads(blueprint_path.read_text(encoding="utf-8"))
-                personality = bp.get("personality", {})
-                traits = personality.get("traits", [])
-                style = personality.get("communication_style", "")
-                parts = [f"Soul overlay: {soul_name}"]
-                if traits:
-                    parts.append(f"Personality traits: {', '.join(traits)}")
-                if style:
-                    parts.append(f"Communication style: {style}")
-                return "\n".join(parts)
+            # Build candidate paths: agent-specific first, then global;
+            # installed/ before blueprints/ for each.
+            agent_name = getattr(self, "_agent_name", "")
+            candidates: list[Path] = []
+            if agent_name:
+                agent_soul = self._home / "agents" / agent_name / "soul"
+                candidates.append(agent_soul / "installed" / f"{soul_name}.json")
+                candidates.append(agent_soul / "blueprints" / f"{soul_name}.json")
+            candidates.append(self._home / "soul" / "installed" / f"{soul_name}.json")
+            candidates.append(self._home / "soul" / "blueprints" / f"{soul_name}.json")
+
+            for blueprint_path in candidates:
+                if blueprint_path.exists():
+                    bp = json.loads(blueprint_path.read_text(encoding="utf-8"))
+                    personality = bp.get("personality", {})
+                    traits = personality.get("traits", [])
+                    style = personality.get("communication_style", "")
+                    parts = [f"Soul overlay: {soul_name}"]
+                    if traits:
+                        parts.append(f"Personality traits: {', '.join(traits)}")
+                    if style:
+                        parts.append(f"Communication style: {style}")
+                    return "\n".join(parts)
 
             return f"Active soul: {soul_name}"
         except Exception as exc:

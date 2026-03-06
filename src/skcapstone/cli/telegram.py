@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from pathlib import Path
 
 import click
 
-from ._common import console
+from ._common import AGENT_HOME, console
 
 from rich.panel import Panel
 from rich.table import Table
@@ -207,4 +209,57 @@ def register_telegram_commands(main: click.Group) -> None:
             console.print(table)
         except Exception as e:
             console.print(f"[red]Error:[/] {e}")
+            raise SystemExit(1)
+
+    @telegram.command("soul-swap")
+    @click.argument("chat")
+    @click.option("--from", "from_soul", required=True, help="Current soul name to swap from.")
+    @click.option("--to", "to_soul", required=True, help="New soul name to swap to.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def telegram_soul_swap(chat, from_soul, to_soul, home):
+        """Perform a soul swap and announce it to a Telegram chat.
+
+        Swaps the active soul using the soul_switch module, then sends
+        a notification message to the specified Telegram chat.
+
+        Example: skcapstone telegram soul-swap @mychat --from base --to lumina
+        """
+        from ..soul_switch import set_active_switch
+
+        home_path = Path(home).expanduser()
+
+        # Perform the soul swap
+        try:
+            blueprint = set_active_switch(home_path, to_soul)
+            display = blueprint.effective_agent_name()
+        except FileNotFoundError as e:
+            console.print(f"[red]Soul swap failed:[/] {e}")
+            raise SystemExit(1)
+        except ValueError as e:
+            console.print(f"[red]Soul swap failed:[/] {e}")
+            raise SystemExit(1)
+
+        # Send notification to Telegram
+        try:
+            from skmemory.importers.telegram_api import send_message
+        except ImportError:
+            console.print(f"[green]Soul swapped:[/] {from_soul} -> {to_soul}")
+            console.print("[red]skmemory[telegram] not available.[/] Swap succeeded but notification not sent.")
+            raise SystemExit(1)
+
+        message = f"Soul swap: {from_soul} -> {to_soul} ({display})"
+        try:
+            result = asyncio.run(send_message(chat, message))
+            console.print(Panel(
+                f"[green]Soul swapped and announced![/]\n"
+                f"From: [yellow]{from_soul}[/]\n"
+                f"To: [bold cyan]{to_soul}[/] ({display})\n"
+                f"Chat: [cyan]{result['chat']}[/]\n"
+                f"Message ID: [dim]{result['message_id']}[/]",
+                title="Telegram Soul Swap",
+                border_style="green",
+            ))
+        except Exception as e:
+            console.print(f"[green]Soul swapped:[/] {from_soul} -> {to_soul}")
+            console.print(f"[red]Telegram notification failed:[/] {e}")
             raise SystemExit(1)

@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  SKCapstone Task Scheduler Import Template
+  ==========================================
+  This XML can be imported via:
+    schtasks /create /tn "\SKCapstone\SKCapstone-Daemon" /xml skcapstone-task.xml
+  or via Task Scheduler GUI: Action > Import Task...
+
+  BEFORE IMPORTING: Replace the following placeholders:
+    __USERID__       - Your Windows username (e.g., DESKTOP-ABC\alice)
+    __SKENV_PATH__   - Path to skenv (e.g., C:\Users\alice\AppData\Local\skenv)
+    __LOG_DIR__      - Log directory (e.g., C:\Users\alice\.skcapstone\logs)
+
+  This template defines the SKCapstone Daemon task. Duplicate and modify
+  the Command/Arguments and Triggers sections for other tasks:
+    - MemoryCompress:  Command=skcapstone.exe memory compress, Trigger=Weekly
+    - SyncWatcher:     Command=python.exe -m skcapstone.cli sync poll, Trigger=Repetition/2min
+    - Heartbeat:       Command=skcomm.exe heartbeat, Trigger=Repetition/1min
+    - Housekeeping:    See install-tasks.ps1 for the batch wrapper approach
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+
+  <!-- ================================================================== -->
+  <!-- Registration Info                                                    -->
+  <!-- ================================================================== -->
+  <RegistrationInfo>
+    <Description>SKCapstone Sovereign Agent Daemon — equivalent to skcapstone.service on Linux. Starts the agent daemon at user logon, restarts on failure.</Description>
+    <Author>SKCapstone</Author>
+    <URI>\SKCapstone\SKCapstone-Daemon</URI>
+  </RegistrationInfo>
+
+  <!-- ================================================================== -->
+  <!-- Triggers                                                             -->
+  <!-- ================================================================== -->
+  <Triggers>
+    <!-- Start at user logon with a 15-second delay -->
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT15S</Delay>
+    </LogonTrigger>
+  </Triggers>
+
+  <!-- ================================================================== -->
+  <!-- Principal (security context)                                         -->
+  <!-- ================================================================== -->
+  <Principals>
+    <Principal id="Author">
+      <UserId>__USERID__</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+
+  <!-- ================================================================== -->
+  <!-- Settings                                                             -->
+  <!-- ================================================================== -->
+  <Settings>
+    <!-- Allow on battery power -->
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+
+    <!-- No execution time limit (daemon runs indefinitely) -->
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+
+    <!-- Restart on failure: up to 3 times, 30-second intervals -->
+    <RestartOnFailure>
+      <Interval>PT30S</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+
+    <!-- If missed (laptop was off), start when next available -->
+    <StartWhenAvailable>true</StartWhenAvailable>
+
+    <!-- Do not start a second instance if already running -->
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+
+    <!-- Enabled -->
+    <Enabled>true</Enabled>
+
+    <!-- Do not delete after completion -->
+    <DeleteExpiredTaskAfter>PT0S</DeleteExpiredTaskAfter>
+
+    <!-- Run even if not idle -->
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+
+    <!-- Network not required (offline-first) -->
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+
+    <!-- Allow on-demand start -->
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+
+    <!-- Allow hard terminate -->
+    <AllowHardTerminate>true</AllowHardTerminate>
+
+    <!-- Keep task in scheduler after it ends -->
+    <Hidden>false</Hidden>
+
+    <!-- Priority: below normal (6) to avoid impacting user work -->
+    <Priority>6</Priority>
+  </Settings>
+
+  <!-- ================================================================== -->
+  <!-- Actions                                                              -->
+  <!-- ================================================================== -->
+  <Actions Context="Author">
+    <Exec>
+      <Command>__SKENV_PATH__\Scripts\skcapstone.exe</Command>
+      <Arguments>daemon start --foreground</Arguments>
+      <WorkingDirectory>%USERPROFILE%\.skcapstone</WorkingDirectory>
+    </Exec>
+  </Actions>
+
+</Task>

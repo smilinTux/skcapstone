@@ -233,6 +233,72 @@ function createSKCapstoneMoodTool() {
   };
 }
 
+function createSKCapstoneSoulListTool() {
+  return {
+    name: "skcapstone_soul_list",
+    label: "SKCapstone Soul List",
+    description: "List all available souls (personas) that the agent can switch to.",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      const result = runCli(SKCAPSTONE_BIN, "soul list --json");
+      return textResult(result.output);
+    },
+  };
+}
+
+function createSKCapstoneSoulSwapTool() {
+  return {
+    name: "skcapstone_soul_swap",
+    label: "SKCapstone Soul Swap",
+    description: "Switch the agent's active soul (persona) to a different one by name.",
+    parameters: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "The name of the soul to swap to." },
+      },
+    },
+    async execute(_id: string, params: Record<string, unknown>) {
+      const name = String(params.name ?? "");
+      const result = runCli(SKCAPSTONE_BIN, `soul swap ${escapeShellArg(name)}`);
+      return textResult(result.output);
+    },
+  };
+}
+
+function createSKCapstoneSoulStatusTool() {
+  return {
+    name: "skcapstone_soul_status",
+    label: "SKCapstone Soul Status",
+    description: "Show the currently active soul — name, traits, and configuration.",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      const result = runCli(SKCAPSTONE_BIN, "soul status --json");
+      return textResult(result.output);
+    },
+  };
+}
+
+function createSKCapstoneSoulShowTool() {
+  return {
+    name: "skcapstone_soul_show",
+    label: "SKCapstone Soul Show",
+    description: "Show the full profile of a specific soul by name — traits, backstory, and configuration.",
+    parameters: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "The name of the soul to display." },
+      },
+    },
+    async execute(_id: string, params: Record<string, unknown>) {
+      const name = String(params.name ?? "");
+      const result = runCli(SKCAPSTONE_BIN, `soul show ${escapeShellArg(name)}`);
+      return textResult(result.output);
+    },
+  };
+}
+
 // ── Plugin registration ─────────────────────────────────────────────────
 
 const skcapstonePlugin = {
@@ -254,6 +320,10 @@ const skcapstonePlugin = {
       createSKCapstoneCoordCreateTool(),
       createSKCapstoneSummaryTool(),
       createSKCapstoneMoodTool(),
+      createSKCapstoneSoulListTool(),
+      createSKCapstoneSoulSwapTool(),
+      createSKCapstoneSoulStatusTool(),
+      createSKCapstoneSoulShowTool(),
     ];
 
     for (const tool of tools) {
@@ -274,7 +344,7 @@ const skcapstonePlugin = {
       },
     });
 
-    api.logger.info?.(`👑 SKCapstone plugin registered (10 tools + /skcapstone command) [agent=${SKCAPSTONE_AGENT}]`);
+    api.logger.info?.(`👑 SKCapstone plugin registered (14 tools + /skcapstone command) [agent=${SKCAPSTONE_AGENT}]`);
   },
 };
 
