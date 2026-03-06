@@ -937,11 +937,15 @@ class DaemonService:
         # Build task scheduler (beacon + consciousness must be ready first)
         try:
             from .scheduled_tasks import build_scheduler
+
+            # Get sync_watcher from consciousness loop if available
+            _sync_watcher = getattr(self._consciousness, "_sync_watcher", None)
             self._scheduler = build_scheduler(
                 home=self.config.home,
                 stop_event=self._stop_event,
                 consciousness_loop=self._consciousness,
                 beacon=self._beacon,
+                sync_watcher=_sync_watcher,
             )
             logger.info("Task scheduler built — %d task(s)", len(self._scheduler._tasks))
         except Exception as exc:

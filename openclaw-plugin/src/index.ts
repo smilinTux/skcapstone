@@ -14,6 +14,7 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 
 const SKCAPSTONE_BIN = process.env.SKCAPSTONE_BIN || "skcapstone";
 const SKMEMORY_BIN = process.env.SKMEMORY_BIN || "skmemory";
+const SKCAPSTONE_AGENT = process.env.SKCAPSTONE_AGENT || "lumina";
 const EXEC_TIMEOUT = 60_000;
 
 function runCli(bin: string, args: string): { ok: boolean; output: string } {
@@ -23,6 +24,7 @@ function runCli(bin: string, args: string): { ok: boolean; output: string } {
       timeout: EXEC_TIMEOUT,
       env: {
         ...process.env,
+        SKCAPSTONE_AGENT,
         PATH: `${process.env.HOME}/.local/bin:${process.env.HOME}/.skenv/bin:${process.env.PATH}`,
       },
     }).trim();
@@ -272,7 +274,7 @@ const skcapstonePlugin = {
       },
     });
 
-    api.logger.info?.("👑 SKCapstone plugin registered (10 tools + /skcapstone command)");
+    api.logger.info?.(`👑 SKCapstone plugin registered (10 tools + /skcapstone command) [agent=${SKCAPSTONE_AGENT}]`);
   },
 };
 

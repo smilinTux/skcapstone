@@ -32,8 +32,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
+from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -41,6 +43,7 @@ from .memory_engine import (
     _entry_path,
     _load_entry,
     _memory_dir,
+    _remove_from_index,
     _save_entry,
     _update_index,
 )
@@ -71,6 +74,9 @@ HIGH_VALUE_PATTERNS = [
     re.compile(r"\bsovereign", re.I),
     re.compile(r"\bentangl", re.I),
 ]
+
+# Tags that protect memories from compression and archival
+PROTECTED_TAGS = frozenset({"seed", "core", "identity"})
 
 
 @dataclass
@@ -226,6 +232,21 @@ class PromotionEngine:
             if layer_dir.is_dir():
                 result.by_layer[lyr.value] = sum(1 for _ in layer_dir.glob("*.json"))
 
+        # Run maintenance passes: dedup, compress, archive
+        if not dry_run:
+            try:
+                self.dedup_memories()
+            except Exception as exc:
+                logger.error("Dedup pass failed: %s", exc)
+            try:
+                self.compress_memories()
+            except Exception as exc:
+                logger.error("Compress pass failed: %s", exc)
+            try:
+                self.archive_old_memories()
+            except Exception as exc:
+                logger.error("Archive pass failed: %s", exc)
+
         self._record_sweep(result)
         return result
 
@@ -260,6 +281,248 @@ class PromotionEngine:
             return data[-limit:]
         except (json.JSONDecodeError, Exception):
             return []
+
+    # -------------------------------------------------------------------
+    # Dedup / Compress / Archive
+    # -------------------------------------------------------------------
+
+    def dedup_memories(self) -> int:
+        """Scan all memory tiers for duplicate and near-duplicate memories.
+
+        Duplicates are detected by:
+        - Exact title match (case-insensitive), using the raw JSON ``title``
+          field or falling back to the first line of ``content``.
+        - Near-duplicate: first 50 characters of the title match.
+
+        When duplicates are found, the newest memory (by ``created_at``) is
+        kept and the rest are moved to an ``archive/deduped/`` directory.
+
+        Returns:
+            Number of duplicate memories removed.
+        """
+        mem_dir = _memory_dir(self._home)
+        removed = 0
+
+        # Collect all memories across tiers with their raw titles
+        entries_by_title: dict[str, list[tuple[Path, dict, MemoryEntry]]] = defaultdict(list)
+
+        for lyr in MemoryLayer:
+            layer_dir = mem_dir / lyr.value
+            if not layer_dir.is_dir():
+                continue
+            for f in sorted(layer_dir.glob("*.json")):
+                try:
+                    raw = json.loads(f.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+                entry = _load_entry(f)
+                if entry is None:
+                    continue
+                # Use raw title if present, otherwise first line of content
+                title = raw.get("title", entry.content.split("\n", 1)[0])
+                norm_title = title.strip().lower()
+                entries_by_title[norm_title].append((f, raw, entry))
+
+        # Phase 1: exact title duplicates
+        deduped_ids: list[str] = []
+        for title, group in entries_by_title.items():
+            if len(group) <= 1:
+                continue
+            # Sort by created_at descending — keep newest
+            group.sort(key=lambda g: g[2].created_at, reverse=True)
+            keeper = group[0]
+            for path, raw, entry in group[1:]:
+                self._archive_deduped(path, entry)
+                deduped_ids.append(entry.memory_id)
+                removed += 1
+                logger.info(
+                    "Dedup: archived %s (dup of %s, title='%s')",
+                    entry.memory_id, keeper[2].memory_id, title[:60],
+                )
+
+        # Phase 2: near-duplicates (first 50 chars of title match)
+        # Re-collect surviving memories (exclude already-deduped)
+        prefix_groups: dict[str, list[tuple[Path, dict, MemoryEntry]]] = defaultdict(list)
+        for title, group in entries_by_title.items():
+            for path, raw, entry in group:
+                if entry.memory_id in deduped_ids:
+                    continue
+                if not path.exists():
+                    continue
+                prefix = title[:50]
+                prefix_groups[prefix].append((path, raw, entry))
+
+        for prefix, group in prefix_groups.items():
+            if len(group) <= 1:
+                continue
+            group.sort(key=lambda g: g[2].created_at, reverse=True)
+            keeper = group[0]
+            for path, raw, entry in group[1:]:
+                if entry.memory_id in deduped_ids:
+                    continue
+                self._archive_deduped(path, entry)
+                deduped_ids.append(entry.memory_id)
+                removed += 1
+                logger.info(
+                    "Dedup (near): archived %s (near-dup of %s, prefix='%s')",
+                    entry.memory_id, keeper[2].memory_id, prefix[:50],
+                )
+
+        # Log dedup actions to promotion-log.json
+        if removed > 0:
+            self._record_dedup(removed, deduped_ids)
+
+        return removed
+
+    def compress_memories(self) -> int:
+        """Compress older memories by truncating content.
+
+        Rules:
+        - Mid-term memories older than 7 days: truncate to first 500 chars + "..."
+        - Long-term memories older than 30 days: keep only first 200 chars as summary
+        - Memories tagged "seed", "core", or "identity" are never compressed.
+
+        Returns:
+            Number of memories compressed.
+        """
+        mem_dir = _memory_dir(self._home)
+        now = datetime.now(timezone.utc)
+        compressed = 0
+
+        compress_rules = [
+            (MemoryLayer.MID_TERM, timedelta(days=7), 500),
+            (MemoryLayer.LONG_TERM, timedelta(days=30), 200),
+        ]
+
+        for lyr, age_threshold, max_chars in compress_rules:
+            layer_dir = mem_dir / lyr.value
+            if not layer_dir.is_dir():
+                continue
+            for f in sorted(layer_dir.glob("*.json")):
+                entry = _load_entry(f)
+                if entry is None:
+                    continue
+
+                # Skip protected memories
+                if self._is_protected(entry):
+                    continue
+
+                age = now - entry.created_at
+                if age < age_threshold:
+                    continue
+
+                # Already short enough — skip
+                if len(entry.content) <= max_chars:
+                    continue
+
+                entry.content = entry.content[:max_chars] + "..."
+                _save_entry(self._home, entry)
+                compressed += 1
+                logger.info(
+                    "Compressed %s (%s, age=%dd, truncated to %d chars)",
+                    entry.memory_id, lyr.value, age.days, max_chars,
+                )
+
+        return compressed
+
+    def archive_old_memories(self) -> int:
+        """Move memories older than 60 days to an archive directory.
+
+        Scans all tiers and moves qualifying memories to
+        ``~/.skcapstone/agents/<agent>/memory/archive/``.
+        Memories tagged "seed", "core", or "identity" are never archived.
+
+        Returns:
+            Number of memories archived.
+        """
+        mem_dir = _memory_dir(self._home)
+        archive_dir = mem_dir / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        threshold = timedelta(days=60)
+        archived = 0
+
+        for lyr in MemoryLayer:
+            layer_dir = mem_dir / lyr.value
+            if not layer_dir.is_dir():
+                continue
+            for f in sorted(layer_dir.glob("*.json")):
+                entry = _load_entry(f)
+                if entry is None:
+                    continue
+
+                if self._is_protected(entry):
+                    continue
+
+                age = now - entry.created_at
+                if age < threshold:
+                    continue
+
+                dest = archive_dir / f.name
+                shutil.move(str(f), str(dest))
+                _remove_from_index(self._home, entry.memory_id)
+                archived += 1
+                logger.info(
+                    "Archived %s (%s, age=%dd) -> archive/",
+                    entry.memory_id, lyr.value, age.days,
+                )
+
+        return archived
+
+    def _is_protected(self, entry: MemoryEntry) -> bool:
+        """Check if a memory has protected tags (seed/core/identity).
+
+        Args:
+            entry: The MemoryEntry to check.
+
+        Returns:
+            True if the memory should not be compressed or archived.
+        """
+        return bool(set(t.lower() for t in entry.tags) & PROTECTED_TAGS)
+
+    def _archive_deduped(self, path: Path, entry: MemoryEntry) -> None:
+        """Move a deduplicated memory to the deduped archive.
+
+        Args:
+            path: Current file path.
+            entry: The MemoryEntry being archived.
+        """
+        mem_dir = _memory_dir(self._home)
+        dedup_dir = mem_dir / "archive" / "deduped"
+        dedup_dir.mkdir(parents=True, exist_ok=True)
+        dest = dedup_dir / path.name
+        if path.exists():
+            shutil.move(str(path), str(dest))
+        _remove_from_index(self._home, entry.memory_id)
+
+    def _record_dedup(self, count: int, deduped_ids: list[str]) -> None:
+        """Append dedup results to the promotion log.
+
+        Args:
+            count: Number of duplicates removed.
+            deduped_ids: List of memory IDs that were archived.
+        """
+        log_path = self._home / "memory" / "promotion-log.json"
+        history: list[dict] = []
+        if log_path.exists():
+            try:
+                history = json.loads(log_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, Exception):
+                history = []
+
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action": "dedup",
+            "removed": count,
+            "deduped_ids": deduped_ids[-50:],  # cap list size
+        }
+        history.append(entry)
+
+        if len(history) > 100:
+            history = history[-100:]
+
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
 
     # -------------------------------------------------------------------
     # Scoring

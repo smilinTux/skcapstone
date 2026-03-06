@@ -391,3 +391,28 @@ def register_memory_commands(main: click.Group) -> None:
             for err in result.get("errors", [])[:5]:
                 console.print(f"    {err}")
         console.print()
+
+    @memory.command("dedup")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def memory_dedup(home):
+        """Deduplicate memories across all tiers.
+
+        Scans for exact and near-duplicate titles. Keeps the newest
+        copy and archives the rest to memory/archive/deduped/.
+        """
+        from ..memory_promoter import PromotionEngine
+
+        home_path = Path(home).expanduser()
+        if not home_path.exists():
+            console.print("[bold red]No agent found.[/] Run skcapstone init first.")
+            sys.exit(1)
+
+        console.print("\n  Scanning for duplicate memories...\n")
+        engine = PromotionEngine(home_path)
+        removed = engine.dedup_memories()
+
+        if removed:
+            console.print(f"  [yellow]Deduped:[/] {removed} duplicate{'s' if removed != 1 else ''} archived.")
+        else:
+            console.print("  [green]No duplicates found.[/]")
+        console.print()

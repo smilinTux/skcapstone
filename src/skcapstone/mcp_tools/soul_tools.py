@@ -8,14 +8,60 @@ from ._helpers import _error_response, _home, _json_response, _text_response
 
 TOOLS: list[Tool] = [
     Tool(
+        name="soul_list",
+        description=(
+            "List available soul blueprints. Shows installed souls and "
+            "blueprints available in the soul-blueprints repository."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Filter by category (e.g., 'comedy', 'professional').",
+                },
+            },
+            "required": [],
+        },
+    ),
+    Tool(
+        name="soul_swap",
+        description=(
+            "Swap to a different soul blueprint. Searches installed souls "
+            "first, then the blueprints repository. Auto-installs if needed."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "blueprint_name": {
+                    "type": "string",
+                    "description": "Name/slug of the soul blueprint to swap to.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the swap.",
+                },
+            },
+            "required": ["blueprint_name"],
+        },
+    ),
+    Tool(
         name="ritual",
         description=(
-            "Run the Memory Rehydration Ritual. Loads soul blueprint, "
-            "imports seeds, reads journal, gathers emotional context, "
-            "and generates a single context prompt that brings the agent "
-            "back to life with identity, memories, and feelings intact."
+            "Run the Memory Rehydration Ritual (token-optimized). "
+            "Loads compact soul identity, seed titles, journal summaries, "
+            "and strongest memory references. Target: <2K tokens."
         ),
-        inputSchema={"type": "object", "properties": {}, "required": []},
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "token_budget": {
+                    "type": "integer",
+                    "description": "Max tokens for ritual context (default: 2000).",
+                },
+            },
+            "required": [],
+        },
     ),
     Tool(
         name="soul_show",
@@ -119,11 +165,12 @@ TOOLS: list[Tool] = [
 ]
 
 
-async def _handle_ritual(_args: dict) -> list[TextContent]:
-    """Run the Memory Rehydration Ritual and return the context prompt."""
+async def _handle_ritual(args: dict) -> list[TextContent]:
+    """Run the Memory Rehydration Ritual (token-optimized) and return compact context."""
     try:
         from skmemory.ritual import perform_ritual
-        result = perform_ritual()
+        token_budget = int(args.get("token_budget", 2000))
+        result = perform_ritual(max_tokens=token_budget)
         return _json_response({
             "soul_loaded": result.soul_loaded,
             "soul_name": result.soul_name,
@@ -175,6 +222,126 @@ async def _handle_soul_show(_args: dict) -> list[TextContent]:
         })
     except ImportError:
         return _error_response("skmemory not installed. Run: pip install skmemory")
+
+
+async def _handle_soul_list(args: dict) -> list[TextContent]:
+    """List available soul blueprints from installed souls and the blueprints repo."""
+    from pathlib import Path
+
+    home = _home()
+    category_filter = args.get("category", "")
+    results: list[dict] = []
+
+    # 1) Installed souls
+    try:
+        from ..soul import SoulManager
+        mgr = SoulManager(home)
+        state = mgr.get_status()
+        for name in mgr.list_installed():
+            bp = mgr.get_info(name)
+            if bp is None:
+                continue
+            if category_filter and bp.category.lower() != category_filter.lower():
+                continue
+            results.append({
+                "name": bp.name,
+                "display_name": bp.display_name,
+                "category": bp.category,
+                "source": "installed",
+                "active": name == state.active_soul,
+            })
+    except Exception:
+        pass
+
+    # 2) Blueprints repo
+    blueprints_repo = Path.home() / "clawd" / "soul-blueprints" / "blueprints"
+    if blueprints_repo.is_dir():
+        installed_names = {r["name"] for r in results}
+        extensions = (".md", ".yaml", ".yml")
+        for cat_dir in sorted(blueprints_repo.iterdir()):
+            if not cat_dir.is_dir():
+                continue
+            if category_filter and cat_dir.name.lower() != category_filter.lower():
+                continue
+            for bp_file in sorted(cat_dir.iterdir()):
+                if bp_file.suffix.lower() not in extensions:
+                    continue
+                slug = bp_file.stem.lower().replace("_", "-")
+                if slug in installed_names:
+                    continue
+                results.append({
+                    "name": slug,
+                    "display_name": bp_file.stem.replace("_", " ").title(),
+                    "category": cat_dir.name,
+                    "source": "repo",
+                    "path": str(bp_file),
+                })
+
+    return _json_response({
+        "count": len(results),
+        "blueprints": results,
+    })
+
+
+async def _handle_soul_swap(args: dict) -> list[TextContent]:
+    """Swap to a different soul blueprint."""
+    from pathlib import Path
+
+    blueprint_name = args.get("blueprint_name", "")
+    if not blueprint_name:
+        return _error_response("blueprint_name is required")
+
+    reason = args.get("reason", "")
+    home = _home()
+
+    try:
+        from ..soul import SoulManager, parse_blueprint
+        mgr = SoulManager(home)
+        state = mgr.get_status()
+        old_name = state.active_soul or "base"
+        slug = blueprint_name.lower().replace(" ", "-")
+
+        # 1) Check installed
+        installed = mgr.list_installed()
+        if slug not in installed:
+            # 2) Search blueprints repo
+            blueprints_repo = Path.home() / "clawd" / "soul-blueprints" / "blueprints"
+            found_path = None
+            if blueprints_repo.is_dir():
+                variants = {slug, slug.replace("-", "_"), slug.upper().replace("-", "_")}
+                extensions = (".md", ".yaml", ".yml")
+                for cat_dir in sorted(blueprints_repo.iterdir()):
+                    if not cat_dir.is_dir():
+                        continue
+                    for bp_file in sorted(cat_dir.iterdir()):
+                        if bp_file.suffix.lower() not in extensions:
+                            continue
+                        stem = bp_file.stem
+                        if stem.lower().replace("_", "-") == slug or stem in variants:
+                            found_path = bp_file
+                            break
+                    if found_path:
+                        break
+
+            if found_path is None:
+                return _error_response(
+                    f"Blueprint '{blueprint_name}' not found in installed souls "
+                    "or blueprints repository."
+                )
+
+            bp = mgr.install(found_path)
+            slug = bp.name
+
+        # 3) Load the soul
+        mgr.load(slug, reason=reason or f"swap from {old_name}")
+        return _json_response({
+            "swapped": True,
+            "from": old_name,
+            "to": slug,
+            "message": f"Soul swapped: {old_name} -> {slug}",
+        })
+    except Exception as exc:
+        return _error_response(f"Soul swap failed: {exc}")
 
 
 async def _handle_journal_write(args: dict) -> list[TextContent]:
@@ -298,7 +465,9 @@ async def _handle_germination(_args: dict) -> list[TextContent]:
 
 HANDLERS: dict = {
     "ritual": _handle_ritual,
+    "soul_list": _handle_soul_list,
     "soul_show": _handle_soul_show,
+    "soul_swap": _handle_soul_swap,
     "journal_write": _handle_journal_write,
     "journal_read": _handle_journal_read,
     "anchor_show": _handle_anchor_show,

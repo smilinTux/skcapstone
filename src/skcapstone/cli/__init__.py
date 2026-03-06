@@ -85,6 +85,9 @@ from .usage_cmd import register_usage_commands
 from .search_cmd import register_search_commands
 from .mood_cmd import register_mood_commands
 from .register_cmd import register_register_commands
+from .gtd import register_gtd_commands
+from .skseed import register_skseed_commands
+from .service_cmd import register_service_commands
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -132,3 +135,6 @@ register_usage_commands(main)
 register_search_commands(main)
 register_mood_commands(main)
 register_register_commands(main)
+register_gtd_commands(main)
+register_skseed_commands(main)
+register_service_commands(main)

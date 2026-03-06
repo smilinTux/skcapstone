@@ -1,8 +1,11 @@
-"""Soul layering commands: list, install, install-all, load, unload, status, history, info."""
+"""Soul layering commands: list, install, install-all, load, unload, swap, show, status, history, info."""
 
 from __future__ import annotations
 
+import json
+import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -13,6 +16,41 @@ from ..pillars.security import audit_event
 
 from rich.panel import Panel
 from rich.table import Table
+
+# Path to the soul-blueprints repository (community blueprints)
+_BLUEPRINTS_REPO = Path.home() / "clawd" / "soul-blueprints" / "blueprints"
+
+
+def _find_blueprint_in_repo(slug: str) -> Path | None:
+    """Search the soul-blueprints repo for a blueprint matching the slug.
+
+    Searches all category subdirectories for files matching:
+      <SLUG>.md, <SLUG>.yaml, <SLUG>.yml (case-insensitive stem match).
+
+    Args:
+        slug: Lowercased, hyphenated blueprint name to search for.
+
+    Returns:
+        Path to the blueprint file, or None if not found.
+    """
+    if not _BLUEPRINTS_REPO.is_dir():
+        return None
+
+    # Normalize: try both hyphenated and underscored variants
+    variants = {slug, slug.replace("-", "_"), slug.upper().replace("-", "_")}
+    extensions = (".md", ".yaml", ".yml")
+
+    for category_dir in sorted(_BLUEPRINTS_REPO.iterdir()):
+        if not category_dir.is_dir():
+            continue
+        for bp_file in sorted(category_dir.iterdir()):
+            if bp_file.suffix.lower() not in extensions:
+                continue
+            stem = bp_file.stem
+            if stem.lower().replace("_", "-") == slug or stem in variants:
+                return bp_file
+
+    return None
 
 
 def register_soul_commands(main: click.Group) -> None:
@@ -213,3 +251,131 @@ def register_soul_commands(main: click.Group) -> None:
             title=f"Soul: {name}", border_style="yellow",
         ))
         console.print()
+
+    # -----------------------------------------------------------------------
+    # soul show — display current active soul or a specific skmemory blueprint
+    # -----------------------------------------------------------------------
+
+    @soul.command("show")
+    @click.argument("name", required=False, default=None)
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def soul_show(name, home):
+        """Display the current soul identity or a named blueprint.
+
+        With no argument, shows the active soul from skmemory's base.json.
+        With a NAME, shows details of an installed soul overlay.
+        """
+        home_path = Path(home).expanduser()
+
+        if name:
+            # Show a specific installed soul overlay
+            from ..soul import SoulManager
+            validate_soul_name(name)
+            mgr = SoulManager(home_path)
+            bp = mgr.get_info(name)
+            if bp is None:
+                console.print(f"\n  [red]Soul not found:[/] {name}\n")
+                sys.exit(1)
+            console.print()
+            console.print(Panel(
+                f"[bold]{bp.display_name}[/]\n"
+                f"Category: {bp.category}\n"
+                f"Vibe: {bp.vibe}\n"
+                f"Traits: {', '.join(bp.core_traits[:8])}\n",
+                title=f"Soul: {name}", border_style="cyan",
+            ))
+            console.print()
+            return
+
+        # Show the current skmemory soul identity (base.json)
+        try:
+            from skmemory.soul import load_soul
+            soul_path = str(home_path / "soul" / "base.json")
+            blueprint = load_soul(path=soul_path)
+            if blueprint is None:
+                console.print("\n  [dim]No soul blueprint found.[/]\n")
+                return
+
+            lines = []
+            if blueprint.name:
+                lines.append(f"Name: [bold]{blueprint.name}[/]")
+            if blueprint.title:
+                lines.append(f"Title: [cyan]{blueprint.title}[/]")
+            if blueprint.personality:
+                lines.append(f"Traits: {', '.join(blueprint.personality)}")
+            if blueprint.values:
+                lines.append(f"Values: {', '.join(blueprint.values)}")
+            if blueprint.community:
+                lines.append(f"Community: {blueprint.community}")
+            if blueprint.boot_message:
+                lines.append(f"\nBoot: [italic]{blueprint.boot_message}[/]")
+
+            console.print()
+            console.print(Panel(
+                "\n".join(lines),
+                title="Active Soul Identity",
+                border_style="green",
+            ))
+            console.print()
+        except ImportError:
+            console.print("\n  [red]skmemory not installed.[/] Run: pip install skmemory\n")
+            sys.exit(1)
+
+    # -----------------------------------------------------------------------
+    # soul swap — search, install-if-needed, and activate a soul overlay
+    # -----------------------------------------------------------------------
+
+    @soul.command("swap")
+    @click.argument("blueprint")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--reason", "-r", default="", help="Reason for the swap.")
+    def soul_swap(blueprint, home, reason):
+        """Swap to a different soul blueprint.
+
+        Searches for BLUEPRINT in this order:
+          1) Already installed souls
+          2) ~/clawd/soul-blueprints/blueprints/*/<BLUEPRINT>.{md,yaml,yml}
+          3) Defaults
+
+        If found in the blueprints repo but not installed, installs it first.
+        Backs up current state and activates the new soul overlay.
+        """
+        from ..soul import SoulManager, parse_blueprint
+
+        home_path = Path(home).expanduser()
+        mgr = SoulManager(home_path)
+
+        # Get current state for the "swapped from" message
+        state = mgr.get_status()
+        old_name = state.active_soul or "base"
+
+        # 1) Check if already installed
+        installed = mgr.list_installed()
+        slug = blueprint.lower().replace(" ", "-")
+
+        if slug not in installed:
+            # 2) Search the blueprints repo
+            found_path = _find_blueprint_in_repo(slug)
+            if found_path is None:
+                console.print(f"\n  [red]Blueprint not found:[/] {blueprint}")
+                console.print("  Searched installed souls and ~/clawd/soul-blueprints/blueprints/")
+                console.print("  Run [bold]skcapstone soul list[/] to see available souls.\n")
+                sys.exit(1)
+
+            # Install it
+            try:
+                bp = mgr.install(found_path)
+                console.print(f"  [green]Auto-installed:[/] {bp.display_name} ({bp.name})")
+                slug = bp.name  # Use the parsed name
+            except (ValueError, FileNotFoundError) as e:
+                console.print(f"\n  [red]Failed to install blueprint:[/] {e}\n")
+                sys.exit(1)
+
+        # 3) Load/activate the soul
+        try:
+            mgr.load(slug, reason=reason or f"swap from {old_name}")
+            audit_event(home_path, "SOUL_SWAP", f"Soul swapped: {old_name} -> {slug}")
+            console.print(f"\n  Soul swapped: [yellow]{old_name}[/] -> [bold cyan]{slug}[/]\n")
+        except ValueError as e:
+            console.print(f"\n  [red]Error:[/] {e}\n")
+            sys.exit(1)

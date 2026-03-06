@@ -1244,7 +1244,7 @@ class ConsciousnessLoop:
         self._skcomm = skcomm
 
     def start(self) -> list[threading.Thread]:
-        """Start inotify watcher and consciousness worker threads.
+        """Start inotify watcher, sync watcher, and consciousness worker threads.
 
         Returns:
             List of started threads.
@@ -1260,6 +1260,22 @@ class ConsciousnessLoop:
             )
             t.start()
             threads.append(t)
+
+        # Sync inbox watcher (auto-import Syncthing seeds)
+        try:
+            from skcapstone.sync_watcher import SyncWatcher
+
+            self._sync_watcher = SyncWatcher(
+                home=self._home,
+                stop_event=self._stop_event,
+            )
+            if self._sync_watcher.enabled:
+                sync_threads = self._sync_watcher.start()
+                threads.extend(sync_threads)
+                logger.info("SyncWatcher integrated with consciousness loop")
+        except Exception as exc:
+            self._sync_watcher = None
+            logger.debug("SyncWatcher not available: %s", exc)
 
         # Config hot-reload watcher
         t_cfg = threading.Thread(
@@ -1284,6 +1300,13 @@ class ConsciousnessLoop:
             try:
                 self._observer.stop()
                 self._observer.join(timeout=5)
+            except Exception:
+                pass
+        # Stop sync watcher if running
+        sync_watcher = getattr(self, "_sync_watcher", None)
+        if sync_watcher:
+            try:
+                sync_watcher.stop()
             except Exception:
                 pass
         self._executor.shutdown(wait=False)

@@ -348,6 +348,7 @@ def build_scheduler(
     stop_event: threading.Event,
     consciousness_loop: object = None,
     beacon: object = None,
+    sync_watcher: object = None,
 ) -> TaskScheduler:
     """Build and register all standard scheduled tasks.
 
@@ -358,7 +359,11 @@ def build_scheduler(
     +==========================+============+
     | heartbeat_pulse          | 30 s       |
     +--------------------------+------------+
+    | sync_inbox_scan          | 30 s       |
+    +--------------------------+------------+
     | backend_reprobe          | 5 min      |
+    +--------------------------+------------+
+    | service_health_check     | 5 min      |
     +--------------------------+------------+
     | memory_promotion_sweep   | 1 hour     |
     +--------------------------+------------+
@@ -370,6 +375,7 @@ def build_scheduler(
         stop_event: Daemon stop event — scheduler thread exits when set.
         consciousness_loop: Optional ConsciousnessLoop for backend re-probe.
         beacon: Optional HeartbeatBeacon for heartbeat pulse.
+        sync_watcher: Optional SyncWatcher for inbox polling fallback.
 
     Returns:
         Configured TaskScheduler (call ``.start()`` to begin).
@@ -388,6 +394,18 @@ def build_scheduler(
         callback=make_heartbeat_task(beacon, _consciousness_active),
     )
 
+    # Sync inbox polling (fallback for when inotify misses events)
+    try:
+        from .sync_watcher import make_sync_inbox_scan_task
+
+        scheduler.register(
+            name="sync_inbox_scan",
+            interval_seconds=30,
+            callback=make_sync_inbox_scan_task(sync_watcher),
+        )
+    except ImportError:
+        logger.debug("sync_watcher not available — sync_inbox_scan task skipped")
+
     scheduler.register(
         name="backend_reprobe",
         interval_seconds=300,  # 5 minutes
@@ -405,5 +423,17 @@ def build_scheduler(
         interval_seconds=86400,  # 24 hours
         callback=make_profile_freshness_task(home),
     )
+
+    # Service health check — pings Qdrant, FalkorDB, Syncthing, daemons
+    try:
+        from .service_health import make_service_health_task
+
+        scheduler.register(
+            name="service_health_check",
+            interval_seconds=300,  # 5 minutes
+            callback=make_service_health_task(),
+        )
+    except ImportError:
+        logger.debug("service_health not available — service_health_check task skipped")
 
     return scheduler

@@ -8,6 +8,33 @@ from ._helpers import _error_response, _json_response
 
 TOOLS: list[Tool] = [
     Tool(
+        name="skseed_ingest",
+        description=(
+            "Ingest a document (file or URL) into long-term memory. "
+            "Supports PDF, Markdown, TXT, HTML files and HTTP(S) URLs. "
+            "Extracts text, identifies key claims, and stores as a searchable memory."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path or URL to ingest",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional title override for the document",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional tags to attach to the memory",
+                },
+            },
+            "required": ["path"],
+        },
+    ),
+    Tool(
         name="skseed_collide",
         description=(
             "Run a proposition through the 6-stage steel man collider. "
@@ -127,6 +154,29 @@ TOOLS: list[Tool] = [
 ]
 
 
+async def _handle_skseed_ingest(args: dict) -> list[TextContent]:
+    """Ingest a document into long-term memory."""
+    from ..cli.skseed import ingest_document
+
+    path = args.get("path", "")
+    if not path:
+        return _error_response("path is required")
+
+    try:
+        result = ingest_document(
+            source=path,
+            title=args.get("title"),
+            tags=args.get("tags"),
+        )
+        return _json_response(result)
+    except FileNotFoundError as e:
+        return _error_response(str(e))
+    except ValueError as e:
+        return _error_response(str(e))
+    except Exception as e:
+        return _error_response(f"Ingestion failed: {e}")
+
+
 async def _handle_skseed_collide(args: dict) -> list[TextContent]:
     """Run a proposition through the 6-stage steel man collider."""
     from skseed.skill import collide
@@ -196,6 +246,7 @@ async def _handle_skseed_alignment(args: dict) -> list[TextContent]:
 
 
 HANDLERS: dict = {
+    "skseed_ingest": _handle_skseed_ingest,
     "skseed_collide": _handle_skseed_collide,
     "skseed_audit": _handle_skseed_audit,
     "skseed_philosopher": _handle_skseed_philosopher,

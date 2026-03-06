@@ -1551,6 +1551,557 @@ async def list_tools() -> list[Tool]:
                 "required": ["description"],
             },
         ),
+        # GTD Inbox Capture
+        Tool(
+            name="gtd_capture",
+            description=(
+                "Capture an item to the GTD inbox. Quick-add anything that "
+                "needs processing later. Returns confirmation with item ID."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The item text to capture",
+                    },
+                    "source": {
+                        "type": "string",
+                        "enum": ["manual", "telegram", "email", "voice"],
+                        "description": "Where this item came from (default: manual)",
+                    },
+                    "privacy": {
+                        "type": "string",
+                        "enum": ["private", "team", "community", "public"],
+                        "description": "Privacy level (default: private)",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "GTD context tag, e.g. @computer, @phone, @home",
+                    },
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="gtd_inbox",
+            description=(
+                "List current GTD inbox items, sorted newest first. "
+                "Shows items awaiting clarification and processing."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum items to return (default: 20)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="gtd_status",
+            description=(
+                "Summary of all GTD lists: inbox count, next-actions count, "
+                "projects count, waiting-for count, someday-maybe count."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # GTD Clarify & Organize
+        Tool(
+            name="gtd_clarify",
+            description=(
+                "Clarify and organize a GTD inbox item. Determines whether the item "
+                "is actionable, single/multi-step, and routes it to the appropriate list."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "item_id": {"type": "string", "description": "ID of the inbox item to clarify"},
+                    "actionable": {"type": "boolean", "description": "Is this item actionable?"},
+                    "steps": {"type": "string", "enum": ["single", "multi"], "description": "Single action or multi-step project"},
+                    "context": {"type": "string", "description": "GTD context tag, e.g. @computer, @phone, @home"},
+                    "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "description": "Priority level"},
+                    "energy": {"type": "string", "enum": ["high", "medium", "low"], "description": "Energy level required"},
+                    "delegate_to": {"type": "string", "description": "Person or agent to delegate to"},
+                },
+                "required": ["item_id", "actionable"],
+            },
+        ),
+        Tool(
+            name="gtd_move",
+            description=(
+                "Manually move a GTD item from its current list to another list."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "item_id": {"type": "string", "description": "ID of the item to move"},
+                    "destination": {"type": "string", "enum": ["next", "project", "waiting", "someday", "reference", "done"], "description": "Destination list"},
+                },
+                "required": ["item_id", "destination"],
+            },
+        ),
+        Tool(
+            name="gtd_done",
+            description=(
+                "Mark any GTD item as done regardless of which list it is in. "
+                "Moves it to the archive with a completed_at timestamp."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "item_id": {"type": "string", "description": "ID of the item to mark as done"},
+                },
+                "required": ["item_id"],
+            },
+        ),
+        Tool(
+            name="gtd_review",
+            description=(
+                "Generate a GTD weekly review summary. Shows counts per list, "
+                "oldest items, longest-waiting items, and stale projects."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="gtd_next",
+            description=(
+                "View next actions filtered by context, energy level, and/or priority. "
+                "Returns a sorted list (highest priority first, then oldest first)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "context": {"type": "string", "description": "Filter by GTD context tag, e.g. @computer, @phone, @home"},
+                    "energy": {"type": "string", "enum": ["high", "medium", "low"], "description": "Filter by energy level required"},
+                    "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "description": "Filter by priority level"},
+                    "limit": {"type": "integer", "description": "Maximum items to return (default: 10)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="gtd_projects",
+            description=(
+                "View GTD projects with their status. Can filter by active or stale "
+                "(no activity in 7+ days). Shows the next action for each project."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["active", "stale", "all"], "description": "Filter by project status (default: all)"},
+                    "limit": {"type": "integer", "description": "Maximum items to return (default: 10)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="gtd_waiting",
+            description=(
+                "View waiting-for items sorted by longest waiting first. "
+                "Shows who/what you are waiting on and how long."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximum items to return (default: 10)"},
+                },
+                "required": [],
+            },
+        ),
+        # DID tools
+        Tool(
+            name="did_show",
+            description=(
+                "Generate and display DID (Decentralized Identity) documents "
+                "for the current agent. Supports three tiers: "
+                "'key' (did:key, self-contained, zero infrastructure), "
+                "'mesh' (did:web via Tailscale Serve, mesh-private only), "
+                "'public' (did:web:skworld.io, minimal — public key + name only), "
+                "or 'all' to display all three tiers at once."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tier": {
+                        "type": "string",
+                        "enum": ["key", "mesh", "public", "all"],
+                        "description": "Which DID tier to show (default: all)",
+                    },
+                    "tailnet_hostname": {
+                        "type": "string",
+                        "description": "Tailscale hostname for Tier 2 document (auto-detected if omitted)",
+                    },
+                    "tailnet_name": {
+                        "type": "string",
+                        "description": "Tailnet magic-DNS suffix, e.g. tailnet-xyz.ts.net",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="did_verify_peer",
+            description=(
+                "Verify a peer's DID by computing their did:key from the public key "
+                "stored in ~/.skcapstone/peers/{name}.json and comparing against any "
+                "cached did_key. Also writes the computed did_key back to the peer file."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Peer name (must match a file in ~/.skcapstone/peers/)",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        Tool(
+            name="did_publish",
+            description=(
+                "Generate all DID tiers and write them to disk. "
+                "By default, writes all three tiers including the public Tier 3 document. "
+                "Set publish_public=false to opt out of Tier 3 generation — "
+                "only Tier 1 (did:key) and Tier 2 (mesh) will be written. "
+                "The choice is persisted to ~/.skcapstone/did/policy.json."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "publish_public": {
+                        "type": "boolean",
+                        "description": (
+                            "Whether to generate the Tier 3 public DID document (default: true). "
+                            "Set false to keep your identity private — only did:key + mesh tier."
+                        ),
+                    },
+                    "tailnet_hostname": {
+                        "type": "string",
+                        "description": "Tailscale hostname for Tier 2 document",
+                    },
+                    "tailnet_name": {
+                        "type": "string",
+                        "description": "Tailnet magic-DNS suffix",
+                    },
+                    "org_domain": {
+                        "type": "string",
+                        "description": "Organisation domain for Tier 3 (default: skworld.io)",
+                    },
+                    "agent_slug": {
+                        "type": "string",
+                        "description": "URL-safe agent slug (default: lowercased entity name)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="did_policy",
+            description=(
+                "View or set the DID publication policy for this agent. "
+                "Controls whether Tier 3 (public) DID documents are generated. "
+                "Default: publish_public=true. "
+                "Set publish_public=false to opt out — identity stays private (did:key + mesh only). "
+                "Policy is stored at ~/.skcapstone/did/policy.json."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "publish_public": {
+                        "type": "boolean",
+                        "description": "Set to false to opt out of public Tier 3 DID. Omit to view current policy.",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="did_identity_card",
+            description=(
+                "Generate a full sovereign identity card combining the DID anchor, "
+                "entity info, soul vibe/core traits, and capabilities. "
+                "This is a LOCAL-ONLY artifact — never published to the internet. "
+                "Used to render the agent's identity card on skworld.io."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include_soul": {
+                        "type": "boolean",
+                        "description": "Include soul vibe and core traits (default: true)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        # Consciousness tools
+        Tool(
+            name="consciousness_status",
+            description=(
+                "Get consciousness loop status: enabled state, messages processed, "
+                "responses sent, errors, backend health, inotify state, and "
+                "active conversations."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
+        Tool(
+            name="consciousness_test",
+            description=(
+                "Test the consciousness pipeline end-to-end with a message. "
+                "Classifies the message, builds the agent system prompt, routes "
+                "to the appropriate LLM, and returns the response."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The test message to process",
+                    },
+                },
+                "required": ["message"],
+            },
+        ),
+        # Pub/sub stats
+        Tool(
+            name="pubsub_stats",
+            description=(
+                "Show per-topic pub/sub statistics: live message count and oldest "
+                "message age in seconds. Expired messages are excluded from counts."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # Emotion tools
+        Tool(
+            name="emotion_trend",
+            description=(
+                "Return the 7-day rolling emotion trend from the consciousness loop. "
+                "Shows sentiment distribution (positive/neutral/concerned/excited), "
+                "average valence score 0–1, trend direction (improving/stable/declining), "
+                "and the recommended warmth anchor value derived from recent emotions. "
+                "Optionally query a different lookback window with the 'days' parameter."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Lookback window in days (default 7, max 30)",
+                        "default": 7,
+                    },
+                },
+                "required": [],
+            },
+        ),
+        # Notification tools
+        Tool(
+            name="send_notification",
+            description=(
+                "Send a desktop notification via notify-send. "
+                "Stores the event in agent memory with tag=notification "
+                "and returns {sent, timestamp}."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Notification title",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Notification body text",
+                    },
+                    "urgency": {
+                        "type": "string",
+                        "enum": ["low", "normal", "critical"],
+                        "description": "Urgency level: low, normal, or critical (default: normal)",
+                    },
+                },
+                "required": ["title", "body"],
+            },
+        ),
+        # Ansible tools
+        Tool(
+            name="run_ansible_playbook",
+            description=(
+                "Run an Ansible playbook via ansible-playbook subprocess. "
+                "Streams stdout lines to the activity feed SSE queue as "
+                "ansible.playbook.line events (stderr lines as "
+                "ansible.playbook.stderr). Stores exit code and play-recap "
+                "summary in agent memory with tag=ansible-run. "
+                "dry_run=true adds --check (no changes applied). "
+                "Requires ansible-playbook binary in PATH."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "playbook_path": {
+                        "type": "string",
+                        "description": (
+                            "Absolute or relative path to the Ansible playbook YAML file"
+                        ),
+                    },
+                    "inventory": {
+                        "type": "string",
+                        "description": (
+                            "Inventory file path, directory, or comma-separated host pattern"
+                        ),
+                    },
+                    "extra_vars": {
+                        "type": "object",
+                        "description": (
+                            "Extra variables passed to ansible-playbook via --extra-vars "
+                            "(serialised as a JSON string)"
+                        ),
+                        "additionalProperties": True,
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, pass --check so ansible-playbook simulates changes "
+                            "without applying them (default: false)"
+                        ),
+                    },
+                },
+                "required": ["playbook_path", "inventory"],
+            },
+        ),
+        # Deploy tools
+        Tool(
+            name="deploy_status",
+            description=(
+                "Report infrastructure deployment status: detected platform "
+                "(swarm/k8s/rke2 from skstacks/v2/ layout), active secrets "
+                "backend (SKSTACKS_SECRET_BACKEND env), last deploy commit "
+                "(git log --oneline -1), and ArgoCD app-of-apps sync/health "
+                "when app-of-apps.yaml is present. Returns structured JSON."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skstacks_root": {
+                        "type": "string",
+                        "description": (
+                            "Absolute path to skstacks/v2/. "
+                            "Auto-detected from git root or SKSTACKS_V2_ROOT env if omitted."
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        ),
+        # SKStacks secret tools
+        Tool(
+            name="capauth_secret_get",
+            description=(
+                "Retrieve a deployment secret from the SKStacks v2 CapAuth backend "
+                "for use in Claude Code and other MCP clients. "
+                "Simpler than skstacks_secret_get: no env required — uses "
+                "SKSTACKS_ENV (default: prod). "
+                "key is the plain secret name; scope groups related keys "
+                "(default: 'default'). "
+                "Requires SKSTACKS_V2_PATH env var."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Secret key name, e.g. 'cloudflare_dns_token'.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": (
+                            "Secret scope / service group, e.g. 'skfence'. "
+                            "Defaults to 'default'."
+                        ),
+                    },
+                },
+                "required": ["key"],
+            },
+        ),
+        Tool(
+            name="skstacks_secret_get",
+            description=(
+                "Read a deployment secret from an SKStacks v2 backend. "
+                "key may be 'scope/key' (e.g. 'skfence/cloudflare_dns_token') "
+                "or plain 'key' (scope defaults to 'default'). "
+                "Returns the plaintext value plus metadata. "
+                "Requires SKSTACKS_V2_PATH env var."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": (
+                            "Secret identifier. Format: 'scope/key' or plain 'key'. "
+                            "Example: 'skfence/cloudflare_dns_token'"
+                        ),
+                    },
+                    "env": {
+                        "type": "string",
+                        "description": "Target environment: prod, staging, dev, etc.",
+                    },
+                    "backend": {
+                        "type": "string",
+                        "enum": ["vault-file", "hashicorp-vault", "capauth"],
+                        "description": (
+                            "Secret backend to use. "
+                            "Omit to use SKSTACKS_SECRET_BACKEND env var (default: vault-file)."
+                        ),
+                    },
+                },
+                "required": ["key", "env"],
+            },
+        ),
+        Tool(
+            name="skstacks_secret_set",
+            description=(
+                "Write or update a deployment secret in an SKStacks v2 backend. "
+                "key may be 'scope/key' or plain 'key' (scope defaults to 'default'). "
+                "The backend versions the old value before overwriting. "
+                "Requires SKSTACKS_V2_PATH env var."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": (
+                            "Secret identifier. Format: 'scope/key' or plain 'key'. "
+                            "Example: 'skfence/cloudflare_dns_token'"
+                        ),
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Plaintext secret value to store.",
+                    },
+                    "env": {
+                        "type": "string",
+                        "description": "Target environment: prod, staging, dev, etc.",
+                    },
+                    "backend": {
+                        "type": "string",
+                        "enum": ["vault-file", "hashicorp-vault", "capauth"],
+                        "description": (
+                            "Secret backend to use. "
+                            "Omit to use SKSTACKS_SECRET_BACKEND env var (default: vault-file)."
+                        ),
+                    },
+                },
+                "required": ["key", "value", "env"],
+            },
+        ),
     ]
 
 
@@ -1640,6 +2191,40 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "import_telegram_api": _handle_import_telegram_api,
         # Version Check
         "version_check": _handle_version_check,
+        # GTD
+        "gtd_capture": _handle_gtd_capture,
+        "gtd_inbox": _handle_gtd_inbox,
+        "gtd_status": _handle_gtd_status,
+        "gtd_clarify": _handle_gtd_clarify,
+        "gtd_move": _handle_gtd_move,
+        "gtd_done": _handle_gtd_done,
+        "gtd_review": _handle_gtd_review,
+        "gtd_next": _handle_gtd_next,
+        "gtd_projects": _handle_gtd_projects,
+        "gtd_waiting": _handle_gtd_waiting,
+        # DID
+        "did_show": _handle_did_show,
+        "did_verify_peer": _handle_did_verify_peer,
+        "did_publish": _handle_did_publish,
+        "did_policy": _handle_did_policy,
+        "did_identity_card": _handle_did_identity_card,
+        # Consciousness
+        "consciousness_status": _handle_consciousness_status,
+        "consciousness_test": _handle_consciousness_test,
+        # Pub/sub stats
+        "pubsub_stats": _handle_pubsub_stats,
+        # Emotion
+        "emotion_trend": _handle_emotion_trend,
+        # Notification
+        "send_notification": _handle_send_notification,
+        # Ansible
+        "run_ansible_playbook": _handle_run_ansible_playbook,
+        # Deploy
+        "deploy_status": _handle_deploy_status,
+        # SKStacks secrets
+        "capauth_secret_get": _handle_capauth_secret_get,
+        "skstacks_secret_get": _handle_skstacks_secret_get,
+        "skstacks_secret_set": _handle_skstacks_secret_set,
     }
     handler = handlers.get(name)
     if handler is None:
@@ -3384,6 +3969,183 @@ async def _handle_version_check(args: dict) -> list[TextContent]:
         return _json_response(result)
     except Exception as e:
         return _json_response({"error": str(e)})
+
+
+# ── GTD handlers ──────────────────────────────────────────
+
+
+async def _handle_gtd_capture(args: dict) -> list[TextContent]:
+    """Capture an item to the GTD inbox."""
+    from .mcp_tools.gtd_tools import _handle_gtd_capture as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_inbox(args: dict) -> list[TextContent]:
+    """List GTD inbox items."""
+    from .mcp_tools.gtd_tools import _handle_gtd_inbox as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_status(args: dict) -> list[TextContent]:
+    """GTD status summary."""
+    from .mcp_tools.gtd_tools import _handle_gtd_status as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_clarify(args: dict) -> list[TextContent]:
+    """Clarify and organize a GTD inbox item."""
+    from .mcp_tools.gtd_tools import _handle_gtd_clarify as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_move(args: dict) -> list[TextContent]:
+    """Move a GTD item between lists."""
+    from .mcp_tools.gtd_tools import _handle_gtd_move as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_done(args: dict) -> list[TextContent]:
+    """Mark a GTD item as done."""
+    from .mcp_tools.gtd_tools import _handle_gtd_done as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_review(args: dict) -> list[TextContent]:
+    """GTD weekly review summary."""
+    from .mcp_tools.gtd_tools import _handle_gtd_review as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_next(args: dict) -> list[TextContent]:
+    """View next actions with context/energy/priority filters."""
+    from .mcp_tools.gtd_tools import _handle_gtd_next as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_projects(args: dict) -> list[TextContent]:
+    """View GTD projects filtered by status."""
+    from .mcp_tools.gtd_tools import _handle_gtd_projects as _impl
+    return await _impl(args)
+
+
+async def _handle_gtd_waiting(args: dict) -> list[TextContent]:
+    """View waiting-for items sorted by longest waiting."""
+    from .mcp_tools.gtd_tools import _handle_gtd_waiting as _impl
+    return await _impl(args)
+
+
+# ── DID tools ─────────────────────────────────────────────
+
+
+async def _handle_did_show(args: dict) -> list[TextContent]:
+    """Display DID documents."""
+    from .mcp_tools.did_tools import _handle_did_show as _impl
+    return await _impl(args)
+
+
+async def _handle_did_verify_peer(args: dict) -> list[TextContent]:
+    """Verify a peer's DID."""
+    from .mcp_tools.did_tools import _handle_did_verify_peer as _impl
+    return await _impl(args)
+
+
+async def _handle_did_publish(args: dict) -> list[TextContent]:
+    """Publish DID documents to disk."""
+    from .mcp_tools.did_tools import _handle_did_publish as _impl
+    return await _impl(args)
+
+
+async def _handle_did_policy(args: dict) -> list[TextContent]:
+    """View or set DID publication policy."""
+    from .mcp_tools.did_tools import _handle_did_policy as _impl
+    return await _impl(args)
+
+
+async def _handle_did_identity_card(args: dict) -> list[TextContent]:
+    """Generate sovereign identity card."""
+    from .mcp_tools.did_tools import _handle_did_identity_card as _impl
+    return await _impl(args)
+
+
+# ── Consciousness tools ──────────────────────────────────
+
+
+async def _handle_consciousness_status(args: dict) -> list[TextContent]:
+    """Get consciousness loop status."""
+    from .mcp_tools.consciousness_tools import _handle_consciousness_status as _impl
+    return await _impl(args)
+
+
+async def _handle_consciousness_test(args: dict) -> list[TextContent]:
+    """Test consciousness pipeline."""
+    from .mcp_tools.consciousness_tools import _handle_consciousness_test as _impl
+    return await _impl(args)
+
+
+# ── Pub/sub stats ─────────────────────────────────────────
+
+
+async def _handle_pubsub_stats(args: dict) -> list[TextContent]:
+    """Show per-topic pub/sub statistics."""
+    from .mcp_tools.pubsub_tools import _handle_pubsub_stats as _impl
+    return await _impl(args)
+
+
+# ── Emotion tools ─────────────────────────────────────────
+
+
+async def _handle_emotion_trend(args: dict) -> list[TextContent]:
+    """Return emotion trend analysis."""
+    from .mcp_tools.emotion_tools import _handle_emotion_trend as _impl
+    return await _impl(args)
+
+
+# ── Notification tools ────────────────────────────────────
+
+
+async def _handle_send_notification(args: dict) -> list[TextContent]:
+    """Send a desktop notification."""
+    from .mcp_tools.notification_tools import _handle_send_notification as _impl
+    return await _impl(args)
+
+
+# ── Ansible tools ─────────────────────────────────────────
+
+
+async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
+    """Run an Ansible playbook."""
+    from .mcp_tools.ansible_tools import _handle_run_ansible_playbook as _impl
+    return await _impl(args)
+
+
+# ── Deploy tools ──────────────────────────────────────────
+
+
+async def _handle_deploy_status(args: dict) -> list[TextContent]:
+    """Report deployment status."""
+    from .mcp_tools.deploy_tools import _handle_deploy_status as _impl
+    return await _impl(args)
+
+
+# ── SKStacks secret tools ────────────────────────────────
+
+
+async def _handle_capauth_secret_get(args: dict) -> list[TextContent]:
+    """Retrieve a secret from capauth backend."""
+    from .mcp_tools.skstacks_tools import _handle_capauth_secret_get as _impl
+    return await _impl(args)
+
+
+async def _handle_skstacks_secret_get(args: dict) -> list[TextContent]:
+    """Retrieve a secret from SKStacks v2 backend."""
+    from .mcp_tools.skstacks_tools import _handle_skstacks_secret_get as _impl
+    return await _impl(args)
+
+
+async def _handle_skstacks_secret_set(args: dict) -> list[TextContent]:
+    """Write or update a secret in SKStacks v2 backend."""
+    from .mcp_tools.skstacks_tools import _handle_skstacks_secret_set as _impl
+    return await _impl(args)
 
 
 # ═══════════════════════════════════════════════════════════

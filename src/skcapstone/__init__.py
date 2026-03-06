@@ -8,13 +8,25 @@ A smilinTux Open Source Project.
 """
 
 import os
+import platform
 from pathlib import Path
 
 __version__ = "0.2.0"
 __author__ = "smilinTux"
 
+
+def _default_home() -> str:
+    """Platform-aware default home for skcapstone."""
+    if platform.system() == "Windows":
+        # Use %LOCALAPPDATA%\skcapstone on Windows
+        local = os.environ.get("LOCALAPPDATA", "")
+        if local:
+            return os.path.join(local, "skcapstone")
+    return os.path.expanduser("~/.skcapstone")
+
+
 # Root of the skcapstone tree (shared infra lives here)
-AGENT_HOME = os.environ.get("SKCAPSTONE_HOME", "~/.skcapstone")
+AGENT_HOME = os.environ.get("SKCAPSTONE_HOME", _default_home())
 
 # Which agent this process is running as (set by daemon/connector)
 SKCAPSTONE_AGENT = os.environ.get("SKCAPSTONE_AGENT", "lumina")
