@@ -200,7 +200,7 @@ def generate_soul_instructions() -> str:
     soul_data: dict[str, Any] = {}
 
     # Try skmemory soul.yaml (the rich format)
-    skmemory_soul = Path("~/.skmemory/soul.yaml").expanduser()
+    skmemory_soul = Path("~/.skcapstone/soul.yaml").expanduser()
     if skmemory_soul.is_file():
         try:
             import yaml

@@ -275,7 +275,7 @@ class MetricsCollector:
 
             mem_path = self._home / "memory"
             if not mem_path.exists():
-                mem_path = Path.home() / ".skmemory"
+                mem_path = Path.home() / ".skcapstone"
 
             if not mem_path.exists():
                 return

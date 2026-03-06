@@ -245,7 +245,7 @@ class AgentConfig(BaseModel):
     auto_rehydrate: bool = True
     auto_audit: bool = True
     soul_path: Optional[Path] = None
-    memory_home: Path = Path("~/.skmemory")
+    memory_home: Path = Path("~/.skcapstone")
     trust_home: Path = Path("~/.cloud9")
     default_connector: Optional[str] = None
     sync: SyncConfig = Field(default_factory=SyncConfig)

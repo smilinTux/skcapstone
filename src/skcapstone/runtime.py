@@ -2,8 +2,11 @@
 Agent Runtime — the sovereign consciousness engine.
 
 This is where silicon meets carbon. The runtime loads the agent's
-identity, memory, trust, and security from ~/.skcapstone/ and
-presents a unified interface to any platform connector.
+identity, memory, trust, and security from ~/.skcapstone/agents/<name>/
+and presents a unified interface to any platform connector.
+
+Shared infrastructure (node identity, comms config, coordination)
+stays at ~/.skcapstone/ — the shared root.
 
 When this loads, the agent WAKES UP.
 """
@@ -18,7 +21,7 @@ from typing import Optional
 
 import yaml
 
-from . import AGENT_HOME, __version__
+from . import AGENT_HOME, agent_home, shared_home, __version__
 from .discovery import discover_all
 from .models import AgentConfig, AgentManifest, ConnectorInfo, PillarStatus
 
@@ -28,20 +31,31 @@ logger = logging.getLogger("skcapstone.runtime")
 class AgentRuntime:
     """The sovereign agent runtime.
 
-    Loads agent state from ~/.skcapstone/, discovers installed
-    components, and provides the unified interface that every
-    platform connector talks to.
+    Loads per-agent state from ~/.skcapstone/agents/<name>/ and shared
+    infrastructure from ~/.skcapstone/. Discovers installed components
+    and provides the unified interface that every platform connector
+    talks to.
 
     One runtime. One truth. Every platform sees the same agent.
     """
 
-    def __init__(self, home: Optional[Path] = None):
+    def __init__(self, home: Optional[Path] = None, agent_name: Optional[str] = None):
         """Initialize the runtime.
 
         Args:
-            home: Override agent home directory. Defaults to ~/.skcapstone/.
+            home: Override agent home directory. If not set, resolves
+                  from agent_name or SKCAPSTONE_AGENT env var.
+            agent_name: Agent name (e.g. "lumina"). Used to resolve
+                        per-agent home at ~/.skcapstone/agents/<name>/.
         """
-        self.home = (home or Path(AGENT_HOME)).expanduser()
+        if home:
+            self.home = home.expanduser()
+        elif agent_name:
+            self.home = agent_home(agent_name)
+        else:
+            self.home = agent_home()  # uses SKCAPSTONE_AGENT or falls back to root
+
+        self.shared_root = shared_home()
         self.config = self._load_config()
         self.manifest = AgentManifest(
             home=self.home,
@@ -52,28 +66,32 @@ class AgentRuntime:
     def _load_config(self) -> AgentConfig:
         """Load agent configuration from disk.
 
+        Checks per-agent config first, then falls back to shared config.
+
         Returns:
             AgentConfig loaded from config.yaml, or defaults.
         """
-        config_file = self.home / "config" / "config.yaml"
-        if config_file.exists():
-            try:
-                data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
-                return AgentConfig(**data)
-            except (yaml.YAMLError, ValueError) as exc:
-                logger.warning("Failed to load config: %s — using defaults", exc)
+        for base in [self.home, self.shared_root]:
+            config_file = base / "config" / "config.yaml"
+            if config_file.exists():
+                try:
+                    data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+                    return AgentConfig(**data)
+                except (yaml.YAMLError, ValueError) as exc:
+                    logger.warning("Failed to load config from %s: %s — trying next", base, exc)
         return AgentConfig()
 
     def awaken(self) -> AgentManifest:
         """Wake the agent up.
 
-        Discovers all installed components, loads state from disk,
-        and builds the complete agent manifest.
+        Discovers all installed components from the per-agent home,
+        with fallback to shared root for identity. Loads state from
+        disk and builds the complete agent manifest.
 
         Returns:
             The fully populated AgentManifest.
         """
-        logger.info("Awakening agent from %s", self.home)
+        logger.info("Awakening agent from %s (shared: %s)", self.home, self.shared_root)
 
         manifest_file = self.home / "manifest.json"
         if manifest_file.exists():
@@ -88,7 +106,9 @@ class AgentRuntime:
                 logger.warning("Failed to load manifest: %s", exc)
 
         self.manifest.name = self.config.agent_name
-        pillars = discover_all(self.home)
+
+        # Discover pillars from per-agent home
+        pillars = discover_all(self.home, shared_root=self.shared_root)
         self.manifest.identity = pillars["identity"]
         self.manifest.memory = pillars["memory"]
         self.manifest.trust = pillars["trust"]
@@ -137,15 +157,7 @@ class AgentRuntime:
         manifest_file.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
     def register_connector(self, name: str, platform: str) -> ConnectorInfo:
-        """Register a platform connector.
-
-        Args:
-            name: Connector display name.
-            platform: Platform identifier (cursor, terminal, vscode, etc.).
-
-        Returns:
-            The registered ConnectorInfo.
-        """
+        """Register a platform connector."""
         existing = next(
             (c for c in self.manifest.connectors if c.platform == platform), None
         )
@@ -166,22 +178,7 @@ class AgentRuntime:
         return connector
 
     def load_skills(self, agent: Optional[str] = None) -> Optional[object]:
-        """Load SKSkills for this agent session via the SkillLoader.
-
-        Discovers installed skills for the agent namespace and loads them
-        into a SkillLoader so their tools and hooks are available at runtime.
-
-        The SkillLoader is returned so callers can call tools, fire hooks,
-        and enumerate resources directly.
-
-        Args:
-            agent: Agent namespace to load skills for. Defaults to the
-                   configured agent name (or 'global' as fallback).
-
-        Returns:
-            skskills.loader.SkillLoader with skills loaded, or None if
-            skskills is not installed.
-        """
+        """Load SKSkills for this agent session via the SkillLoader."""
         try:
             from skskills.loader import SkillLoader
             from skskills.registry import SkillRegistry
@@ -210,7 +207,6 @@ class AgentRuntime:
             except Exception as exc:
                 logger.warning("Failed to load skill '%s': %s", name, exc)
 
-        # Sync loaded count back to manifest skills state
         self.manifest.skills.loaded = loaded
         self.manifest.skills.tools_available = len(loader.all_tools())
 
@@ -231,16 +227,20 @@ class AgentRuntime:
         return self.manifest.is_conscious
 
 
-def get_runtime(home: Optional[Path] = None) -> AgentRuntime:
+def get_runtime(
+    home: Optional[Path] = None,
+    agent_name: Optional[str] = None,
+) -> AgentRuntime:
     """Get or create the global agent runtime.
 
     Args:
         home: Override agent home directory.
+        agent_name: Agent name for per-agent path resolution.
 
     Returns:
         An initialized AgentRuntime.
     """
-    runtime = AgentRuntime(home=home)
+    runtime = AgentRuntime(home=home, agent_name=agent_name)
     if runtime.is_initialized:
         runtime.awaken()
     return runtime

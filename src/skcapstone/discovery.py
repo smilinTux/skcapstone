@@ -41,7 +41,7 @@ def _count_json_files(directory: Path) -> int:
     return sum(1 for f in directory.iterdir() if f.suffix == ".json")
 
 
-def discover_identity(home: Path) -> IdentityState:
+def discover_identity(home: Path, shared_root: Optional[Path] = None) -> IdentityState:
     """Probe for CapAuth identity.
 
     Checks (in priority order):
@@ -87,6 +87,19 @@ def discover_identity(home: Path) -> IdentityState:
         state.key_path = pub_key
         if state.status == PillarStatus.MISSING:
             state.status = PillarStatus.DEGRADED
+
+    # Fallback: if agent has no identity, inherit from shared root (node owner)
+    if state.status == PillarStatus.MISSING and shared_root and shared_root != home:
+        shared_identity = shared_root / "identity" / "identity.json"
+        if shared_identity.exists():
+            try:
+                data = json.loads(shared_identity.read_text(encoding="utf-8"))
+                state.fingerprint = data.get("fingerprint")
+                state.name = data.get("name")
+                state.email = data.get("email")
+                state.status = PillarStatus.DEGRADED  # inherited, not own key
+            except (json.JSONDecodeError, KeyError, ValueError):
+                pass
 
     return state
 
@@ -154,7 +167,7 @@ def discover_memory(home: Path) -> MemoryState:
 
     Checks (in order):
     1. Built-in memory engine at ~/.skcapstone/memory/
-    2. External skmemory package at ~/.skmemory/ (legacy fallback)
+    2. External skmemory package at ~/.skcapstone/ (consolidated)
 
     Args:
         home: The agent home directory (~/.skcapstone).
@@ -179,7 +192,7 @@ def discover_memory(home: Path) -> MemoryState:
     if skmemory is None:
         return state
 
-    memory_home = Path("~/.skmemory").expanduser()
+    memory_home = Path("~/.skcapstone").expanduser()
     if not memory_home.exists():
         state.status = PillarStatus.DEGRADED
         return state
@@ -425,17 +438,22 @@ def discover_skills(home: Path, agent: Optional[str] = None) -> SkillsState:
     return state
 
 
-def discover_all(home: Path, agent: Optional[str] = None) -> dict:
+def discover_all(
+    home: Path,
+    agent: Optional[str] = None,
+    shared_root: Optional[Path] = None,
+) -> dict:
     """Run full discovery across all pillars including sync and skills.
 
     Args:
-        home: The agent home directory (~/.skcapstone).
+        home: The agent-specific home directory (~/.skcapstone/agent/<name>/).
         agent: Agent name for per-agent skill namespace lookup.
+        shared_root: Shared root (~/.skcapstone/) for fallback identity lookup.
 
     Returns:
         Dict with identity, memory, trust, security, sync, skills states.
     """
-    identity = discover_identity(home)
+    identity = discover_identity(home, shared_root=shared_root)
     # Resolve agent from identity when not explicitly provided
     resolved_agent = agent or identity.name or None
     return {
