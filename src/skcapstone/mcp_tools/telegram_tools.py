@@ -160,6 +160,44 @@ TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="telegram_catchup",
+        description=(
+            "Full catch-up import from a Telegram group into ALL memory tiers. "
+            "Downloads chat via Telethon and distributes: last 24h → short-term "
+            "(individual messages), last 7 days → mid-term (daily summaries), "
+            "older → long-term (weekly summaries). Use this to rehydrate an "
+            "agent's context from a Telegram group."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "chat": {
+                    "type": "string",
+                    "description": "Chat username, title, or numeric ID to catch up from",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum total messages to fetch (default: 2000)",
+                    "default": 2000,
+                },
+                "since": {
+                    "type": "string",
+                    "description": "Only fetch messages after this date (YYYY-MM-DD)",
+                },
+                "min_length": {
+                    "type": "integer",
+                    "description": "Skip messages shorter than this (default: 20)",
+                    "default": 20,
+                },
+                "tags": {
+                    "type": "string",
+                    "description": "Extra comma-separated tags to apply",
+                },
+            },
+            "required": ["chat"],
+        },
+    ),
+    Tool(
         name="telegram_chats",
         description=(
             "List available Telegram chats, groups, and channels. "
@@ -311,6 +349,34 @@ async def _handle_telegram_poll(args: dict) -> list[TextContent]:
         return _json_response({"error": str(e)})
 
 
+async def _handle_telegram_catchup(args: dict) -> list[TextContent]:
+    """Full catch-up import from Telegram into all memory tiers."""
+    try:
+        from skmemory.importers.telegram_api import import_telegram_api
+        from skmemory.store import MemoryStore
+
+        chat = args["chat"]
+        limit = args.get("limit", 2000)
+        since = args.get("since")
+        min_length = args.get("min_length", 20)
+        tags_str = args.get("tags", "")
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else None
+
+        store = MemoryStore()
+        stats = import_telegram_api(
+            store,
+            chat,
+            mode="catchup",
+            limit=limit,
+            since=since,
+            min_message_length=min_length,
+            tags=tags,
+        )
+        return _json_response(stats)
+    except Exception as e:
+        return _json_response({"error": str(e)})
+
+
 async def _handle_telegram_chats(args: dict) -> list[TextContent]:
     """List available Telegram chats."""
     try:
@@ -339,5 +405,6 @@ HANDLERS: dict = {
     "telegram_setup": _handle_telegram_setup,
     "telegram_send": _handle_telegram_send,
     "telegram_poll": _handle_telegram_poll,
+    "telegram_catchup": _handle_telegram_catchup,
     "telegram_chats": _handle_telegram_chats,
 }

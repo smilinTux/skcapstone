@@ -1565,6 +1565,42 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        Tool(
+            name="telegram_catchup",
+            description=(
+                "Full catch-up import from a Telegram group into ALL memory tiers. "
+                "Downloads chat via Telethon and distributes: last 24h → short-term, "
+                "last 7 days → mid-term, older → long-term."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "chat": {
+                        "type": "string",
+                        "description": "Chat username, title, or numeric ID to catch up from",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum total messages to fetch (default: 2000)",
+                        "default": 2000,
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "Only fetch messages after this date (YYYY-MM-DD)",
+                    },
+                    "min_length": {
+                        "type": "integer",
+                        "description": "Skip messages shorter than this (default: 20)",
+                        "default": 20,
+                    },
+                    "tags": {
+                        "type": "string",
+                        "description": "Extra comma-separated tags to apply",
+                    },
+                },
+                "required": ["chat"],
+            },
+        ),
         # ── Version Check ──────────────────────────────────────────
         Tool(
             name="version_check",
@@ -2271,6 +2307,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "telegram_send": _handle_telegram_send,
         "telegram_poll": _handle_telegram_poll,
         "telegram_chats": _handle_telegram_chats,
+        "telegram_catchup": _handle_telegram_catchup,
         # Version Check
         "version_check": _handle_version_check,
         # GTD
@@ -4000,6 +4037,12 @@ async def _handle_telegram_poll(args: dict) -> list[TextContent]:
 async def _handle_telegram_chats(args: dict) -> list[TextContent]:
     """List available Telegram chats."""
     from .mcp_tools.telegram_tools import _handle_telegram_chats as _impl
+    return await _impl(args)
+
+
+async def _handle_telegram_catchup(args: dict) -> list[TextContent]:
+    """Full catch-up import from Telegram into all memory tiers."""
+    from .mcp_tools.telegram_tools import _handle_telegram_catchup as _impl
     return await _impl(args)
 
 

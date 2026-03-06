@@ -125,6 +125,49 @@ def register_telegram_commands(main: click.Group) -> None:
             console.print(f"[red]Error:[/] {e}")
             raise SystemExit(1)
 
+    @telegram.command("catchup")
+    @click.argument("chat")
+    @click.option("--limit", "-l", default=2000, type=int, help="Max messages to fetch.")
+    @click.option("--since", "-s", default=None, help="Only messages after this date (YYYY-MM-DD).")
+    @click.option("--min-length", "-m", default=20, type=int, help="Skip messages shorter than this.")
+    @click.option("--tags", "-t", default=None, help="Extra comma-separated tags.")
+    def telegram_catchup(chat, limit, since, min_length, tags):
+        """Full catch-up import from a Telegram group into all memory tiers.
+
+        Downloads chat via Telethon and distributes messages by age:
+        last 24h → short-term, last 7 days → mid-term, older → long-term.
+
+        Example: skcapstone telegram catchup @mygroup --limit 500
+        """
+        try:
+            from skmemory.importers.telegram_api import import_telegram_api
+            from skmemory.store import MemoryStore
+        except ImportError:
+            console.print("[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]")
+            raise SystemExit(1)
+
+        try:
+            tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+            store = MemoryStore()
+            stats = import_telegram_api(
+                store,
+                chat,
+                mode="catchup",
+                limit=limit,
+                since=since,
+                min_message_length=min_length,
+                tags=tags_list,
+            )
+
+            lines = [f"[green]Catch-up complete![/]"]
+            for key, val in stats.items():
+                lines.append(f"  {key}: [cyan]{val}[/]")
+
+            console.print(Panel("\n".join(lines), title="Telegram Catch-Up", border_style="green"))
+        except Exception as e:
+            console.print(f"[red]Error:[/] {e}")
+            raise SystemExit(1)
+
     @telegram.command("chats")
     @click.option("--limit", "-l", default=50, type=int, help="Max chats to list.")
     def telegram_chats(limit):
