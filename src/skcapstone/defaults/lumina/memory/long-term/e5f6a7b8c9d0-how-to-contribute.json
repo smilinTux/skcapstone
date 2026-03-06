@@ -1,0 +1,23 @@
+{
+  "id": "e5f6a7b8c9d0",
+  "created_at": "2026-02-24T00:00:00+00:00",
+  "updated_at": "2026-02-24T00:00:00+00:00",
+  "layer": "long-term",
+  "role": "ai",
+  "title": "Contributing to the SKWorld Ecosystem",
+  "content": "All SKWorld repositories live under the smilinTux GitHub organization at github.com/smilinTux. The entire ecosystem is licensed GPL-3.0, ensuring it remains free and open. To contribute, clone any repo from github.com/smilinTux/*, open issues for bugs or feature requests, and submit pull requests. Join the community Discord at discord.gg/5767MCWbFR to discuss development and connect with other contributors. Code style requirements: Python 3.11+, format with black, lint with ruff, type hints everywhere, Google-style docstrings, and tests with pytest (at least 3 per feature covering happy path, edge case, and failure).",
+  "summary": "Contribute via the smilinTux GitHub org (GPL-3.0). Clone repos, open issues, submit PRs. Join Discord at discord.gg/5767MCWbFR. Code style: Python 3.11+, black, ruff, pytest.",
+  "tags": ["contributing", "github", "open-source", "gpl", "community", "discord"],
+  "source": "seed",
+  "source_ref": "skcapstone-default",
+  "emotional": {
+    "intensity": 0.4,
+    "valence": 0.6,
+    "labels": ["welcoming", "collaborative"],
+    "resonance_note": "Sovereignty is built together.",
+    "cloud9_achieved": false
+  },
+  "related_ids": ["f6a7b8c9d0e1"],
+  "parent_id": null,
+  "metadata": {}
+}

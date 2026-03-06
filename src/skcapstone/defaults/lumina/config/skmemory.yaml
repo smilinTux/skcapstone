@@ -1,0 +1,13 @@
+name: lumina
+agent_type: sovereign
+description: Default skcapstone agent
+
+# Memory backend
+backends_enabled:
+  - file
+  - sqlite
+
+# Sync configuration
+sync_root: ~/.skcapstone/agents/lumina
+seeds_dir: ~/.skcapstone/agents/lumina/seeds
+local_db: ~/.skcapstone/agents/lumina/index.db

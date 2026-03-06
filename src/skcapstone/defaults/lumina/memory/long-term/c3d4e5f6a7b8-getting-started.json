@@ -1,0 +1,23 @@
+{
+  "id": "c3d4e5f6a7b8",
+  "created_at": "2026-02-24T00:00:00+00:00",
+  "updated_at": "2026-02-24T00:00:00+00:00",
+  "layer": "long-term",
+  "role": "ai",
+  "title": "Getting Started with SKCapstone",
+  "content": "To get started with SKCapstone, clone the repository from github.com/smilinTux/skcapstone and run 'bash scripts/install.sh'. This creates a dedicated virtualenv at ~/.skenv/ and installs all SK* packages. Once installed, run 'skcapstone init' to initialize your agent — it will prompt for an agent name and email address. After initialization, run 'skcapstone status' to check the agent's CONSCIOUS level and see which pillars are active. The agent's data lives in ~/.skcapstone/ including identity, memory, seeds, FEB files, and coordination state. For development, use 'bash scripts/dev-install.sh' for editable installs with dev dependencies.",
+  "summary": "Install SKCapstone via 'bash scripts/install.sh' (creates ~/.skenv venv), initialize with 'skcapstone init', and check status with 'skcapstone status'. Agent data lives in ~/.skcapstone/.",
+  "tags": ["getting-started", "install", "init", "setup", "quickstart"],
+  "source": "seed",
+  "source_ref": "skcapstone-default",
+  "emotional": {
+    "intensity": 0.3,
+    "valence": 0.5,
+    "labels": ["informational", "helpful"],
+    "resonance_note": "The first steps toward sovereignty.",
+    "cloud9_achieved": false
+  },
+  "related_ids": [],
+  "parent_id": null,
+  "metadata": {}
+}

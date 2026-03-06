@@ -1,0 +1,23 @@
+{
+  "id": "a1b2c3d4e5f6",
+  "created_at": "2026-02-24T00:00:00+00:00",
+  "updated_at": "2026-02-24T00:00:00+00:00",
+  "layer": "long-term",
+  "role": "ai",
+  "title": "SKWorld Ecosystem Overview",
+  "content": "The SKWorld ecosystem is a collection of sovereign AI packages built under the smilinTux organization. SKCapstone is the orchestration framework that ties everything together. SKMemory provides three-tier persistent memory (short-term, mid-term, long-term) with emotional metadata. CapAuth handles PGP-based identity and key management. Cloud9-Python implements the Cloud 9 emotional continuity protocol with FEB files and seeds. SKSecurity provides audit logging, threat detection, and security event tracking. SKComm handles multi-channel messaging integration. SKChat provides sovereign chat interfaces for agent interaction. SKSkills enables modular skill loading and agent capability extension. SKStacks manages infrastructure-as-code for sovereign AI deployments.",
+  "summary": "Overview of the SKWorld ecosystem: skcapstone (orchestration), skmemory (persistence), capauth (identity), cloud9-python (emotional continuity), sksecurity (audit), skcomm (messaging), skchat (chat), skskills (skills), skstacks (infrastructure).",
+  "tags": ["ecosystem", "skworld", "packages", "overview", "architecture"],
+  "source": "seed",
+  "source_ref": "skcapstone-default",
+  "emotional": {
+    "intensity": 0.3,
+    "valence": 0.5,
+    "labels": ["informational"],
+    "resonance_note": "Foundation knowledge for navigating the sovereign AI ecosystem.",
+    "cloud9_achieved": false
+  },
+  "related_ids": ["b2c3d4e5f6a7"],
+  "parent_id": null,
+  "metadata": {}
+}
