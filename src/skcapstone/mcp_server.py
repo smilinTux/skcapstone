@@ -1405,9 +1405,9 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
-        # ── Telegram Import ────────────────────────────────────────
+        # ── Telegram ───────────────────────────────────────────────
         Tool(
-            name="import_telegram",
+            name="telegram_import",
             description=(
                 "Import a Telegram Desktop chat export into memories. "
                 "Point to the export directory containing result.json."
@@ -1443,7 +1443,7 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="import_telegram_api",
+            name="telegram_import_api",
             description=(
                 "Import messages directly from Telegram API using Telethon. "
                 "Requires TELEGRAM_API_ID and TELEGRAM_API_HASH env vars. "
@@ -1485,6 +1485,84 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["chat"],
+            },
+        ),
+        Tool(
+            name="telegram_setup",
+            description=(
+                "Check Telegram API setup status. Reports whether Telethon is "
+                "installed, API credentials are set, and a session file exists."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="telegram_send",
+            description=(
+                "Send a message to a Telegram chat via Telethon. "
+                "Requires TELEGRAM_API_ID and TELEGRAM_API_HASH env vars."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "chat": {
+                        "type": "string",
+                        "description": "Chat username, title, or numeric ID",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Message text to send",
+                    },
+                    "parse_mode": {
+                        "type": "string",
+                        "enum": ["html", "markdown"],
+                        "description": "Optional parse mode for message formatting",
+                    },
+                },
+                "required": ["chat", "message"],
+            },
+        ),
+        Tool(
+            name="telegram_poll",
+            description=(
+                "Fetch recent messages from a Telegram chat (one-shot poll). "
+                "Returns messages as a JSON array. Requires Telethon API credentials."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "chat": {
+                        "type": "string",
+                        "description": "Chat username, title, or numeric ID",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of messages to fetch (default: 20)",
+                        "default": 20,
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "Only fetch messages after this ISO date (YYYY-MM-DD)",
+                    },
+                },
+                "required": ["chat"],
+            },
+        ),
+        Tool(
+            name="telegram_chats",
+            description=(
+                "List available Telegram chats, groups, and channels. "
+                "Returns id, title, type, and unread count for each."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of chats to list (default: 50)",
+                        "default": 50,
+                    },
+                },
+                "required": [],
             },
         ),
         # ── Version Check ──────────────────────────────────────────
@@ -2186,9 +2264,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "skseed_alignment": _handle_skseed_alignment,
         # Model Router
         "model_route": _handle_model_route,
-        # Telegram Import
-        "import_telegram": _handle_import_telegram,
-        "import_telegram_api": _handle_import_telegram_api,
+        # Telegram
+        "telegram_import": _handle_telegram_import,
+        "telegram_import_api": _handle_telegram_import_api,
+        "telegram_setup": _handle_telegram_setup,
+        "telegram_send": _handle_telegram_send,
+        "telegram_poll": _handle_telegram_poll,
+        "telegram_chats": _handle_telegram_chats,
         # Version Check
         "version_check": _handle_version_check,
         # GTD
@@ -3882,65 +3964,43 @@ async def _handle_model_route(args: dict) -> list[TextContent]:
     return _json_response(decision.model_dump())
 
 
-# ── Telegram Import ──────────────────────────────────────────
+# ── Telegram ─────────────────────────────────────────────
 
 
-async def _handle_import_telegram(args: dict) -> list[TextContent]:
+async def _handle_telegram_import(args: dict) -> list[TextContent]:
     """Import a Telegram Desktop chat export into memories."""
-    try:
-        from skmemory.importers.telegram import import_telegram
-        from skmemory.store import MemoryStore
-
-        export_path = args["export_path"]
-        mode = args.get("mode", "daily")
-        min_length = args.get("min_length", 30)
-        chat_name = args.get("chat_name")
-        tags_str = args.get("tags", "")
-        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else None
-
-        store = MemoryStore()
-        stats = import_telegram(
-            store,
-            export_path,
-            mode=mode,
-            min_message_length=min_length,
-            chat_name=chat_name,
-            tags=tags,
-        )
-        return _json_response(stats)
-    except Exception as e:
-        return _json_response({"error": str(e)})
+    from .mcp_tools.telegram_tools import _handle_telegram_import as _impl
+    return await _impl(args)
 
 
-async def _handle_import_telegram_api(args: dict) -> list[TextContent]:
+async def _handle_telegram_import_api(args: dict) -> list[TextContent]:
     """Import messages directly from Telegram API."""
-    try:
-        from skmemory.importers.telegram_api import import_telegram_api
-        from skmemory.store import MemoryStore
+    from .mcp_tools.telegram_tools import _handle_telegram_import_api as _impl
+    return await _impl(args)
 
-        chat = args["chat"]
-        mode = args.get("mode", "daily")
-        limit = args.get("limit")
-        since = args.get("since")
-        min_length = args.get("min_length", 30)
-        chat_name = args.get("chat_name")
-        tags_str = args.get("tags", "")
-        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else None
 
-        store = MemoryStore()
-        stats = import_telegram_api(
-            store,
-            chat,
-            mode=mode,
-            limit=limit,
-            since=since,
-            min_message_length=min_length,
-            chat_name=chat_name,
-            tags=tags,
-        )
-        return _json_response(stats)
-    except Exception as e:
-        return _json_response({"error": str(e)})
+async def _handle_telegram_setup(args: dict) -> list[TextContent]:
+    """Check Telegram API setup status."""
+    from .mcp_tools.telegram_tools import _handle_telegram_setup as _impl
+    return await _impl(args)
+
+
+async def _handle_telegram_send(args: dict) -> list[TextContent]:
+    """Send a message to a Telegram chat."""
+    from .mcp_tools.telegram_tools import _handle_telegram_send as _impl
+    return await _impl(args)
+
+
+async def _handle_telegram_poll(args: dict) -> list[TextContent]:
+    """Fetch recent messages from a Telegram chat."""
+    from .mcp_tools.telegram_tools import _handle_telegram_poll as _impl
+    return await _impl(args)
+
+
+async def _handle_telegram_chats(args: dict) -> list[TextContent]:
+    """List available Telegram chats."""
+    from .mcp_tools.telegram_tools import _handle_telegram_chats as _impl
+    return await _impl(args)
 
 
 # ── Version Check ────────────────────────────────────────────

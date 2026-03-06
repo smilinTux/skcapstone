@@ -40,6 +40,7 @@ from . import (
     skstacks_tools,
     soul_tools,
     sync_tools,
+    telegram_tools,
     trust_tools,
     trustee_tools,
 )
@@ -73,6 +74,7 @@ _MODULES = [
     consciousness_tools,
     emotion_tools,
     notification_tools,
+    telegram_tools,
 ]
 
 
