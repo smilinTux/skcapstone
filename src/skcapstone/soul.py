@@ -838,6 +838,25 @@ class SoulManager:
                         "source": "repo",
                         "description": desc[:80] if desc else "",
                     }
+        else:
+            # 2b) Local repo not cloned — fall back to GitHub API
+            try:
+                from .blueprint_registry import _fetch_github_blueprints
+
+                github_results = _fetch_github_blueprints()
+                if github_results:
+                    for bp in github_results:
+                        slug = bp["name"]
+                        if slug not in seen:
+                            seen[slug] = {
+                                "name": slug,
+                                "display_name": bp.get("display_name", slug),
+                                "category": bp.get("category", ""),
+                                "source": "github",
+                                "description": "",
+                            }
+            except Exception:
+                pass  # offline — show only installed souls
 
         # Sort by category, then name
         return sorted(seen.values(), key=lambda d: (d["category"], d["name"]))

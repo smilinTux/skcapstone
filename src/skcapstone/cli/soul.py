@@ -517,22 +517,36 @@ def register_soul_commands(main: click.Group) -> None:
     @soul_registry.command("list")
     @click.option("--url", default=None, help="Registry API base URL.")
     def registry_list(url):
-        """List all blueprints in the remote registry."""
-        from ..blueprint_registry import BlueprintRegistryClient, BlueprintRegistryError
+        """List all blueprints in the remote registry.
 
-        kwargs = {}
+        Pulls from the soul-blueprints GitHub repo. Falls back to
+        the souls.skworld.io API if --url is set.
+        """
+        from ..blueprint_registry import (
+            BlueprintRegistryClient,
+            BlueprintRegistryError,
+            _fetch_github_blueprints,
+        )
+
+        blueprints = None
+        source = "github"
+
+        # If custom URL, try the API server first
         if url:
-            kwargs["base_url"] = url
-        client = BlueprintRegistryClient(**kwargs)
+            try:
+                client = BlueprintRegistryClient(base_url=url)
+                blueprints = client.list_blueprints()
+                source = "registry"
+            except BlueprintRegistryError:
+                pass
 
-        try:
-            blueprints = client.list_blueprints()
-        except BlueprintRegistryError as e:
-            console.print(f"\n  [red]Registry error:[/] {e}\n")
-            sys.exit(1)
+        # Default: pull from GitHub repo
+        if blueprints is None:
+            blueprints = _fetch_github_blueprints()
+            source = "github"
 
         if not blueprints:
-            console.print("\n  [dim]No blueprints found in the registry.[/]\n")
+            console.print("\n  [dim]No blueprints found.[/]\n")
             return
 
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
@@ -547,27 +561,38 @@ def register_soul_commands(main: click.Group) -> None:
                 bp.get("category", ""),
             )
 
+        source_label = "" if source == "github" else "  [dim](registry)[/]"
         console.print()
         console.print(table)
-        console.print(f"\n  [dim]{len(blueprints)} blueprint(s) in registry[/]\n")
+        console.print(f"\n  [dim]{len(blueprints)} blueprint(s){source_label}[/]\n")
 
     @soul_registry.command("search")
     @click.argument("query")
     @click.option("--url", default=None, help="Registry API base URL.")
     def registry_search(query, url):
-        """Search the remote registry for blueprints."""
-        from ..blueprint_registry import BlueprintRegistryClient, BlueprintRegistryError
+        """Search the remote registry for blueprints.
 
-        kwargs = {}
+        Searches the soul-blueprints GitHub repo by name and category.
+        """
+        from ..blueprint_registry import (
+            BlueprintRegistryClient,
+            BlueprintRegistryError,
+            _fetch_github_blueprints,
+        )
+
+        results = None
+
+        # If custom URL, try the API server first
         if url:
-            kwargs["base_url"] = url
-        client = BlueprintRegistryClient(**kwargs)
+            try:
+                client = BlueprintRegistryClient(base_url=url)
+                results = client.search_blueprints(query)
+            except BlueprintRegistryError:
+                pass
 
-        try:
-            results = client.search_blueprints(query)
-        except BlueprintRegistryError as e:
-            console.print(f"\n  [red]Registry error:[/] {e}\n")
-            sys.exit(1)
+        # Default: search GitHub repo
+        if results is None:
+            results = _fetch_github_blueprints(query)
 
         if not results:
             console.print(f"\n  [dim]No blueprints matching '{query}'.[/]\n")
@@ -577,14 +602,12 @@ def register_soul_commands(main: click.Group) -> None:
         table.add_column("Name", style="cyan", no_wrap=True)
         table.add_column("Display Name", style="bold")
         table.add_column("Category", style="yellow")
-        table.add_column("Vibe", style="dim")
 
         for bp in results:
             table.add_row(
                 bp.get("name", "?"),
                 bp.get("display_name", ""),
                 bp.get("category", ""),
-                (bp.get("vibe", "") or "")[:60],
             )
 
         console.print()

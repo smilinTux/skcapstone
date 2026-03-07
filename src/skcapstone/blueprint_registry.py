@@ -355,3 +355,81 @@ class BlueprintRegistryClient:
             return True
         except BlueprintRegistryError:
             return False
+
+
+# --------------------------------------------------------------------------
+# GitHub-based fallback — reads blueprints directly from the repo
+# --------------------------------------------------------------------------
+
+_GITHUB_API_URL = "https://api.github.com/repos/smilinTux/soul-blueprints/contents/blueprints"
+_GITHUB_RAW_URL = "https://raw.githubusercontent.com/smilinTux/soul-blueprints/main/blueprints"
+
+
+def _fetch_github_blueprints(query: str = "") -> Optional[list[dict[str, Any]]]:
+    """Fetch blueprint listings from the soul-blueprints GitHub repo.
+
+    Uses the GitHub Contents API to list category directories, then
+    fetches file names from each. Lightweight header parsing is done
+    via raw file fetch for descriptions.
+
+    Args:
+        query: Optional search filter (case-insensitive).
+
+    Returns:
+        List of blueprint dicts, or None on failure.
+    """
+    try:
+        # Get top-level categories
+        req = urllib.request.Request(
+            _GITHUB_API_URL,
+            headers={"User-Agent": "skcapstone", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            categories = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.debug("GitHub blueprint fetch failed: %s", exc)
+        return None
+
+    blueprints: list[dict[str, Any]] = []
+    q = query.lower()
+
+    for cat_entry in categories:
+        if cat_entry.get("type") != "dir":
+            continue
+        cat_name = cat_entry["name"]
+
+        # Fetch files in this category
+        try:
+            cat_req = urllib.request.Request(
+                cat_entry["url"],
+                headers={"User-Agent": "skcapstone", "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(cat_req, timeout=10) as resp:
+                files = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            continue
+
+        for file_entry in files:
+            fname = file_entry.get("name", "")
+            if not fname.lower().endswith((".md", ".yaml", ".yml")):
+                continue
+            if fname.lower() in ("readme.md", "index.html"):
+                continue
+
+            stem = fname.rsplit(".", 1)[0]
+            slug = stem.lower().replace("_", "-").replace(" ", "-")
+            display = stem.replace("_", " ").replace("-", " ").title()
+
+            # Apply search filter
+            if q and q not in slug and q not in cat_name.lower() and q not in display.lower():
+                continue
+
+            blueprints.append({
+                "name": slug,
+                "display_name": display,
+                "category": cat_name,
+                "source": "github",
+                "raw_url": f"{_GITHUB_RAW_URL}/{cat_name}/{fname}",
+            })
+
+    return sorted(blueprints, key=lambda d: (d["category"], d["name"]))
