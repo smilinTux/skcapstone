@@ -23,8 +23,10 @@ jobs:
         run: |
           # All tests must collect without import errors
           python -m pytest tests/ --collect-only -q 2>&1 | tee /tmp/collect.txt
-          if grep -q "error" /tmp/collect.txt; then
+          # Check last line for "N errors during collection"
+          if tail -1 /tmp/collect.txt | grep -qP '\d+ errors? during collection'; then
             echo "::error::Test collection errors detected"
+            tail -5 /tmp/collect.txt
             exit 1
           fi
       - name: Run core tests
