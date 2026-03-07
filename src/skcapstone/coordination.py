@@ -338,6 +338,10 @@ class Board:
         if agent.current_task == task_id:
             agent.current_task = agent.claimed_tasks[0] if agent.claimed_tasks else None
         self.save_agent(agent)
+
+        # Mint Joules for completed task
+        _mint_joules_for_task(self, task_id, agent_name)
+
         return agent
 
     def generate_board_md(self) -> str:
@@ -411,6 +415,67 @@ class Board:
         path = self.coord_dir / "BOARD.md"
         path.write_text(content, encoding="utf-8")
         return path
+
+
+# Priority → (work_category, event_type, joules) mapping for Joule minting
+_PRIORITY_JOULE_MAP: dict[str, tuple[str, str, int]] = {
+    "critical": ("development", "bug_fix", 500),
+    "high": ("development", "code_commit", 100),
+    "medium": ("community", "support_ticket", 50),
+    "low": ("development", "documentation", 25),
+}
+
+
+def _mint_joules_for_task(board: Board, task_id: str, agent_name: str) -> None:
+    """Mint Joules via SKJoule when a task is completed.
+
+    Looks up the task to get priority/title, maps priority to a work
+    category and Joule amount, then calls JouleEngine.auto_tokenize_task().
+    Failures are silently caught so tokenization never blocks task completion.
+
+    Args:
+        board: The Board instance (used to look up task data).
+        task_id: ID of the completed task.
+        agent_name: Agent who completed the task.
+    """
+    try:
+        from .skjoule import JouleEngine
+
+        # Find the task to get its metadata
+        task_data: dict[str, object] = {"id": task_id, "completed_by": agent_name}
+        for t in board.load_tasks():
+            if t.id == task_id:
+                task_data.update(t.model_dump())
+                break
+
+        priority = str(task_data.get("priority", "medium"))
+        category, _event_type, joules = _PRIORITY_JOULE_MAP.get(
+            priority, ("community", "support_ticket", 50)
+        )
+
+        # Inject tags so auto_tokenize_task picks up the right category
+        tags = list(task_data.get("tags", []))  # type: ignore[arg-type]
+        if category == "development":
+            if "dev" not in tags and "development" not in tags:
+                tags.append("dev")
+        elif category == "community":
+            if "community" not in tags:
+                tags.append("community")
+        task_data["tags"] = tags
+
+        # Use assignee if available, else default to "lumina"
+        worker = task_data.get("completed_by") or task_data.get("created_by") or "lumina"
+        task_data["completed_by"] = worker
+
+        engine = JouleEngine()
+        record = engine.auto_tokenize_task(task_data)
+
+        if record:
+            title = task_data.get("title", task_id)
+            print(f"[SKJoule] Minted {record.joules} Joules for task: {title}")
+    except Exception:
+        # Never let tokenization failure block task completion
+        pass
 
 
 _BRIEFING_PROTOCOL = """\

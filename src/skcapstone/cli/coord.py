@@ -147,6 +147,7 @@ def register_coord_commands(main: click.Group) -> None:
         home_path = Path(home).expanduser()
         board = Board(home_path)
         ag = board.complete_task(agent, task_id)
+        # board.complete_task() automatically mints Joules via _mint_joules_for_task
         console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
 
     @coord.command("board")

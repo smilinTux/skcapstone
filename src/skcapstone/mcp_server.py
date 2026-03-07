@@ -2946,12 +2946,28 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
         return _error_response("task_id and agent_name are required")
 
     board = Board(_home())
+    # board.complete_task() automatically mints Joules via _mint_joules_for_task
     agent = board.complete_task(agent_name, task_id)
+
+    # Report minted Joules in the response (best-effort)
+    joules_minted = 0
+    try:
+        from .coordination import _PRIORITY_JOULE_MAP
+        for t in board.load_tasks():
+            if t.id == task_id:
+                _cat, _evt, joules_minted = _PRIORITY_JOULE_MAP.get(
+                    t.priority.value, ("community", "support_ticket", 50)
+                )
+                break
+    except Exception:
+        pass
+
     return _json_response({
         "completed": True,
         "task_id": task_id,
         "agent": agent.agent,
         "completed_tasks": agent.completed_tasks,
+        "joules_minted": joules_minted,
     })
 
 
