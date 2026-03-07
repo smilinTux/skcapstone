@@ -195,19 +195,25 @@ def register_status_commands(main: click.Group) -> None:
     """Register all status/overview commands on the main CLI group."""
 
     @main.command()
-    @click.option("--home", default=AGENT_HOME, help="Agent home directory.", type=click.Path())
-    def status(home: str):
+    @click.option("--home", default=None, help="Agent home directory.", type=click.Path())
+    @click.option("--agent", default=None, help="Agent name (e.g. opus, lumina).")
+    def status(home: Optional[str], agent: Optional[str]):
         """Show the sovereign agent's current state."""
-        home_path = Path(home).expanduser()
+        from .. import SKCAPSTONE_AGENT as default_agent
 
-        if not home_path.exists():
-            console.print(
-                "[bold red]No agent found.[/] "
-                "Run [bold]skcapstone init --name \"YourAgent\"[/] first."
-            )
-            sys.exit(1)
-
-        runtime = get_runtime(home_path)
+        if home:
+            home_path = Path(home).expanduser()
+            if not home_path.exists():
+                console.print(
+                    "[bold red]No agent found.[/] "
+                    "Run [bold]skcapstone init --name \"YourAgent\"[/] first."
+                )
+                sys.exit(1)
+            runtime = get_runtime(home_path)
+        else:
+            agent_name = agent or default_agent
+            runtime = get_runtime(agent_name=agent_name)
+        home_path = runtime.home
         m = runtime.manifest
 
         console.print()
