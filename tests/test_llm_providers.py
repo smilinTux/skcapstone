@@ -7,18 +7,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from skseed.llm import (
-    LLMCallback,
-    _is_adapted_prompt,
-    anthropic_callback,
-    auto_callback,
-    grok_callback,
-    kimi_callback,
-    nvidia_callback,
-    ollama_callback,
-    openai_callback,
-    passthrough_callback,
-)
+skseed_llm = pytest.importorskip("skseed.llm", reason="skseed not installed")
+LLMCallback = skseed_llm.LLMCallback
+_is_adapted_prompt = skseed_llm._is_adapted_prompt
+anthropic_callback = skseed_llm.anthropic_callback
+auto_callback = skseed_llm.auto_callback
+grok_callback = skseed_llm.grok_callback
+kimi_callback = skseed_llm.kimi_callback
+nvidia_callback = skseed_llm.nvidia_callback
+ollama_callback = skseed_llm.ollama_callback
+openai_callback = skseed_llm.openai_callback
+passthrough_callback = skseed_llm.passthrough_callback
 
 
 class TestIsAdaptedPrompt:

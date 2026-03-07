@@ -190,7 +190,7 @@ class JouleWallet:
         self._state_path = self._wallet_dir / "joules.json"
         self._log_path = self._wallet_dir / "transactions.jsonl"
         self._lock = threading.Lock()
-        self._snapshot = self._load_snapshot()
+        self._snapshot = self._load_or_create_snapshot()
 
     # -- Public properties ---------------------------------------------------
 
@@ -403,15 +403,30 @@ class JouleWallet:
 
     # -- Persistence ---------------------------------------------------------
 
-    def _load_snapshot(self) -> WalletSnapshot:
-        """Load wallet state from disk, or create a fresh one."""
+    def _load_or_create_snapshot(self) -> WalletSnapshot:
+        """Load wallet state from disk, or create and persist a fresh one.
+
+        Ensures the wallet directory exists (parents=True, exist_ok=True)
+        and writes an initial joules.json if none is found, so the file
+        is always present on disk after construction.
+        """
+        self._wallet_dir.mkdir(parents=True, exist_ok=True)
         if self._state_path.exists():
             try:
                 data = json.loads(self._state_path.read_text(encoding="utf-8"))
                 return WalletSnapshot(**data)
             except (json.JSONDecodeError, OSError, ValueError) as exc:
                 logger.warning("Failed to load wallet for %s: %s", self._agent, exc)
-        return WalletSnapshot(agent=self._agent)
+        snapshot = WalletSnapshot(agent=self._agent)
+        # Persist the fresh snapshot so joules.json exists on disk immediately
+        try:
+            self._state_path.write_text(
+                json.dumps(snapshot.model_dump(), indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.error("Failed to initialize wallet for %s: %s", self._agent, exc)
+        return snapshot
 
     def _persist(self, txn: Transaction) -> None:
         """Save snapshot and append transaction (caller must hold lock)."""
@@ -422,6 +437,9 @@ class JouleWallet:
 
         This is the raw persistence call used by both _persist() and
         the transfer() method which manages its own locking.
+
+        Every call writes the wallet state and flushes the transaction
+        log to disk immediately so no data is lost on crash.
         """
         self._snapshot.updated_at = datetime.now(timezone.utc).isoformat()
         self._wallet_dir.mkdir(parents=True, exist_ok=True)
@@ -436,6 +454,7 @@ class JouleWallet:
         try:
             with self._log_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(txn.model_dump()) + "\n")
+                fh.flush()
         except OSError as exc:
             logger.error("Failed to append transaction for %s: %s", self._agent, exc)
 

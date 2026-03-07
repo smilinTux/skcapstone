@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pgpy
 import pytest
-from pgpy.constants import (
+
+pgpy = pytest.importorskip("pgpy", reason="pgpy not installed")
+from pgpy.constants import (  # noqa: E402
     HashAlgorithm,
     KeyFlags,
     PubKeyAlgorithm,
