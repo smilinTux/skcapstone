@@ -33,7 +33,11 @@ def register_preflight_commands(main: click.Group) -> None:
             skcapstone preflight --json-out
         """
         import json
+        from .. import ensure_skeleton
         from ..preflight import PreflightChecker
+
+        # Ensure all expected directories exist before checking
+        ensure_skeleton()
 
         checker = PreflightChecker(home=Path(home).expanduser())
         summary = checker.run_all()

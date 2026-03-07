@@ -17,7 +17,9 @@ def register_peers_dir_commands(main: click.Group) -> None:
 
     @main.group("peers")
     def peers_dir():
-        """Peer transport directory — routing addresses for the mesh."""
+        """Peer transport directory — routing addresses for the mesh.
+
+        SKComm transport endpoints. For identity/trust peers, see 'peer'."""
 
     @peers_dir.command("list")
     @click.option("--home", "sk_home", default=AGENT_HOME, type=click.Path())

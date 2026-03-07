@@ -74,15 +74,32 @@ def register_card_commands(main: click.Group) -> None:
         console.print(f"  [dim]Saved to: {out_path}[/]\n")
 
     @card.command("show")
-    @click.argument("filepath", default="~/.skcapstone/agent-card.json")
+    @click.argument("filepath", default=None, required=False)
     def card_show(filepath):
-        """Display an agent card."""
+        """Display an agent card.
+
+        If no filepath is given, looks in the agent home directory first,
+        then falls back to ~/.skcapstone/agent-card.json.
+        """
         from ..agent_card import AgentCard
+        from .. import agent_home, AGENT_HOME
+
+        if filepath is None:
+            # Try agent-scoped path first, then shared root
+            candidates = [
+                Path(agent_home()) / "agent-card.json",
+                Path(AGENT_HOME).expanduser() / "agent-card.json",
+            ]
+            filepath = next(
+                (str(c) for c in candidates if c.exists()),
+                str(candidates[0]),  # default for error message
+            )
 
         try:
             agent_card = AgentCard.load(filepath)
         except FileNotFoundError:
             console.print(f"[red]Card not found: {filepath}[/]")
+            console.print("[dim]Generate one with: skcapstone card generate[/]")
             raise SystemExit(1)
 
         verified = AgentCard.verify_signature(agent_card)

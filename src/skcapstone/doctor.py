@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -616,6 +617,120 @@ def _check_versions() -> list[Check]:
         pass
 
     return checks
+
+
+@dataclass
+class FixResult:
+    """Result of attempting to auto-fix a failing check.
+
+    Attributes:
+        check_name: Name of the check that was fixed.
+        success: Whether the fix succeeded.
+        action: Description of what was done.
+        error: Error message if the fix failed.
+    """
+
+    check_name: str
+    success: bool
+    action: str = ""
+    error: str = ""
+
+
+def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
+    """Attempt to auto-fix failing checks by creating missing directories and files.
+
+    Args:
+        report: Diagnostic report with failing checks.
+        home: Agent home directory.
+
+    Returns:
+        List of FixResult for each attempted fix.
+    """
+    results: list[FixResult] = []
+
+    for check in report.checks:
+        if check.passed:
+            continue
+
+        # Fix missing directories
+        if check.name.startswith("home:") and check.name != "home:exists" and check.name != "home:manifest":
+            dirname = check.name.split(":", 1)[1]
+            dirpath = home / dirname
+            try:
+                dirpath.mkdir(parents=True, exist_ok=True)
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=True,
+                    action=f"Created directory {dirpath}",
+                ))
+            except OSError as exc:
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error=str(exc),
+                ))
+
+        # Fix missing manifest
+        elif check.name == "home:manifest":
+            manifest_path = home / "manifest.json"
+            try:
+                data = {
+                    "name": os.environ.get("SKCAPSTONE_AGENT", "sovereign"),
+                    "version": "0.0.0",
+                    "created_at": "",
+                    "connectors": [],
+                }
+                manifest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=True,
+                    action=f"Created default manifest at {manifest_path}",
+                ))
+            except OSError as exc:
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error=str(exc),
+                ))
+
+        # Fix missing memory store
+        elif check.name == "memory:store":
+            agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+            memory_dir = home / "agents" / agent_name / "memory"
+            try:
+                for layer in ("short-term", "mid-term", "long-term"):
+                    (memory_dir / layer).mkdir(parents=True, exist_ok=True)
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=True,
+                    action=f"Created memory directories at {memory_dir}",
+                ))
+            except OSError as exc:
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error=str(exc),
+                ))
+
+        # Fix missing sync directory
+        elif check.name == "sync:dir":
+            sync_dir = home / "sync"
+            try:
+                for subdir in ("outbox", "inbox", "archive"):
+                    (sync_dir / subdir).mkdir(parents=True, exist_ok=True)
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=True,
+                    action=f"Created sync directories at {sync_dir}",
+                ))
+            except OSError as exc:
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error=str(exc),
+                ))
+
+    return results
 
 
 def _get_tool_version(tool: str) -> Optional[str]:

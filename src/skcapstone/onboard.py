@@ -109,6 +109,52 @@ def _step_identity(home_path: Path, name: str, email: str | None) -> tuple[str, 
 
         (home_path / "skills").mkdir(parents=True, exist_ok=True)
 
+        # Create full skeleton so all commands work from day one
+        agent_slug = name.lower().replace(" ", "-")
+        agent_dir = home_path / "agents" / agent_slug
+
+        skeleton_dirs = [
+            # Shared root directories
+            home_path / "heartbeats",
+            home_path / "peers",
+            home_path / "coordination" / "tasks",
+            home_path / "coordination" / "agents",
+            home_path / "logs",
+            home_path / "comms" / "inbox",
+            home_path / "comms" / "outbox",
+            home_path / "comms" / "archive",
+            home_path / "archive",
+            home_path / "deployments",
+            home_path / "docs",
+            home_path / "metrics",
+            # Per-agent directories
+            agent_dir / "memory" / "short-term",
+            agent_dir / "memory" / "mid-term",
+            agent_dir / "memory" / "long-term",
+            agent_dir / "soul" / "installed",
+            agent_dir / "wallet",
+            agent_dir / "seeds",
+            agent_dir / "identity",
+            agent_dir / "config",
+            agent_dir / "logs",
+            agent_dir / "security",
+            agent_dir / "cloud9",
+            agent_dir / "trust" / "febs",
+            agent_dir / "sync" / "outbox",
+            agent_dir / "sync" / "inbox",
+            agent_dir / "sync" / "archive",
+            agent_dir / "reflections",
+            agent_dir / "improvements",
+            agent_dir / "scripts",
+            agent_dir / "cron",
+            agent_dir / "archive",
+            agent_dir / "comms" / "inbox",
+            agent_dir / "comms" / "outbox",
+            agent_dir / "comms" / "archive",
+        ]
+        for d in skeleton_dirs:
+            d.mkdir(parents=True, exist_ok=True)
+
         manifest = {
             "name": name,
             "version": __version__,

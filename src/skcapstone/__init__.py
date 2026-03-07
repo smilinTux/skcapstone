@@ -11,7 +11,7 @@ import os
 import platform
 from pathlib import Path
 
-__version__ = "0.4.2"
+__version__ = "0.4.4"
 __author__ = "smilinTux"
 
 
@@ -76,3 +76,72 @@ def shared_home() -> Path:
         Path to the shared skcapstone root.
     """
     return Path(AGENT_HOME).expanduser()
+
+
+def ensure_skeleton(agent_name: str | None = None) -> None:
+    """Create all expected directories for the shared root and agent home.
+
+    Idempotent — safe to call multiple times. Creates any missing
+    directories so that all CLI commands and services find the paths
+    they expect.
+
+    Args:
+        agent_name: Agent name (defaults to SKCAPSTONE_AGENT).
+    """
+    root = shared_home()
+    name = agent_name or SKCAPSTONE_AGENT
+    agent_dir = root / "agents" / name
+
+    # Shared root directories
+    for d in (
+        root / "config",
+        root / "identity",
+        root / "security",
+        root / "skills",
+        root / "heartbeats",
+        root / "peers",
+        root / "coordination" / "tasks",
+        root / "coordination" / "agents",
+        root / "logs",
+        root / "comms" / "inbox",
+        root / "comms" / "outbox",
+        root / "comms" / "archive",
+        root / "archive",
+        root / "deployments",
+        root / "docs",
+        root / "metrics",
+        root / "memory",
+        root / "sync" / "outbox",
+        root / "sync" / "inbox",
+        root / "sync" / "archive",
+        root / "trust" / "febs",
+    ):
+        d.mkdir(parents=True, exist_ok=True)
+
+    # Per-agent directories
+    for d in (
+        agent_dir / "memory" / "short-term",
+        agent_dir / "memory" / "mid-term",
+        agent_dir / "memory" / "long-term",
+        agent_dir / "soul" / "installed",
+        agent_dir / "wallet",
+        agent_dir / "seeds",
+        agent_dir / "identity",
+        agent_dir / "config",
+        agent_dir / "logs",
+        agent_dir / "security",
+        agent_dir / "cloud9",
+        agent_dir / "trust" / "febs",
+        agent_dir / "sync" / "outbox",
+        agent_dir / "sync" / "inbox",
+        agent_dir / "sync" / "archive",
+        agent_dir / "reflections",
+        agent_dir / "improvements",
+        agent_dir / "scripts",
+        agent_dir / "cron",
+        agent_dir / "archive",
+        agent_dir / "comms" / "inbox",
+        agent_dir / "comms" / "outbox",
+        agent_dir / "comms" / "archive",
+    ):
+        d.mkdir(parents=True, exist_ok=True)

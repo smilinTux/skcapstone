@@ -14,13 +14,18 @@ from ._common import AGENT_HOME, console
 def register_usage_commands(main: click.Group) -> None:
     """Register the ``skcapstone usage`` command group."""
 
-    @main.group("usage")
-    def usage_group():
+    @main.group("usage", invoke_without_command=True)
+    @click.pass_context
+    def usage_group(ctx):
         """Show LLM token usage and cost estimates.
 
         Tracks input/output tokens per model per day.
         Data is stored in ~/.skcapstone/usage/tokens-{date}.json.
+
+        When called without a subcommand, shows today's usage.
         """
+        if ctx.invoked_subcommand is None:
+            ctx.invoke(today_cmd)
 
     @usage_group.command("daily")
     @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")

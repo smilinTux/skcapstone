@@ -20,7 +20,9 @@ def register_peer_commands(main: click.Group) -> None:
 
     @main.group()
     def peer():
-        """Peer management — discover, add, and manage trusted contacts."""
+        """Peer management — discover, add, and manage trusted contacts.
+
+        Identity-layer peers (PGP keys, trust). For transport routing, see 'peers'."""
 
     @peer.command("add")
     @click.option("--card", "card_path", type=click.Path(exists=True), help="Import from identity card.")

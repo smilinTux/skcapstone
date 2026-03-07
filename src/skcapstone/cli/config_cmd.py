@@ -1,4 +1,4 @@
-"""Config commands: validate."""
+"""Config commands: show, validate."""
 
 from __future__ import annotations
 
@@ -17,6 +17,58 @@ def register_config_commands(main: click.Group) -> None:
     @main.group()
     def config():
         """Config management — validate and inspect agent configuration."""
+
+    @config.command("show")
+    @click.option(
+        "--home", default=AGENT_HOME, type=click.Path(),
+        help="Agent home directory.",
+    )
+    @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
+    def show(home: str, json_out: bool) -> None:
+        """Show current agent configuration.
+
+        Displays the contents of config.yaml, consciousness.yaml, and
+        model_profiles.yaml from the agent home directory.
+        """
+        import yaml
+
+        home_path = Path(home).expanduser()
+        config_dir = home_path / "config"
+
+        if not config_dir.exists():
+            console.print(f"[red]Config directory not found: {config_dir}[/]")
+            sys.exit(1)
+
+        config_files = ["config.yaml", "consciousness.yaml", "model_profiles.yaml"]
+        all_data: dict = {}
+
+        for fname in config_files:
+            fpath = config_dir / fname
+            if fpath.exists():
+                try:
+                    data = yaml.safe_load(fpath.read_text(encoding="utf-8"))
+                    all_data[fname] = data
+                except Exception as exc:
+                    all_data[fname] = {"error": str(exc)}
+            else:
+                all_data[fname] = None
+
+        if json_out:
+            click.echo(json.dumps(all_data, indent=2, default=str))
+            return
+
+        for fname, data in all_data.items():
+            if data is None:
+                console.print(f"  [dim]{fname}[/]  [yellow]not found[/]")
+            elif "error" in data:
+                console.print(f"  [dim]{fname}[/]  [red]{data['error']}[/]")
+            else:
+                console.print(f"\n  [bold cyan]{fname}[/]")
+                console.print(f"  [dim]{config_dir / fname}[/]")
+                formatted = yaml.dump(data, default_flow_style=False, indent=2)
+                for line in formatted.strip().split("\n"):
+                    console.print(f"    {line}")
+            console.print()
 
     @config.command("validate")
     @click.option(
