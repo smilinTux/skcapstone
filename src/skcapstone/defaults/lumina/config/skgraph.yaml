@@ -1,0 +1,12 @@
+# SKGraph configuration — knowledge graph / relationship memory
+# Customize graph backend and relationship tracking for your agent.
+
+enabled: false
+backend: sqlite
+auto_link_memories: true
+max_depth: 5
+relationship_types:
+  - relates_to
+  - builds_on
+  - contradicts
+  - supersedes

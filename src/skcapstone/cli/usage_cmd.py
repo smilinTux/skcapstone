@@ -37,6 +37,20 @@ def register_usage_commands(main: click.Group) -> None:
             return
         _print_report(report, model, title_suffix=f"[dim]({report.date})[/]")
 
+    @usage_group.command("today")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
+    @click.option("--model", default=None, help="Filter to a specific model.")
+    @click.option("--json-out", is_flag=True, help="Output raw JSON.")
+    def today_cmd(home: str, model: str | None, json_out: bool):
+        """Show token usage for today (alias for 'daily')."""
+        from ..usage import UsageTracker
+        tracker = UsageTracker(Path(home).expanduser())
+        report = tracker.get_daily(None)
+        if json_out:
+            click.echo(json.dumps(_report_to_dict(report, model), indent=2))
+            return
+        _print_report(report, model, title_suffix=f"[dim]({report.date})[/]")
+
     @usage_group.command("weekly")
     @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
     @click.option("--model", default=None, help="Filter to a specific model.")

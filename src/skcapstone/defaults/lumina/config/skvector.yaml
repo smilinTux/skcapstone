@@ -1,0 +1,9 @@
+# SKVector configuration — semantic memory embeddings
+# Customize the embedding model and index settings for your agent.
+
+enabled: false
+model: "all-MiniLM-L6-v2"
+dimensions: 384
+index_type: flat
+similarity_metric: cosine
+auto_embed_on_store: true

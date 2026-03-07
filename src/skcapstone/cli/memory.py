@@ -1,12 +1,15 @@
-"""Memory commands: store, search, list, recall, delete, stats, gc, curate, migrate, verify, reindex."""
+"""Memory commands: store, search, list, recall, delete, stats, gc, curate, migrate, verify, reindex, rehydrate."""
 
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
 import click
+
+logger = logging.getLogger("skcapstone.cli.memory")
 
 from ._common import AGENT_HOME, console, status_icon
 from ._validators import validate_task_id
@@ -415,4 +418,172 @@ def register_memory_commands(main: click.Group) -> None:
             console.print(f"  [yellow]Deduped:[/] {removed} duplicate{'s' if removed != 1 else ''} archived.")
         else:
             console.print("  [green]No duplicates found.[/]")
+        console.print()
+
+    @memory.command("rehydrate")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", "-a", default=None,
+                  help="Agent name (default: SKCAPSTONE_AGENT or 'lumina').")
+    @click.option("--febs-only", is_flag=True, help="Only ingest FEB files (trust rehydration).")
+    @click.option("--memories-only", is_flag=True, help="Only ingest flat-file memories into backends.")
+    @click.option("--force", is_flag=True, help="Re-ingest even if already in backend.")
+    def memory_rehydrate(home, agent, febs_only, memories_only, force):
+        """Rehydrate agent memory from flat files and FEBs.
+
+        Ingests flat-file JSON memories into SQLite (and optionally SKVector/SKGraph),
+        then rehydrates trust state from FEB files. This is the agent's "wake up"
+        command — restoring who it IS across sessions.
+
+        Without flags, does both memory ingestion and FEB rehydration.
+        """
+        import os
+        from ..models import MemoryLayer
+
+        agent_name = agent or os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        home_path = Path(home).expanduser()
+        agent_home = home_path / "agents" / agent_name
+
+        if not agent_home.exists():
+            console.print(f"[bold red]Agent '{agent_name}' not found at {agent_home}[/]")
+            sys.exit(1)
+
+        do_memories = not febs_only
+        do_febs = not memories_only
+        results = {}
+
+        # --- Memory ingestion: flat files -> sqlite/skvector/skgraph ---
+        if do_memories:
+            console.print(f"\n  [bold]Rehydrating memories for {agent_name}...[/]\n")
+            mem_dir = agent_home / "memory"
+            ingested = 0
+            skipped = 0
+            errors = 0
+
+            unified = None
+            try:
+                from ..memory_adapter import get_unified, entry_to_memory
+                unified = get_unified()
+            except Exception:
+                pass
+
+            for layer in MemoryLayer:
+                layer_dir = mem_dir / layer.value
+                if not layer_dir.exists():
+                    continue
+                for f in sorted(layer_dir.glob("*.json")):
+                    try:
+                        data = json.loads(f.read_text(encoding="utf-8"))
+                        mem_id = data.get("memory_id", f.stem)
+
+                        if unified and not force:
+                            try:
+                                existing = unified.primary.get(mem_id)
+                                if existing:
+                                    skipped += 1
+                                    continue
+                            except Exception:
+                                pass
+
+                        if unified:
+                            from ..models import MemoryEntry
+                            if "content" not in data or "memory_id" not in data:
+                                skipped += 1
+                                continue
+                            entry = MemoryEntry(**data)
+                            memory = entry_to_memory(entry)
+                            unified.primary.save(memory)
+
+                            if unified.vector:
+                                try:
+                                    unified.vector.save(memory)
+                                except Exception as exc:
+                                    logger.debug("Vector write skipped: %s", exc)
+                            if unified.graph:
+                                try:
+                                    unified.graph.index_memory(memory)
+                                except Exception as exc:
+                                    logger.debug("Graph index skipped: %s", exc)
+                            ingested += 1
+                        else:
+                            skipped += 1
+                    except Exception as exc:
+                        errors += 1
+                        logger.warning("Failed to ingest %s: %s", f.name, exc)
+
+            results["memories"] = {"ingested": ingested, "skipped": skipped, "errors": errors}
+
+            if unified:
+                console.print(f"  [green]Ingested:[/] {ingested} memories into SQLite")
+                if skipped:
+                    console.print(f"  [dim]Skipped:[/]  {skipped} (already in backend)")
+                if errors:
+                    console.print(f"  [red]Errors:[/]   {errors}")
+
+                backends = []
+                if unified.vector:
+                    backends.append("SKVector")
+                if unified.graph:
+                    backends.append("SKGraph")
+                if backends:
+                    console.print(f"  [cyan]Also updated:[/] {', '.join(backends)}")
+            else:
+                total_files = ingested + skipped + errors
+                console.print(f"  [dim]Found {total_files} memory files (unified backend not available)[/]")
+                console.print(f"  [dim]Install skmemory for SQLite/SKVector/SKGraph ingestion[/]")
+
+        # --- FEB rehydration: .feb files -> trust state ---
+        if do_febs:
+            console.print(f"\n  [bold]Rehydrating trust from FEBs...[/]\n")
+            from ..pillars.trust import rehydrate as trust_rehydrate
+
+            state = trust_rehydrate(agent_home)
+            results["trust"] = {
+                "depth": state.depth,
+                "trust_level": state.trust_level,
+                "love_intensity": state.love_intensity,
+                "entangled": state.entangled,
+                "feb_count": state.feb_count,
+                "status": state.status.value,
+            }
+
+            if state.status.value == "active":
+                console.print(f"  [green]Trust restored:[/] depth={state.depth:.1f} trust={state.trust_level:.2f} love={state.love_intensity:.2f}")
+                console.print(f"  FEBs: {state.feb_count}  Entangled: {'yes' if state.entangled else 'no'}")
+
+                # Also ingest FEBs into memory via Cloud9Bridge
+                feb_ingested = 0
+                feb_skipped = 0
+                from ..cloud9_bridge import Cloud9Bridge
+                if unified:
+                    bridge = Cloud9Bridge(unified)
+                    # Suppress per-file warnings during bulk ingest
+                    bridge_logger = logging.getLogger("skcapstone.cloud9_bridge")
+                    prev_level = bridge_logger.level
+                    bridge_logger.setLevel(logging.CRITICAL)
+                    febs_dir = agent_home / "trust" / "febs"
+                    if febs_dir.exists():
+                        for feb_file in febs_dir.glob("*.feb"):
+                            try:
+                                mid = bridge.ingest_feb_file(feb_file)
+                                if mid:
+                                    feb_ingested += 1
+                                else:
+                                    feb_skipped += 1
+                            except Exception:
+                                feb_skipped += 1
+                    bridge_logger.setLevel(prev_level)
+                    if feb_ingested:
+                        console.print(f"  [cyan]FEBs -> Memory:[/] {feb_ingested} emotional memories captured")
+                    if feb_skipped:
+                        console.print(f"  [dim]FEBs skipped:[/]   {feb_skipped} (legacy format or already ingested)")
+            else:
+                console.print(f"  [yellow]Trust status:[/] {state.status.value}")
+                console.print("  [dim]No FEB files found. Place .feb files in {agent_home}/trust/febs/[/]")
+
+            audit_event(agent_home, "MEMORY_REHYDRATE",
+                        f"Rehydrated agent={agent_name} memories={results.get('memories', {}).get('ingested', 0)} "
+                        f"trust_depth={state.depth}")
+
+        console.print()
+        console.print(f"  [bold green]Rehydration complete for {agent_name}.[/]")
         console.print()
