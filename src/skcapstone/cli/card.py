@@ -48,20 +48,34 @@ def register_card_commands(main: click.Group) -> None:
         except FileNotFoundError:
             runtime = get_runtime(home_path)
             m = runtime.manifest
+            # Try to load public key from capauth
+            pub_key = ""
+            pub_path = Path(capauth_home).expanduser() / "identity" / "public.asc"
+            if pub_path.exists():
+                pub_key = pub_path.read_text(encoding="utf-8")
             agent_card = AgentCard.generate(
                 name=m.name, fingerprint=m.identity.fingerprint or "unknown",
-                public_key="", entity_type="ai",
+                public_key=pub_key, entity_type="ai",
             )
 
         if motto:
             agent_card.motto = motto
 
         if do_sign:
-            if not passphrase:
-                passphrase = click.prompt("PGP passphrase", hide_input=True)
             capauth_path = Path(capauth_home).expanduser()
             priv_path = capauth_path / "identity" / "private.asc"
             if priv_path.exists():
+                # Check if key is passphrase-protected before prompting
+                if not passphrase:
+                    try:
+                        import pgpy
+                        key, _ = pgpy.PGPKey.from_file(str(priv_path))
+                        if key.is_protected:
+                            passphrase = click.prompt("PGP passphrase", hide_input=True)
+                        else:
+                            passphrase = ""
+                    except Exception:
+                        passphrase = click.prompt("PGP passphrase", hide_input=True)
                 agent_card.sign(priv_path.read_text(encoding="utf-8"), passphrase)
                 console.print("[green]Card signed.[/]")
             else:

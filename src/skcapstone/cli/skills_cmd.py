@@ -50,19 +50,49 @@ def register_skills_commands(main: click.Group) -> None:
 
             skcapstone skills list --query identity --json
         """
-        client = get_registry_client(registry)
-        if client is None:
-            console.print(
-                "[bold red]skskills not installed.[/] "
-                "Run: pip install skskills"
-            )
-            sys.exit(1)
+        # Try remote registry first, fall back to local catalog
+        skill_entries = None
+        source = "remote"
 
-        try:
-            skill_entries = client.search(query) if query else client.list_skills()
-        except Exception as exc:
-            console.print(f"[bold red]Registry error:[/] {exc}")
-            sys.exit(1)
+        client = get_registry_client(registry)
+        if client is not None:
+            try:
+                skill_entries = client.search(query) if query else client.list_skills()
+            except Exception:
+                pass  # fall through to local catalog
+
+        # Fall back to local catalog (bundled with skskills)
+        if skill_entries is None:
+            try:
+                from skskills.catalog import SkillCatalog
+
+                catalog = SkillCatalog()
+                if query:
+                    entries = catalog.search(query)
+                else:
+                    entries = catalog.list_all()
+                skill_entries = [
+                    {
+                        "name": e.name,
+                        "version": "",
+                        "description": e.description,
+                        "tags": e.tags,
+                        "category": e.category,
+                        "pip": e.pip,
+                        "git": e.git,
+                    }
+                    for e in entries
+                ]
+                source = "catalog"
+            except ImportError:
+                console.print(
+                    "[bold red]skskills not installed.[/] "
+                    "Run: pip install skskills"
+                )
+                sys.exit(1)
+            except Exception as exc:
+                console.print(f"[bold red]Catalog error:[/] {exc}")
+                sys.exit(1)
 
         if json_out:
             click.echo(json.dumps(skill_entries, indent=2))
@@ -76,17 +106,19 @@ def register_skills_commands(main: click.Group) -> None:
         label = f"[bold]{len(skill_entries)}[/] skill(s)"
         if query:
             label += f" matching [cyan]'{query}'[/]"
+        if source == "catalog":
+            label += "  [dim](local catalog)[/]"
 
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         table.add_column("Name", style="cyan")
-        table.add_column("Version", style="dim")
+        table.add_column("Category", style="dim")
         table.add_column("Description")
         table.add_column("Tags", style="dim")
 
         for s in skill_entries:
             table.add_row(
                 s.get("name", ""),
-                s.get("version", ""),
+                s.get("category", s.get("version", "")),
                 s.get("description", ""),
                 ", ".join(s.get("tags", [])),
             )

@@ -212,7 +212,10 @@ class AgentCard(BaseModel):
             content = self.content_hash().encode("utf-8")
             pgp_message = pgpy.PGPMessage.new(content, cleartext=False)
 
-            with key.unlock(passphrase):
+            if key.is_protected:
+                with key.unlock(passphrase):
+                    sig = key.sign(pgp_message)
+            else:
                 sig = key.sign(pgp_message)
 
             self.signature = str(sig)
