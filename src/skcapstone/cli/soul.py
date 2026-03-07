@@ -57,13 +57,17 @@ def _find_blueprint_in_repo(slug: str) -> Path | None:
 def register_soul_commands(main: click.Group) -> None:
     """Register the soul command group."""
 
+    def _agent_option():
+        """Reusable --agent/-a option for soul subcommands."""
+        return click.option(
+            "--agent", "-a",
+            default=SKCAPSTONE_AGENT or "lumina",
+            envvar="SKCAPSTONE_AGENT",
+            help="Agent profile name (default: SKCAPSTONE_AGENT or 'lumina').",
+        )
+
     @main.group()
-    @click.option(
-        "--agent", "-a",
-        default=SKCAPSTONE_AGENT or "lumina",
-        envvar="SKCAPSTONE_AGENT",
-        help="Agent profile name (default: SKCAPSTONE_AGENT or 'lumina').",
-    )
+    @_agent_option()
     @click.pass_context
     def soul(ctx, agent):
         """Soul layering — hot-swappable personality overlays.
@@ -307,23 +311,43 @@ def register_soul_commands(main: click.Group) -> None:
 
     @soul.command("status")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @_agent_option()
     @click.pass_context
-    def soul_status(ctx, home):
+    def soul_status(ctx, home, agent):
         """Show current soul state."""
         from ..soul import SoulManager
 
         home_path = Path(home).expanduser()
-        mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])
+        mgr = SoulManager(home_path, agent_name=agent)
         state = mgr.get_status()
         installed = mgr.list_installed()
 
         active_display = state.active_soul or "[dim]base[/]"
+
+        # Try to read vibe from base.json
+        vibe = ""
+        base_path = mgr.soul_dir / "base.json"
+        if base_path.exists():
+            try:
+                import json
+                base_data = json.loads(base_path.read_text(encoding="utf-8"))
+                vibe = base_data.get("vibe", "")
+            except Exception:
+                pass
+
+        lines = [
+            f"Agent: [bold magenta]{agent}[/]",
+            f"Base: [bold]{state.base_soul}[/]",
+            f"Active: [bold cyan]{active_display}[/]",
+            f"Installed: [bold]{len(installed)}[/] soul(s)",
+            f"Activated at: {state.activated_at or '[dim]n/a[/]'}",
+        ]
+        if vibe:
+            lines.insert(1, f"Vibe: [italic]{vibe}[/]")
+
         console.print()
         console.print(Panel(
-            f"Base: [bold]{state.base_soul}[/]\n"
-            f"Active: [bold cyan]{active_display}[/]\n"
-            f"Installed: [bold]{len(installed)}[/] soul(s)\n"
-            f"Activated at: {state.activated_at or '[dim]n/a[/]'}",
+            "\n".join(lines),
             title="Soul Layer", border_style="yellow",
         ))
         console.print()
