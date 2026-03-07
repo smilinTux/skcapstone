@@ -162,6 +162,7 @@ Install-Pkg -Name 'skchat-sovereign' -Extras 'all'                -Paths @((Join
 Install-Pkg -Name 'skseal'     -Extras ''                         -Paths @((Join-Path $ParentDir 'skseal'))
 Install-Pkg -Name 'skskills'   -Extras ''                         -Paths @((Join-Path $ParentDir 'skskills'))
 Install-Pkg -Name 'sksecurity' -Extras ''                         -Paths @((Join-Path $ParentDir 'sksecurity'))
+Install-Pkg -Name 'skseed'     -Extras ''                         -Paths @((Join-Path $PillarDir 'skseed'), (Join-Path $ParentDir 'skseed'))
 
 # ---------------------------------------------------------------------------
 # Step 4: Dev tools (optional)
@@ -248,6 +249,6 @@ if ($failures -eq 0) {
     Write-Host "=== Installation complete with $failures warning(s) ===" -ForegroundColor Yellow
 }
 Write-Host ''
-Write-Host "Commands available: skcomm, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity"
+Write-Host "Commands available: skcomm, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity, skseed"
 Write-Host "Venv location:     $SKENV"
 Write-Host "To activate:       & $SKENV\Scripts\Activate.ps1"

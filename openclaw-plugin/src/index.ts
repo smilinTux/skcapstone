@@ -16,16 +16,28 @@ const SKCAPSTONE_BIN = process.env.SKCAPSTONE_BIN || "skcapstone";
 const SKMEMORY_BIN = process.env.SKMEMORY_BIN || "skmemory";
 const SKCAPSTONE_AGENT = process.env.SKCAPSTONE_AGENT || "lumina";
 const EXEC_TIMEOUT = 60_000;
+const IS_WIN = process.platform === "win32";
 
-function runCli(bin: string, args: string): { ok: boolean; output: string } {
+function skenvPath(): string {
+  if (IS_WIN) {
+    const local = process.env.LOCALAPPDATA || "";
+    return `${local}\\skenv\\Scripts`;
+  }
+  const home = process.env.HOME || "";
+  return `${home}/.local/bin:${home}/.skenv/bin`;
+}
+
+function runCli(bin: string, args: string, agentOverride?: string): { ok: boolean; output: string } {
+  const sep = IS_WIN ? ";" : ":";
+  const agent = agentOverride || SKCAPSTONE_AGENT;
   try {
     const raw = execSync(`${bin} ${args}`, {
       encoding: "utf-8",
       timeout: EXEC_TIMEOUT,
       env: {
         ...process.env,
-        SKCAPSTONE_AGENT,
-        PATH: `${process.env.HOME}/.local/bin:${process.env.HOME}/.skenv/bin:${process.env.PATH}`,
+        SKCAPSTONE_AGENT: agent,
+        PATH: `${skenvPath()}${sep}${process.env.PATH}`,
       },
     }).trim();
     return { ok: true, output: raw };
@@ -299,6 +311,62 @@ function createSKCapstoneSoulShowTool() {
   };
 }
 
+function createSKCapstoneAgentListTool() {
+  return {
+    name: "skcapstone_agent_list",
+    label: "SKCapstone Agent List",
+    description:
+      "List all skcapstone agent profiles available on this node. Each profile has its own identity, memories, soul, and trust state. Use this to discover which agents can be loaded.",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      const result = runCli(SKCAPSTONE_BIN, "agents list --json");
+      return textResult(result.output);
+    },
+  };
+}
+
+function createSKCapstoneAgentStatusTool() {
+  return {
+    name: "skcapstone_agent_status",
+    label: "SKCapstone Agent Status",
+    description:
+      "Show the status of a specific skcapstone agent profile — identity, memories, trust, sync state. Use this to load a different agent's context into the current OpenClaw session.",
+    parameters: {
+      type: "object",
+      required: ["agent"],
+      properties: {
+        agent: { type: "string", description: "Agent name (e.g. 'lumina', 'opus', 'jarvis')." },
+      },
+    },
+    async execute(_id: string, params: Record<string, unknown>) {
+      const agent = String(params.agent ?? "");
+      const result = runCli(SKCAPSTONE_BIN, `status --agent ${escapeShellArg(agent)}`, agent);
+      return textResult(result.output);
+    },
+  };
+}
+
+function createSKCapstoneAgentCreateTool() {
+  return {
+    name: "skcapstone_agent_create",
+    label: "SKCapstone Create Agent",
+    description:
+      "Create a new skcapstone agent profile with its own identity, memory store, and sync folder. The profile will immediately begin syncing via Syncthing to all connected nodes.",
+    parameters: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "Agent name (lowercase, e.g. 'casey', 'nova')." },
+      },
+    },
+    async execute(_id: string, params: Record<string, unknown>) {
+      const name = String(params.name ?? "").toLowerCase();
+      const result = runCli(SKCAPSTONE_BIN, `init --name ${escapeShellArg(name)} --agent ${escapeShellArg(name)}`);
+      return textResult(result.output);
+    },
+  };
+}
+
 // ── Plugin registration ─────────────────────────────────────────────────
 
 const skcapstonePlugin = {
@@ -324,6 +392,9 @@ const skcapstonePlugin = {
       createSKCapstoneSoulSwapTool(),
       createSKCapstoneSoulStatusTool(),
       createSKCapstoneSoulShowTool(),
+      createSKCapstoneAgentListTool(),
+      createSKCapstoneAgentStatusTool(),
+      createSKCapstoneAgentCreateTool(),
     ];
 
     for (const tool of tools) {
@@ -344,7 +415,7 @@ const skcapstonePlugin = {
       },
     });
 
-    api.logger.info?.(`👑 SKCapstone plugin registered (14 tools + /skcapstone command) [agent=${SKCAPSTONE_AGENT}]`);
+    api.logger.info?.(`SKCapstone plugin registered (17 tools + /skcapstone command) [agent=${SKCAPSTONE_AGENT}]`);
   },
 };
 

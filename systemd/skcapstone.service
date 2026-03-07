@@ -5,19 +5,18 @@ After=network-online.target ollama.service syncthing.service
 Wants=network-online.target
 
 [Service]
-Type=notify
-ExecStart=skcapstone daemon start --foreground
-ExecStop=skcapstone daemon stop
+Type=simple
+ExecStart=%h/.skenv/bin/skcapstone daemon start --foreground
+ExecStop=%h/.skenv/bin/skcapstone daemon stop
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10
-# Watchdog: daemon must call sd_notify("WATCHDOG=1") at least every 5 minutes
-WatchdogSec=300
 # Cap memory to prevent OOM from large model loading
 MemoryMax=4G
 # Keep Ollama models warm for 5 minutes between requests
 Environment=PYTHONUNBUFFERED=1
 Environment=OLLAMA_KEEP_ALIVE=5m
+Environment=SKCAPSTONE_AGENT=lumina
 # Journal logging
 StandardOutput=journal
 StandardError=journal
@@ -27,7 +26,7 @@ SyslogIdentifier=skcapstone
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.skcapstone %h/.skmemory %h/.capauth %h/.cloud9 %h/.skcomm %h/.skchat
+ReadWritePaths=%h/.skcapstone %h/.skenv %h/.capauth %h/.cloud9 %h/.skcomm %h/.skchat
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectControlGroups=true

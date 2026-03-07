@@ -165,6 +165,66 @@ skcapstone status
 
 ---
 
+## Windows Quickstart
+
+SKCapstone runs natively on Windows. The installer creates a virtualenv at `%LOCALAPPDATA%\skenv` and adds its `Scripts` directory to your user PATH.
+
+### Prerequisites
+
+- **Python 3.10+** — [python.org/downloads](https://www.python.org/downloads/) (check "Add to PATH" during install)
+- **Git for Windows** — [git-scm.com](https://git-scm.com/download/win)
+- **Syncthing** (optional) — for cross-device sync ([syncthing.net](https://syncthing.net/downloads/))
+
+### Install
+
+```powershell
+# Clone and install (creates %LOCALAPPDATA%\skenv venv)
+git clone https://github.com/smilintux-org/skcapstone.git
+cd skcapstone
+.\scripts\install.ps1
+
+# The installer adds %LOCALAPPDATA%\skenv\Scripts to your user PATH.
+# Restart your terminal for PATH changes to take effect.
+
+# Initialize your agent
+skcapstone init --name "YourAgent"
+
+# Check status
+skcapstone status
+```
+
+### Syncthing Sync (Optional)
+
+To sync your agent across devices (e.g., Windows desktop + Linux server):
+
+1. Install [Syncthing](https://syncthing.net/downloads/) on both machines
+2. Share the `%USERPROFILE%\.skcapstone` folder between devices
+3. Agent state (memories, identity, trust, seeds) syncs automatically
+
+### OpenClaw Integration
+
+If you're running [OpenClaw](https://github.com/smilintux-org/openclaw), the SK* plugins register automatically during install:
+
+```powershell
+# Re-register if needed
+skcapstone register
+
+# Verify plugins are loaded in OpenClaw
+# Plugins provide tools for status, rehydration, coordination,
+# soul management, and agent profiles directly in OpenClaw agents.
+```
+
+### Task Scheduler (Background Service)
+
+On Windows, the daemon runs via Task Scheduler instead of systemd:
+
+```powershell
+# Install the scheduled task (runs at logon)
+.\scripts\windows\install-tasks.ps1
+```
+
+---
+
 ## DID Tools
 
 SKCapstone exposes a set of **Decentralized Identifier (DID)** MCP tools for sovereign identity management. These tools are available to Claude Code and other MCP clients through the `mcp_tools/did_tools.py` module.
@@ -223,6 +283,7 @@ DIDs are organized in three tiers of trust and discoverability:
 | **SKComm** | Communication — Encrypted channels between agents |
 | **SKChat** | Chat — AI-native encrypted messaging |
 | **SKForge** | Generation — Blueprint creation with agent context |
+| **SKSeed** | Epistemic rigor — Steel man collider, truth alignment, memory audit |
 | **SKStacks** | Infrastructure — Self-hosted deployment patterns |
 
 ---

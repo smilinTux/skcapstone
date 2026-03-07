@@ -209,7 +209,7 @@ def register_status_commands(main: click.Group) -> None:
                     "Run [bold]skcapstone init --name \"YourAgent\"[/] first."
                 )
                 sys.exit(1)
-            runtime = get_runtime(home_path)
+            runtime = get_runtime(home=home_path)
         else:
             agent_name = agent or default_agent
             runtime = get_runtime(agent_name=agent_name)

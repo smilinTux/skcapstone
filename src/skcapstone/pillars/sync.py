@@ -72,7 +72,7 @@ def initialize_sync(home: Path, config: Optional[SyncConfig] = None) -> SyncStat
         else:
             state.status = PillarStatus.DEGRADED
 
-    state.seed_count = _count_seeds(sync_dir)
+    state.seed_count = _count_seeds(sync_dir, home=home)
     return state
 
 
@@ -396,7 +396,7 @@ def discover_sync(home: Path) -> SyncState:
     state = SyncState(
         transport=transport,
         sync_path=sync_dir,
-        seed_count=_count_seeds(sync_dir),
+        seed_count=_count_seeds(sync_dir, home=home),
         status=PillarStatus.ACTIVE,
     )
 
@@ -483,14 +483,21 @@ def _get_hostname() -> str:
     return socket.gethostname()
 
 
-def _count_seeds(sync_dir: Path) -> int:
-    """Count seed files across outbox, inbox, and archive."""
+def _count_seeds(sync_dir: Path, home: Optional[Path] = None) -> int:
+    """Count seed files across sync subdirs and the agent seeds directory."""
     count = 0
     for subdir in ("outbox", "inbox", "archive"):
         d = sync_dir / subdir
         if d.exists():
             count += sum(
                 1 for f in d.iterdir() if f.name.endswith(SEED_EXTENSION) or f.suffix == ".gpg"
+            )
+    # Also count seeds in the agent's seeds/ directory
+    if home is not None:
+        seeds_dir = home / "seeds"
+        if seeds_dir.is_dir():
+            count += sum(
+                1 for f in seeds_dir.iterdir() if f.name.endswith(SEED_EXTENSION)
             )
     return count
 

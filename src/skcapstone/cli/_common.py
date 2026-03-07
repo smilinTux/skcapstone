@@ -46,17 +46,17 @@ def resolve_agent_home(agent: str) -> Path:
 
 
 def apply_agent_override(agent: str) -> None:
-    """Override the global AGENT_HOME when --agent is specified.
+    """Set the active agent name when --agent is specified.
 
-    Mutates the package-level AGENT_HOME so that all downstream code
-    (MCP tools, pillars, etc.) uses the correct per-agent directory.
+    Only mutates SKCAPSTONE_AGENT so that agent_home() resolves to
+    the correct per-agent directory. Does NOT mutate AGENT_HOME
+    (the shared root) — that would break agent_home() (double
+    nesting) and shared_home() (wrong path).
 
     Args:
         agent: Agent name from the --agent CLI option or env var.
     """
     if agent:
-        new_home = str(Path(SHARED_ROOT) / "agents" / agent)
-        _pkg.AGENT_HOME = new_home
         _pkg.SKCAPSTONE_AGENT = agent
         os.environ["SKCAPSTONE_AGENT"] = agent
 

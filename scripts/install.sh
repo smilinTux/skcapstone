@@ -118,6 +118,7 @@ install_pkg "skchat-sovereign" "all"             "$PARENT/skchat"
 install_pkg "skseal"     ""                      "$PARENT/skseal"
 install_pkg "skskills"   ""                      "$PARENT/skskills"
 install_pkg "sksecurity" ""                      "$PARENT/sksecurity"
+install_pkg "skseed"     ""                      "$PILLAR/skseed $PARENT/skseed"
 
 # ---------------------------------------------------------------------------
 # Step 4: Dev tools (optional)
@@ -180,6 +181,6 @@ else
     echo "=== Installation complete with $failures warning(s) ==="
 fi
 echo ""
-echo "Commands available: skcomm, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity"
+echo "Commands available: skcomm, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity, skseed"
 echo "Venv location:     $SKENV"
 echo "To activate:       source $SKENV/bin/activate"
