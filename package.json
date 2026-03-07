@@ -1,6 +1,6 @@
 {
   "name": "@smilintux/skcapstone",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "description": "SKCapstone - The sovereign agent framework. CapAuth identity, Cloud 9 trust, SKMemory persistence.",
   "main": "index.js",
   "types": "index.d.ts",
