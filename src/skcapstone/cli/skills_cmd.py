@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
+import urllib.request
+from typing import Optional
 
 import click
+import yaml
 
 from ._common import AGENT_HOME, console
 from ..registry_client import get_registry_client
@@ -13,18 +17,65 @@ from ..registry_client import get_registry_client
 from rich.panel import Panel
 from rich.table import Table
 
+logger = logging.getLogger(__name__)
+
+# Raw catalog.yaml from the skskills GitHub repo (always fresh)
+_GITHUB_CATALOG_URL = (
+    "https://raw.githubusercontent.com/smilinTux/skskills/main/catalog.yaml"
+)
+
+
+def _fetch_github_catalog(query: str = "") -> Optional[list[dict]]:
+    """Fetch catalog.yaml from the skskills GitHub repo.
+
+    Returns:
+        List of skill entry dicts, or None on failure.
+    """
+    try:
+        req = urllib.request.Request(_GITHUB_CATALOG_URL, headers={"User-Agent": "skcapstone"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = yaml.safe_load(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.debug("GitHub catalog fetch failed: %s", exc)
+        return None
+
+    entries = []
+    q = query.lower()
+    for item in raw.get("skills", []):
+        name = item.get("name", "")
+        desc = item.get("description", "").strip()
+        tags = item.get("tags", [])
+
+        if q and not (
+            q in name.lower()
+            or q in desc.lower()
+            or any(q in t.lower() for t in tags)
+        ):
+            continue
+
+        entries.append({
+            "name": name,
+            "description": desc,
+            "tags": tags,
+            "category": item.get("category", ""),
+            "pip": item.get("pip", ""),
+            "git": item.get("git", ""),
+        })
+
+    return entries
+
 
 def register_skills_commands(main: click.Group) -> None:
     """Register the skills command group."""
 
     @main.group()
     def skills():
-        """Remote skills registry — discover and install agent skills.
+        """Skills registry — discover and install agent skills.
 
-        Browse skills at skills.smilintux.org, search by name or tag,
-        and install skill packages into your local agent namespace.
+        Fetches the latest skill catalog from GitHub. Falls back to the
+        locally installed catalog if offline.
 
-        Set SKSKILLS_REGISTRY_URL to override the default registry.
+        Set SKSKILLS_REGISTRY_URL to override with a custom registry server.
         """
 
     @skills.command("list")
@@ -36,11 +87,12 @@ def register_skills_commands(main: click.Group) -> None:
         help="Override the skills registry URL.",
     )
     @click.option("--json", "json_out", is_flag=True, help="Output raw JSON.")
-    def skills_list(query: str, registry: str | None, json_out: bool) -> None:
-        """List skills available in the remote registry.
+    @click.option("--offline", is_flag=True, help="Use local catalog only (no network).")
+    def skills_list(query: str, registry: str | None, json_out: bool, offline: bool) -> None:
+        """List skills available in the catalog.
 
-        Without --query all skills are shown. With --query only skills
-        matching the name, description, or tags are returned.
+        Pulls the latest catalog from the skskills GitHub repo.
+        Falls back to local catalog if offline or fetch fails.
 
         Examples:
 
@@ -49,19 +101,28 @@ def register_skills_commands(main: click.Group) -> None:
             skcapstone skills list --query syncthing
 
             skcapstone skills list --query identity --json
+
+            skcapstone skills list --offline
         """
-        # Try remote registry first, fall back to local catalog
         skill_entries = None
-        source = "remote"
+        source = "github"
 
-        client = get_registry_client(registry)
-        if client is not None:
-            try:
-                skill_entries = client.search(query) if query else client.list_skills()
-            except Exception:
-                pass  # fall through to local catalog
+        # 1. Try custom registry server if configured
+        if registry:
+            client = get_registry_client(registry)
+            if client is not None:
+                try:
+                    skill_entries = client.search(query) if query else client.list_skills()
+                    source = "remote"
+                except Exception:
+                    pass
 
-        # Fall back to local catalog (bundled with skskills)
+        # 2. Try GitHub raw catalog (always fresh, no server needed)
+        if skill_entries is None and not offline:
+            skill_entries = _fetch_github_catalog(query)
+            source = "github"
+
+        # 3. Fall back to local catalog (bundled with skskills package)
         if skill_entries is None:
             try:
                 from skskills.catalog import SkillCatalog
@@ -74,7 +135,6 @@ def register_skills_commands(main: click.Group) -> None:
                 skill_entries = [
                     {
                         "name": e.name,
-                        "version": "",
                         "description": e.description,
                         "tags": e.tags,
                         "category": e.category,
@@ -83,10 +143,10 @@ def register_skills_commands(main: click.Group) -> None:
                     }
                     for e in entries
                 ]
-                source = "catalog"
+                source = "local"
             except ImportError:
                 console.print(
-                    "[bold red]skskills not installed.[/] "
+                    "[bold red]skskills not installed and GitHub unreachable.[/] "
                     "Run: pip install skskills"
                 )
                 sys.exit(1)
@@ -103,11 +163,15 @@ def register_skills_commands(main: click.Group) -> None:
             console.print(f"\n  [dim]No skills found{suffix}.[/]\n")
             return
 
+        source_labels = {
+            "github": "",
+            "remote": "  [dim](registry)[/]",
+            "local": "  [dim](local — offline)[/]",
+        }
         label = f"[bold]{len(skill_entries)}[/] skill(s)"
         if query:
             label += f" matching [cyan]'{query}'[/]"
-        if source == "catalog":
-            label += "  [dim](local catalog)[/]"
+        label += source_labels.get(source, "")
 
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         table.add_column("Name", style="cyan")
@@ -118,13 +182,13 @@ def register_skills_commands(main: click.Group) -> None:
         for s in skill_entries:
             table.add_row(
                 s.get("name", ""),
-                s.get("category", s.get("version", "")),
+                s.get("category", ""),
                 s.get("description", ""),
                 ", ".join(s.get("tags", [])),
             )
 
         console.print()
-        console.print(Panel(label, title="Skills Registry", border_style="bright_blue"))
+        console.print(Panel(label, title="Skills Catalog", border_style="bright_blue"))
         console.print(table)
         console.print()
 
