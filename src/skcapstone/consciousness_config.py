@@ -117,3 +117,30 @@ def write_default_config(home: Path) -> Path:
     config_path.write_text(header + content, encoding="utf-8")
     logger.info("Wrote default consciousness config to %s", config_path)
     return config_path
+
+
+def load_dreaming_config(
+    home: Path,
+    config_path: Optional[Path] = None,
+):
+    """Load dreaming config from the consciousness.yaml ``dreaming:`` section.
+
+    Args:
+        home: Agent home directory.
+        config_path: Explicit path to config file (overrides default).
+
+    Returns:
+        DreamingConfig (defaults if section is missing or unparseable).
+    """
+    from .dreaming import DreamingConfig
+
+    yaml_path = config_path or (home / "config" / CONFIG_FILENAME)
+    if not yaml_path.exists():
+        return DreamingConfig()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        if raw and isinstance(raw, dict) and "dreaming" in raw:
+            return DreamingConfig.model_validate(raw["dreaming"])
+    except Exception as exc:
+        logger.warning("Failed to parse dreaming config: %s", exc)
+    return DreamingConfig()
