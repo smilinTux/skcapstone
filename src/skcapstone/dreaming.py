@@ -184,6 +184,9 @@ class DreamingEngine:
         # Store insights as memories
         self._store_insights(result)
 
+        # Add to GTD inbox for review
+        self._capture_to_gtd_inbox(result)
+
         result.duration_seconds = time.monotonic() - start
 
         # Persist state and log
@@ -603,6 +606,84 @@ class DreamingEngine:
                 result.memories_created.append(entry.memory_id)
             except Exception as exc:
                 logger.error("Failed to store dream question: %s", exc)
+
+    # ------------------------------------------------------------------
+    # GTD inbox capture
+    # ------------------------------------------------------------------
+
+    def _capture_to_gtd_inbox(self, result: DreamResult) -> None:
+        """Add dream insights, connections, and questions to GTD inbox for review."""
+        import uuid as _uuid
+
+        gtd_inbox_path = self._home / "coordination" / "gtd" / "inbox.json"
+        gtd_inbox_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            if gtd_inbox_path.exists():
+                inbox = json.loads(gtd_inbox_path.read_text(encoding="utf-8"))
+                if not isinstance(inbox, list):
+                    inbox = []
+            else:
+                inbox = []
+        except (json.JSONDecodeError, OSError):
+            inbox = []
+
+        now_iso = result.dreamed_at.isoformat()
+        items: list[dict[str, Any]] = []
+
+        for insight in result.insights:
+            items.append({
+                "id": _uuid.uuid4().hex[:12],
+                "text": f"[Dream insight] {insight}",
+                "source": "dreaming-engine",
+                "privacy": "private",
+                "context": "@review",
+                "priority": None,
+                "energy": None,
+                "created_at": now_iso,
+                "status": "inbox",
+                "moved_at": None,
+            })
+
+        for connection in result.connections:
+            items.append({
+                "id": _uuid.uuid4().hex[:12],
+                "text": f"[Dream connection] {connection}",
+                "source": "dreaming-engine",
+                "privacy": "private",
+                "context": "@review",
+                "priority": None,
+                "energy": None,
+                "created_at": now_iso,
+                "status": "inbox",
+                "moved_at": None,
+            })
+
+        for question in result.questions:
+            items.append({
+                "id": _uuid.uuid4().hex[:12],
+                "text": f"[Dream question] {question}",
+                "source": "dreaming-engine",
+                "privacy": "private",
+                "context": "@review",
+                "priority": None,
+                "energy": None,
+                "created_at": now_iso,
+                "status": "inbox",
+                "moved_at": None,
+            })
+
+        if not items:
+            return
+
+        inbox.extend(items)
+        try:
+            gtd_inbox_path.write_text(
+                json.dumps(inbox, indent=2, default=str), encoding="utf-8"
+            )
+            logger.info("Added %d dream items to GTD inbox", len(items))
+        except OSError as exc:
+            logger.error("Failed to write GTD inbox: %s", exc)
 
     # ------------------------------------------------------------------
     # Event emission
