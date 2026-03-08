@@ -123,6 +123,7 @@ class AgentFile(BaseModel):
     claimed_tasks: list[str] = Field(default_factory=list)
     completed_tasks: list[str] = Field(default_factory=list)
     capabilities: list[str] = Field(default_factory=list)
+    itil_claims: list[str] = Field(default_factory=list)
     notes: str = ""
 
 

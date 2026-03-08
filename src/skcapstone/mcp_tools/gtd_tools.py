@@ -21,7 +21,7 @@ _GTD_LISTS = {
     "someday-maybe": "someday-maybe.json",
 }
 
-_VALID_SOURCES = {"manual", "telegram", "email", "voice"}
+_VALID_SOURCES = {"manual", "telegram", "email", "voice", "itil"}
 _VALID_PRIVACY = {"private", "team", "community", "public"}
 _VALID_STATUSES = {"inbox", "next", "project", "waiting", "someday", "reference", "done"}
 _VALID_PRIORITIES = {"critical", "high", "medium", "low"}

@@ -374,6 +374,50 @@ def make_dreaming_task(
     return _run
 
 
+def make_itil_auto_close_task(home: Path) -> Callable[[], None]:
+    """Return a callback that auto-closes resolved incidents after 24h stable.
+
+    Args:
+        home: Shared root directory.
+    """
+
+    def _run() -> None:
+        from .itil import ITILManager
+
+        mgr = ITILManager(home)
+        closed = mgr.auto_close_resolved(stable_hours=24)
+        if closed:
+            logger.info("ITIL auto-close: %d incident(s) closed: %s", len(closed), closed)
+        else:
+            logger.debug("ITIL auto-close: no incidents to close")
+
+    return _run
+
+
+def make_itil_escalation_task(home: Path) -> Callable[[], None]:
+    """Return a callback that checks SLA breaches on open incidents.
+
+    Args:
+        home: Shared root directory.
+    """
+
+    def _run() -> None:
+        from .itil import ITILManager
+
+        mgr = ITILManager(home)
+        breaches = mgr.check_sla_breaches()
+        if breaches:
+            for b in breaches:
+                logger.warning(
+                    "ITIL SLA breach: %s (%s) unacknowledged for %d min (limit: %d min)",
+                    b["id"], b["severity"], b["elapsed_minutes"], b["sla_minutes"],
+                )
+        else:
+            logger.debug("ITIL escalation check: no SLA breaches")
+
+    return _run
+
+
 # ---------------------------------------------------------------------------
 # Convenience builder
 # ---------------------------------------------------------------------------
@@ -480,5 +524,23 @@ def build_scheduler(
         )
     except ImportError:
         logger.debug("service_health not available — service_health_check task skipped")
+
+    # ITIL escalation check — SLA breach detection every 5 minutes
+    try:
+        from . import SHARED_ROOT
+
+        shared = Path(SHARED_ROOT).expanduser()
+        scheduler.register(
+            name="itil_escalation_check",
+            interval_seconds=300,  # 5 minutes
+            callback=make_itil_escalation_task(shared),
+        )
+        scheduler.register(
+            name="itil_auto_close",
+            interval_seconds=1800,  # 30 minutes
+            callback=make_itil_auto_close_task(shared),
+        )
+    except Exception:
+        logger.debug("ITIL scheduled tasks not available — skipped")
 
     return scheduler

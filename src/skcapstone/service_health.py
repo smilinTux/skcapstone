@@ -197,16 +197,90 @@ def check_all_services() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
+    """Auto-create an ITIL incident for a down service (with dedup).
+
+    Only creates a new incident if there is no existing open incident
+    for the same service. Uses best-effort: failures are logged but
+    never block the health check.
+    """
+    try:
+        from . import SHARED_ROOT
+        from .itil import ITILManager
+
+        svc_name = service_result["name"]
+        mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
+
+        # Dedup: skip if there's already an open incident for this service
+        existing = mgr.find_open_incident_for_service(svc_name)
+        if existing:
+            logger.debug(
+                "Skipping incident creation for %s — open incident %s exists",
+                svc_name, existing.id,
+            )
+            return
+
+        error_info = service_result.get("error") or "unreachable"
+        mgr.create_incident(
+            title=f"{svc_name} down",
+            severity="sev3",
+            source="service_health",
+            affected_services=[svc_name],
+            impact=f"Service unreachable: {error_info}",
+            managed_by="lumina",
+            created_by="service_health",
+            tags=["auto-detected", "service-health"],
+        )
+        logger.info("Auto-created incident for down service: %s", svc_name)
+    except Exception as exc:
+        logger.debug("Failed to create incident for %s: %s", service_result.get("name"), exc)
+
+
+def _auto_resolve_recovered_service(service_result: dict[str, Any]) -> None:
+    """Auto-resolve sev4 incidents when a service recovers."""
+    try:
+        from . import SHARED_ROOT
+        from .itil import ITILManager
+
+        svc_name = service_result["name"]
+        mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
+        existing = mgr.find_open_incident_for_service(svc_name)
+        if existing is None:
+            return
+
+        if existing.severity.value == "sev4":
+            mgr.update_incident(
+                existing.id, "service_health",
+                new_status="resolved",
+                note=f"Service {svc_name} recovered automatically",
+                resolution_summary="Auto-resolved: service came back up",
+            )
+            logger.info("Auto-resolved sev4 incident %s for recovered service %s",
+                        existing.id, svc_name)
+        else:
+            mgr.update_incident(
+                existing.id, "service_health",
+                note=f"Service {svc_name} appears to be back up",
+            )
+    except Exception as exc:
+        logger.debug("Failed to auto-resolve incident for %s: %s",
+                      service_result.get("name"), exc)
+
+
 def make_service_health_task() -> callable:
     """Return a zero-arg callback suitable for TaskScheduler.register().
 
     Runs check_all_services() and logs results.  Down services are logged
-    at WARNING level; all-up is logged at DEBUG level.
+    at WARNING level; all-up is logged at DEBUG level.  Auto-creates ITIL
+    incidents for down services and auto-resolves sev4 incidents for
+    recovered services.
     """
 
     def _run() -> None:
         results = check_all_services()
         down = [r for r in results if r["status"] == "down"]
+        up = [r for r in results if r["status"] == "up"]
+
         if down:
             names = ", ".join(r["name"] for r in down)
             logger.warning(
@@ -216,13 +290,18 @@ def make_service_health_task() -> callable:
                 logger.warning(
                     "  %s (%s): %s", r["name"], r["url"], r["error"] or "unreachable"
                 )
+                _create_incident_for_down_service(r)
         else:
-            up_count = sum(1 for r in results if r["status"] == "up")
+            up_count = len(up)
             logger.debug(
                 "Service health: %d/%d up, %d unknown",
                 up_count,
                 len(results),
                 len(results) - up_count,
             )
+
+        # Check for recovered services
+        for r in up:
+            _auto_resolve_recovered_service(r)
 
     return _run
