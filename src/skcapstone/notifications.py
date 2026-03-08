@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 import platform
 import subprocess
 import threading
@@ -43,53 +44,65 @@ _TERMINAL_CMDS: list[list[str]] = [
 
 
 def _store_notification_memory(title: str, body: str, urgency: str) -> None:
-    """Persist a short-term memory entry for every dispatched notification."""
+    """Log a notification dispatch to the skcomm/notifications/ directory.
+
+    These are transport bookkeeping, not persistent memories, so they
+    go to ``~/.skcapstone/agents/{agent}/skcomm/notifications/`` instead
+    of polluting the memory/ tree that skmemory indexes.
+    """
     try:
+        import json as _json
+        import uuid
         from . import AGENT_HOME
-        from .memory_engine import store as mem_store
-        from .models import MemoryLayer
 
         home = Path(AGENT_HOME).expanduser()
         if not home.exists():
             return
 
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        notif_dir = home / "agents" / agent_name / "skcomm" / "notifications"
+        notif_dir.mkdir(parents=True, exist_ok=True)
+
         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        content = f"[{ts}] Notification sent — title={title!r} body={body!r} urgency={urgency}"
-        mem_store(
-            home=home,
-            content=content,
-            tags=["notification"],
-            source="notifications",
-            importance=0.3,
-            layer=MemoryLayer.SHORT_TERM,
-        )
+        entry = {
+            "id": uuid.uuid4().hex[:12],
+            "type": "notification-sent",
+            "title": title,
+            "body": body,
+            "urgency": urgency,
+            "timestamp": ts,
+        }
+        path = notif_dir / f"{entry['id']}.json"
+        path.write_text(_json.dumps(entry, indent=2), encoding="utf-8")
     except Exception as exc:
-        logger.debug("Failed to store notification memory: %s", exc)
+        logger.debug("Failed to store notification log: %s", exc)
 
 
 def _store_click_event(action: str, detail: str) -> None:
-    """Persist a short-term memory entry for a notification click action."""
+    """Log a notification click event to the skcomm/notifications/ directory."""
     try:
+        import json as _json
+        import uuid
         from . import AGENT_HOME
-        from .memory_engine import store as mem_store
-        from .models import MemoryLayer
 
         home = Path(AGENT_HOME).expanduser()
         if not home.exists():
             return
 
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        notif_dir = home / "agents" / agent_name / "skcomm" / "notifications"
+        notif_dir.mkdir(parents=True, exist_ok=True)
+
         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        content = (
-            f"[{ts}] Notification click — action={action!r} detail={detail!r}"
-        )
-        mem_store(
-            home=home,
-            content=content,
-            tags=["notification", "click-event"],
-            source="notifications",
-            importance=0.3,
-            layer=MemoryLayer.SHORT_TERM,
-        )
+        entry = {
+            "id": uuid.uuid4().hex[:12],
+            "type": "click-event",
+            "action": action,
+            "detail": detail,
+            "timestamp": ts,
+        }
+        path = notif_dir / f"{entry['id']}.json"
+        path.write_text(_json.dumps(entry, indent=2), encoding="utf-8")
         logger.debug("Stored notification click event: %s → %s", action, detail)
     except Exception as exc:
         logger.debug("Failed to store click event in memory: %s", exc)

@@ -1145,16 +1145,35 @@ class DaemonService:
             logger.debug("Auto-journal write failed: %s", exc)
 
         try:
-            from .memory_engine import store as mem_store
-            mem_store(
-                self.config.home,
-                f"Received message from {sender}: {preview}",
-                tags=["skcomm-received"],
-                source="daemon",
-            )
-            logger.debug("Memory stored for incoming message from %s", sender)
+            self._store_skcomm_receipt(sender, preview)
+            logger.debug("SKComm receipt stored for incoming message from %s", sender)
         except Exception as exc:
-            logger.debug("Auto-journal memory store failed: %s", exc)
+            logger.debug("SKComm receipt store failed: %s", exc)
+
+    def _store_skcomm_receipt(self, sender: str, preview: str) -> None:
+        """Write a skcomm receipt to the skcomm/received/ directory.
+
+        These are transport bookkeeping, NOT persistent memories, so they
+        go to ``~/.skcapstone/agents/{agent}/skcomm/received/`` instead of
+        polluting the memory/ tree that skmemory indexes.
+        """
+        import json
+        import uuid
+        from datetime import datetime, timezone
+
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        recv_dir = self.config.home / "agents" / agent_name / "skcomm" / "received"
+        recv_dir.mkdir(parents=True, exist_ok=True)
+
+        receipt_id = uuid.uuid4().hex[:12]
+        receipt = {
+            "id": receipt_id,
+            "sender": sender,
+            "preview": preview,
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        }
+        path = recv_dir / f"{receipt_id}.json"
+        path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
 
     def _healing_loop(self) -> None:
         """Periodically run self-healing diagnostics (every 5 min)."""

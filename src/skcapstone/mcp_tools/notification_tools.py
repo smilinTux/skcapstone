@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import os
 
 from mcp.types import TextContent, Tool
 
@@ -70,19 +71,19 @@ async def _handle_send_notification(args: dict) -> list[TextContent]:
 
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    # Persist a memory entry so the agent recalls past notifications.
+    # Log notification to skcomm/notifications/ (not memory/).
     try:
-        from ..memory_engine import store as memory_store
-
-        memory_store(
-            home=_home(),
-            content=f"Notification sent — title: {title!r}, body: {body!r}, urgency: {urgency}",
-            tags=["notification"],
-            source="mcp:send_notification",
-            importance=0.4,
-        )
+        import json as _j
+        import uuid
+        home = _home()
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        notif_dir = home / "agents" / agent_name / "skcomm" / "notifications"
+        notif_dir.mkdir(parents=True, exist_ok=True)
+        entry = {"id": uuid.uuid4().hex[:12], "type": "notification-sent",
+                 "title": title, "body": body, "urgency": urgency, "timestamp": timestamp}
+        (notif_dir / f"{entry['id']}.json").write_text(_j.dumps(entry, indent=2))
     except Exception:
-        pass  # memory failure must not block the notification response
+        pass  # notification log failure must not block the response
 
     return _json_response({"sent": True, "timestamp": timestamp})
 
