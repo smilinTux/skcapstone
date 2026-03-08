@@ -9,6 +9,7 @@ Built-in recurring tasks:
     - backend_reprobe        — every 5 minutes
     - memory_promotion_sweep — every hour
     - profile_freshness_check — every 24 hours
+    - dreaming_reflection    — every 15 minutes
 
 Usage:
     scheduler = build_scheduler(home, stop_event, consciousness_loop, beacon)
@@ -338,6 +339,41 @@ def make_profile_freshness_task(home: Path, max_age_days: int = 7) -> Callable[[
     return _run
 
 
+def make_dreaming_task(
+    home: Path, consciousness_loop: object = None
+) -> Callable[[], None]:
+    """Return a callback that runs the dreaming engine every 15 minutes.
+
+    Instantiates DreamingEngine lazily (so import errors are deferred until
+    first run). The engine itself checks idle state and cooldown internally.
+
+    Args:
+        home: Agent home directory.
+        consciousness_loop: ConsciousnessLoop instance for idle detection.
+    """
+
+    def _run() -> None:
+        from .consciousness_config import load_dreaming_config
+        from .dreaming import DreamingEngine
+
+        config = load_dreaming_config(home)
+        if config is None or not config.enabled:
+            return
+        engine = DreamingEngine(
+            home=home, config=config, consciousness_loop=consciousness_loop
+        )
+        result = engine.dream()
+        if result and result.memories_created:
+            logger.info(
+                "Dreaming: %d memories created from reflection",
+                len(result.memories_created),
+            )
+        elif result and result.skipped_reason:
+            logger.debug("Dreaming skipped: %s", result.skipped_reason)
+
+    return _run
+
+
 # ---------------------------------------------------------------------------
 # Convenience builder
 # ---------------------------------------------------------------------------
@@ -368,6 +404,8 @@ def build_scheduler(
     | memory_promotion_sweep   | 1 hour     |
     +--------------------------+------------+
     | profile_freshness_check  | 24 hours   |
+    +--------------------------+------------+
+    | dreaming_reflection      | 15 min     |
     +--------------------------+------------+
 
     Args:
@@ -422,6 +460,13 @@ def build_scheduler(
         name="profile_freshness_check",
         interval_seconds=86400,  # 24 hours
         callback=make_profile_freshness_task(home),
+    )
+
+    # Dreaming — idle-time self-reflection via NVIDIA NIM
+    scheduler.register(
+        name="dreaming_reflection",
+        interval_seconds=900,  # 15 minutes
+        callback=make_dreaming_task(home, consciousness_loop),
     )
 
     # Service health check — pings Qdrant, FalkorDB, Syncthing, daemons
