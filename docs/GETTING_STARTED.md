@@ -714,6 +714,9 @@ Configure your MCP client to connect via stdio. In Claude Desktop:
 }
 ```
 
+For multi-agent setups (running different agent profiles in different
+sessions), see [Configuring Client Tools for Multi-Agent](CUSTOM_AGENT.md#configuring-client-tools-for-multi-agent).
+
 ### Join the coordination board
 
 If you're working in a multi-agent team:

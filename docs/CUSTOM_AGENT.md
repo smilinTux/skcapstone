@@ -161,6 +161,190 @@ sed -i 's/lumina/nova/g' ~/.skcapstone/agents/nova/config/skmemory.yaml
 skcapstone soul status --agent nova
 ```
 
+## Configuring Client Tools for Multi-Agent
+
+Once you've created your agent, you need to configure your AI client tools
+(Claude Code, Claude Desktop, Cursor, OpenClaw, etc.) so they connect MCP
+servers to the correct agent profile.
+
+### The Key: `SKCAPSTONE_AGENT` Environment Variable
+
+All SK\* MCP servers read `SKCAPSTONE_AGENT` from their environment to
+determine which agent profile to load. If unset, they default to `lumina`.
+
+The priority chain (highest wins):
+
+1. `SKMEMORY_AGENT` — skmemory-specific override (rarely needed)
+2. `SKCAPSTONE_AGENT` — universal, used by all SK\* packages
+3. Falls back to `"lumina"`
+
+### Claude Code (`~/.claude/mcp.json`)
+
+**Do NOT hardcode the agent name in the MCP config.** MCP servers inherit
+environment variables from the parent process, so if you launch Claude Code
+with `SKCAPSTONE_AGENT` set, all servers pick it up automatically.
+
+```json
+{
+  "mcpServers": {
+    "skmemory": {
+      "command": "/home/you/.skenv/bin/skmemory-mcp",
+      "args": []
+    },
+    "skcapstone": {
+      "command": "skcapstone-mcp",
+      "args": []
+    },
+    "skcomm": {
+      "command": "/home/you/.skenv/bin/skcomm-mcp",
+      "args": []
+    },
+    "skchat": {
+      "command": "/home/you/.skenv/bin/skchat-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Notice: **no `env` blocks with `SKCAPSTONE_AGENT`**. This is intentional.
+The servers inherit the variable from the shell.
+
+Then launch as any agent:
+
+```bash
+# Default (lumina)
+claude
+
+# As Jarvis
+SKCAPSTONE_AGENT=jarvis claude
+
+# As a custom agent
+SKCAPSTONE_AGENT=nova claude
+```
+
+**Anti-pattern — do NOT do this:**
+
+```json
+{
+  "skmemory": {
+    "command": "/home/you/.skenv/bin/skmemory-mcp",
+    "args": [],
+    "env": {
+      "SKCAPSTONE_AGENT": "lumina"
+    }
+  }
+}
+```
+
+Hardcoding the agent name in `env` locks every session to that agent,
+regardless of what you pass on the command line.
+
+### Claude Desktop (`claude_desktop_config.json`)
+
+Same principle — omit `SKCAPSTONE_AGENT` from the `env` block if you want
+it inherited from the parent process. If Claude Desktop doesn't propagate
+env vars from the shell, you can set it explicitly per config:
+
+```json
+{
+  "mcpServers": {
+    "skcapstone": {
+      "command": "skcapstone-mcp",
+      "args": [],
+      "env": {
+        "SKCAPSTONE_AGENT": "jarvis"
+      }
+    }
+  }
+}
+```
+
+### Cursor (`.cursor/mcp.json`)
+
+Works the same as Claude Code. Place the config at project root or
+`~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "skcapstone": {
+      "command": "skcapstone-mcp",
+      "args": []
+    },
+    "skmemory": {
+      "command": "/home/you/.skenv/bin/skmemory-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+### OpenClaw (`~/.openclaw/openclaw.json`)
+
+OpenClaw plugins read `SKCAPSTONE_AGENT` from the environment at startup.
+Set it before launching:
+
+```bash
+SKCAPSTONE_AGENT=nova openclaw
+```
+
+Or set it in your shell profile for a persistent default:
+
+```bash
+# ~/.bashrc or ~/.zshrc
+export SKCAPSTONE_AGENT=lumina
+```
+
+### Shell Aliases (Convenience)
+
+Add these to `~/.bashrc` or `~/.zshrc` for quick agent switching:
+
+```bash
+# Launch Claude Code as different agents
+alias claude-lumina='SKCAPSTONE_AGENT=lumina claude'
+alias claude-jarvis='SKCAPSTONE_AGENT=jarvis claude'
+alias claude-opus='SKCAPSTONE_AGENT=opus claude'
+alias claude-nova='SKCAPSTONE_AGENT=nova claude'
+```
+
+### systemd Services
+
+For background daemons, set the agent via the templated service unit:
+
+```bash
+# Uses SKCAPSTONE_AGENT=%i from the unit template
+systemctl --user start skcapstone@jarvis
+systemctl --user start skcapstone@nova
+```
+
+Or set it in a non-templated service:
+
+```ini
+[Service]
+Environment=SKCAPSTONE_AGENT=jarvis
+```
+
+### Verifying Your Agent
+
+After launching, confirm which agent is active:
+
+```bash
+# In the terminal
+echo $SKCAPSTONE_AGENT
+
+# Via the CLI
+skcapstone status
+
+# Via skmemory
+skmemory ritual --dry-run
+```
+
+In Claude Code, ask the agent to run `echo $SKCAPSTONE_AGENT` to confirm
+the MCP servers loaded the correct profile.
+
+---
+
 ## Tips
 
 - The `system_prompt` in `base.json` is the most impactful field — it defines how
