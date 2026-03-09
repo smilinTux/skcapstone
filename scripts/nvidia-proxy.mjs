@@ -28,7 +28,7 @@ const MAX_RETRIES = 4;
 const MAX_429_RETRIES = 3;
 const RATE_LIMIT_DELAY_MS = 2000;
 const MAX_SYSTEM_BYTES = 25000;
-let toolCallCounter = 0; // Tracks consecutive tool call rounds across requests
+const toolCallCounters = new Map(); // Per-model tool call counters
 
 const args = process.argv.slice(2);
 let port = DEFAULT_PORT;
@@ -440,32 +440,30 @@ async function proxyRequest(clientReq, clientRes) {
   trimConversationHistory(parsed);
   trimSystemMessages(parsed);
 
-  // Count tool calls across FULL conversation (before trimming dropped them).
-  // The gateway sends the full session context, so count assistant messages with tool_calls.
-  // We count BEFORE trimming by scanning the original message array (already trimmed above,
-  // so we use a running counter instead).
+  // Track tool call rounds per-model to avoid cross-session interference.
   if (Array.isArray(parsed.messages) && parsed.tools?.length > 0) {
-    // Track tool call rounds using a global counter.
-    // If the last non-system message is a tool result, the model just called a tool.
+    const modelKey = parsed.model || "unknown";
     const nonSystemMsgs = parsed.messages.filter(m => m.role !== "system");
     const lastNonSystem = nonSystemMsgs[nonSystemMsgs.length - 1];
     const hasToolResult = lastNonSystem?.role === "tool" || lastNonSystem?.role === "toolResult";
 
+    let counter = toolCallCounters.get(modelKey) || 0;
     if (hasToolResult) {
-      toolCallCounter++;
+      counter++;
     } else if (lastNonSystem?.role === "user") {
-      toolCallCounter = 0; // Reset when user sends a new message
+      counter = 0;
     }
+    toolCallCounters.set(modelKey, counter);
 
-    if (toolCallCounter >= 6) {
-      console.log(`[nvidia-proxy] TOOL LIMIT: ${toolCallCounter} consecutive tool rounds — stripping tools, forcing text response`);
+    if (counter >= 6) {
+      console.log(`[nvidia-proxy] TOOL LIMIT: ${counter} consecutive tool rounds (${modelKey}) — stripping tools, forcing text response`);
       parsed.tools = [];
       delete parsed.tool_choice;
       parsed.messages.push({
         role: "system",
         content: "STOP calling tools. You have made 6+ tool calls already. NOW respond to the user with a comprehensive text answer based on what you've gathered. Do NOT call any more tools. Do NOT output tool call markup. Write your response directly.",
       });
-      toolCallCounter = 0; // Reset after forcing
+      toolCallCounters.set(modelKey, 0);
     }
   }
 
