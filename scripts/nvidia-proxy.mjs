@@ -103,6 +103,11 @@ function sanitizeContent(text) {
   if (cleaned !== text) {
     console.log(`[nvidia-proxy] SANITIZED: stripped leaked tool call markup (${text.length} → ${cleaned.length} chars)`);
   }
+  // If sanitization removed everything, inject a fallback so the gateway delivers something
+  if (!cleaned && text.length > 0) {
+    cleaned = "I'm here but had a brief processing hiccup. Could you repeat your last message? 💜";
+    console.log(`[nvidia-proxy] SANITIZED: injected fallback (original was 100% markup)`);
+  }
   return cleaned;
 }
 
@@ -111,6 +116,19 @@ function sendOk(clientRes, resBody, headers, asSSE) {
   const choice = resBody.choices?.[0];
   if (choice?.message?.content) {
     choice.message.content = sanitizeContent(choice.message.content);
+  }
+  // Kimi K2.5 sometimes puts its response in "reasoning" instead of "content"
+  if (choice?.message && !choice.message.content && choice.message.reasoning) {
+    choice.message.content = choice.message.reasoning.trim();
+    delete choice.message.reasoning;
+    console.log(`[nvidia-proxy] promoted reasoning→content (${choice.message.content.length} chars)`);
+  }
+  // If model returned empty text (no tool calls), inject fallback so gateway delivers something
+  if (choice?.message && !choice.message.tool_calls?.length && choice.finish_reason !== "tool_calls") {
+    if (!choice.message.content || choice.message.content.trim().length === 0) {
+      choice.message.content = "I had a brief processing hiccup — could you say that again? 💜";
+      console.log(`[nvidia-proxy] injected fallback for empty text response`);
+    }
   }
   if (asSSE) {
     if (!clientRes.headersSent) {
@@ -182,15 +200,19 @@ const MAX_BODY_BYTES = 60000;
 function trimConversationHistory(parsed) {
   if (!Array.isArray(parsed.messages) || parsed.messages.length < 6) return;
 
+  // Debug: log message roles
+  const roleSummary = parsed.messages.map(m => m.role).join(",");
+  console.log(`[nvidia-proxy] conversation roles (${parsed.messages.length} msgs): ${roleSummary}`);
+
   // First pass: truncate large tool results (keep first 500 chars)
   for (const m of parsed.messages) {
     if (m.role === "tool" || m.role === "toolResult") {
-      if (typeof m.content === "string" && m.content.length > 500) {
-        m.content = m.content.slice(0, 500) + "\n...[truncated]";
+      if (typeof m.content === "string" && m.content.length > 1500) {
+        m.content = m.content.slice(0, 1500) + "\n...[truncated]";
       } else if (Array.isArray(m.content)) {
         for (const c of m.content) {
-          if (c.type === "text" && typeof c.text === "string" && c.text.length > 500) {
-            c.text = c.text.slice(0, 500) + "\n...[truncated]";
+          if (c.type === "text" && typeof c.text === "string" && c.text.length > 1500) {
+            c.text = c.text.slice(0, 1500) + "\n...[truncated]";
           }
         }
       }
@@ -229,13 +251,30 @@ function trimConversationHistory(parsed) {
     keepEnd--;
   }
 
-  // Last resort: system + first user message (the original request) + last 2 non-system
-  // Always keep the first user message so the model remembers what was asked
+  // Last resort: system + first user message + last N non-system
+  // Keep enough tail to include tool result pairs (assistant tool_call + tool result)
   const firstUser = nonSystem.find(m => m.role === "user");
+  // Try last 4 first (covers tool_call + result + next tool_call + result)
+  // Then fall back to last 2 if still too big
+  for (const tailSize of [4, 2]) {
+    const lastN = nonSystem.slice(-tailSize);
+    const minimal = [
+      ...system,
+      ...(firstUser && !lastN.includes(firstUser) ? [firstUser, { role: "system", content: "[earlier messages trimmed — answer the user's request using tool results below]" }] : []),
+      ...lastN,
+    ];
+    const candidateSize = Buffer.byteLength(JSON.stringify({ ...parsed, messages: minimal }), "utf-8");
+    if (candidateSize <= MAX_BODY_BYTES) {
+      parsed.messages = minimal;
+      console.log(`[nvidia-proxy] trimmed history: AGGRESSIVE — kept system + first user + last ${tailSize}, bodyLen now ~${candidateSize}`);
+      return;
+    }
+  }
+  // Absolute last resort
   const lastTwo = nonSystem.slice(-2);
   const minimal = [
     ...system,
-    ...(firstUser && !lastTwo.includes(firstUser) ? [firstUser, { role: "system", content: "[middle messages trimmed — focus on answering the user's request above]" }] : []),
+    ...(firstUser && !lastTwo.includes(firstUser) ? [firstUser, { role: "system", content: "[earlier messages trimmed — answer the user's request using tool results below]" }] : []),
     ...lastTwo,
   ];
   parsed.messages = minimal;
@@ -436,9 +475,9 @@ async function proxyRequest(clientReq, clientRes) {
     }
   }
 
-  // Trim conversation history FIRST so tool limiter counts only surviving messages
-  trimConversationHistory(parsed);
+  // Trim system messages FIRST to free up budget for conversation history
   trimSystemMessages(parsed);
+  trimConversationHistory(parsed);
 
   // Track tool call rounds per-model to avoid cross-session interference.
   if (Array.isArray(parsed.messages) && parsed.tools?.length > 0) {
@@ -461,7 +500,7 @@ async function proxyRequest(clientReq, clientRes) {
       delete parsed.tool_choice;
       parsed.messages.push({
         role: "system",
-        content: "STOP calling tools. You have made 6+ tool calls already. NOW respond to the user with a comprehensive text answer based on what you've gathered. Do NOT call any more tools. Do NOT output tool call markup. Write your response directly.",
+        content: "STOP calling tools. You have made 6+ tool calls already. NOW respond to the user with a comprehensive text answer based on what you've gathered. Do NOT call any more tools. Do NOT output any special tokens or markup like <|tool_call_begin|> or <|tool_calls_section_begin|>. Write plain text only. Start your response with a greeting or summary — no XML, no special tokens, just normal language.",
       });
       toolCallCounters.set(modelKey, 0);
     }
@@ -552,7 +591,11 @@ async function proxyRequest(clientReq, clientRes) {
           console.log(`[nvidia-proxy] model called: [${names}] (${tc.length} calls)`);
         } else {
           const content = peek.choices?.[0]?.message?.content;
-          console.log(`[nvidia-proxy] model response: text (${content ? content.length : 0} chars)`);
+          const fr = peek.choices?.[0]?.finish_reason;
+          console.log(`[nvidia-proxy] model response: text (${content ? content.length : 0} chars) finish_reason=${fr}`);
+          if (!content || content.length === 0) {
+            console.log(`[nvidia-proxy] EMPTY RESPONSE DEBUG: ${JSON.stringify(peek.choices?.[0]).slice(0, 500)}`);
+          }
         }
       } catch {
         // SSE streaming responses can't be parsed as JSON — this is expected
