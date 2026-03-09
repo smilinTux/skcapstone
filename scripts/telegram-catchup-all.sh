@@ -17,7 +17,7 @@
 #   - ~/.skenv/bin/skcapstone on PATH
 #   - Telethon installed in ~/.skenv/
 
-set -euo pipefail
+set -uo pipefail  # no -e: individual group failures shouldn't stop the batch
 
 SKENV="${HOME}/.skenv/bin"
 SKCAPSTONE="${SKENV}/skcapstone"
@@ -75,12 +75,12 @@ process_group() {
 
   if [[ "$enabled" != "true" ]]; then
     echo "  SKIP $name (disabled)"
-    ((SKIPPED++))
+    SKIPPED=$((SKIPPED + 1))
     return
   fi
 
   if [[ -n "$ONLY_GROUP" && "$name" != *"$ONLY_GROUP"* ]]; then
-    ((SKIPPED++))
+    SKIPPED=$((SKIPPED + 1))
     return
   fi
 
@@ -92,10 +92,10 @@ process_group() {
 
   if eval "$cmd" > /tmp/telegram-catchup-$name.log 2>&1; then
     echo "OK"
-    ((SUCCESS++))
+    SUCCESS=$((SUCCESS + 1))
   else
     echo "FAILED (see /tmp/telegram-catchup-$name.log)"
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
   fi
 
   # Rate limit — avoid hitting Telegram flood control
