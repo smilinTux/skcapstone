@@ -1,0 +1,663 @@
+#!/usr/bin/env node
+/**
+ * NVIDIA NIM API Proxy
+ *
+ * Sits between OpenClaw and the NVIDIA NIM API. Handles the fact that
+ * NVIDIA NIM rejects responses with multiple tool calls (400 error)
+ * even when parallel_tool_calls: false is set.
+ *
+ * Strategy:
+ *   1. Inject parallel_tool_calls: false + system instruction
+ *   2. On 400 "single tool-calls": reduce to max 6 tools + force tool_choice
+ *   3. On second 400: send with just 1 tool (the most likely one) via tool_choice
+ *   4. Final fallback: strip tools, get text-only response
+ *
+ * Usage:
+ *   node nvidia-proxy.mjs [--port 18780] [--target https://integrate.api.nvidia.com/v1]
+ *
+ * Then point OpenClaw's nvidia provider baseUrl to http://127.0.0.1:18780/v1
+ */
+
+import http from "node:http";
+import https from "node:https";
+import { URL } from "node:url";
+
+const DEFAULT_PORT = parseInt(process.env.NVIDIA_PROXY_PORT || "18780", 10);
+const DEFAULT_TARGET = process.env.NVIDIA_PROXY_TARGET || "https://integrate.api.nvidia.com/v1";
+const MAX_RETRIES = 4;
+const MAX_429_RETRIES = 3;
+const RATE_LIMIT_DELAY_MS = 2000;
+const MAX_SYSTEM_BYTES = 25000;
+
+const args = process.argv.slice(2);
+let port = DEFAULT_PORT;
+let targetBase = DEFAULT_TARGET;
+
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--port" && args[i + 1]) port = parseInt(args[++i], 10);
+  if (args[i] === "--target" && args[i + 1]) targetBase = args[++i];
+}
+
+const targetUrl = new URL(targetBase.replace(/\/v1\/?$/, ""));
+
+/** Send a request to NVIDIA and return { status, headers, body } */
+function sendUpstream(reqUrl, method, headers, body) {
+  return new Promise((resolve) => {
+    const upstream = new URL(reqUrl, targetUrl);
+    const proxyHeaders = { ...headers };
+    proxyHeaders.host = upstream.host;
+    proxyHeaders["content-length"] = body.length;
+    delete proxyHeaders.connection;
+    delete proxyHeaders["keep-alive"];
+
+    const transport = upstream.protocol === "https:" ? https : http;
+    const upstreamReq = transport.request(
+      {
+        hostname: upstream.hostname,
+        port: upstream.port || (upstream.protocol === "https:" ? 443 : 80),
+        path: upstream.pathname + upstream.search,
+        method,
+        headers: proxyHeaders,
+      },
+      (upstreamRes) => {
+        const chunks = [];
+        upstreamRes.on("data", (c) => chunks.push(c));
+        upstreamRes.on("end", () => {
+          resolve({
+            status: upstreamRes.statusCode,
+            headers: upstreamRes.headers,
+            body: Buffer.concat(chunks),
+          });
+        });
+      },
+    );
+    upstreamReq.on("error", (err) => {
+      resolve({ status: 502, headers: {}, body: Buffer.from(JSON.stringify({ error: { message: err.message } })) });
+    });
+    upstreamReq.write(body);
+    upstreamReq.end();
+  });
+}
+
+/**
+ * Send a 200 response, converting to SSE if the original request was streaming.
+ * @param {http.ServerResponse} clientRes
+ * @param {object} resBody - parsed JSON response body
+ * @param {object} headers - upstream response headers
+ * @param {boolean} asSSE - whether to wrap as SSE
+ */
+/**
+ * Sanitize model text content — strip leaked tool call markup from Kimi K2.5.
+ * When tools are stripped, Kimi embeds raw tool syntax in text output.
+ */
+function sanitizeContent(text) {
+  if (!text) return text;
+  // Strip Kimi's leaked tool call markup blocks
+  let cleaned = text.replace(/<\|tool_calls_section_begin\|>[\s\S]*?<\|tool_calls_section_end\|>/g, "");
+  // Strip individual tool call fragments that might not have the section wrapper
+  cleaned = cleaned.replace(/<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>/g, "");
+  cleaned = cleaned.replace(/<\|tool_call_argument_begin\|>[\s\S]*?(<\|tool_call_end\|>|$)/g, "");
+  // Clean up leftover whitespace from removed blocks
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  if (cleaned !== text) {
+    console.log(`[nvidia-proxy] SANITIZED: stripped leaked tool call markup (${text.length} → ${cleaned.length} chars)`);
+  }
+  return cleaned;
+}
+
+function sendOk(clientRes, resBody, headers, asSSE) {
+  // Sanitize text content before sending
+  const choice = resBody.choices?.[0];
+  if (choice?.message?.content) {
+    choice.message.content = sanitizeContent(choice.message.content);
+  }
+  if (asSSE) {
+    if (!clientRes.headersSent) {
+      const sseHeaders = { ...headers };
+      sseHeaders["content-type"] = "text/event-stream; charset=utf-8";
+      delete sseHeaders["content-length"];
+      delete sseHeaders["transfer-encoding"];
+      sseHeaders["cache-control"] = "no-cache";
+      clientRes.writeHead(200, sseHeaders);
+    }
+
+    const base = { id: resBody.id, object: "chat.completion.chunk", created: resBody.created, model: resBody.model };
+    const choice = resBody.choices?.[0];
+
+    if (!choice) {
+      clientRes.write("data: [DONE]\n\n");
+      clientRes.end();
+      return;
+    }
+
+    const msg = choice.message || {};
+
+    // 1. Role chunk
+    clientRes.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: msg.role || "assistant" }, finish_reason: null }] })}\n\n`);
+
+    // 2. Content chunks (split into smaller pieces for proper streaming behavior)
+    const content = msg.content || "";
+    if (content) {
+      const chunkSize = 100;
+      for (let i = 0; i < content.length; i += chunkSize) {
+        clientRes.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { content: content.slice(i, i + chunkSize) }, finish_reason: null }] })}\n\n`);
+      }
+    }
+
+    // 3. Tool calls (if any) — send as a single delta
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      clientRes.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { tool_calls: msg.tool_calls }, finish_reason: null }] })}\n\n`);
+    }
+
+    // 4. Usage chunk (if present)
+    if (resBody.usage) {
+      clientRes.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: choice.finish_reason || "stop" }], usage: resBody.usage })}\n\n`);
+    } else {
+      clientRes.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: choice.finish_reason || "stop" }] })}\n\n`);
+    }
+
+    clientRes.write("data: [DONE]\n\n");
+    clientRes.end();
+  } else {
+    const body = Buffer.from(JSON.stringify(resBody), "utf-8");
+    const outHeaders = { ...headers };
+    outHeaders["content-length"] = body.length;
+    clientRes.writeHead(200, outHeaders);
+    clientRes.end(body);
+  }
+}
+
+const SINGLE_TOOL_INSTRUCTION =
+  "You MUST call exactly ONE tool per response. Never call multiple tools at once.";
+
+const MAX_BODY_BYTES = 60000;
+
+/**
+ * Trim conversation history to keep body size under MAX_BODY_BYTES.
+ * Preserves: system messages, first 2 user/assistant messages (identity/rehydration),
+ * and the most recent messages. Drops middle messages first.
+ * Tool result messages with large content get their content truncated first.
+ */
+function trimConversationHistory(parsed) {
+  if (!Array.isArray(parsed.messages) || parsed.messages.length < 6) return;
+
+  // First pass: truncate large tool results (keep first 500 chars)
+  for (const m of parsed.messages) {
+    if (m.role === "tool" || m.role === "toolResult") {
+      if (typeof m.content === "string" && m.content.length > 500) {
+        m.content = m.content.slice(0, 500) + "\n...[truncated]";
+      } else if (Array.isArray(m.content)) {
+        for (const c of m.content) {
+          if (c.type === "text" && typeof c.text === "string" && c.text.length > 500) {
+            c.text = c.text.slice(0, 500) + "\n...[truncated]";
+          }
+        }
+      }
+    }
+  }
+
+  // Check if we're still over budget
+  let bodySize = Buffer.byteLength(JSON.stringify(parsed), "utf-8");
+  if (bodySize <= MAX_BODY_BYTES) return;
+
+  // Second pass: drop middle messages, then progressively shrink tail until under budget
+  const msgs = parsed.messages;
+  const system = msgs.filter(m => m.role === "system");
+  const nonSystem = msgs.filter(m => m.role !== "system");
+
+  if (nonSystem.length <= 4) return; // not enough to trim
+
+  const keepStart = 2;
+  let keepEnd = Math.min(6, nonSystem.length - keepStart);
+
+  // Loop: keep reducing tail until under budget
+  while (keepEnd >= 2) {
+    const dropped = nonSystem.length - keepStart - keepEnd;
+    const trimmed = [
+      ...system,
+      ...nonSystem.slice(0, keepStart),
+      ...(dropped > 0 ? [{ role: "system", content: `[${dropped} earlier messages trimmed to save context]` }] : []),
+      ...nonSystem.slice(-keepEnd),
+    ];
+    const candidateSize = Buffer.byteLength(JSON.stringify({ ...parsed, messages: trimmed }), "utf-8");
+    if (candidateSize <= MAX_BODY_BYTES) {
+      parsed.messages = trimmed;
+      console.log(`[nvidia-proxy] trimmed history: dropped ${dropped} middle messages, keepEnd=${keepEnd}, bodyLen now ~${candidateSize}`);
+      return;
+    }
+    keepEnd--;
+  }
+
+  // Last resort: system + first user message (the original request) + last 2 non-system
+  // Always keep the first user message so the model remembers what was asked
+  const firstUser = nonSystem.find(m => m.role === "user");
+  const lastTwo = nonSystem.slice(-2);
+  const minimal = [
+    ...system,
+    ...(firstUser && !lastTwo.includes(firstUser) ? [firstUser, { role: "system", content: "[middle messages trimmed — focus on answering the user's request above]" }] : []),
+    ...lastTwo,
+  ];
+  parsed.messages = minimal;
+  bodySize = Buffer.byteLength(JSON.stringify(parsed), "utf-8");
+  console.log(`[nvidia-proxy] trimmed history: AGGRESSIVE — kept system + first user + last 2, bodyLen now ~${bodySize}`);
+}
+
+/**
+ * Trim system messages to keep total system content under MAX_SYSTEM_BYTES.
+ * Finds the largest system messages and truncates them, keeping head + tail
+ * with a trimming notice in the middle.
+ */
+function trimSystemMessages(parsed) {
+  if (!Array.isArray(parsed.messages)) return;
+
+  const systemMsgs = parsed.messages.filter(m => m.role === "system" && typeof m.content === "string");
+  if (systemMsgs.length === 0) return;
+
+  const before = systemMsgs.reduce((sum, m) => sum + Buffer.byteLength(m.content, "utf-8"), 0);
+  if (before <= MAX_SYSTEM_BYTES) return;
+
+  let trimmedCount = 0;
+
+  // Sort by size descending to trim largest first
+  const sorted = [...systemMsgs].sort((a, b) => b.content.length - a.content.length);
+
+  for (const msg of sorted) {
+    // Re-measure current total
+    const currentTotal = parsed.messages
+      .filter(m => m.role === "system" && typeof m.content === "string")
+      .reduce((sum, m) => sum + Buffer.byteLength(m.content, "utf-8"), 0);
+    if (currentTotal <= MAX_SYSTEM_BYTES) break;
+
+    // Skip messages already under 4000 chars
+    if (msg.content.length <= 4000) break;
+
+    const head = msg.content.slice(0, 3000);
+    const tail = msg.content.slice(-1000);
+    msg.content = head + "\n\n[...content trimmed to save context — use skmemory_ritual tool for full identity...]\n\n" + tail;
+    trimmedCount++;
+  }
+
+  if (trimmedCount > 0) {
+    const after = parsed.messages
+      .filter(m => m.role === "system" && typeof m.content === "string")
+      .reduce((sum, m) => sum + Buffer.byteLength(m.content, "utf-8"), 0);
+    console.log(`[nvidia-proxy] trimmed system prompt: ${before} → ${after} bytes (${trimmedCount} messages trimmed)`);
+  }
+}
+
+/**
+ * Strip tool_calls from conversation history to prevent the model from
+ * learning the pattern of calling multiple tools. Converts assistant
+ * tool_call messages to plain text and removes tool result messages.
+ */
+function stripToolCallHistory(messages) {
+  if (!Array.isArray(messages)) return;
+  // Remove tool result messages
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "tool" || m.role === "toolResult") {
+      messages.splice(i, 1);
+    } else if (m.role === "assistant" && m.tool_calls) {
+      // Convert tool_call messages to plain text summaries
+      const toolNames = m.tool_calls.map((tc) => tc.function?.name).join(", ");
+      m.content = m.content || `[Used: ${toolNames}]`;
+      delete m.tool_calls;
+    }
+  }
+}
+
+/** Priority tools — kept when reducing tool count (order matters) */
+const PRIORITY_TOOLS = [
+  // Core agent tools
+  "exec", "read", "write", "edit",
+  // Communication (critical for Telegram)
+  "message",
+  // Memory tools (most frequently needed)
+  "skmemory_health", "skmemory_search", "skmemory_snapshot",
+  "skmemory_ritual", "skmemory_context", "skmemory_list",
+  // Web tools
+  "web_search", "web_fetch",
+  // Communication (other channels)
+  "skchat_send", "skcomm_send",
+  // SKCapstone
+  "skcapstone_status", "skcapstone_whoami", "skcapstone_mood",
+  // Cloud 9
+  "cloud9_oof", "cloud9_rehydrate",
+  // Memory (infrequent)
+  "skmemory_export", "skmemory_import_seeds",
+];
+
+/**
+ * Reduce the tools array to at most `max` tools, preferring tools
+ * mentioned in recent messages and priority tools.
+ * Avoids generic tools (exec, read) when specific tools are available.
+ */
+function reduceTools(tools, messages, max) {
+  if (tools.length <= max) return tools;
+
+  // Score each tool — higher = more likely to be kept
+  const scores = new Map();
+  for (const t of tools) {
+    const name = t.function?.name || "";
+    let score = 0;
+
+    // Boost tools mentioned in the user's last message (strongest signal)
+    const lastUserMsg = [...(messages || [])].reverse().find(m => m.role === "user");
+    if (lastUserMsg) {
+      const text = typeof lastUserMsg.content === "string" ? lastUserMsg.content : JSON.stringify(lastUserMsg.content || "");
+      if (text.includes(name)) score += 200;
+      // Also match partial names (e.g., "health" matches "skmemory_health")
+      const parts = name.split("_");
+      for (const part of parts) {
+        if (part.length > 3 && text.toLowerCase().includes(part.toLowerCase())) score += 100;
+      }
+    }
+
+    // Priority list bonus
+    const prioIdx = PRIORITY_TOOLS.indexOf(name);
+    if (prioIdx >= 0) score += 50 - prioIdx;
+
+    // Boost tools in recent assistant tool_calls
+    const recentMsgs = (messages || []).slice(-6);
+    for (const m of recentMsgs) {
+      if (m.tool_calls) {
+        for (const tc of m.tool_calls) {
+          if (tc.function?.name === name) score += 80;
+        }
+      }
+    }
+
+    // Penalize process tool (exec is critical for agent operation)
+    if (name === "process") score -= 30;
+
+    scores.set(name, { tool: t, score });
+  }
+
+  const sorted = [...scores.values()].sort((a, b) => b.score - a.score);
+  return sorted.slice(0, max).map((s) => s.tool);
+}
+
+async function proxyRequest(clientReq, clientRes) {
+  const chunks = [];
+  for await (const chunk of clientReq) chunks.push(chunk);
+  let body = Buffer.concat(chunks);
+  const contentType = clientReq.headers["content-type"] || "";
+
+  const isChatCompletion =
+    contentType.includes("application/json") &&
+    clientReq.url.includes("/chat/completions");
+
+  let parsed = null;
+  if (isChatCompletion) {
+    try {
+      parsed = JSON.parse(body.toString("utf-8"));
+    } catch {
+      // pass through
+    }
+  }
+
+  // For non-tool requests or non-chat-completions, just proxy through
+  if (!parsed || !parsed.tools || !Array.isArray(parsed.tools) || parsed.tools.length === 0) {
+    const res = await sendUpstream(clientReq.url, clientReq.method, clientReq.headers, body);
+    clientRes.writeHead(res.status, res.headers);
+    clientRes.end(res.body);
+    return;
+  }
+
+  // Save original tools for reference
+  const allTools = [...parsed.tools];
+
+  // Tool request — proactively limit tools to reduce parallel call tendency
+  parsed.parallel_tool_calls = false;
+  // Force non-streaming for tool requests — proxy buffers full response anyway,
+  // and streaming (SSE) prevents us from inspecting/fixing tool calls
+  const wasStreaming = parsed.stream;
+  parsed.stream = false;
+  delete parsed.stream_options;
+  // With 94 tools the model almost always tries parallel calls.
+  // Reduce to max 12 most relevant tools on first attempt.
+  if (allTools.length > 12) {
+    parsed.tools = reduceTools(allTools, parsed.messages, 12);
+    const names = parsed.tools.map(t => t.function?.name).join(",");
+    console.log(`[nvidia-proxy] proactive reduction: ${allTools.length}→${parsed.tools.length} tools [${names}]`);
+  }
+
+  // Add system instruction to force single tool call
+  if (Array.isArray(parsed.messages)) {
+    const hasInstruction = parsed.messages.some(
+      (m) => m.role === "system" && typeof m.content === "string" && m.content.includes("ONE tool at a time"),
+    );
+    if (!hasInstruction) {
+      parsed.messages.unshift({
+        role: "system",
+        content: SINGLE_TOOL_INSTRUCTION,
+      });
+    }
+  }
+
+  // Trim conversation history FIRST so tool limiter counts only surviving messages
+  trimConversationHistory(parsed);
+  trimSystemMessages(parsed);
+
+  // After trimming, check if too many tool calls remain — force text response
+  if (Array.isArray(parsed.messages) && parsed.tools?.length > 0) {
+    const toolResultCount = parsed.messages.filter(m => m.role === "tool" || m.role === "toolResult").length;
+    if (toolResultCount >= 8) {
+      console.log(`[nvidia-proxy] TOOL LIMIT: ${toolResultCount} tool results after trimming — stripping tools, forcing text response`);
+      parsed.tools = [];
+      delete parsed.tool_choice;
+      parsed.messages.push({
+        role: "system",
+        content: "You have gathered enough information from tool calls. NOW respond to the user with a comprehensive text answer. Do NOT try to call more tools. Do NOT output any tool call markup. Synthesize what you learned and reply directly.",
+      });
+    }
+  }
+
+  const model = parsed.model || "unknown";
+
+  // If client wanted streaming, start SSE headers early so we can send keep-alive
+  // comments while waiting for NVIDIA. This keeps the gateway's typing indicator alive.
+  let sseStarted = false;
+  let keepAliveTimer = null;
+  function startSSEKeepAlive() {
+    if (!wasStreaming || sseStarted) return;
+    sseStarted = true;
+    clientRes.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      "connection": "keep-alive",
+    });
+    keepAliveTimer = setInterval(() => {
+      try { clientRes.write(": keep-alive\n\n"); } catch {}
+    }, 5000);
+  }
+  function stopKeepAlive() {
+    if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+  }
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const currentToolCount = parsed.tools ? parsed.tools.length : 0;
+    const reqBody = Buffer.from(JSON.stringify(parsed), "utf-8");
+    console.log(
+      `[nvidia-proxy] ${new Date().toISOString()} attempt=${attempt} model=${model} tools=${currentToolCount} bodyLen=${reqBody.length}`,
+    );
+
+    // Start keep-alive comments while NVIDIA processes
+    if (wasStreaming) startSSEKeepAlive();
+
+    let res;
+    // Handle 429 rate limiting with internal retries + backoff
+    for (let r429 = 0; r429 <= MAX_429_RETRIES; r429++) {
+      res = await sendUpstream(clientReq.url, clientReq.method, clientReq.headers, reqBody);
+      if (res.status !== 429 || r429 === MAX_429_RETRIES) break;
+      const delay = RATE_LIMIT_DELAY_MS * (r429 + 1);
+      console.log(`[nvidia-proxy] 429 rate limited, waiting ${delay}ms (retry ${r429 + 1}/${MAX_429_RETRIES})...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+
+    if (res.status === 400) {
+      const errText = res.body.toString("utf-8");
+      if (errText.includes("single tool-calls") && attempt < MAX_RETRIES) {
+        console.log(`[nvidia-proxy] 400 parallel tool-calls rejected, retrying (${attempt}/${MAX_RETRIES})...`);
+
+        if (attempt === 1) {
+          // Attempt 2: reduce to 6 tools + strip tool_calls from history
+          // The massive conversation history with tool_calls trains the model to call multiple
+          parsed.tools = reduceTools(allTools, parsed.messages, 6);
+          stripToolCallHistory(parsed.messages);
+          const toolNames = parsed.tools.map(t => t.function?.name).join(",");
+          console.log(`[nvidia-proxy] retry: ${parsed.tools.length} tools [${toolNames}], stripped history`);
+        } else if (attempt === 2) {
+          // Attempt 3: single tool, forced choice
+          parsed.tools = reduceTools(allTools, parsed.messages, 1);
+          const topTool = parsed.tools[0]?.function?.name;
+          if (topTool) {
+            parsed.tool_choice = { type: "function", function: { name: topTool } };
+          }
+          console.log(`[nvidia-proxy] retry: 1 tool, forced=${topTool}`);
+        } else {
+          // Attempt 4 (final): strip all tools, text-only
+          delete parsed.tools;
+          delete parsed.tool_choice;
+          delete parsed.parallel_tool_calls;
+          stripToolCallHistory(parsed.messages);
+          console.log(`[nvidia-proxy] final retry: stripped all tools, text-only`);
+        }
+        continue;
+      }
+    }
+
+    // Log tool calls in successful responses
+    if (res.status === 200) {
+      try {
+        const bodyStr = res.body.toString("utf-8");
+        const peek = JSON.parse(bodyStr);
+        const tc = peek.choices?.[0]?.message?.tool_calls;
+        if (tc && tc.length > 0) {
+          const names = tc.map(c => c.function?.name).join(", ");
+          console.log(`[nvidia-proxy] model called: [${names}] (${tc.length} calls)`);
+        } else {
+          const content = peek.choices?.[0]?.message?.content;
+          console.log(`[nvidia-proxy] model response: text (${content ? content.length : 0} chars)`);
+        }
+      } catch {
+        // SSE streaming responses can't be parsed as JSON — this is expected
+      }
+    }
+
+    // Fix ghost tool calls: finish_reason says "tool_calls" but no actual tool_calls present
+    if (res.status === 200 && parsed.tools) {
+      try {
+        const resBody = JSON.parse(res.body.toString("utf-8"));
+        const choice = resBody.choices?.[0];
+        if (choice && (choice.finish_reason === "tool_calls" || choice.finish_reason === "function_call") && !choice.message?.tool_calls?.length) {
+          console.warn(`[nvidia-proxy] GHOST TOOL CALL: finish_reason=${choice.finish_reason} but no tool_calls — fixing to stop`);
+          choice.finish_reason = "stop";
+          stopKeepAlive();
+          sendOk(clientRes, resBody, res.headers, wasStreaming);
+          return;
+        }
+      } catch {
+        // Not JSON — pass through
+      }
+    }
+
+    // Check for hallucinated/invalid tool names (e.g., Kimi K2.5 "callauto" bug)
+    if (res.status === 200 && parsed.tools) {
+      try {
+        const resBody = JSON.parse(res.body.toString("utf-8"));
+        const choice = resBody.choices?.[0];
+        if (choice?.message?.tool_calls) {
+          // Compare against ALL original tools, not just the reduced set
+          const allToolNames = new Set(allTools.map(t => t.function?.name));
+          const invalidCalls = choice.message.tool_calls.filter(
+            tc => !tc.function?.name || !allToolNames.has(tc.function.name)
+          );
+          if (invalidCalls.length > 0) {
+            const badNames = invalidCalls.map(tc => tc.function?.name || "(empty)").join(", ");
+            console.warn(`[nvidia-proxy] CALLAUTO DETECTED: invalid tool names [${badNames}] — stripping tool_calls, returning text-only`);
+            // Strip invalid tool calls, keep only content
+            choice.message.tool_calls = choice.message.tool_calls.filter(
+              tc => tc.function?.name && allToolNames.has(tc.function.name)
+            );
+            if (choice.message.tool_calls.length === 0) {
+              delete choice.message.tool_calls;
+              choice.finish_reason = "stop";
+            }
+            stopKeepAlive();
+            sendOk(clientRes, resBody, res.headers, wasStreaming);
+            return;
+          }
+        }
+      } catch {
+        // Not JSON — pass through
+      }
+    }
+
+    // Check for successful response with multiple tool calls — trim to just the first one
+    if (res.status === 200 && parsed.tools) {
+      try {
+        const resBody = JSON.parse(res.body.toString("utf-8"));
+        const choice = resBody.choices?.[0];
+        if (choice?.message?.tool_calls && choice.message.tool_calls.length > 1) {
+          console.log(
+            `[nvidia-proxy] trimming ${choice.message.tool_calls.length} tool_calls to 1 (${choice.message.tool_calls[0].function?.name})`,
+          );
+          choice.message.tool_calls = [choice.message.tool_calls[0]];
+          stopKeepAlive();
+          sendOk(clientRes, resBody, res.headers, wasStreaming);
+          return;
+        }
+      } catch {
+        // Not JSON or parse error — pass through as-is
+      }
+    }
+
+    // Success or non-retryable error
+    stopKeepAlive();
+    if (res.status >= 400) {
+      console.error(`[nvidia-proxy] ${res.status} ERROR: ${res.body.toString("utf-8").slice(0, 300)}`);
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(res.status, res.headers);
+      }
+      clientRes.end(res.body);
+      return;
+    }
+
+    console.log(`[nvidia-proxy] ${res.status} OK (attempt ${attempt})`);
+    if (wasStreaming && res.status === 200) {
+      try {
+        const resBody = JSON.parse(res.body.toString("utf-8"));
+        sendOk(clientRes, resBody, res.headers, true);
+      } catch {
+        // Can't parse — send raw
+        if (!clientRes.headersSent) {
+          clientRes.writeHead(res.status, res.headers);
+        }
+        clientRes.end(res.body);
+      }
+    } else {
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(res.status, res.headers);
+      }
+      clientRes.end(res.body);
+    }
+    return;
+  }
+}
+
+const server = http.createServer(proxyRequest);
+
+server.listen(port, "127.0.0.1", () => {
+  console.log(`[nvidia-proxy] listening on http://127.0.0.1:${port}`);
+  console.log(`[nvidia-proxy] proxying to ${targetUrl.origin}`);
+  console.log(`[nvidia-proxy] retry strategy: 12 tools→6 tools→1 tool (forced)→text-only (max ${MAX_RETRIES} attempts)`);
+  console.log(`[nvidia-proxy] also trims multi-tool responses to single tool call`);
+});
+
+for (const sig of ["SIGINT", "SIGTERM"]) {
+  process.on(sig, () => {
+    console.log(`[nvidia-proxy] ${sig} received, shutting down`);
+    server.close(() => process.exit(0));
+  });
+}
