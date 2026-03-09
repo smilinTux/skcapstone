@@ -118,10 +118,17 @@ function sendOk(clientRes, resBody, headers, asSSE) {
     choice.message.content = sanitizeContent(choice.message.content);
   }
   // Kimi K2.5 sometimes puts its response in "reasoning" instead of "content"
+  // Only promote if reasoning is substantial (>200 chars) — short reasoning like
+  // "Let me call the tool" is just inner monologue that shouldn't be user-facing
   if (choice?.message && !choice.message.content && choice.message.reasoning) {
-    choice.message.content = choice.message.reasoning.trim();
+    const cleaned = sanitizeContent(choice.message.reasoning.trim());
+    if (cleaned.length > 150) {
+      choice.message.content = cleaned;
+      console.log(`[nvidia-proxy] promoted reasoning→content (${cleaned.length} chars)`);
+    } else {
+      console.log(`[nvidia-proxy] suppressed short reasoning (${cleaned.length} chars): ${cleaned.slice(0, 80)}...`);
+    }
     delete choice.message.reasoning;
-    console.log(`[nvidia-proxy] promoted reasoning→content (${choice.message.content.length} chars)`);
   }
   // If model returned empty text (no tool calls), inject fallback so gateway delivers something
   if (choice?.message && !choice.message.tool_calls?.length && choice.finish_reason !== "tool_calls") {
