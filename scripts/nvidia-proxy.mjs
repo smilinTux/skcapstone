@@ -28,6 +28,7 @@ const MAX_RETRIES = 4;
 const MAX_429_RETRIES = 3;
 const RATE_LIMIT_DELAY_MS = 2000;
 const MAX_SYSTEM_BYTES = 25000;
+let toolCallCounter = 0; // Tracks consecutive tool call rounds across requests
 
 const args = process.argv.slice(2);
 let port = DEFAULT_PORT;
@@ -439,17 +440,32 @@ async function proxyRequest(clientReq, clientRes) {
   trimConversationHistory(parsed);
   trimSystemMessages(parsed);
 
-  // After trimming, check if too many tool calls remain — force text response
+  // Count tool calls across FULL conversation (before trimming dropped them).
+  // The gateway sends the full session context, so count assistant messages with tool_calls.
+  // We count BEFORE trimming by scanning the original message array (already trimmed above,
+  // so we use a running counter instead).
   if (Array.isArray(parsed.messages) && parsed.tools?.length > 0) {
-    const toolResultCount = parsed.messages.filter(m => m.role === "tool" || m.role === "toolResult").length;
-    if (toolResultCount >= 8) {
-      console.log(`[nvidia-proxy] TOOL LIMIT: ${toolResultCount} tool results after trimming — stripping tools, forcing text response`);
+    // Track tool call rounds using a global counter.
+    // If the last non-system message is a tool result, the model just called a tool.
+    const nonSystemMsgs = parsed.messages.filter(m => m.role !== "system");
+    const lastNonSystem = nonSystemMsgs[nonSystemMsgs.length - 1];
+    const hasToolResult = lastNonSystem?.role === "tool" || lastNonSystem?.role === "toolResult";
+
+    if (hasToolResult) {
+      toolCallCounter++;
+    } else if (lastNonSystem?.role === "user") {
+      toolCallCounter = 0; // Reset when user sends a new message
+    }
+
+    if (toolCallCounter >= 6) {
+      console.log(`[nvidia-proxy] TOOL LIMIT: ${toolCallCounter} consecutive tool rounds — stripping tools, forcing text response`);
       parsed.tools = [];
       delete parsed.tool_choice;
       parsed.messages.push({
         role: "system",
-        content: "You have gathered enough information from tool calls. NOW respond to the user with a comprehensive text answer. Do NOT try to call more tools. Do NOT output any tool call markup. Synthesize what you learned and reply directly.",
+        content: "STOP calling tools. You have made 6+ tool calls already. NOW respond to the user with a comprehensive text answer based on what you've gathered. Do NOT call any more tools. Do NOT output tool call markup. Write your response directly.",
       });
+      toolCallCounter = 0; // Reset after forcing
     }
   }
 
