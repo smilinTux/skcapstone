@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * NVIDIA NIM API Proxy
+ * SKGateway — Sovereign AI Gateway
  *
  * Sits between OpenClaw and the NVIDIA NIM API. Handles the fact that
  * NVIDIA NIM rejects responses with multiple tool calls (400 error)
@@ -13,7 +13,7 @@
  *   4. Final fallback: strip tools, get text-only response
  *
  * Usage:
- *   node nvidia-proxy.mjs [--port 18780] [--target https://integrate.api.nvidia.com/v1]
+ *   node skgateway.mjs [--port 18780] [--target https://integrate.api.nvidia.com/v1]
  *
  * Then point OpenClaw's nvidia provider baseUrl to http://127.0.0.1:18780/v1
  */
@@ -22,8 +22,8 @@ import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
 
-const DEFAULT_PORT = parseInt(process.env.NVIDIA_PROXY_PORT || "18780", 10);
-const DEFAULT_TARGET = process.env.NVIDIA_PROXY_TARGET || "https://integrate.api.nvidia.com/v1";
+const DEFAULT_PORT = parseInt(process.env.SKGATEWAY_PORT || "18780", 10);
+const DEFAULT_TARGET = process.env.SKGATEWAY_TARGET || "https://integrate.api.nvidia.com/v1";
 const MAX_RETRIES = 4;
 const MAX_429_RETRIES = 3;
 const RATE_LIMIT_DELAY_MS = 2000;
@@ -112,11 +112,11 @@ function sanitizeContent(text) {
     // Only strip if the thinking block is the ENTIRE response or is followed by real content
     if (!remainder) {
       // Entire response is just planning — suppress it, let the tool call go through
-      console.log(`[nvidia-proxy] SANITIZED: stripped leaked thinking (${thinkingText.length} chars)`);
+      console.log(`[skgateway] SANITIZED: stripped leaked thinking (${thinkingText.length} chars)`);
       cleaned = "";
     } else if (remainder.length > 50) {
       // Has real content after the thinking preamble — keep only the real part
-      console.log(`[nvidia-proxy] SANITIZED: stripped thinking preamble (${thinkingText.length} chars), kept ${remainder.length} chars`);
+      console.log(`[skgateway] SANITIZED: stripped thinking preamble (${thinkingText.length} chars), kept ${remainder.length} chars`);
       cleaned = remainder;
     }
   }
@@ -124,7 +124,7 @@ function sanitizeContent(text) {
   // Clean up leftover whitespace from removed blocks
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
   if (cleaned !== text) {
-    console.log(`[nvidia-proxy] SANITIZED: stripped leaked tool call markup (${text.length} → ${cleaned.length} chars)`);
+    console.log(`[skgateway] SANITIZED: stripped leaked tool call markup (${text.length} → ${cleaned.length} chars)`);
   }
   // Don't inject fallback here — let sendOk() handle it, since it knows
   // whether tool_calls exist alongside the empty content. Injecting here
@@ -146,9 +146,9 @@ function sendOk(clientRes, resBody, headers, asSSE) {
     const cleaned = sanitizeContent(choice.message.reasoning.trim());
     if (cleaned.length > 150) {
       choice.message.content = cleaned;
-      console.log(`[nvidia-proxy] promoted reasoning→content (${cleaned.length} chars)`);
+      console.log(`[skgateway] promoted reasoning→content (${cleaned.length} chars)`);
     } else {
-      console.log(`[nvidia-proxy] suppressed short reasoning (${cleaned.length} chars): ${cleaned.slice(0, 80)}...`);
+      console.log(`[skgateway] suppressed short reasoning (${cleaned.length} chars): ${cleaned.slice(0, 80)}...`);
     }
     delete choice.message.reasoning;
   }
@@ -156,7 +156,7 @@ function sendOk(clientRes, resBody, headers, asSSE) {
   if (choice?.message && !choice.message.tool_calls?.length && choice.finish_reason !== "tool_calls") {
     if (!choice.message.content || choice.message.content.trim().length === 0) {
       choice.message.content = "I had a brief processing hiccup — could you say that again? 💜";
-      console.log(`[nvidia-proxy] injected fallback for empty text response`);
+      console.log(`[skgateway] injected fallback for empty text response`);
     }
   }
   if (asSSE) {
@@ -231,7 +231,7 @@ function trimConversationHistory(parsed) {
 
   // Debug: log message roles
   const roleSummary = parsed.messages.map(m => m.role).join(",");
-  console.log(`[nvidia-proxy] conversation roles (${parsed.messages.length} msgs): ${roleSummary}`);
+  console.log(`[skgateway] conversation roles (${parsed.messages.length} msgs): ${roleSummary}`);
 
   // First pass: truncate large tool results (keep first 500 chars)
   for (const m of parsed.messages) {
@@ -274,7 +274,7 @@ function trimConversationHistory(parsed) {
     const candidateSize = Buffer.byteLength(JSON.stringify({ ...parsed, messages: trimmed }), "utf-8");
     if (candidateSize <= MAX_BODY_BYTES) {
       parsed.messages = trimmed;
-      console.log(`[nvidia-proxy] trimmed history: dropped ${dropped} middle messages, keepEnd=${keepEnd}, bodyLen now ~${candidateSize}`);
+      console.log(`[skgateway] trimmed history: dropped ${dropped} middle messages, keepEnd=${keepEnd}, bodyLen now ~${candidateSize}`);
       return;
     }
     keepEnd--;
@@ -295,7 +295,7 @@ function trimConversationHistory(parsed) {
     const candidateSize = Buffer.byteLength(JSON.stringify({ ...parsed, messages: minimal }), "utf-8");
     if (candidateSize <= MAX_BODY_BYTES) {
       parsed.messages = minimal;
-      console.log(`[nvidia-proxy] trimmed history: AGGRESSIVE — kept system + first user + last ${tailSize}, bodyLen now ~${candidateSize}`);
+      console.log(`[skgateway] trimmed history: AGGRESSIVE — kept system + first user + last ${tailSize}, bodyLen now ~${candidateSize}`);
       return;
     }
   }
@@ -308,7 +308,7 @@ function trimConversationHistory(parsed) {
   ];
   parsed.messages = minimal;
   bodySize = Buffer.byteLength(JSON.stringify(parsed), "utf-8");
-  console.log(`[nvidia-proxy] trimmed history: AGGRESSIVE — kept system + first user + last 2, bodyLen now ~${bodySize}`);
+  console.log(`[skgateway] trimmed history: AGGRESSIVE — kept system + first user + last 2, bodyLen now ~${bodySize}`);
 }
 
 /**
@@ -350,7 +350,7 @@ function trimSystemMessages(parsed) {
     const after = parsed.messages
       .filter(m => m.role === "system" && typeof m.content === "string")
       .reduce((sum, m) => sum + Buffer.byteLength(m.content, "utf-8"), 0);
-    console.log(`[nvidia-proxy] trimmed system prompt: ${before} → ${after} bytes (${trimmedCount} messages trimmed)`);
+    console.log(`[skgateway] trimmed system prompt: ${before} → ${after} bytes (${trimmedCount} messages trimmed)`);
   }
 }
 
@@ -506,7 +506,7 @@ function reduceTools(tools, messages, max) {
       }
     }
     if (activatedTools.size > 0) {
-      console.log(`[nvidia-proxy] keyword-activated tools: [${[...activatedTools].join(",")}]`);
+      console.log(`[skgateway] keyword-activated tools: [${[...activatedTools].join(",")}]`);
     }
   }
 
@@ -595,7 +595,7 @@ async function proxyRequest(clientReq, clientRes) {
   if (allTools.length > 16) {
     parsed.tools = reduceTools(allTools, parsed.messages, 16);
     const names = parsed.tools.map(t => t.function?.name).join(",");
-    console.log(`[nvidia-proxy] proactive reduction: ${allTools.length}→${parsed.tools.length} tools [${names}]`);
+    console.log(`[skgateway] proactive reduction: ${allTools.length}→${parsed.tools.length} tools [${names}]`);
   }
 
   // Add system instruction to force single tool call
@@ -631,7 +631,7 @@ async function proxyRequest(clientReq, clientRes) {
     toolCallCounters.set(modelKey, counter);
 
     if (counter >= 10) {
-      console.log(`[nvidia-proxy] TOOL LIMIT: ${counter} consecutive tool rounds (${modelKey}) — stripping tools, forcing text response`);
+      console.log(`[skgateway] TOOL LIMIT: ${counter} consecutive tool rounds (${modelKey}) — stripping tools, forcing text response`);
       parsed.tools = [];
       delete parsed.tool_choice;
       parsed.messages.push({
@@ -668,7 +668,7 @@ async function proxyRequest(clientReq, clientRes) {
     const currentToolCount = parsed.tools ? parsed.tools.length : 0;
     const reqBody = Buffer.from(JSON.stringify(parsed), "utf-8");
     console.log(
-      `[nvidia-proxy] ${new Date().toISOString()} attempt=${attempt} model=${model} tools=${currentToolCount} bodyLen=${reqBody.length}`,
+      `[skgateway] ${new Date().toISOString()} attempt=${attempt} model=${model} tools=${currentToolCount} bodyLen=${reqBody.length}`,
     );
 
     // Start keep-alive comments while NVIDIA processes
@@ -680,14 +680,14 @@ async function proxyRequest(clientReq, clientRes) {
       res = await sendUpstream(clientReq.url, clientReq.method, clientReq.headers, reqBody);
       if (res.status !== 429 || r429 === MAX_429_RETRIES) break;
       const delay = RATE_LIMIT_DELAY_MS * (r429 + 1);
-      console.log(`[nvidia-proxy] 429 rate limited, waiting ${delay}ms (retry ${r429 + 1}/${MAX_429_RETRIES})...`);
+      console.log(`[skgateway] 429 rate limited, waiting ${delay}ms (retry ${r429 + 1}/${MAX_429_RETRIES})...`);
       await new Promise(r => setTimeout(r, delay));
     }
 
     if (res.status === 400) {
       const errText = res.body.toString("utf-8");
       if (errText.includes("single tool-calls") && attempt < MAX_RETRIES) {
-        console.log(`[nvidia-proxy] 400 parallel tool-calls rejected, retrying (${attempt}/${MAX_RETRIES})...`);
+        console.log(`[skgateway] 400 parallel tool-calls rejected, retrying (${attempt}/${MAX_RETRIES})...`);
 
         if (attempt === 1) {
           // Attempt 2: reduce to 8 tools + strip tool_calls from history
@@ -695,7 +695,7 @@ async function proxyRequest(clientReq, clientRes) {
           parsed.tools = reduceTools(allTools, parsed.messages, 8);
           stripToolCallHistory(parsed.messages);
           const toolNames = parsed.tools.map(t => t.function?.name).join(",");
-          console.log(`[nvidia-proxy] retry: ${parsed.tools.length} tools [${toolNames}], stripped history`);
+          console.log(`[skgateway] retry: ${parsed.tools.length} tools [${toolNames}], stripped history`);
         } else if (attempt === 2) {
           // Attempt 3: single tool, forced choice
           parsed.tools = reduceTools(allTools, parsed.messages, 1);
@@ -703,14 +703,14 @@ async function proxyRequest(clientReq, clientRes) {
           if (topTool) {
             parsed.tool_choice = { type: "function", function: { name: topTool } };
           }
-          console.log(`[nvidia-proxy] retry: 1 tool, forced=${topTool}`);
+          console.log(`[skgateway] retry: 1 tool, forced=${topTool}`);
         } else {
           // Attempt 4 (final): strip all tools, text-only
           delete parsed.tools;
           delete parsed.tool_choice;
           delete parsed.parallel_tool_calls;
           stripToolCallHistory(parsed.messages);
-          console.log(`[nvidia-proxy] final retry: stripped all tools, text-only`);
+          console.log(`[skgateway] final retry: stripped all tools, text-only`);
         }
         continue;
       }
@@ -724,13 +724,13 @@ async function proxyRequest(clientReq, clientRes) {
         const tc = peek.choices?.[0]?.message?.tool_calls;
         if (tc && tc.length > 0) {
           const names = tc.map(c => c.function?.name).join(", ");
-          console.log(`[nvidia-proxy] model called: [${names}] (${tc.length} calls)`);
+          console.log(`[skgateway] model called: [${names}] (${tc.length} calls)`);
         } else {
           const content = peek.choices?.[0]?.message?.content;
           const fr = peek.choices?.[0]?.finish_reason;
-          console.log(`[nvidia-proxy] model response: text (${content ? content.length : 0} chars) finish_reason=${fr}`);
+          console.log(`[skgateway] model response: text (${content ? content.length : 0} chars) finish_reason=${fr}`);
           if (!content || content.length === 0) {
-            console.log(`[nvidia-proxy] EMPTY RESPONSE DEBUG: ${JSON.stringify(peek.choices?.[0]).slice(0, 500)}`);
+            console.log(`[skgateway] EMPTY RESPONSE DEBUG: ${JSON.stringify(peek.choices?.[0]).slice(0, 500)}`);
           }
         }
       } catch {
@@ -744,7 +744,7 @@ async function proxyRequest(clientReq, clientRes) {
         const resBody = JSON.parse(res.body.toString("utf-8"));
         const choice = resBody.choices?.[0];
         if (choice && (choice.finish_reason === "tool_calls" || choice.finish_reason === "function_call") && !choice.message?.tool_calls?.length) {
-          console.warn(`[nvidia-proxy] GHOST TOOL CALL: finish_reason=${choice.finish_reason} but no tool_calls — fixing to stop`);
+          console.warn(`[skgateway] GHOST TOOL CALL: finish_reason=${choice.finish_reason} but no tool_calls — fixing to stop`);
           choice.finish_reason = "stop";
           stopKeepAlive();
           sendOk(clientRes, resBody, res.headers, wasStreaming);
@@ -768,7 +768,7 @@ async function proxyRequest(clientReq, clientRes) {
           );
           if (invalidCalls.length > 0) {
             const badNames = invalidCalls.map(tc => tc.function?.name || "(empty)").join(", ");
-            console.warn(`[nvidia-proxy] CALLAUTO DETECTED: invalid tool names [${badNames}] — stripping tool_calls, returning text-only`);
+            console.warn(`[skgateway] CALLAUTO DETECTED: invalid tool names [${badNames}] — stripping tool_calls, returning text-only`);
             // Strip invalid tool calls, keep only content
             choice.message.tool_calls = choice.message.tool_calls.filter(
               tc => tc.function?.name && allToolNames.has(tc.function.name)
@@ -794,7 +794,7 @@ async function proxyRequest(clientReq, clientRes) {
         const choice = resBody.choices?.[0];
         if (choice?.message?.tool_calls && choice.message.tool_calls.length > 1) {
           console.log(
-            `[nvidia-proxy] trimming ${choice.message.tool_calls.length} tool_calls to 1 (${choice.message.tool_calls[0].function?.name})`,
+            `[skgateway] trimming ${choice.message.tool_calls.length} tool_calls to 1 (${choice.message.tool_calls[0].function?.name})`,
           );
           choice.message.tool_calls = [choice.message.tool_calls[0]];
           stopKeepAlive();
@@ -809,7 +809,7 @@ async function proxyRequest(clientReq, clientRes) {
     // Success or non-retryable error
     stopKeepAlive();
     if (res.status >= 400) {
-      console.error(`[nvidia-proxy] ${res.status} ERROR: ${res.body.toString("utf-8").slice(0, 300)}`);
+      console.error(`[skgateway] ${res.status} ERROR: ${res.body.toString("utf-8").slice(0, 300)}`);
       if (!clientRes.headersSent) {
         clientRes.writeHead(res.status, res.headers);
       }
@@ -817,7 +817,7 @@ async function proxyRequest(clientReq, clientRes) {
       return;
     }
 
-    console.log(`[nvidia-proxy] ${res.status} OK (attempt ${attempt})`);
+    console.log(`[skgateway] ${res.status} OK (attempt ${attempt})`);
     if (wasStreaming && res.status === 200) {
       try {
         const resBody = JSON.parse(res.body.toString("utf-8"));
@@ -842,15 +842,15 @@ async function proxyRequest(clientReq, clientRes) {
 const server = http.createServer(proxyRequest);
 
 server.listen(port, "127.0.0.1", () => {
-  console.log(`[nvidia-proxy] listening on http://127.0.0.1:${port}`);
-  console.log(`[nvidia-proxy] proxying to ${targetUrl.origin}`);
-  console.log(`[nvidia-proxy] retry strategy: 16 tools (5 guaranteed)→8 tools→1 tool (forced)→text-only (max ${MAX_RETRIES} attempts)`);
-  console.log(`[nvidia-proxy] also trims multi-tool responses to single tool call`);
+  console.log(`[skgateway] listening on http://127.0.0.1:${port}`);
+  console.log(`[skgateway] proxying to ${targetUrl.origin}`);
+  console.log(`[skgateway] retry strategy: 16 tools (5 guaranteed)→8 tools→1 tool (forced)→text-only (max ${MAX_RETRIES} attempts)`);
+  console.log(`[skgateway] also trims multi-tool responses to single tool call`);
 });
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
-    console.log(`[nvidia-proxy] ${sig} received, shutting down`);
+    console.log(`[skgateway] ${sig} received, shutting down`);
     server.close(() => process.exit(0));
   });
 }
