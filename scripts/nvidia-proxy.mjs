@@ -433,7 +433,7 @@ const TOOL_GROUPS = {
   ],
   // Projects & Notion (Lumina delegates to project-ops via sessions_spawn)
   "notion|project|brother john|swapseat|swap seat|chiro|davidrich|board|kanban|milestone": [
-    "sessions_spawn", "subagents", "exec", "read",
+    "notion_read", "notion_append", "notion_add_todo", "sessions_spawn", "subagents", "exec", "read",
   ],
 };
 
