@@ -68,6 +68,13 @@ jobs:
       - name: Build TypeScript
         run: npm run build 2>/dev/null || true
       - name: Publish to npm
-        run: npm publish --access public
+        run: |
+          OUTPUT=$(npm publish --access public 2>&1) && exit 0
+          if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
+            echo "::warning::Version already exists on npm — skipping"
+          else
+            echo "$OUTPUT"
+            exit 1
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
