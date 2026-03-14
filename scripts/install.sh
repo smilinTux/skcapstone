@@ -110,15 +110,16 @@ PARENT="$(dirname "$REPO_ROOT")"
 PILLAR="$PARENT/pillar-repos"
 
 # Core packages (in dependency order)
-install_pkg "capauth"    "all"                   "$PILLAR/capauth $PARENT/capauth"
-install_pkg "skmemory"   ""                      "$PILLAR/skmemory $PARENT/skmemory"
+install_pkg "capauth"    "all"                      "$PILLAR/capauth $PARENT/capauth"
+install_pkg "cloud9-protocol" ""                    "$PILLAR/cloud9 $PARENT/cloud9"
+install_pkg "skmemory"   ""                         "$PILLAR/skmemory $PARENT/skmemory"
 install_pkg "skcomm"     "cli,crypto,discovery,api" "$PILLAR/skcomm $PARENT/skcomm"
-install_pkg "skcapstone" ""                      "$REPO_ROOT"
-install_pkg "skchat-sovereign" "all"             "$PARENT/skchat"
-install_pkg "skseal"     ""                      "$PARENT/skseal"
-install_pkg "skskills"   ""                      "$PARENT/skskills"
-install_pkg "sksecurity" ""                      "$PARENT/sksecurity"
-install_pkg "skseed"     ""                      "$PILLAR/skseed $PARENT/skseed"
+install_pkg "skcapstone" ""                         "$REPO_ROOT"
+install_pkg "skchat-sovereign" "all"                "$PARENT/skchat"
+install_pkg "skseal"     ""                         "$PARENT/skseal"
+install_pkg "skskills"   ""                         "$PARENT/skskills"
+install_pkg "sksecurity" ""                         "$PARENT/sksecurity $PILLAR/SKSecurity $PARENT/SKSecurity"
+install_pkg "skseed"     ""                         "$PILLAR/skseed $PARENT/skseed"
 
 # ---------------------------------------------------------------------------
 # Step 4: Dev tools (optional)
@@ -184,3 +185,33 @@ echo ""
 echo "Commands available: skcomm, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity, skseed"
 echo "Venv location:     $SKENV"
 echo "To activate:       source $SKENV/bin/activate"
+
+# ---------------------------------------------------------------------------
+# macOS: Offer launchd service installation
+# ---------------------------------------------------------------------------
+if [[ "$(uname)" == "Darwin" ]]; then
+    echo ""
+    echo "=== macOS Auto-Start Services ==="
+    echo ""
+    echo "SKCapstone can install launchd services so your agent starts"
+    echo "automatically at login. You can choose which services to install."
+    echo ""
+    read -r -p "Install launchd auto-start services? [Y/n] " _LAUNCHD_ANSWER
+    _LAUNCHD_ANSWER="${_LAUNCHD_ANSWER:-Y}"
+
+    if [[ "$_LAUNCHD_ANSWER" =~ ^[Yy] ]]; then
+        # Ask for agent name
+        _DEFAULT_AGENT="${SKCAPSTONE_AGENT:-sovereign}"
+        read -r -p "Agent name [$_DEFAULT_AGENT]: " _AGENT_NAME
+        _AGENT_NAME="${_AGENT_NAME:-$_DEFAULT_AGENT}"
+
+        read -r -p "Start services now? [y/N] " _START_NOW
+        if [[ "$_START_NOW" =~ ^[Yy] ]]; then
+            "$SKENV/bin/skcapstone" daemon install --agent "$_AGENT_NAME" --start
+        else
+            "$SKENV/bin/skcapstone" daemon install --agent "$_AGENT_NAME"
+        fi
+    else
+        echo "Skipped. Install later: skcapstone daemon install --agent <name>"
+    fi
+fi

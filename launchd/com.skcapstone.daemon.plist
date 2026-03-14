@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.skcapstone.daemon</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${HOME}/.skenv/bin/skcapstone</string>
+    <string>daemon</string>
+    <string>start</string>
+    <string>--foreground</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>OLLAMA_KEEP_ALIVE</key>
+    <string>5m</string>
+    <key>SKCAPSTONE_AGENT</key>
+    <string>lumina</string>
+    <key>PATH</key>
+    <string>${HOME}/.skenv/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>${HOME}/.skcapstone/logs/daemon.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${HOME}/.skcapstone/logs/daemon.stderr.log</string>
+
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>MemoryLimit</key>
+    <integer>4294967296</integer>
+  </dict>
+</dict>
+</plist>

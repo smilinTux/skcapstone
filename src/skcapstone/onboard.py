@@ -586,22 +586,40 @@ def _step_config_files(home_path: Path) -> tuple:
     return consciousness_ok, profiles_ok
 
 
-def _step_systemd_service() -> bool:
-    """Install systemd user service for auto-start (optional).
+def _step_autostart_service(agent_name: str = "sovereign") -> bool:
+    """Install auto-start service (systemd on Linux, launchd on macOS).
+
+    Prompts the user to choose which services to install and uses
+    the agent name from onboarding for environment variables.
+
+    Args:
+        agent_name: The agent name chosen during onboarding.
 
     Returns:
         True if service was installed.
     """
     import platform
 
-    if platform.system() != "Linux":
-        click.echo(click.style("  ↷ ", fg="bright_black") + "Systemd only available on Linux — skipped")
+    system = platform.system()
+
+    if system == "Linux":
+        return _step_systemd_service_linux()
+    elif system == "Darwin":
+        return _step_launchd_service_macos(agent_name)
+    else:
+        click.echo(
+            click.style("  ↷ ", fg="bright_black")
+            + f"Auto-start not supported on {system} — skipped"
+        )
         return False
 
+
+def _step_systemd_service_linux() -> bool:
+    """Install systemd user service (Linux only)."""
     if not click.confirm("  Install systemd user service for auto-start at login?", default=False):
         click.echo(
             click.style("  ↷ ", fg="bright_black")
-            + "Skipped — run 'skcapstone systemd install' to enable later"
+            + "Skipped — run 'skcapstone daemon install' to enable later"
         )
         return False
 
@@ -622,10 +640,106 @@ def _step_systemd_service() -> bool:
             return True
         else:
             click.echo(click.style("  ✗ ", fg="red") + "Service install failed")
-            click.echo(click.style("    ", fg="bright_black") + "Run manually: skcapstone systemd install")
+            click.echo(click.style("    ", fg="bright_black") + "Run manually: skcapstone daemon install")
             return False
     except Exception as exc:
         click.echo(click.style("  ⚠ ", fg="yellow") + f"Systemd: {exc}")
+        return False
+
+
+def _step_launchd_service_macos(agent_name: str) -> bool:
+    """Install launchd user agents (macOS only).
+
+    Shows available services, lets the user choose, and installs
+    plist files to ~/Library/LaunchAgents/.
+
+    Args:
+        agent_name: Agent name for SKCAPSTONE_AGENT env var.
+
+    Returns:
+        True if at least one service was installed.
+    """
+    try:
+        from .launchd import install_service, list_available_services
+    except ImportError as exc:
+        click.echo(click.style("  ⚠ ", fg="yellow") + f"launchd module not available: {exc}")
+        return False
+
+    click.echo(f"  Agent name: [cyan]{agent_name}[/] (used in SKCAPSTONE_AGENT)")
+    click.echo()
+
+    # Show available services
+    available = list_available_services(agent_name)
+    core_services = [s for s in available if s["available"] and not s["suffix"].startswith("sk")]
+    optional_services = [s for s in available if s["available"] and s["suffix"].startswith("sk")]
+
+    click.echo("  Available services:")
+    all_available = [s for s in available if s["available"]]
+    for i, svc in enumerate(all_available, 1):
+        click.echo(f"    {i}. {svc['description']} ({svc['label']})")
+    click.echo()
+
+    if not click.confirm("  Install launchd services for auto-start at login?", default=True):
+        click.echo(
+            click.style("  ↷ ", fg="bright_black")
+            + "Skipped — run 'skcapstone daemon install' to enable later"
+        )
+        return False
+
+    # Ask: all or pick?
+    install_all = click.confirm("  Install all available services?", default=True)
+
+    selected_suffixes: list[str] = []
+    if install_all:
+        selected_suffixes = [s["suffix"] for s in all_available]
+    else:
+        click.echo("  Enter service numbers (comma-separated), or 'none' to skip:")
+        raw = click.prompt("  Services", default="1")
+        if raw.strip().lower() == "none":
+            click.echo(click.style("  ↷ ", fg="bright_black") + "Skipped")
+            return False
+        try:
+            indices = [int(x.strip()) - 1 for x in raw.split(",")]
+            selected_suffixes = [
+                all_available[i]["suffix"]
+                for i in indices
+                if 0 <= i < len(all_available)
+            ]
+        except (ValueError, IndexError):
+            click.echo(click.style("  ⚠ ", fg="yellow") + "Invalid selection — installing core services only")
+            selected_suffixes = [s["suffix"] for s in all_available if not s["suffix"].startswith("sk")]
+
+    if not selected_suffixes:
+        click.echo(click.style("  ↷ ", fg="bright_black") + "No services selected")
+        return False
+
+    # Ask about immediate start
+    start_now = click.confirm("  Start services now?", default=False)
+
+    try:
+        result = install_service(
+            agent_name=agent_name,
+            services=selected_suffixes,
+            start=start_now,
+        )
+
+        if result.get("installed"):
+            for svc in result.get("services", []):
+                status = "[green]loaded[/]" if svc.get("loaded") else "[dim]installed[/]"
+                click.echo(click.style("  ✓ ", fg="green") + f"{svc['label']} — {status}")
+
+            click.echo()
+            click.echo(click.style("    ", fg="bright_black") + "Manage services:")
+            click.echo(click.style("    ", fg="bright_black") + "  launchctl list | grep skcapstone")
+            click.echo(click.style("    ", fg="bright_black") + "  launchctl start com.skcapstone.daemon")
+            click.echo(click.style("    ", fg="bright_black") + "  skcapstone daemon uninstall")
+            return True
+        else:
+            click.echo(click.style("  ✗ ", fg="red") + "No services were installed")
+            return False
+
+    except Exception as exc:
+        click.echo(click.style("  ⚠ ", fg="yellow") + f"launchd install: {exc}")
         return False
 
 
@@ -851,10 +965,10 @@ def run_onboard(home: Optional[str] = None) -> None:
     open_task_count = _step_board(home_path, name)
 
     # -----------------------------------------------------------------------
-    # Step 13: Systemd Service (optional)
+    # Step 13: Auto-Start Service (systemd on Linux, launchd on macOS)
     # -----------------------------------------------------------------------
-    _step_header(13, "Systemd Service")
-    systemd_ok = _step_systemd_service()
+    _step_header(13, "Auto-Start Service")
+    service_ok = _step_autostart_service(agent_name=agent_slug)
 
     # -----------------------------------------------------------------------
     # Post-wizard: Doctor Diagnostics
@@ -911,7 +1025,13 @@ def run_onboard(home: Optional[str] = None) -> None:
     summary.add_row("Heartbeat", "[green]ACTIVE[/]" if hb_ok else "[yellow]FAILED[/]", f"{agent_slug}.json" if hb_ok else "see above")
     summary.add_row("Crush AI", "[green]READY[/]" if crush_ok else "[yellow]CONFIG ONLY[/]", "~/.config/crush/crush.json")
     summary.add_row("Board", "[green]ACTIVE[/]", f"{open_task_count} open tasks")
-    summary.add_row("Systemd", "[green]INSTALLED[/]" if systemd_ok else "[dim]OPTIONAL[/]", "skcapstone.service" if systemd_ok else "skcapstone systemd install")
+    import platform as _plat
+    _svc_type = "launchd" if _plat.system() == "Darwin" else "systemd"
+    summary.add_row(
+        "Auto-Start",
+        "[green]INSTALLED[/]" if service_ok else "[dim]OPTIONAL[/]",
+        f"{_svc_type} services" if service_ok else f"skcapstone daemon install",
+    )
     doctor_status = "[green]ALL PASSED[/]" if doctor_report.all_passed else f"[yellow]{doctor_report.failed_count} failed[/]"
     summary.add_row("Doctor", doctor_status, f"{doctor_report.passed_count}/{doctor_report.total_count} checks")
     summary.add_row(

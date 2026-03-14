@@ -1278,17 +1278,25 @@ class DaemonService:
                 except Exception:
                     stats.update(disk_total_gb=0, disk_used_gb=0, disk_free_gb=0)
                 try:
-                    meminfo: dict = {}
-                    with open("/proc/meminfo") as fh:
-                        for line in fh:
-                            parts = line.split()
-                            if len(parts) >= 2:
-                                meminfo[parts[0].rstrip(":")] = int(parts[1])
-                    total_kb = meminfo.get("MemTotal", 0)
-                    avail_kb = meminfo.get("MemAvailable", 0)
-                    stats["memory_total_mb"] = round(total_kb / 1024)
-                    stats["memory_used_mb"] = round((total_kb - avail_kb) / 1024)
-                    stats["memory_free_mb"] = round(avail_kb / 1024)
+                    import platform as _platform
+                    if _platform.system() == "Linux":
+                        meminfo: dict = {}
+                        with open("/proc/meminfo") as fh:
+                            for line in fh:
+                                parts = line.split()
+                                if len(parts) >= 2:
+                                    meminfo[parts[0].rstrip(":")] = int(parts[1])
+                        total_kb = meminfo.get("MemTotal", 0)
+                        avail_kb = meminfo.get("MemAvailable", 0)
+                        stats["memory_total_mb"] = round(total_kb / 1024)
+                        stats["memory_used_mb"] = round((total_kb - avail_kb) / 1024)
+                        stats["memory_free_mb"] = round(avail_kb / 1024)
+                    else:
+                        import psutil
+                        mem = psutil.virtual_memory()
+                        stats["memory_total_mb"] = round(mem.total / (1024 * 1024))
+                        stats["memory_used_mb"] = round((mem.total - mem.available) / (1024 * 1024))
+                        stats["memory_free_mb"] = round(mem.available / (1024 * 1024))
                 except Exception:
                     stats.update(memory_total_mb=0, memory_used_mb=0, memory_free_mb=0)
                 return stats

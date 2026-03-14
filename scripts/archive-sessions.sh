@@ -14,6 +14,14 @@ KEEP_RECENT=5
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1"; }
 
+# Cross-platform stat helpers
+_stat_mtime() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then stat -f '%m' "$1"; else stat -c '%Y' "$1"; fi
+}
+_stat_size() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then stat -f '%z' "$1"; else stat -c '%s' "$1"; fi
+}
+
 # Ensure directories exist
 if [ ! -d "$SESSION_DIR" ]; then
     log "Session directory does not exist: $SESSION_DIR — nothing to do."
@@ -22,7 +30,15 @@ fi
 mkdir -p "$ARCHIVE_DIR"
 
 # Collect all .jsonl files (not in archive subdir), sorted newest-first
-mapfile -t all_files < <(find "$SESSION_DIR" -maxdepth 1 -name '*.jsonl' -type f -printf '%T@\t%p\n' | sort -rn | cut -f2-)
+# (macOS-compatible: avoid mapfile and find -printf)
+all_files=()
+while IFS= read -r f; do
+    [ -n "$f" ] && all_files+=("$f")
+done < <(
+    for f in "$SESSION_DIR"/*.jsonl; do
+        [ -f "$f" ] && echo "$(_stat_mtime "$f") $f"
+    done | sort -rn | awk '{print $2}'
+)
 
 total=${#all_files[@]}
 if [ "$total" -eq 0 ]; then
@@ -50,11 +66,11 @@ for i in "${!all_files[@]}"; do
     fi
 
     # Check age (older than MAX_AGE_HOURS)
-    file_age_sec=$(( $(date +%s) - $(stat -c '%Y' "$file") ))
+    file_age_sec=$(( $(date +%s) - $(_stat_mtime "$file") ))
     old_enough=$(( file_age_sec > MAX_AGE_HOURS * 3600 ))
 
     # Check size (larger than MAX_SIZE_KB)
-    file_size_kb=$(( $(stat -c '%s' "$file") / 1024 ))
+    file_size_kb=$(( $(_stat_size "$file") / 1024 ))
     big_enough=$(( file_size_kb >= MAX_SIZE_KB ))
 
     if [ "$old_enough" -eq 1 ] || [ "$big_enough" -eq 1 ]; then

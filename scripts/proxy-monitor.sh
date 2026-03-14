@@ -2,7 +2,11 @@
 # proxy-monitor.sh — Quick health check for nvidia-proxy tuning
 # Usage: ./proxy-monitor.sh [minutes]  (default: last 30 minutes)
 MINS=${1:-30}
-SINCE="$(date -d "$MINS minutes ago" '+%Y-%m-%d %H:%M:%S')"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    SINCE=$(date -v-${MINS}M '+%Y-%m-%d %H:%M:%S')
+else
+    SINCE=$(date -d "$MINS minutes ago" '+%Y-%m-%d %H:%M:%S')
+fi
 
 echo "=== NVIDIA Proxy Monitor (last ${MINS}m) ==="
 echo ""

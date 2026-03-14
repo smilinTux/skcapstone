@@ -270,60 +270,117 @@ def register_daemon_commands(main: click.Group) -> None:
             console.print(f"  [yellow]API unreachable on port {effective_port}[/]\n")
 
     @daemon.command("install")
-    def daemon_install():
-        """Install the daemon as a systemd user service.
+    @click.option("--agent", "agent_name", default=None,
+                  help="Agent name for SKCAPSTONE_AGENT (default: from env or 'sovereign').")
+    @click.option("--start", is_flag=True, help="Start services immediately after installing.")
+    def daemon_install(agent_name: str | None, start: bool):
+        """Install the daemon as a system service.
 
-        Copies unit files to ~/.config/systemd/user/, enables at login,
-        and starts immediately. No root required.
+        On Linux: installs systemd user service units.
+        On macOS: installs launchd plist files to ~/Library/LaunchAgents/.
+
+        The --agent flag sets the SKCAPSTONE_AGENT environment variable
+        in the service definition. If not provided, uses the
+        SKCAPSTONE_AGENT env var or defaults to 'sovereign'.
 
         Examples:
 
             skcapstone daemon install
+
+            skcapstone daemon install --agent myagent --start
         """
-        from ..systemd import install_service, systemd_available
+        import platform
 
-        if not systemd_available():
-            console.print("[red]systemd user session not available.[/]")
-            console.print("[dim]This command requires a Linux system with systemd.[/]")
-            raise SystemExit(1)
+        effective_agent = agent_name or os.environ.get("SKCAPSTONE_AGENT", "sovereign")
 
-        console.print("\n[cyan]Installing skcapstone systemd service...[/]")
-        result = install_service()
+        if platform.system() == "Darwin":
+            from ..launchd import install_service as launchd_install
 
-        if result["installed"]:
-            console.print("[green]  Unit files installed.[/]")
-        if result["enabled"]:
-            console.print("[green]  Service enabled at login.[/]")
-        if result["started"]:
-            console.print("[green]  Service started.[/]")
-        console.print()
+            console.print(f"\n[cyan]Installing launchd services for agent '{effective_agent}'...[/]")
+            result = launchd_install(agent_name=effective_agent, start=start)
 
-        if not result["installed"]:
-            console.print("[red]Installation failed. Check logs.[/]")
+            if result["installed"]:
+                for svc in result.get("services", []):
+                    status = "[green]loaded[/]" if svc.get("loaded") else "[green]installed[/]"
+                    console.print(f"  [green]✓[/] {svc['label']} — {status}")
+                console.print()
+                console.print("[dim]  Manage: launchctl list | grep skcapstone[/]")
+                if not start:
+                    console.print("[dim]  Start:  launchctl start com.skcapstone.daemon[/]")
+                    console.print("[dim]  Or re-run with --start to load immediately.[/]")
+            else:
+                console.print("[red]Installation failed. Check logs.[/]")
+                raise SystemExit(1)
+            console.print()
+
+        elif platform.system() == "Linux":
+            from ..systemd import install_service, systemd_available
+
+            if not systemd_available():
+                console.print("[red]systemd user session not available.[/]")
+                console.print("[dim]This command requires a Linux system with systemd.[/]")
+                raise SystemExit(1)
+
+            console.print("\n[cyan]Installing skcapstone systemd service...[/]")
+            result = install_service(start=start)
+
+            if result["installed"]:
+                console.print("[green]  Unit files installed.[/]")
+            if result["enabled"]:
+                console.print("[green]  Service enabled at login.[/]")
+            if result.get("started"):
+                console.print("[green]  Service started.[/]")
+            console.print()
+
+            if not result["installed"]:
+                console.print("[red]Installation failed. Check logs.[/]")
+                raise SystemExit(1)
+        else:
+            console.print(f"[red]Auto-start not supported on {platform.system()}.[/]")
             raise SystemExit(1)
 
     @daemon.command("uninstall")
     def daemon_uninstall():
-        """Uninstall the systemd user service.
+        """Uninstall the system service.
 
-        Stops, disables, and removes the unit files.
+        On Linux: stops, disables, and removes systemd unit files.
+        On macOS: unloads and removes launchd plist files.
 
         Examples:
 
             skcapstone daemon uninstall
         """
-        from ..systemd import uninstall_service
+        import platform
 
-        console.print("\n[cyan]Uninstalling skcapstone systemd service...[/]")
-        result = uninstall_service()
+        if platform.system() == "Darwin":
+            from ..launchd import uninstall_service as launchd_uninstall
 
-        if result["stopped"]:
-            console.print("[green]  Service stopped.[/]")
-        if result["disabled"]:
-            console.print("[green]  Service disabled.[/]")
-        if result["removed"]:
-            console.print("[green]  Unit files removed.[/]")
-        console.print()
+            console.print("\n[cyan]Uninstalling skcapstone launchd services...[/]")
+            result = launchd_uninstall()
+
+            if result["stopped"]:
+                console.print("[green]  Services unloaded.[/]")
+            if result["removed"]:
+                for label in result.get("services", []):
+                    console.print(f"  [green]✓[/] Removed {label}")
+            console.print()
+
+        elif platform.system() == "Linux":
+            from ..systemd import uninstall_service
+
+            console.print("\n[cyan]Uninstalling skcapstone systemd service...[/]")
+            result = uninstall_service()
+
+            if result["stopped"]:
+                console.print("[green]  Service stopped.[/]")
+            if result["disabled"]:
+                console.print("[green]  Service disabled.[/]")
+            if result["removed"]:
+                console.print("[green]  Unit files removed.[/]")
+            console.print()
+
+        else:
+            console.print(f"[red]Not supported on {platform.system()}.[/]")
 
     @daemon.command("components")
     @click.option("--agent", default=None, help="Named agent to query.")
@@ -413,7 +470,10 @@ def register_daemon_commands(main: click.Group) -> None:
     @click.option("--lines", "-n", default=50, help="Number of lines (default: 50).")
     @click.option("--follow", "-f", is_flag=True, help="Show the command to follow logs live.")
     def daemon_logs(lines: int, follow: bool):
-        """Show daemon logs from journald.
+        """Show daemon logs.
+
+        On Linux: reads from journald.
+        On macOS: reads from ~/.skcapstone/logs/ files.
 
         Examples:
 
@@ -423,14 +483,29 @@ def register_daemon_commands(main: click.Group) -> None:
 
             skcapstone daemon logs -f
         """
-        from ..systemd import service_logs
+        import platform
 
-        if follow:
-            cmd = service_logs(follow=True)
-            console.print(f"\n  Run: [bold cyan]{cmd}[/]\n")
-        else:
-            output = service_logs(lines=lines)
-            if output.strip():
-                click.echo(output)
+        if platform.system() == "Darwin":
+            if follow:
+                log_path = Path.home() / ".skcapstone" / "logs" / "daemon.stdout.log"
+                console.print(f"\n  Run: [bold cyan]tail -f {log_path}[/]\n")
             else:
-                console.print("[dim]No logs found. Is the service installed?[/]")
+                from ..launchd import service_logs
+                output = service_logs(lines=lines)
+                if output.strip():
+                    click.echo(output)
+                else:
+                    console.print("[dim]No logs found in ~/.skcapstone/logs/[/]")
+                    console.print("[dim]Is the service installed? Run: skcapstone daemon install[/]")
+        else:
+            from ..systemd import service_logs
+
+            if follow:
+                cmd = service_logs(follow=True)
+                console.print(f"\n  Run: [bold cyan]{cmd}[/]\n")
+            else:
+                output = service_logs(lines=lines)
+                if output.strip():
+                    click.echo(output)
+                else:
+                    console.print("[dim]No logs found. Is the service installed?[/]")

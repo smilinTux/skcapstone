@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.skcapstone.skcomm-queue-drain</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${HOME}/.skenv/bin/skcomm</string>
+    <string>queue</string>
+    <string>drain</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${HOME}/.skenv/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <!-- Every 2 minutes -->
+  <key>StartInterval</key>
+  <integer>120</integer>
+
+  <key>Nice</key>
+  <integer>19</integer>
+
+  <key>StandardOutPath</key>
+  <string>${HOME}/.skcapstone/logs/skcomm-queue-drain.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${HOME}/.skcapstone/logs/skcomm-queue-drain.stderr.log</string>
+</dict>
+</plist>

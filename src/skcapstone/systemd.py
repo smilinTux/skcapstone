@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import platform
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -23,6 +24,14 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("skcapstone.systemd")
+
+
+def _require_linux() -> None:
+    """Raise RuntimeError if not running on Linux."""
+    if platform.system() != "Linux":
+        raise RuntimeError(
+            "systemd is only available on Linux. Use launchd on macOS."
+        )
 
 SERVICE_NAME = "skcapstone.service"
 SOCKET_NAME = "skcapstone-api.socket"
@@ -93,7 +102,11 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess:
 
     Returns:
         CompletedProcess result.
+
+    Raises:
+        RuntimeError: If not running on Linux.
     """
+    _require_linux()
     return _run(["systemctl", "--user", *args])
 
 
@@ -127,6 +140,7 @@ def install_service(
     Returns:
         dict: Result with 'installed', 'enabled', 'started' bools.
     """
+    _require_linux()
     target = unit_dir or SYSTEMD_USER_DIR
     source = source_dir or BUNDLED_DIR
 
@@ -184,6 +198,7 @@ def uninstall_service(unit_dir: Optional[Path] = None) -> dict:
     Returns:
         dict: Result with 'stopped', 'disabled', 'removed' bools.
     """
+    _require_linux()
     target = unit_dir or SYSTEMD_USER_DIR
     result = {"stopped": False, "disabled": False, "removed": False}
 
@@ -214,6 +229,7 @@ def service_status() -> ServiceStatus:
     Returns:
         ServiceStatus: Detailed status information.
     """
+    _require_linux()
     status = ServiceStatus()
 
     unit_path = SYSTEMD_USER_DIR / SERVICE_NAME
@@ -264,6 +280,7 @@ def service_logs(lines: int = 50, follow: bool = False) -> str:
     Returns:
         str: Log output or the follow command.
     """
+    _require_linux()
     if follow:
         return f"journalctl --user -u {SERVICE_NAME} -f"
 

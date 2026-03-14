@@ -31,6 +31,7 @@ import errno
 import json
 import logging
 import os
+import platform
 import stat
 import subprocess
 import sys
@@ -1001,16 +1002,17 @@ class FUSEDaemon:
         mount_str = str(self._mount_point)
 
         # Linux: parse /proc/mounts
-        proc_mounts = Path("/proc/mounts")
-        if proc_mounts.exists():
-            try:
-                for line in proc_mounts.read_text(encoding="utf-8").splitlines():
-                    parts = line.split()
-                    if len(parts) >= 2 and parts[1] == mount_str:
-                        return True
-            except OSError as exc:
-                logger.warning("Failed to read /proc/mounts: %s", exc)
-            return False
+        if platform.system() == "Linux":
+            proc_mounts = Path("/proc/mounts")
+            if proc_mounts.exists():
+                try:
+                    for line in proc_mounts.read_text(encoding="utf-8").splitlines():
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1] == mount_str:
+                            return True
+                except OSError as exc:
+                    logger.warning("Failed to read /proc/mounts: %s", exc)
+                return False
 
         # macOS / other: use mount command
         try:
@@ -1113,8 +1115,13 @@ class FUSEDaemon:
 
         mount_str = str(self._mount_point)
 
-        # Linux: fusermount
-        for cmd in (["fusermount", "-u", mount_str], ["umount", mount_str]):
+        # On Linux try fusermount first, then umount; on macOS skip fusermount
+        if platform.system() == "Linux":
+            unmount_cmds = [["fusermount", "-u", mount_str], ["umount", mount_str]]
+        else:
+            unmount_cmds = [["umount", mount_str]]
+
+        for cmd in unmount_cmds:
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if result.returncode == 0:
@@ -1130,7 +1137,8 @@ class FUSEDaemon:
             except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
                 logger.debug("Unmount command %s failed: %s", cmd, exc)
 
-        logger.error("Could not unmount %s — try: fusermount -u %s", mount_str, mount_str)
+        hint = "fusermount -u" if platform.system() == "Linux" else "umount"
+        logger.error("Could not unmount %s — try: %s %s", mount_str, hint, mount_str)
         return False
 
     def status(self) -> Dict[str, Any]:

@@ -398,27 +398,30 @@ class HeartbeatBeacon:
             mem = psutil.virtual_memory()
             mem_used_mb = (mem.total - mem.available) // (1024 * 1024)
         except ImportError:
-            # Fallback: /proc on Linux
-            try:
-                loadavg = Path("/proc/loadavg")
-                if loadavg.exists():
-                    parts = loadavg.read_text().split()
-                    cpu_load = round(float(parts[0]), 2)
-            except Exception as exc:
-                logger.debug("CPU load fallback failed: %s", exc)
-            try:
-                meminfo = Path("/proc/meminfo")
-                if meminfo.exists():
-                    info: dict[str, int] = {}
-                    for line in meminfo.read_text().splitlines():
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            info[parts[0].rstrip(":")] = int(parts[1])
-                    total_kb = info.get("MemTotal", 0)
-                    avail_kb = info.get("MemAvailable", 0)
-                    mem_used_mb = (total_kb - avail_kb) // 1024
-            except Exception as exc:
-                logger.debug("Memory fallback failed: %s", exc)
+            # Fallback: /proc on Linux only
+            if platform.system() == "Linux":
+                try:
+                    loadavg = Path("/proc/loadavg")
+                    if loadavg.exists():
+                        parts = loadavg.read_text().split()
+                        cpu_load = round(float(parts[0]), 2)
+                except Exception as exc:
+                    logger.debug("CPU load fallback failed: %s", exc)
+                try:
+                    meminfo = Path("/proc/meminfo")
+                    if meminfo.exists():
+                        info: dict[str, int] = {}
+                        for line in meminfo.read_text().splitlines():
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                info[parts[0].rstrip(":")] = int(parts[1])
+                        total_kb = info.get("MemTotal", 0)
+                        avail_kb = info.get("MemAvailable", 0)
+                        mem_used_mb = (total_kb - avail_kb) // 1024
+                except Exception as exc:
+                    logger.debug("Memory fallback failed: %s", exc)
+            else:
+                logger.debug("psutil not available and not on Linux; skipping CPU/mem detection")
         except Exception as exc:
             logger.debug("CPU/mem detection failed: %s", exc)
 
@@ -439,14 +442,15 @@ class HeartbeatBeacon:
                 mem_total = mem.total // (1024 * 1024)
                 mem_avail = mem.available // (1024 * 1024)
             except ImportError:
-                # Fallback: read from /proc/meminfo on Linux
-                meminfo = Path("/proc/meminfo")
-                if meminfo.exists():
-                    for line in meminfo.read_text().splitlines():
-                        if line.startswith("MemTotal:"):
-                            mem_total = int(line.split()[1]) // 1024
-                        elif line.startswith("MemAvailable:"):
-                            mem_avail = int(line.split()[1]) // 1024
+                # Fallback: read from /proc/meminfo on Linux only
+                if platform.system() == "Linux":
+                    meminfo = Path("/proc/meminfo")
+                    if meminfo.exists():
+                        for line in meminfo.read_text().splitlines():
+                            if line.startswith("MemTotal:"):
+                                mem_total = int(line.split()[1]) // 1024
+                            elif line.startswith("MemAvailable:"):
+                                mem_avail = int(line.split()[1]) // 1024
 
             gpu_available = False
             gpu_name = ""

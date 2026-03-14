@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.skcapstone.memory-compress</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${HOME}/.skenv/bin/skcapstone</string>
+    <string>memory</string>
+    <string>compress</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>OLLAMA_KEEP_ALIVE</key>
+    <string>5m</string>
+    <key>PATH</key>
+    <string>${HOME}/.skenv/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <!-- Weekly: Sunday at midnight -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>0</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>Nice</key>
+  <integer>15</integer>
+
+  <key>StandardOutPath</key>
+  <string>${HOME}/.skcapstone/logs/memory-compress.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${HOME}/.skcapstone/logs/memory-compress.stderr.log</string>
+</dict>
+</plist>

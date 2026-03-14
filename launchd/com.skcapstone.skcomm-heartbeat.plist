@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.skcapstone.skcomm-heartbeat</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${HOME}/.skenv/bin/skcomm</string>
+    <string>heartbeat</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${HOME}/.skenv/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <!-- Every 60 seconds -->
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <key>Nice</key>
+  <integer>19</integer>
+
+  <key>StandardOutPath</key>
+  <string>${HOME}/.skcapstone/logs/skcomm-heartbeat.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${HOME}/.skcapstone/logs/skcomm-heartbeat.stderr.log</string>
+</dict>
+</plist>
