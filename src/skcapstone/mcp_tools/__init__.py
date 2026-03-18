@@ -17,6 +17,7 @@ from mcp.types import TextContent, Tool
 from . import (
     agent_tools,
     ansible_tools,
+    brain_first_tools,
     chat_tools,
     comm_tools,
     consciousness_tools,
@@ -49,6 +50,7 @@ from . import (
 # Ordered list of all tool-group modules.
 _MODULES = [
     agent_tools,
+    brain_first_tools,
     memory_tools,
     comm_tools,
     sync_tools,

@@ -358,8 +358,8 @@ class MetricsCollector:
                         1 for t in transports.values()
                         if isinstance(t, dict) and t.get("enabled", True)
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to parse skcomm transport config: %s", exc)
 
             report.transport = TransportMetrics(
                 available=True,
@@ -474,8 +474,8 @@ class MetricsCollector:
             if state_path.exists():
                 try:
                     state = json.loads(state_path.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to read sync_state.json: %s", exc)
 
             report.sync = SyncMetrics(
                 available=True,
@@ -510,8 +510,8 @@ class MetricsCollector:
                 try:
                     subs = json.loads(subs_file.read_text(encoding="utf-8"))
                     sub_count = len(subs)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to read pubsub subscriptions.json: %s", exc)
 
             report.pubsub = PubSubMetrics(
                 available=True,
@@ -546,8 +546,8 @@ class MetricsCollector:
                 try:
                     rot_data = json.loads(rot_log.read_text(encoding="utf-8"))
                     rotations = len(rot_data)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to read KMS rotation log: %s", exc)
 
             report.kms = KmsMetrics(
                 available=True,

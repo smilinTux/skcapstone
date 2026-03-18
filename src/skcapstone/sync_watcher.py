@@ -574,8 +574,8 @@ class SyncWatcher:
             try:
                 self._observer.stop()
                 self._observer.join(timeout=5)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Error stopping SyncWatcher observer: %s", exc)
             self._observer = None
         logger.info("SyncWatcher stopped.")
 

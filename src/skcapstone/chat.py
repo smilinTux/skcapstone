@@ -204,8 +204,8 @@ class AgentChat:
                                     thread_id=msg_dict.get("thread_id"),
                                 )
                                 history.store_message(chat_msg)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning("Failed to store received message in history: %s", exc)
             except Exception as exc:
                 logger.warning("Receive error: %s", exc)
 
@@ -410,8 +410,8 @@ class AgentChat:
                             state["last_recv_thread"] = recv_thread
                         display = _format_content(content)
                         print(f"\n  \033[32m{sender}\033[0m \033[2m[{ts}]\033[0m  {display}\n")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Chat poll loop error: %s", exc)
 
         # Print header
         tr_label = "✓ connected" if transport_ok else "✗ local-only"

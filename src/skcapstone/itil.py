@@ -1100,5 +1100,5 @@ class ITILManager:
         try:
             from . import activity
             activity.push(topic, payload)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to push ITIL event %s to activity bus: %s", topic, exc)

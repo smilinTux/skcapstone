@@ -76,8 +76,8 @@ def _http_check(
                 try:
                     body = json.loads(resp.read().decode("utf-8"))
                     result["version"] = body.get(version_key)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to parse version from service health response: %s", exc)
     except urllib.error.HTTPError as exc:
         latency = (time.monotonic() - t0) * 1000
         result["latency_ms"] = round(latency, 1)

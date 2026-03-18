@@ -13,11 +13,14 @@ skcapstone chat summary <peer>      LLM-powered conversation summary
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Optional
 
 import click
+
+logger = logging.getLogger(__name__)
 
 from ._common import AGENT_HOME, console, get_runtime
 from ._validators import validate_agent_name
@@ -85,8 +88,8 @@ def _run_llm_chat(peer: str, home_path: Path, identity: str) -> None:
                     content = msg.get("content", "")[:100]
                     console.print(f"  {label}: {content}")
                 console.print()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load previous conversation history with %s: %s", peer, exc)
 
     console.print(f"[bold]Chat with [cyan]{peer}[/][/]  [dim]Ctrl+C or /quit to exit[/]\n")
 

@@ -21,6 +21,7 @@ Steps:
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,8 @@ from pathlib import Path
 from typing import Optional
 
 import click
+
+logger = logging.getLogger(__name__)
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -503,8 +506,8 @@ def _step_ollama_models(prereqs: dict) -> bool:
         if DEFAULT_MODEL in (r.stdout or ""):
             click.echo(click.style("  ✓ ", fg="green") + f"{DEFAULT_MODEL} already present")
             return True
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to check ollama model list: %s", exc)
 
     if not click.confirm(f"  Pull default model ({DEFAULT_MODEL}, ~2 GB)?", default=True):
         click.echo(click.style("  ↷ ", fg="bright_black") + f"Skipped — pull later: ollama pull {DEFAULT_MODEL}")
@@ -991,8 +994,8 @@ def run_onboard(home: Optional[str] = None) -> None:
         soul = load_soul()
         if soul and soul.boot_message:
             boot_message = soul.boot_message
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to load soul boot message, using default: %s", exc)
 
     # -----------------------------------------------------------------------
     # Summary table

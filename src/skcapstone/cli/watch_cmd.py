@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -28,6 +29,8 @@ from rich.table import Table
 from rich.text import Text
 
 from ._common import AGENT_HOME, console
+
+logger = logging.getLogger(__name__)
 
 
 def _fetch_consciousness(port: int = 7777) -> dict:
@@ -87,8 +90,8 @@ def _build_renderable(home: Path, daemon_port: int = 7777) -> Group:
         memory_short = m.memory.short_term
         memory_mid = m.memory.mid_term
         memory_long = m.memory.long_term
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to read runtime manifest for watch display: %s", exc)
 
     # ── Consciousness data ────────────────────────────────────────────────
     cdata = _fetch_consciousness(daemon_port)
@@ -99,8 +102,8 @@ def _build_renderable(home: Path, daemon_port: int = 7777) -> Group:
         from ..memory_engine import list_memories
 
         recent_memories = list_memories(home, limit=5)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to load recent memories for watch display: %s", exc)
 
     # ── Coordination board ────────────────────────────────────────────────
     board_tasks: list = []
@@ -118,8 +121,8 @@ def _build_renderable(home: Path, daemon_port: int = 7777) -> Group:
         board_tasks = [
             v for v in views if v.status.value in ("open", "in_progress")
         ][:8]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to load coordination board for watch display: %s", exc)
 
     # ── Header ────────────────────────────────────────────────────────────
     con_color = {

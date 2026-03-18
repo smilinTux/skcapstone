@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +12,8 @@ from ._common import AGENT_HOME, console
 
 from rich.panel import Panel
 from rich.table import Table
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_provider_backend(provider: Optional[str], home_path: Path):
@@ -37,8 +40,8 @@ def _resolve_provider_backend(provider: Optional[str], home_path: Path):
                 prov_backend = DockerProvider()
             elif prov_type == ProviderType.PROXMOX:
                 prov_backend = ProxmoxProvider()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to initialize provider backend for %s: %s", provider, exc)
     return prov_backend, prov_type
 
 

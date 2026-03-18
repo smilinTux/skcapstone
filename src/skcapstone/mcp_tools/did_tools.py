@@ -10,6 +10,7 @@ Exposes four tools:
 from __future__ import annotations
 
 import json as _json
+import logging
 import os as _os
 import socket as _socket
 from pathlib import Path
@@ -17,6 +18,8 @@ from pathlib import Path
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _home, _json_response
+
+logger = logging.getLogger(__name__)
 
 TOOLS: list[Tool] = [
     Tool(
@@ -165,8 +168,8 @@ def _load_policy() -> dict:
     if p.exists():
         try:
             return _json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load DID policy from %s: %s", p, exc)
     return dict(_POLICY_DEFAULT)
 
 
@@ -191,8 +194,8 @@ def _resolve_tailnet(tailnet_hostname: str, tailnet_name: str) -> tuple[str, str
         if not tailnet_hostname:
             try:
                 tailnet_hostname = _socket.gethostname()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to resolve hostname for tailnet DID: %s", exc)
     if not tailnet_name:
         tailnet_name = _os.environ.get("SKWORLD_TAILNET", "")
     return tailnet_hostname, tailnet_name
@@ -297,8 +300,8 @@ async def _handle_did_verify_peer(args: dict) -> list[TextContent]:
                 _json.dumps(peer_data, indent=2, default=str),
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to cache did:key back to peer file %s: %s", peer_file, exc)
 
     return _json_response({
         "name": name,

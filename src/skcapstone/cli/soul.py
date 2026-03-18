@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ from .. import SKCAPSTONE_AGENT
 
 from rich.panel import Panel
 from rich.table import Table
+
+logger = logging.getLogger(__name__)
 
 # Path to the soul-blueprints repository (community blueprints)
 _BLUEPRINTS_REPO = Path.home() / "clawd" / "soul-blueprints" / "blueprints"
@@ -332,8 +335,8 @@ def register_soul_commands(main: click.Group) -> None:
                 import json
                 base_data = json.loads(base_path.read_text(encoding="utf-8"))
                 vibe = base_data.get("vibe", "")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read vibe from soul base.json: %s", exc)
 
         lines = [
             f"Agent: [bold magenta]{agent}[/]",

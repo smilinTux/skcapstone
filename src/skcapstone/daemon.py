@@ -1312,16 +1312,16 @@ class DaemonService:
                     try:
                         agent_name = runtime.manifest.name or agent_name
                         agent_fingerprint = getattr(runtime.manifest, "fingerprint", "")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to read agent name from runtime manifest: %s", exc)
                 identity_file = config.home / "identity" / "identity.json"
                 if identity_file.exists():
                     try:
                         ident = json.loads(identity_file.read_text(encoding="utf-8"))
                         agent_name = ident.get("name", agent_name)
                         agent_fingerprint = ident.get("fingerprint", agent_fingerprint)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to read identity.json for dashboard: %s", exc)
 
                 # Consciousness stats
                 c_stats: dict = snap.get("consciousness", {})
@@ -1347,10 +1347,10 @@ class DaemonService:
                                         "message_count": len(msgs),
                                         "last_message": msgs[-1].get("timestamp") if msgs else None,
                                     })
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
+                            except Exception as exc:
+                                logger.warning("Failed to read conversation file %s: %s", cf, exc)
+                    except Exception as exc:
+                        logger.warning("Failed to list conversation files: %s", exc)
 
                 return {
                     "agent": {
@@ -1392,16 +1392,16 @@ class DaemonService:
                             agent["consciousness"] = "SINGULAR"
                         elif m.is_conscious:
                             agent["consciousness"] = "CONSCIOUS"
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to read agent identity from runtime manifest: %s", exc)
                 identity_file = config.home / "identity" / "identity.json"
                 if identity_file.exists():
                     try:
                         ident = json.loads(identity_file.read_text(encoding="utf-8"))
                         agent["name"] = ident.get("name", agent["name"])
                         agent["fingerprint"] = ident.get("fingerprint", agent["fingerprint"])
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to read identity.json for capstone dashboard: %s", exc)
 
                 # ── Pillar status ─────────────────────────────────────────
                 pillars: dict = {}
@@ -1411,8 +1411,8 @@ class DaemonService:
                             k: v.value
                             for k, v in runtime.manifest.pillar_summary.items()
                         }
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to read pillar summary from manifest: %s", exc)
 
                 # ── Memory stats ──────────────────────────────────────────
                 memory: dict = {}
@@ -1426,8 +1426,8 @@ class DaemonService:
                         "long_term": ms.long_term,
                         "status": ms.status.value,
                     }
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to collect memory stats for dashboard: %s", exc)
 
                 # ── Coordination board ────────────────────────────────────
                 board: dict = {"summary": {}, "active": []}
@@ -1461,16 +1461,16 @@ class DaemonService:
                         },
                         "active": active_tasks,
                     }
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to collect coordination board data for dashboard: %s", exc)
 
                 # ── Consciousness stats ───────────────────────────────────
                 c_stats: dict = {}
                 if consciousness:
                     try:
                         c_stats = dict(consciousness.stats)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to read consciousness stats for dashboard: %s", exc)
 
                 return {
                     "agent": agent,
@@ -1984,8 +1984,8 @@ class DaemonService:
                                     entry["identity"] = json.loads(
                                         identity_path.read_text(encoding="utf-8")
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    logger.warning("Failed to read identity for agent %s: %s", agent_name, exc)
 
                             hb_path = heartbeats_dir / f"{agent_name.lower()}.json"
                             if hb_path.exists():
@@ -1995,7 +1995,8 @@ class DaemonService:
                                     hb["alive"] = alive
                                     entry["heartbeat"] = hb
                                     entry["status"] = hb.get("status", "unknown") if alive else "stale"
-                                except Exception:
+                                except Exception as exc:
+                                    logger.warning("Failed to read heartbeat for agent %s: %s", agent_name, exc)
                                     entry["status"] = "unknown"
                             else:
                                 entry["status"] = "no_heartbeat"
@@ -2027,8 +2028,8 @@ class DaemonService:
                             entry["identity"] = json.loads(
                                 identity_path.read_text(encoding="utf-8")
                             )
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("Failed to read identity for agent %s: %s", name, exc)
 
                     hb_path = config.shared_root / "heartbeats" / f"{name.lower()}.json"
                     if hb_path.exists():
@@ -2038,8 +2039,8 @@ class DaemonService:
                             hb["alive"] = alive
                             entry["heartbeat"] = hb
                             entry["status"] = hb.get("status", "unknown") if alive else "stale"
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("Failed to read heartbeat for agent %s: %s", name, exc)
 
                     memory_dir = agent_dir / "memory"
                     if memory_dir.exists():
@@ -2062,8 +2063,8 @@ class DaemonService:
                                         "message_count": len(msgs),
                                         "last_message": msgs[-1].get("timestamp") if msgs else None,
                                     })
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning("Failed to read conversation file %s: %s", cf, exc)
                     entry["recent_conversations"] = conv_list
 
                     if consciousness:
@@ -2092,8 +2093,8 @@ class DaemonService:
                                         "last_message_time": last_msg.get("timestamp") if msgs else None,
                                         "last_message_preview": (last_content or "")[:120],
                                     })
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning("Failed to read conversation file %s: %s", cf, exc)
                     self._json_response({"conversations": conversations})
 
                 # ── Conversations: single peer history ────────────────────

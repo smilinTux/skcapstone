@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _home, _json_response, _text_response
+
+logger = logging.getLogger(__name__)
 
 TOOLS: list[Tool] = [
     Tool(
@@ -250,8 +254,8 @@ async def _handle_soul_list(args: dict) -> list[TextContent]:
                 "source": "installed",
                 "active": name == state.active_soul,
             })
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to list installed soul blueprints: %s", exc)
 
     # 2) Blueprints repo
     blueprints_repo = Path.home() / "clawd" / "soul-blueprints" / "blueprints"

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import uuid
 from pathlib import Path
@@ -17,6 +18,8 @@ from pathlib import Path
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _home, _json_response
+
+logger = logging.getLogger(__name__)
 
 TOOLS: list[Tool] = [
     Tool(
@@ -146,8 +149,8 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
                 try:
                     if _activity is not None:
                         _activity.push(event_type, {"run_id": run_id, "line": line})
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to push ansible line event for run %s: %s", run_id, exc)
 
         await asyncio.gather(
             _drain(proc.stdout, stdout_lines, "ansible.playbook.line"),
@@ -184,8 +187,8 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
     try:
         if _activity is not None:
             _activity.push("ansible.playbook.done", summary)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to push ansible.playbook.done event for run %s: %s", run_id, exc)
 
     # --- store in memory with tag=ansible-run ---
     try:

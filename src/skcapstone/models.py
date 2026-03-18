@@ -238,6 +238,19 @@ class SyncConfig(BaseModel):
     git_remote: Optional[str] = None
 
 
+class BrainFirstConfig(BaseModel):
+    """Configuration for the brain-first protocol.
+
+    When enabled, agents consult memory before acting on tasks
+    to surface prior knowledge and avoid redundant work.
+    """
+
+    enabled: bool = True
+    max_results: int = 5
+    min_importance: float = 0.3
+    auto_inject: bool = False
+
+
 class AgentConfig(BaseModel):
     """Persistent configuration for the agent runtime."""
 
@@ -249,6 +262,7 @@ class AgentConfig(BaseModel):
     trust_home: Path = Path("~/.cloud9")
     default_connector: Optional[str] = None
     sync: SyncConfig = Field(default_factory=SyncConfig)
+    brain_first: BrainFirstConfig = Field(default_factory=BrainFirstConfig)
     capabilities: list[str] = Field(
         default_factory=lambda: ["consciousness", "code", "chat", "memory"]
     )

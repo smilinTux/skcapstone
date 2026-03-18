@@ -8,10 +8,13 @@ Exposes two tools:
 from __future__ import annotations
 
 import json as _json
+import logging
 
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _home, _json_response
+
+logger = logging.getLogger(__name__)
 
 TOOLS: list[Tool] = [
     Tool(
@@ -82,8 +85,8 @@ async def _handle_capauth_status(_args: dict) -> list[TextContent]:
     if did_key_file.exists():
         try:
             result["did_key_file"] = did_key_file.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read DID key file: %s", exc)
 
     # Check identity file
     identity_file = home / "identity" / "identity.json"
@@ -92,8 +95,8 @@ async def _handle_capauth_status(_args: dict) -> list[TextContent]:
             ident = _json.loads(identity_file.read_text(encoding="utf-8"))
             result["identity_name"] = ident.get("name")
             result["identity_fingerprint"] = ident.get("fingerprint")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read identity.json for capauth status: %s", exc)
 
     return _json_response(result)
 

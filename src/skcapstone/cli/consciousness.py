@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
 import click
 
 from ._common import AGENT_HOME, console
+
+logger = logging.getLogger(__name__)
 
 
 def register_consciousness_commands(main: click.Group) -> None:
@@ -233,8 +236,8 @@ def register_consciousness_commands(main: click.Group) -> None:
                 try:
                     file_data = json.loads(daily.read_text(encoding="utf-8"))
                     quality = file_data.get("quality_avg", {})
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to read daily quality metrics from %s: %s", daily, exc)
 
         if not quality or quality.get("count", 0) == 0:
             if json_out:

@@ -183,8 +183,8 @@ class BlueprintRegistryClient:
             error_body = ""
             try:
                 error_body = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                pass
+            except Exception as read_exc:
+                logger.debug("Failed to read error body from registry HTTP error: %s", read_exc)
             msg = f"Registry API error {exc.code} for {method} {path}"
             if error_body:
                 msg += f": {error_body[:500]}"

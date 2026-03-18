@@ -423,8 +423,8 @@ def _import_conversations(
                 existing_data = json.loads(peer_file.read_text(encoding="utf-8"))
                 if isinstance(existing_data, list):
                     existing_messages = existing_data
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read existing conversation for peer %s: %s", peer, exc)
 
         # Deduplicate by (role, content, timestamp) tuple
         existing_keys = {

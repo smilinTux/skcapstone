@@ -100,8 +100,8 @@ def migrate(
     try:
         existing = store.list_memories(limit=10000)
         existing_ids = {m.id for m in existing}
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to load existing memory IDs for deduplication: %s", exc)
 
     for entry in entries:
         if entry.memory_id in existing_ids:

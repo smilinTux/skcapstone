@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -18,6 +19,8 @@ from ..runtime import get_runtime
 
 from rich.panel import Panel
 from rich.table import Table
+
+logger = logging.getLogger(__name__)
 
 
 def _probe_llm_backends() -> dict[str, bool]:
@@ -43,8 +46,8 @@ def _probe_llm_backends() -> dict[str, bool]:
             urllib.request.Request(f"{host}/api/tags"), timeout=2
         ):
             backends["ollama"] = True
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ollama probe failed (not available): %s", exc)
     return backends
 
 
@@ -129,8 +132,8 @@ def _read_local_heartbeat(home: Path) -> Optional[dict]:
             hb_path = home / "heartbeats" / f"{agent_name}.json"
         if hb_path.exists():
             return json.loads(hb_path.read_text())
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to load heartbeat data: %s", exc)
     return None
 
 
@@ -332,8 +335,8 @@ def register_status_commands(main: click.Group) -> None:
                     f"\n  [bold yellow]WARNING:[/] [yellow]Low disk space: "
                     f"{free_gb:.1f} GB free[/]"
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to check disk space: %s", exc)
 
         console.print()
         console.print(f"  [dim]Home: {m.home}[/]")
@@ -718,8 +721,8 @@ def register_status_commands(main: click.Group) -> None:
             import webbrowser
             try:
                 webbrowser.open(url)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to open browser for dashboard: %s", exc)
 
         server = start_dashboard(home_path, port=port)
         try:

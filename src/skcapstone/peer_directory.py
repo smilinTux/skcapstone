@@ -250,8 +250,8 @@ class PeerDirectory:
                         ts = data.get("timestamp", "")
                         if ts:
                             self._entries[agent_name].last_seen = ts
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to update last_seen from heartbeat for %s: %s", agent_name, exc)
                     continue
 
                 try:

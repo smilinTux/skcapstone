@@ -392,8 +392,8 @@ class EmotionTracker:
                 if item.get("timestamp", "") >= cutoff:
                     try:
                         entries.append(EmotionEntry(**item))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to parse emotion log entry: %s", exc)
             return entries
         except Exception as exc:
             logger.debug("Failed to load emotion log: %s", exc)

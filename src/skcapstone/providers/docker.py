@@ -307,8 +307,8 @@ class DockerProvider(ProviderBackend):
             old = client.containers.get(container_name)
             logger.warning("Removing stale container: %s", container_name)
             old.remove(force=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("No stale container to remove for %s (expected if first run): %s", container_name, exc)
 
         # Ensure named volume for agent state persistence
         try:

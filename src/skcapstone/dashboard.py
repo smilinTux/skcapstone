@@ -240,8 +240,8 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
             "recent_errors": recent_errors,
             "inflight_count": snap.get("inflight_count", 0),
         }
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to fetch daemon status for dashboard: %s", exc)
 
     # ── Daemon /consciousness ─────────────────────────────────────────────────
     consciousness_info: dict = {"enabled": False}
@@ -249,8 +249,8 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
         url = f"http://127.0.0.1:{daemon_port}/consciousness"
         with urllib.request.urlopen(url, timeout=3) as resp:
             consciousness_info = json.loads(resp.read())
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to fetch consciousness status for dashboard: %s", exc)
 
     # ── LLM backend availability ──────────────────────────────────────────────
     backend_health: dict = {
@@ -266,8 +266,8 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
             urllib.request.Request(f"{ollama_host}/api/tags"), timeout=2
         ):
             backend_health["ollama"] = True
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ollama probe failed (not available): %s", exc)
 
     # ── Heartbeat (system metrics + active conversations) ─────────────────────
     system_info: dict = {}
@@ -291,8 +291,8 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
                 "cpu_load_1min": hb.get("cpu_load_1min", 0.0),
                 "memory_used_mb": hb.get("memory_used_mb", 0),
             }
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to read heartbeat data for dashboard: %s", exc)
 
     return {
         "generated_at": now,

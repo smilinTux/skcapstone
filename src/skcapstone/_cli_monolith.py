@@ -3212,8 +3212,8 @@ def dashboard(home: str, port: int, no_open: bool):
         import webbrowser
         try:
             webbrowser.open(url)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to open browser for dashboard: %s", exc)
 
     server = start_dashboard(home_path, port=port)
     try:
@@ -5353,8 +5353,8 @@ def agents_spawn(
                 prov_backend = DockerProvider()
             elif prov_type == ProviderType.PROXMOX:
                 prov_backend = ProxmoxProvider()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to initialize provider backend for %s: %s", provider, exc)
 
     # Auto-classify for display
     detected_role, detected_model = classify_task(task)

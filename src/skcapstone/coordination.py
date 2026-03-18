@@ -14,6 +14,7 @@ Directory layout:
 from __future__ import annotations
 
 import json
+import logging
 import re
 import socket
 import uuid
@@ -23,6 +24,8 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 def _slugify_filename(text: str) -> str:
@@ -474,9 +477,9 @@ def _mint_joules_for_task(board: Board, task_id: str, agent_name: str) -> None:
         if record:
             title = task_data.get("title", task_id)
             print(f"[SKJoule] Minted {record.joules} Joules for task: {title}")
-    except Exception:
+    except Exception as exc:
         # Never let tokenization failure block task completion
-        pass
+        logger.warning("Joule tokenization failed for task %s (non-fatal): %s", task_id, exc)
 
 
 _BRIEFING_PROTOCOL = """\

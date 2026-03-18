@@ -107,8 +107,8 @@ def _collect_local_bid(task_id: str, agent_name: str, shared_root: Path) -> Auct
         agent_file = board.load_agent(agent_name)
         if agent_file:
             claimed_count = len(agent_file.claimed_tasks)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to read claimed task count for agent %s: %s", agent_name, exc)
 
     return AuctionBid(
         task_id=task_id,
@@ -283,8 +283,8 @@ class AuctionManager:
                     ttl_seconds=3600,
                     tags=["auction", "no_bidders"],
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to publish auction_no_bidders event for %s: %s", task_id, exc)
             return None
 
         winner_bid = min(record.bids, key=_load_score)
@@ -327,8 +327,8 @@ class AuctionManager:
                 ttl_seconds=3600,
                 tags=["auction", "resolved"],
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to publish auction_resolved event for %s: %s", task_id, exc)
 
         # Notify activity stream
         try:
@@ -338,8 +338,8 @@ class AuctionManager:
                 "task.auction_resolved",
                 {"task_id": task_id, "winner": winner, "bids": len(record.bids)},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to push auction_resolved activity for %s: %s", task_id, exc)
 
         return winner
 

@@ -238,8 +238,8 @@ class MDNSDiscovery:
                         agent_name,
                     )
                     return
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read existing mDNS heartbeat for %s: %s", agent_name, exc)
 
         heartbeat = {
             "agent_name": agent_name,

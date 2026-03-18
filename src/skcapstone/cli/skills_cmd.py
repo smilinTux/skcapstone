@@ -114,8 +114,8 @@ def register_skills_commands(main: click.Group) -> None:
                 try:
                     skill_entries = client.search(query) if query else client.list_skills()
                     source = "remote"
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Registry client query failed, falling back: %s", exc)
 
         # 2. Try GitHub raw catalog (always fresh, no server needed)
         if skill_entries is None and not offline:

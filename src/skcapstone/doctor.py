@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -613,8 +616,8 @@ def _check_versions() -> list[Check]:
                     category="packages",
                 )
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Version check failed (non-fatal): %s", exc)
 
     return checks
 

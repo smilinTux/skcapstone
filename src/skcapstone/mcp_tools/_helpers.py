@@ -46,6 +46,6 @@ def _get_agent_name(home: Path) -> str:
         try:
             data = json.loads(identity_path.read_text(encoding="utf-8"))
             return data.get("name", "anonymous")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read agent name from identity.json: %s", exc)
     return "anonymous"

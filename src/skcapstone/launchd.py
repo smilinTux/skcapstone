@@ -420,7 +420,7 @@ def service_logs(suffix: str = "daemon", lines: int = 50) -> str:
                 )
                 if r.stdout.strip():
                     output_parts.append(f"--- {log_path.name} ---\n{r.stdout}")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read launchd log %s: %s", log_path, exc)
 
     return "\n".join(output_parts) if output_parts else f"No logs found in {logs_dir}"

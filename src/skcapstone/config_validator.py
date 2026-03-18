@@ -16,12 +16,15 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -113,8 +116,8 @@ def _yaml_key_line(text: str, key: str) -> Optional[int]:
         for key_node, _ in node.value:
             if isinstance(key_node, yaml.ScalarNode) and key_node.value == key:
                 return key_node.start_mark.line + 1
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to locate YAML key '%s' for line number: %s", key, exc)
     return None
 
 
@@ -147,8 +150,8 @@ def _yaml_seq_item_line(text: str, seq_key: str, idx: int, subkey: str) -> Optio
                             if kk.value == subkey:
                                 return kk.start_mark.line + 1
                         return item.start_mark.line + 1
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to locate YAML seq item line for '%s[%d].%s': %s", seq_key, idx, subkey, exc)
     return None
 
 

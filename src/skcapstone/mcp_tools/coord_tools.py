@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _home, _json_response, _shared_root
+
+logger = logging.getLogger(__name__)
 
 TOOLS: list[Tool] = [
     Tool(
@@ -149,8 +153,8 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
         try:
             from .. import activity
             activity.push("task.claimed", {"task_id": task_id, "agent": agent_name})
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to push task.claimed activity for %s: %s", task_id, exc)
         return _json_response({
             "claimed": True,
             "task_id": task_id,
@@ -175,8 +179,8 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
     try:
         from .. import activity
         activity.push("task.completed", {"task_id": task_id, "agent": agent_name})
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to push task.completed activity for %s: %s", task_id, exc)
     return _json_response({
         "completed": True,
         "task_id": task_id,

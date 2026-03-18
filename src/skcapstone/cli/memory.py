@@ -463,8 +463,8 @@ def register_memory_commands(main: click.Group) -> None:
             try:
                 from ..memory_adapter import get_unified, entry_to_memory
                 unified = get_unified()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Memory adapter unavailable, falling back to file-only mode: %s", exc)
 
             for layer in MemoryLayer:
                 layer_dir = mem_dir / layer.value
@@ -481,8 +481,8 @@ def register_memory_commands(main: click.Group) -> None:
                                 if existing:
                                     skipped += 1
                                     continue
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.debug("Failed to check existing memory %s: %s", mem_id, exc)
 
                         if unified:
                             from ..models import MemoryEntry

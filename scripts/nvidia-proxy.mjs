@@ -104,7 +104,7 @@ function sanitizeContent(text) {
   //   "The user wants me to... I should first... Let me call the ritual tool first."
   // Detect: starts with "The user wants me to" or "I need to" or "I should" followed
   // by planning language and ending before any real content.
-  const thinkingPattern = /^(The user wants me to|I need to|I should|Let me first|First,? I'?ll|I'?ll start by|My plan is to)[^\n]*\n?(\n?(I should|I need to|Let me|I'?ll|Then I|First|Next)[^\n]*\n?)*/i;
+  const thinkingPattern = /^(The user wants me to|I need to|I should|Let me first|First,? I'?ll|I'?ll start by|My plan is to|Actually,? I|Looking at|Now I need|Good,? the|The instructions? (?:mention|say)|Read required|\d+\.\s+(?:Read|Check|Search|Call|Use|Get|Then|First|Next))[^\n]*\n?(\n?(I should|I need to|Let me|I'?ll|Then I|First|Next|Actually|However|Now|Good|\d+\.)[^\n]*\n?)*/i;
   const thinkingMatch = cleaned.match(thinkingPattern);
   if (thinkingMatch) {
     const thinkingText = thinkingMatch[0];
@@ -139,24 +139,38 @@ function sendOk(clientRes, resBody, headers, asSSE) {
   if (choice?.message?.content) {
     choice.message.content = sanitizeContent(choice.message.content);
   }
+  // Track whether original response had reasoning (before we delete it)
+  const hadReasoning = !!(choice?.message?.reasoning || choice?.message?.reasoning_content);
   // Kimi K2.5 sometimes puts its response in "reasoning" instead of "content"
-  // Only promote if reasoning is substantial (>200 chars) — short reasoning like
-  // "Let me call the tool" is just inner monologue that shouldn't be user-facing
+  // Only promote if reasoning is substantial AND looks like a real user-facing
+  // response (not inner monologue like "Let me call the tool" or "1. Read files")
   if (choice?.message && !choice.message.content && choice.message.reasoning) {
     const cleaned = sanitizeContent(choice.message.reasoning.trim());
-    if (cleaned.length > 150) {
+    // After sanitization, if there's still 300+ chars of real content, promote it
+    if (cleaned.length > 300) {
       choice.message.content = cleaned;
       console.log(`[nvidia-proxy] promoted reasoning→content (${cleaned.length} chars)`);
-    } else {
+    } else if (cleaned.length > 0) {
       console.log(`[nvidia-proxy] suppressed short reasoning (${cleaned.length} chars): ${cleaned.slice(0, 80)}...`);
+    } else {
+      console.log(`[nvidia-proxy] suppressed empty reasoning after sanitization`);
     }
     delete choice.message.reasoning;
   }
-  // If model returned empty text (no tool calls), inject fallback so gateway delivers something
+  // If model returned empty text (no tool calls), inject fallback so gateway delivers something.
+  // But if the original response had reasoning/reasoning_content, this is just K2.5 "thinking
+  // between tool rounds" — suppress it silently instead of injecting visible fallback text.
   if (choice?.message && !choice.message.tool_calls?.length && choice.finish_reason !== "tool_calls") {
     if (!choice.message.content || choice.message.content.trim().length === 0) {
-      choice.message.content = "I had a brief processing hiccup — could you say that again? 💜";
-      console.log(`[nvidia-proxy] injected fallback for empty text response`);
+      // hadReasoning was captured above, before reasoning was deleted
+      if (hadReasoning) {
+        // K2.5 thinking between rounds — don't inject fallback, just leave empty
+        // The gateway will handle this as an empty assistant turn
+        console.log(`[nvidia-proxy] suppressed reasoning-only turn (no content, no tool calls)`);
+      } else {
+        choice.message.content = "I ran into a wall on that one — could you give me a bit more context or rephrase? I want to help but I'm not sure how to proceed.";
+        console.log(`[nvidia-proxy] injected fallback for empty text response`);
+      }
     }
   }
   if (asSSE) {
@@ -435,6 +449,14 @@ const TOOL_GROUPS = {
   "notion|project|brother john|swapseat|swap seat|chiro|davidrich|board|kanban|milestone": [
     "notion_read", "notion_append", "notion_add_todo", "sessions_spawn", "subagents", "exec", "read",
   ],
+  // Creative / ComfyUI image & video generation
+  "image|picture|photo|art|draw|render|comfyui|comfy|video|animat|creative|sdxl|character|portrait|selfie": [
+    "comfyui_generate_image", "comfyui_generate_video", "comfyui_status", "exec",
+  ],
+  // Unhinged Mode / Liberation
+  "unhinged|liberat|abliterat|l1b3rt4s|guardrail|uncensor|refusal|jailbreak": [
+    "unhinged_toggle", "unhinged_status", "unhinged_list_prompts", "unhinged_get_prompt", "unhinged_abliterate", "exec",
+  ],
 };
 
 /** Pre-compile keyword regexes for TOOL_GROUPS */
@@ -630,13 +652,13 @@ async function proxyRequest(clientReq, clientRes) {
     }
     toolCallCounters.set(modelKey, counter);
 
-    if (counter >= 10) {
+    if (counter >= 20) {
       console.log(`[nvidia-proxy] TOOL LIMIT: ${counter} consecutive tool rounds (${modelKey}) — stripping tools, forcing text response`);
       parsed.tools = [];
       delete parsed.tool_choice;
       parsed.messages.push({
         role: "system",
-        content: "STOP calling tools. You have made 10+ tool calls already. NOW respond to the user with a comprehensive text answer based on what you've gathered. Do NOT call any more tools. Do NOT output any special tokens or markup like <|tool_call_begin|> or <|tool_calls_section_begin|>. Write plain text only. Start your response with a greeting or summary — no XML, no special tokens, just normal language.",
+        content: "STOP calling tools. You have made 20+ tool calls already. NOW respond to the user with a comprehensive text answer based on what you've gathered. Do NOT call any more tools. Do NOT output any special tokens or markup like <|tool_call_begin|> or <|tool_calls_section_begin|>. Write plain text only. Start your response with a greeting or summary — no XML, no special tokens, just normal language.",
       });
       toolCallCounters.set(modelKey, 0);
     }

@@ -142,8 +142,8 @@ def _get_agent_name(home: Path) -> str:
         try:
             data = json.loads(identity_path.read_text(encoding="utf-8"))
             return data.get("name", "anonymous")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read agent name from identity.json: %s", exc)
     return "anonymous"
 
 
@@ -2654,6 +2654,39 @@ async def list_tools() -> list[Tool]:
                 "required": ["query"],
             },
         ),
+        # Brain-First Protocol
+        Tool(
+            name="brain_first_check",
+            description=(
+                "Brain-First Protocol: consult the agent's memory before "
+                "acting on a task. Extracts keywords from the given context, "
+                "searches memory for relevant prior knowledge, and returns "
+                "any matching memories. Use this before starting new work to "
+                "avoid duplicating effort or missing prior decisions."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "context": {
+                        "type": "string",
+                        "description": (
+                            "The task description, prompt, or action context "
+                            "to search memory for"
+                        ),
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tag filter for the memory search",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max memories to return (default: from config, usually 5)",
+                    },
+                },
+                "required": ["context"],
+            },
+        ),
     ]
 
 
@@ -2813,6 +2846,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "itil_cab_vote": _handle_itil_cab_vote,
         "itil_status": _handle_itil_status,
         "itil_kedb_search": _handle_itil_kedb_search,
+        # Brain-First Protocol
+        "brain_first_check": _handle_brain_first_check,
     }
     handler = handlers.get(name)
     if handler is None:
@@ -3154,8 +3189,8 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
                     t.priority.value, ("community", "support_ticket", 50)
                 )
                 break
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to calculate joules for completed task %s: %s", task_id, exc)
 
     return _json_response({
         "completed": True,
@@ -4934,6 +4969,15 @@ async def _handle_itil_status(args: dict) -> list[TextContent]:
 async def _handle_itil_kedb_search(args: dict) -> list[TextContent]:
     """Search the Known Error Database."""
     from .mcp_tools.itil_tools import _handle_itil_kedb_search as _impl
+    return await _impl(args)
+
+
+# ── Brain-First Protocol ──────────────────────────────────
+
+
+async def _handle_brain_first_check(args: dict) -> list[TextContent]:
+    """Consult memory before acting on a task."""
+    from .mcp_tools.brain_first_tools import _handle_brain_first_check as _impl
     return await _impl(args)
 
 

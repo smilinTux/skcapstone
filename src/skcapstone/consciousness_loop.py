@@ -211,8 +211,8 @@ class _OllamaPool:
         if self._conn is not None:
             try:
                 self._conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to close connection socket: %s", exc)
             self._conn = None
             self._created_at = 0.0
 
@@ -995,8 +995,8 @@ class SystemPromptBuilder:
                     f"trust: {anchor.get('trust', 5)}/10, "
                     f"connection: {anchor.get('connection', 5)}/10"
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load warmth anchor: %s", exc)
         return ""
 
     def _load_context(self) -> str:
@@ -1252,7 +1252,8 @@ class ConsciousnessLoop:
         try:
             from skcapstone.mood import MoodTracker
             self._mood_tracker: Optional[Any] = MoodTracker(home=self._home)
-        except Exception:
+        except Exception as exc:
+            logger.warning("MoodTracker unavailable, mood tracking disabled: %s", exc)
             self._mood_tracker = None
 
         # Agent identity for inbox filtering
@@ -1266,7 +1267,8 @@ class ConsciousnessLoop:
         try:
             from skcapstone.peer_directory import PeerDirectory
             self._peer_dir: Optional[Any] = PeerDirectory(home=self._shared_root)
-        except Exception:
+        except Exception as exc:
+            logger.warning("PeerDirectory unavailable, peer tracking disabled: %s", exc)
             self._peer_dir = None
 
     def set_skcomm(self, skcomm) -> None:
@@ -1334,15 +1336,15 @@ class ConsciousnessLoop:
             try:
                 self._observer.stop()
                 self._observer.join(timeout=5)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Error stopping inotify observer: %s", exc)
         # Stop sync watcher if running
         sync_watcher = getattr(self, "_sync_watcher", None)
         if sync_watcher:
             try:
                 sync_watcher.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Error stopping sync watcher: %s", exc)
         self._executor.shutdown(wait=False)
         self._metrics.stop()
         logger.info("Consciousness loop stopped.")
@@ -1353,8 +1355,8 @@ class ConsciousnessLoop:
             try:
                 self._observer.stop()
                 self._observer.join(timeout=5)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Error stopping inotify observer during restart: %s", exc)
             self._observer = None
 
         # Re-launch inotify in a new thread
@@ -1419,8 +1421,8 @@ class ConsciousnessLoop:
             if self._peer_dir is not None:
                 try:
                     self._peer_dir.update_last_seen(sender)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to update peer directory for %s: %s", sender, exc)
             self._metrics.record_message(sender)
 
             # Desktop notification
@@ -1827,8 +1829,8 @@ class ConsciousnessLoop:
             if identity_path.exists():
                 data = json.loads(identity_path.read_text(encoding="utf-8"))
                 return data.get("name", "").lower()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to resolve agent name from identity.json: %s", exc)
         return ""
 
     def _verify_message_signature(self, data: dict) -> str:
@@ -1948,8 +1950,8 @@ class ConsciousnessLoop:
                         queue_size,
                     )
                     return
-            except Exception:
-                pass  # _work_queue might not exist in all Python versions
+            except Exception as exc:
+                logger.debug("Could not check executor queue depth: %s", exc)
 
             # PGP signature verification (soft enforcement — log only)
             sig_sender = _sanitize_peer_name(

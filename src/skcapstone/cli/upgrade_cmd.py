@@ -11,12 +11,15 @@ Commands:
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
 import click
+
+logger = logging.getLogger(__name__)
 
 from ._common import AGENT_HOME, console
 
@@ -62,8 +65,8 @@ def _get_installed_version(package: str) -> Optional[str]:
         for line in result.stdout.splitlines():
             if line.startswith("Version:"):
                 return line.split(":", 1)[1].strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to get installed version for %s: %s", package, exc)
     return None
 
 
@@ -91,8 +94,8 @@ def _get_latest_version(package: str) -> Optional[str]:
                     versions = [v.strip() for v in parts[-1].split(",")]
                     if versions:
                         return versions[0]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to get latest PyPI version for %s: %s", package, exc)
     return None
 
 

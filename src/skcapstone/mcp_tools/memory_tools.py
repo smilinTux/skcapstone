@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _home, _json_response
+
+logger = logging.getLogger(__name__)
 
 TOOLS: list[Tool] = [
     Tool(
@@ -130,8 +134,8 @@ async def _handle_memory_store(args: dict) -> list[TextContent]:
             "importance": entry.importance,
             "tags": entry.tags,
         })
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to push memory.stored activity for %s: %s", entry.memory_id, exc)
     return _json_response({
         "memory_id": entry.memory_id,
         "layer": entry.layer.value,

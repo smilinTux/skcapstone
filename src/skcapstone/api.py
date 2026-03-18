@@ -828,23 +828,23 @@ async def get_dashboard(
                 "consciousness": m.consciousness.value if hasattr(m, "consciousness") else "",
                 "version": m.version,
             }
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to read agent identity from runtime manifest: %s", exc)
     if not agent:
         try:
             identity_path = config.home / "identity" / "identity.json"
             if identity_path.exists():
                 agent = json.loads(identity_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read identity.json for API status: %s", exc)
 
     # Consciousness stats
     c_stats: Dict[str, Any] = {}
     if consciousness:
         try:
             c_stats = dict(consciousness.stats)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read consciousness stats: %s", exc)
 
     # Recent conversations
     conversations: List[Dict[str, Any]] = []
@@ -862,8 +862,8 @@ async def get_dashboard(
                         "last": last.get("timestamp"),
                         "preview": preview,
                     })
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to list recent conversations for API status: %s", exc)
 
     daemon_summary = DaemonSummary(
         running=snap.get("running", True),
@@ -924,8 +924,8 @@ async def get_capstone(
             m = runtime.manifest
             agent = {"name": m.identity.name, "fingerprint": m.identity.fingerprint or ""}
             pillars = {k: v.value for k, v in m.pillar_summary.items()}
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to read agent pillars from runtime manifest: %s", exc)
 
     # Memory stats
     memory = MemorySummary()
@@ -940,8 +940,8 @@ async def get_capstone(
             long_term=ms.long_term,
             status=ms.status.value,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to collect memory stats for capstone API: %s", exc)
 
     # Coordination board
     board: Dict[str, Any] = {"summary": {}, "active": []}
@@ -970,16 +970,16 @@ async def get_capstone(
                 if v.status.value in ("in_progress", "claimed")
             ],
         }
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to collect coordination board data for capstone API: %s", exc)
 
     # Consciousness stats
     c_stats: Dict[str, Any] = {}
     if consciousness:
         try:
             c_stats = dict(consciousness.stats)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read consciousness stats for capstone API: %s", exc)
 
     return CapstoneResponse(
         agent=agent,
@@ -1027,8 +1027,8 @@ async def get_activity_stream(
         try:
             for chunk in _activity.get_history_encoded():
                 yield chunk
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to replay activity stream history: %s", exc)
         # Stream live events; yield keep-alive comments on timeout
         try:
             while True:
@@ -1100,8 +1100,8 @@ async def list_household_agents(
             if identity_path.exists():
                 try:
                     entry["identity"] = json.loads(identity_path.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to read identity for agent %s: %s", agent_name, exc)
 
             hb: Optional[Dict[str, Any]] = None
             hb_path = heartbeats_dir / f"{agent_name.lower()}.json"
@@ -1112,7 +1112,8 @@ async def list_household_agents(
                     hb["alive"] = alive
                     entry["heartbeat"] = hb
                     entry["status"] = hb.get("status", "unknown") if alive else "stale"
-                except Exception:
+                except Exception as exc:
+                    logger.warning("Failed to read heartbeat for agent %s: %s", agent_name, exc)
                     entry["status"] = "unknown"
             else:
                 entry["status"] = "no_heartbeat"
@@ -1174,8 +1175,8 @@ async def get_household_agent(
     if identity_path.exists():
         try:
             entry["identity"] = json.loads(identity_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read identity for agent %s: %s", name, exc)
 
     hb_path = config.shared_root / "heartbeats" / f"{name.lower()}.json"
     if hb_path.exists():
@@ -1185,8 +1186,8 @@ async def get_household_agent(
             hb["alive"] = alive
             entry["heartbeat"] = hb
             entry["status"] = hb.get("status", "unknown") if alive else "stale"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read heartbeat for agent %s: %s", name, exc)
 
     # Memory count
     memory_dir = agent_dir / "memory"
@@ -1249,8 +1250,8 @@ async def list_conversations(
                             last_message_preview=(last_content or "")[:120],
                         )
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read conversation file %s: %s", cf, exc)
     return ConversationsResponse(conversations=conversations)
 
 
@@ -1534,8 +1535,8 @@ def _load_first_argocd_doc(path: Path) -> Optional[dict]:
                     "sync_policy": spec.get("syncPolicy", {}),
                     "manifest_file": path.name,
                 }
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to parse ArgoCD manifest %s: %s", path, exc)
     return None
 
 
@@ -1618,8 +1619,8 @@ def _get_argocd_status() -> dict:
                     "last_synced": (item_status.get("operationState") or {}).get("finishedAt"),
                 }
             source = "yaml+kubectl"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("kubectl ArgoCD status query failed (using yaml only): %s", exc)
 
     # ── Merge and build output ───────────────────────────────────────────────
     apps = []
@@ -1767,8 +1768,8 @@ async def websocket_logs(
                 tail_lines = list(deque(fh, maxlen=50))
             for line in tail_lines:
                 await websocket.send_json({"type": "line", "line": line.rstrip("\n")})
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to replay log tail history over websocket: %s", exc)
 
     # Tail the log file and stream new lines
     try:
@@ -1783,8 +1784,8 @@ async def websocket_logs(
                             for ln in chunk.splitlines():
                                 await websocket.send_json({"type": "line", "line": ln})
                         offset = fh.tell()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Log tail websocket read error: %s", exc)
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
         pass
