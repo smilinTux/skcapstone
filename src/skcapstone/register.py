@@ -88,7 +88,7 @@ def _build_package_registry(workspace: Optional[Path] = None) -> list[dict]:
             "mcp_cmd": None,
             "mcp_args": None,
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "cloud9-python" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace / "pillar-repos" / "cloud9" / "openclaw-plugin-python" / "src" / "index.ts",
         },
         {
             "name": "sksecurity",
@@ -124,7 +124,7 @@ _PILLAR_DIR_MAP: dict[str, Optional[str]] = {
     "skcomm": "skcomm",
     "skchat": "skchat",
     "capauth": "capauth",
-    "cloud9": "cloud9-python",
+    "cloud9": "cloud9",
     "sksecurity": "sksecurity",
     "skseed": "skseed",
     "skgit": None,  # skill dir only, no pillar repo

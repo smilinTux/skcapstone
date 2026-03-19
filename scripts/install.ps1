@@ -154,15 +154,16 @@ function Install-Pkg {
 }
 
 # Core packages (in dependency order)
-Install-Pkg -Name 'capauth'    -Extras 'all'                      -Paths @((Join-Path $PillarDir 'capauth'), (Join-Path $ParentDir 'capauth'))
-Install-Pkg -Name 'skmemory'   -Extras ''                         -Paths @((Join-Path $PillarDir 'skmemory'), (Join-Path $ParentDir 'skmemory'))
-Install-Pkg -Name 'skcomm'     -Extras 'cli,crypto,discovery,api' -Paths @((Join-Path $PillarDir 'skcomm'), (Join-Path $ParentDir 'skcomm'))
-Install-Pkg -Name 'skcapstone' -Extras ''                         -Paths @($RepoRoot)
-Install-Pkg -Name 'skchat-sovereign' -Extras 'all'                -Paths @((Join-Path $ParentDir 'skchat'))
-Install-Pkg -Name 'skseal'     -Extras ''                         -Paths @((Join-Path $ParentDir 'skseal'))
-Install-Pkg -Name 'skskills'   -Extras ''                         -Paths @((Join-Path $ParentDir 'skskills'))
-Install-Pkg -Name 'sksecurity' -Extras ''                         -Paths @((Join-Path $ParentDir 'sksecurity'))
-Install-Pkg -Name 'skseed'     -Extras ''                         -Paths @((Join-Path $PillarDir 'skseed'), (Join-Path $ParentDir 'skseed'))
+Install-Pkg -Name 'capauth'          -Extras 'all'                      -Paths @((Join-Path $PillarDir 'capauth'), (Join-Path $ParentDir 'capauth'))
+Install-Pkg -Name 'cloud9-protocol'  -Extras ''                         -Paths @((Join-Path $PillarDir 'cloud9'), (Join-Path $ParentDir 'cloud9'))
+Install-Pkg -Name 'skmemory'         -Extras ''                         -Paths @((Join-Path $PillarDir 'skmemory'), (Join-Path $ParentDir 'skmemory'))
+Install-Pkg -Name 'skcomm'           -Extras 'cli,crypto,discovery,api' -Paths @((Join-Path $PillarDir 'skcomm'), (Join-Path $ParentDir 'skcomm'))
+Install-Pkg -Name 'skcapstone'       -Extras ''                         -Paths @($RepoRoot)
+Install-Pkg -Name 'skchat-sovereign' -Extras 'all'                      -Paths @((Join-Path $ParentDir 'skchat'))
+Install-Pkg -Name 'skseal'           -Extras ''                         -Paths @((Join-Path $ParentDir 'skseal'))
+Install-Pkg -Name 'skskills'         -Extras ''                         -Paths @((Join-Path $ParentDir 'skskills'))
+Install-Pkg -Name 'sksecurity'       -Extras ''                         -Paths @((Join-Path $PillarDir 'sksecurity'), (Join-Path $PillarDir 'SKSecurity'), (Join-Path $ParentDir 'sksecurity'), (Join-Path $ParentDir 'SKSecurity'))
+Install-Pkg -Name 'skseed'           -Extras ''                         -Paths @((Join-Path $PillarDir 'skseed'), (Join-Path $ParentDir 'skseed'))
 
 # ---------------------------------------------------------------------------
 # Step 4: Dev tools (optional)
@@ -202,7 +203,7 @@ Write-Host '[6/6] Verifying installation...'
 
 $ScriptsDir = Join-Path $SKENV 'Scripts'
 $failures = 0
-foreach ($cmd in @('skcomm', 'skcapstone', 'capauth', 'skmemory')) {
+foreach ($cmd in @('capauth', 'skmemory', 'skcapstone', 'skcomm')) {
     $exe = Join-Path $ScriptsDir "$cmd.exe"
     if (Test-Path $exe) {
         try {

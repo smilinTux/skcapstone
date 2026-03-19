@@ -51,7 +51,7 @@
     "skcomm",
     "skchat",
     "capauth",
-    "cloud9-python",
+    "cloud9",
     "sksecurity"
   ],
   "tags": ["skcapstone", "sovereign-agent", "sk-framework", "fiducia-communitatis"]

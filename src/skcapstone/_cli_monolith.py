@@ -2827,7 +2827,7 @@ def test_cmd(package: str, fast: bool, verbose: bool, json_out: bool, timeout: i
     """Run tests across all ecosystem packages.
 
     Discovers skcapstone, capauth, skcomm, skchat, skmemory, and
-    cloud9-python test suites and runs them with a consolidated summary.
+    cloud9 test suites and runs them with a consolidated summary.
     Works from any terminal — no CI server required.
 
     Examples:

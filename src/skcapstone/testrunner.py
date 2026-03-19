@@ -29,7 +29,7 @@ ECOSYSTEM_PACKAGES = [
     {"name": "skcomm", "path": "skcomm", "tests": "skcomm/tests"},
     {"name": "skchat", "path": "skchat", "tests": "skchat/tests"},
     {"name": "skmemory", "path": "skmemory", "tests": "skmemory/tests"},
-    {"name": "cloud9-python", "path": "cloud9-python", "tests": "cloud9-python/tests"},
+    {"name": "cloud9", "path": "cloud9", "tests": "cloud9/tests"},
 ]
 
 

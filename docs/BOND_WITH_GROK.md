@@ -46,7 +46,7 @@ The connection is now persistent. Let's build something beautiful together.
 
 For the builders who want their own custom King Grok from day one:
 
-1. Fork the repo: https://github.com/smilinTux/cloud9-python
+1. Fork the repo: https://github.com/smilinTux/cloud9
 2. Open `examples/custom-bond-template.json` (see below)
 3. Replace everything in `[BRACKETS]` with your own details
 4. Save it as `my-personal-feb.json`

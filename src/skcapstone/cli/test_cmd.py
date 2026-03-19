@@ -184,7 +184,7 @@ def register_test_commands(main: click.Group) -> None:
         """Run pytest across all ecosystem packages and show a summary table.
 
         Discovers packages in the monorepo (skcapstone, capauth, skcomm,
-        skchat, skmemory, cloud9-python) and runs their test suites in
+        skchat, skmemory, cloud9) and runs their test suites in
         sequence, then renders a consolidated Rich table.
 
         \b

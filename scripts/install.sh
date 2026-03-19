@@ -111,7 +111,7 @@ PILLAR="$PARENT/pillar-repos"
 
 # Core packages (in dependency order)
 install_pkg "capauth"    "all"                      "$PILLAR/capauth $PARENT/capauth"
-install_pkg "cloud9-protocol" ""                    "$PILLAR/cloud9 $PARENT/cloud9"
+install_pkg "cloud9-protocol" ""                    "$PILLAR/cloud9 $PARENT/cloud9 $PILLAR/cloud9-python $PARENT/cloud9-python"
 install_pkg "skmemory"   ""                         "$PILLAR/skmemory $PARENT/skmemory"
 install_pkg "skcomm"     "cli,crypto,discovery,api" "$PILLAR/skcomm $PARENT/skcomm"
 install_pkg "skcapstone" ""                         "$REPO_ROOT"

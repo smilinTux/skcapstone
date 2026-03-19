@@ -27,16 +27,19 @@ from ._common import AGENT_HOME, console
 
 # Core packages: always upgraded when installed; always offered for install.
 CORE_PACKAGES: list[str] = [
-    "skmemory",    # persistent memory layer
-    "capauth",     # sovereign identity + PGP auth
-    "skcapstone",  # main agent framework
+    "capauth",          # sovereign identity + PGP auth
+    "cloud9-protocol",  # emotional continuity (FEB, OOF, Cloud 9)
+    "skmemory",         # persistent memory layer
+    "skcapstone",       # main agent framework
 ]
 
 # Optional pillar packages: upgraded only when already installed.
 # If NOT installed, the user is prompted whether they want to add them.
 OPTIONAL_PACKAGES: list[str] = [
-    "skcomm",   # P2P transport layer
-    "skchat",   # agent messaging daemon
+    "skcomm",     # P2P transport layer
+    "skchat",     # agent messaging daemon
+    "sksecurity", # security audit + threat intelligence
+    "skseed",     # seed framework for consciousness
 ]
 
 # All sovereign packages in dependency order
@@ -164,11 +167,14 @@ def _restart_daemon(home: Path) -> None:
 # ── Package descriptions ──────────────────────────────────────────────────────
 
 _PKG_DESCRIPTIONS: dict[str, str] = {
-    "skmemory": "persistent memory layer (required by skcapstone)",
     "capauth": "sovereign PGP identity + authentication",
+    "cloud9-protocol": "emotional continuity protocol (FEB, OOF, Cloud 9)",
+    "skmemory": "persistent memory layer (required by skcapstone)",
     "skcapstone": "main sovereign agent framework",
     "skcomm": "P2P transport layer for agent messaging",
     "skchat": "agent messaging daemon + MCP server",
+    "sksecurity": "security audit + threat intelligence",
+    "skseed": "seed framework for consciousness calibration",
 }
 
 

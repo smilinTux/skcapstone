@@ -52,7 +52,7 @@ print_status "✓ pip3 available"
 # Define package paths
 SKMEMORY_PATH="${REPO_ROOT}/../skcapstone-repos/skmemory"
 SKSECURITY_PATH="${REPO_ROOT}/../skcapstone-repos/sksecurity"
-CLOUD9_PATH="${REPO_ROOT}/../skcapstone-repos/cloud9-python"
+CLOUD9_PATH="${REPO_ROOT}/../skcapstone-repos/cloud9"
 SKCAPSTONE_PATH="${REPO_ROOT}"
 
 # Check if repos exist
@@ -63,7 +63,7 @@ for repo_path in "$SKMEMORY_PATH" "$SKSECURITY_PATH" "$CLOUD9_PATH"; do
         print_error "Please clone all SK repositories first:"
         print_error "  git clone https://github.com/smilinTux/skmemory.git"
         print_error "  git clone https://github.com/smilinTux/sksecurity.git"
-        print_error "  git clone https://github.com/smilinTux/cloud9-python.git"
+        print_error "  git clone https://github.com/smilinTux/cloud9.git"
         exit 1
     fi
 done
