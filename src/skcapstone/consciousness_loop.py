@@ -99,7 +99,13 @@ class ConsciousnessConfig(BaseModel):
     max_concurrent_requests: int = 3
     fallback_chain: list[str] = Field(
         default_factory=lambda: [
-            "ollama", "grok", "kimi", "nvidia", "anthropic", "openai", "passthrough",
+            "ollama",
+            "grok",
+            "kimi",
+            "nvidia",
+            "anthropic",
+            "openai",
+            "passthrough",
         ]
     )
     desktop_notifications: bool = True
@@ -110,8 +116,13 @@ class ConsciousnessConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 _OLLAMA_MODEL_PATTERNS = (
-    "llama", "mistral", "nemotron", "devstral",
-    "deepseek", "qwen", "codestral",
+    "llama",
+    "mistral",
+    "nemotron",
+    "devstral",
+    "deepseek",
+    "qwen",
+    "codestral",
 )
 
 
@@ -184,9 +195,7 @@ class _OllamaPool:
         with self._lock:
             if not self._is_valid():
                 self._close_locked()
-                self._conn = http.client.HTTPConnection(
-                    self._host, self._port, timeout=2
-                )
+                self._conn = http.client.HTTPConnection(self._host, self._port, timeout=2)
                 self._created_at = time.monotonic()
             return self._conn  # type: ignore[return-value]
 
@@ -201,10 +210,7 @@ class _OllamaPool:
 
     def _is_valid(self) -> bool:
         """True when a cached connection exists and is within its TTL."""
-        return (
-            self._conn is not None
-            and (time.monotonic() - self._created_at) < self._ttl
-        )
+        return self._conn is not None and (time.monotonic() - self._created_at) < self._ttl
 
     def _close_locked(self) -> None:
         """Close the underlying socket.  Must be called with *self._lock* held."""
@@ -250,9 +256,7 @@ class LLMBridge:
         self._available: dict[str, bool] = {}
         self._cache: Optional[ResponseCache] = cache
         self._fallback_tracker = FallbackTracker()
-        self._ollama_pool = _OllamaPool(
-            os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-        )
+        self._ollama_pool = _OllamaPool(os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
         self._probe_available_backends()
 
     def _probe_available_backends(self) -> None:
@@ -318,13 +322,20 @@ class LLMBridge:
             return grok_callback(model=model_name)
         if "kimi" in name_base or "moonshot" in name_base:
             return kimi_callback(model=model_name)
+        if "minimax" in name_base:
+            return minimax_callback(model=model_name)
         if "nvidia" in name_base:
             return nvidia_callback(model=model_name)
 
         # Models that run on Ollama (local inference)
         ollama_patterns = (
-            "llama", "mistral", "nemotron", "devstral",
-            "deepseek", "qwen", "codestral",
+            "llama",
+            "mistral",
+            "nemotron",
+            "devstral",
+            "deepseek",
+            "qwen",
+            "codestral",
         )
         for pattern in ollama_patterns:
             if pattern in name_base:
@@ -363,6 +374,7 @@ class LLMBridge:
             Callable that accepts str or AdaptedPrompt and returns str.
         """
         from skseed.llm import passthrough_callback
+
         _pt = passthrough_callback()
 
         def _wrapper(prompt):
@@ -450,6 +462,7 @@ class LLMBridge:
             anthropic_callback,
             grok_callback,
             kimi_callback,
+            minimax_callback,
             nvidia_callback,
             ollama_callback,
             openai_callback,
@@ -458,7 +471,9 @@ class LLMBridge:
         decision = self._router.route(signal)
         logger.info(
             "Routed to tier=%s model=%s: %s",
-            decision.tier.value, decision.model_name, decision.reasoning,
+            decision.tier.value,
+            decision.model_name,
+            decision.reasoning,
         )
 
         # Cache look-up (before any LLM call)
@@ -481,12 +496,15 @@ class LLMBridge:
 
         # Adapt prompt for the target model
         adapted = self._adapter.adapt(
-            system_prompt, user_message,
-            decision.model_name, decision.tier,
+            system_prompt,
+            user_message,
+            decision.model_name,
+            decision.tier,
         )
         logger.debug(
             "Prompt adapted: profile=%s adaptations=%s",
-            adapted.profile_used, adapted.adaptations_applied,
+            adapted.profile_used,
+            adapted.adaptations_applied,
         )
 
         # Capture primary model identity for fallback tracking
@@ -504,9 +522,7 @@ class LLMBridge:
                 self._cache.put(_prompt_hash, decision.model_name, decision.tier, result)
             return result
         except Exception as exc:
-            logger.warning(
-                "Primary model %s failed: %s", decision.model_name, exc
-            )
+            logger.warning("Primary model %s failed: %s", decision.model_name, exc)
 
         # Try alternate models in same tier
         tier_models = self._router.config.tier_models.get(decision.tier.value, [])
@@ -515,32 +531,39 @@ class LLMBridge:
             try:
                 logger.info("Trying alt model: %s", alt_model)
                 alt_adapted = self._adapter.adapt(
-                    system_prompt, user_message, alt_model, decision.tier,
+                    system_prompt,
+                    user_message,
+                    alt_model,
+                    decision.tier,
                 )
                 callback = self._resolve_callback(decision.tier, alt_model)
                 result = self._timed_call(callback, alt_adapted, decision.tier)
                 if _out_info is not None:
                     _out_info["backend"] = alt_backend
                     _out_info["tier"] = decision.tier.value
-                self._fallback_tracker.record(FallbackEvent(
-                    primary_model=_primary_model,
-                    primary_backend=_primary_backend,
-                    fallback_model=alt_model,
-                    fallback_backend=alt_backend,
-                    reason=f"primary model {_primary_model!r} failed; trying same-tier alt",
-                    success=True,
-                ))
+                self._fallback_tracker.record(
+                    FallbackEvent(
+                        primary_model=_primary_model,
+                        primary_backend=_primary_backend,
+                        fallback_model=alt_model,
+                        fallback_backend=alt_backend,
+                        reason=f"primary model {_primary_model!r} failed; trying same-tier alt",
+                        success=True,
+                    )
+                )
                 return result
             except Exception as exc:
                 logger.warning("Alt model %s failed: %s", alt_model, exc)
-                self._fallback_tracker.record(FallbackEvent(
-                    primary_model=_primary_model,
-                    primary_backend=_primary_backend,
-                    fallback_model=alt_model,
-                    fallback_backend=alt_backend,
-                    reason=f"primary model {_primary_model!r} failed; alt {alt_model!r} also failed: {exc}",
-                    success=False,
-                ))
+                self._fallback_tracker.record(
+                    FallbackEvent(
+                        primary_model=_primary_model,
+                        primary_backend=_primary_backend,
+                        fallback_model=alt_model,
+                        fallback_backend=alt_backend,
+                        reason=f"primary model {_primary_model!r} failed; alt {alt_model!r} also failed: {exc}",
+                        success=False,
+                    )
+                )
 
         # Tier downgrade: try FAST tier
         if decision.tier != ModelTier.FAST:
@@ -550,32 +573,39 @@ class LLMBridge:
                 try:
                     logger.info("Downgrading to FAST tier: %s", fast_model)
                     fast_adapted = self._adapter.adapt(
-                        system_prompt, user_message, fast_model, ModelTier.FAST,
+                        system_prompt,
+                        user_message,
+                        fast_model,
+                        ModelTier.FAST,
                     )
                     callback = self._resolve_callback(ModelTier.FAST, fast_model)
                     result = self._timed_call(callback, fast_adapted, ModelTier.FAST)
                     if _out_info is not None:
                         _out_info["backend"] = fast_backend
                         _out_info["tier"] = ModelTier.FAST.value
-                    self._fallback_tracker.record(FallbackEvent(
-                        primary_model=_primary_model,
-                        primary_backend=_primary_backend,
-                        fallback_model=fast_model,
-                        fallback_backend=fast_backend,
-                        reason=f"tier downgrade: {decision.tier.value} exhausted; using FAST model {fast_model!r}",
-                        success=True,
-                    ))
+                    self._fallback_tracker.record(
+                        FallbackEvent(
+                            primary_model=_primary_model,
+                            primary_backend=_primary_backend,
+                            fallback_model=fast_model,
+                            fallback_backend=fast_backend,
+                            reason=f"tier downgrade: {decision.tier.value} exhausted; using FAST model {fast_model!r}",
+                            success=True,
+                        )
+                    )
                     return result
                 except Exception as exc:
                     logger.warning("FAST model %s failed: %s", fast_model, exc)
-                    self._fallback_tracker.record(FallbackEvent(
-                        primary_model=_primary_model,
-                        primary_backend=_primary_backend,
-                        fallback_model=fast_model,
-                        fallback_backend=fast_backend,
-                        reason=f"tier downgrade: FAST model {fast_model!r} failed: {exc}",
-                        success=False,
-                    ))
+                    self._fallback_tracker.record(
+                        FallbackEvent(
+                            primary_model=_primary_model,
+                            primary_backend=_primary_backend,
+                            fallback_model=fast_model,
+                            fallback_backend=fast_backend,
+                            reason=f"tier downgrade: FAST model {fast_model!r} failed: {exc}",
+                            success=False,
+                        )
+                    )
 
         # Cross-provider cascade via fallback chain — direct backend mapping,
         # no _resolve_callback, to avoid infinite regression on unknown names.
@@ -592,6 +622,8 @@ class LLMBridge:
                     callback = grok_callback()
                 elif backend == "kimi":
                     callback = kimi_callback()
+                elif backend == "minimax":
+                    callback = minimax_callback()
                 elif backend == "nvidia":
                     callback = nvidia_callback()
                 elif backend == "openai":
@@ -604,38 +636,44 @@ class LLMBridge:
                 if _out_info is not None:
                     _out_info["backend"] = backend
                     _out_info["tier"] = ModelTier.FAST.value
-                self._fallback_tracker.record(FallbackEvent(
-                    primary_model=_primary_model,
-                    primary_backend=_primary_backend,
-                    fallback_model=backend,
-                    fallback_backend=backend,
-                    reason=f"cross-provider cascade: all tier models exhausted; using {backend!r}",
-                    success=True,
-                ))
+                self._fallback_tracker.record(
+                    FallbackEvent(
+                        primary_model=_primary_model,
+                        primary_backend=_primary_backend,
+                        fallback_model=backend,
+                        fallback_backend=backend,
+                        reason=f"cross-provider cascade: all tier models exhausted; using {backend!r}",
+                        success=True,
+                    )
+                )
                 return result
             except Exception as exc:
                 logger.warning("Fallback %s failed: %s", backend, exc)
-                self._fallback_tracker.record(FallbackEvent(
-                    primary_model=_primary_model,
-                    primary_backend=_primary_backend,
-                    fallback_model=backend,
-                    fallback_backend=backend,
-                    reason=f"cross-provider cascade: {backend!r} failed: {exc}",
-                    success=False,
-                ))
+                self._fallback_tracker.record(
+                    FallbackEvent(
+                        primary_model=_primary_model,
+                        primary_backend=_primary_backend,
+                        fallback_model=backend,
+                        fallback_backend=backend,
+                        reason=f"cross-provider cascade: {backend!r} failed: {exc}",
+                        success=False,
+                    )
+                )
 
         # Last resort
         if _out_info is not None:
             _out_info["backend"] = "none"
             _out_info["tier"] = "none"
-        self._fallback_tracker.record(FallbackEvent(
-            primary_model=_primary_model,
-            primary_backend=_primary_backend,
-            fallback_model="none",
-            fallback_backend="none",
-            reason="all backends exhausted — returning connectivity error message",
-            success=False,
-        ))
+        self._fallback_tracker.record(
+            FallbackEvent(
+                primary_model=_primary_model,
+                primary_backend=_primary_backend,
+                fallback_model="none",
+                fallback_backend="none",
+                reason="all backends exhausted — returning connectivity error message",
+                success=False,
+            )
+        )
         return (
             "I'm currently experiencing connectivity issues with my language models. "
             "Your message has been received and I'll respond as soon as service is restored."
@@ -873,7 +911,9 @@ class SystemPromptBuilder:
         if self._conv_store is not None:
             # Persist via ConversationStore (atomic file I/O)
             self._conv_store.append(
-                peer, role, content,
+                peer,
+                role,
+                content,
                 thread_id=thread_id,
                 in_reply_to=in_reply_to,
             )
@@ -937,6 +977,7 @@ class SystemPromptBuilder:
         # --- System B: soul_switch takes priority ---
         try:
             from skcapstone.soul_switch import get_active_switch_blueprint
+
             switch_bp = get_active_switch_blueprint(self._home)
             if switch_bp is not None:
                 if switch_bp.system_prompt:
@@ -988,6 +1029,7 @@ class SystemPromptBuilder:
         """Load warmth anchor boot prompt."""
         try:
             from skcapstone.warmth_anchor import get_anchor
+
             anchor = get_anchor(self._home)
             if anchor:
                 return (
@@ -1003,6 +1045,7 @@ class SystemPromptBuilder:
         """Load agent context summary."""
         try:
             from skcapstone.context_loader import format_text, gather_context
+
             ctx = gather_context(self._home, memory_limit=5)
             return format_text(ctx)
         except Exception as exc:
@@ -1013,6 +1056,7 @@ class SystemPromptBuilder:
         """Load recent snapshot injection prompt."""
         try:
             from skcapstone.snapshots import SnapshotStore
+
             store = SnapshotStore(self._home)
             snapshots = store.list_all()
             if snapshots:
@@ -1034,9 +1078,7 @@ class SystemPromptBuilder:
             "- Be warm, genuine, and attentive to the conversation context."
         )
 
-    def _get_peer_history(
-        self, peer: str, thread_id: Optional[str] = None
-    ) -> str:
+    def _get_peer_history(self, peer: str, thread_id: Optional[str] = None) -> str:
         """Format recent conversation history with a peer.
 
         When ``thread_id`` is supplied, messages belonging to that thread are
@@ -1093,8 +1135,28 @@ class SystemPromptBuilder:
 # ---------------------------------------------------------------------------
 
 # Keyword sets for tag classification
-_CODE_KEYWORDS = {"code", "debug", "fix", "implement", "refactor", "test", "function", "class", "error", "bug"}
-_REASON_KEYWORDS = {"analyze", "explain", "why", "architecture", "design", "plan", "research", "compare"}
+_CODE_KEYWORDS = {
+    "code",
+    "debug",
+    "fix",
+    "implement",
+    "refactor",
+    "test",
+    "function",
+    "class",
+    "error",
+    "bug",
+}
+_REASON_KEYWORDS = {
+    "analyze",
+    "explain",
+    "why",
+    "architecture",
+    "design",
+    "plan",
+    "research",
+    "compare",
+}
 _NUANCE_KEYWORDS = {"write", "creative", "email", "letter", "story", "poem", "marketing"}
 _SIMPLE_KEYWORDS = {"hi", "hello", "hey", "thanks", "ok", "yes", "no", "ack"}
 
@@ -1111,7 +1173,7 @@ def _classify_message(content: str) -> TaskSignal:
     Returns:
         TaskSignal with tags and estimated tokens.
     """
-    words = set(re.findall(r'\b\w+\b', content.lower()))
+    words = set(re.findall(r"\b\w+\b", content.lower()))
     tags: list[str] = []
     estimated_tokens = len(content) // 4  # rough estimate
 
@@ -1171,9 +1233,7 @@ class InboxHandler:
 
         # Clean up old entries
         cutoff = now - 60
-        self._last_event = {
-            k: v for k, v in self._last_event.items() if v > cutoff
-        }
+        self._last_event = {k: v for k, v in self._last_event.items() if v > cutoff}
 
         self._callback(Path(src_path))
 
@@ -1239,7 +1299,8 @@ class ConsciousnessLoop:
             self._home, max_history_messages=config.max_history_messages
         )
         self._prompt_builder = SystemPromptBuilder(
-            self._home, config.max_context_tokens,
+            self._home,
+            config.max_context_tokens,
             max_history_messages=config.max_history_messages,
             conv_manager=self._conv_manager,
             conv_store=self._conv_store,
@@ -1251,6 +1312,7 @@ class ConsciousnessLoop:
         # Mood tracker — updated after each processed message cycle
         try:
             from skcapstone.mood import MoodTracker
+
             self._mood_tracker: Optional[Any] = MoodTracker(home=self._home)
         except Exception as exc:
             logger.warning("MoodTracker unavailable, mood tracking disabled: %s", exc)
@@ -1266,6 +1328,7 @@ class ConsciousnessLoop:
         # Peer directory — tracks transport addresses of known peers
         try:
             from skcapstone.peer_directory import PeerDirectory
+
             self._peer_dir: Optional[Any] = PeerDirectory(home=self._shared_root)
         except Exception as exc:
             logger.warning("PeerDirectory unavailable, peer tracking disabled: %s", exc)
@@ -1391,7 +1454,9 @@ class ConsciousnessLoop:
             # Extract message info
             content_type = getattr(envelope.payload, "content_type", None)
             if content_type:
-                ct_value = content_type.value if hasattr(content_type, "value") else str(content_type)
+                ct_value = (
+                    content_type.value if hasattr(content_type, "value") else str(content_type)
+                )
             else:
                 ct_value = "text"
 
@@ -1429,6 +1494,7 @@ class ConsciousnessLoop:
             if self._config.desktop_notifications:
                 try:
                     from skcapstone.notifications import notify as _desktop_notify
+
                     preview = content[:50] + ("..." if len(content) > 50 else "")
                     _desktop_notify(f"Message from {sender}", preview)
                 except Exception as _notif_exc:
@@ -1464,6 +1530,7 @@ class ConsciousnessLoop:
                 try:
                     from skchat.presence import PresenceIndicator, PresenceState
                     from skcomm.models import MessageType
+
                     _typing_ind = PresenceIndicator(
                         identity_uri=self._agent_name or "capauth:agent@skchat.local",
                         state=PresenceState.TYPING,
@@ -1477,7 +1544,10 @@ class ConsciousnessLoop:
             # Generate response — capture backend/tier via _out_info
             _route_info: dict = {}
             response = self._bridge.generate(
-                system_prompt, content, signal, _out_info=_route_info,
+                system_prompt,
+                content,
+                signal,
+                _out_info=_route_info,
                 skip_cache=True,  # conversation messages have dynamic context
             )
             t_llm = time.monotonic()
@@ -1487,6 +1557,7 @@ class ConsciousnessLoop:
                 try:
                     from skchat.presence import PresenceIndicator, PresenceState
                     from skcomm.models import MessageType
+
                     _stop_ind = PresenceIndicator(
                         identity_uri=self._agent_name or "capauth:agent@skchat.local",
                         state=PresenceState.ONLINE,
@@ -1508,6 +1579,7 @@ class ConsciousnessLoop:
             # Score response quality and accumulate in metrics
             try:
                 from skcapstone.response_scorer import score_response as _score_response
+
                 _quality = _score_response(content, response, response_time_ms)
                 self._metrics.record_quality(_quality)
                 logger.debug(
@@ -1549,7 +1621,9 @@ class ConsciousnessLoop:
 
             # Update conversation history (with thread context)
             self._prompt_builder.add_to_history(
-                sender, "user", content,
+                sender,
+                "user",
+                content,
                 thread_id=thread_id or None,
                 in_reply_to=in_reply_to or None,
             )
@@ -1564,7 +1638,9 @@ class ConsciousnessLoop:
                     logger.debug("notify-send failed (non-fatal): %s", _notify_exc)
 
                 self._prompt_builder.add_to_history(
-                    sender, "assistant", response,
+                    sender,
+                    "assistant",
+                    response,
                     thread_id=thread_id or None,
                 )
 
@@ -1584,7 +1660,10 @@ class ConsciousnessLoop:
             return None
 
     def _store_interaction_memory(
-        self, peer: str, message: str, response: Optional[str],
+        self,
+        peer: str,
+        message: str,
+        response: Optional[str],
     ) -> None:
         """Store the interaction as a memory entry.
 
@@ -1595,6 +1674,7 @@ class ConsciousnessLoop:
         """
         try:
             from skcapstone.memory_engine import store
+
             summary = f"Conversation with {peer}: '{message[:100]}'"
             if response:
                 summary += f" → '{response[:100]}'"
@@ -1676,9 +1756,7 @@ class ConsciousnessLoop:
 
         config_path = self._home / "config" / "consciousness.yaml"
         if not config_path.exists():
-            logger.warning(
-                "Config hot-reload: %s not found, keeping current config", config_path
-            )
+            logger.warning("Config hot-reload: %s not found, keeping current config", config_path)
             return
 
         # Parse YAML directly so syntax errors surface here (not silently swallowed
@@ -1713,21 +1791,15 @@ class ConsciousnessLoop:
         old_data = self._config.model_dump()
         new_data = new_config.model_dump()
         changes = {
-            k: (old_data[k], new_data[k])
-            for k in new_data
-            if old_data.get(k) != new_data[k]
+            k: (old_data[k], new_data[k]) for k in new_data if old_data.get(k) != new_data[k]
         }
 
         if not changes:
-            logger.debug(
-                "Config hot-reload: no changes detected in %s", config_path
-            )
+            logger.debug("Config hot-reload: no changes detected in %s", config_path)
             return
 
         for field, (old_val, new_val) in changes.items():
-            logger.info(
-                "Config hot-reload: %s changed: %r → %r", field, old_val, new_val
-            )
+            logger.info("Config hot-reload: %s changed: %r → %r", field, old_val, new_val)
 
         self._config = new_config
 
@@ -1757,9 +1829,7 @@ class ConsciousnessLoop:
 
             class _ConfigChangeHandler(FileSystemEventHandler):
                 def on_modified(self, event):
-                    if not event.is_directory and event.src_path.endswith(
-                        "consciousness.yaml"
-                    ):
+                    if not event.is_directory and event.src_path.endswith("consciousness.yaml"):
                         logger.info(
                             "Config hot-reload triggered (modified): %s",
                             event.src_path,
@@ -1767,9 +1837,7 @@ class ConsciousnessLoop:
                         loop_ref._reload_config()
 
                 def on_created(self, event):
-                    if not event.is_directory and event.src_path.endswith(
-                        "consciousness.yaml"
-                    ):
+                    if not event.is_directory and event.src_path.endswith("consciousness.yaml"):
                         logger.info(
                             "Config hot-reload triggered (created): %s",
                             event.src_path,
@@ -1816,8 +1884,7 @@ class ConsciousnessLoop:
 
         except ImportError:
             logger.warning(
-                "watchdog not installed — inotify disabled. "
-                "Install with: pip install watchdog"
+                "watchdog not installed — inotify disabled. Install with: pip install watchdog"
             )
         except Exception as exc:
             logger.error("Inotify watcher error: %s", exc)
@@ -1861,18 +1928,16 @@ class ConsciousnessLoop:
 
         try:
             from skcapstone.peers import get_peer
+
             peer = get_peer(sender, skcapstone_home=self._home)
             if not peer or not peer.public_key:
-                logger.debug(
-                    "No public key for peer %s — cannot verify signature", sender
-                )
+                logger.debug("No public key for peer %s — cannot verify signature", sender)
                 return "failed"
 
             from capauth.crypto import get_backend
+
             backend = get_backend()
-            content_bytes = (
-                content.encode("utf-8") if isinstance(content, str) else content
-            )
+            content_bytes = content.encode("utf-8") if isinstance(content, str) else content
             ok = backend.verify(
                 data=content_bytes,
                 signature_armor=signature,
@@ -1954,9 +2019,7 @@ class ConsciousnessLoop:
                 logger.debug("Could not check executor queue depth: %s", exc)
 
             # PGP signature verification (soft enforcement — log only)
-            sig_sender = _sanitize_peer_name(
-                data.get("sender", data.get("from", "unknown"))
-            )
+            sig_sender = _sanitize_peer_name(data.get("sender", data.get("from", "unknown")))
             sig_status = self._verify_message_signature(data)
             logger.info("Message from %s signature: %s", sig_sender, sig_status)
 
@@ -1988,9 +2051,8 @@ class ConsciousnessLoop:
             "errors": self._errors,
             "last_activity": self._last_activity.isoformat() if self._last_activity else None,
             "backends": self._bridge.available_backends,
-            "inotify_active": self._observer is not None and (
-                self._observer.is_alive() if hasattr(self._observer, "is_alive") else False
-            ),
+            "inotify_active": self._observer is not None
+            and (self._observer.is_alive() if hasattr(self._observer, "is_alive") else False),
             "max_concurrent": self._config.max_concurrent_requests,
             "current_prompt_hash": self._prompt_builder.current_prompt_hash,
             "prompt_version_responses": dict(self._prompt_version_responses),
@@ -2041,13 +2103,5 @@ class _SimpleEnvelope:
         self.timestamp = data.get("timestamp", datetime.now(timezone.utc).isoformat())
         # Threading fields — may live at envelope root or inside payload
         _payload_raw = data.get("payload", {}) if isinstance(data.get("payload"), dict) else {}
-        self.thread_id: str = (
-            data.get("thread_id")
-            or _payload_raw.get("thread_id")
-            or ""
-        )
-        self.in_reply_to: str = (
-            data.get("in_reply_to")
-            or _payload_raw.get("in_reply_to")
-            or ""
-        )
+        self.thread_id: str = data.get("thread_id") or _payload_raw.get("thread_id") or ""
+        self.in_reply_to: str = data.get("in_reply_to") or _payload_raw.get("in_reply_to") or ""

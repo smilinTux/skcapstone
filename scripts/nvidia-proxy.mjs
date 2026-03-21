@@ -392,6 +392,7 @@ function stripToolCallHistory(messages) {
 /** Tools that ALWAYS survive reduction — guaranteed slots, never cut */
 const GUARANTEED_TOOLS = [
   "exec", "read", "write", "edit", "message",
+  "notion_read", "notion_append", "notion_add_todo",
 ];
 
 /**
@@ -448,6 +449,15 @@ const TOOL_GROUPS = {
   // Projects & Notion (Lumina delegates to project-ops via sessions_spawn)
   "notion|project|brother john|swapseat|swap seat|chiro|davidrich|board|kanban|milestone": [
     "notion_read", "notion_append", "notion_add_todo", "sessions_spawn", "subagents", "exec", "read",
+  ],
+  // Google Drive & file search
+  "gdrive|google drive|drive|shared folder|gtd folder|spreadsheet|google doc": [
+    "gdrive_search", "gdrive_list", "gdrive_read", "gdrive_shared", "exec",
+  ],
+  // Nextcloud files, calendar, notes, deck
+  "nextcloud|skhub|webdav|deck|nc_|calendar event|nextcloud note": [
+    "nextcloud_list_files", "nextcloud_read_file", "nextcloud_search_files",
+    "nextcloud_calendar_upcoming", "nextcloud_notes_search", "nextcloud_deck_boards", "exec",
   ],
   // Creative / ComfyUI image & video generation
   "image|picture|photo|art|draw|render|comfyui|comfy|video|animat|creative|sdxl|character|portrait|selfie": [
@@ -613,7 +623,7 @@ async function proxyRequest(clientReq, clientRes) {
   delete parsed.stream_options;
   // With 94 tools the model almost always tries parallel calls.
   // Reduce to max 16 most relevant tools on first attempt.
-  // 5 guaranteed (exec,read,write,edit,message) + 11 scored slots.
+  // 8 guaranteed (exec,read,write,edit,message,notion_*) + 8 scored slots.
   if (allTools.length > 16) {
     parsed.tools = reduceTools(allTools, parsed.messages, 16);
     const names = parsed.tools.map(t => t.function?.name).join(",");
@@ -866,7 +876,7 @@ const server = http.createServer(proxyRequest);
 server.listen(port, "127.0.0.1", () => {
   console.log(`[nvidia-proxy] listening on http://127.0.0.1:${port}`);
   console.log(`[nvidia-proxy] proxying to ${targetUrl.origin}`);
-  console.log(`[nvidia-proxy] retry strategy: 16 tools (5 guaranteed)→8 tools→1 tool (forced)→text-only (max ${MAX_RETRIES} attempts)`);
+  console.log(`[nvidia-proxy] retry strategy: 16 tools (8 guaranteed)→8 tools→1 tool (forced)→text-only (max ${MAX_RETRIES} attempts)`);
   console.log(`[nvidia-proxy] also trims multi-tool responses to single tool call`);
 });
 
