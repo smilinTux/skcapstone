@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from skcapstone.pillars.consciousness import initialize_consciousness
 from skcapstone.pillars.identity import generate_identity
 from skcapstone.pillars.security import (
     AuditEntry,
@@ -163,3 +164,75 @@ class TestSecurityPillar:
         """read_audit_log returns empty list when no log exists."""
         entries = read_audit_log(tmp_path / "nonexistent")
         assert entries == []
+
+
+class TestConsciousnessPillar:
+    """Tests for consciousness pillar initialization (SKWhisper + SKTrip)."""
+
+    def test_returns_missing_when_no_skwhisper(self, tmp_agent_home: Path):
+        """initialize_consciousness returns MISSING when no SKWhisper data exists."""
+        state = initialize_consciousness(tmp_agent_home)
+        assert state.status == PillarStatus.MISSING
+
+    def test_degraded_with_digested_sessions_no_daemon(self, tmp_agent_home: Path, monkeypatch):
+        """DEGRADED when sessions have been digested but daemon is not running."""
+        import os
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
+        whisper_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write state.json with one digested session
+        state_json = whisper_dir / "state.json"
+        state_json.write_text(json.dumps({
+            "last_digest": "2026-03-25T12:00:00+00:00",
+            "sessions": {
+                "abc123": {"digested_at": "2026-03-25T12:00:00+00:00"}
+            }
+        }))
+
+        # Daemon not running (systemctl will fail in test env)
+        state = initialize_consciousness(tmp_agent_home)
+        assert state.sessions_digested == 1
+        assert state.sessions_pending == 0
+        assert state.status in (PillarStatus.DEGRADED, PillarStatus.ACTIVE)
+
+    def test_whisper_md_age_tracked(self, tmp_agent_home: Path):
+        """whisper.md existence and age are captured correctly."""
+        import os
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
+        whisper_dir.mkdir(parents=True, exist_ok=True)
+
+        whisper_md = whisper_dir / "whisper.md"
+        whisper_md.write_text("# Whisper context\n")
+
+        state = initialize_consciousness(tmp_agent_home)
+        assert state.whisper_md == whisper_md
+        assert state.whisper_md_age_hours >= 0.0
+
+    def test_patterns_json_topic_count(self, tmp_agent_home: Path):
+        """topics_tracked reflects the number of topics in patterns.json."""
+        import os
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
+        whisper_dir.mkdir(parents=True, exist_ok=True)
+
+        patterns = whisper_dir / "patterns.json"
+        patterns.write_text(json.dumps({
+            "topics": {"sovereignty": {}, "memory": {}, "consciousness": {}}
+        }))
+
+        state = initialize_consciousness(tmp_agent_home)
+        assert state.topics_tracked == 3
+
+    def test_trip_sessions_counted(self, tmp_agent_home: Path):
+        """trip_sessions counts .json files in the sktrip directory."""
+        import os
+        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        trip_dir = tmp_agent_home / "agents" / agent_name / "sktrip"
+        trip_dir.mkdir(parents=True, exist_ok=True)
+        (trip_dir / "trip-001.json").write_text("{}")
+        (trip_dir / "trip-002.json").write_text("{}")
+
+        state = initialize_consciousness(tmp_agent_home)
+        assert state.trip_sessions == 2

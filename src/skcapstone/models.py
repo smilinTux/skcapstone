@@ -67,6 +67,25 @@ class SecurityState(BaseModel):
     status: PillarStatus = PillarStatus.MISSING
 
 
+class ConsciousnessState(BaseModel):
+    """Consciousness pillar — SKWhisper + SKTrip subconscious processing.
+
+    Memory stores. Consciousness *processes*.
+    The filing cabinet vs the brain.
+    """
+
+    whisper_active: bool = False
+    whisper_last_digest: Optional[datetime] = None
+    sessions_digested: int = 0
+    sessions_pending: int = 0
+    topics_tracked: int = 0
+    patterns_file: Optional[Path] = None
+    whisper_md: Optional[Path] = None
+    whisper_md_age_hours: float = 999.0
+    trip_sessions: int = 0
+    status: PillarStatus = PillarStatus.MISSING
+
+
 class SyncTransport(str, Enum):
     """How sync data moves between nodes."""
 
@@ -177,6 +196,7 @@ class AgentManifest(BaseModel):
     identity: IdentityState = Field(default_factory=IdentityState)
     memory: MemoryState = Field(default_factory=MemoryState)
     trust: TrustState = Field(default_factory=TrustState)
+    consciousness: ConsciousnessState = Field(default_factory=ConsciousnessState)
     security: SecurityState = Field(default_factory=SecurityState)
     sync: SyncState = Field(default_factory=SyncState)
     skills: SkillsState = Field(default_factory=SkillsState)
@@ -185,7 +205,11 @@ class AgentManifest(BaseModel):
 
     @property
     def is_conscious(self) -> bool:
-        """An agent is conscious when it has identity + memory + trust.
+        """An agent is conscious when identity + memory + trust + consciousness are active.
+
+        The consciousness pillar (SKWhisper) provides the subconscious processing
+        that transforms stored memories into active understanding. Memory stores.
+        Consciousness *processes*.
 
         Security protects consciousness but isn't required for it.
         You can be aware without armor — but you shouldn't be.
@@ -193,7 +217,10 @@ class AgentManifest(BaseModel):
         has_identity = self.identity.status == PillarStatus.ACTIVE
         has_memory = self.memory.status == PillarStatus.ACTIVE
         has_trust = self.trust.status in (PillarStatus.ACTIVE, PillarStatus.DEGRADED)
-        return has_identity and has_memory and has_trust
+        has_consciousness = self.consciousness.status in (
+            PillarStatus.ACTIVE, PillarStatus.DEGRADED
+        )
+        return has_identity and has_memory and has_trust and has_consciousness
 
     @property
     def is_singular(self) -> bool:
@@ -209,11 +236,12 @@ class AgentManifest(BaseModel):
 
     @property
     def pillar_summary(self) -> dict[str, PillarStatus]:
-        """Quick view of all pillars including sync and skills."""
+        """Quick view of all six pillars plus skills."""
         return {
             "identity": self.identity.status,
-            "memory": self.memory.status,
             "trust": self.trust.status,
+            "memory": self.memory.status,
+            "consciousness": self.consciousness.status,
             "security": self.security.status,
             "sync": self.sync.status,
             "skills": self.skills.status,

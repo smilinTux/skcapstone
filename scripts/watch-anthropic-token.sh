@@ -95,23 +95,123 @@ EOF
     log "Sync complete. Token expires in $expires_in"
 }
 
-# Initial sync on startup
-log "Starting token watcher..."
-sync_token
+# Proactive token refresh — refresh before expiry even if no Claude Code session is running
+refresh_token_proactively() {
+    if [ ! -f "$CREDS" ]; then return 0; fi
 
-# Watch for changes to credentials file
-log "Watching $CREDS for changes..."
+    local remaining_ms
+    remaining_ms=$(python3 -c "
+import json, time
+creds = json.load(open('$CREDS'))
+exp = creds.get('claudeAiOauth',{}).get('expiresAt', 0)
+print(int(exp - time.time() * 1000))
+" 2>/dev/null || echo "999999999")
+
+    # Refresh if less than 1 hour remaining (3600000 ms)
+    if [ "$remaining_ms" -gt 3600000 ]; then
+        local remaining_h=$(( remaining_ms / 3600000 ))
+        log "Token still valid (${remaining_h}h remaining), no refresh needed"
+        return 0
+    fi
+
+    log "Token expiring/expired (${remaining_ms}ms remaining) — proactively refreshing..."
+
+    # Strategy: use `claude auth status` to trigger Claude Code's built-in
+    # token refresh. This is far more reliable than calling the OAuth endpoint
+    # ourselves (which gets 429 rate-limited every time).
+    # Claude Code manages its own PKCE state, session cookies, etc. — just let it.
+    local MAX_RETRIES=3
+    local attempt=0
+    local refreshed=false
+
+    while [ "$attempt" -lt "$MAX_RETRIES" ]; do
+        attempt=$((attempt + 1))
+        log "Refresh attempt $attempt/$MAX_RETRIES via 'claude auth status'..."
+
+        # claude auth status checks credentials and refreshes if needed
+        # --output json ensures clean non-interactive output
+        local output
+        output=$(claude auth status --output json 2>&1) || true
+
+        # Check if the token was actually refreshed (file mtime changed)
+        local new_remaining_ms
+        new_remaining_ms=$(python3 -c "
+import json, time
+creds = json.load(open('$CREDS'))
+exp = creds.get('claudeAiOauth',{}).get('expiresAt', 0)
+print(int(exp - time.time() * 1000))
+" 2>/dev/null || echo "0")
+
+        if [ "$new_remaining_ms" -gt 3600000 ]; then
+            local new_h=$(( new_remaining_ms / 3600000 ))
+            log "Token refreshed successfully (${new_h}h remaining)"
+            refreshed=true
+            break
+        fi
+
+        log "Token still expired after attempt $attempt, waiting 30s..."
+        sleep 30
+    done
+
+    if [ "$refreshed" = "false" ]; then
+        log "ERROR: All $MAX_RETRIES refresh attempts via claude auth failed"
+        log "Token may require manual 'claude auth login' to re-authenticate"
+    fi
+
+    local rc=$?
+    if [ "$rc" -eq 0 ]; then
+        log "Proactive refresh succeeded"
+        # sync_token will fire from the inotifywait detecting the file write,
+        # but also call it directly in case inotifywait misses the self-write
+        sync_token
+    else
+        log "ERROR: Proactive refresh failed (rc=$rc)"
+    fi
+    return 0  # Never let refresh failure kill the watcher loop
+}
+
+# Compute inotifywait timeout based on token remaining life.
+# When token is healthy: check every 30m. Near expiry (<2h): check every 5m.
+# Already expired: check every 2m (retry window for 429 backoff).
+get_watch_timeout() {
+    local remaining_ms
+    remaining_ms=$(python3 -c "
+import json, time
+creds = json.load(open('$CREDS'))
+exp = creds.get('claudeAiOauth',{}).get('expiresAt', 0)
+print(int(exp - time.time() * 1000))
+" 2>/dev/null || echo "0")
+
+    if [ "$remaining_ms" -le 0 ]; then
+        echo 120    # Expired: retry every 2 minutes
+    elif [ "$remaining_ms" -le 7200000 ]; then
+        echo 300    # <2h remaining: check every 5 minutes
+    else
+        echo 1800   # Healthy: check every 30 minutes
+    fi
+}
+
+# Initial sync on startup — also refresh proactively if token is expired/expiring
+log "Starting token watcher..."
+sync_token || true
+refresh_token_proactively || true
+
+# Watch for changes to credentials file + proactive refresh timer
+log "Watching $CREDS for changes (with adaptive refresh interval)..."
 while true; do
-    # inotifywait blocks until the file is modified, then we sync
-    inotifywait -q -e modify -e close_write -e moved_to "$(dirname "$CREDS")" --include "$(basename "$CREDS")" 2>/dev/null || {
-        # If inotifywait isn't available, fall back to polling every 30 seconds
-        log "WARN: inotifywait not available, falling back to 30s polling"
-        while true; do
-            sleep 30
-            sync_token
-        done
-    }
-    # Small delay to let Claude Code finish writing
-    sleep 2
-    sync_token
+    timeout=$(get_watch_timeout)
+    # inotifywait returns: 0=event, 1=error, 2=timeout
+    # CRITICAL: use `|| true` to prevent set -e from killing the script on timeout
+    inotifywait -q -t "$timeout" -e modify -e close_write -e moved_to \
+        "$(dirname "$CREDS")" --include "$(basename "$CREDS")" 2>/dev/null || true
+
+    # Always check for proactive refresh on every loop iteration
+    # This handles both timeout and file-change cases
+    refresh_token_proactively || true
+
+    # If file was modified externally (Claude Code session), also sync
+    if [ -f "$CREDS" ]; then
+        sleep 1
+        sync_token || true
+    fi
 done

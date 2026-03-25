@@ -112,6 +112,7 @@ class AgentRuntime:
         self.manifest.identity = pillars["identity"]
         self.manifest.memory = pillars["memory"]
         self.manifest.trust = pillars["trust"]
+        self.manifest.consciousness = pillars["consciousness"]
         self.manifest.security = pillars["security"]
         self.manifest.sync = pillars["sync"]
         self.manifest.skills = pillars["skills"]

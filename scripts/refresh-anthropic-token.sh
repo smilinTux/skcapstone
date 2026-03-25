@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Sync Anthropic OAuth token from Claude Code credentials to OpenClaw gateway
+# Proactive Anthropic OAuth token refresh + sync to OpenClaw gateway.
 #
-# Claude Code manages its own token refresh internally (writing to .credentials.json).
-# This script simply reads the current token and syncs it to:
-#   1. ~/.openclaw/openclaw.json (anthropic provider apiKey)
-#   2. ~/.openclaw/.env (ANTHROPIC_API_KEY)
-#   3. systemd override (ANTHROPIC_API_KEY env var)
-# Then restarts the gateway if the token changed.
+# Two-phase approach (prb-021b489e):
+#   Phase 1: If token is expiring (<2h) or expired, refresh it:
+#     a) Try `claude auth status` (lightweight, no interactive session)
+#     b) If that fails, spin up ephemeral Claude Code in tmux → triggers internal refresh → kill it
+#   Phase 2: Sync the (possibly refreshed) token to OpenClaw config + restart gateway if changed.
 #
-# Run via systemd timer every 2 hours.
+# Run via systemd timer every 4 hours.
 set -euo pipefail
 
 _sed_i() { if [[ "$OSTYPE" == "darwin"* ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
@@ -17,18 +16,93 @@ CREDS="$HOME/.claude/.credentials.json"
 OPENCLAW_JSON="$HOME/.openclaw/openclaw.json"
 OPENCLAW_ENV="$HOME/.openclaw/.env"
 OVERRIDE_CONF="$HOME/.config/systemd/user/openclaw-gateway.service.d/override.conf"
+LOG_TAG="anthropic-token-refresh"
+TMUX_SESSION="token-refresh-ephemeral"
+
+log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [$LOG_TAG] $*"; }
 
 if [ ! -f "$CREDS" ]; then
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Claude credentials not found at $CREDS"
+    log "ERROR: Claude credentials not found at $CREDS"
     exit 1
 fi
 
-# Read current token and expiry from Claude Code credentials
-ACCESS_TOKEN=$(python3 -c "import json; print(json.load(open('$CREDS'))['claudeAiOauth']['accessToken'])")
-EXPIRES_AT=$(python3 -c "import json; print(json.load(open('$CREDS'))['claudeAiOauth']['expiresAt'])")
+get_remaining_ms() {
+    python3 -c "
+import json, time
+creds = json.load(open('$CREDS'))
+exp = creds.get('claudeAiOauth',{}).get('expiresAt', 0)
+print(int(exp - time.time() * 1000))
+" 2>/dev/null || echo "0"
+}
 
-REMAINING=$(python3 -c "import time; print(f'{($EXPIRES_AT/1000 - time.time())/3600:.1f}h')")
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Current token: ${ACCESS_TOKEN:0:20}... (expires in $REMAINING)"
+get_remaining_h() {
+    python3 -c "
+import json, time
+creds = json.load(open('$CREDS'))
+exp = creds.get('claudeAiOauth',{}).get('expiresAt', 0)
+print(f'{(exp/1000 - time.time())/3600:.1f}')
+" 2>/dev/null || echo "0"
+}
+
+token_needs_refresh() {
+    local remaining_ms
+    remaining_ms=$(get_remaining_ms)
+    # Refresh if less than 2 hours remaining
+    [ "$remaining_ms" -le 7200000 ]
+}
+
+token_is_healthy() {
+    local remaining_ms
+    remaining_ms=$(get_remaining_ms)
+    [ "$remaining_ms" -gt 7200000 ]
+}
+
+# ─── Phase 1: Refresh token if needed ───────────────────────────────
+
+if token_needs_refresh; then
+    log "Token needs refresh ($(get_remaining_h)h remaining)"
+
+    # Step 1a: Try lightweight refresh
+    log "Attempting lightweight refresh via 'claude auth status'..."
+    claude auth status > /dev/null 2>&1 || true
+    sleep 2
+
+    if token_is_healthy; then
+        log "Lightweight refresh succeeded! ($(get_remaining_h)h remaining)"
+    else
+        # Step 1b: Ephemeral Claude Code session in tmux
+        log "Lightweight refresh didn't cut it — spinning up ephemeral Claude Code session..."
+        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+
+        tmux new-session -d -s "$TMUX_SESSION" \
+            "claude -p 'respond with just OK' --output-format stream-json 2>/dev/null; exit"
+
+        refreshed=false
+        for i in $(seq 1 12); do
+            sleep 5
+            if token_is_healthy; then
+                log "Ephemeral session refreshed the token! ($(get_remaining_h)h remaining)"
+                refreshed=true
+                break
+            fi
+        done
+
+        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+
+        if [ "$refreshed" = "false" ]; then
+            log "ERROR: All refresh attempts failed ($(get_remaining_h)h remaining)"
+            log "Manual intervention may be needed: claude auth login"
+            # Continue to sync phase anyway — sync whatever token we have
+        fi
+    fi
+else
+    log "Token is healthy ($(get_remaining_h)h remaining), no refresh needed"
+fi
+
+# ─── Phase 2: Sync token to OpenClaw ────────────────────────────────
+
+ACCESS_TOKEN=$(python3 -c "import json; print(json.load(open('$CREDS'))['claudeAiOauth']['accessToken'])")
+REMAINING=$(get_remaining_h)
 
 # Check what's currently in the systemd override
 OLD_TOKEN=""
@@ -37,13 +111,11 @@ if [ -f "$OVERRIDE_CONF" ]; then
 fi
 
 if [ "$OLD_TOKEN" = "$ACCESS_TOKEN" ]; then
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Token already synced, no changes needed"
+    log "Token already synced (expires in ${REMAINING}h)"
     exit 0
 fi
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Token mismatch detected, syncing..."
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Old: ${OLD_TOKEN:0:20}..."
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] New: ${ACCESS_TOKEN:0:20}..."
+log "Token changed, syncing to OpenClaw..."
 
 # 1. Update openclaw.json
 if [ -f "$OPENCLAW_JSON" ]; then
@@ -71,7 +143,7 @@ if grep -q "^ANTHROPIC_API_KEY=" "$OPENCLAW_ENV" 2>/dev/null; then
 else
     echo "ANTHROPIC_API_KEY=$ACCESS_TOKEN" >> "$OPENCLAW_ENV"
 fi
-echo "[sync] Updated .env"
+log "Updated .env"
 
 # 3. Update systemd override
 NVIDIA_KEY=$(grep "NVIDIA_API_KEY=" "$OVERRIDE_CONF" 2>/dev/null | sed 's/.*NVIDIA_API_KEY=//' || true)
@@ -85,10 +157,10 @@ RestartSec=10
 Environment=NVIDIA_API_KEY=${NVIDIA_KEY}
 Environment=ANTHROPIC_API_KEY=${ACCESS_TOKEN}
 EOF
-echo "[sync] Updated systemd override"
+log "Updated systemd override"
 
 # 4. Reload and restart gateway
 systemctl --user daemon-reload
 systemctl --user restart openclaw-gateway
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Gateway restarted with synced token (expires in $REMAINING)"
+log "Gateway restarted with fresh token (expires in ${REMAINING}h)"

@@ -62,7 +62,7 @@ function createSKCapstoneStatusTool() {
     name: "skcapstone_status",
     label: "SKCapstone Status",
     description:
-      "Show the sovereign agent's current state — all pillars at a glance (identity, memory, trust, security, sync, communication).",
+      "Show the sovereign agent's current state — all six pillars at a glance (identity, memory, trust, consciousness, security, sync).",
     parameters: { type: "object", properties: {} },
     async execute() {
       const result = runCli(SKCAPSTONE_BIN, "status");

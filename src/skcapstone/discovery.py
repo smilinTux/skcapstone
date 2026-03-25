@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from .models import (
+    ConsciousnessState,
     IdentityState,
     MemoryState,
     PillarStatus,
@@ -336,6 +337,22 @@ def discover_sync(home: Path) -> SyncState:
     return _discover(home)
 
 
+def discover_consciousness(home: Path) -> ConsciousnessState:
+    """Probe for SKWhisper consciousness state.
+
+    Delegates to the consciousness pillar's initialization function.
+
+    Args:
+        home: The agent home directory (~/.skcapstone).
+
+    Returns:
+        ConsciousnessState reflecting current SKWhisper + SKTrip status.
+    """
+    from .pillars.consciousness import initialize_consciousness
+
+    return initialize_consciousness(home)
+
+
 def _probe_remote_registry(state: SkillsState) -> None:
     """Probe the remote skills-registry for availability.
 
@@ -460,6 +477,7 @@ def discover_all(
         "identity": identity,
         "memory": discover_memory(home),
         "trust": discover_trust(home),
+        "consciousness": discover_consciousness(home),
         "security": discover_security(home),
         "sync": discover_sync(home),
         "skills": discover_skills(home, agent=resolved_agent),

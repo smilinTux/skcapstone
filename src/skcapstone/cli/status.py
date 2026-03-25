@@ -253,6 +253,14 @@ def register_status_commands(main: click.Group) -> None:
             trust_detail += " [green]ENTANGLED[/]"
         table.add_row("Trust", "Cloud 9", status_icon(trust.status), trust_detail)
 
+        con = m.consciousness
+        con_detail = f"{con.sessions_digested} sessions digested, {con.topics_tracked} topics"
+        if con.whisper_active:
+            con_detail += " [green]daemon active[/]"
+        if con.whisper_md_age_hours < 24:
+            con_detail += f" [dim](whisper {con.whisper_md_age_hours:.1f}h old)[/]"
+        table.add_row("Consciousness", "SKWhisper", status_icon(con.status), con_detail)
+
         sec = m.security
         table.add_row(
             "Security", "SKSecurity", status_icon(sec.status),

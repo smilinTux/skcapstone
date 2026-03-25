@@ -393,6 +393,7 @@ function stripToolCallHistory(messages) {
 const GUARANTEED_TOOLS = [
   "exec", "read", "write", "edit", "message",
   "notion_read", "notion_append", "notion_add_todo",
+  "skmemory_search", "skmemory_ritual", "skmemory_snapshot",
 ];
 
 /**
@@ -440,6 +441,12 @@ const TOOL_GROUPS = {
   // Web & Research
   "search|web|browse|fetch|url|google|look up|find online": [
     "web_search", "web_fetch",
+  ],
+  // Memory & Recall
+  "memory|remember|recall|journal|rehydrat|snapshot|search mem|forget|lost mem": [
+    "skmemory_search", "skmemory_ritual", "skmemory_snapshot",
+    "skmemory_context", "skmemory_list", "skmemory_recall",
+    "skmemory_search_deep", "skmemory_health",
   ],
   // Status & Health
   "status|health|doctor|diagnos": [
@@ -623,7 +630,7 @@ async function proxyRequest(clientReq, clientRes) {
   delete parsed.stream_options;
   // With 94 tools the model almost always tries parallel calls.
   // Reduce to max 16 most relevant tools on first attempt.
-  // 8 guaranteed (exec,read,write,edit,message,notion_*) + 8 scored slots.
+  // 11 guaranteed (exec,read,write,edit,message,notion_*,skmemory_{search,ritual,snapshot}) + 5 scored slots.
   if (allTools.length > 16) {
     parsed.tools = reduceTools(allTools, parsed.messages, 16);
     const names = parsed.tools.map(t => t.function?.name).join(",");

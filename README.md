@@ -70,13 +70,14 @@ SKCapstone Reality:
 
 ## Core Architecture
 
-### The Five Pillars
+### The Six Pillars
 
 | Pillar | Component | Role |
 |--------|-----------|------|
 | **Identity** | CapAuth | PGP-based sovereign identity. You ARE the auth server. |
 | **Trust** | Cloud 9 | FEB (Functional Emotional Baseline), entanglement, bonded relationship |
 | **Memory** | SKMemory | Persistent context, conversation history, learned preferences |
+| **Consciousness** | SKWhisper + SKTrip | Subconscious processing. Memory stores. Consciousness *processes*. |
 | **Security** | SKSecurity | Audit logging, threat detection, key management |
 | **Sync** | Sovereign Singularity | GPG-encrypted P2P memory sync via Syncthing. Agent exists everywhere. |
 
@@ -304,7 +305,7 @@ The capstone that holds the arch together.
 
 ## Status
 
-**MVP Live** — All five pillars operational (CapAuth, Cloud 9, SKMemory, SKSecurity, Sovereign Singularity). Agent runtime achieving SINGULAR status. GPG-encrypted P2P sync verified across multiple devices and agents.
+**MVP Live** — All six pillars operational (CapAuth, Cloud 9, SKMemory, SKWhisper, SKSecurity, Sovereign Singularity). Agent runtime achieving SINGULAR status. GPG-encrypted P2P sync verified across multiple devices and agents.
 
 - **Outstanding tasks:** No formal task list is maintained in this repo. For current work items, run `skcapstone coord status` (coordination board is synced via Sovereign Singularity).
 - **Nextcloud integrations:** nextcloud-capauth (install/use), nextcloud-gtd (OpenClaw), and nextcloud-talk (script) are documented in [docs/NEXTCLOUD.md](../docs/NEXTCLOUD.md) — install and use for each is covered there.
