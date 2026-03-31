@@ -47,14 +47,14 @@ print(f'{(exp/1000 - time.time())/3600:.1f}')
 token_needs_refresh() {
     local remaining_ms
     remaining_ms=$(get_remaining_ms)
-    # Refresh if less than 2 hours remaining
-    [ "$remaining_ms" -le 7200000 ]
+    # Refresh if less than 4 hours remaining (was 2h — too tight with 3h timer)
+    [ "$remaining_ms" -le 14400000 ]
 }
 
 token_is_healthy() {
     local remaining_ms
     remaining_ms=$(get_remaining_ms)
-    [ "$remaining_ms" -gt 7200000 ]
+    [ "$remaining_ms" -gt 14400000 ]
 }
 
 # ─── Phase 1: Refresh token if needed ───────────────────────────────

@@ -54,6 +54,36 @@ DEFAULT_PORT = 7777
 PID_FILE = "daemon.pid"
 LOG_DIR = "logs"
 
+
+def _sd_notify(state: str) -> bool:
+    """Send a notification to systemd via the NOTIFY_SOCKET.
+
+    Implements the sd_notify(3) protocol using a raw AF_UNIX datagram socket
+    so we don't need an external dependency.  Returns True if the notification
+    was sent, False if NOTIFY_SOCKET is not set (i.e. not running under systemd).
+
+    Common states:
+        "READY=1"       — service startup complete
+        "WATCHDOG=1"    — watchdog keep-alive ping
+        "STOPPING=1"    — graceful shutdown in progress
+    """
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return False
+    import socket as _socket
+    try:
+        sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_DGRAM)
+        try:
+            if addr[0] == "@":
+                addr = "\0" + addr[1:]
+            sock.sendto(state.encode("utf-8"), addr)
+        finally:
+            sock.close()
+        return True
+    except OSError as exc:
+        logger.debug("sd_notify(%r) failed: %s", state, exc)
+        return False
+
 # ── WebSocket helpers (RFC 6455, stdlib-only) ─────────────────────────────────
 
 _WS_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -770,10 +800,12 @@ class DaemonService:
 
         self._start_api_server()
 
+        _sd_notify("READY=1")
         logger.info("Daemon started — PID %d", os.getpid())
 
     def stop(self) -> None:
         """Gracefully stop the daemon and all workers."""
+        _sd_notify("STOPPING=1")
         logger.info("Daemon stopping...")
         self._stop_event.set()
         self.state.running = False
@@ -973,9 +1005,10 @@ class DaemonService:
             self._stop_event.wait(timeout=self.config.poll_interval)
 
     def _health_loop(self) -> None:
-        """Periodically check transport health."""
+        """Periodically check transport health and ping systemd watchdog."""
         while not self._stop_event.is_set():
             self._component_mgr.heartbeat("health")
+            _sd_notify("WATCHDOG=1")
             if self._skcomm:
                 try:
                     report = self._skcomm.status()

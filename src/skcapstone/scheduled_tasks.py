@@ -55,16 +55,25 @@ class ScheduledTask:
     last_error: Optional[str] = None
     run_count: int = 0
     error_count: int = 0
+    delay_first_run: float = 0.0
 
     def is_due(self, now: Optional[datetime] = None) -> bool:
         """Return True if the task interval has elapsed since last_run.
 
-        A task with no prior run is always considered due.
+        A task with no prior run is always considered due, unless
+        ``delay_first_run`` is set — in that case the first run is
+        deferred by that many seconds from process start.
 
         Args:
             now: Reference time for the check (defaults to UTC now).
         """
         if self.last_run is None:
+            if self.delay_first_run > 0:
+                if not hasattr(self, "_created_at"):
+                    object.__setattr__(self, "_created_at", datetime.now(timezone.utc))
+                reference = now or datetime.now(timezone.utc)
+                elapsed = (reference - self._created_at).total_seconds()
+                return elapsed >= self.delay_first_run
             return True
         reference = now or datetime.now(timezone.utc)
         elapsed = (reference - self.last_run).total_seconds()
@@ -132,6 +141,7 @@ class TaskScheduler:
         name: str,
         interval_seconds: float,
         callback: Callable[[], None],
+        delay_first_run: float = 0.0,
     ) -> ScheduledTask:
         """Register a recurring task.
 
@@ -139,11 +149,12 @@ class TaskScheduler:
             name: Unique task name (used in logs and status output).
             interval_seconds: Minimum seconds between executions.
             callback: Zero-argument callable to invoke.
+            delay_first_run: Seconds to wait before first execution (default 0 = immediate).
 
         Returns:
             The created ScheduledTask (caller may inspect it at runtime).
         """
-        task = ScheduledTask(name=name, interval_seconds=interval_seconds, callback=callback)
+        task = ScheduledTask(name=name, interval_seconds=interval_seconds, callback=callback, delay_first_run=delay_first_run)
         with self._lock:
             self._tasks.append(task)
         logger.debug("Registered scheduled task '%s' every %.0fs", name, interval_seconds)
@@ -214,29 +225,50 @@ class TaskScheduler:
 def make_memory_promotion_task(home: Path) -> Callable[[], None]:
     """Return a callback that runs an hourly memory promotion sweep.
 
-    Instantiates PromotionEngine lazily (so import errors are deferred until
-    first run, matching the graceful-import pattern used elsewhere in the daemon).
+    The sweep runs in a dedicated background thread so it never blocks the
+    scheduler (and therefore never blocks watchdog pings or other scheduled
+    tasks).  A ``threading.Event`` gate prevents overlapping sweeps.
+
+    The sweep is rate-limited to 50 promotions per run to bound I/O time.
 
     Args:
         home: Agent home directory containing the ``memory/`` subtree.
     """
+    _running = threading.Event()
+
+    def _sweep() -> None:
+        try:
+            from .memory_promoter import PromotionEngine
+
+            engine = PromotionEngine(home)
+            result = engine.sweep(limit=50)
+            if result.promoted:
+                logger.info(
+                    "Memory promotion sweep: %d promoted of %d scanned",
+                    len(result.promoted),
+                    result.scanned,
+                )
+            else:
+                logger.debug(
+                    "Memory promotion sweep: %d scanned, 0 promoted",
+                    result.scanned,
+                )
+        except Exception as exc:
+            logger.error("Memory promotion sweep error: %s", exc)
+        finally:
+            _running.clear()
 
     def _run() -> None:
-        from .memory_promoter import PromotionEngine
-
-        engine = PromotionEngine(home)
-        result = engine.sweep()
-        if result.promoted:
-            logger.info(
-                "Memory promotion sweep: %d promoted of %d scanned",
-                len(result.promoted),
-                result.scanned,
-            )
-        else:
-            logger.debug(
-                "Memory promotion sweep: %d scanned, 0 promoted",
-                result.scanned,
-            )
+        if _running.is_set():
+            logger.debug("Memory promotion sweep already running — skipping")
+            return
+        _running.set()
+        t = threading.Thread(
+            target=_sweep,
+            name="memory-promotion-sweep",
+            daemon=True,
+        )
+        t.start()
 
     return _run
 
@@ -498,6 +530,7 @@ def build_scheduler(
         name="memory_promotion_sweep",
         interval_seconds=3600,  # 1 hour
         callback=make_memory_promotion_task(home),
+        delay_first_run=120,  # let daemon stabilize before first sweep
     )
 
     scheduler.register(

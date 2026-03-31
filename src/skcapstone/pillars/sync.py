@@ -175,7 +175,7 @@ def gpg_encrypt(
         recipient = _detect_gpg_key(agent_home)
 
     if recipient is None:
-        logger.error("No GPG key found for encryption")
+        logger.warning("No GPG key found for encryption — skipping")
         return None
 
     # Build recipient list: own key + all known peers
@@ -208,7 +208,7 @@ def gpg_encrypt(
         )
         return encrypted_path
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        logger.error("GPG encryption failed: %s", exc)
+        logger.warning("GPG encryption failed (key may be missing): %s", exc)
         return None
 
 

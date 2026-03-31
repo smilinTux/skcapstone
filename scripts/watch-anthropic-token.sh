@@ -107,8 +107,8 @@ exp = creds.get('claudeAiOauth',{}).get('expiresAt', 0)
 print(int(exp - time.time() * 1000))
 " 2>/dev/null || echo "999999999")
 
-    # Refresh if less than 1 hour remaining (3600000 ms)
-    if [ "$remaining_ms" -gt 3600000 ]; then
+    # Refresh if less than 3 hours remaining (10800000 ms) — gives time for retries before expiry
+    if [ "$remaining_ms" -gt 10800000 ]; then
         local remaining_h=$(( remaining_ms / 3600000 ))
         log "Token still valid (${remaining_h}h remaining), no refresh needed"
         return 0
@@ -142,7 +142,7 @@ exp = creds.get('claudeAiOauth',{}).get('expiresAt', 0)
 print(int(exp - time.time() * 1000))
 " 2>/dev/null || echo "0")
 
-        if [ "$new_remaining_ms" -gt 3600000 ]; then
+        if [ "$new_remaining_ms" -gt 10800000 ]; then
             local new_h=$(( new_remaining_ms / 3600000 ))
             log "Token refreshed successfully (${new_h}h remaining)"
             refreshed=true
@@ -184,8 +184,8 @@ print(int(exp - time.time() * 1000))
 
     if [ "$remaining_ms" -le 0 ]; then
         echo 120    # Expired: retry every 2 minutes
-    elif [ "$remaining_ms" -le 7200000 ]; then
-        echo 300    # <2h remaining: check every 5 minutes
+    elif [ "$remaining_ms" -le 10800000 ]; then
+        echo 180    # <3h remaining: check every 3 minutes
     else
         echo 1800   # Healthy: check every 30 minutes
     fi

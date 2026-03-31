@@ -138,14 +138,15 @@ def _tcp_check(name: str, host: str, port: int) -> dict[str, Any]:
 def check_all_services() -> list[dict[str, Any]]:
     """Ping every known service and return a list of status dicts.
 
-    Environment variables override default URLs:
-        SKMEMORY_SKVECTOR_URL   — Qdrant REST base (default http://localhost:6333)
-        SKMEMORY_SKGRAPH_HOST   — FalkorDB host   (default localhost)
-        SKMEMORY_SKGRAPH_PORT   — FalkorDB port   (default 6379)
-        SYNCTHING_API_URL       — Syncthing REST   (default http://localhost:8384)
-        SYNCTHING_API_KEY       — Syncthing API key (optional)
-        SKCAPSTONE_DAEMON_URL   — Daemon HTTP base (default http://localhost:9383)
-        SKCHAT_DAEMON_URL       — SKChat daemon    (default http://localhost:9385)
+    Environment variables override default URLs (set any to "disabled" to skip):
+        SKMEMORY_SKVECTOR_URL     — Qdrant REST base (default http://localhost:6333)
+        SKMEMORY_SKVECTOR_API_KEY — Qdrant API key (sent as ``api-key`` header)
+        SKMEMORY_SKGRAPH_HOST     — FalkorDB host   (default localhost)
+        SKMEMORY_SKGRAPH_PORT     — FalkorDB port   (default 6379)
+        SYNCTHING_API_URL         — Syncthing REST   (default http://localhost:8384)
+        SYNCTHING_API_KEY         — Syncthing API key (optional)
+        SKCAPSTONE_DAEMON_URL     — Daemon HTTP base (default http://localhost:9383)
+        SKCHAT_DAEMON_URL         — SKChat daemon    (default http://localhost:9385)
 
     Returns:
         List of dicts, each containing: name, url, status ("up"|"down"|"unknown"),
@@ -155,13 +156,20 @@ def check_all_services() -> list[dict[str, Any]]:
 
     # -- SKVector (Qdrant) --------------------------------------------------
     qdrant_base = os.environ.get("SKMEMORY_SKVECTOR_URL", "http://localhost:6333")
-    qdrant_url = qdrant_base.rstrip("/") + "/healthz"
-    results.append(_http_check("skvector (Qdrant)", qdrant_url))
+    if qdrant_base.lower() != "disabled":
+        qdrant_url = qdrant_base.rstrip("/") + "/healthz"
+        qdrant_headers: dict[str, str] = {}
+        qdrant_api_key = os.environ.get("SKMEMORY_SKVECTOR_API_KEY", "")
+        if qdrant_api_key:
+            qdrant_headers["api-key"] = qdrant_api_key
+        results.append(_http_check("skvector (Qdrant)", qdrant_url, headers=qdrant_headers))
 
     # -- SKGraph (FalkorDB) — TCP check on Redis protocol port ---------------
     graph_host = os.environ.get("SKMEMORY_SKGRAPH_HOST", "localhost")
-    graph_port = int(os.environ.get("SKMEMORY_SKGRAPH_PORT", "6379"))
-    results.append(_tcp_check("skgraph (FalkorDB)", graph_host, graph_port))
+    graph_port_str = os.environ.get("SKMEMORY_SKGRAPH_PORT", "6379")
+    if graph_host.lower() != "disabled":
+        graph_port = int(graph_port_str)
+        results.append(_tcp_check("skgraph (FalkorDB)", graph_host, graph_port))
 
     # -- Syncthing -----------------------------------------------------------
     syncthing_base = os.environ.get("SYNCTHING_API_URL", "http://localhost:8384")
@@ -186,8 +194,9 @@ def check_all_services() -> list[dict[str, Any]]:
 
     # -- skchat daemon -------------------------------------------------------
     chat_base = os.environ.get("SKCHAT_DAEMON_URL", "http://localhost:9385")
-    chat_url = chat_base.rstrip("/") + "/health"
-    results.append(_http_check("skchat daemon", chat_url))
+    if chat_base.lower() != "disabled":
+        chat_url = chat_base.rstrip("/") + "/health"
+        results.append(_http_check("skchat daemon", chat_url))
 
     return results
 
