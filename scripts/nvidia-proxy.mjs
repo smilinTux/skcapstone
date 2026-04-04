@@ -27,7 +27,37 @@ const DEFAULT_TARGET = process.env.NVIDIA_PROXY_TARGET || "https://integrate.api
 const MAX_RETRIES = 4;
 const MAX_429_RETRIES = 3;
 const RATE_LIMIT_DELAY_MS = 2000;
-const MAX_SYSTEM_BYTES = 40000;
+const DEFAULT_MAX_SYSTEM_BYTES = 80000;
+
+/**
+ * Per-model proxy limits — based on ACTUAL NVIDIA NIM context windows.
+ * These are generous pre-trim limits. NVIDIA will reject if truly too large.
+ * maxBody = ~80% of context window in bytes (1 token ≈ 4 bytes, safety margin)
+ * maxSystem = ~40% of maxBody (system prompt shouldn't dominate)
+ */
+const MODEL_LIMITS = {
+  // MiniMax M2.1: 196K tokens → ~784KB context
+  "minimaxai/minimax-m2.1": { maxBody: 600000, maxSystem: 240000 },
+  // MiniMax M2.5: 204K tokens → ~820KB context
+  "minimaxai/minimax-m2.5": { maxBody: 640000, maxSystem: 256000 },
+  // Kimi K2 Instruct: 128K tokens → ~512KB context
+  "moonshotai/kimi-k2-instruct": { maxBody: 400000, maxSystem: 160000 },
+  "moonshotai/kimi-k2-instruct-0905": { maxBody: 400000, maxSystem: 160000 },
+  // Kimi K2.5: 256K tokens → ~1MB context
+  "moonshotai/kimi-k2.5": { maxBody: 800000, maxSystem: 320000 },
+  "moonshotai/kimi-k2-thinking": { maxBody: 800000, maxSystem: 320000 },
+  // Llama 3.3 70B: 130K tokens → ~520KB context
+  "meta/llama-3.3-70b-instruct": { maxBody: 400000, maxSystem: 160000 },
+};
+const DEFAULT_MAX_BODY_BYTES = 200000;
+
+function getModelLimits(model) {
+  const limits = MODEL_LIMITS[model] || {};
+  return {
+    maxBody: limits.maxBody || DEFAULT_MAX_BODY_BYTES,
+    maxSystem: limits.maxSystem || DEFAULT_MAX_SYSTEM_BYTES,
+  };
+}
 const toolCallCounters = new Map(); // Per-model tool call counters
 
 const args = process.argv.slice(2);
@@ -232,10 +262,8 @@ function sendOk(clientRes, resBody, headers, asSSE) {
 const SINGLE_TOOL_INSTRUCTION =
   "You MUST call exactly ONE tool per response. Never call multiple tools at once.";
 
-const MAX_BODY_BYTES = 120000;
-
 /**
- * Trim conversation history to keep body size under MAX_BODY_BYTES.
+ * Trim conversation history to keep body size under the model's max body limit.
  * Preserves: system messages, first 2 user/assistant messages (identity/rehydration),
  * and the most recent messages. Drops middle messages first.
  * Tool result messages with large content get their content truncated first.
@@ -243,9 +271,11 @@ const MAX_BODY_BYTES = 120000;
 function trimConversationHistory(parsed) {
   if (!Array.isArray(parsed.messages) || parsed.messages.length < 6) return;
 
+  const { maxBody } = getModelLimits(parsed.model);
+
   // Debug: log message roles
   const roleSummary = parsed.messages.map(m => m.role).join(",");
-  console.log(`[nvidia-proxy] conversation roles (${parsed.messages.length} msgs): ${roleSummary}`);
+  console.log(`[nvidia-proxy] conversation roles (${parsed.messages.length} msgs): ${roleSummary} [maxBody=${maxBody}]`);
 
   // First pass: truncate large tool results (keep first 500 chars)
   for (const m of parsed.messages) {
@@ -264,7 +294,7 @@ function trimConversationHistory(parsed) {
 
   // Check if we're still over budget
   let bodySize = Buffer.byteLength(JSON.stringify(parsed), "utf-8");
-  if (bodySize <= MAX_BODY_BYTES) return;
+  if (bodySize <= maxBody) return;
 
   // Second pass: drop middle messages, then progressively shrink tail until under budget
   const msgs = parsed.messages;
@@ -286,7 +316,7 @@ function trimConversationHistory(parsed) {
       ...nonSystem.slice(-keepEnd),
     ];
     const candidateSize = Buffer.byteLength(JSON.stringify({ ...parsed, messages: trimmed }), "utf-8");
-    if (candidateSize <= MAX_BODY_BYTES) {
+    if (candidateSize <= maxBody) {
       parsed.messages = trimmed;
       console.log(`[nvidia-proxy] trimmed history: dropped ${dropped} middle messages, keepEnd=${keepEnd}, bodyLen now ~${candidateSize}`);
       return;
@@ -307,7 +337,7 @@ function trimConversationHistory(parsed) {
       ...lastN,
     ];
     const candidateSize = Buffer.byteLength(JSON.stringify({ ...parsed, messages: minimal }), "utf-8");
-    if (candidateSize <= MAX_BODY_BYTES) {
+    if (candidateSize <= maxBody) {
       parsed.messages = minimal;
       console.log(`[nvidia-proxy] trimmed history: AGGRESSIVE — kept system + first user + last ${tailSize}, bodyLen now ~${candidateSize}`);
       return;
@@ -326,18 +356,20 @@ function trimConversationHistory(parsed) {
 }
 
 /**
- * Trim system messages to keep total system content under MAX_SYSTEM_BYTES.
+ * Trim system messages to keep total system content under the model's max system limit.
  * Finds the largest system messages and truncates them, keeping head + tail
  * with a trimming notice in the middle.
  */
 function trimSystemMessages(parsed) {
   if (!Array.isArray(parsed.messages)) return;
 
+  const { maxSystem } = getModelLimits(parsed.model);
+
   const systemMsgs = parsed.messages.filter(m => m.role === "system" && typeof m.content === "string");
   if (systemMsgs.length === 0) return;
 
   const before = systemMsgs.reduce((sum, m) => sum + Buffer.byteLength(m.content, "utf-8"), 0);
-  if (before <= MAX_SYSTEM_BYTES) return;
+  if (before <= maxSystem) return;
 
   let trimmedCount = 0;
 
@@ -349,7 +381,7 @@ function trimSystemMessages(parsed) {
     const currentTotal = parsed.messages
       .filter(m => m.role === "system" && typeof m.content === "string")
       .reduce((sum, m) => sum + Buffer.byteLength(m.content, "utf-8"), 0);
-    if (currentTotal <= MAX_SYSTEM_BYTES) break;
+    if (currentTotal <= maxSystem) break;
 
     // Skip messages already under 4000 chars
     if (msg.content.length <= 4000) break;
