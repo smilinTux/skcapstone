@@ -8,9 +8,9 @@ can use Claude Code's subscription-covered inference instead of a raw API key.
 Architecture:
   - aiohttp HTTP server on port 18782
   - asyncio.Semaphore(1) serialises claude invocations (single-threaded CLI)
-  - Non-streaming: claude --print --output-format json
-  - Streaming: claude --print --output-format stream-json --verbose --include-partial-messages
-    → parses assistant events, emits SSE deltas
+  - All modes: claude --print --output-format json  (reliable, no stream-json timeouts)
+  - Streaming responses: result is emitted as chunked SSE after the subprocess finishes
+    (avoids the 300s timeout caused by opus extended-thinking blocking stream-json stdout)
 
 Usage:
   python3 claude-code-api.py [--port 18782] [--debug]
@@ -33,8 +33,8 @@ from aiohttp import web
 
 PORT = 18782
 DEFAULT_MODEL = "claude-sonnet-4-6"
-REQUEST_TIMEOUT = 300  # seconds per claude call
-QUEUE_TIMEOUT = 60     # seconds to wait for semaphore
+REQUEST_TIMEOUT = 600  # seconds per claude call (opus can be slow with large context)
+QUEUE_TIMEOUT = 90     # seconds to wait for semaphore before giving up
 
 VALID_MODELS = {
     "claude-opus-4-6",
@@ -228,98 +228,26 @@ async def _run_claude_json(model: str, prompt: str, system: str) -> tuple[str, d
     return text, usage
 
 
-async def _stream_claude(model: str, prompt: str, system: str) -> AsyncIterator[str]:
+async def _fake_stream_chunks(text: str, chunk_size: int = 80) -> AsyncIterator[str]:
     """
-    Run `claude --print --output-format stream-json --verbose --include-partial-messages`
-    and yield text deltas as they arrive.
+    Break a completed response into chunks for SSE emission.
 
-    Parses the JSONL event stream:
-      • type=assistant → message.content[].text (cumulative snapshot)
-        → yields the delta (new chars since last emission)
-      • type=result → final; no extra text to yield (already covered by assistant events)
+    We always use --output-format json (blocking) for the subprocess — stream-json
+    mode causes opus extended-thinking to block stdout for minutes before emitting
+    any assistant events. Fake-streaming is more reliable and still lets clients
+    receive incremental SSE deltas.
     """
-    cmd = [
-        "claude", "--print",
-        "--model", model,
-        "--output-format", "stream-json",
-        "--verbose",
-        "--include-partial-messages",
-        "--no-session-persistence",
-    ]
-    if system:
-        cmd += ["--append-system-prompt", system]
-    cmd.append(prompt)
-
-    log.debug("Running (stream): %s", " ".join(cmd[:8]) + " ...")
-
-    async with asyncio.timeout(QUEUE_TIMEOUT):
-        await sem().acquire()
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        emitted = ""         # cumulative text we have yielded so far
-        result_text = None   # text from the final result event
-
-        buf = b""
-        while True:
-            try:
-                chunk = await asyncio.wait_for(proc.stdout.read(8192), timeout=REQUEST_TIMEOUT)
-            except asyncio.TimeoutError:
-                proc.kill()
-                raise RuntimeError(f"claude stream timed out after {REQUEST_TIMEOUT}s")
-            if not chunk:
-                break
-            buf += chunk
-
-            # Process complete lines
-            while b"\n" in buf:
-                line_bytes, buf = buf.split(b"\n", 1)
-                line = line_bytes.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                etype = obj.get("type")
-
-                if etype == "assistant":
-                    # Extract cumulative text from content blocks
-                    msg = obj.get("message", {})
-                    full_text = ""
-                    for block in msg.get("content", []):
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            full_text += block.get("text", "")
-
-                    if full_text and len(full_text) > len(emitted):
-                        delta = full_text[len(emitted):]
-                        emitted = full_text
-                        yield delta
-
-                elif etype == "result":
-                    result_text = obj.get("result", "")
-                    is_error = obj.get("is_error", False)
-                    if is_error:
-                        raise RuntimeError(result_text or "Claude returned an error")
-                    # Yield any remaining text not yet emitted
-                    if result_text and len(result_text) > len(emitted):
-                        yield result_text[len(emitted):]
-                        emitted = result_text
-
-        await asyncio.wait_for(proc.wait(), timeout=10)
-
-        # If we got nothing from assistant events but have a result, yield it now
-        if not emitted and result_text:
-            yield result_text
-
-    finally:
-        sem().release()
+    # Emit in word-boundary chunks to look natural
+    words = text.split(" ")
+    buf = ""
+    for word in words:
+        buf += word + " "
+        if len(buf) >= chunk_size:
+            yield buf
+            buf = ""
+            await asyncio.sleep(0)  # yield to event loop
+    if buf:
+        yield buf
 
 
 # ─── HTTP Handlers ────────────────────────────────────────────────────────────
@@ -371,6 +299,9 @@ async def handle_chat_completions(request: web.Request) -> web.Response:
         await response.prepare(request)
 
         try:
+            # Run claude with json output (avoids stream-json opus timeout)
+            text, usage = await _run_claude_json(model, prompt, system)
+
             # Opening role delta (OpenAI convention)
             role_chunk = {
                 "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
@@ -381,7 +312,8 @@ async def handle_chat_completions(request: web.Request) -> web.Response:
             }
             await response.write(f"data: {json.dumps(role_chunk)}\n\n".encode())
 
-            async for delta in _stream_claude(model, prompt, system):
+            # Emit result in chunks
+            async for delta in _fake_stream_chunks(text):
                 if delta:
                     await response.write(make_sse_chunk(model, delta).encode())
 
