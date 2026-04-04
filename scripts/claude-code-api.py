@@ -181,6 +181,7 @@ async def _run_claude_json(model: str, prompt: str, system: str) -> tuple[str, d
     """
     cmd = [
         "claude", "--print",
+        "--dangerously-skip-permissions",
         "--model", model,
         "--output-format", "json",
         "--no-session-persistence",
