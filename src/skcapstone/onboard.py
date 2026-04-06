@@ -1283,19 +1283,6 @@ def run_onboard(home: Optional[str] = None) -> None:
         return
 
     # -----------------------------------------------------------------------
-    # Gather basic identity info up front
-    # -----------------------------------------------------------------------
-    console.print()
-    name = Prompt.ask("  What's your name?", default="Sovereign")
-    entity_type = Prompt.ask(
-        "  Are you a [cyan]human[/] or an [cyan]ai[/]?",
-        choices=["human", "ai"],
-        default="ai",
-    )
-    email = Prompt.ask("  Email (optional, press Enter to skip)", default="")
-    console.print()
-
-    # -----------------------------------------------------------------------
     # Step 1: Prerequisites
     # -----------------------------------------------------------------------
     _step_header(1, "Prerequisites")
@@ -1308,9 +1295,101 @@ def run_onboard(home: Optional[str] = None) -> None:
     pillar_results = _step_install_pillars()
 
     # -----------------------------------------------------------------------
-    # Step 3: Identity + Directory Structure
+    # Step 3: Operator Identity (human) + Agent Identity
     # -----------------------------------------------------------------------
     _step_header(3, "Identity")
+
+    # --- Detect or create human operator profile in ~/.capauth ---
+    operator_name = None
+    operator_fingerprint = None
+    try:
+        from capauth.profile import load_profile, init_profile as capauth_init
+
+        try:
+            profile = load_profile()
+            operator_name = profile.entity.name
+            operator_fingerprint = profile.key_info.fingerprint
+            entity_type_val = getattr(profile.entity, "entity_type", None)
+            is_human = str(entity_type_val).lower() in ("human", "entitytype.human")
+            if is_human:
+                _ok(
+                    f"Operator identity found: [cyan]{operator_name}[/] "
+                    f"({operator_fingerprint[:16]}…)"
+                )
+            else:
+                # Existing profile is an AI — need a human operator first
+                _warn(
+                    f"Existing profile is type '{entity_type_val}' — "
+                    f"a human operator profile is recommended"
+                )
+                is_human = False
+        except Exception:
+            is_human = False
+            profile = None
+
+        if not is_human:
+            console.print()
+            console.print(
+                "  [bold cyan]Operator Setup[/] — Your sovereign agent needs a human operator.\n"
+                "  This creates your personal PGP identity at [dim]~/.capauth/[/].\n"
+                "  Your agent will be registered under this identity.\n"
+            )
+            op_name = Prompt.ask("  Operator name (your name)", default="Sovereign")
+            op_email = Prompt.ask("  Operator email", default="")
+            console.print()
+
+            with Status("  Generating operator PGP identity…", console=console, spinner="dots") as s:
+                try:
+                    import shutil as _shutil_capauth
+                    capauth_home = Path.home() / ".capauth"
+                    if capauth_home.exists():
+                        # Back up and recreate
+                        backup = capauth_home.with_name(".capauth.bak")
+                        if backup.exists():
+                            _shutil_capauth.rmtree(backup)
+                        capauth_home.rename(backup)
+                    profile = capauth_init(
+                        name=op_name,
+                        email=op_email or f"{op_name.lower().replace(' ', '-')}@capauth.local",
+                        passphrase="",
+                        entity_type="human",
+                    )
+                    operator_name = profile.entity.name
+                    operator_fingerprint = profile.key_info.fingerprint
+                    s.stop()
+                    _ok(
+                        f"Operator identity created: [cyan]{operator_name}[/] "
+                        f"({operator_fingerprint[:16]}…)"
+                    )
+                except Exception as exc:
+                    s.stop()
+                    _warn(f"Operator identity creation failed: {exc}")
+                    _info("Continue anyway — agent will use a degraded identity")
+    except ImportError:
+        _warn("capauth not installed — skipping operator identity")
+        _info("Install: pip install capauth")
+
+    # --- Now set up the agent identity ---
+    console.print()
+    # Derive agent name from --agent flag (SKCAPSTONE_AGENT env) or ask
+    import os as _os
+    agent_flag = _os.environ.get("SKCAPSTONE_AGENT", "").strip()
+    if agent_flag and agent_flag not in ("lumina",):
+        # Agent name was specified via --agent flag — use it as default
+        default_agent = agent_flag.capitalize()
+    else:
+        default_agent = "Sovereign"
+    name = Prompt.ask("  Agent name", default=default_agent)
+
+    email = Prompt.ask(
+        "  Agent email (optional, press Enter to skip)",
+        default=f"{name.lower().replace(' ', '-')}@skcapstone.local",
+    )
+
+    if operator_name:
+        _info(f"Agent [cyan]{name}[/] will be registered under operator [cyan]{operator_name}[/]")
+    console.print()
+
     fingerprint, identity_status = _step_identity(home_path, name, email or None)
 
     # -----------------------------------------------------------------------
@@ -1433,7 +1512,13 @@ def run_onboard(home: Optional[str] = None) -> None:
         "[green]ALL[/]" if pillars_installed == pillars_total else f"[yellow]{pillars_installed}/{pillars_total}[/]",
         f"{pillars_installed}/{pillars_total} installed",
     )
-    summary.add_row("Identity", identity_status, fingerprint[:20] + "…" if len(fingerprint) > 20 else fingerprint)
+    if operator_name:
+        summary.add_row(
+            "Operator",
+            "[green]ACTIVE[/]",
+            f"{operator_name} ({operator_fingerprint[:16]}…)" if operator_fingerprint else operator_name,
+        )
+    summary.add_row("Identity", identity_status, f"{name} — {fingerprint[:16]}…" if len(fingerprint) > 16 else fingerprint)
     ollama_model_name = ollama_result.get("model", "llama3.2")
     ollama_host_display = ollama_result.get("host", "http://localhost:11434")
     summary.add_row(
