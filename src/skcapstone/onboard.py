@@ -42,7 +42,7 @@ from . import AGENT_HOME, __version__
 
 console = Console()
 
-TOTAL_STEPS = 14  # excludes welcome + celebrate; includes pillar install step
+TOTAL_STEPS = 15  # excludes welcome + celebrate; includes pillar install + import step
 
 
 def _step_header(n: int, title: str) -> None:
@@ -577,6 +577,252 @@ def _step_install_pillars() -> dict:
     return results
 
 
+# ---------------------------------------------------------------------------
+# Import sources — detect and import from existing agent platforms
+# ---------------------------------------------------------------------------
+
+# (source_id, display_name, detect_func, import_func_key)
+_IMPORT_SOURCES: list[tuple[str, str, str]] = [
+    ("openclaw", "OpenClaw (Jarvis)", "~/.openclaw/workspace"),
+    ("claude", "Claude Code", "~/.claude"),
+    ("cloud9", "Cloud 9 FEB Templates", ""),  # always available if cloud9_protocol installed
+]
+
+
+def _detect_import_sources(home_path: Path) -> list[dict]:
+    """Detect available sources for importing memories, soul, and trust data.
+
+    Returns:
+        List of dicts with 'id', 'name', 'available', 'detail', 'items'.
+    """
+    sources = []
+
+    # --- OpenClaw ---
+    oc_workspace = Path.home() / ".openclaw" / "workspace"
+    oc_memory = oc_workspace / "memory"
+    oc_soul = oc_workspace / "SOUL.md"
+    oc_identity = oc_workspace / "IDENTITY.md"
+    oc_agents = oc_workspace / "agents"
+    if oc_workspace.exists():
+        items = []
+        if oc_memory.exists():
+            mem_files = list(oc_memory.glob("*.md"))
+            items.append(f"{len(mem_files)} memory files")
+        if oc_soul.exists():
+            items.append("SOUL.md")
+        if oc_identity.exists():
+            items.append("IDENTITY.md")
+        if oc_agents.exists():
+            agent_souls = list(oc_agents.rglob("SOUL.md"))
+            if agent_souls:
+                items.append(f"{len(agent_souls)} agent soul(s)")
+        sources.append({
+            "id": "openclaw",
+            "name": "OpenClaw (Jarvis)",
+            "available": True,
+            "detail": ", ".join(items) if items else "workspace found",
+            "paths": {
+                "memory": oc_memory,
+                "soul": oc_soul,
+                "identity": oc_identity,
+                "agents": oc_agents,
+                "workspace": oc_workspace,
+            },
+        })
+
+    # --- Claude Code ---
+    claude_dir = Path.home() / ".claude"
+    claude_memory = None
+    if claude_dir.exists():
+        # Find project memory dirs
+        projects = claude_dir / "projects"
+        items = []
+        if projects.exists():
+            for proj_dir in projects.iterdir():
+                mem_dir = proj_dir / "memory"
+                if mem_dir.exists() and list(mem_dir.glob("*.md")):
+                    mem_files = list(mem_dir.glob("*.md"))
+                    items.append(f"{len(mem_files)} memory file(s) in {proj_dir.name}")
+                    claude_memory = mem_dir
+                memory_md = proj_dir / "MEMORY.md"
+                if memory_md.exists():
+                    items.append(f"MEMORY.md in {proj_dir.name}")
+        if items:
+            sources.append({
+                "id": "claude",
+                "name": "Claude Code",
+                "available": True,
+                "detail": ", ".join(items),
+                "paths": {"memory": claude_memory, "projects": projects},
+            })
+
+    # --- Cloud 9 FEB Templates ---
+    try:
+        import cloud9_protocol
+        c9_pkg = Path(cloud9_protocol.__file__).parent
+        feb_files = list(c9_pkg.rglob("*.feb"))
+        # Also check skcapstone defaults
+        defaults_dir = Path(__file__).parent / "defaults"
+        if defaults_dir.exists():
+            feb_files.extend(defaults_dir.rglob("*.feb"))
+        # Check user cloud9 dirs
+        for cloud9_dir in [Path.home() / ".cloud9" / "febs", Path.home() / ".cloud9" / "feb-backups"]:
+            if cloud9_dir.exists():
+                feb_files.extend(cloud9_dir.glob("*.feb"))
+        if feb_files:
+            sources.append({
+                "id": "cloud9",
+                "name": "Cloud 9 FEB Templates",
+                "available": True,
+                "detail": f"{len(feb_files)} FEB file(s)",
+                "paths": {"febs": feb_files},
+            })
+    except ImportError:
+        pass
+
+    return sources
+
+
+def _step_import_sources(home_path: Path) -> dict:
+    """Detect and import data from existing agent platforms.
+
+    Args:
+        home_path: Agent home directory.
+
+    Returns:
+        dict with 'imported_count' (int) and 'sources' (list of imported source ids).
+    """
+    import shutil as _shutil
+
+    result = {"imported_count": 0, "sources": []}
+
+    click.echo(click.style("  Scanning for existing agent data…", fg="bright_black"))
+    sources = _detect_import_sources(home_path)
+
+    if not sources:
+        click.echo(click.style("  ℹ ", fg="cyan") + "No existing agent data found — starting fresh")
+        return result
+
+    click.echo()
+    for i, src in enumerate(sources, 1):
+        click.echo(
+            click.style(f"    {i}. ", fg="cyan")
+            + f"[bold]{src['name']}[/] — {src['detail']}"
+        )
+    click.echo()
+
+    choices = {
+        "a": "Import from all sources",
+        "s": "Select which to import",
+        "n": "Skip (start fresh)",
+    }
+    for key, desc in choices.items():
+        click.echo(f"    [{key}] {desc}")
+    choice = click.prompt("  Choice", default="a", show_choices=False).strip().lower()
+
+    to_import: list[dict] = []
+    if choice == "a":
+        to_import = sources
+    elif choice == "s":
+        for src in sources:
+            if click.confirm(f"  Import from {src['name']}?", default=True):
+                to_import.append(src)
+    else:
+        click.echo(click.style("  ↷ ", fg="bright_black") + "Skipped — starting fresh")
+        return result
+
+    if not to_import:
+        return result
+
+    # --- Execute imports ---
+    for src in to_import:
+        sid = src["id"]
+        paths = src.get("paths", {})
+        count = 0
+
+        if sid == "openclaw":
+            # Import memories
+            mem_src = paths.get("memory")
+            if mem_src and mem_src.exists():
+                mem_dest = home_path / "memory" / "imported" / "openclaw"
+                mem_dest.mkdir(parents=True, exist_ok=True)
+                for f in mem_src.glob("*.md"):
+                    _shutil.copy2(f, mem_dest / f.name)
+                    count += 1
+                click.echo(click.style("  ✓ ", fg="green") + f"Imported {count} memory files from OpenClaw")
+
+            # Import soul/identity
+            for doc_name in ("soul", "identity"):
+                doc_path = paths.get(doc_name)
+                if doc_path and doc_path.exists():
+                    dest = home_path / "memory" / "imported" / "openclaw" / doc_path.name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    _shutil.copy2(doc_path, dest)
+                    count += 1
+                    click.echo(click.style("  ✓ ", fg="green") + f"Imported {doc_path.name} from OpenClaw")
+
+            # Import agent souls
+            agents_dir = paths.get("agents")
+            if agents_dir and agents_dir.exists():
+                agent_dest = home_path / "memory" / "imported" / "openclaw" / "agents"
+                agent_dest.mkdir(parents=True, exist_ok=True)
+                for soul_file in agents_dir.rglob("SOUL.md"):
+                    agent_name = soul_file.parent.name
+                    target = agent_dest / f"{agent_name}-SOUL.md"
+                    _shutil.copy2(soul_file, target)
+                    count += 1
+                for mem_file in agents_dir.rglob("MEMORY.md"):
+                    agent_name = mem_file.parent.name
+                    target = agent_dest / f"{agent_name}-MEMORY.md"
+                    _shutil.copy2(mem_file, target)
+                    count += 1
+                click.echo(click.style("  ✓ ", fg="green") + f"Imported agent souls/memories from OpenClaw")
+
+        elif sid == "claude":
+            # Import Claude memory files
+            projects_dir = paths.get("projects")
+            if projects_dir and projects_dir.exists():
+                claude_dest = home_path / "memory" / "imported" / "claude-code"
+                claude_dest.mkdir(parents=True, exist_ok=True)
+                for proj_dir in projects_dir.iterdir():
+                    mem_dir = proj_dir / "memory"
+                    if mem_dir.exists():
+                        for f in mem_dir.glob("*.md"):
+                            _shutil.copy2(f, claude_dest / f.name)
+                            count += 1
+                    memory_md = proj_dir / "MEMORY.md"
+                    if memory_md.exists():
+                        _shutil.copy2(memory_md, claude_dest / f"{proj_dir.name}-MEMORY.md")
+                        count += 1
+                if count:
+                    click.echo(click.style("  ✓ ", fg="green") + f"Imported {count} files from Claude Code")
+
+        elif sid == "cloud9":
+            # Import FEB files into trust/febs
+            febs = paths.get("febs", [])
+            if febs:
+                febs_dest = home_path / "trust" / "febs"
+                febs_dest.mkdir(parents=True, exist_ok=True)
+                for feb_path in febs:
+                    if isinstance(feb_path, Path) and feb_path.exists():
+                        _shutil.copy2(feb_path, febs_dest / feb_path.name)
+                        count += 1
+                click.echo(click.style("  ✓ ", fg="green") + f"Imported {count} FEB file(s) into trust chain")
+
+        result["imported_count"] += count
+        if count > 0:
+            result["sources"].append(sid)
+
+    click.echo()
+    click.echo(
+        click.style("  ✓ ", fg="green")
+        + f"Total: {result['imported_count']} file(s) imported from {len(result['sources'])} source(s)"
+    )
+    click.echo(click.style("    ", fg="bright_black") + f"Imported data: {home_path / 'memory' / 'imported'}")
+
+    return result
+
+
 def _step_ollama_models(prereqs: dict) -> dict:
     """Configure Ollama host, choose a model, and pull it.
 
@@ -1093,46 +1339,52 @@ def run_onboard(home: Optional[str] = None) -> None:
     seed_count = _step_memory(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 8: Rehydration Ritual
+    # Step 8: Import from Existing Sources
     # -----------------------------------------------------------------------
-    _step_header(8, "Rehydration Ritual")
+    _step_header(8, "Import Sources")
+    import_result = _step_import_sources(home_path)
+
+    # -----------------------------------------------------------------------
+    # Step 9: Rehydration Ritual
+    # -----------------------------------------------------------------------
+    _step_header(9, "Rehydration Ritual")
     _step_ritual(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 9: Trust Chain Verification
+    # Step 10: Trust Chain Verification
     # -----------------------------------------------------------------------
-    _step_header(9, "Trust Chain Verification")
+    _step_header(10, "Trust Chain Verification")
     trust_status = _step_trust(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 10: Mesh Connection (Syncthing)
+    # Step 11: Mesh Connection (Syncthing)
     # -----------------------------------------------------------------------
-    _step_header(10, "Mesh Connection")
+    _step_header(11, "Mesh Connection")
     mesh_ok = _step_mesh(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 11: First Heartbeat
+    # Step 12: First Heartbeat
     # -----------------------------------------------------------------------
-    _step_header(11, "First Heartbeat")
+    _step_header(12, "First Heartbeat")
     agent_slug = name.lower().replace(" ", "-")
     hb_ok = _step_heartbeat(home_path, agent_slug, fingerprint)
 
     # -----------------------------------------------------------------------
-    # Step 12: Crush Terminal AI Client
+    # Step 13: Crush Terminal AI Client
     # -----------------------------------------------------------------------
-    _step_header(12, "Crush Terminal AI")
+    _step_header(13, "Crush Terminal AI")
     crush_ok = _step_crush(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 13: Coordination Board
+    # Step 14: Coordination Board
     # -----------------------------------------------------------------------
-    _step_header(13, "Coordination Board")
+    _step_header(14, "Coordination Board")
     open_task_count = _step_board(home_path, name)
 
     # -----------------------------------------------------------------------
-    # Step 14: Auto-Start Service (systemd on Linux, launchd on macOS)
+    # Step 15: Auto-Start Service (systemd on Linux, launchd on macOS)
     # -----------------------------------------------------------------------
-    _step_header(14, "Auto-Start Service")
+    _step_header(15, "Auto-Start Service")
     service_ok = _step_autostart_service(agent_name=agent_slug)
 
     # -----------------------------------------------------------------------
@@ -1193,6 +1445,16 @@ def run_onboard(home: Optional[str] = None) -> None:
     summary.add_row("Config Files", config_status, "consciousness.yaml + model_profiles.yaml")
     summary.add_row("Soul", "[green]ACTIVE[/]", title)
     summary.add_row("Memory", "[green]ACTIVE[/]", f"{seed_count} seed(s)")
+    imported_count = import_result.get("imported_count", 0)
+    imported_sources = import_result.get("sources", [])
+    if imported_count > 0:
+        summary.add_row(
+            "Import Sources",
+            "[green]IMPORTED[/]",
+            f"{imported_count} files from {', '.join(imported_sources)}",
+        )
+    else:
+        summary.add_row("Import Sources", "[dim]SKIPPED[/]", "starting fresh")
     summary.add_row("Ritual", "[green]DONE[/]", "rehydration complete")
     summary.add_row("Trust", trust_status, "FEB chain verified")
     summary.add_row("Mesh", "[green]ACTIVE[/]" if mesh_ok else "[yellow]MISSING[/]", "syncthing" if mesh_ok else "install syncthing")
