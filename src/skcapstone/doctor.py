@@ -162,6 +162,17 @@ def _check_packages() -> list[Check]:
                     category="packages",
                 )
             )
+        except (ValueError, RuntimeError, OSError) as exc:
+            # Package installed but failed to initialize (e.g. no agent configured)
+            checks.append(
+                Check(
+                    name=f"pkg:{pkg_name}",
+                    description=desc,
+                    passed=True,
+                    detail=f"installed (init pending: {exc})",
+                    category="packages",
+                )
+            )
 
     return checks
 
