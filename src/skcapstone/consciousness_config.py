@@ -79,7 +79,7 @@ def load_consciousness_config(
     return config
 
 
-def write_default_config(home: Path) -> Path:
+def write_default_config(home: Path, **overrides) -> Path:
     """Write the default consciousness config to disk.
 
     Creates {home}/config/consciousness.yaml with all defaults
@@ -87,6 +87,8 @@ def write_default_config(home: Path) -> Path:
 
     Args:
         home: Agent home directory.
+        **overrides: Key-value overrides applied to the default config
+            (e.g. ollama_host, ollama_model).
 
     Returns:
         Path to the created config file.
@@ -96,6 +98,8 @@ def write_default_config(home: Path) -> Path:
     config_path = config_dir / CONFIG_FILENAME
 
     default = ConsciousnessConfig()
+    if overrides:
+        default = default.model_copy(update=overrides)
     content = yaml.dump(
         default.model_dump(),
         default_flow_style=False,

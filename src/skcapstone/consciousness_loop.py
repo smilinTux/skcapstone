@@ -108,6 +108,8 @@ class ConsciousnessConfig(BaseModel):
             "passthrough",
         ]
     )
+    ollama_host: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2"
     desktop_notifications: bool = True
 
 
@@ -256,7 +258,7 @@ class LLMBridge:
         self._available: dict[str, bool] = {}
         self._cache: Optional[ResponseCache] = cache
         self._fallback_tracker = FallbackTracker()
-        self._ollama_pool = _OllamaPool(os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
+        self._ollama_pool = _OllamaPool(os.environ.get("OLLAMA_HOST", config.ollama_host))
         self._probe_available_backends()
 
     def _probe_available_backends(self) -> None:

@@ -1,0 +1,17 @@
+[Unit]
+Description=SKComm Queue Drain — retry undelivered messages
+Documentation=https://github.com/smilinTux/skcomm
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=skcomm queue drain
+Nice=19
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone %h/.skcomm
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1

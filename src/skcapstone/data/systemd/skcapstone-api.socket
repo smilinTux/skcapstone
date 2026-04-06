@@ -1,0 +1,9 @@
+[Unit]
+Description=SKCapstone Daemon API Socket
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Socket]
+ListenStream=127.0.0.1:7777
+
+[Install]
+WantedBy=sockets.target

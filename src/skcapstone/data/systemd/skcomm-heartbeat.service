@@ -1,0 +1,18 @@
+[Unit]
+Description=SKComm Heartbeat Emission
+Documentation=https://github.com/smilinTux/skcomm
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=skcomm heartbeat --no-emit
+ExecStart=skcomm heartbeat
+Nice=19
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone %h/.skcomm
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1

@@ -53,7 +53,7 @@ TIMER_UNITS = [HEARTBEAT_TIMER, QUEUE_DRAIN_TIMER]
 
 SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
 
-BUNDLED_DIR = Path(__file__).parent.parent.parent / "systemd"
+BUNDLED_DIR = Path(__file__).parent / "data" / "systemd"
 
 
 @dataclass

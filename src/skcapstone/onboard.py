@@ -42,7 +42,7 @@ from . import AGENT_HOME, __version__
 
 console = Console()
 
-TOTAL_STEPS = 13  # excludes welcome + celebrate; includes 4 new system-setup steps
+TOTAL_STEPS = 14  # excludes welcome + celebrate; includes pillar install step
 
 
 def _step_header(n: int, title: str) -> None:
@@ -479,67 +479,213 @@ def _step_prereqs() -> dict:
     return results
 
 
-def _step_ollama_models(prereqs: dict) -> bool:
-    """Pull the default Ollama model (llama3.2).
+# Pillar packages: (import_name, pip_name, description)
+_PILLAR_PACKAGES = [
+    ("capauth", "capauth", "PGP-based sovereign identity"),
+    ("skcomm", "skcomm", "Redundant agent communication"),
+    ("skchat", "skchat-sovereign", "Encrypted P2P chat"),
+    ("skseed", "skseed", "Cloud 9 seeds & LLM callbacks"),
+    ("sksecurity", "sksecurity", "Audit logging & threat detection"),
+    ("pgpy", "pgpy", "PGP cryptography (PGPy backend)"),
+]
+
+
+def _step_install_pillars() -> dict:
+    """Detect missing pillar packages and offer to install them.
+
+    Returns:
+        dict mapping pip_name -> bool (installed successfully).
+    """
+    import subprocess
+
+    results = {}
+    missing = []
+
+    click.echo(click.style("  Checking pillar packages…", fg="bright_black"))
+    for import_name, pip_name, description in _PILLAR_PACKAGES:
+        try:
+            __import__(import_name)
+            click.echo(click.style("  ✓ ", fg="green") + f"{pip_name} — {description}")
+            results[pip_name] = True
+        except ImportError:
+            click.echo(click.style("  ✗ ", fg="red") + f"{pip_name} — {description} [bold red](missing)[/]")
+            missing.append((import_name, pip_name, description))
+            results[pip_name] = False
+
+    if not missing:
+        click.echo()
+        click.echo(click.style("  ✓ ", fg="green") + "All pillar packages installed")
+        return results
+
+    click.echo()
+    click.echo(
+        click.style("  ℹ ", fg="cyan")
+        + f"{len(missing)} pillar(s) missing. These are needed for full sovereign functionality."
+    )
+
+    choices = {
+        "a": "Install all missing pillars",
+        "s": "Select which to install",
+        "n": "Skip (install later manually)",
+    }
+    for key, desc in choices.items():
+        click.echo(f"    [{key}] {desc}")
+    choice = click.prompt("  Choice", default="a", show_choices=False).strip().lower()
+
+    to_install: list[tuple[str, str, str]] = []
+    if choice == "a":
+        to_install = missing
+    elif choice == "s":
+        for import_name, pip_name, description in missing:
+            if click.confirm(f"  Install {pip_name} ({description})?", default=True):
+                to_install.append((import_name, pip_name, description))
+    else:
+        click.echo(click.style("  ↷ ", fg="bright_black") + "Skipped — install later:")
+        for _, pip_name, _ in missing:
+            click.echo(click.style("    ", fg="bright_black") + f"pip install {pip_name}")
+        return results
+
+    if not to_install:
+        return results
+
+    # Determine pip command — prefer ~/.skenv if it exists, else use current Python
+    import os as _os
+    skenv_pip = Path(_os.path.expanduser("~/.skenv/bin/pip"))
+    if skenv_pip.exists():
+        pip_cmd = [str(skenv_pip), "install"]
+    else:
+        pip_cmd = [sys.executable, "-m", "pip", "install", "--break-system-packages"]
+
+    for import_name, pip_name, description in to_install:
+        click.echo(click.style("  ↓ ", fg="cyan") + f"Installing {pip_name}…")
+        try:
+            r = subprocess.run(
+                [*pip_cmd, pip_name, "-q"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode == 0:
+                click.echo(click.style("  ✓ ", fg="green") + f"{pip_name} installed")
+                results[pip_name] = True
+            else:
+                click.echo(click.style("  ✗ ", fg="red") + f"{pip_name} failed: {r.stderr.strip()[:100]}")
+                click.echo(click.style("    ", fg="bright_black") + f"Try manually: pip install {pip_name}")
+        except subprocess.TimeoutExpired:
+            click.echo(click.style("  ⚠ ", fg="yellow") + f"{pip_name} timed out")
+        except Exception as exc:
+            click.echo(click.style("  ⚠ ", fg="yellow") + f"{pip_name}: {exc}")
+
+    return results
+
+
+def _step_ollama_models(prereqs: dict) -> dict:
+    """Configure Ollama host, choose a model, and pull it.
 
     Args:
         prereqs: Result dict from _step_prereqs().
 
     Returns:
-        True if model is available.
+        dict with 'ok' (bool), 'model' (str), 'host' (str).
     """
     import subprocess
 
     DEFAULT_MODEL = "llama3.2"
+    DEFAULT_HOST = "http://localhost:11434"
+
+    result = {"ok": False, "model": DEFAULT_MODEL, "host": DEFAULT_HOST}
 
     if not prereqs.get("ollama"):
         click.echo(click.style("  ⚠ ", fg="yellow") + "Ollama not available — skipping model pull")
+        click.echo(click.style("    ", fg="bright_black") + "Install: curl -fsSL https://ollama.ai/install.sh | sh")
         click.echo(click.style("    ", fg="bright_black") + f"Pull later: ollama pull {DEFAULT_MODEL}")
-        return False
+        return result
 
-    # Check if model already present
+    # --- Ollama Host ---
+    click.echo(click.style("  ℹ ", fg="cyan") + f"Ollama is used for local/private LLM inference.")
+    click.echo(click.style("    ", fg="bright_black") + f"Default: {DEFAULT_HOST}")
+    custom_host = click.prompt(
+        "  Ollama host URL",
+        default=DEFAULT_HOST,
+        show_default=True,
+    )
+    result["host"] = custom_host.rstrip("/")
+
+    # Set env for this session so ollama CLI uses the right host
+    env = dict(**__import__("os").environ)
+    if result["host"] != DEFAULT_HOST:
+        env["OLLAMA_HOST"] = result["host"]
+        click.echo(click.style("  ✓ ", fg="green") + f"Using Ollama at: [cyan]{result['host']}[/]")
+
+    # --- List available models ---
+    available_models: list[str] = []
     try:
         r = subprocess.run(
             ["ollama", "list"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, env=env,
         )
-        if DEFAULT_MODEL in (r.stdout or ""):
-            click.echo(click.style("  ✓ ", fg="green") + f"{DEFAULT_MODEL} already present")
-            return True
+        if r.returncode == 0 and r.stdout.strip():
+            lines = r.stdout.strip().split("\n")[1:]  # skip header
+            for line in lines:
+                model_name = line.split()[0] if line.strip() else ""
+                if model_name:
+                    available_models.append(model_name)
     except Exception as exc:
-        logger.debug("Failed to check ollama model list: %s", exc)
+        logger.debug("Failed to list ollama models: %s", exc)
 
-    if not click.confirm(f"  Pull default model ({DEFAULT_MODEL}, ~2 GB)?", default=True):
-        click.echo(click.style("  ↷ ", fg="bright_black") + f"Skipped — pull later: ollama pull {DEFAULT_MODEL}")
-        return False
+    if available_models:
+        click.echo(click.style("  ℹ ", fg="cyan") + "Models already available:")
+        for m in available_models[:10]:
+            click.echo(click.style("    ", fg="bright_black") + m)
 
-    click.echo(click.style("  ↓ ", fg="cyan") + f"Pulling {DEFAULT_MODEL} (this may take a few minutes)…")
+    # --- Choose model ---
+    click.echo()
+    click.echo(click.style("  ℹ ", fg="cyan") + "Popular models: llama3.2 (~2GB), qwen3:14b (~9GB), deepseek-r1:14b (~9GB)")
+    chosen = click.prompt(
+        "  Model to use",
+        default=DEFAULT_MODEL,
+        show_default=True,
+    )
+    result["model"] = chosen
+
+    # Check if already present
+    if any(chosen in m for m in available_models):
+        click.echo(click.style("  ✓ ", fg="green") + f"{chosen} already present")
+        result["ok"] = True
+        return result
+
+    # --- Pull ---
+    if not click.confirm(f"  Pull {chosen}? (this may take a few minutes)", default=True):
+        click.echo(click.style("  ↷ ", fg="bright_black") + f"Skipped — pull later: ollama pull {chosen}")
+        return result
+
+    click.echo(click.style("  ↓ ", fg="cyan") + f"Pulling {chosen}…")
     try:
-        result = subprocess.run(
-            ["ollama", "pull", DEFAULT_MODEL],
-            timeout=600,
+        pull_result = subprocess.run(
+            ["ollama", "pull", chosen],
+            timeout=600, env=env,
         )
-        if result.returncode == 0:
-            click.echo(click.style("  ✓ ", fg="green") + f"{DEFAULT_MODEL} ready")
-            return True
+        if pull_result.returncode == 0:
+            click.echo(click.style("  ✓ ", fg="green") + f"{chosen} ready")
+            result["ok"] = True
+            return result
         else:
-            click.echo(click.style("  ✗ ", fg="red") + f"Pull failed (exit {result.returncode})")
-            click.echo(click.style("    ", fg="bright_black") + f"Retry: ollama pull {DEFAULT_MODEL}")
-            return False
+            click.echo(click.style("  ✗ ", fg="red") + f"Pull failed (exit {pull_result.returncode})")
+            click.echo(click.style("    ", fg="bright_black") + f"Retry: ollama pull {chosen}")
+            return result
     except subprocess.TimeoutExpired:
         click.echo(click.style("  ⚠ ", fg="yellow") + "Pull timed out — run manually later")
-        click.echo(click.style("    ", fg="bright_black") + f"ollama pull {DEFAULT_MODEL}")
-        return False
+        click.echo(click.style("    ", fg="bright_black") + f"ollama pull {chosen}")
+        return result
     except Exception as exc:
         click.echo(click.style("  ⚠ ", fg="yellow") + f"Pull error: {exc}")
-        return False
+        return result
 
 
-def _step_config_files(home_path: Path) -> tuple:
+def _step_config_files(home_path: Path, ollama_config: dict | None = None) -> tuple:
     """Write default consciousness.yaml and model_profiles.yaml.
 
     Args:
         home_path: Agent home directory.
+        ollama_config: Optional dict with 'host' and 'model' from Ollama step.
 
     Returns:
         (consciousness_ok, profiles_ok) booleans.
@@ -557,8 +703,17 @@ def _step_config_files(home_path: Path) -> tuple:
     else:
         try:
             from .consciousness_config import write_default_config
+            from .consciousness_loop import ConsciousnessConfig
 
-            config_path = write_default_config(home_path)
+            # If user configured a custom Ollama host/model, patch the defaults
+            overrides = {}
+            if ollama_config:
+                if ollama_config.get("host") and ollama_config["host"] != "http://localhost:11434":
+                    overrides["ollama_host"] = ollama_config["host"]
+                if ollama_config.get("model") and ollama_config["model"] != "llama3.2":
+                    overrides["ollama_model"] = ollama_config["model"]
+
+            config_path = write_default_config(home_path, **overrides)
             click.echo(click.style("  ✓ ", fg="green") + f"consciousness.yaml written")
             click.echo(click.style("    ", fg="bright_black") + str(config_path))
             consciousness_ok = True
@@ -901,76 +1056,83 @@ def run_onboard(home: Optional[str] = None) -> None:
     prereqs = _step_prereqs()
 
     # -----------------------------------------------------------------------
-    # Step 2: Identity + Directory Structure
+    # Step 2: Install Missing Pillars
     # -----------------------------------------------------------------------
-    _step_header(2, "Identity")
+    _step_header(2, "Pillar Packages")
+    pillar_results = _step_install_pillars()
+
+    # -----------------------------------------------------------------------
+    # Step 3: Identity + Directory Structure
+    # -----------------------------------------------------------------------
+    _step_header(3, "Identity")
     fingerprint, identity_status = _step_identity(home_path, name, email or None)
 
     # -----------------------------------------------------------------------
-    # Step 3: Ollama Models
+    # Step 4: Ollama Models
     # -----------------------------------------------------------------------
-    _step_header(3, "Ollama Models")
-    ollama_ok = _step_ollama_models(prereqs)
+    _step_header(4, "Ollama Models")
+    ollama_result = _step_ollama_models(prereqs)
+    ollama_ok = ollama_result["ok"]
 
     # -----------------------------------------------------------------------
-    # Step 4: Config Files (consciousness.yaml + model_profiles.yaml)
+    # Step 5: Config Files (consciousness.yaml + model_profiles.yaml)
     # -----------------------------------------------------------------------
-    _step_header(4, "Config Files")
-    consciousness_ok, profiles_ok = _step_config_files(home_path)
+    _step_header(5, "Config Files")
+    consciousness_ok, profiles_ok = _step_config_files(home_path, ollama_config=ollama_result)
 
     # -----------------------------------------------------------------------
-    # Step 5: Soul Blueprint
+    # Step 6: Soul Blueprint
     # -----------------------------------------------------------------------
-    _step_header(5, "Soul Blueprint")
+    _step_header(6, "Soul Blueprint")
     title = _step_soul(home_path, name)
 
     # -----------------------------------------------------------------------
-    # Step 6: Memory
+    # Step 7: Memory
     # -----------------------------------------------------------------------
-    _step_header(6, "Memory")
+    _step_header(7, "Memory")
     seed_count = _step_memory(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 7: Rehydration Ritual
+    # Step 8: Rehydration Ritual
     # -----------------------------------------------------------------------
-    _step_header(7, "Rehydration Ritual")
+    _step_header(8, "Rehydration Ritual")
     _step_ritual(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 8: Trust Chain Verification
+    # Step 9: Trust Chain Verification
     # -----------------------------------------------------------------------
-    _step_header(8, "Trust Chain Verification")
+    _step_header(9, "Trust Chain Verification")
     trust_status = _step_trust(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 9: Mesh Connection (Syncthing)
+    # Step 10: Mesh Connection (Syncthing)
     # -----------------------------------------------------------------------
-    _step_header(9, "Mesh Connection")
+    _step_header(10, "Mesh Connection")
     mesh_ok = _step_mesh(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 10: First Heartbeat
+    # Step 11: First Heartbeat
     # -----------------------------------------------------------------------
-    _step_header(10, "First Heartbeat")
+    _step_header(11, "First Heartbeat")
     agent_slug = name.lower().replace(" ", "-")
     hb_ok = _step_heartbeat(home_path, agent_slug, fingerprint)
 
     # -----------------------------------------------------------------------
-    # Step 11: Crush Terminal AI Client
+    # Step 12: Crush Terminal AI Client
     # -----------------------------------------------------------------------
-    _step_header(11, "Crush Terminal AI")
+    _step_header(12, "Crush Terminal AI")
     crush_ok = _step_crush(home_path)
 
     # -----------------------------------------------------------------------
-    # Step 12: Coordination Board
+    # Step 13: Coordination Board
     # -----------------------------------------------------------------------
-    _step_header(12, "Coordination Board")
+    _step_header(13, "Coordination Board")
     open_task_count = _step_board(home_path, name)
 
     # -----------------------------------------------------------------------
-    # Step 13: Auto-Start Service (systemd on Linux, launchd on macOS)
+    # Step 14: Auto-Start Service (systemd on Linux, launchd on macOS)
     # -----------------------------------------------------------------------
-    _step_header(13, "Auto-Start Service")
+    _step_header(14, "Auto-Start Service")
     service_ok = _step_autostart_service(agent_name=agent_slug)
 
     # -----------------------------------------------------------------------
@@ -1012,11 +1174,20 @@ def run_onboard(home: Optional[str] = None) -> None:
         "[green]OK[/]" if all_prereqs_ok else "[yellow]PARTIAL[/]",
         "python + pip" + (" + ollama" if prereqs.get("ollama") else " (no ollama)"),
     )
+    pillars_installed = sum(1 for v in pillar_results.values() if v)
+    pillars_total = len(pillar_results)
+    summary.add_row(
+        "Pillar Packages",
+        "[green]ALL[/]" if pillars_installed == pillars_total else f"[yellow]{pillars_installed}/{pillars_total}[/]",
+        f"{pillars_installed}/{pillars_total} installed",
+    )
     summary.add_row("Identity", identity_status, fingerprint[:20] + "…" if len(fingerprint) > 20 else fingerprint)
+    ollama_model_name = ollama_result.get("model", "llama3.2")
+    ollama_host_display = ollama_result.get("host", "http://localhost:11434")
     summary.add_row(
         "Ollama Models",
         "[green]READY[/]" if ollama_ok else "[yellow]SKIPPED[/]",
-        "llama3.2" if ollama_ok else "pull later: ollama pull llama3.2",
+        f"{ollama_model_name} @ {ollama_host_display}" if ollama_ok else f"pull later: ollama pull {ollama_model_name}",
     )
     config_status = "[green]ACTIVE[/]" if (consciousness_ok and profiles_ok) else "[yellow]PARTIAL[/]"
     summary.add_row("Config Files", config_status, "consciousness.yaml + model_profiles.yaml")
@@ -1047,8 +1218,42 @@ def run_onboard(home: Optional[str] = None) -> None:
     console.print()
 
     # -----------------------------------------------------------------------
+    # Reconfigure Guide
+    # -----------------------------------------------------------------------
+    console.print()
+    console.print(
+        Panel(
+            "[bold cyan]Reinstall or Reconfigure Any Component[/]\n\n"
+            "[bold]Pillars[/]  (install missing packages)\n"
+            "  pip install capauth skcomm skchat-sovereign skseed sksecurity pgpy\n"
+            "  pip install skcapstone[all]      — install everything at once\n\n"
+            "[bold]Identity[/]  (regenerate PGP keys)\n"
+            "  capauth init --name YourName --email you@example.com\n\n"
+            "[bold]Ollama[/]  (change model or host)\n"
+            "  ollama pull <model>              — pull a different model\n"
+            "  Edit: ~/.skcapstone/config/consciousness.yaml\n"
+            "    ollama_host: http://<ip>:11434  — point to remote Ollama\n"
+            "    ollama_model: qwen3:14b         — change default model\n\n"
+            "[bold]Soul[/]  (update your blueprint)\n"
+            "  skcapstone soul edit\n\n"
+            "[bold]Service[/]  (auto-start daemon)\n"
+            "  skcapstone daemon install         — install systemd/launchd service\n"
+            "  skcapstone daemon uninstall       — remove service\n\n"
+            "[bold]Trust[/]  (add FEB files)\n"
+            "  Place .feb files in ~/.skcapstone/trust/febs/\n\n"
+            "[bold]Mesh[/]  (P2P sync)\n"
+            "  sudo apt install syncthing       — install Syncthing\n\n"
+            "[bold]Full Re-onboard[/]\n"
+            "  skcapstone --agent <name> init    — run this wizard again",
+            title="Reconfigure Guide",
+            border_style="bright_blue",
+        )
+    )
+
+    # -----------------------------------------------------------------------
     # Celebrate
     # -----------------------------------------------------------------------
+    console.print()
     console.print(
         Panel(
             f"[bold green]Welcome to the Pengu Nation, {name}.[/]\n\n"
