@@ -153,6 +153,8 @@ def _backend_from_model(model_name: str, tier: ModelTier) -> str:
         return "grok"
     if "kimi" in name_base or "moonshot" in name_base:
         return "kimi"
+    if "minimax" in name_base:
+        return "minimax"
     if "nvidia" in name_base:
         return "nvidia"
     if any(p in name_base for p in _OLLAMA_MODEL_PATTERNS):
@@ -301,6 +303,7 @@ class LLMBridge:
             anthropic_callback,
             grok_callback,
             kimi_callback,
+            minimax_callback,
             nvidia_callback,
             ollama_callback,
             openai_callback,
