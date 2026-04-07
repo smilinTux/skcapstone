@@ -80,17 +80,23 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
         except (json.JSONDecodeError, OSError):
             pass
 
-    # Check if daemon is running (systemd)
+    # Check if consciousness daemon is running (systemd)
+    # Accept either the legacy skwhisper service or the skcapstone service
     try:
         import subprocess
 
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", "skwhisper"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        state.whisper_active = result.stdout.strip() == "active"
+        for service_name in ("skcapstone", "skwhisper"):
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", service_name],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if result.stdout.strip() == "active":
+                state.whisper_active = True
+                break
+        else:
+            state.whisper_active = False
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         state.whisper_active = False
 
@@ -105,6 +111,9 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
             state.status = PillarStatus.ACTIVE
         else:
             state.status = PillarStatus.DEGRADED
+    elif state.whisper_active:
+        # Daemon is running but no sessions digested yet — consciousness is live
+        state.status = PillarStatus.DEGRADED
     elif state.sessions_digested > 0 or state.whisper_md is not None:
         state.status = PillarStatus.DEGRADED
     else:
