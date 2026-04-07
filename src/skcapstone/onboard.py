@@ -1507,6 +1507,28 @@ def run_onboard(home: Optional[str] = None) -> None:
 
     fingerprint, identity_status = _step_identity(home_path, name, email or None)
 
+    # --- Offer CapAuth Syncthing sync (non-blocking) ---
+    try:
+        from capauth.sync import is_syncthing_available, is_sync_configured, setup_syncthing_sync
+
+        if is_syncthing_available() and not is_sync_configured():
+            console.print()
+            if Confirm.ask(
+                "  Sync identity across cluster via Syncthing?",
+                default=True,
+            ):
+                ok = setup_syncthing_sync()
+                if ok:
+                    _ok("CapAuth identity will replicate to all mesh nodes")
+                else:
+                    _warn("Could not configure sync — set up manually: capauth sync")
+        elif is_sync_configured():
+            _ok("CapAuth Syncthing sync already configured")
+    except ImportError:
+        pass  # capauth.sync not available yet
+    except Exception as exc:
+        _warn(f"Sync setup skipped: {exc}")
+
     # -----------------------------------------------------------------------
     # Step 4: Ollama Models
     # -----------------------------------------------------------------------
