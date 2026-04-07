@@ -314,22 +314,25 @@ def register_daemon_commands(main: click.Group) -> None:
             console.print()
 
         elif platform.system() == "Linux":
-            from ..systemd import install_service, systemd_available
+            from ..systemd import install_service, systemd_available, SERVICE_NAME
 
             if not systemd_available():
                 console.print("[red]systemd user session not available.[/]")
                 console.print("[dim]This command requires a Linux system with systemd.[/]")
                 raise SystemExit(1)
 
-            console.print("\n[cyan]Installing skcapstone systemd service...[/]")
-            result = install_service(start=start)
+            console.print(f"\n[cyan]Installing skcapstone systemd service for agent '{effective_agent}'...[/]")
+            result = install_service(agent_name=effective_agent, start=start)
+            svc_name = result.get("service_name", SERVICE_NAME)
 
             if result["installed"]:
-                console.print("[green]  Unit files installed.[/]")
+                console.print(f"[green]  Unit files installed ({svc_name}).[/]")
             if result["enabled"]:
-                console.print("[green]  Service enabled at login.[/]")
+                console.print(f"[green]  Service enabled at login.[/]")
             if result.get("started"):
-                console.print("[green]  Service started.[/]")
+                console.print(f"[green]  Service started.[/]")
+            else:
+                console.print(f"[dim]  Start: systemctl --user start {svc_name}[/]")
             console.print()
 
             if not result["installed"]:

@@ -121,24 +121,32 @@ def systemd_available() -> bool:
 
 
 def install_service(
+    agent_name: Optional[str] = None,
     unit_dir: Optional[Path] = None,
     source_dir: Optional[Path] = None,
     enable: bool = True,
     start: bool = True,
 ) -> dict:
-    """Install the skcapstone systemd user service.
+    """Install the skcapstone systemd user service for an agent.
 
-    Copies unit files to ~/.config/systemd/user/, reloads the
-    daemon, and optionally enables + starts the service.
+    When *agent_name* is provided, installs the template unit
+    ``skcapstone@.service`` and enables ``skcapstone@<agent>.service``.
+    This supports multiple agents running as independent services on
+    the same machine.
+
+    When *agent_name* is None, falls back to the single-agent
+    ``skcapstone.service`` unit for backwards compatibility.
 
     Args:
+        agent_name: Agent name (e.g. "jarvis"). Uses template unit.
         unit_dir: Target directory for unit files.
         source_dir: Directory containing the .service/.socket files.
         enable: Whether to enable the service at login.
         start: Whether to start the service immediately.
 
     Returns:
-        dict: Result with 'installed', 'enabled', 'started' bools.
+        dict: Result with 'installed', 'enabled', 'started' bools
+              and 'service_name' for the installed unit.
     """
     _require_linux()
     target = unit_dir or SYSTEMD_USER_DIR
@@ -146,15 +154,41 @@ def install_service(
 
     target.mkdir(parents=True, exist_ok=True)
 
-    result = {"installed": False, "enabled": False, "started": False, "timers_enabled": False}
+    result = {
+        "installed": False,
+        "enabled": False,
+        "started": False,
+        "timers_enabled": False,
+        "service_name": "",
+    }
 
-    service_src = source / SERVICE_NAME
-    if not service_src.exists():
-        logger.error("Service unit not found: %s", service_src)
-        return result
+    # Determine which unit to use
+    if agent_name:
+        # Multi-agent: use template unit skcapstone@.service
+        template_name = "skcapstone@.service"
+        instance_name = f"skcapstone@{agent_name}.service"
+        template_src = source / template_name
+        if not template_src.exists():
+            logger.error("Template unit not found: %s", template_src)
+            return result
+        shutil.copy2(template_src, target / template_name)
+        service_unit = instance_name
+        result["service_name"] = instance_name
+    else:
+        # Single-agent fallback
+        service_src = source / SERVICE_NAME
+        if not service_src.exists():
+            logger.error("Service unit not found: %s", service_src)
+            return result
+        shutil.copy2(service_src, target / SERVICE_NAME)
+        service_unit = SERVICE_NAME
+        result["service_name"] = SERVICE_NAME
 
-    copied = 0
+    # Copy ancillary units (socket, timers, etc.)
+    copied = 1  # already copied the main unit
     for unit_name in ALL_UNITS:
+        if unit_name == SERVICE_NAME:
+            continue  # already handled above
         src = source / unit_name
         if src.exists():
             shutil.copy2(src, target / unit_name)
@@ -162,10 +196,10 @@ def install_service(
 
     _systemctl("daemon-reload")
     result["installed"] = True
-    logger.info("Installed %d unit file(s) to %s", copied, target)
+    logger.info("Installed %d unit file(s) to %s (service: %s)", copied, target, service_unit)
 
     if enable:
-        r = _systemctl("enable", SERVICE_NAME)
+        r = _systemctl("enable", service_unit)
         result["enabled"] = r.returncode == 0
 
         timers_ok = True
@@ -177,7 +211,7 @@ def install_service(
         result["timers_enabled"] = timers_ok
 
     if start:
-        r = _systemctl("start", SERVICE_NAME)
+        r = _systemctl("start", service_unit)
         result["started"] = r.returncode == 0
 
         for timer in TIMER_UNITS:

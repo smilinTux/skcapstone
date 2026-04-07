@@ -1008,7 +1008,7 @@ def _step_autostart_service(agent_name: str = "sovereign") -> bool:
     system = platform.system()
 
     if system == "Linux":
-        return _step_systemd_service_linux()
+        return _step_systemd_service_linux(agent_name)
     elif system == "Darwin":
         return _step_launchd_service_macos(agent_name)
     else:
@@ -1019,8 +1019,17 @@ def _step_autostart_service(agent_name: str = "sovereign") -> bool:
         return False
 
 
-def _step_systemd_service_linux() -> bool:
-    """Install systemd user service (Linux only)."""
+def _step_systemd_service_linux(agent_name: str = "sovereign") -> bool:
+    """Install systemd user service for an agent (Linux only).
+
+    Uses the template unit ``skcapstone@.service`` so each agent
+    gets its own independent service instance. Multiple agents can
+    run simultaneously on the same machine.
+
+    Args:
+        agent_name: Agent slug from onboarding (e.g. "jarvis").
+    """
+    service_name = f"skcapstone@{agent_name}.service"
     if not click.confirm("  Install systemd user service for auto-start at login?", default=False):
         click.echo(
             click.style("  ↷ ", fg="bright_black")
@@ -1036,12 +1045,15 @@ def _step_systemd_service_linux() -> bool:
             click.echo(click.style("    ", fg="bright_black") + "Try: systemctl --user status")
             return False
 
-        result = install_service(enable=True, start=False)
+        result = install_service(agent_name=agent_name, enable=True, start=False)
         if result.get("installed"):
-            click.echo(click.style("  ✓ ", fg="green") + "Systemd service installed")
+            click.echo(click.style("  ✓ ", fg="green") + f"Systemd service installed")
             if result.get("enabled"):
-                click.echo(click.style("  ✓ ", fg="green") + "Service enabled — auto-starts at login")
-            click.echo(click.style("    ", fg="bright_black") + "Start now: systemctl --user start skcapstone")
+                click.echo(click.style("  ✓ ", fg="green") + f"Service enabled — auto-starts at login")
+            click.echo(
+                click.style("    ", fg="bright_black")
+                + f"Start now: systemctl --user start {service_name}"
+            )
             return True
         else:
             click.echo(click.style("  ✗ ", fg="red") + "Service install failed")
