@@ -140,23 +140,14 @@ def _backend_from_model(model_name: str, tier: ModelTier) -> str:
 
     Returns:
         Backend string: ``"ollama"``, ``"anthropic"``, ``"openai"``, ``"grok"``,
-        ``"kimi"``, ``"nvidia"``, ``"passthrough"``, or ``"unknown"``.
+        ``"kimi"``, ``"minimax"``, ``"nvidia"``, ``"passthrough"``, or ``"unknown"``.
     """
     if tier == ModelTier.LOCAL:
         return "ollama"
     name_base = model_name.lower().split(":")[0]
-    if "claude" in name_base:
-        return "anthropic"
-    if any(x in name_base for x in ("gpt", "o1", "o3", "o4")):
-        return "openai"
-    if "grok" in name_base:
-        return "grok"
-    if "kimi" in name_base or "moonshot" in name_base:
-        return "kimi"
-    if "minimax" in name_base:
-        return "minimax"
-    if "nvidia" in name_base:
-        return "nvidia"
+    for patterns, backend in LLMBridge._MODEL_PATTERNS:
+        if any(p in name_base for p in patterns):
+            return backend
     if any(p in name_base for p in _OLLAMA_MODEL_PATTERNS):
         return "ollama"
     return "unknown"
@@ -253,6 +244,7 @@ class LLMBridge:
         adapter: Optional[PromptAdapter] = None,
         cache: Optional[ResponseCache] = None,
     ) -> None:
+        self._config = config
         self._router = ModelRouter(config=router_config)
         self._adapter = adapter or PromptAdapter()
         self._fallback_chain = config.fallback_chain
@@ -263,17 +255,29 @@ class LLMBridge:
         self._ollama_pool = _OllamaPool(os.environ.get("OLLAMA_HOST", config.ollama_host))
         self._probe_available_backends()
 
+    # Maps backend name → env var that activates it.
+    # Backends with None are probed separately (ollama) or always on (passthrough).
+    _BACKEND_ENV_KEYS: dict[str, Optional[str]] = {
+        "ollama": None,
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "grok": "XAI_API_KEY",
+        "kimi": "MOONSHOT_API_KEY",
+        "minimax": "MINIMAX_API_KEY",
+        "nvidia": "NVIDIA_API_KEY",
+        "passthrough": None,
+    }
+
     def _probe_available_backends(self) -> None:
         """Probe all backends for availability."""
-        self._available = {
-            "ollama": self._probe_ollama(),
-            "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
-            "openai": bool(os.environ.get("OPENAI_API_KEY")),
-            "grok": bool(os.environ.get("XAI_API_KEY")),
-            "kimi": bool(os.environ.get("MOONSHOT_API_KEY")),
-            "nvidia": bool(os.environ.get("NVIDIA_API_KEY")),
-            "passthrough": True,
-        }
+        self._available = {}
+        for name, env_key in self._BACKEND_ENV_KEYS.items():
+            if name == "ollama":
+                self._available[name] = self._probe_ollama()
+            elif name == "passthrough":
+                self._available[name] = True
+            else:
+                self._available[name] = bool(os.environ.get(env_key or ""))
         available = [k for k, v in self._available.items() if v]
         logger.info("LLM backends available: %s", available)
 
@@ -289,8 +293,22 @@ class LLMBridge:
             self._ollama_pool.invalidate()
             return False
 
+    # Maps model-name substring → backend name for pattern matching.
+    _MODEL_PATTERNS: list[tuple[tuple[str, ...], str]] = [
+        (("claude",), "anthropic"),
+        (("gpt", "o1", "o3", "o4"), "openai"),
+        (("grok",), "grok"),
+        (("kimi", "moonshot"), "kimi"),
+        (("minimax",), "minimax"),
+        (("nvidia",), "nvidia"),
+    ]
+
     def _resolve_callback(self, tier: ModelTier, model_name: str):
         """Map tier+model to a skseed callback.
+
+        Uses the configured ollama_model for local inference and
+        resolves cloud backends by model-name pattern matching.
+        Falls back through the configured fallback_chain.
 
         Args:
             tier: The routing tier.
@@ -299,73 +317,57 @@ class LLMBridge:
         Returns:
             An LLMCallback callable.
         """
-        from skseed.llm import (
-            anthropic_callback,
-            grok_callback,
-            kimi_callback,
-            minimax_callback,
-            nvidia_callback,
-            ollama_callback,
-            openai_callback,
-            passthrough_callback,
-        )
+        from skseed.llm import ollama_callback
 
-        name_lower = model_name.lower()
-        # Strip Ollama :tag suffix for pattern matching (e.g. "deepseek-r1:8b" -> "deepseek-r1")
-        name_base = name_lower.split(":")[0]
+        name_base = model_name.lower().split(":")[0]
 
         # LOCAL tier always goes to Ollama
         if tier == ModelTier.LOCAL:
             return ollama_callback(model=model_name)
 
-        # Pattern matching on model name (use name_base to handle :tag suffixes)
-        if "claude" in name_base:
-            return anthropic_callback(model=model_name)
-        if "gpt" in name_base or "o1" in name_base or "o3" in name_base or "o4" in name_base:
-            return openai_callback(model=model_name)
-        if "grok" in name_base:
-            return grok_callback(model=model_name)
-        if "kimi" in name_base or "moonshot" in name_base:
-            return kimi_callback(model=model_name)
-        if "minimax" in name_base:
-            return minimax_callback(model=model_name)
-        if "nvidia" in name_base:
-            return nvidia_callback(model=model_name)
+        # Pattern matching on model name
+        for patterns, backend in self._MODEL_PATTERNS:
+            if any(p in name_base for p in patterns):
+                return self._callback_for_backend(backend, model=model_name)
 
         # Models that run on Ollama (local inference)
-        ollama_patterns = (
-            "llama",
-            "mistral",
-            "nemotron",
-            "devstral",
-            "deepseek",
-            "qwen",
-            "codestral",
-        )
-        for pattern in ollama_patterns:
-            if pattern in name_base:
-                return ollama_callback(model=model_name)
+        if any(p in name_base for p in _OLLAMA_MODEL_PATTERNS):
+            return ollama_callback(model=model_name)
 
         # Walk fallback chain for first available backend
         for backend in self._fallback_chain:
-            if not self._available.get(backend, False):
-                continue
-            if backend == "ollama":
-                return ollama_callback(model="llama3.2")
-            elif backend == "anthropic":
-                return anthropic_callback()
-            elif backend == "openai":
-                return openai_callback()
-            elif backend == "grok":
-                return grok_callback()
-            elif backend == "kimi":
-                return kimi_callback()
-            elif backend == "nvidia":
-                return nvidia_callback()
-            elif backend == "passthrough":
-                return self._make_passthrough_callback()
+            if self._available.get(backend, False):
+                return self._callback_for_backend(backend)
 
         return self._make_passthrough_callback()
+
+    def _callback_for_backend(self, backend: str, model: Optional[str] = None):
+        """Return the skseed callback for *backend*, importing only what's needed.
+
+        Args:
+            backend: Backend name (e.g. "ollama", "anthropic", "openai").
+            model: Optional model override. When None, uses each provider's default.
+
+        Returns:
+            An LLMCallback callable.
+        """
+        import skseed.llm as _llm
+
+        if backend == "ollama":
+            return _llm.ollama_callback(model=model or self._config.ollama_model)
+        if backend == "passthrough":
+            return self._make_passthrough_callback()
+
+        # All other backends follow the same pattern: <backend>_callback(model=…)
+        factory = getattr(_llm, f"{backend}_callback", None)
+        if factory is None:
+            logger.warning("No skseed callback for backend %r — using passthrough", backend)
+            return self._make_passthrough_callback()
+
+        kwargs: dict[str, Any] = {}
+        if model:
+            kwargs["model"] = model
+        return factory(**kwargs)
 
     @staticmethod
     def _make_passthrough_callback():
@@ -463,16 +465,6 @@ class LLMBridge:
         Returns:
             LLM response text, or a fallback error message.
         """
-        from skseed.llm import (
-            anthropic_callback,
-            grok_callback,
-            kimi_callback,
-            minimax_callback,
-            nvidia_callback,
-            ollama_callback,
-            openai_callback,
-        )
-
         decision = self._router.route(signal)
         logger.info(
             "Routed to tier=%s model=%s: %s",
@@ -612,31 +604,14 @@ class LLMBridge:
                         )
                     )
 
-        # Cross-provider cascade via fallback chain — direct backend mapping,
-        # no _resolve_callback, to avoid infinite regression on unknown names.
+        # Cross-provider cascade via fallback chain — uses _callback_for_backend
+        # so adding a new provider only requires updating the registry, not this loop.
         for backend in self._fallback_chain:
             if not self._available.get(backend, False):
                 continue
             try:
                 logger.info("Fallback cascade: %s", backend)
-                if backend == "ollama":
-                    callback = ollama_callback(model="llama3.2")
-                elif backend == "anthropic":
-                    callback = anthropic_callback()
-                elif backend == "grok":
-                    callback = grok_callback()
-                elif backend == "kimi":
-                    callback = kimi_callback()
-                elif backend == "minimax":
-                    callback = minimax_callback()
-                elif backend == "nvidia":
-                    callback = nvidia_callback()
-                elif backend == "openai":
-                    callback = openai_callback()
-                elif backend == "passthrough":
-                    callback = self._make_passthrough_callback()
-                else:
-                    continue
+                callback = self._callback_for_backend(backend)
                 result = self._timed_call(callback, adapted, ModelTier.FAST)
                 if _out_info is not None:
                     _out_info["backend"] = backend

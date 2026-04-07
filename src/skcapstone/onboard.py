@@ -1283,44 +1283,61 @@ def _step_doctor_check(home_path: Path) -> "object":
 
 
 def _step_test_consciousness(home_path: Path) -> bool:
-    """Send a test message through the consciousness loop (optional).
+    """Send a quick test message to the configured LLM backend.
+
+    Reads the consciousness config to determine the default backend
+    (typically the local Ollama model chosen during onboarding) and
+    sends a single prompt to verify the pipeline works end-to-end.
 
     Args:
         home_path: Agent home directory.
 
     Returns:
-        True if the loop responded successfully.
+        True if the LLM responded successfully.
     """
-    if not click.confirm("  Send a test message to verify the consciousness loop?", default=False):
+    if not click.confirm("  Send a test message to verify the LLM backend?", default=False):
         click.echo(
             click.style("  ↷ ", fg="bright_black")
             + "Skipped — test later: skcapstone consciousness test 'hello'"
         )
         return False
 
-    click.echo(click.style("  Sending test message…", fg="bright_black"))
+    # Load config to discover which backend/model was configured
     try:
         from .consciousness_config import load_consciousness_config
-        from .consciousness_loop import LLMBridge, SystemPromptBuilder, _classify_message
-
         config = load_consciousness_config(home_path)
-        bridge = LLMBridge(config)
-        builder = SystemPromptBuilder(home_path, config.max_context_tokens)
-        signal = _classify_message("Onboard wizard test — please confirm you are running.")
-        system_prompt = builder.build()
-        response = bridge.generate(system_prompt, "Onboard wizard test — please confirm you are running.", signal)
+    except Exception:
+        # Fall back to defaults
+        ollama_model = "llama3.2"
+        ollama_host = "http://localhost:11434"
+        config = None
+    else:
+        ollama_model = config.ollama_model
+        ollama_host = config.ollama_host
+
+    click.echo(
+        click.style("  Testing ", fg="bright_black")
+        + click.style(f"{ollama_model}", fg="cyan")
+        + click.style(f" @ {ollama_host}…", fg="bright_black")
+    )
+
+    try:
+        from skseed.llm import ollama_callback
+
+        callback = ollama_callback(model=ollama_model, base_url=ollama_host)
+        response = callback("Respond in one sentence: are you online?")
         if response:
             preview = response[:80].replace("\n", " ")
-            click.echo(click.style("  ✓ ", fg="green") + f"Consciousness loop active")
+            click.echo(click.style("  ✓ ", fg="green") + "LLM backend active")
             click.echo(click.style("    ", fg="bright_black") + f"Response: {preview!r}")
             return True
         else:
-            click.echo(click.style("  ⚠ ", fg="yellow") + "Empty response — loop may not be fully configured")
-            click.echo(click.style("    ", fg="bright_black") + "Start daemon: skcapstone daemon start")
+            click.echo(click.style("  ⚠ ", fg="yellow") + "Empty response — model may still be loading")
+            click.echo(click.style("    ", fg="bright_black") + f"Try: ollama run {ollama_model}")
             return False
     except Exception as exc:
         click.echo(click.style("  ⚠ ", fg="yellow") + f"Test failed: {exc}")
-        click.echo(click.style("    ", fg="bright_black") + "Start daemon: skcapstone daemon start --foreground")
+        click.echo(click.style("    ", fg="bright_black") + f"Check: ollama serve && ollama run {ollama_model}")
         return False
 
 
