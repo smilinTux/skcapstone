@@ -105,6 +105,14 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
     if trip_dir.exists():
         state.trip_sessions = len(list(trip_dir.glob("*.json")))
 
+    # Check if skwhisper package is importable (installed)
+    skwhisper_installed = False
+    try:
+        import importlib.util
+        skwhisper_installed = importlib.util.find_spec("skwhisper") is not None
+    except (ImportError, ValueError):
+        skwhisper_installed = False
+
     # Determine status
     if state.whisper_active and state.sessions_digested > 0 and state.whisper_md is not None:
         if state.whisper_md_age_hours < 24:
@@ -115,6 +123,9 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
         # Daemon is running but no sessions digested yet — consciousness is live
         state.status = PillarStatus.DEGRADED
     elif state.sessions_digested > 0 or state.whisper_md is not None:
+        state.status = PillarStatus.DEGRADED
+    elif skwhisper_installed:
+        # Package is installed but service not running and no data yet — at least DEGRADED
         state.status = PillarStatus.DEGRADED
     else:
         state.status = PillarStatus.MISSING

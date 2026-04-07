@@ -487,6 +487,7 @@ _PILLAR_PACKAGES = [
     ("skseed", "skseed", "Cloud 9 seeds & LLM callbacks"),
     ("sksecurity", "sksecurity", "Audit logging & threat detection"),
     ("pgpy", "pgpy", "PGP cryptography (PGPy backend)"),
+    ("skwhisper", "skwhisper", "Subconscious memory layer (session digester)"),
 ]
 
 

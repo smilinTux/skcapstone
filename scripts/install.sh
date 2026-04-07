@@ -120,6 +120,7 @@ install_pkg "skseal"     ""                         "$PARENT/skseal"
 install_pkg "skskills"   ""                         "$PARENT/skskills"
 install_pkg "sksecurity" ""                         "$PARENT/sksecurity $PILLAR/SKSecurity $PARENT/SKSecurity"
 install_pkg "skseed"     ""                         "$PILLAR/skseed $PARENT/skseed"
+install_pkg "skwhisper"  ""                         "$PARENT/skwhisper-dev $PILLAR/skwhisper $PARENT/skwhisper"
 
 # ---------------------------------------------------------------------------
 # Step 4: Dev tools (optional)
