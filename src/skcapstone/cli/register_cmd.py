@@ -91,6 +91,16 @@ def register_register_commands(main: click.Group) -> None:
             dry_run=dry_run,
         )
 
+        # Register Claude Code hooks
+        if not dry_run:
+            try:
+                from skmemory.register import register_hooks
+                register_hooks(install_hooks=True)
+            except ImportError:
+                pass
+            except Exception:
+                pass
+
         # Display results
         from rich.table import Table
 

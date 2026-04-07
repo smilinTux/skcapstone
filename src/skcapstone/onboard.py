@@ -1650,6 +1650,27 @@ def run_onboard(home: Optional[str] = None) -> None:
         logger.debug("Failed to load soul boot message, using default: %s", exc)
 
     # -----------------------------------------------------------------------
+    # Write global CLAUDE.md and register Claude Code hooks
+    # -----------------------------------------------------------------------
+    # Write global CLAUDE.md
+    try:
+        from .cli.setup import _write_global_claude_md
+        _write_global_claude_md(home_path, name)
+        _ok("~/.claude/CLAUDE.md written")
+    except Exception as exc:
+        _warn(f"Could not write CLAUDE.md: {exc}")
+
+    # Register Claude Code hooks (skmemory)
+    try:
+        from skmemory.register import register_hooks
+        actions = register_hooks()
+        _ok(f"Claude Code hooks registered ({', '.join(f'{k}={v}' for k, v in actions.items())})")
+    except ImportError:
+        _info("skmemory hooks: skipped (skmemory.register not available)")
+    except Exception as exc:
+        _warn(f"Hook registration: {exc}")
+
+    # -----------------------------------------------------------------------
     # Summary table
     # -----------------------------------------------------------------------
     console.print()
