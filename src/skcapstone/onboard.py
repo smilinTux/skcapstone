@@ -42,7 +42,7 @@ from . import AGENT_HOME, __version__
 
 console = Console()
 
-TOTAL_STEPS = 15  # excludes welcome + celebrate; includes pillar install + import step
+TOTAL_STEPS = 16  # excludes welcome + celebrate; includes pillar install + import step
 
 
 def _step_header(n: int, title: str) -> None:
@@ -1147,19 +1147,117 @@ def _step_launchd_service_macos(agent_name: str) -> bool:
         return False
 
 
+def _step_shell_profile(
+    home_path: Path, agent_name: str, agent_slug: str
+) -> bool:
+    """Write SKCAPSTONE profile environment variables to ~/.bashrc.
+
+    Asks the user whether to set this agent as the default profile.
+    Appends SKCAPSTONE_HOME, SKCAPSTONE_AGENT, and PATH entries.
+
+    Args:
+        home_path: Agent home directory.
+        agent_name: Display name of the agent (e.g. "Jarvis").
+        agent_slug: Slug form used for SKCAPSTONE_AGENT (e.g. "jarvis").
+
+    Returns:
+        True if profile was written, False if skipped.
+    """
+    import os as _os
+
+    bashrc = Path.home() / ".bashrc"
+    marker = "# --- SKCapstone profile ---"
+
+    # Check if profile block already exists
+    existing = ""
+    if bashrc.exists():
+        existing = bashrc.read_text(encoding="utf-8")
+        if marker in existing:
+            _ok("SKCapstone profile already present in ~/.bashrc")
+            # Offer to update it
+            if not Confirm.ask(
+                f"  Update profile to agent [cyan]{agent_name}[/]?",
+                default=True,
+            ):
+                return True
+            # Remove old block so we can rewrite it
+            lines = existing.splitlines(keepends=True)
+            new_lines: list[str] = []
+            skip = False
+            for line in lines:
+                if marker in line:
+                    skip = not skip  # toggle on first marker, off on second
+                    continue
+                if not skip:
+                    new_lines.append(line)
+            existing = "".join(new_lines)
+
+    set_default = Confirm.ask(
+        f"  Set [cyan]{agent_name}[/] as default SKCAPSTONE_AGENT in ~/.bashrc?",
+        default=True,
+    )
+
+    if not set_default:
+        _info("Skipped — set manually: export SKCAPSTONE_AGENT=<name>")
+        return False
+
+    block = (
+        f"\n{marker}\n"
+        f'export SKCAPSTONE_HOME="{home_path}"\n'
+        f'export SKCAPSTONE_AGENT="{agent_slug}"\n'
+        f'export PATH="$HOME/.skenv/bin:$PATH"\n'
+        f"{marker}\n"
+    )
+
+    with open(bashrc, "a" if marker not in (existing or "") else "w", encoding="utf-8") as f:
+        if marker not in (existing or ""):
+            f.write(block)
+        else:
+            # Rewrite with updated block
+            f.write(existing.rstrip("\n") + block)
+
+    _ok(f"~/.bashrc updated — SKCAPSTONE_AGENT={agent_slug}")
+    _info("Run [bold]source ~/.bashrc[/] or open a new terminal to apply")
+
+    # Also export into current process so subsequent steps see it
+    _os.environ["SKCAPSTONE_HOME"] = str(home_path)
+    _os.environ["SKCAPSTONE_AGENT"] = agent_slug
+
+    return True
+
+
 def _step_doctor_check(home_path: Path) -> "object":
     """Run doctor diagnostics and print results.
+
+    Non-fatal — errors are logged as warnings but never block onboarding.
 
     Args:
         home_path: Agent home directory.
 
     Returns:
-        DiagnosticReport from doctor.run_diagnostics().
+        DiagnosticReport from doctor.run_diagnostics(), or a stub on error.
     """
-    from .doctor import run_diagnostics
+    try:
+        from .doctor import run_diagnostics
+    except Exception as exc:
+        _warn(f"Could not load diagnostics module: {exc}")
+        # Return a stub so the summary table still works
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            all_passed=False, passed_count=0, failed_count=0, total_count=0, checks=[]
+        )
 
     click.echo(click.style("  Running diagnostics…", fg="bright_black"))
-    report = run_diagnostics(home_path)
+    try:
+        report = run_diagnostics(home_path)
+    except Exception as exc:
+        _warn(f"Diagnostics failed: {exc}")
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            all_passed=False, passed_count=0, failed_count=0, total_count=0, checks=[]
+        )
 
     categories_seen: set = set()
     for check in report.checks:
@@ -1193,7 +1291,7 @@ def _step_test_consciousness(home_path: Path) -> bool:
     Returns:
         True if the loop responded successfully.
     """
-    if not click.confirm("  Send a test message to verify the consciousness loop?", default=True):
+    if not click.confirm("  Send a test message to verify the consciousness loop?", default=False):
         click.echo(
             click.style("  ↷ ", fg="bright_black")
             + "Skipped — test later: skcapstone consciousness test 'hello'"
@@ -1467,13 +1565,19 @@ def run_onboard(home: Optional[str] = None) -> None:
     service_ok = _step_autostart_service(agent_name=agent_slug)
 
     # -----------------------------------------------------------------------
-    # Post-wizard: Doctor Diagnostics
+    # Step 16: Shell Profile (~/.bashrc)
+    # -----------------------------------------------------------------------
+    _step_header(16, "Shell Profile")
+    profile_ok = _step_shell_profile(home_path, name, agent_slug)
+
+    # -----------------------------------------------------------------------
+    # Post-wizard: Doctor Diagnostics (non-fatal)
     # -----------------------------------------------------------------------
     console.print(f"\n  [bold cyan]Doctor Diagnostics[/]\n")
     doctor_report = _step_doctor_check(home_path)
 
     # -----------------------------------------------------------------------
-    # Post-wizard: Consciousness Test (optional)
+    # Post-wizard: Consciousness Test (optional, defaults to skip)
     # -----------------------------------------------------------------------
     console.print(f"\n  [bold cyan]Consciousness Test[/]\n")
     consciousness_test_ok = _step_test_consciousness(home_path)
@@ -1553,6 +1657,11 @@ def run_onboard(home: Optional[str] = None) -> None:
         "[green]INSTALLED[/]" if service_ok else "[dim]OPTIONAL[/]",
         f"{_svc_type} services" if service_ok else f"skcapstone daemon install",
     )
+    summary.add_row(
+        "Shell Profile",
+        "[green]ACTIVE[/]" if profile_ok else "[dim]SKIPPED[/]",
+        f"SKCAPSTONE_AGENT={agent_slug}" if profile_ok else "set manually in ~/.bashrc",
+    )
     doctor_status = "[green]ALL PASSED[/]" if doctor_report.all_passed else f"[yellow]{doctor_report.failed_count} failed[/]"
     summary.add_row("Doctor", doctor_status, f"{doctor_report.passed_count}/{doctor_report.total_count} checks")
     summary.add_row(
@@ -1590,6 +1699,9 @@ def run_onboard(home: Optional[str] = None) -> None:
             "  Place .feb files in ~/.skcapstone/trust/febs/\n\n"
             "[bold]Mesh[/]  (P2P sync)\n"
             "  sudo apt install syncthing       — install Syncthing\n\n"
+            "[bold]Shell Profile[/]  (update default agent)\n"
+            "  Edit the [dim]# --- SKCapstone profile ---[/] block in ~/.bashrc\n"
+            "  Or re-run: skcapstone --agent <name> init\n\n"
             "[bold]Full Re-onboard[/]\n"
             "  skcapstone --agent <name> init    — run this wizard again",
             title="Reconfigure Guide",
