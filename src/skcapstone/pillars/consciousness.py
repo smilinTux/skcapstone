@@ -28,7 +28,11 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
         ConsciousnessState with current status.
     """
     agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
-    whisper_dir = home / "agents" / agent_name / "skwhisper"
+    # home may be the agent dir (~/.skcapstone/agents/jarvis/) or the
+    # shared root (~/.skcapstone/). Check for skwhisper/ directly first.
+    whisper_dir = home / "skwhisper"
+    if not whisper_dir.exists():
+        whisper_dir = home / "agents" / agent_name / "skwhisper"
 
     state = ConsciousnessState()
 
@@ -81,11 +85,16 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
             pass
 
     # Check if consciousness daemon is running (systemd)
-    # Accept either the legacy skwhisper service or the skcapstone service
+    # Check template instance (skcapstone@<agent>), legacy single-agent, and skwhisper
     try:
         import subprocess
 
-        for service_name in ("skcapstone", "skwhisper"):
+        service_candidates = [
+            f"skcapstone@{agent_name}",  # multi-agent template unit
+            "skcapstone",                 # legacy single-agent unit
+            "skwhisper",                  # standalone skwhisper daemon
+        ]
+        for service_name in service_candidates:
             result = subprocess.run(
                 ["systemctl", "--user", "is-active", service_name],
                 capture_output=True,
