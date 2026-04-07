@@ -1362,21 +1362,24 @@ def _step_test_consciousness(home_path: Path) -> bool:
 def run_onboard(home: Optional[str] = None) -> None:
     """Run the interactive onboarding wizard.
 
-    Covers all 13 setup steps:
-      1. Prerequisites check (Python, pip, Ollama)
-      2. Identity — create ~/.skcapstone/ + generate PGP key
-      3. Ollama models — pull llama3.2
-      4. Config files — consciousness.yaml + model_profiles.yaml
-      5. Soul Blueprint
-      6. Memory & Seeds
-      7. Rehydration Ritual
-      8. Trust Chain Verification
-      9. Mesh Connection (Syncthing)
-     10. First Heartbeat
-     11. Crush Terminal AI
-     12. Coordination Board
-     13. Systemd Service (optional)
-     [post-wizard] Doctor diagnostics + consciousness test
+    Covers all 16 setup steps:
+      1. Prerequisites (Python, pip, Ollama)
+      2. Pillar Packages (install missing SK* + skwhisper)
+      3. Identity (CapAuth PGP + Syncthing sync)
+      4. Ollama Models
+      5. Config Files (consciousness.yaml + model_profiles.yaml)
+      6. Soul Blueprint
+      7. Memory & Seeds
+      8. Import Sources (OpenClaw, Cloud 9 FEBs)
+      9. Rehydration Ritual
+     10. Trust Chain Verification
+     11. Mesh Connection (Syncthing)
+     12. First Heartbeat
+     13. Crush Terminal AI
+     14. Coordination Board
+     15. Auto-Start Service (systemd template per agent)
+     16. Shell Profile (~/.bashrc env vars)
+     [post-wizard] Doctor diagnostics + consciousness test (optional)
 
     Args:
         home: Override agent home directory.

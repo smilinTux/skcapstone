@@ -16,7 +16,8 @@ MemoryMax=4G
 # Keep Ollama models warm for 5 minutes between requests
 Environment=PYTHONUNBUFFERED=1
 Environment=OLLAMA_KEEP_ALIVE=5m
-Environment=SKCAPSTONE_AGENT=sovereign
+# Set SKCAPSTONE_AGENT to your agent name (or use skcapstone@<agent>.service template instead)
+# Environment=SKCAPSTONE_AGENT=sovereign
 Environment=SKCAPSTONE_HOME=%h/.skcapstone
 # Journal logging
 StandardOutput=journal
