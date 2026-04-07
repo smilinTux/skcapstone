@@ -78,6 +78,13 @@ for i in "${!all_files[@]}"; do
         [ "$old_enough" -eq 1 ] && reason="age=$(( file_age_sec / 3600 ))h"
         [ "$big_enough" -eq 1 ] && { [ -n "$reason" ] && reason="$reason, "; reason="${reason}size=${file_size_kb}KB"; }
         log "ARCHIVE ($reason): $basename_f"
+        # Save session to skmemory before archiving
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        SESSION_TO_MEM="$SCRIPT_DIR/session-to-memory.py"
+        if [ -f "$SESSION_TO_MEM" ]; then
+            log "  → saving session digest to skmemory..."
+            python3 "$SESSION_TO_MEM" "$file" --agent lumina 2>&1 | while IFS= read -r l; do log "    $l"; done || true
+        fi
         mv -- "$file" "$ARCHIVE_DIR/$basename_f"
         archived=$((archived + 1))
     else
