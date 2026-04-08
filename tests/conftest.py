@@ -19,6 +19,27 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_agent_env(monkeypatch):
+    """Prevent host SKCAPSTONE_AGENT / SKMEMORY_AGENT from leaking into unit tests.
+
+    The profile-aware runtime reads both the env var and the module-level
+    skcapstone.SKCAPSTONE_AGENT (set at import time).  We clear both so that
+    _memory_dir() falls back to the flat "home/memory" layout expected by
+    tests that use the tmp_agent_home fixture.
+    Tests that need a specific agent should override explicitly via monkeypatch.
+    """
+    monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+    monkeypatch.delenv("SKMEMORY_AGENT", raising=False)
+    import skcapstone
+    monkeypatch.setattr(skcapstone, "SKCAPSTONE_AGENT", "")
+    # _detect_active_agent() scans ~/.skcapstone/agents/ even when the env var
+    # is cleared, returning a real agent name that routes memory writes to the
+    # wrong directory.  Stub it out so tests using tmp directories get the flat
+    # "home/memory" layout they expect.
+    monkeypatch.setattr(skcapstone, "_detect_active_agent", lambda root=None: None)
+
+
 @pytest.fixture
 def tmp_agent_home(tmp_path: Path) -> Path:
     """Provide a temporary agent home directory for testing."""

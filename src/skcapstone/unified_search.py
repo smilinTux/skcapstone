@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -143,7 +144,13 @@ def _search_memories(
     from . import active_agent_name
 
     agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-    mem_dir = home / "agents" / agent_name / "memory"
+    if home.parent.name == "agents":
+        # home is already an agent-specific dir (e.g. ~/.skcapstone/agents/lumina)
+        mem_dir = home / "memory"
+    elif agent_name:
+        mem_dir = home / "agents" / agent_name / "memory"
+    else:
+        mem_dir = home / "memory"
     if not mem_dir.exists():
         return results
 

@@ -108,31 +108,16 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from . import AGENT_HOME
+from .mcp_tools._helpers import (
+    _error_response,
+    _home,
+    _json_response,
+    _text_response,
+)
 
 logger = logging.getLogger("skcapstone.mcp")
 
 server = Server("skcapstone")
-
-
-def _home() -> Path:
-    """Resolve the agent home directory."""
-    return Path(AGENT_HOME).expanduser()
-
-
-def _json_response(data: Any) -> list[TextContent]:
-    """Wrap data as a JSON text content response."""
-    return [TextContent(type="text", text=json.dumps(data, indent=2, default=str))]
-
-
-def _text_response(text: str) -> list[TextContent]:
-    """Wrap a plain string as a text content response."""
-    return [TextContent(type="text", text=text)]
-
-
-def _error_response(message: str) -> list[TextContent]:
-    """Return an error message as text content."""
-    return [TextContent(type="text", text=json.dumps({"error": message}))]
 
 
 def _get_agent_name(home: Path) -> str:
