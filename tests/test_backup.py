@@ -237,7 +237,8 @@ class TestBackupManifest:
     def test_manifest_defaults(self) -> None:
         """Manifest has sensible defaults."""
         m = BackupManifest()
-        assert m.version == "0.9.0"
+        import skcapstone
+        assert m.version == skcapstone.__version__
         assert m.files == {}
         assert m.total_size == 0
 
