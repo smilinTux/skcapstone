@@ -36,9 +36,10 @@ sync_token() {
     local expires_in
     expires_in=$(python3 -c "import json,time; print(f'{(json.load(open(\"$CREDS\"))[\"claudeAiOauth\"][\"expiresAt\"]/1000 - time.time())/3600:.1f}h')" 2>/dev/null || echo "unknown")
 
-    # Read current token from OpenClaw
+    # Read current token from credentials file (track changes by comparing with last known)
+    local state_file="$HOME/.skcapstone/agents/lumina/logs/anthropic-token.last"
     local current_token
-    current_token=$(python3 -c "import json; print(json.load(open('$OPENCLAW_JSON'))['models']['providers']['anthropic']['apiKey'])" 2>/dev/null || echo "")
+    current_token=$(cat "$state_file" 2>/dev/null || echo "")
 
     if [ "$new_token" = "$current_token" ]; then
         log "Token unchanged (expires in $expires_in)"
@@ -47,20 +48,14 @@ sync_token() {
 
     log "Token changed! Syncing... (new token expires in $expires_in)"
 
-    # 1. Update openclaw.json
-    python3 << PYEOF
-import json
-with open('$OPENCLAW_JSON') as f:
-    cfg = json.load(f)
-if 'anthropic' in cfg.get('models', {}).get('providers', {}):
-    cfg['models']['providers']['anthropic']['apiKey'] = '$new_token'
-    with open('$OPENCLAW_JSON', 'w') as f:
-        json.dump(cfg, f, indent=2)
-        f.write('\n')
-PYEOF
-    log "Updated openclaw.json"
+    # 1. Save new token to state file
+    echo "$new_token" > "$state_file"
+    log "State file updated"
 
-    # 2. Update .env
+    # NOTE: anthropic provider removed from openclaw.json — all Claude models
+    # now route through claude-code proxy (port 18782). No openclaw.json update needed.
+
+    # 2. Update .env (kept for any scripts that source it)
     if grep -q "^ANTHROPIC_API_KEY=" "$OPENCLAW_ENV" 2>/dev/null; then
         sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=$new_token|" "$OPENCLAW_ENV"
     else
@@ -68,7 +63,7 @@ PYEOF
     fi
     log "Updated .env"
 
-    # 3. Update systemd override
+    # 3. Update systemd override (ANTHROPIC_API_KEY kept for claude-code-api server)
     if [ -f "$OVERRIDE_CONF" ]; then
         local nvidia_key
         nvidia_key=$(grep "NVIDIA_API_KEY=" "$OVERRIDE_CONF" 2>/dev/null | sed 's/.*NVIDIA_API_KEY=//' || true)

@@ -159,8 +159,14 @@ Environment=ANTHROPIC_API_KEY=${ACCESS_TOKEN}
 EOF
 log "Updated systemd override"
 
-# 4. Reload and restart gateway
+# 4. Reload systemd (for env vars) but DO NOT restart the gateway.
+#    OpenClaw uses chokidar to watch openclaw.json — updating the file above
+#    triggers a hot reload automatically.  Restarting the gateway kills all
+#    active sessions (the root cause of the 0-turn session cascade on 2026-04-07).
 systemctl --user daemon-reload
-systemctl --user restart openclaw-gateway
 
-log "Gateway restarted with fresh token (expires in ${REMAINING}h)"
+# Touch the config to ensure chokidar picks up the change (write already did,
+# but belt-and-suspenders in case the mtime didn't change fast enough).
+touch "$OPENCLAW_JSON"
+
+log "Token synced via hot reload (expires in ${REMAINING}h) — gateway NOT restarted, active sessions preserved"
