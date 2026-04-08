@@ -256,7 +256,9 @@ class DreamingEngine:
         self._home = home
         self._config = config or DreamingConfig()
         self._consciousness_loop = consciousness_loop
-        self._agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        from . import active_agent_name
+
+        self._agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name() or ""
         self._state_path = (
             home / "agents" / self._agent_name / "memory" / "dreaming-state.json"
         )

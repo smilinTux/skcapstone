@@ -93,6 +93,7 @@ def _step_identity(home_path: Path, name: str, email: str | None) -> tuple[str, 
     from .pillars.memory import initialize_memory
     from .pillars.sync import initialize_sync
     from .models import AgentConfig, SyncConfig
+    from .operator_link import build_agent_manifest, discover_human_operator
     from .soul import SoulManager
 
     with Status("  Generating PGP identity…", console=console, spinner="dots") as s:
@@ -158,12 +159,11 @@ def _step_identity(home_path: Path, name: str, email: str | None) -> tuple[str, 
         for d in skeleton_dirs:
             d.mkdir(parents=True, exist_ok=True)
 
-        manifest = {
-            "name": name,
-            "version": __version__,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "connectors": [],
-        }
+        manifest = build_agent_manifest(
+            name,
+            __version__,
+            operator=discover_human_operator(),
+        )
         (home_path / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"
         )

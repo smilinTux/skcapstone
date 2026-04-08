@@ -121,6 +121,24 @@ class TestBuildGraph:
         sync_edges = [e for e in graph.edges if e.edge_type == "sync"]
         assert len(sync_edges) >= 1
 
+    def test_manifest_operator_creates_human_link(self, tmp_agent_home: Path):
+        """Manifest operator metadata appears as an explicit trust relationship."""
+        _init_agent(tmp_agent_home, "operator-graph")
+        manifest_path = tmp_agent_home / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["operator"] = {
+            "name": "Casey",
+            "fingerprint": "FP1234567890",
+            "relationship": "human-operator",
+            "entity_type": "human",
+        }
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        graph = build_trust_graph(tmp_agent_home)
+
+        assert any(n.label == "Casey" for n in graph.nodes)
+        assert any(e.edge_type == "operator" and e.label == "human-operator" for e in graph.edges)
+
 
 class TestFormatDot:
     """Tests for DOT format output."""

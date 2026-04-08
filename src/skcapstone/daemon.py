@@ -1194,7 +1194,9 @@ class DaemonService:
         import uuid
         from datetime import datetime, timezone
 
-        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        from . import active_agent_name
+
+        agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
         recv_dir = self.config.home / "agents" / agent_name / "skcomm" / "received"
         recv_dir.mkdir(parents=True, exist_ok=True)
 

@@ -439,7 +439,7 @@ def register_joule_commands(main: click.Group) -> None:
     @joule_group.command("dashboard")
     @click.option(
         "--agent", "-a", "agent_name", default=None,
-        help="Agent name (default: lumina).",
+        help="Agent name (default: current agent).",
     )
     def dashboard_cmd(agent_name: str | None):
         """Show a financial dashboard for an agent."""
@@ -451,7 +451,9 @@ def register_joule_commands(main: click.Group) -> None:
 
         from ..skjoule import JouleEngine, TransactionKind
 
-        agent_name = agent_name or "lumina"
+        from .. import active_agent_name
+
+        agent_name = agent_name or active_agent_name()
         engine = JouleEngine(home=Path(SHARED_ROOT).expanduser())
         wallet = engine.get_wallet(agent_name)
         balance = wallet.balance
@@ -624,4 +626,6 @@ def _resolve_agent(agent_name: str | None) -> str:
     if agent_name:
         return agent_name
     from .. import SKCAPSTONE_AGENT
-    return SKCAPSTONE_AGENT or "lumina"
+    from .. import active_agent_name
+
+    return SKCAPSTONE_AGENT or active_agent_name() or ""

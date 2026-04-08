@@ -423,7 +423,7 @@ def register_memory_commands(main: click.Group) -> None:
     @memory.command("rehydrate")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", "-a", default=None,
-                  help="Agent name (default: SKCAPSTONE_AGENT or 'lumina').")
+                  help="Agent name (default: active agent).")
     @click.option("--febs-only", is_flag=True, help="Only ingest FEB files (trust rehydration).")
     @click.option("--memories-only", is_flag=True, help="Only ingest flat-file memories into backends.")
     @click.option("--force", is_flag=True, help="Re-ingest even if already in backend.")
@@ -439,7 +439,9 @@ def register_memory_commands(main: click.Group) -> None:
         import os
         from ..models import MemoryLayer
 
-        agent_name = agent or os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        from .. import active_agent_name
+
+        agent_name = agent or os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
         home_path = Path(home).expanduser()
         agent_home = home_path / "agents" / agent_name
 

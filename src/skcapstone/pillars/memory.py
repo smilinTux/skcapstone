@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from .. import active_agent_name
 from ..models import MemoryLayer, MemoryState, PillarStatus
 
 
@@ -32,9 +33,13 @@ def initialize_memory(home: Path, memory_home: Optional[Path] = None) -> MemoryS
     Returns:
         MemoryState after initialization.
     """
-    # Use agent-specific memory directory
-    agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
-    memory_dir = home / "agents" / agent_name / "memory"
+    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
+    if home.parent.name == "agents":
+        memory_dir = home / "memory"
+    elif agent_name:
+        memory_dir = home / "agents" / agent_name / "memory"
+    else:
+        memory_dir = home / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     for layer in MemoryLayer:

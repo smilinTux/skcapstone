@@ -2,7 +2,7 @@
 
 Covers:
 - Per-agent home directory resolution (opus → agents/opus/, jarvis → agents/jarvis/)
-- Per-agent port assignment (opus=7777, jarvis=7778, unknown → next available)
+- Default daemon port behavior under the profile-agnostic runtime
 - Default (no-agent) mode keeps backward-compatible home and port
 - SKCAPSTONE_AGENT env var propagation
 - DaemonConfig accepts distinct homes and ports for simultaneous agents
@@ -13,7 +13,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -84,17 +83,19 @@ class TestResolveAgentHome:
 
 
 class TestResolveAgentPort:
-    def test_opus_gets_7777(self):
-        """opus always gets port 7777."""
+    def test_known_agent_uses_registered_default_port(self):
+        """Known agents use the registered default daemon port."""
+        from skcapstone import AGENT_PORTS, DEFAULT_PORT
         from skcapstone.cli.daemon import _resolve_agent_port
 
-        assert _resolve_agent_port("opus", None) == 7777
+        assert _resolve_agent_port("opus", None) == AGENT_PORTS["opus"] == DEFAULT_PORT
 
-    def test_jarvis_gets_7778(self):
-        """jarvis always gets port 7778."""
+    def test_second_known_agent_uses_registered_default_port(self):
+        """Jarvis also uses the registered default daemon port."""
+        from skcapstone import AGENT_PORTS, DEFAULT_PORT
         from skcapstone.cli.daemon import _resolve_agent_port
 
-        assert _resolve_agent_port("jarvis", None) == 7778
+        assert _resolve_agent_port("jarvis", None) == AGENT_PORTS["jarvis"] == DEFAULT_PORT
 
     def test_explicit_port_overrides_agent_default(self):
         """Explicit --port always wins over the agent default."""
@@ -103,11 +104,12 @@ class TestResolveAgentPort:
         assert _resolve_agent_port("opus", 9999) == 9999
         assert _resolve_agent_port("jarvis", 8000) == 8000
 
-    def test_no_agent_defaults_to_7777(self):
-        """Single-agent / no-flag mode uses 7777."""
+    def test_no_agent_defaults_to_default_port(self):
+        """Single-agent / no-flag mode uses the package default port."""
+        from skcapstone import DEFAULT_PORT
         from skcapstone.cli.daemon import _resolve_agent_port
 
-        assert _resolve_agent_port(None, None) == 7777
+        assert _resolve_agent_port(None, None) == DEFAULT_PORT
 
     def test_unknown_agent_gets_next_port(self):
         """An agent not in AGENT_PORTS gets max(ports)+1."""
@@ -118,11 +120,11 @@ class TestResolveAgentPort:
         result = _resolve_agent_port("brandnew", None)
         assert result == expected
 
-    def test_opus_and_jarvis_ports_differ(self):
-        """Opus and Jarvis must listen on different ports."""
+    def test_explicit_ports_can_differ_for_isolated_agents(self):
+        """Simultaneous agent daemons can still isolate by explicit port."""
         from skcapstone.cli.daemon import _resolve_agent_port
 
-        assert _resolve_agent_port("opus", None) != _resolve_agent_port("jarvis", None)
+        assert _resolve_agent_port("opus", 7777) != _resolve_agent_port("jarvis", 7778)
 
 
 # ---------------------------------------------------------------------------
@@ -132,22 +134,22 @@ class TestResolveAgentPort:
 
 class TestAgentPortsRegistry:
     def test_opus_registered(self):
-        from skcapstone import AGENT_PORTS
+        from skcapstone import AGENT_PORTS, DEFAULT_PORT
 
         assert "opus" in AGENT_PORTS
-        assert AGENT_PORTS["opus"] == 7777
+        assert AGENT_PORTS["opus"] == DEFAULT_PORT
 
     def test_jarvis_registered(self):
-        from skcapstone import AGENT_PORTS
+        from skcapstone import AGENT_PORTS, DEFAULT_PORT
 
         assert "jarvis" in AGENT_PORTS
-        assert AGENT_PORTS["jarvis"] == 7778
+        assert AGENT_PORTS["jarvis"] == DEFAULT_PORT
 
-    def test_all_ports_unique(self):
+    def test_all_ports_are_ints(self):
         from skcapstone import AGENT_PORTS
 
-        ports = list(AGENT_PORTS.values())
-        assert len(ports) == len(set(ports)), "Duplicate ports in AGENT_PORTS"
+        assert AGENT_PORTS
+        assert all(isinstance(port, int) for port in AGENT_PORTS.values())
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +222,7 @@ class TestDaemonConfigMultiAgent:
 
         assert opus_cfg.home != jarvis_cfg.home
         assert opus_cfg.port != jarvis_cfg.port
-        assert opus_cfg.port == 7777
-        assert jarvis_cfg.port == 7778
+
 
     def test_log_files_are_in_respective_homes(self, tmp_path: Path):
         """Each agent's log file lives under its own home."""
@@ -244,24 +245,25 @@ class TestDaemonConfigMultiAgent:
 
 
 class TestAgentHomeEnvVar:
-    def test_env_var_produces_agents_subdir(self, monkeypatch):
-        """SKCAPSTONE_AGENT=opus → AGENT_HOME includes agents/opus."""
+    def test_env_var_keeps_shared_root_and_agent_home_resolves_subdir(self, monkeypatch):
+        """SKCAPSTONE_AGENT keeps AGENT_HOME at root and agent_home() resolves the agent subdir."""
         import importlib
 
         monkeypatch.setenv("SKCAPSTONE_AGENT", "opus")
-        monkeypatch.setenv("SKCAPSTONE_ROOT", "/tmp/sk")
+        monkeypatch.setenv("SKCAPSTONE_HOME", "/tmp/sk")
 
         import skcapstone as pkg
         importlib.reload(pkg)
 
-        assert "agents/opus" in pkg.AGENT_HOME or "agents\\opus" in pkg.AGENT_HOME
+        assert pkg.AGENT_HOME == "/tmp/sk"
+        assert "agents/opus" in str(pkg.agent_home("opus")) or "agents\\opus" in str(pkg.agent_home("opus"))
 
     def test_no_env_var_uses_root_directly(self, monkeypatch):
-        """Without SKCAPSTONE_AGENT, AGENT_HOME == SKCAPSTONE_ROOT."""
+        """Without SKCAPSTONE_AGENT, AGENT_HOME stays at the shared root."""
         import importlib
 
         monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
-        monkeypatch.setenv("SKCAPSTONE_ROOT", "/tmp/sk")
+        monkeypatch.setenv("SKCAPSTONE_HOME", "/tmp/sk")
 
         import skcapstone as pkg
         importlib.reload(pkg)

@@ -64,9 +64,9 @@ def register_soul_commands(main: click.Group) -> None:
         """Reusable --agent/-a option for soul subcommands."""
         return click.option(
             "--agent", "-a",
-            default=SKCAPSTONE_AGENT or "lumina",
+            default=SKCAPSTONE_AGENT,
             envvar="SKCAPSTONE_AGENT",
-            help="Agent profile name (default: SKCAPSTONE_AGENT or 'lumina').",
+            help="Agent profile name (default: active agent).",
         )
 
     @main.group()

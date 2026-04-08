@@ -138,9 +138,22 @@ def _setup_environment() -> None:
     """Set required environment variables if not already present."""
     home = Path.home()
     skcapstone_home = home / ".skcapstone"
+    agent_name = os.environ.get("SKCAPSTONE_AGENT")
+    if not agent_name:
+        try:
+            from . import active_agent_name
+
+            agent_name = active_agent_name()
+        except Exception:
+            agent_name = None
 
     os.environ.setdefault("SKCAPSTONE_HOME", str(skcapstone_home))
-    os.environ.setdefault("SKMEMORY_HOME", str(skcapstone_home / "memory"))
+    if agent_name:
+        os.environ.setdefault("SKCAPSTONE_AGENT", agent_name)
+        os.environ.setdefault(
+            "SKMEMORY_HOME",
+            str(skcapstone_home / "agents" / agent_name / "memory"),
+        )
 
     # Ensure src/ is on PYTHONPATH for importability
     src_dir = str(Path(__file__).resolve().parent.parent)

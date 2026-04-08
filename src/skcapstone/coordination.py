@@ -467,8 +467,15 @@ def _mint_joules_for_task(board: Board, task_id: str, agent_name: str) -> None:
                 tags.append("community")
         task_data["tags"] = tags
 
-        # Use assignee if available, else default to "lumina"
-        worker = task_data.get("completed_by") or task_data.get("created_by") or "lumina"
+        # Use assignee if available, else fall back to the active workspace agent.
+        from . import active_agent_name
+
+        worker = (
+            task_data.get("completed_by")
+            or task_data.get("created_by")
+            or active_agent_name()
+            or "agent"
+        )
         task_data["completed_by"] = worker
 
         engine = JouleEngine()

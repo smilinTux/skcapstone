@@ -18,6 +18,8 @@ import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .operator_link import build_agent_manifest, discover_human_operator
 from typing import Optional
 
 logger = logging.getLogger("skcapstone.migrate")
@@ -202,12 +204,11 @@ def create_agent_home(
         results["created"].append(str(d.relative_to(root)))
 
     # Write minimal manifest
-    manifest = {
-        "name": agent_name,
-        "version": "0.1.0",
-        "entity_type": "ai-agent",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
+    manifest = build_agent_manifest(
+        agent_name,
+        "0.1.0",
+        operator=discover_human_operator(),
+    )
     manifest_path = agent_home / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     results["created"].append(str(manifest_path.relative_to(root)))

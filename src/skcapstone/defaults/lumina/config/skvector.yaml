@@ -2,8 +2,8 @@
 # Customize the embedding model and index settings for your agent.
 
 enabled: false
-model: "all-MiniLM-L6-v2"
-dimensions: 384
+model: "bge-legal-v1"
+dimensions: 1024
 index_type: flat
 similarity_metric: cosine
 auto_embed_on_store: true

@@ -398,7 +398,9 @@ def _check_identity(home: Path) -> list[Check]:
 def _check_memory(home: Path) -> list[Check]:
     """Check memory store health."""
     checks = []
-    agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+    from . import active_agent_name
+
+    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
     memory_dir = home / "agents" / agent_name / "memory"
 
     if not memory_dir.exists():
@@ -709,7 +711,7 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
 
         # Fix missing memory store
         elif check.name == "memory:store":
-            agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+            agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
             memory_dir = home / "agents" / agent_name / "memory"
             try:
                 for layer in ("short-term", "mid-term", "long-term"):

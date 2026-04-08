@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from skcapstone.runtime import AgentRuntime
@@ -27,6 +28,26 @@ class TestAgentRuntime:
         manifest = runtime.awaken()
         assert manifest.name == "test-agent"
         assert manifest.last_awakened is not None
+
+    def test_awaken_prefers_identity_name_over_shared_config(self, tmp_path: Path):
+        """Agent-local identity should beat a shared-root fallback config name."""
+        shared_root = tmp_path / ".skcapstone"
+        agent_home = shared_root / "agents" / "aster"
+        (agent_home / "identity").mkdir(parents=True)
+        (agent_home / "config").mkdir(parents=True)
+
+        (shared_root / "config").mkdir(parents=True)
+        (shared_root / "config" / "config.yaml").write_text("agent_name: Jarvis\n")
+        (agent_home / "manifest.json").write_text(json.dumps({"name": "aster"}))
+        (agent_home / "identity" / "identity.json").write_text(json.dumps({
+            "name": "Aster",
+            "fingerprint": "A" * 40,
+            "capauth_managed": True,
+        }))
+
+        runtime = AgentRuntime(home=agent_home)
+        manifest = runtime.awaken()
+        assert manifest.name == "Aster"
 
     def test_register_connector(self, initialized_agent_home: Path):
         """Registering a connector should persist it."""

@@ -94,18 +94,20 @@ class AgentRuntime:
         logger.info("Awakening agent from %s (shared: %s)", self.home, self.shared_root)
 
         manifest_file = self.home / "manifest.json"
+        manifest_name_loaded = False
         if manifest_file.exists():
             try:
                 data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                self.manifest.name = data.get("name", self.manifest.name)
+                manifest_name = data.get("name")
+                if manifest_name:
+                    self.manifest.name = manifest_name
+                    manifest_name_loaded = True
                 if data.get("created_at"):
                     self.manifest.created_at = datetime.fromisoformat(data["created_at"])
                 connectors_data = data.get("connectors", [])
                 self.manifest.connectors = [ConnectorInfo(**c) for c in connectors_data]
             except (json.JSONDecodeError, ValueError) as exc:
                 logger.warning("Failed to load manifest: %s", exc)
-
-        self.manifest.name = self.config.agent_name
 
         # Discover pillars from per-agent home
         pillars = discover_all(self.home, shared_root=self.shared_root)
@@ -116,6 +118,14 @@ class AgentRuntime:
         self.manifest.security = pillars["security"]
         self.manifest.sync = pillars["sync"]
         self.manifest.skills = pillars["skills"]
+
+        if (
+            self.manifest.identity.name
+            and self.manifest.identity.status == PillarStatus.ACTIVE
+        ):
+            self.manifest.name = self.manifest.identity.name
+        elif not manifest_name_loaded and self.config.agent_name:
+            self.manifest.name = self.config.agent_name
 
         self.manifest.last_awakened = datetime.now(timezone.utc)
         self._awakened = True

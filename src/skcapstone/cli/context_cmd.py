@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 
-from ._common import AGENT_HOME, console
+from ._common import AGENT_HOME, SKCAPSTONE_AGENT, console, resolve_agent_home
 
 
 def register_context_commands(main: click.Group) -> None:
@@ -22,7 +22,11 @@ def register_context_commands(main: click.Group) -> None:
         """
 
     @context.command("show")
-    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--home",
+        default=str(resolve_agent_home(SKCAPSTONE_AGENT)),
+        type=click.Path(),
+    )
     @click.option(
         "--format",
         "fmt",
@@ -55,7 +59,11 @@ def register_context_commands(main: click.Group) -> None:
             click.echo(FORMATTERS[fmt](ctx))
 
     @context.command("generate")
-    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--home",
+        default=str(resolve_agent_home(SKCAPSTONE_AGENT)),
+        type=click.Path(),
+    )
     @click.option("--memories", "-n", default=10, help="Max recent memories to include.")
     @click.option(
         "--target",
@@ -95,7 +103,11 @@ def register_context_commands(main: click.Group) -> None:
         console.print()
 
     @main.command("refresh-context")
-    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--home",
+        default=str(resolve_agent_home(SKCAPSTONE_AGENT)),
+        type=click.Path(),
+    )
     @click.option("--memories", "-n", default=10, help="Max recent memories to embed.")
     @click.option(
         "--dest",

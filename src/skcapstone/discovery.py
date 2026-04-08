@@ -46,7 +46,7 @@ def discover_identity(home: Path, shared_root: Optional[Path] = None) -> Identit
     """Probe for CapAuth identity.
 
     Checks (in priority order):
-    1. Real CapAuth profile at ~/.capauth/ (sovereign PGP keys)
+    1. Real CapAuth profile at {home}/capauth/ (agent-local sovereign PGP keys)
     2. Identity manifest at ~/.skcapstone/identity/identity.json
     3. Key material files in the identity directory
 
@@ -63,7 +63,7 @@ def discover_identity(home: Path, shared_root: Optional[Path] = None) -> Identit
     state = IdentityState()
     identity_dir = home / "identity"
 
-    capauth_state = _try_load_capauth_profile()
+    capauth_state = _try_load_capauth_profile(home / "capauth")
     if capauth_state is not None:
         state = capauth_state
         _sync_identity_json(identity_dir, state)
@@ -105,8 +105,8 @@ def discover_identity(home: Path, shared_root: Optional[Path] = None) -> Identit
     return state
 
 
-def _try_load_capauth_profile() -> Optional[IdentityState]:
-    """Attempt to load a real CapAuth profile from ~/.capauth/.
+def _try_load_capauth_profile(base_dir: Path) -> Optional[IdentityState]:
+    """Attempt to load a real CapAuth profile from an agent-local home.
 
     Returns:
         IdentityState populated from the CapAuth profile, or None
@@ -115,7 +115,7 @@ def _try_load_capauth_profile() -> Optional[IdentityState]:
     try:
         from capauth.profile import load_profile  # type: ignore[import-untyped]
 
-        profile = load_profile()
+        profile = load_profile(base_dir=base_dir)
         return IdentityState(
             fingerprint=profile.key_info.fingerprint,
             name=profile.entity.name,

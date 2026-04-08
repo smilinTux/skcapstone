@@ -117,6 +117,8 @@ def build_trust_graph(home: Path) -> TrustGraph:
 
 def _add_self_node(home: Path, graph: TrustGraph) -> None:
     """Add the local agent as the central node."""
+    manifest_data: dict[str, Any] = {}
+
     identity_file = home / "identity" / "identity.json"
     if identity_file.exists():
         try:
@@ -130,19 +132,52 @@ def _add_self_node(home: Path, graph: TrustGraph) -> None:
                 fingerprint=data.get("fingerprint"),
                 metadata={"capauth_managed": data.get("capauth_managed", False)},
             ))
-            return
         except (json.JSONDecodeError, OSError):
             pass
 
     manifest = home / "manifest.json"
     if manifest.exists():
         try:
-            data = json.loads(manifest.read_text(encoding="utf-8"))
-            name = data.get("name", "self")
-            graph.agent_name = name
-            graph.add_node(TrustNode(id=name, label=name, node_type="agent"))
+            manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+            if not graph.nodes:
+                name = manifest_data.get("name", "self")
+                graph.agent_name = name
+                graph.add_node(TrustNode(id=name, label=name, node_type="agent"))
         except (json.JSONDecodeError, OSError):
             pass
+
+    _add_operator_edge(manifest_data, graph)
+
+
+def _add_operator_edge(manifest_data: dict[str, Any], graph: TrustGraph) -> None:
+    """Add an explicit human-operator relationship from manifest metadata."""
+    operator = manifest_data.get("operator")
+    if not isinstance(operator, dict):
+        return
+
+    name = str(operator.get("name", "")).strip()
+    if not name or not graph.agent_name:
+        return
+
+    node_id = str(operator.get("fingerprint", "")).strip() or f"operator:{name}"
+    graph.add_node(TrustNode(
+        id=node_id,
+        label=name,
+        node_type="peer",
+        fingerprint=str(operator.get("fingerprint", "")).strip() or None,
+        metadata={
+            "relationship": operator.get("relationship", "human-operator"),
+            "entity_type": operator.get("entity_type", "human"),
+            "source": operator.get("source", "manifest"),
+        },
+    ))
+    graph.add_edge(TrustEdge(
+        source=graph.agent_name,
+        target=node_id,
+        edge_type="operator",
+        label=operator.get("relationship", "human-operator"),
+        strength=1.0,
+    ))
 
 
 def _add_token_edges(home: Path, graph: TrustGraph) -> None:

@@ -15,6 +15,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import active_agent_name
 from ..models import ConsciousnessState, PillarStatus
 
 
@@ -27,7 +28,7 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
     Returns:
         ConsciousnessState with current status.
     """
-    agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name() or ""
     # home may be the agent dir (~/.skcapstone/agents/jarvis/) or the
     # shared root (~/.skcapstone/). Check for skwhisper/ directly first.
     whisper_dir = home / "skwhisper"

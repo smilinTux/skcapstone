@@ -140,7 +140,9 @@ def _search_memories(
         List of SearchResult objects from the memory store.
     """
     results: list[SearchResult] = []
-    agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+    from . import active_agent_name
+
+    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
     mem_dir = home / "agents" / agent_name / "memory"
     if not mem_dir.exists():
         return results

@@ -76,7 +76,9 @@ async def _handle_send_notification(args: dict) -> list[TextContent]:
         import json as _j
         import uuid
         home = _home()
-        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        from .. import active_agent_name
+
+        agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
         notif_dir = home / "agents" / agent_name / "skcomm" / "notifications"
         notif_dir.mkdir(parents=True, exist_ok=True)
         entry = {"id": uuid.uuid4().hex[:12], "type": "notification-sent",

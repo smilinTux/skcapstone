@@ -25,11 +25,38 @@ def _default_home() -> str:
     return os.path.expanduser("~/.skcapstone")
 
 
+def _detect_active_agent(root: str | None = None) -> str | None:
+    """Best-effort active agent discovery.
+
+    Resolution order:
+    1. Explicit SKCAPSTONE_AGENT environment variable
+    2. First non-template directory under ~/.skcapstone/agents
+
+    Returns:
+        The active agent name if one can be resolved, else None.
+    """
+    env_agent = os.environ.get("SKCAPSTONE_AGENT", "").strip()
+    if env_agent:
+        return env_agent
+
+    base = Path(root or os.environ.get("SKCAPSTONE_HOME", _default_home())).expanduser()
+    agents_dir = base / "agents"
+    if not agents_dir.exists():
+        return None
+
+    candidates = sorted(
+        entry.name
+        for entry in agents_dir.iterdir()
+        if entry.is_dir() and not entry.name.endswith("-template")
+    )
+    return candidates[0] if candidates else None
+
+
 # Root of the skcapstone tree (shared infra lives here)
 AGENT_HOME = os.environ.get("SKCAPSTONE_HOME", _default_home())
 
 # Which agent this process is running as (set by daemon/connector)
-SKCAPSTONE_AGENT = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+SKCAPSTONE_AGENT = _detect_active_agent() or ""
 
 # Default daemon port
 DEFAULT_PORT = int(os.environ.get("SKCAPSTONE_PORT", "9383"))
@@ -59,11 +86,16 @@ def agent_home(agent_name: str | None = None) -> Path:
     Returns:
         Path to the agent-specific home directory.
     """
-    name = agent_name or SKCAPSTONE_AGENT
+    name = agent_name or SKCAPSTONE_AGENT or _detect_active_agent()
     root = Path(AGENT_HOME).expanduser()
     if name:
         return root / "agents" / name
     return root
+
+
+def active_agent_name() -> str | None:
+    """Return the currently active agent name, if one can be resolved."""
+    return SKCAPSTONE_AGENT or _detect_active_agent()
 
 
 def shared_home() -> Path:

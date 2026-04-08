@@ -155,6 +155,15 @@ def _gather_soul(home: Path) -> dict[str, Any]:
     """Gather active soul overlay info."""
     active_path = home / "soul" / "active.json"
     if not active_path.exists():
+        try:
+            from skmemory.soul import load_soul
+
+            soul = load_soul()
+            if soul is not None:
+                soul_name = getattr(soul, "name", None) or "default"
+                return {"active": soul_name, "base": soul_name}
+        except Exception as exc:
+            logger.debug("Failed to load soul via skmemory fallback: %s", exc)
         return {"active": None, "base": "default"}
     try:
         data = json.loads(active_path.read_text(encoding="utf-8"))

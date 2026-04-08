@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from . import active_agent_name
 from .models import MemoryEntry, MemoryLayer, MemoryState, PillarStatus
 
 logger = logging.getLogger("skcapstone.memory")
@@ -48,9 +49,15 @@ def _get_unified():
 
 def _memory_dir(home: Path) -> Path:
     """Resolve the memory directory, creating it if needed."""
-    # Use agent-specific memory directory if agent name is set
-    agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
-    mem = home / "agents" / agent_name / "memory"
+    # Accept either the shared root (~/.skcapstone) or an agent home
+    # (~/.skcapstone/agents/<agent>) and resolve to the active memory dir.
+    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
+    if home.parent.name == "agents":
+        mem = home / "memory"
+    elif agent_name:
+        mem = home / "agents" / agent_name / "memory"
+    else:
+        mem = home / "memory"
     mem.mkdir(parents=True, exist_ok=True)
     for layer in MemoryLayer:
         (mem / layer.value).mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,7 @@
 """Register command — auto-register SK* skills and MCP servers.
 
 Detects the user's environments (OpenClaw, Claude Code, Cursor, VS Code,
-OpenCode CLI, mcporter) and registers SKILL.md symlinks + MCP server entries.
+OpenCode CLI, Codex, mcporter) and registers SKILL.md symlinks + MCP server entries.
 
 Commands:
     skcapstone register              — register all SK* packages
@@ -49,7 +49,7 @@ def register_register_commands(main: click.Group) -> None:
         """Register all SK* skills and MCP servers in detected environments.
 
         Auto-detects your development environments (Claude Code, Cursor,
-        VS Code, OpenClaw, OpenCode, mcporter) and ensures all SK* skill
+        VS Code, OpenClaw, OpenCode, Codex, mcporter) and ensures all SK* skill
         manifests and MCP server entries are properly configured.
 
         Examples:
@@ -107,6 +107,7 @@ def register_register_commands(main: click.Group) -> None:
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         table.add_column("Package", style="cyan")
         table.add_column("Skill", style="dim")
+        table.add_column("Codex")
         table.add_column("MCP")
         table.add_column("OpenClaw Plugin")
 
@@ -143,6 +144,21 @@ def register_register_commands(main: click.Group) -> None:
             else:
                 mcp_str = str(mcp_info)
 
+            codex_info = pkg_result.get("codex_skill", {})
+            codex_action = codex_info.get("action", "")
+            if codex_action == "created":
+                codex_str = "[green]created[/]"
+            elif codex_action == "exists":
+                codex_str = "[dim]exists[/]"
+            elif codex_action == "dry-run":
+                codex_str = "[yellow]would create[/]"
+            elif codex_action == "error":
+                codex_str = f"[red]{codex_info.get('error', 'error')}[/]"
+            elif not codex_action:
+                codex_str = "[dim]—[/]"
+            else:
+                codex_str = f"[dim]{codex_action}[/]"
+
             plugin_action = pkg_result.get("openclaw_plugin", "")
             if plugin_action == "created":
                 plugin_str = "[green]created[/]"
@@ -157,7 +173,7 @@ def register_register_commands(main: click.Group) -> None:
             else:
                 plugin_str = f"[dim]{plugin_action}[/]"
 
-            table.add_row(name, skill_str, mcp_str, plugin_str)
+            table.add_row(name, skill_str, codex_str, mcp_str, plugin_str)
 
         console.print(table)
         console.print()
