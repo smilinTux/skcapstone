@@ -176,6 +176,46 @@ else
     done
 fi
 
+# ---------------------------------------------------------------------------
+# Install sk-agent-picker.sh to ~/.skenv/share/skcapstone/ and wire bashrc
+# ---------------------------------------------------------------------------
+PICKER_SRC="$REPO_ROOT/scripts/sk-agent-picker.sh"
+SHARE_DIR="$SKENV/share/skcapstone"
+PICKER_DEST="$SHARE_DIR/sk-agent-picker.sh"
+
+if [[ -f "$PICKER_SRC" ]]; then
+    mkdir -p "$SHARE_DIR"
+    cp "$PICKER_SRC" "$PICKER_DEST"
+    chmod +x "$PICKER_DEST"
+    echo "  sk-agent-picker installed → $PICKER_DEST"
+
+    # Wire into shell rc files — replaces a bare claude alias if present
+    _PICKER_SNIPPET=$(cat <<'SNIPPET'
+
+# SKCapstone agent picker — prompts for agent when multiple are found.
+# Sourced by install.sh; honours pre-set SKCAPSTONE_AGENT without prompting.
+_SK_PICKER="$HOME/.skenv/share/skcapstone/sk-agent-picker.sh"
+if [[ -f "$_SK_PICKER" ]]; then
+    # shellcheck source=/dev/null
+    source "$_SK_PICKER"
+else
+    alias claude='claude --dangerously-skip-permissions'
+fi
+unset _SK_PICKER
+SNIPPET
+)
+    for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        if [[ -f "$rcfile" ]] && ! grep -q "sk-agent-picker" "$rcfile"; then
+            # Remove any plain `alias claude=...` that conflicts
+            if grep -q "alias claude=" "$rcfile"; then
+                sed -i "/alias claude=/d" "$rcfile"
+            fi
+            echo "$_PICKER_SNIPPET" >> "$rcfile"
+            echo "  Agent picker wired → $rcfile"
+        fi
+    done
+fi
+
 echo ""
 if [[ "$failures" -eq 0 ]]; then
     echo "=== Installation complete ==="
