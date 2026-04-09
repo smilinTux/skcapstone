@@ -105,16 +105,12 @@ _sk_pick_agent() {
 # Generic launcher used by all wrappers
 # ---------------------------------------------------------------------------
 _sk_launch() {
-    local tool="$1"; shift        # the underlying binary (claude / codex / opencode)
-    local extra_flags="$*"        # tool-specific flags to always pass (may be empty)
+    local tool="$1"; shift         # the underlying binary (claude / codex / opencode)
+    local extra_flags="$1"; shift  # tool-specific flags always appended (pass "" if none)
+    # remaining args collected below after parsing --agent
 
-    # SKCAPSTONE_AGENT already set → honour it, no picker
-    if [[ -n "${SKCAPSTONE_AGENT:-}" ]]; then
-        command "$tool" $extra_flags "$@"
-        return
-    fi
-
-    # Parse --agent <name> / --agent=<name> out of args
+    # Parse --agent <name> / --agent=<name> out of args first.
+    # SK_NO_PICKER=1 skips the menu entirely (for scripted/CI use).
     local agent=""
     local -a passthrough=()
     local skip_next=0
@@ -130,15 +126,31 @@ _sk_launch() {
         esac
     done
 
-    if [[ -z "$agent" ]]; then
+    # --agent flag given → skip picker
+    # SK_NO_PICKER=1 → skip picker (scripted/CI use)
+    if [[ -z "$agent" && "${SK_NO_PICKER:-0}" != "1" ]]; then
         agent=$(_sk_pick_agent)
+    fi
+
+    # Fallback: if picker returned empty (0 agents), just use SKCAPSTONE_AGENT
+    # or launch bare if that's also unset.
+    if [[ -z "$agent" ]]; then
+        agent="${SKCAPSTONE_AGENT:-}"
     fi
 
     if [[ -n "$agent" ]]; then
         printf "  ▶ Starting %s as agent: %s\n\n" "$tool" "$agent" >&2
-        SKCAPSTONE_AGENT="$agent" command "$tool" $extra_flags "${passthrough[@]}"
+        if [[ -n "$extra_flags" ]]; then
+            SKCAPSTONE_AGENT="$agent" command "$tool" $extra_flags "${passthrough[@]}"
+        else
+            SKCAPSTONE_AGENT="$agent" command "$tool" "${passthrough[@]}"
+        fi
     else
-        command "$tool" $extra_flags "${passthrough[@]}"
+        if [[ -n "$extra_flags" ]]; then
+            command "$tool" $extra_flags "${passthrough[@]}"
+        else
+            command "$tool" "${passthrough[@]}"
+        fi
     fi
 }
 
@@ -153,20 +165,17 @@ unalias opencode 2>/dev/null || true
 
 # claude (Claude Code CLI)
 function claude {
-    _sk_launch claude --dangerously-skip-permissions "$@"
+    _sk_launch claude "--dangerously-skip-permissions" "$@"
 }
 
 # codex (OpenAI Codex CLI — https://github.com/openai/codex)
-# Passes --full-auto to skip per-command confirmation prompts, matching
-# the spirit of Claude's --dangerously-skip-permissions flag.
 function codex {
-    _sk_launch codex --full-auto "$@"
+    _sk_launch codex "--full-auto" "$@"
 }
 
 # opencode (opencode.ai)
-# No extra flags needed — opencode handles agent context via env vars.
 function opencode {
-    _sk_launch opencode "$@"
+    _sk_launch opencode "" "$@"
 }
 
 # Export so sub-shells (tmux panes, etc.) inherit the functions
