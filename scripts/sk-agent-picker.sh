@@ -144,24 +144,28 @@ _sk_launch() {
 
 # ---------------------------------------------------------------------------
 # Per-tool wrapper functions
+# Must unalias first — an active alias with the same name causes bash to
+# expand it during function-definition parsing, producing a syntax error.
 # ---------------------------------------------------------------------------
+unalias claude   2>/dev/null || true
+unalias codex    2>/dev/null || true
+unalias opencode 2>/dev/null || true
 
 # claude (Claude Code CLI)
-claude() {
+function claude {
     _sk_launch claude --dangerously-skip-permissions "$@"
 }
 
 # codex (OpenAI Codex CLI — https://github.com/openai/codex)
 # Passes --full-auto to skip per-command confirmation prompts, matching
 # the spirit of Claude's --dangerously-skip-permissions flag.
-# Remove or change this if you prefer interactive confirmation.
-codex() {
+function codex {
     _sk_launch codex --full-auto "$@"
 }
 
-# opencode (opencode.ai / Sourcegraph's AI coding tool)
+# opencode (opencode.ai)
 # No extra flags needed — opencode handles agent context via env vars.
-opencode() {
+function opencode {
     _sk_launch opencode "$@"
 }
 
