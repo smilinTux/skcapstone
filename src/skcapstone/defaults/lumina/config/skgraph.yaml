@@ -1,12 +1,57 @@
-# SKGraph configuration — knowledge graph / relationship memory
-# Customize graph backend and relationship tracking for your agent.
+# SKGraph Configuration for {{AGENT_NAME}} Agent
+# ─────────────────────────────────────────────────────────────────────────────
+# FalkorDB graph database for relationship-aware memory traversal.
+#
+# Graph search answers questions like:
+#   "What memories are connected to this one?"
+#   "Show me the lineage of this seed"
+#   "Which topics are most central to this agent's knowledge?"
+#
+# FalkorDB is the successor to RedisGraph — same Redis wire protocol (port 6379).
+#
+# Hosted options:
+#   - Self-hosted on LAN:         redis://192.168.x.x:6379
+#   - Self-hosted via domain:     redis://skgraph.yourdomain.com:6381
+#   - FalkorDB Cloud:             https://app.falkordb.cloud
+#   - Docker (local dev):         docker run -p 6379:6379 falkordb/falkordb
+# ─────────────────────────────────────────────────────────────────────────────
 
-enabled: false
-backend: sqlite
-auto_link_memories: true
-max_depth: 5
+enabled: true
+
+# ── FalkorDB connection ──────────────────────────────────────────────────────
+# Option A: host/port/password (recommended — password is plain text here,
+# the loader URL-decodes it automatically if you paste a URL-encoded value)
+host: 192.168.0.59       # replace with your FalkorDB host
+port: 16379
+password:                # leave blank for unauthenticated local instances
+                         # or set to your plaintext password
+
+# Option B: full Redis URL (use instead of host/port/password)
+# url: redis://:yourpassword@skgraph.yourdomain.com:6381
+# Note: if the password contains special chars (+ / = @), URL-encode it
+# when using the url: form (e.g. + → %2B, / → %2F, = → %3D, @ → %40)
+
+# ── Graph ────────────────────────────────────────────────────────────────────
+# Each agent should have its own graph to keep relationship spaces separate.
+graph_name: {{AGENT_NAME}}_knowledge
+
+# ── Relationship types ───────────────────────────────────────────────────────
+# These are created as edge types in the graph when indexing memories.
+# The backend also auto-creates: TAGGED, FROM_SOURCE, PROMOTED_FROM,
+# PRECEDED_BY, PLANTED (seeds), MENTIONS, CITES, ASSERTS, IN_SECTION
 relationship_types:
-  - relates_to
-  - builds_on
-  - contradicts
-  - supersedes
+  - relates_to       # General semantic relationship
+  - part_of          # Hierarchical containment
+  - caused_by        # Causal chain
+  - leads_to         # Forward causal/temporal link
+  - mentions         # Entity reference
+  - tagged_with      # Tag association
+  - deployed_to      # Infrastructure deployment
+  - depends_on       # Technical dependency
+  - fixed_by         # Bug/issue resolution
+
+# ── Ingestion ────────────────────────────────────────────────────────────────
+auto_ingest: true    # Automatically index new memories into the graph
+
+# Source directory (flat files to index from)
+source: ~/.skcapstone/agents/{{AGENT_NAME}}/memory

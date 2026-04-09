@@ -1,13 +1,79 @@
-name: lumina
-agent_type: sovereign
-description: Default skcapstone agent
+# SKMemory Configuration for {{AGENT_NAME}} Agent
+# ─────────────────────────────────────────────────────────────────────────────
+# This file is synced across all machines via Syncthing.
+# The local SQLite database is machine-specific and rebuilt from flat files.
+#
+# Quick-start: run `skcapstone onboard --agent <name>` to auto-generate this
+# with values filled in.  Or copy and edit manually — replace every {{...}}.
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Memory backend
-backends_enabled:
-  - file
-  - sqlite
+agent:
+  name: {{AGENT_NAME}}
+  uuid_naming: true        # Prefix memory filenames with UUID for conflict-free sync
 
-# Sync configuration
-sync_root: ~/.skcapstone/agents/lumina
-seeds_dir: ~/.skcapstone/agents/lumina/seeds
-local_db: ~/.skcapstone/agents/lumina/index.db
+storage:
+  # Root directory for this agent (Syncthing-synced)
+  sync_root: ~/.skcapstone/agents/{{AGENT_NAME}}
+  seeds_dir: ~/.skcapstone/agents/{{AGENT_NAME}}/seeds
+
+  # Memory tier directories (flat JSON files, source of truth)
+  memory_dirs:
+    short-term: ~/.skcapstone/agents/{{AGENT_NAME}}/memory/short-term
+    mid-term:   ~/.skcapstone/agents/{{AGENT_NAME}}/memory/mid-term
+    long-term:  ~/.skcapstone/agents/{{AGENT_NAME}}/memory/long-term
+
+  # Local SQLite index (machine-specific, NOT synced, rebuilt on demand)
+  local_db: ~/.skcapstone/agents/{{AGENT_NAME}}/memory/index.db
+
+sync:
+  enabled: true
+  mode: flat_files_source_of_truth
+  rehydrate_interval: 30m   # Rebuild SQLite from flat files every 30 minutes
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backend configuration
+# Each backend has its own yaml file for clarity.
+# Set enabled: true in the backend yaml to activate it.
+# ─────────────────────────────────────────────────────────────────────────────
+backends:
+  skvector:
+    enabled: true
+    config: ~/.skcapstone/agents/{{AGENT_NAME}}/config/skvector.yaml
+
+  skgraph:
+    enabled: true
+    config: ~/.skcapstone/agents/{{AGENT_NAME}}/config/skgraph.yaml
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cross-agent / shared vector collections (read-only)
+#
+# These Qdrant collections are searched during deep_search() IN ADDITION TO
+# the agent's own collection.  Use this to pull from shared knowledge bases,
+# other agents, or import indexes (e.g. hammerTime document corpus).
+#
+# The agent's own collection (defined in skvector.yaml) is always searched
+# first; recall_collections are searched afterward with deduplication.
+#
+# Each entry is a Qdrant collection name — all use the same Qdrant endpoint
+# and api_key configured in skvector.yaml.
+# ─────────────────────────────────────────────────────────────────────────────
+recall_collections: []
+# Example:
+# recall_collections:
+#   - hammertime-v2          # Document corpus from hammerTime importer
+#   - lumina-memory          # Read Lumina's memories (cross-agent)
+#   - shared-knowledge       # Team-wide shared knowledge base
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Memory filename naming pattern
+# ─────────────────────────────────────────────────────────────────────────────
+naming:
+  pattern: "{uuid}-{description}"
+  uuid_length: 8   # First 8 chars of UUID for readability
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logs (machine-specific, excluded from sync)
+# ─────────────────────────────────────────────────────────────────────────────
+logs:
+  dir: ~/.skcapstone/agents/{{AGENT_NAME}}/logs
+  level: info

@@ -1,9 +1,60 @@
-# SKVector configuration — semantic memory embeddings
-# Customize the embedding model and index settings for your agent.
+# SKVector Configuration for {{AGENT_NAME}} Agent
+# ─────────────────────────────────────────────────────────────────────────────
+# Qdrant vector database for semantic memory search.
+#
+# Semantic search finds memories by *meaning*, not just keyword matching.
+# "That conversation where we felt stuck" finds the right memory even if
+# those words aren't in it.
+#
+# Hosted Qdrant options:
+#   - Qdrant Cloud:          https://cloud.qdrant.io  (free 1GB tier)
+#   - Self-hosted on LAN:    http://192.168.x.x:6333
+#   - Self-hosted via HTTPS: https://skvector.yourdomain.com:443
+# ─────────────────────────────────────────────────────────────────────────────
 
-enabled: false
-model: "bge-legal-v1"
-dimensions: 1024
-index_type: flat
-similarity_metric: cosine
-auto_embed_on_store: true
+enabled: true
+
+# ── Qdrant connection ────────────────────────────────────────────────────────
+# Option A: explicit host/port/https (recommended for self-hosted)
+host: skvector.yourdomain.com   # replace with your Qdrant host
+port: 443
+https: true
+
+# Option B: full URL (use instead of host/port/https if you prefer)
+# url: https://skvector.yourdomain.com:443
+
+api_key: YOUR_QDRANT_API_KEY    # leave blank for unauthenticated local instances
+
+# ── Collection ───────────────────────────────────────────────────────────────
+# Each agent should have its own collection.
+# Use recall_collections in skmemory.yaml to also search other collections.
+collection_name: {{AGENT_NAME}}-memory
+dimensions: 1024    # Must match the embedding model output size
+
+# ── Embedding provider ───────────────────────────────────────────────────────
+# How to convert text into vectors.  Three supported providers:
+#
+#   ollama            — local Ollama instance (recommended for sovereign setup)
+#   sentence_transformers — local Python model (no external service needed)
+#   openai            — OpenAI text-embedding-* API (requires OPENAI_API_KEY)
+#
+embedding:
+  provider: ollama                    # ollama | sentence_transformers | openai
+  model: mxbai-embed-large            # 1024-dim, strong general-purpose model
+  url: http://192.168.0.100:11434     # Ollama API base URL (only for provider: ollama)
+  # For provider: sentence_transformers, set model to e.g. "all-MiniLM-L6-v2" (384-dim)
+  # For provider: openai, set model to e.g. "text-embedding-3-small" (1536-dim)
+
+# Alternative sovereign embedding model (HuggingFace):
+#   model: chefboyrave21/bge-legal-v1   (1024-dim, legal domain fine-tuned)
+#   provider: sentence_transformers
+#
+# If using bge-legal-v1 locally, set HAMMERTIME_ROOT env var to the
+# directory containing models/bge-legal-v1/
+
+# ── Ingestion ────────────────────────────────────────────────────────────────
+batch_size: 100         # Memories to embed per batch during bulk ingest
+auto_ingest: true       # Automatically index new memories as they're saved
+
+# Source directory (flat files to ingest from)
+source: ~/.skcapstone/agents/{{AGENT_NAME}}/memory
