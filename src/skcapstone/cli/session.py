@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -125,3 +126,27 @@ def register_session_commands(main: click.Group) -> None:
         for src, count in sorted(by_source.items(), key=lambda x: -x[1]):
             console.print(f"    {src}: {count}")
         console.print()
+
+    @session.command("briefing")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--format",
+        "fmt",
+        type=click.Choice(["text", "json"]),
+        default="text",
+        help="Output format (default: text).",
+    )
+    @click.option("--memories", "-n", default=10, help="Max recent memories to include.")
+    def session_briefing(home: str, fmt: str, memories: int):
+        """Show a native startup briefing for sovereign sessions.
+
+        Merges SKCapstone context with the current HammerTime legal/case
+        briefing when available, so any client can consume one startup payload.
+        """
+        from ..session_briefing import build_session_briefing, format_session_briefing_text
+
+        payload = build_session_briefing(Path(home).expanduser(), memory_limit=memories)
+        if fmt == "json":
+            click.echo(json.dumps(payload, indent=2, default=str))
+            return
+        click.echo(format_session_briefing_text(payload))
