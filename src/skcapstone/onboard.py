@@ -1652,7 +1652,7 @@ def run_onboard(home: Optional[str] = None) -> None:
     # -----------------------------------------------------------------------
     # Write global CLAUDE.md and register Claude Code hooks
     # -----------------------------------------------------------------------
-    # Write global CLAUDE.md
+    # Write global CLAUDE.md from bundled skeleton template
     try:
         from .cli.setup import _write_global_claude_md
         _write_global_claude_md(home_path, name)
@@ -1660,7 +1660,18 @@ def run_onboard(home: Optional[str] = None) -> None:
     except Exception as exc:
         _warn(f"Could not write CLAUDE.md: {exc}")
 
-    # Register Claude Code hooks (skmemory)
+    # Write ~/.claude/settings.json with SK hooks (merge with existing)
+    try:
+        from .cli.setup import _write_claude_settings
+        settings_path = _write_claude_settings(merge=True)
+        if settings_path:
+            _ok(f"~/.claude/settings.json updated ({settings_path})")
+        else:
+            _info("claude settings: skipped (skmemory not installed or template missing)")
+    except Exception as exc:
+        _warn(f"Could not write claude settings: {exc}")
+
+    # Register Claude Code hooks via skmemory (adds any hooks not yet in settings.json)
     try:
         from skmemory.register import register_hooks
         actions = register_hooks()
