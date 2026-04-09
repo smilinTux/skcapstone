@@ -44,7 +44,6 @@ _sk_pick_agent() {
     fi
 
     local count="${#agents[@]}"
-    local default="${SKCAPSTONE_AGENT:-lumina}"
 
     if [[ $count -eq 0 ]]; then
         echo ""; return 0
@@ -54,6 +53,17 @@ _sk_pick_agent() {
         echo "${agents[0]}"; return 0
     fi
 
+    # Validate SKCAPSTONE_AGENT against actual agent list.
+    # If it's set but not in the list (stale env), fall back to first agent.
+    local env_agent="${SKCAPSTONE_AGENT:-}"
+    local default="${agents[0]}"
+    for agent in "${agents[@]}"; do
+        if [[ "$agent" == "$env_agent" ]]; then
+            default="$agent"
+            break
+        fi
+    done
+
     # Multi-agent menu
     echo "" >&2
     echo "  ╔══════════════════════════════════╗" >&2
@@ -62,12 +72,10 @@ _sk_pick_agent() {
     echo "" >&2
 
     local i=1
-    local default_idx=1
     for agent in "${agents[@]}"; do
         local marker="  "
         if [[ "$agent" == "$default" ]]; then
             marker="→ "
-            default_idx=$i
         fi
         printf "  %s%2d)  %s\n" "$marker" "$i" "$agent" >&2
         (( i++ ))
@@ -96,8 +104,12 @@ _sk_pick_agent() {
         fi
     done
 
-    # Invalid
-    printf "\n  ⚠  Unknown choice '%s', using '%s'\n\n" "$choice" "$default" >&2
+    # Invalid — use list-validated default (not stale env), re-show options
+    printf "\n  ⚠  Unknown agent '%s'. Valid agents:\n" "$choice" >&2
+    for agent in "${agents[@]}"; do
+        printf "       %s\n" "$agent" >&2
+    done
+    printf "  Using default: %s\n\n" "$default" >&2
     echo "$default"
 }
 
