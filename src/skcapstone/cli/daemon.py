@@ -140,7 +140,8 @@ def register_daemon_commands(main: click.Group) -> None:
         effective_port = _resolve_agent_port(agent, port)
 
         if agent:
-            # Propagate identity to child imports that read SKCAPSTONE_AGENT.
+            # Propagate identity to child imports that read SKAGENT.
+            os.environ["SKAGENT"] = agent
             os.environ["SKCAPSTONE_AGENT"] = agent
 
         if not home_path.exists():

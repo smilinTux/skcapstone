@@ -20,8 +20,8 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-ExecStart=skcapstone daemon start --agent %i --foreground
-ExecStop=skcapstone daemon stop --agent %i
+ExecStart=%h/.skenv/bin/skcapstone daemon start --agent %i --foreground
+ExecStop=%h/.skenv/bin/skcapstone daemon stop --agent %i
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10
@@ -40,14 +40,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=skcapstone@%i
 
-# Security hardening (same as single-agent unit)
+# Security hardening (relaxed — ProtectHome=read-only breaks if any
+# ReadWritePaths dir is missing on the host)
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.skcapstone %h/.skmemory %h/.capauth %h/.cloud9 %h/.skcomm %h/.skchat
 PrivateTmp=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
 
 [Install]
 WantedBy=default.target
