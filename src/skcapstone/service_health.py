@@ -32,6 +32,10 @@ logger = logging.getLogger("skcapstone.service_health")
 # Default timeout per service check (seconds).
 CHECK_TIMEOUT = 3
 
+# Hostname tag for multi-machine dedup — prevents Syncthing conflicts when
+# multiple daemons write to the same ITIL incident files.
+_HOSTNAME = socket.gethostname()
+
 
 # ---------------------------------------------------------------------------
 # Individual service checks
@@ -218,18 +222,23 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
         from .itil import ITILManager
 
         svc_name = service_result["name"]
+        error_info = service_result.get("error") or "unreachable"
         mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
 
         # Dedup: skip if there's already an open incident for this service
         existing = mgr.find_open_incident_for_service(svc_name)
         if existing:
-            logger.debug(
-                "Skipping incident creation for %s — open incident %s exists",
-                svc_name, existing.id,
-            )
+            # Only add a "still down" note if this host hasn't noted it recently
+            last_notes = [e.get("note", "") for e in (existing.timeline or [])[-3:]]
+            host_tag = f"[{_HOSTNAME}]"
+            if any(host_tag in n and "still down" in n for n in last_notes):
+                logger.debug("Skipping duplicate down note for %s from %s", svc_name, _HOSTNAME)
+            else:
+                mgr.update_incident(
+                    existing.id, "service_health",
+                    note=f"[{_HOSTNAME}] Service {svc_name} still down: {error_info}",
+                )
             return
-
-        error_info = service_result.get("error") or "unreachable"
         mgr.create_incident(
             title=f"{svc_name} down",
             severity="sev3",
@@ -267,10 +276,14 @@ def _auto_resolve_recovered_service(service_result: dict[str, Any]) -> None:
             logger.info("Auto-resolved sev4 incident %s for recovered service %s",
                         existing.id, svc_name)
         else:
-            mgr.update_incident(
-                existing.id, "service_health",
-                note=f"Service {svc_name} appears to be back up",
-            )
+            # Skip if this host already noted recovery recently
+            last_notes = [e.get("note", "") for e in (existing.timeline or [])[-3:]]
+            host_tag = f"[{_HOSTNAME}]"
+            if not any(host_tag in n and "back up" in n for n in last_notes):
+                mgr.update_incident(
+                    existing.id, "service_health",
+                    note=f"[{_HOSTNAME}] Service {svc_name} appears to be back up",
+                )
     except Exception as exc:
         logger.debug("Failed to auto-resolve incident for %s: %s",
                       service_result.get("name"), exc)
