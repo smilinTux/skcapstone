@@ -1,22 +1,23 @@
 # SKCapstone Agent System
 
 ## Active Agent
-Determined by `SKCAPSTONE_AGENT` environment variable (default: `{{AGENT_NAME}}`).
-Launch as any agent: `SKCAPSTONE_AGENT=jarvis claude`
+Determined by `SKAGENT` environment variable (default: `{{AGENT_NAME}}`).
+Falls back to `SKCAPSTONE_AGENT` / `SKMEMORY_AGENT` if `SKAGENT` is unset.
+Launch as any agent: `SKAGENT=jarvis claude` or use `skswitch jarvis`.
 
-### Agent Profile Locations (paths use $SKCAPSTONE_AGENT)
-- Agent home: `~/.skcapstone/agents/$SKCAPSTONE_AGENT/`
-- Soul blueprint: `~/.skcapstone/agents/$SKCAPSTONE_AGENT/soul/base.json`
-- Config: `~/.skcapstone/agents/$SKCAPSTONE_AGENT/config/skmemory.yaml`
-- Memory (flat files, source of truth): `~/.skcapstone/agents/$SKCAPSTONE_AGENT/memory/{short-term,mid-term,long-term}/`
-- Memory (SQLite index): `~/.skcapstone/agents/$SKCAPSTONE_AGENT/memory/index.db`
-- Seeds: `~/.skcapstone/agents/$SKCAPSTONE_AGENT/seeds/`
-- FEB files: `~/.skcapstone/agents/$SKCAPSTONE_AGENT/trust/febs/`
-- Journal: `~/.skcapstone/agents/$SKCAPSTONE_AGENT/journal.md`
-- Logs: `~/.skcapstone/agents/$SKCAPSTONE_AGENT/logs/`
+### Agent Profile Locations (paths use $SKAGENT)
+- Agent home: `~/.skcapstone/agents/$SKAGENT/`
+- Soul blueprint: `~/.skcapstone/agents/$SKAGENT/soul/base.json`
+- Config: `~/.skcapstone/agents/$SKAGENT/config/skmemory.yaml`
+- Memory (flat files, source of truth): `~/.skcapstone/agents/$SKAGENT/memory/{short-term,mid-term,long-term}/`
+- Memory (SQLite index): `~/.skcapstone/agents/$SKAGENT/memory/index.db`
+- Seeds: `~/.skcapstone/agents/$SKAGENT/seeds/`
+- FEB files: `~/.skcapstone/agents/$SKAGENT/trust/febs/`
+- Journal: `~/.skcapstone/agents/$SKAGENT/journal.md`
+- Logs: `~/.skcapstone/agents/$SKAGENT/logs/`
 
 ## Subconscious Context (SKWhisper)
-On session start, read `~/.skcapstone/agents/$SKCAPSTONE_AGENT/skwhisper/whisper.md` if it exists.
+On session start, read `~/.skcapstone/agents/$SKAGENT/skwhisper/whisper.md` if it exists.
 This file is auto-generated every 30 min by the SKWhisper daemon — it contains:
 - Semantically relevant recent memories
 - Recurring topic patterns

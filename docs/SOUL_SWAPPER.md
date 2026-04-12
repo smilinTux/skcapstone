@@ -126,7 +126,7 @@ skcapstone soul install-all ~/clawd/soul-blueprints/blueprints/
 
 ## 4. CLI Reference
 
-All soul commands live under the `skcapstone soul` group. Every command accepts a `--agent` / `-a` flag to target a specific agent profile (defaults to `SKCAPSTONE_AGENT` env var or `lumina`).
+All soul commands live under the `skcapstone soul` group. Every command accepts a `--agent` / `-a` flag to target a specific agent profile (defaults to `SKAGENT` env var, with fallback to `SKCAPSTONE_AGENT`).
 
 ### `soul list`
 
@@ -488,7 +488,7 @@ Every soul command supports the `--agent` / `-a` flag to target a specific agent
 
 ### How it works
 
-When `--agent casey` is passed (or `SKCAPSTONE_AGENT=casey` is set), all soul data is stored under:
+When `--agent casey` is passed (or `SKAGENT=casey` / `skswitch casey` is used), all soul data is stored under:
 
 ```
 ~/.skcapstone/agents/casey/soul/
@@ -520,10 +520,10 @@ skcapstone soul status --agent nova    # -> base
 
 ### Environment variable
 
-Instead of passing `--agent` every time, set the environment variable:
+Instead of passing `--agent` every time, use `skswitch`:
 
 ```bash
-export SKCAPSTONE_AGENT=casey
+skswitch casey
 skcapstone soul swap the-attorney   # targets casey automatically
 ```
 
@@ -775,7 +775,7 @@ Registers all `skcapstone soul *` commands via Click. Key implementation details
 
 - `_find_blueprint_in_repo(slug)` -- Searches `~/clawd/soul-blueprints/blueprints/*/` for a matching file, trying hyphenated, underscored, and uppercased variants
 - `soul swap` -- The most complex command; searches installed, then repo, auto-installs if needed, records audit events
-- All commands use `SoulManager` with the agent name from `--agent` / `SKCAPSTONE_AGENT`
+- All commands use `SoulManager` with the agent name from `--agent` / `SKAGENT`
 
 ### `mcp_tools/soul_tools.py` -- MCP Handlers
 

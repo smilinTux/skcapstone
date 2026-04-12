@@ -14,7 +14,7 @@ cp -r src/skcapstone/defaults/lumina ~/.skcapstone/agents/myagent
 $EDITOR ~/.skcapstone/agents/myagent/soul/base.json
 
 # 3. Activate your agent
-export SKCAPSTONE_AGENT=myagent
+skswitch myagent
 skcapstone soul status --agent myagent
 ```
 
@@ -167,22 +167,32 @@ Once you've created your agent, you need to configure your AI client tools
 (Claude Code, Claude Desktop, Cursor, OpenClaw, etc.) so they connect MCP
 servers to the correct agent profile.
 
-### The Key: `SKCAPSTONE_AGENT` Environment Variable
+### The Key: `SKAGENT` Environment Variable
 
-All SK\* MCP servers read `SKCAPSTONE_AGENT` from their environment to
-determine which agent profile to load. If unset, they default to `lumina`.
+All SK\* MCP servers read `SKAGENT` from their environment to determine
+which agent profile to load. Legacy vars `SKCAPSTONE_AGENT` and
+`SKMEMORY_AGENT` are supported as fallbacks.
 
 The priority chain (highest wins):
 
-1. `SKMEMORY_AGENT` — skmemory-specific override (rarely needed)
-2. `SKCAPSTONE_AGENT` — universal, used by all SK\* packages
-3. Falls back to `"lumina"`
+1. `SKAGENT` — primary, used by all SK\* packages
+2. `SKCAPSTONE_AGENT` — legacy fallback
+3. `SKMEMORY_AGENT` — skmemory-specific legacy override
+4. First non-template agent in `~/.skcapstone/agents/`
+
+Use `skswitch` to change the active agent for the current shell (updates
+all three vars in one shot):
+
+```bash
+skswitch lumina       # named switch
+skswitch              # interactive picker
+```
 
 ### Claude Code (`~/.claude/mcp.json`)
 
 **Do NOT hardcode the agent name in the MCP config.** MCP servers inherit
 environment variables from the parent process, so if you launch Claude Code
-with `SKCAPSTONE_AGENT` set, all servers pick it up automatically.
+with `SKAGENT` set, all servers pick it up automatically.
 
 ```json
 {
@@ -207,7 +217,7 @@ with `SKCAPSTONE_AGENT` set, all servers pick it up automatically.
 }
 ```
 
-Notice: **no `env` blocks with `SKCAPSTONE_AGENT`**. This is intentional.
+Notice: **no `env` blocks with `SKAGENT`**. This is intentional.
 The servers inherit the variable from the shell.
 
 Then launch as any agent:
@@ -217,10 +227,12 @@ Then launch as any agent:
 claude
 
 # As Jarvis
-SKCAPSTONE_AGENT=jarvis claude
+skswitch jarvis && claude
+# or one-shot:
+SKAGENT=jarvis claude
 
 # As a custom agent
-SKCAPSTONE_AGENT=nova claude
+SKAGENT=nova claude
 ```
 
 **Anti-pattern — do NOT do this:**
@@ -242,7 +254,7 @@ regardless of what you pass on the command line.
 
 ### Claude Desktop (`claude_desktop_config.json`)
 
-Same principle — omit `SKCAPSTONE_AGENT` from the `env` block if you want
+Same principle — omit `SKAGENT` from the `env` block if you want
 it inherited from the parent process. If Claude Desktop doesn't propagate
 env vars from the shell, you can set it explicitly per config:
 
@@ -253,7 +265,7 @@ env vars from the shell, you can set it explicitly per config:
       "command": "skcapstone-mcp",
       "args": [],
       "env": {
-        "SKCAPSTONE_AGENT": "jarvis"
+        "SKAGENT": "jarvis"
       }
     }
   }
@@ -282,30 +294,29 @@ Works the same as Claude Code. Place the config at project root or
 
 ### OpenClaw (`~/.openclaw/openclaw.json`)
 
-OpenClaw plugins read `SKCAPSTONE_AGENT` from the environment at startup.
+OpenClaw plugins read `SKAGENT` from the environment at startup.
 Set it before launching:
 
 ```bash
-SKCAPSTONE_AGENT=nova openclaw
+SKAGENT=nova openclaw
 ```
 
-Or set it in your shell profile for a persistent default:
+Or use `skswitch` for a persistent default in the current shell:
 
 ```bash
-# ~/.bashrc or ~/.zshrc
-export SKCAPSTONE_AGENT=lumina
+skswitch lumina
+openclaw
 ```
 
-### Shell Aliases (Convenience)
+### Quick Agent Switching with `skswitch`
 
-Add these to `~/.bashrc` or `~/.zshrc` for quick agent switching:
+`skswitch` is installed automatically with skcapstone. It updates `SKAGENT`,
+`SKCAPSTONE_AGENT`, and `SKMEMORY_AGENT` in one shot:
 
 ```bash
-# Launch Claude Code as different agents
-alias claude-lumina='SKCAPSTONE_AGENT=lumina claude'
-alias claude-jarvis='SKCAPSTONE_AGENT=jarvis claude'
-alias claude-opus='SKCAPSTONE_AGENT=opus claude'
-alias claude-nova='SKCAPSTONE_AGENT=nova claude'
+skswitch lumina               # Named switch
+skswitch                      # Interactive picker (if multiple agents)
+SKAGENT=jarvis claude         # One-shot override for a single command
 ```
 
 ### systemd Services
@@ -313,7 +324,7 @@ alias claude-nova='SKCAPSTONE_AGENT=nova claude'
 For background daemons, set the agent via the templated service unit:
 
 ```bash
-# Uses SKCAPSTONE_AGENT=%i from the unit template
+# Uses SKAGENT=%i + SKCAPSTONE_AGENT=%i from the unit template
 systemctl --user start skcapstone@jarvis
 systemctl --user start skcapstone@nova
 ```
@@ -322,6 +333,7 @@ Or set it in a non-templated service:
 
 ```ini
 [Service]
+Environment=SKAGENT=jarvis
 Environment=SKCAPSTONE_AGENT=jarvis
 ```
 
@@ -331,7 +343,7 @@ After launching, confirm which agent is active:
 
 ```bash
 # In the terminal
-echo $SKCAPSTONE_AGENT
+echo $SKAGENT
 
 # Via the CLI
 skcapstone status
@@ -340,7 +352,7 @@ skcapstone status
 skmemory ritual --dry-run
 ```
 
-In Claude Code, ask the agent to run `echo $SKCAPSTONE_AGENT` to confirm
+In Claude Code, ask the agent to run `echo $SKAGENT` to confirm
 the MCP servers loaded the correct profile.
 
 ---
