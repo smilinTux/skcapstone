@@ -33,6 +33,8 @@ Environment=PYTHONUNBUFFERED=1
 Environment=OLLAMA_KEEP_ALIVE=5m
 Environment=SKAGENT=%i
 Environment=SKCAPSTONE_AGENT=%i
+Environment=SKMEMORY_AGENT=%i
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
 # Journal logging — logs appear under skcapstone@<instance>
 StandardOutput=journal
 StandardError=journal

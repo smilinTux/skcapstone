@@ -228,6 +228,91 @@ echo "Venv location:     $SKENV"
 echo "To activate:       source $SKENV/bin/activate"
 
 # ---------------------------------------------------------------------------
+# Linux: Install systemd user services for all SK* pillars
+# ---------------------------------------------------------------------------
+if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
+    echo ""
+    echo "=== Linux Systemd Services ==="
+    echo ""
+    echo "SKCapstone can install systemd user services so your agent starts"
+    echo "automatically at login. This includes skcapstone, skchat, and skcomm."
+    echo ""
+    read -r -p "Install systemd user services? [Y/n] " _SYSTEMD_ANSWER
+    _SYSTEMD_ANSWER="${_SYSTEMD_ANSWER:-Y}"
+
+    if [[ "$_SYSTEMD_ANSWER" =~ ^[Yy] ]]; then
+        _DEFAULT_AGENT="${SKAGENT:-${SKCAPSTONE_AGENT:-lumina}}"
+        read -r -p "Agent name [$_DEFAULT_AGENT]: " _AGENT_NAME
+        _AGENT_NAME="${_AGENT_NAME:-$_DEFAULT_AGENT}"
+
+        _UNIT_DIR="${HOME}/.config/systemd/user"
+        mkdir -p "$_UNIT_DIR"
+
+        _installed=0
+
+        # skcapstone services
+        for _unit in skcapstone.service skcapstone@.service \
+                     skcapstone-memory-compress.service skcapstone-memory-compress.timer \
+                     skcomm-heartbeat.service skcomm-heartbeat.timer; do
+            _src="$REPO_ROOT/systemd/$_unit"
+            if [[ -f "$_src" ]]; then
+                # Substitute agent name in non-template units
+                if [[ "$_unit" != *@* ]]; then
+                    sed "s/=lumina/=$_AGENT_NAME/g" "$_src" > "$_UNIT_DIR/$_unit"
+                else
+                    cp "$_src" "$_UNIT_DIR/$_unit"
+                fi
+                echo "  [OK] $_unit"
+                (( _installed++ ))
+            fi
+        done
+
+        # skchat services (sibling repo)
+        _SKCHAT_DIR="$(dirname "$REPO_ROOT")/skchat/systemd"
+        for _unit in skchat-daemon.service skchat-lumina-bridge.service \
+                     skchat-opus-bridge.service skchat-bridges.target; do
+            _src="$_SKCHAT_DIR/$_unit"
+            if [[ -f "$_src" ]]; then
+                sed "s/=lumina/=$_AGENT_NAME/g; s/=opus/=$_AGENT_NAME/g" "$_src" > "$_UNIT_DIR/$_unit"
+                echo "  [OK] $_unit"
+                (( _installed++ ))
+            fi
+        done
+
+        # skcomm services (sibling repo)
+        _SKCOMM_DIR="$(dirname "$REPO_ROOT")/skcomm/systemd"
+        for _unit in skcomm.service skcomm-daemon.service; do
+            _src="$_SKCOMM_DIR/$_unit"
+            if [[ -f "$_src" ]]; then
+                sed "s/=lumina/=$_AGENT_NAME/g" "$_src" > "$_UNIT_DIR/$_unit"
+                echo "  [OK] $_unit"
+                (( _installed++ ))
+            fi
+        done
+
+        echo ""
+        echo "  Installed $_installed service files to $_UNIT_DIR/"
+
+        systemctl --user daemon-reload
+        echo "  systemd daemon reloaded"
+
+        read -r -p "Enable and start core services now? [Y/n] " _START_NOW
+        _START_NOW="${_START_NOW:-Y}"
+        if [[ "$_START_NOW" =~ ^[Yy] ]]; then
+            systemctl --user enable --now skcapstone.service 2>/dev/null && echo "  [STARTED] skcapstone" || true
+            systemctl --user enable --now skchat-daemon.service 2>/dev/null && echo "  [STARTED] skchat-daemon" || true
+            systemctl --user enable --now skchat-bridges.target 2>/dev/null && echo "  [STARTED] skchat-bridges" || true
+            systemctl --user enable skcapstone-context.timer 2>/dev/null && echo "  [ENABLED] skcapstone-context.timer" || true
+            systemctl --user enable skcomm-heartbeat.timer 2>/dev/null && echo "  [ENABLED] skcomm-heartbeat.timer" || true
+        else
+            echo "  Skipped. Enable later: systemctl --user enable --now skcapstone.service"
+        fi
+    else
+        echo "  Skipped. Install later by re-running: bash scripts/install.sh"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # macOS: Offer launchd service installation
 # ---------------------------------------------------------------------------
 if [[ "$(uname)" == "Darwin" ]]; then

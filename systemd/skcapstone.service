@@ -16,20 +16,18 @@ MemoryMax=4G
 # Keep Ollama models warm for 5 minutes between requests
 Environment=PYTHONUNBUFFERED=1
 Environment=OLLAMA_KEEP_ALIVE=5m
+Environment=SKAGENT=lumina
 Environment=SKCAPSTONE_AGENT=lumina
+Environment=SKMEMORY_AGENT=lumina
 # Journal logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=skcapstone
 
-# Security hardening
+# Security hardening (relaxed — ProtectHome=read-only breaks if any
+# ReadWritePaths dir is missing on the host)
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.skcapstone %h/.skenv %h/.capauth %h/.cloud9 %h/.skcomm %h/.skchat
 PrivateTmp=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
 
 [Install]
 WantedBy=default.target
