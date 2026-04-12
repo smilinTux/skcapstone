@@ -192,8 +192,8 @@ if [[ -f "$PICKER_SRC" ]]; then
     # Wire into shell rc files — replaces a bare claude alias if present
     _PICKER_SNIPPET=$(cat <<'SNIPPET'
 
-# SKCapstone agent picker — prompts for agent when multiple are found.
-# Sourced by install.sh; honours pre-set SKCAPSTONE_AGENT without prompting.
+# SKCapstone agent picker + skswitch — prompts for agent when multiple are found.
+# Sourced by install.sh; honours pre-set SKAGENT without prompting.
 _SK_PICKER="$HOME/.skenv/share/skcapstone/sk-agent-picker.sh"
 if [[ -f "$_SK_PICKER" ]]; then
     # shellcheck source=/dev/null

@@ -5,18 +5,23 @@
 # (OpenAI Codex CLI), and `opencode` with an agent-aware launcher that
 # shows a numbered menu when multiple SK agents are configured.
 #
+# Also provides `skswitch` — a fast way to change the active agent for
+# the current shell session (updates SKAGENT + legacy vars in one shot).
+#
 # Behaviour:
 #   - Zero agents found       → launch tool normally (no SK home yet)
 #   - Exactly one agent       → use it silently, no prompt
 #   - Multiple agents         → numbered menu, default highlighted with →
-#   - SKCAPSTONE_AGENT is set → honour it, skip menu entirely
+#   - SKAGENT is set          → honour it, skip menu entirely
 #   - Pass --agent <name>     → skip menu, use that agent directly
 #   - Any other args          → forwarded to the underlying tool unchanged
 #
 # Usage:
 #   claude                        # picker if multiple agents
 #   claude --agent lumina         # direct launch
-#   SKCAPSTONE_AGENT=opus claude  # env override (existing behaviour)
+#   SKAGENT=opus claude           # env override
+#   skswitch lumina               # change active agent for this shell
+#   skswitch                      # interactive picker
 #   codex                         # same picker logic
 #   opencode                      # same picker logic
 #
@@ -53,9 +58,9 @@ _sk_pick_agent() {
         echo "${agents[0]}"; return 0
     fi
 
-    # Validate SKCAPSTONE_AGENT against actual agent list.
+    # Validate SKAGENT against actual agent list.
     # If it's set but not in the list (stale env), fall back to first agent.
-    local env_agent="${SKCAPSTONE_AGENT:-}"
+    local env_agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
     local default="${agents[0]}"
     for agent in "${agents[@]}"; do
         if [[ "$agent" == "$env_agent" ]]; then
@@ -144,18 +149,18 @@ _sk_launch() {
         agent=$(_sk_pick_agent)
     fi
 
-    # Fallback: if picker returned empty (0 agents), just use SKCAPSTONE_AGENT
+    # Fallback: if picker returned empty (0 agents), just use SKAGENT
     # or launch bare if that's also unset.
     if [[ -z "$agent" ]]; then
-        agent="${SKCAPSTONE_AGENT:-}"
+        agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
     fi
 
     if [[ -n "$agent" ]]; then
         printf "  ▶ Starting %s as agent: %s\n\n" "$tool" "$agent" >&2
         if [[ -n "$extra_flags" ]]; then
-            SKCAPSTONE_AGENT="$agent" command "$tool" $extra_flags "${passthrough[@]}"
+            SKAGENT="$agent" SKCAPSTONE_AGENT="$agent" SKMEMORY_AGENT="$agent" command "$tool" $extra_flags "${passthrough[@]}"
         else
-            SKCAPSTONE_AGENT="$agent" command "$tool" "${passthrough[@]}"
+            SKAGENT="$agent" SKCAPSTONE_AGENT="$agent" SKMEMORY_AGENT="$agent" command "$tool" "${passthrough[@]}"
         fi
     else
         if [[ -n "$extra_flags" ]]; then
@@ -164,6 +169,39 @@ _sk_launch() {
             command "$tool" "${passthrough[@]}"
         fi
     fi
+}
+
+# ---------------------------------------------------------------------------
+# skswitch — change the active agent for the current shell session
+# ---------------------------------------------------------------------------
+function skswitch {
+    local agent="$1"
+
+    if [[ -z "$agent" ]]; then
+        # No argument — show interactive picker
+        agent=$(_sk_pick_agent)
+        if [[ -z "$agent" ]]; then
+            echo "No agents found in ${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents/" >&2
+            return 1
+        fi
+    fi
+
+    # Validate agent directory exists
+    local agent_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents/$agent"
+    if [[ ! -d "$agent_dir" ]]; then
+        echo "Agent not found: $agent" >&2
+        echo "Available agents:" >&2
+        local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
+        if [[ -d "$agents_dir" ]]; then
+            find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '  %f\n' | sort >&2
+        fi
+        return 1
+    fi
+
+    export SKAGENT="$agent"
+    export SKCAPSTONE_AGENT="$agent"
+    export SKMEMORY_AGENT="$agent"
+    echo "Switched to agent: $agent"
 }
 
 # ---------------------------------------------------------------------------
@@ -193,6 +231,7 @@ function opencode {
 # Export so sub-shells (tmux panes, etc.) inherit the functions
 export -f _sk_pick_agent 2>/dev/null || true
 export -f _sk_launch     2>/dev/null || true
+export -f skswitch       2>/dev/null || true
 export -f claude         2>/dev/null || true
 export -f codex          2>/dev/null || true
 export -f opencode       2>/dev/null || true

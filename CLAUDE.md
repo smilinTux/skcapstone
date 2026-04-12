@@ -15,6 +15,23 @@ skcapstone coord briefing
 This prints the complete protocol, JSON schemas, rules, and a live snapshot
 of current tasks and agent assignments. It works in any terminal.
 
+## Agent Switching
+
+`SKAGENT` is the primary env var for selecting the active agent across all SK*
+packages (skcapstone, skmemory, skcomm, skchat). Legacy vars `SKCAPSTONE_AGENT`
+and `SKMEMORY_AGENT` are still supported as fallbacks.
+
+```bash
+skswitch lumina               # Switch active agent for this shell session
+skswitch opus                 # Sets SKAGENT + SKCAPSTONE_AGENT + SKMEMORY_AGENT
+skswitch                      # Interactive picker (if multiple agents)
+SKAGENT=jarvis claude         # One-shot override for a single command
+```
+
+`skswitch` is installed automatically by `scripts/install.sh` via the agent
+picker (`sk-agent-picker.sh`). It validates the agent directory exists and
+updates all three env vars in one shot.
+
 ## Quick Reference
 
 ```bash
