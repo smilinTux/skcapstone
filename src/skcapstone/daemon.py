@@ -2505,23 +2505,31 @@ class DaemonService:
 def read_pid(home: Optional[Path] = None) -> Optional[int]:
     """Read the daemon PID from the PID file.
 
+    Checks the given home directory first, then falls back to the shared
+    root (AGENT_HOME / ~/.skcapstone) since the daemon writes its PID
+    to config.home which defaults to the shared root.
+
     Args:
-        home: Agent home directory.
+        home: Agent home directory (or shared root).
 
     Returns:
         PID as int, or None if not running.
     """
     home = (home or Path(AGENT_HOME)).expanduser()
-    pid_path = home / PID_FILE
-    if not pid_path.exists():
-        return None
-    try:
-        pid = int(pid_path.read_text(encoding="utf-8").strip())
-        os.kill(pid, 0)
-        return pid
-    except (ValueError, ProcessLookupError, PermissionError):
-        pid_path.unlink(missing_ok=True)
-        return None
+    shared_root = Path(AGENT_HOME).expanduser()
+
+    # Check agent home first, then shared root
+    for candidate in (home, shared_root):
+        pid_path = candidate / PID_FILE
+        if not pid_path.exists():
+            continue
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+            os.kill(pid, 0)
+            return pid
+        except (ValueError, ProcessLookupError, PermissionError):
+            pid_path.unlink(missing_ok=True)
+    return None
 
 
 def is_running(home: Optional[Path] = None) -> bool:
