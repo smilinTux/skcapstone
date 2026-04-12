@@ -31,6 +31,7 @@ WatchdogSec=300
 # resolve the correct per-agent home even before the CLI flag is processed.
 Environment=PYTHONUNBUFFERED=1
 Environment=OLLAMA_KEEP_ALIVE=5m
+Environment=SKAGENT=%i
 Environment=SKCAPSTONE_AGENT=%i
 # Journal logging — logs appear under skcapstone@<instance>
 StandardOutput=journal

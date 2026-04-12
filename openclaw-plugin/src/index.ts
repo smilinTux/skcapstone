@@ -14,7 +14,7 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 
 const SKCAPSTONE_BIN = process.env.SKCAPSTONE_BIN || "skcapstone";
 const SKMEMORY_BIN = process.env.SKMEMORY_BIN || "skmemory";
-const SKCAPSTONE_AGENT = process.env.SKCAPSTONE_AGENT || "lumina";
+const SKCAPSTONE_AGENT = process.env.SKAGENT || process.env.SKCAPSTONE_AGENT || "lumina";
 const EXEC_TIMEOUT = 60_000;
 const IS_WIN = process.platform === "win32";
 
@@ -36,6 +36,7 @@ function runCli(bin: string, args: string, agentOverride?: string): { ok: boolea
       timeout: EXEC_TIMEOUT,
       env: {
         ...process.env,
+        SKAGENT: agent,
         SKCAPSTONE_AGENT: agent,
         PATH: `${skenvPath()}${sep}${process.env.PATH}`,
       },

@@ -39,8 +39,9 @@ send_alert() {
     log "Sending fallback alert to Chef..."
 
     # Send via Telethon (async)
-    SKCAPSTONE_AGENT=lumina ~/.skenv/bin/python3 -c "
+    SKAGENT=lumina SKCAPSTONE_AGENT=lumina ~/.skenv/bin/python3 -c "
 import asyncio, os
+os.environ['SKAGENT'] = 'lumina'
 os.environ['SKCAPSTONE_AGENT'] = 'lumina'
 from skmemory.importers.telegram_api import send_message
 
@@ -75,8 +76,9 @@ print(int((exp/1000 - time.time()) / 3600))
         log "Token refresh succeeded ($remaining h remaining), restarting gateway..."
         systemctl --user restart openclaw-gateway.service 2>/dev/null || true
 
-        SKCAPSTONE_AGENT=lumina ~/.skenv/bin/python3 -c "
+        SKAGENT=lumina SKCAPSTONE_AGENT=lumina ~/.skenv/bin/python3 -c "
 import asyncio, os
+os.environ['SKAGENT'] = 'lumina'
 os.environ['SKCAPSTONE_AGENT'] = 'lumina'
 from skmemory.importers.telegram_api import send_message
 asyncio.run(send_message('$CHEF_CHAT', '✅ Token refreshed, gateway restarted. Lumina back on Opus.', parse_mode='markdown'))

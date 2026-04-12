@@ -242,7 +242,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
 
     if [[ "$_LAUNCHD_ANSWER" =~ ^[Yy] ]]; then
         # Ask for agent name
-        _DEFAULT_AGENT="${SKCAPSTONE_AGENT:-sovereign}"
+        _DEFAULT_AGENT="${SKAGENT:-${SKCAPSTONE_AGENT:-sovereign}}"
         read -r -p "Agent name [$_DEFAULT_AGENT]: " _AGENT_NAME
         _AGENT_NAME="${_AGENT_NAME:-$_DEFAULT_AGENT}"
 

@@ -19,7 +19,7 @@ from .. import __version__
 @click.group()
 @click.version_option(version=__version__, prog_name="skcapstone")
 @click.option(
-    "--agent", envvar="SKCAPSTONE_AGENT", default="",
+    "--agent", envvar="SKAGENT", default="",
     help="Agent name — resolves home to {root}/agents/{name}/",
 )
 @click.pass_context

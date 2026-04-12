@@ -132,7 +132,7 @@ def save_to_skmemory(title: str, content: str, agent: str, tags: list[str]) -> b
             ],
             capture_output=True,
             timeout=30,
-            env={**os.environ, "SKCAPSTONE_AGENT": agent},
+            env={**os.environ, "SKAGENT": agent, "SKCAPSTONE_AGENT": agent},
         )
         if result.returncode != 0:
             print(f"  [skmemory error] {result.stderr.decode()[:200]}", file=sys.stderr)

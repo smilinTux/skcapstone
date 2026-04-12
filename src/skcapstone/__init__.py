@@ -35,7 +35,7 @@ def _detect_active_agent(root: str | None = None) -> str | None:
     Returns:
         The active agent name if one can be resolved, else None.
     """
-    env_agent = os.environ.get("SKCAPSTONE_AGENT", "").strip()
+    env_agent = (os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT", "")).strip()
     if env_agent:
         return env_agent
 

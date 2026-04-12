@@ -65,8 +65,8 @@ def register_soul_commands(main: click.Group) -> None:
         return click.option(
             "--agent", "-a",
             default=SKCAPSTONE_AGENT,
-            envvar="SKCAPSTONE_AGENT",
-            help="Agent profile name (default: active agent).",
+            envvar="SKAGENT",
+            help="Agent profile name (default: SKAGENT or active agent).",
         )
 
     @main.group()

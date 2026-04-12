@@ -58,6 +58,7 @@ def apply_agent_override(agent: str) -> None:
     """
     if agent:
         _pkg.SKCAPSTONE_AGENT = agent
+        os.environ["SKAGENT"] = agent
         os.environ["SKCAPSTONE_AGENT"] = agent
 
 

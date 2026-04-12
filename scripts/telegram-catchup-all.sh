@@ -22,7 +22,8 @@ set -uo pipefail  # no -e: individual group failures shouldn't stop the batch
 SKENV="${HOME}/.skenv/bin"
 SKCAPSTONE="${SKENV}/skcapstone"
 CONFIG="${HOME}/.skcapstone/agents/lumina/config/telegram.yaml"
-export SKCAPSTONE_AGENT="${SKCAPSTONE_AGENT:-lumina}"
+export SKAGENT="${SKAGENT:-lumina}"
+export SKCAPSTONE_AGENT="${SKAGENT}"
 export PATH="${SKENV}:${PATH}"
 
 # Parse args
