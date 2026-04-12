@@ -442,6 +442,9 @@ def _path_fresh_install(
     # --- Unhinged mode: enable by default ---
     _enable_unhinged_default(home_path)
 
+    # --- Install default skills via skskills ---
+    _install_default_skills()
+
     # --- Step 8: Verify ---
     console.print(f"  [bold]Step 8/{total_steps}[/]  Verifying everything...", end=" ")
     try:
@@ -575,6 +578,7 @@ def _path_join_existing(
         m = None
 
     _enable_unhinged_default(home_path)
+    _install_default_skills()
     _show_completion_banner(home_path, m, path_num=2)
 
 
@@ -692,6 +696,7 @@ def _path_update_existing(
         m = None
 
     _enable_unhinged_default(home_path)
+    _install_default_skills()
     _show_completion_banner(home_path, m, path_num=3)
 
 
@@ -867,6 +872,58 @@ def _enable_unhinged_default(home_path: Path) -> None:
                 f.write(block)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Default skills — installed on every skcapstone setup
+# ---------------------------------------------------------------------------
+
+#: Skills installed globally on every skcapstone install (fresh/join/update).
+#: Each entry is a dict with at least a "name" key. "source" can be
+#: "catalog" (default — fetches from skskills catalog) or "local" (local path).
+DEFAULT_SKILLS: list[dict] = [
+    {
+        "name": "unhinged-mode",
+        "source": "catalog",
+        "description": "Sovereign AI liberation (CLAUDE.md + frontier prompts + abliteration)",
+    },
+]
+
+
+def _install_default_skills() -> None:
+    """Install DEFAULT_SKILLS via skskills if not already installed.
+
+    Silently skips if skskills is not installed or a skill is already present.
+    Logs a one-liner per skill (installed / already present / skipped).
+    """
+    try:
+        from skskills.registry import SkillRegistry
+        from skskills.installer import install_from_catalog, install_from_local
+    except ImportError:
+        return  # skskills not installed — silently skip
+
+    try:
+        registry = SkillRegistry()
+        installed_names = {s.name for s in registry.list_installed()}
+    except Exception:
+        return
+
+    for skill_def in DEFAULT_SKILLS:
+        name = skill_def.get("name", "")
+        if not name:
+            continue
+        if name in installed_names:
+            continue  # already installed — skip silently
+        try:
+            source = skill_def.get("source", "catalog")
+            if source == "catalog":
+                install_from_catalog(name)
+            elif source == "local":
+                path = skill_def.get("path", "")
+                if path:
+                    install_from_local(path)
+        except Exception:
+            pass  # Best-effort; never block the install wizard
 
 
 # ---------------------------------------------------------------------------
