@@ -60,6 +60,7 @@ class DreamingConfig(BaseModel):
     idle_threshold_minutes: int = 30
     idle_messages_24h_max: int = 5
     cooldown_hours: float = 2.0
+    max_per_day: int = 1
     max_context_memories: int = 20
     max_response_tokens: int = 4096
     request_timeout: int = 120
@@ -290,6 +291,9 @@ class DreamingEngine:
                 skipped_reason=f"cooldown ({remaining:.0f}s remaining)"
             )
 
+        if self._config.max_per_day > 0 and self._dreams_today() >= self._config.max_per_day:
+            return DreamResult(skipped_reason=f"max_per_day ({self._config.max_per_day}) reached")
+
         # Gather memories (may be diversified)
         diversity_forced = self._should_force_diversity()
         if diversity_forced:
@@ -394,6 +398,22 @@ class DreamingEngine:
 
         # Default: consider idle (safe for first run)
         return True
+
+    def _dreams_today(self) -> int:
+        """Count how many dreams have already run today (UTC calendar day)."""
+        today = datetime.now(timezone.utc).date()
+        log = self._load_dream_log()
+        count = 0
+        for entry in log:
+            ts = entry.get("dreamed_at", "")
+            if not ts or entry.get("skipped_reason"):
+                continue
+            try:
+                if datetime.fromisoformat(ts).astimezone(timezone.utc).date() == today:
+                    count += 1
+            except (ValueError, TypeError):
+                pass
+        return count
 
     def cooldown_remaining(self) -> float:
         """Seconds remaining until the next dream is allowed."""
