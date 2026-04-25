@@ -11,7 +11,7 @@ import os
 import platform
 from pathlib import Path
 
-__version__ = "0.6.5"
+__version__ = "0.6.6"
 __author__ = "smilinTux"
 
 
