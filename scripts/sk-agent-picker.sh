@@ -12,8 +12,11 @@
 #   - Zero agents found       → launch tool normally (no SK home yet)
 #   - Exactly one agent       → use it silently, no prompt
 #   - Multiple agents         → numbered menu, default highlighted with →
-#   - SKAGENT is set          → honour it, skip menu entirely
+#   - SKAGENT/SKCAPSTONE_AGENT set & valid → honour it silently, no menu
 #   - Pass --agent <name>     → skip menu, use that agent directly
+#   - Print mode (-p / --print) → skip menu (non-interactive by definition)
+#   - stdin not a TTY         → skip menu (no way to read user input)
+#   - SK_NO_PICKER=1          → skip menu (scripted/CI use)
 #   - Any other args          → forwarded to the underlying tool unchanged
 #
 # Usage:
@@ -62,12 +65,20 @@ _sk_pick_agent() {
     # If it's set but not in the list (stale env), fall back to first agent.
     local env_agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
     local default="${agents[0]}"
+    local env_match=0
     for agent in "${agents[@]}"; do
         if [[ "$agent" == "$env_agent" ]]; then
             default="$agent"
+            env_match=1
             break
         fi
     done
+
+    # If env explicitly selected a real agent, skip the menu entirely.
+    # Same if stdin isn't a TTY (we'd hang waiting for input that can't come).
+    if [[ $env_match -eq 1 ]] || [[ ! -t 0 ]]; then
+        echo "$default"; return 0
+    fi
 
     # Multi-agent menu
     echo "" >&2
@@ -128,25 +139,41 @@ _sk_launch() {
 
     # Parse --agent <name> / --agent=<name> out of args first.
     # SK_NO_PICKER=1 skips the menu entirely (for scripted/CI use).
+    # Also detect print/non-interactive modes (-p, --print, --output-format)
+    # so we never hang on the menu when claude/codex/opencode are invoked
+    # non-interactively (skill dispatchers, CI, automation).
     local agent=""
     local -a passthrough=()
     local skip_next=0
+    local non_interactive=0
 
     for arg in "$@"; do
         if [[ $skip_next -eq 1 ]]; then
             agent="$arg"; skip_next=0; continue
         fi
         case "$arg" in
-            --agent)        skip_next=1 ;;
-            --agent=*)      agent="${arg#--agent=}" ;;
-            *)              passthrough+=("$arg") ;;
+            --agent)            skip_next=1 ;;
+            --agent=*)          agent="${arg#--agent=}" ;;
+            -p|--print)         non_interactive=1; passthrough+=("$arg") ;;
+            --output-format|--output-format=*) non_interactive=1; passthrough+=("$arg") ;;
+            *)                  passthrough+=("$arg") ;;
         esac
     done
 
     # --agent flag given → skip picker
     # SK_NO_PICKER=1 → skip picker (scripted/CI use)
-    if [[ -z "$agent" && "${SK_NO_PICKER:-0}" != "1" ]]; then
+    # Print/non-interactive mode → skip picker (no menu can be answered)
+    if [[ -z "$agent" && "${SK_NO_PICKER:-0}" != "1" && $non_interactive -eq 0 ]]; then
         agent=$(_sk_pick_agent)
+    elif [[ -z "$agent" && $non_interactive -eq 1 ]]; then
+        # Non-interactive: take env or first agent silently
+        agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
+        if [[ -z "$agent" ]]; then
+            local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
+            if [[ -d "$agents_dir" ]]; then
+                agent=$(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '%f\n' | sort | head -1)
+            fi
+        fi
     fi
 
     # Fallback: if picker returned empty (0 agents), just use SKAGENT
