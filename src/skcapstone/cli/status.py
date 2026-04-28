@@ -151,8 +151,11 @@ def _print_consciousness_metrics(console, home: Optional[Path] = None) -> None:
     import urllib.request
     import urllib.error
 
+    from .. import AGENT_PORTS, DEFAULT_PORT, SKCAPSTONE_AGENT
+
+    port = AGENT_PORTS.get(SKCAPSTONE_AGENT, DEFAULT_PORT)
     try:
-        with urllib.request.urlopen("http://localhost:7777/consciousness", timeout=2) as resp:
+        with urllib.request.urlopen(f"http://localhost:{port}/consciousness", timeout=2) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         enabled = data.get("enabled", False)
         messages = data.get("messages_processed", 0)
