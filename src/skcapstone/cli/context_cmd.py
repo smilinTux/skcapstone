@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from ._common import AGENT_HOME, SKCAPSTONE_AGENT, console, resolve_agent_home
+from ._validators import validate_file_path
 
 
 def register_context_commands(main: click.Group) -> None:
@@ -134,6 +135,7 @@ def register_context_commands(main: click.Group) -> None:
         home_path = Path(home).expanduser()
 
         if dest:
+            validate_file_path(dest)
             target = Path(dest).expanduser().resolve()
             if target.is_dir():
                 target = target / "CLAUDE.md"
