@@ -356,28 +356,28 @@ def discover_consciousness(home: Path) -> ConsciousnessState:
 def _probe_remote_registry(state: SkillsState) -> None:
     """Probe the remote skills-registry for availability.
 
-    Uses the skskills RemoteRegistry client when available.
-    Falls back gracefully if the skskills package is missing or
-    the remote registry is unreachable.
+    Uses RegistryClient (skcapstone.registry_client) which wraps the
+    skskills RemoteRegistry client.  Falls back gracefully if skskills
+    is not installed or the remote registry is unreachable.
 
     Args:
         state: SkillsState to update with remote info (mutated in place).
     """
-    try:
-        from skskills.remote import RemoteRegistry, DEFAULT_REGISTRY_URL
-    except ImportError:
-        return
-
+    from .registry_client import get_registry_client, DEFAULT_REGISTRY_URL
     import os
 
     registry_url = os.environ.get("SKSKILLS_REGISTRY_URL", DEFAULT_REGISTRY_URL)
     state.registry_url = registry_url
 
+    client = get_registry_client(registry_url=registry_url)
+    if client is None:
+        # skskills package not installed — remote registry unavailable
+        return
+
     try:
-        remote = RemoteRegistry(registry_url=registry_url)
-        index = remote.fetch_index()
+        skills = client.list_skills()
         state.registry_available = True
-        state.remote_skill_count = len(index.skills)
+        state.remote_skill_count = len(skills)
     except Exception:
         # Remote unreachable — cached index may still work; that is
         # handled by RemoteRegistry.fetch_index() internally.
