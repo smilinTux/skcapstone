@@ -289,7 +289,8 @@ class LLMBridge:
             resp = conn.getresponse()
             resp.read()  # drain body so the connection stays reusable
             return resp.status < 500
-        except Exception:
+        except Exception as e:
+            logger.warning("consciousness_loop.py: %s", e)
             self._ollama_pool.invalidate()
             return False
 

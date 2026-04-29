@@ -3288,6 +3288,7 @@ def backup_create(home: str, output: str, no_encrypt: bool):
             console.print(f"  [green]Backup saved:[/] {result_path}")
 
     except Exception as exc:
+        logger.warning("_cli_monolith.py: %s", exc)
         console.print(f"  [red]Backup failed:[/] {exc}")
         sys.exit(1)
 
@@ -3325,6 +3326,7 @@ def backup_restore(backup_file: str, home: str, force: bool):
         console.print(f"  [yellow]{exc}[/]")
         sys.exit(1)
     except Exception as exc:
+        logger.warning("_cli_monolith.py: %s", exc)
         console.print(f"  [red]Restore failed:[/] {exc}")
         sys.exit(1)
 
@@ -5059,7 +5061,8 @@ def agents_messages(deployment_id: str, agent_name: Optional[str], limit: int, h
                     content[:80] + ("…" if len(content) > 80 else ""),
                 )
                 total_shown += 1
-            except Exception:
+            except Exception as e:
+                logger.warning("_cli_monolith.py: %s", e)
                 continue
 
         if table.row_count:
@@ -5106,7 +5109,8 @@ def agents_messages(deployment_id: str, agent_name: Optional[str], limit: int, h
                         content[:90] + ("…" if len(content) > 90 else ""),
                     )
                     total_shown += 1
-                except Exception:
+                except Exception as e:
+                    logger.warning("_cli_monolith.py: %s", e)
                     continue
 
             if bc_table.row_count:
@@ -5814,7 +5818,8 @@ def skills_install(source: str, agent: str | None, home: str, force: bool) -> No
             try:
                 data = _json.loads(identity_path.read_text(encoding="utf-8"))
                 agent = data.get("name", "global")
-            except Exception:
+            except Exception as e:
+                logger.warning("_cli_monolith.py: %s", e)
                 agent = "global"
         else:
             agent = "global"

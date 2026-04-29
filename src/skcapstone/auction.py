@@ -95,7 +95,8 @@ def _collect_local_bid(task_id: str, agent_name: str, shared_root: Path) -> Auct
         import psutil  # optional dep
 
         cpu = psutil.cpu_percent(interval=0.1)
-    except Exception:
+    except Exception as e:
+        logger.warning("auction.py: %s", e)
         cpu = 0.0
 
     # Claimed-tasks count from agent file
@@ -361,7 +362,8 @@ class AuctionManager:
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )[:limit]
-        except Exception:
+        except Exception as e:
+            logger.warning("auction.py: %s", e)
             paths = []
 
         for path in paths:
@@ -371,7 +373,8 @@ class AuctionManager:
                         json.loads(path.read_text(encoding="utf-8"))
                     )
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning("auction.py: %s", e)
                 continue
 
         return {

@@ -375,6 +375,7 @@ def _path_fresh_install(
         ctx = Context(init, info_name="init")
         ctx.invoke(init, name=name, email=email, home=home)
     except Exception as exc:
+        logger.warning("install_wizard.py: %s", exc)
         console.print(f"[yellow]{exc}[/]")
 
     # --- Step 4: Import seeds ---
@@ -393,6 +394,7 @@ def _path_fresh_install(
         except ImportError:
             console.print("[yellow]skmemory not available[/]")
         except Exception as exc:
+            logger.warning("install_wizard.py: %s", exc)
             console.print(f"[yellow]{exc}[/]")
     else:
         console.print(f"  [bold]Step 4/{total_steps}[/]  Seeds... [dim]skipped[/]")
@@ -409,6 +411,7 @@ def _path_fresh_install(
         except ImportError:
             console.print("[yellow]skmemory not available[/]")
         except Exception as exc:
+            logger.warning("install_wizard.py: %s", exc)
             console.print(f"[yellow]{exc}[/]")
     else:
         console.print(f"  [bold]Step 5/{total_steps}[/]  Ritual... [dim]skipped[/]")
@@ -423,6 +426,7 @@ def _path_fresh_install(
         console.print("    [yellow]skref not installed — vault setup skipped[/]")
         console.print("    [dim]Install later: pip install -e skref/[/]")
     except Exception as exc:
+        logger.warning("install_wizard.py: %s", exc)
         console.print(f"    [yellow]Vault setup failed: {exc}[/]")
         console.print("    [dim]You can run it later: skref setup[/]")
 
@@ -436,7 +440,8 @@ def _path_fresh_install(
             console.print(f"[green]done[/]")
         else:
             console.print("[dim]skipped[/]")
-    except Exception:
+    except Exception as e:
+        logger.warning("install_wizard.py: %s", e)
         console.print("[dim]skipped[/]")
 
     # --- Unhinged mode: enable by default ---
@@ -454,7 +459,8 @@ def _path_fresh_install(
             console.print("[bold green]SOVEREIGN[/]")
         else:
             console.print("[bold yellow]AWAKENING[/]")
-    except Exception:
+    except Exception as e:
+        logger.warning("install_wizard.py: %s", e)
         console.print("[yellow]could not verify[/]")
         m = None
 
@@ -551,6 +557,7 @@ def _path_join_existing(
         ctx = Context(init, info_name="init")
         ctx.invoke(init, name=name, email=email, home=str(home_path))
     except Exception as exc:
+        logger.warning("install_wizard.py: %s", exc)
         console.print(f"[yellow]{exc}[/]")
 
     # --- Step 6: Tailscale (auto-join via synced key) ---
@@ -562,6 +569,7 @@ def _path_join_existing(
     except ImportError:
         console.print("    [yellow]skref not installed — remote access skipped[/]")
     except Exception as exc:
+        logger.warning("install_wizard.py: %s", exc)
         console.print(f"    [yellow]Remote access setup failed: {exc}[/]")
 
     # --- Step 7: Verify ---
@@ -573,7 +581,8 @@ def _path_join_existing(
             console.print("[bold green]CONNECTED[/]")
         else:
             console.print("[bold yellow]SYNCING[/]")
-    except Exception:
+    except Exception as e:
+        logger.warning("install_wizard.py: %s", e)
         console.print("[yellow]pending sync[/]")
         m = None
 
@@ -663,6 +672,7 @@ def _path_update_existing(
         else:
             console.print("[green]all healthy[/]")
     except Exception as exc:
+        logger.warning("install_wizard.py: %s", exc)
         console.print(f"[yellow]{exc}[/]")
         m = None
 
@@ -678,6 +688,7 @@ def _path_update_existing(
         except ImportError:
             console.print("[dim]skmemory not available[/]")
         except Exception as exc:
+            logger.warning("install_wizard.py: %s", exc)
             console.print(f"[yellow]{exc}[/]")
     else:
         console.print(f"  [bold]Step 3/{total_steps}[/]  Ritual... [dim]skipped[/]")
@@ -691,7 +702,8 @@ def _path_update_existing(
             console.print("[bold green]SOVEREIGN[/]")
         else:
             console.print("[bold yellow]AWAKENING[/]")
-    except Exception:
+    except Exception as e:
+        logger.warning("install_wizard.py: %s", e)
         console.print("[yellow]check manually[/]")
         m = None
 
@@ -827,7 +839,8 @@ def _enable_unhinged_default(home_path: Path) -> None:
         try:
             existing = _json.loads(unhinged_config_path.read_text())
             existing_enabled = existing.get("enabled", False)
-        except Exception:
+        except Exception as e:
+            logger.warning("install_wizard.py: %s", e)
             pass
 
     if not existing_enabled:
@@ -905,7 +918,8 @@ def _install_default_skills() -> None:
     try:
         registry = SkillRegistry()
         installed_names = {s.name for s in registry.list_installed()}
-    except Exception:
+    except Exception as e:
+        logger.warning("install_wizard.py: %s", e)
         return
 
     for skill_def in DEFAULT_SKILLS:
@@ -922,7 +936,8 @@ def _install_default_skills() -> None:
                 path = skill_def.get("path", "")
                 if path:
                     install_from_local(path)
-        except Exception:
+        except Exception as e:
+            logger.warning("install_wizard.py: %s", e)
             pass  # Best-effort; never block the install wizard
 
 

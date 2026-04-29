@@ -162,7 +162,8 @@ def _verify_migration(
             recalled = store.recall(entry.memory_id)
             if recalled is None:
                 missing.append(entry.memory_id)
-        except Exception:
+        except Exception as e:
+            logger.warning("migrate_memories.py: %s", e)
             missing.append(entry.memory_id)
 
     result["verified"] = len(entries) - len(missing)

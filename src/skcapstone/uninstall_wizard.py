@@ -236,7 +236,8 @@ def _transfer_to_device(
             d for name, d in registry.get("devices", {}).items()
             if name != hostname and d.get("is_datastore")
         ]
-    except Exception:
+    except Exception as e:
+        logger.warning("uninstall_wizard.py: %s", e)
         other_devices = []
 
     if not other_devices:
@@ -310,6 +311,7 @@ def _deregister_from_vault_registry(home_path: Path) -> None:
     except ImportError:
         console.print("[dim]skref not installed — skipping[/]")
     except Exception as exc:
+        logger.warning("uninstall_wizard.py: %s", exc)
         console.print(f"[yellow]{exc}[/]")
 
 
@@ -331,6 +333,7 @@ def _teardown_tailscale() -> None:
     except ImportError:
         console.print("[dim]skref not installed — skipping[/]")
     except Exception as exc:
+        logger.warning("uninstall_wizard.py: %s", exc)
         console.print(f"[yellow]{exc}[/]")
 
 
@@ -369,6 +372,7 @@ def _remove_syncthing_folder(home_path: Path) -> None:
 
         console.print("[dim]no matching folder found[/]")
     except Exception as exc:
+        logger.warning("uninstall_wizard.py: %s", exc)
         console.print(f"[dim]could not reach Syncthing API: {exc}[/]")
         console.print(
             "  [dim]You may need to remove the shared folder manually\n"
@@ -529,6 +533,7 @@ def _export_backup(home_path: Path) -> Optional[Path]:
         )
         return archive_path
     except Exception as exc:
+        logger.warning("uninstall_wizard.py: %s", exc)
         console.print(f"[red]failed: {exc}[/]")
         return None
 

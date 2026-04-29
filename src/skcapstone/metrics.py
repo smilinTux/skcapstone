@@ -242,7 +242,8 @@ class MetricsCollector:
                 try:
                     data = json.loads(fp.read_text(encoding="utf-8"))
                     return data.get("name") or data.get("agent_name") or ""
-                except Exception:
+                except Exception as e:
+                    logger.warning("metrics.py: %s", e)
                     continue
         return "unknown"
 
@@ -265,6 +266,7 @@ class MetricsCollector:
                     name=entity.get("name", ""),
                 )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"identity: {exc}")
 
     def _collect_memory(self, report: MetricsReport) -> None:
@@ -304,6 +306,7 @@ class MetricsCollector:
         except ImportError:
             pass
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"memory: {exc}")
 
     def _collect_chat(self, report: MetricsReport) -> None:
@@ -331,6 +334,7 @@ class MetricsCollector:
         except ImportError:
             pass
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"chat: {exc}")
 
     def _collect_transport(self, report: MetricsReport) -> None:
@@ -368,6 +372,7 @@ class MetricsCollector:
                 outbox_dead=dead,
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"transport: {exc}")
 
     def _collect_coordination(self, report: MetricsReport) -> None:
@@ -390,7 +395,8 @@ class MetricsCollector:
                     if status in counts:
                         counts[status] += 1
                     total += 1
-                except Exception:
+                except Exception as e:
+                    logger.warning("metrics.py: %s", e)
                     total += 1
 
             report.coordination = CoordinationMetrics(
@@ -401,6 +407,7 @@ class MetricsCollector:
                 claimed=counts["claimed"],
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"coordination: {exc}")
 
     def _collect_trust(self, report: MetricsReport) -> None:
@@ -424,6 +431,7 @@ class MetricsCollector:
                 last_rehydration=data.get("last_rehydration", ""),
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"trust: {exc}")
 
     def _collect_security(self, report: MetricsReport) -> None:
@@ -455,6 +463,7 @@ class MetricsCollector:
                 event_types=type_counts,
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"security: {exc}")
 
     def _collect_sync(self, report: MetricsReport) -> None:
@@ -486,6 +495,7 @@ class MetricsCollector:
                 last_pull=state.get("last_pull", ""),
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"sync: {exc}")
 
     def _collect_pubsub(self, report: MetricsReport) -> None:
@@ -520,6 +530,7 @@ class MetricsCollector:
                 subscriptions=sub_count,
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"pubsub: {exc}")
 
     def _collect_kms(self, report: MetricsReport) -> None:
@@ -557,6 +568,7 @@ class MetricsCollector:
                 rotations=rotations,
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"kms: {exc}")
 
     def _collect_fortress(self, report: MetricsReport) -> None:
@@ -573,6 +585,7 @@ class MetricsCollector:
                 seal_algorithm=data.get("seal_algorithm", ""),
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"fortress: {exc}")
 
     def _collect_backup(self, report: MetricsReport) -> None:
@@ -593,6 +606,7 @@ class MetricsCollector:
                 latest_size_bytes=latest.stat().st_size,
             )
         except Exception as exc:
+            logger.warning("metrics.py: %s", exc)
             report.errors.append(f"backup: {exc}")
 
 

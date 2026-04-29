@@ -435,6 +435,7 @@ def load_yaml_blueprint(path: Path) -> SoulBlueprint:
     try:
         return SoulBlueprint.model_validate(data)
     except Exception as exc:
+        logger.warning("soul.py: %s", exc)
         raise ValueError(f"Invalid blueprint data in {path}: {exc}") from exc
 
 
@@ -855,7 +856,8 @@ class SoulManager:
                                 "source": "github",
                                 "description": "",
                             }
-            except Exception:
+            except Exception as e:
+                logger.warning("soul.py: %s", e)
                 pass  # offline — show only installed souls
 
         # Sort by category, then name

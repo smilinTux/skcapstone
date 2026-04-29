@@ -162,6 +162,7 @@ class AgentChat:
                         result["delivered"] = True
                         result["transport"] = getattr(report, "successful_transport", None)
                 except Exception as exc:
+                    logger.warning("chat.py: %s", exc)
                     result["error"] = str(exc)
 
         except ImportError as exc:
@@ -226,14 +227,16 @@ class AgentChat:
 
         try:
             return history.search_messages(self.identity, limit=limit)
-        except Exception:
+        except Exception as e:
+            logger.warning("chat.py: %s", e)
             try:
                 memories = history._store.list_memories(
                     tags=["skchat:message"],
                     limit=limit,
                 )
                 return [history._memory_to_chat_dict(m) for m in memories]
-            except Exception:
+            except Exception as e:
+                logger.warning("chat.py: %s", e)
                 return []
 
     def forward(
@@ -298,6 +301,7 @@ class AgentChat:
                 history.store_message(fwd_msg)
                 result["stored"] = True
             except Exception as exc:
+                logger.warning("chat.py: %s", exc)
                 result["error"] = str(exc)
 
         if self._ensure_comm():
@@ -311,6 +315,7 @@ class AgentChat:
                     result["delivered"] = True
                     result["transport"] = getattr(report, "successful_transport", None)
             except Exception as exc:
+                logger.warning("chat.py: %s", exc)
                 result["error"] = str(exc)
 
         return result

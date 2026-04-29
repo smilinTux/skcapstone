@@ -144,7 +144,8 @@ def _setup_environment() -> None:
             from . import active_agent_name
 
             agent_name = active_agent_name()
-        except Exception:
+        except Exception as e:
+            logger.warning("mcp_launcher.py: %s", e)
             agent_name = None
 
     os.environ.setdefault("SKCAPSTONE_HOME", str(skcapstone_home))

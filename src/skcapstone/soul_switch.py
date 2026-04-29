@@ -102,7 +102,8 @@ def _load_state(home: Path) -> SoulSwitchState:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return SoulSwitchState.model_validate(data)
-    except Exception:
+    except Exception as e:
+        logger.warning("soul_switch.py: %s", e)
         return SoulSwitchState()
 
 
@@ -161,6 +162,7 @@ def load_switch_soul(home: Path, name: str) -> SoulSwitchBlueprint:
     try:
         return SoulSwitchBlueprint.model_validate(data)
     except Exception as exc:
+        logger.warning("soul_switch.py: %s", exc)
         raise ValueError(f"Invalid soul blueprint in {blueprint_path}: {exc}") from exc
 
 

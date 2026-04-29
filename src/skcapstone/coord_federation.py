@@ -272,7 +272,8 @@ class CoordFederationWatcher:
         # Read file content for metadata
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
+            logger.warning("coord_federation.py: %s", e)
             data = {}
 
         payload: dict = {

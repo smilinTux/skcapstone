@@ -98,7 +98,8 @@ def _agent_name() -> str:
         from .runtime import get_runtime
         runtime = get_runtime(_home())
         return runtime.manifest.name or "unknown"
-    except Exception:
+    except Exception as e:
+        logger.warning("shell.py: %s", e)
         return "unknown"
 
 
@@ -354,6 +355,7 @@ def _handle_chat(args: list[str]) -> None:
         except ImportError:
             console.print("  [yellow]Chat module not available[/]")
         except Exception as e:
+            logger.warning("shell.py: %s", e)
             console.print(f"  [red]{e}[/]")
 
     elif sub == "inbox":
@@ -669,6 +671,7 @@ def _dispatch_line(line: str) -> None:
         except _ExitShell:
             raise
         except Exception as exc:
+            logger.warning("shell.py: %s", exc)
             console.print(f"  [red]Error:[/] {exc}")
     else:
         console.print(f"  Unknown: [yellow]{cmd}[/].  Type [bold]help[/] for options.")

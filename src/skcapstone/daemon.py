@@ -1297,7 +1297,8 @@ class DaemonService:
                 try:
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     return datetime.now(timezone.utc) <= ts + timedelta(seconds=ttl)
-                except Exception:
+                except Exception as e:
+                    logger.warning("Failed to parse heartbeat timestamp %r: %s", ts_str, e)
                     return False
 
             @staticmethod
@@ -1310,7 +1311,8 @@ class DaemonService:
                     stats["disk_total_gb"] = round(usage.total / (1024 ** 3), 1)
                     stats["disk_used_gb"] = round(usage.used / (1024 ** 3), 1)
                     stats["disk_free_gb"] = round(usage.free / (1024 ** 3), 1)
-                except Exception:
+                except Exception as e:
+                    logger.warning("Failed to collect disk stats: %s", e)
                     stats.update(disk_total_gb=0, disk_used_gb=0, disk_free_gb=0)
                 try:
                     import platform as _platform
@@ -1332,7 +1334,8 @@ class DaemonService:
                         stats["memory_total_mb"] = round(mem.total / (1024 * 1024))
                         stats["memory_used_mb"] = round((mem.total - mem.available) / (1024 * 1024))
                         stats["memory_free_mb"] = round(mem.available / (1024 * 1024))
-                except Exception:
+                except Exception as e:
+                    logger.warning("Failed to collect memory stats: %s", e)
                     stats.update(memory_total_mb=0, memory_used_mb=0, memory_free_mb=0)
                 return stats
 
@@ -1889,7 +1892,8 @@ class DaemonService:
                                 tok = import_token(token_str)
                                 if verify_token(tok, home=config.home):
                                     fingerprint = tok.payload.issuer
-                            except Exception:
+                            except Exception as e:
+                                logger.warning("Token verification fallback failed: %s", e)
                                 fingerprint = None
 
                     if fingerprint is None:
@@ -2208,7 +2212,8 @@ class DaemonService:
                         length = int(self.headers.get("Content-Length", 0))
                         body = self.rfile.read(length) if length > 0 else b"{}"
                         data = json.loads(body)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("Failed to parse request JSON body: %s", e)
                         self._json_response({"error": "invalid JSON body"}, status=400)
                         return
 

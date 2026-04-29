@@ -289,7 +289,8 @@ def _get_fingerprint() -> str:
         from . import AGENT_HOME
         state = get_identity_state(Path(AGENT_HOME).expanduser())
         return state.fingerprint or "unknown"
-    except Exception:
+    except Exception as e:
+        logger.warning("crush_integration.py: %s", e)
         return "unknown"
 
 

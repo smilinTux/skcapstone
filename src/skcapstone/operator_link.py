@@ -113,7 +113,8 @@ def create_operator_attestation(
 
     try:
         profile = load_profile(base_dir=base)
-    except Exception:
+    except Exception as e:
+        logger.warning("operator_link.py: %s", e)
         return None
 
     entity_type = str(profile.entity.entity_type).lower()
@@ -137,7 +138,8 @@ def create_operator_attestation(
         operator_public_armor = public_key_path.read_text(encoding="utf-8")
         backend = get_backend(profile.crypto_backend)
         signature = backend.sign(payload_bytes, private_armor, "")
-    except Exception:
+    except Exception as e:
+        logger.warning("operator_link.py: %s", e)
         return None
 
     attestation = {
@@ -160,5 +162,6 @@ def _resolve_operator_home() -> Path:
         from capauth import resolve_capauth_home  # type: ignore[import-untyped]
 
         return resolve_capauth_home()
-    except Exception:
+    except Exception as e:
+        logger.warning("operator_link.py: %s", e)
         return Path.home() / ".skcapstone" / "capauth"

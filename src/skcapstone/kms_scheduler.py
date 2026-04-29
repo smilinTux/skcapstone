@@ -117,7 +117,8 @@ class KMSRotationScheduler:
                 timeout=5,
                 capture_output=True,
             )
-        except Exception:
+        except Exception as e:
+            logger.warning("kms_scheduler.py: %s", e)
             pass  # Notification failure must never interrupt rotation
 
     def _store_memory(self, label: str, key_type: str, new_version: int) -> None:

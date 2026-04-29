@@ -340,6 +340,7 @@ def _read_agent_name(home: Path) -> str:
                 name = data.get("name") or data.get("agent_name")
                 if name:
                     return name
-            except Exception:
+            except Exception as e:
+                logger.warning("backup.py: %s", e)
                 continue
     return "unknown"

@@ -126,7 +126,8 @@ def _try_load_capauth_profile(base_dir: Path) -> Optional[IdentityState]:
         )
     except ImportError:
         return None
-    except Exception:
+    except Exception as e:
+        logger.warning("discovery.py: %s", e)
         return None
 
 
@@ -378,7 +379,8 @@ def _probe_remote_registry(state: SkillsState) -> None:
         skills = client.list_skills()
         state.registry_available = True
         state.remote_skill_count = len(skills)
-    except Exception:
+    except Exception as e:
+        logger.warning("discovery.py: %s", e)
         # Remote unreachable — cached index may still work; that is
         # handled by RemoteRegistry.fetch_index() internally.
         state.registry_available = False

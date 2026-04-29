@@ -82,7 +82,8 @@ def _get_installed_version(package_name: str) -> Optional[str]:
         from importlib.metadata import version
 
         return version(package_name)
-    except Exception:
+    except Exception as e:
+        logger.warning("version_check.py: %s", e)
         # Try import-based fallback for packages with dashes
         try:
             mod_name = package_name.replace("-", "_")
@@ -90,7 +91,8 @@ def _get_installed_version(package_name: str) -> Optional[str]:
 
             mod = importlib.import_module(mod_name)
             return getattr(mod, "__version__", None)
-        except Exception:
+        except Exception as e:
+            logger.warning("version_check.py: %s", e)
             return None
 
 

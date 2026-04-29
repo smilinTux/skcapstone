@@ -251,7 +251,8 @@ class AgentCard(BaseModel):
 
             verification = pub_key.verify(pgp_message)
             return bool(verification)
-        except Exception:
+        except Exception as e:
+            logger.warning("agent_card.py: %s", e)
             return False
 
     def save(self, filepath: str | Path) -> Path:

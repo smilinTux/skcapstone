@@ -2862,7 +2862,8 @@ def _get_memory_backend_health() -> dict:
         if "graph" in health:
             backends["skgraph"] = "ok" if health["graph"].get("ok") else "error"
         return backends or {"json": "ok"}
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to get memory backend health: %s", e)
         return {"json": "ok"}
 
 
@@ -3230,6 +3231,8 @@ async def _handle_ritual(_args: dict) -> list[TextContent]:
             "journal_entries": result.journal_entries,
             "germination_prompts": result.germination_prompts,
             "strongest_memories": result.strongest_memories,
+            "song_anchors_loaded": result.song_anchors_loaded,
+            "song_anchor_ids": result.song_anchor_ids,
             "context_prompt": result.context_prompt,
         })
     except ImportError:
@@ -3609,7 +3612,8 @@ def _get_skchat_identity() -> str:
         home = _home()
         runtime = get_runtime(home)
         return f"capauth:{runtime.manifest.name}@local"
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to resolve sovereign identity: %s", e)
         return "capauth:agent@local"
 
 
@@ -3626,7 +3630,8 @@ def _resolve_recipient(name: str) -> str:
     try:
         from skchat.identity_bridge import resolve_peer_name
         return resolve_peer_name(name)
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to resolve peer name %r: %s", name, e)
         return f"capauth:{name}@local"
 
 

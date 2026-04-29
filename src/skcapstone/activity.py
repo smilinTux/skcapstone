@@ -93,7 +93,8 @@ def _fan_out(event: dict) -> None:
     for q in clients:
         try:
             q.put_nowait(chunk)
-        except Exception:
+        except Exception as e:
+            logger.warning("activity.py: %s", e)
             dead.add(q)
     if dead:
         with _clients_lock:

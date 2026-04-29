@@ -406,7 +406,8 @@ def _fetch_github_blueprints(query: str = "") -> Optional[list[dict[str, Any]]]:
             )
             with urllib.request.urlopen(cat_req, timeout=10) as resp:
                 files = json.loads(resp.read().decode("utf-8"))
-        except Exception:
+        except Exception as e:
+            logger.warning("blueprint_registry.py: %s", e)
             continue
 
         for file_entry in files:

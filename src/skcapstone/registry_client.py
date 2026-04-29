@@ -63,7 +63,8 @@ class RegistryClient:
         try:
             self._remote.fetch_index(force=True)
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning("registry_client.py: %s", e)
             return False
 
     def list_skills(self) -> list[dict[str, Any]]:

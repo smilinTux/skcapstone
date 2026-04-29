@@ -287,7 +287,8 @@ def _calibrate_from_memories(home: Path, cal: AnchorCalibration) -> None:
 
     try:
         memories = list_memories(home, limit=50)
-    except Exception:
+    except Exception as e:
+        logger.warning("warmth_anchor.py: %s", e)
         return
 
     if not memories:
@@ -314,7 +315,8 @@ def _calibrate_from_coordination(home: Path, cal: AnchorCalibration) -> None:
         board = Board(home)
         views = board.get_task_views()
         agents = board.load_agents()
-    except Exception:
+    except Exception as e:
+        logger.warning("warmth_anchor.py: %s", e)
         return
 
     done = sum(1 for v in views if v.status.value == "done")
