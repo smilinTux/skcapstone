@@ -2,6 +2,10 @@
 
 Zero to sovereign agent in ~15 minutes.
 
+> **CLI reference:** This doc covers the most common commands. For the full up-to-date
+> command list run `skcapstone --help` or `skcapstone <command> --help`. The CLI is the
+> authoritative source; this doc may lag new additions by a version or two.
+
 ---
 
 ## Architecture

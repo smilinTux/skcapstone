@@ -2,7 +2,65 @@
 
 ### Technical Reference — Sovereign Agent Framework
 
-**Version:** 0.2.0 | **Updated:** 2026-03-02
+**Version:** 0.2.0 | **Updated:** 2026-04-29
+
+---
+
+## Ecosystem Layer Flow
+
+SKCapstone integrates four sovereign packages into a layered stack. Each layer
+depends only on the one below it:
+
+```
+  User / LLM session
+        |
+        v
+  ┌─────────────┐
+  │   SKChat    │  Messaging layer — agent-to-agent conversations,
+  │  (skchat)   │  inbox/outbox, thread history, message delivery
+  └──────┬──────┘
+         │ sends/receives via
+         v
+  ┌─────────────┐
+  │   SKComm    │  Transport layer — encrypted P2P envelope routing,
+  │  (skcomm)   │  Syncthing + File + TURN backends, peer addressing
+  └──────┬──────┘
+         │ verifies identity with
+         v
+  ┌─────────────┐
+  │   CapAuth   │  Identity layer — PGP keypairs, DID documents,
+  │  (capauth)  │  challenge-response auth, peer trust store
+  └──────┬──────┘
+         │ all layers persist state via
+         v
+  ┌─────────────┐
+  │  SKMemory   │  Storage layer — short/mid/long-term memory tiers,
+  │ (skmemory)  │  SQLite index, ChromaDB vectors, FalkorDB graph
+  └─────────────┘
+```
+
+### Layer responsibilities
+
+**CapAuth (identity)** — Generates and manages the agent's PGP keypair. Every
+outbound envelope is signed; every inbound envelope is verified against the
+sender's known public key. Publishes DID documents at three tiers: `did:key`
+(local), `did:web` mesh (Tailscale), and `did:web` public. No other layer
+handles cryptographic identity.
+
+**SKComm (transport)** — Routes `.skc.json` envelopes between agents. Abstracts
+over Syncthing (default), local file drops, and TURN-relay transports. SKChat
+and the daemon's poll loop both call `skcomm.send()` / `skcomm.receive()` — they
+never touch transport internals directly.
+
+**SKChat (messaging)** — Provides the conversation abstraction: threads, per-peer
+history, inbox polling. Calls SKComm for delivery; writes conversation records to
+SKMemory. The CLI `skcapstone chat` and the consciousness loop both use SKChat's
+`AgentMessenger` to send responses.
+
+**SKMemory (storage)** — The single source of truth for all persistent state. All
+other layers store their durable data here (memories, conversation history, FEB
+emotional states, coordination board). Three JSON file tiers (short/mid/long-term)
+are the canonical source; SQLite and ChromaDB are derived indexes rebuilt on demand.
 
 ---
 

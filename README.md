@@ -326,6 +326,32 @@ See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIG
 | [Security Design](docs/SECURITY_DESIGN.md) | Four-layer security model |
 | [Token System](docs/TOKEN_SYSTEM.md) | PGP-signed capability tokens |
 
+## Contributing
+
+### JavaScript / Node lock strategy
+
+Several sub-packages in the SK ecosystem ship their own `package-lock.json`
+(e.g. `capauth/browser-extension`, `skgateway`, `cloud9`). There is no single
+root lock file — each sub-project manages its own lockfile independently.
+
+When working on a Node-based sub-package:
+
+```bash
+# Reproducible install (respects the lockfile, no upgrades)
+npm ci
+
+# Update a specific dep and regenerate the lockfile
+npm install <package>@<version>
+git add package-lock.json
+```
+
+Never commit `node_modules/`. Never use `npm install` in CI — always `npm ci`.
+
+Python packages use `pyproject.toml` with pinned ranges; see individual
+package `pyproject.toml` files. The shared venv is at `~/.skenv/`.
+
+---
+
 ## Community
 
 - **Website**: [skcapstone.io](https://skcapstone.io)
