@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -166,6 +167,26 @@ def register_telegram_commands(main: click.Group) -> None:
                 lines.append(f"  {key}: [cyan]{val}[/]")
 
             console.print(Panel("\n".join(lines), title="Telegram Catch-Up", border_style="green"))
+
+            # Post-import hook: run auto-tagger on the last 6 minutes of files
+            # (just enough to cover what the catchup brought in).  Fires
+            # inline so failures are visible; the hourly cron is the safety net.
+            _auto_tag_script = os.path.expanduser(
+                "~/.skcapstone/agents/lumina/scripts/auto-tag-hallucinations.py"
+            )
+            if os.path.isfile(_auto_tag_script):
+                import subprocess as _subprocess
+                _tag_result = _subprocess.run(
+                    [sys.executable, _auto_tag_script, "--hours", "0.1", "--quiet"],
+                    capture_output=True,
+                    text=True,
+                )
+                if _tag_result.returncode != 0:
+                    console.print(
+                        f"[yellow]auto-tag-hallucinations warning:[/] {_tag_result.stderr.strip() or 'non-zero exit'}"
+                    )
+                elif _tag_result.stdout.strip():
+                    console.print(f"[dim]auto-tag:[/] {_tag_result.stdout.strip()}")
         except Exception as e:
             console.print(f"[red]Error:[/] {e}")
             raise SystemExit(1)
