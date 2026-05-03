@@ -37,6 +37,39 @@ CHECK_TIMEOUT = 3
 _HOSTNAME = socket.gethostname()
 
 
+
+# ---------------------------------------------------------------------------
+# Per-agent YAML config fallback
+# ---------------------------------------------------------------------------
+
+def _load_agent_yaml(config_name: str, agent: str | None = None) -> dict:
+    """Load ~/.skcapstone/agents/<agent>/config/<config_name>.yaml.
+
+    Falls back gracefully when the file or yaml lib is unavailable. Used by
+    check_all_services() so the laptop's jarvis daemon can read the same
+    correctly-populated skvector.yaml / skgraph.yaml that skmemory uses,
+    instead of probing localhost defaults that don't exist here.
+    """
+    if not agent:
+        agent = (
+            os.environ.get("SKAGENT")
+            or os.environ.get("SKCAPSTONE_AGENT")
+            or os.environ.get("SKMEMORY_AGENT")
+            or "lumina"
+        )
+    path = os.path.expanduser(f"~/.skcapstone/agents/{agent}/config/{config_name}.yaml")
+    if not os.path.exists(path):
+        return {}
+    try:
+        import yaml  # type: ignore
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        logger.debug("Failed to load %s: %s", path, exc)
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # Individual service checks
 # ---------------------------------------------------------------------------
@@ -143,10 +176,15 @@ def check_all_services() -> list[dict[str, Any]]:
     """Ping every known service and return a list of status dicts.
 
     Environment variables override default URLs (set any to "disabled" to skip):
-        SKMEMORY_SKVECTOR_URL     — Qdrant REST base (default http://localhost:6333)
-        SKMEMORY_SKVECTOR_API_KEY — Qdrant API key (sent as ``api-key`` header)
-        SKMEMORY_SKGRAPH_HOST     — FalkorDB host   (default localhost)
-        SKMEMORY_SKGRAPH_PORT     — FalkorDB port   (default 6379)
+        SKMEMORY_SKVECTOR_URL     — Qdrant REST base (default: read from
+                                    ~/.skcapstone/agents/<agent>/config/skvector.yaml,
+                                    else http://localhost:6333)
+        SKMEMORY_SKVECTOR_API_KEY — Qdrant API key (default: from skvector.yaml)
+        SKMEMORY_SKGRAPH_HOST     — FalkorDB host   (default: read from
+                                    ~/.skcapstone/agents/<agent>/config/skgraph.yaml,
+                                    else localhost)
+        SKMEMORY_SKGRAPH_PORT     — FalkorDB port   (default: from skgraph.yaml,
+                                    else 6379)
         SYNCTHING_API_URL         — Syncthing REST   (default http://localhost:8384)
         SYNCTHING_API_KEY         — Syncthing API key (optional)
         SKCAPSTONE_DAEMON_URL     — Daemon HTTP base (default http://localhost:9383)
@@ -159,18 +197,47 @@ def check_all_services() -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
     # -- SKVector (Qdrant) --------------------------------------------------
-    qdrant_base = os.environ.get("SKMEMORY_SKVECTOR_URL", "http://localhost:6333")
+    qdrant_base = os.environ.get("SKMEMORY_SKVECTOR_URL", "")
+    qdrant_api_key = os.environ.get("SKMEMORY_SKVECTOR_API_KEY", "")
+    # Fall back to per-agent skvector.yaml when env vars are absent
+    if not qdrant_base or not qdrant_api_key:
+        cfg = _load_agent_yaml("skvector")
+        if cfg.get("enabled", True):
+            if not qdrant_base:
+                # Reconstruct URL from host/port/https
+                host = cfg.get("host", "localhost")
+                port = cfg.get("port", 6333)
+                proto = "https" if cfg.get("https") or int(port) == 443 else "http"
+                if int(port) in (80, 443):
+                    qdrant_base = f"{proto}://{host}"
+                else:
+                    qdrant_base = f"{proto}://{host}:{port}"
+            if not qdrant_api_key and cfg.get("api_key"):
+                qdrant_api_key = cfg["api_key"]
+    if not qdrant_base:
+        qdrant_base = "http://localhost:6333"
     if qdrant_base.lower() != "disabled":
         qdrant_url = qdrant_base.rstrip("/") + "/healthz"
         qdrant_headers: dict[str, str] = {}
-        qdrant_api_key = os.environ.get("SKMEMORY_SKVECTOR_API_KEY", "")
         if qdrant_api_key:
             qdrant_headers["api-key"] = qdrant_api_key
         results.append(_http_check("skvector (Qdrant)", qdrant_url, headers=qdrant_headers))
 
     # -- SKGraph (FalkorDB) — TCP check on Redis protocol port ---------------
-    graph_host = os.environ.get("SKMEMORY_SKGRAPH_HOST", "localhost")
-    graph_port_str = os.environ.get("SKMEMORY_SKGRAPH_PORT", "6379")
+    graph_host = os.environ.get("SKMEMORY_SKGRAPH_HOST", "")
+    graph_port_str = os.environ.get("SKMEMORY_SKGRAPH_PORT", "")
+    # Fall back to per-agent skgraph.yaml when env vars are absent
+    if not graph_host or not graph_port_str:
+        cfg = _load_agent_yaml("skgraph")
+        if cfg.get("enabled", True):
+            if not graph_host and cfg.get("host"):
+                graph_host = str(cfg["host"])
+            if not graph_port_str and cfg.get("port"):
+                graph_port_str = str(cfg["port"])
+    if not graph_host:
+        graph_host = "localhost"
+    if not graph_port_str:
+        graph_port_str = "6379"
     if graph_host.lower() != "disabled":
         graph_port = int(graph_port_str)
         results.append(_tcp_check("skgraph (FalkorDB)", graph_host, graph_port))
