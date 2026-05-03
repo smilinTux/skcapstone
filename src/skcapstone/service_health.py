@@ -70,6 +70,47 @@ def _load_agent_yaml(config_name: str, agent: str | None = None) -> dict:
         return {}
 
 
+
+def _load_syncthing_config() -> tuple[str | None, str | None]:
+    """Read ~/.config/syncthing/config.xml to get GUI URL + API key.
+
+    Returns (url, api_key) tuple — either may be None if the config can't
+    be parsed. Uses regex (no XML lib dep) since we only need 2 small fields.
+    """
+    candidates = [
+        Path.home() / ".config" / "syncthing" / "config.xml",
+        Path.home() / ".local" / "state" / "syncthing" / "config.xml",
+    ]
+    cfg_path = next((p for p in candidates if p.exists()), None)
+    if cfg_path is None:
+        return None, None
+    try:
+        text = cfg_path.read_text()
+    except Exception:
+        return None, None
+
+    # Find <gui ...> ... <address>HOST:PORT</address> ... </gui>
+    gui_match = re.search(
+        r"<gui[^>]*>(.*?)</gui>", text, re.S | re.I
+    )
+    addr_in_gui = None
+    if gui_match:
+        body = gui_match.group(1)
+        addr_match = re.search(r"<address>\s*([^<]+?)\s*</address>", body, re.I)
+        if addr_match:
+            addr_in_gui = addr_match.group(1).strip()
+
+    api_match = re.search(r"<apikey>\s*([^<]+?)\s*</apikey>", text, re.I)
+    api_key = api_match.group(1).strip() if api_match else None
+
+    if not addr_in_gui:
+        return None, api_key
+    # GUI tls flag
+    tls = bool(gui_match and ("tls=\"true\"" in gui_match.group(0) or "tls='true'" in gui_match.group(0)))
+    proto = "https" if tls else "http"
+    return f"{proto}://{addr_in_gui}", api_key
+
+
 # ---------------------------------------------------------------------------
 # Individual service checks
 # ---------------------------------------------------------------------------
@@ -185,8 +226,10 @@ def check_all_services() -> list[dict[str, Any]]:
                                     else localhost)
         SKMEMORY_SKGRAPH_PORT     — FalkorDB port   (default: from skgraph.yaml,
                                     else 6379)
-        SYNCTHING_API_URL         — Syncthing REST   (default http://localhost:8384)
-        SYNCTHING_API_KEY         — Syncthing API key (optional)
+        SYNCTHING_API_URL         — Syncthing REST   (default: discovered from
+                                    ~/.config/syncthing/config.xml gui address,
+                                    else http://localhost:8384)
+        SYNCTHING_API_KEY         — Syncthing API key (default: from config.xml)
         SKCAPSTONE_DAEMON_URL     — Daemon HTTP base (default http://localhost:9383)
         SKCHAT_DAEMON_URL         — SKChat daemon    (default http://localhost:9385)
 
@@ -243,20 +286,30 @@ def check_all_services() -> list[dict[str, Any]]:
         results.append(_tcp_check("skgraph (FalkorDB)", graph_host, graph_port))
 
     # -- Syncthing -----------------------------------------------------------
-    syncthing_base = os.environ.get("SYNCTHING_API_URL", "http://localhost:8384")
-    syncthing_url = syncthing_base.rstrip("/") + "/rest/system/status"
-    syncthing_headers: dict[str, str] = {}
+    syncthing_base = os.environ.get("SYNCTHING_API_URL", "")
     api_key = os.environ.get("SYNCTHING_API_KEY", "")
-    if api_key:
-        syncthing_headers["X-API-Key"] = api_key
-    results.append(
-        _http_check(
-            "syncthing",
-            syncthing_url,
-            headers=syncthing_headers,
-            version_key="version",
+    # Fall back to ~/.config/syncthing/config.xml discovery
+    if not syncthing_base or not api_key:
+        discovered_url, discovered_key = _load_syncthing_config()
+        if not syncthing_base and discovered_url:
+            syncthing_base = discovered_url
+        if not api_key and discovered_key:
+            api_key = discovered_key
+    if not syncthing_base:
+        syncthing_base = "http://localhost:8384"
+    if syncthing_base.lower() != "disabled":
+        syncthing_url = syncthing_base.rstrip("/") + "/rest/system/status"
+        syncthing_headers: dict[str, str] = {}
+        if api_key:
+            syncthing_headers["X-API-Key"] = api_key
+        results.append(
+            _http_check(
+                "syncthing",
+                syncthing_url,
+                headers=syncthing_headers,
+                version_key="version",
+            )
         )
-    )
 
     # -- skcapstone daemon ---------------------------------------------------
     daemon_base = os.environ.get("SKCAPSTONE_DAEMON_URL", "http://localhost:9383")
