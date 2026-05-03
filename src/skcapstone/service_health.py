@@ -93,7 +93,7 @@ def _load_syncthing_config() -> tuple[str | None, str | None]:
 
     # Find <gui ...> ... <address>HOST:PORT</address> ... </gui>
     gui_match = re.search(
-        r"<gui[^>]*>(.*?)</gui>", text, re.S | re.I
+        r"<gui[^>]*>(.*?)</gui>", text, re.S | re.I
     )
     addr_in_gui = None
     if gui_match:
