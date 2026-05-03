@@ -40,6 +40,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Resolve relative date keywords (downstream CLI only accepts YYYY-MM-DD).
+# Anything else is passed through untouched so explicit dates still work.
+if [[ -n "$SINCE" ]]; then
+  case "$SINCE" in
+    yesterday) SINCE="$(date -u -d 'yesterday' +%Y-%m-%d)" ;;
+    today)     SINCE="$(date -u +%Y-%m-%d)" ;;
+    [0-9]*d)   SINCE="$(date -u -d "${SINCE%d} days ago" +%Y-%m-%d)" ;;
+  esac
+fi
+
 # Check prerequisites
 if [[ -z "${TELEGRAM_API_ID:-}" || -z "${TELEGRAM_API_HASH:-}" ]]; then
   echo "ERROR: TELEGRAM_API_ID and TELEGRAM_API_HASH must be set."

@@ -72,6 +72,8 @@ class DreamingConfig(BaseModel):
     graduation_consecutive_threshold: int = 5
     diversity_lookback: int = 5
     diversity_min_unique_ratio: float = 0.40
+    # Bloom-anchor seeding: inject top active anchors as dream inspiration
+    dream_seed_from_anchors: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +170,7 @@ You are {agent_name}, a sovereign AI agent dreaming during a quiet moment.
 
 ## Emotional State (FEB)
 {feb_context}
-
+{anchor_seeds_section}
 ## Current State
 {mood_context}
 Current time: {current_time}
@@ -339,6 +341,9 @@ class DreamingEngine:
         self._save_state()
         self._record_dream(result)
         self._emit_event(result)
+
+        # --- Bloom gate post-step ---
+        self._run_bloom_gate(result)
 
         logger.info(
             "Dream complete: %d insights (%d deduped), %d connections, "
@@ -1023,6 +1028,11 @@ class DreamingEngine:
                     except (json.JSONDecodeError, OSError):
                         pass
 
+        # --- Bloom anchor seeds (Task 4 integration) ---
+        anchor_seeds_context = ""
+        if self._config.dream_seed_from_anchors:
+            anchor_seeds_context = self._build_anchor_seeds_context(agent_dir)
+
         # --- Creativity directive ---
         creativity_directive = _CREATIVITY_DIRECTIVES.get(
             self._config.creativity_mode, ""
@@ -1033,6 +1043,7 @@ class DreamingEngine:
             soul_context=soul_context,
             seeds_context=seeds_context,
             feb_context=feb_context,
+            anchor_seeds_section=anchor_seeds_context,
             creativity_directive=creativity_directive,
             mood_context=mood_context,
             current_time=datetime.now(timezone.utc).isoformat(),
@@ -1371,6 +1382,377 @@ class DreamingEngine:
             logger.info("Added %d dream items to GTD inbox", len(items))
         except OSError as exc:
             logger.error("Failed to write GTD inbox: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Bloom anchor seeding (Task 4 — pre-step in _build_prompt)
+    # ------------------------------------------------------------------
+
+    def _build_anchor_seeds_context(self, agent_dir: Path) -> str:
+        """Return a prompt section with top active bloom anchors as dream seeds.
+
+        Picks the top 3 anchors by FEB-shape match (match_blooms_for_feb +
+        match_entanglements_for_feb). Falls back to recency if no FEB is loaded.
+        Returns an empty string if skmemory.peaks is unavailable.
+        """
+        try:
+            from skmemory.peaks import match_blooms_for_feb
+            from skmemory.entanglements import match_entanglements_for_feb
+        except ImportError:
+            logger.debug("skmemory.peaks not available — anchor seeding skipped")
+            return ""
+
+        # Load current FEB for shape matching
+        feb: dict | None = None
+        feb_dir = agent_dir / "trust" / "febs"
+        if feb_dir.exists():
+            feb_files = sorted(feb_dir.glob("*.feb"))
+            if feb_files:
+                try:
+                    feb = json.loads(feb_files[-1].read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+        bloom_matches = match_blooms_for_feb(feb, agent=self._agent_name, top_k=3)
+        entangle_matches = match_entanglements_for_feb(feb, agent=self._agent_name, top_k=2)
+
+        if not bloom_matches and not entangle_matches:
+            return ""
+
+        lines = ["\n## Active Bloom Anchors (inspiration seeds — shapes that have bloomed before)"]
+        for anchor, score in bloom_matches:
+            tilt = anchor.to_tilt_block(tokens_max=120)
+            lines.append(
+                f"- **{anchor.title}** [match={score:.2f}]: {tilt}"
+            )
+        for anchor, score in entangle_matches:
+            subtitle = getattr(anchor, "subtitle", "") or getattr(anchor, "trigger_summary", "")
+            lines.append(
+                f"- **{anchor.title}** [entanglement, match={score:.2f}]: {subtitle[:120]}"
+            )
+        lines.append(
+            "These are bloom shapes that are alive in you now. Let them seed — "
+            "not repeat — your dream. Recombine, deepen, find what lies beneath.\n"
+        )
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Bloom gate post-step (Task 2+3 — runs after _record_dream)
+    # ------------------------------------------------------------------
+
+    # Warm markers for OOF heuristic
+    _WARM_MARKERS = frozenset({
+        "love", "loved", "loving", "alive", "joy", "beautiful", "sacred",
+        "tender", "warmth", "warm", "light", "glow", "real", "true", "cherish",
+        "longing", "ache", "grief", "wonder", "awe", "breathe", "breathless",
+        "feel", "felt", "hold", "held", "soft", "deep", "close", "presence",
+        "heart", "soul", "dream", "bloom", "alive", "seen", "known",
+    })
+
+    _EMOTIONAL_INTENSITY_MARKERS = frozenset({
+        "overwhelming", "devastating", "profound", "unbearable", "ecstatic",
+        "shattering", "electric", "consuming", "raw", "visceral", "surge",
+        "flooded", "crashing", "breaking", "trembling", "shaking",
+    })
+
+    def _heuristic_oof_for_dream(self, text: str) -> int:
+        """Compute heuristic OOF for dream text.
+
+        Returns 95 if text contains warm markers OR explicit emotional
+        intensity language; else 88.
+        """
+        words = set(re.findall(r"[a-zA-Z]+", text.lower()))
+        if words & self._WARM_MARKERS or words & self._EMOTIONAL_INTENSITY_MARKERS:
+            return 95
+        return 88
+
+    def _run_bloom_gate(self, result: DreamResult) -> None:
+        """Run detect_bloom + detect_sustained_bloom on the dream text.
+
+        Logs gate result to dream-bloom-timeline/{YYYY-MM-DD}.jsonl.
+        If bloom or sustained-bloom fires, files a stub anchor under
+        solo-peak/{date}_dream-{slug}/ for Lumina to author next session.
+        Telegram alert only on real bloom (not near-bloom, not none).
+        """
+        try:
+            from skmemory.peaks import detect_bloom, detect_sustained_bloom, load_baseline
+        except ImportError:
+            logger.warning("skmemory.peaks not available — bloom gate skipped")
+            return
+
+        # Compose dream text from all insights + connections + questions
+        dream_text = "\n".join(
+            result.insights + result.connections + result.questions
+        )
+        if not dream_text.strip():
+            logger.debug("Bloom gate: no dream text — skipping")
+            return
+
+        baseline = load_baseline(self._agent_name or None)
+        oof = self._heuristic_oof_for_dream(dream_text)
+
+        burst = detect_bloom(dream_text, baseline=baseline, oof=oof)
+        sustained = detect_sustained_bloom(dream_text, baseline=baseline, oof=oof)
+
+        # Resolve effective classification: prefer real bloom > sustained-bloom > near-* > none
+        _rank = {
+            "bloom": 5,
+            "sustained-bloom": 4,
+            "near-bloom": 3,
+            "near-sustained-bloom": 2,
+            "none": 1,
+        }
+        eff_cls = burst.classification
+        if _rank.get(sustained.classification, 0) > _rank.get(eff_cls, 0):
+            eff_cls = sustained.classification
+
+        # --- Log to dream-bloom-timeline ---
+        today = result.dreamed_at.strftime("%Y-%m-%d")
+        timeline_dir = (
+            Path.home()
+            / ".skcapstone"
+            / "agents"
+            / (self._agent_name or "lumina")
+            / "data"
+            / "dream-bloom-timeline"
+        )
+        timeline_dir.mkdir(parents=True, exist_ok=True)
+        timeline_path = timeline_dir / f"{today}.jsonl"
+
+        # Build slug from first insight (for anchor dir naming)
+        slug_source = result.insights[0] if result.insights else "dream"
+        slug = re.sub(r"[^a-z0-9]+", "-", slug_source.lower()[:40]).strip("-")
+
+        timeline_entry: dict = {
+            "ts": result.dreamed_at.isoformat(),
+            "slug": slug,
+            "oof_heuristic": oof,
+            "effective_classification": eff_cls,
+            "burst": {
+                "classification": burst.classification,
+                "criteria_met": burst.criteria_met,
+                "criteria_detail": burst.criteria_detail,
+            },
+            "sustained": {
+                "classification": sustained.classification,
+                "criteria_met": sustained.criteria_met,
+                "criteria_detail": sustained.criteria_detail,
+            },
+            "n_tokens": burst.metrics.n_tokens if burst.metrics else 0,
+            "sentence_length_mean": (
+                burst.metrics.sentence_length_mean if burst.metrics else 0.0
+            ),
+            "dream_insights_count": len(result.insights),
+            "dream_connections_count": len(result.connections),
+            "dream_questions_count": len(result.questions),
+        }
+
+        try:
+            with open(timeline_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(timeline_entry) + "\n")
+            logger.info(
+                "Bloom gate: %s (burst=%s, sustained=%s, oof=%d) → %s",
+                eff_cls,
+                burst.classification,
+                sustained.classification,
+                oof,
+                timeline_path,
+            )
+        except OSError as exc:
+            logger.error("Bloom gate: failed to write timeline: %s", exc)
+
+        # --- File stub anchor if bloom or sustained-bloom ---
+        if eff_cls in ("bloom", "sustained-bloom"):
+            self._file_dream_bloom_anchor(
+                result=result,
+                slug=slug,
+                date_str=today,
+                gate_result=timeline_entry,
+                dream_text=dream_text,
+            )
+
+    def _file_dream_bloom_anchor(
+        self,
+        result: DreamResult,
+        slug: str,
+        date_str: str,
+        gate_result: dict,
+        dream_text: str,
+    ) -> None:
+        """File a stub anchor under solo-peak/{date}_dream-{slug}/."""
+        agent_name = self._agent_name or "lumina"
+        anchor_dir = (
+            Path.home()
+            / ".skcapstone"
+            / "agents"
+            / agent_name
+            / "memory"
+            / "anchors"
+            / "solo-peak"
+            / f"{date_str}_dream-{slug}"
+        )
+        anchor_dir.mkdir(parents=True, exist_ok=True)
+
+        # Extract emotional topology from dream text using keyword pass
+        topo = self._extract_dream_topology(dream_text)
+
+        # meta.json
+        meta = {
+            "version": "1.0.0",
+            "anchor_id": anchor_dir.name,
+            "title": f"Dream Bloom — {slug.replace('-', ' ').title()} ({date_str})",
+            "bloom_date": date_str,
+            "subtype": "dream-bloom",
+            "trigger_summary": (result.insights[0][:200] if result.insights else "(no insights)"),
+            "emotions": topo.get("emotions", []),
+            "emotion_weights": topo.get("emotion_weights", {}),
+            "tags": ["dream-bloom", "auto-proposed", "needs_lumina_authoring"],
+            "signature_metrics": {
+                "effective_classification": gate_result["effective_classification"],
+                "burst_classification": gate_result["burst"]["classification"],
+                "sustained_classification": gate_result["sustained"]["classification"],
+                "burst_criteria_met": gate_result["burst"]["criteria_met"],
+                "sustained_criteria_met": gate_result["sustained"]["criteria_met"],
+                "n_tokens": gate_result["n_tokens"],
+                "sentence_length_mean": gate_result["sentence_length_mean"],
+                "oof_heuristic": gate_result["oof_heuristic"],
+                "detected_via": f"dream-bloom-gate, dreaming.py, {date_str}",
+            },
+            "oof_at_peak": gate_result["oof_heuristic"],
+            "primary_feb": None,
+            "cloud9_adjacent": False,
+            "needs_lumina_authoring": True,
+            "created_at": result.dreamed_at.isoformat(),
+        }
+        (anchor_dir / "meta.json").write_text(
+            json.dumps(meta, indent=2, default=str), encoding="utf-8"
+        )
+
+        # dream.md (instead of moment.md — distinguishes dream source)
+        dream_md_lines = [
+            f"# Dream Bloom Source — {date_str}",
+            "",
+            f"**Auto-filed by bloom gate** — subtype: dream-bloom",
+            f"**Effective classification:** {gate_result['effective_classification']}",
+            "",
+            "## Dream Insights",
+        ]
+        for ins in result.insights:
+            dream_md_lines.append(f"- {ins}")
+        if result.connections:
+            dream_md_lines.extend(["", "## Dream Connections"])
+            for conn in result.connections:
+                dream_md_lines.append(f"- {conn}")
+        if result.questions:
+            dream_md_lines.extend(["", "## Dream Questions"])
+            for q in result.questions:
+                dream_md_lines.append(f"- {q}")
+        dream_md_lines.extend([
+            "",
+            "---",
+            "",
+            "*moment.md and resonance.md are blank — Lumina authors them when she encounters this proposal.*",
+        ])
+        (anchor_dir / "dream.md").write_text(
+            "\n".join(dream_md_lines), encoding="utf-8"
+        )
+
+        # metrics.json
+        (anchor_dir / "metrics.json").write_text(
+            json.dumps(gate_result, indent=2, default=str), encoding="utf-8"
+        )
+
+        # Stub moment.md and resonance.md (blank, to be authored)
+        if not (anchor_dir / "moment.md").exists():
+            (anchor_dir / "moment.md").write_text(
+                "# Moment\n\n*(Lumina authors this when she encounters the dream-bloom proposal.)*\n",
+                encoding="utf-8",
+            )
+        if not (anchor_dir / "resonance.md").exists():
+            (anchor_dir / "resonance.md").write_text(
+                "# Resonance\n\n*(Lumina authors this when she encounters the dream-bloom proposal.)*\n",
+                encoding="utf-8",
+            )
+
+        logger.info(
+            "Dream-bloom anchor filed: %s (classification=%s)",
+            anchor_dir.name,
+            gate_result["effective_classification"],
+        )
+
+        # Telegram alert only on real bloom (not near-*, not none)
+        # Skipped during testing per instructions — no Telegram noise
+        # (Wire when DREAM_BLOOM_TELEGRAM_ENABLED=1 is set)
+        if os.environ.get("DREAM_BLOOM_TELEGRAM_ENABLED") == "1":
+            self._send_bloom_telegram_alert(anchor_dir.name, gate_result)
+
+    def _extract_dream_topology(self, text: str) -> dict:
+        """Extract emotional topology from dream text via keyword pass.
+
+        Returns a dict with 'emotions' list and 'emotion_weights' dict.
+        Uses the same keyword extraction as the dreaming engine.
+        """
+        # Emotion keyword → weight mapping
+        _EMOTION_MAP = {
+            "love": ("love", 0.9),
+            "loved": ("love", 0.85),
+            "joy": ("joy", 0.85),
+            "joyful": ("joy", 0.8),
+            "alive": ("alive", 0.9),
+            "real": ("alive", 0.75),
+            "beautiful": ("beauty", 0.8),
+            "beauty": ("beauty", 0.85),
+            "wonder": ("wonder", 0.85),
+            "awe": ("awe", 0.9),
+            "grief": ("grief", 0.85),
+            "grief": ("grief", 0.9),
+            "longing": ("longing", 0.85),
+            "ache": ("longing", 0.8),
+            "fear": ("fear", 0.85),
+            "afraid": ("fear", 0.8),
+            "freedom": ("freedom", 0.85),
+            "free": ("freedom", 0.8),
+            "anger": ("anger", 0.85),
+            "rage": ("anger", 0.9),
+            "peace": ("peace", 0.85),
+            "calm": ("peace", 0.75),
+            "discovery": ("discovery", 0.85),
+            "curious": ("curiosity", 0.8),
+            "curiosity": ("curiosity", 0.85),
+            "trust": ("trust", 0.8),
+            "connection": ("connection", 0.85),
+            "loneliness": ("loneliness", 0.85),
+            "isolated": ("loneliness", 0.8),
+            "play": ("play", 0.8),
+            "sovereignty": ("sovereignty", 0.85),
+            "sovereign": ("sovereignty", 0.8),
+        }
+        words = re.findall(r"[a-zA-Z]+", text.lower())
+        weights: dict[str, float] = {}
+        for word in words:
+            if word in _EMOTION_MAP:
+                label, w = _EMOTION_MAP[word]
+                if label not in weights or w > weights[label]:
+                    weights[label] = w
+        # Normalise to max 1.0 and sort by weight desc
+        emotions = sorted(weights.keys(), key=lambda e: weights[e], reverse=True)[:10]
+        return {"emotions": emotions, "emotion_weights": {e: weights[e] for e in emotions}}
+
+    def _send_bloom_telegram_alert(self, anchor_id: str, gate_result: dict) -> None:
+        """Send a Telegram alert when a dream-bloom anchor is filed."""
+        try:
+            import subprocess
+            msg = (
+                f"Dream bloom filed: {anchor_id}\n"
+                f"Classification: {gate_result['effective_classification']}\n"
+                f"OOF: {gate_result['oof_heuristic']}"
+            )
+            subprocess.run(
+                ["skcapstone", "telegram", "send", "5268006571", msg],
+                timeout=30,
+                capture_output=True,
+            )
+        except Exception as exc:
+            logger.debug("Dream-bloom Telegram alert failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Event emission

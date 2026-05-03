@@ -183,6 +183,8 @@ async def _handle_ritual(args: dict) -> list[TextContent]:
             "journal_entries": result.journal_entries,
             "germination_prompts": result.germination_prompts,
             "strongest_memories": result.strongest_memories,
+            "song_anchors_loaded": result.song_anchors_loaded,
+            "song_anchor_ids": result.song_anchor_ids,
             "context_prompt": result.context_prompt,
         })
     except ImportError:
