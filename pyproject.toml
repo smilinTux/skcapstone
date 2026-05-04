@@ -107,7 +107,7 @@ Changelog = "https://github.com/smilinTux/skcapstone/releases"
 where = ["src"]
 
 [tool.setuptools.package-data]
-skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "data/*.yaml", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer"]
+skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "data/*.yaml", "data/*.sh", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer"]
 
 [tool.black]
 line-length = 99

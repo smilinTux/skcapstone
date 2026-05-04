@@ -177,44 +177,50 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Install sk-agent-picker.sh to ~/.skenv/share/skcapstone/ and wire bashrc
+# Wire the SK agent picker into shell rc files.
+#
+# The picker (sk-agent-picker.sh) is shipped inside the skcapstone Python
+# package as data and discovered via `skcapstone shell-init`, so there is
+# nothing to copy here — every install layout (PyPI / editable / install.sh)
+# resolves to the same file via importlib.resources.
 # ---------------------------------------------------------------------------
-PICKER_SRC="$REPO_ROOT/scripts/sk-agent-picker.sh"
-SHARE_DIR="$SKENV/share/skcapstone"
-PICKER_DEST="$SHARE_DIR/sk-agent-picker.sh"
+_PICKER_SNIPPET=$(cat <<'SNIPPET'
 
-if [[ -f "$PICKER_SRC" ]]; then
-    mkdir -p "$SHARE_DIR"
-    cp "$PICKER_SRC" "$PICKER_DEST"
-    chmod +x "$PICKER_DEST"
-    echo "  sk-agent-picker installed → $PICKER_DEST"
-
-    # Wire into shell rc files — replaces a bare claude alias if present
-    _PICKER_SNIPPET=$(cat <<'SNIPPET'
-
-# SKCapstone agent picker + skswitch — prompts for agent when multiple are found.
-# Sourced by install.sh; honours pre-set SKAGENT without prompting.
-_SK_PICKER="$HOME/.skenv/share/skcapstone/sk-agent-picker.sh"
-if [[ -f "$_SK_PICKER" ]]; then
-    # shellcheck source=/dev/null
-    source "$_SK_PICKER"
+# SKCapstone agent picker + skswitch — sources the picker bundled in the
+# skcapstone package via `skcapstone shell-init`. Honours pre-set SKAGENT
+# without prompting.
+if command -v skcapstone >/dev/null 2>&1; then
+    eval "$(skcapstone shell-init 2>/dev/null)" || alias claude='claude --dangerously-skip-permissions'
 else
     alias claude='claude --dangerously-skip-permissions'
 fi
-unset _SK_PICKER
 SNIPPET
 )
-    for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
-        if [[ -f "$rcfile" ]] && ! grep -q "sk-agent-picker" "$rcfile"; then
-            # Remove any plain `alias claude=...` that conflicts
-            if grep -q "alias claude=" "$rcfile"; then
-                sed -i "/alias claude=/d" "$rcfile"
-            fi
-            echo "$_PICKER_SNIPPET" >> "$rcfile"
-            echo "  Agent picker wired → $rcfile"
+
+for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [[ -f "$rcfile" ]] || continue
+
+    # Migration: strip a stale legacy picker block that pointed at a hardcoded
+    # path (either ~/.skenv/share/skcapstone/sk-agent-picker.sh from older
+    # install.sh runs, or the dev-tree path used before the package shipped
+    # the picker). The new snippet below replaces it.
+    if grep -q '_SK_PICKER=' "$rcfile" && ! grep -q 'skcapstone shell-init' "$rcfile"; then
+        # Best-effort: drop the old _SK_PICKER assignment + its `if/else/fi`
+        # source block. Done in two passes for portability with BSD/GNU sed.
+        sed -i '/^_SK_PICKER=/,/^unset _SK_PICKER$/d' "$rcfile"
+        sed -i '/^# SKCapstone agent picker/d' "$rcfile"
+        echo "  Removed legacy _SK_PICKER block from $rcfile"
+    fi
+
+    if ! grep -q 'skcapstone shell-init' "$rcfile"; then
+        # Remove any plain `alias claude=...` that would conflict
+        if grep -q "alias claude=" "$rcfile"; then
+            sed -i "/alias claude=/d" "$rcfile"
         fi
-    done
-fi
+        echo "$_PICKER_SNIPPET" >> "$rcfile"
+        echo "  Agent picker wired → $rcfile"
+    fi
+done
 
 echo ""
 if [[ "$failures" -eq 0 ]]; then
