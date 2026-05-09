@@ -28,6 +28,18 @@ All hooks are agent-aware via `$SKCAPSTONE_AGENT` env var:
 - `SKCAPSTONE_AGENT=opus claude` → hooks save to Opus's memory
 - Default (no env var): saves to `opus` agent
 
+## Memory Architecture
+
+Hooks use `--no-vector` (flat JSON + SQLite only) to avoid loading the
+~1.8GB SentenceTransformer model on every session end. Semantic vector
+indexing happens asynchronously via `skwhisper digest --backlog`.
+
+Both hooks use `flock` to serialize concurrent calls — prevents memory
+pile-up when multiple sessions end simultaneously.
+
+The `SKMEMORY_NO_VECTOR=1` env var has the same effect if you need to
+override globally.
+
 ## Manual Verification
 
 ```bash
@@ -39,4 +51,7 @@ echo '{"session_id":"test","trigger":"manual","cwd":"."}' | /path/to/pre-compact
 
 # Re-register if needed
 skmemory register
+
+# Force semantic indexing of any flat-only memories
+skmemory sync && skwhisper digest --backlog
 ```
