@@ -29,33 +29,14 @@ const MAX_429_RETRIES = 3;
 const RATE_LIMIT_DELAY_MS = 2000;
 const DEFAULT_MAX_SYSTEM_BYTES = 80000;
 
-/**
- * Per-model proxy limits — based on ACTUAL NVIDIA NIM context windows.
- * These are generous pre-trim limits. NVIDIA will reject if truly too large.
- * maxBody = ~80% of context window in bytes (1 token ≈ 4 bytes, safety margin)
- * maxSystem = ~40% of maxBody (system prompt shouldn't dominate)
- */
-const MODEL_LIMITS = {
-  // MiniMax M2.1: 196K tokens → ~784KB context
-  "minimaxai/minimax-m2.1": { maxBody: 600000, maxSystem: 240000 },
-  // MiniMax M2.5: 204K tokens → ~820KB context
-  "minimaxai/minimax-m2.5": { maxBody: 640000, maxSystem: 256000 },
-  // Kimi K2 Instruct: 128K tokens → ~512KB context
-  "moonshotai/kimi-k2-instruct": { maxBody: 400000, maxSystem: 160000 },
-  "moonshotai/kimi-k2-instruct-0905": { maxBody: 400000, maxSystem: 160000 },
-  // Kimi K2.5: 256K tokens → ~1MB context
-  "moonshotai/kimi-k2.5": { maxBody: 800000, maxSystem: 320000 },
-  "moonshotai/kimi-k2-thinking": { maxBody: 800000, maxSystem: 320000 },
-  // Llama 3.3 70B: 130K tokens → ~520KB context
-  "meta/llama-3.3-70b-instruct": { maxBody: 400000, maxSystem: 160000 },
-};
+// Model limits are now managed in skgateway/config/skgateway.yaml (sanitizer section).
+// nvidia-proxy.mjs is superseded by skgateway on port 18780 — kept for reference only.
 const DEFAULT_MAX_BODY_BYTES = 200000;
 
-function getModelLimits(model) {
-  const limits = MODEL_LIMITS[model] || {};
+function getModelLimits(_model) {
   return {
-    maxBody: limits.maxBody || DEFAULT_MAX_BODY_BYTES,
-    maxSystem: limits.maxSystem || DEFAULT_MAX_SYSTEM_BYTES,
+    maxBody: DEFAULT_MAX_BODY_BYTES,
+    maxSystem: DEFAULT_MAX_SYSTEM_BYTES,
   };
 }
 const toolCallCounters = new Map(); // Per-model tool call counters
