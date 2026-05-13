@@ -395,13 +395,22 @@ def _check_identity(home: Path) -> list[Check]:
     return checks
 
 
+def _resolve_memory_dir(home: Path) -> Path:
+    """Resolve the memory directory for either shared-root or agent-home inputs."""
+    from . import active_agent_name
+
+    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name() or ""
+    if home.parent.name == "agents":
+        return home / "memory"
+    if agent_name:
+        return home / "agents" / agent_name / "memory"
+    return home / "memory"
+
+
 def _check_memory(home: Path) -> list[Check]:
     """Check memory store health."""
     checks = []
-    from . import active_agent_name
-
-    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-    memory_dir = home / "agents" / agent_name / "memory"
+    memory_dir = _resolve_memory_dir(home)
 
     if not memory_dir.exists():
         checks.append(
@@ -668,8 +677,24 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
         if check.passed:
             continue
 
+        # Fix missing agent home root
+        if check.name == "home:exists":
+            try:
+                home.mkdir(parents=True, exist_ok=True)
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=True,
+                    action=f"Created agent home directory {home}",
+                ))
+            except OSError as exc:
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error=str(exc),
+                ))
+
         # Fix missing directories
-        if check.name.startswith("home:") and check.name != "home:exists" and check.name != "home:manifest":
+        elif check.name.startswith("home:") and check.name != "home:manifest":
             dirname = check.name.split(":", 1)[1]
             dirpath = home / dirname
             try:
@@ -690,6 +715,8 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
         elif check.name == "home:manifest":
             manifest_path = home / "manifest.json"
             try:
+                if manifest_path.exists():
+                    raise FileExistsError(f"Refusing to overwrite existing manifest: {manifest_path}")
                 data = {
                     "name": os.environ.get("SKCAPSTONE_AGENT", "sovereign"),
                     "version": "0.0.0",
@@ -702,7 +729,7 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
                     success=True,
                     action=f"Created default manifest at {manifest_path}",
                 ))
-            except OSError as exc:
+            except (OSError, FileExistsError) as exc:
                 results.append(FixResult(
                     check_name=check.name,
                     success=False,
@@ -711,8 +738,7 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
 
         # Fix missing memory store
         elif check.name == "memory:store":
-            agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-            memory_dir = home / "agents" / agent_name / "memory"
+            memory_dir = _resolve_memory_dir(home)
             try:
                 for layer in ("short-term", "mid-term", "long-term"):
                     (memory_dir / layer).mkdir(parents=True, exist_ok=True)
@@ -720,6 +746,42 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
                     check_name=check.name,
                     success=True,
                     action=f"Created memory directories at {memory_dir}",
+                ))
+            except OSError as exc:
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error=str(exc),
+                ))
+
+        # Rebuild missing memory index
+        elif check.name == "memory:index":
+            memory_dir = _resolve_memory_dir(home)
+            index_path = memory_dir / "index.json"
+            try:
+                index_data: dict[str, dict] = {}
+                for layer in ("short-term", "mid-term", "long-term"):
+                    layer_dir = memory_dir / layer
+                    if not layer_dir.exists():
+                        continue
+                    for memory_file in layer_dir.glob("*.json"):
+                        try:
+                            payload = json.loads(memory_file.read_text(encoding="utf-8"))
+                        except (OSError, json.JSONDecodeError):
+                            continue
+                        memory_id = payload.get("memory_id") or payload.get("id") or memory_file.stem
+                        index_data[memory_id] = {
+                            "layer": layer,
+                            "tags": payload.get("tags", []),
+                            "importance": payload.get("importance"),
+                            "created_at": payload.get("created_at"),
+                        }
+                memory_dir.mkdir(parents=True, exist_ok=True)
+                index_path.write_text(json.dumps(index_data, indent=2), encoding="utf-8")
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=True,
+                    action=f"Rebuilt memory index at {index_path}",
                 ))
             except OSError as exc:
                 results.append(FixResult(

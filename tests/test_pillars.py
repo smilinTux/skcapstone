@@ -14,7 +14,15 @@ from skcapstone.pillars.security import (
     read_audit_log,
 )
 from skcapstone.pillars.trust import initialize_trust, record_trust_state
+from skcapstone import active_agent_name
 from skcapstone.models import PillarStatus
+
+
+def _resolved_agent_name() -> str:
+    """Mirror consciousness pillar agent resolution for test data paths."""
+    import os
+
+    return os.environ.get("SKCAPSTONE_AGENT") or active_agent_name() or ""
 
 
 class TestIdentityPillar:
@@ -169,15 +177,14 @@ class TestSecurityPillar:
 class TestConsciousnessPillar:
     """Tests for consciousness pillar initialization (SKWhisper + SKTrip)."""
 
-    def test_returns_missing_when_no_skwhisper(self, tmp_agent_home: Path):
-        """initialize_consciousness returns MISSING when no SKWhisper data exists."""
+    def test_returns_degraded_when_package_installed_but_no_data(self, tmp_agent_home: Path):
+        """initialize_consciousness returns DEGRADED when skwhisper is installed but idle."""
         state = initialize_consciousness(tmp_agent_home)
-        assert state.status == PillarStatus.MISSING
+        assert state.status == PillarStatus.DEGRADED
 
     def test_degraded_with_digested_sessions_no_daemon(self, tmp_agent_home: Path, monkeypatch):
         """DEGRADED when sessions have been digested but daemon is not running."""
-        import os
-        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        agent_name = _resolved_agent_name()
         whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
         whisper_dir.mkdir(parents=True, exist_ok=True)
 
@@ -198,8 +205,7 @@ class TestConsciousnessPillar:
 
     def test_whisper_md_age_tracked(self, tmp_agent_home: Path):
         """whisper.md existence and age are captured correctly."""
-        import os
-        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        agent_name = _resolved_agent_name()
         whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
         whisper_dir.mkdir(parents=True, exist_ok=True)
 
@@ -212,8 +218,7 @@ class TestConsciousnessPillar:
 
     def test_patterns_json_topic_count(self, tmp_agent_home: Path):
         """topics_tracked reflects the number of topics in patterns.json."""
-        import os
-        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        agent_name = _resolved_agent_name()
         whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
         whisper_dir.mkdir(parents=True, exist_ok=True)
 
@@ -227,8 +232,7 @@ class TestConsciousnessPillar:
 
     def test_trip_sessions_counted(self, tmp_agent_home: Path):
         """trip_sessions counts .json files in the sktrip directory."""
-        import os
-        agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+        agent_name = _resolved_agent_name()
         trip_dir = tmp_agent_home / "agents" / agent_name / "sktrip"
         trip_dir.mkdir(parents=True, exist_ok=True)
         (trip_dir / "trip-001.json").write_text("{}")

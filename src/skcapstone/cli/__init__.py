@@ -52,6 +52,7 @@ from .completions import register_completions_commands
 from .peer import register_peer_commands
 from .backup import register_backup_commands
 from .chat import register_chat_commands
+from .record_cmd import register_record_commands
 from .anchor import register_anchor_commands
 from .session import register_session_commands
 from .context_cmd import register_context_commands
@@ -107,6 +108,7 @@ register_completions_commands(main)
 register_peer_commands(main)
 register_backup_commands(main)
 register_chat_commands(main)
+register_record_commands(main)
 register_anchor_commands(main)
 register_session_commands(main)
 register_context_commands(main)

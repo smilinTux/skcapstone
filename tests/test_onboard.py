@@ -7,7 +7,7 @@ Covers:
 - _step_systemd_service(): Linux-only, click.confirm gating
 - _step_doctor_check(): doctor diagnostics output
 - _step_test_consciousness(): consciousness loop test with click.confirm gating
-- TOTAL_STEPS constant updated to 13
+- TOTAL_STEPS constant updated to 16
 """
 
 from __future__ import annotations
@@ -42,13 +42,13 @@ def tmp_home(tmp_path: Path) -> Path:
 
 
 class TestTotalSteps:
-    """Ensure TOTAL_STEPS was updated to 13."""
+    """Ensure TOTAL_STEPS reflects the current 16-step wizard."""
 
-    def test_total_steps_is_13(self) -> None:
-        """Wizard now has 13 numbered steps."""
+    def test_total_steps_is_16(self) -> None:
+        """Wizard now has 16 numbered steps."""
         from skcapstone.onboard import TOTAL_STEPS
 
-        assert TOTAL_STEPS == 13
+        assert TOTAL_STEPS == 16
 
 
 # ---------------------------------------------------------------------------
@@ -152,71 +152,77 @@ class TestStepOllamaModels:
     """Tests for _step_ollama_models()."""
 
     def test_skips_when_ollama_not_available(self) -> None:
-        """Returns False immediately when prereqs['ollama'] is False."""
+        """Returns default structured result when prereqs['ollama'] is False."""
         from skcapstone.onboard import _step_ollama_models
 
         result = _step_ollama_models({"ollama": False})
 
-        assert result is False
+        assert result == {
+            "ok": False,
+            "model": "llama3.2",
+            "host": "http://localhost:11434",
+        }
 
     def test_skips_when_user_declines(self) -> None:
-        """Returns False when user does not confirm the pull."""
+        """Returns a non-ok result when user does not confirm the pull."""
         from skcapstone.onboard import _step_ollama_models
 
-        def fake_which(t: str) -> str | None:
-            return "/usr/local/bin/ollama" if t == "ollama" else None
-
-        with patch("shutil.which", side_effect=fake_which), \
-             patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="")), \
+        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="")), \
+             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]), \
              patch("click.confirm", return_value=False):
             result = _step_ollama_models({"ollama": True})
 
-        assert result is False
+        assert result == {
+            "ok": False,
+            "model": "llama3.2",
+            "host": "http://localhost:11434",
+        }
 
     def test_returns_true_when_model_already_present(self) -> None:
-        """Returns True without pulling if model already in 'ollama list'."""
+        """Returns ok=True without pulling if model already in 'ollama list'."""
         from skcapstone.onboard import _step_ollama_models
 
-        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="llama3.2  2.0 GB")):
+        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="NAME ID SIZE\nllama3.2 abc123 2.0 GB")), \
+             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]):
             result = _step_ollama_models({"ollama": True})
 
-        assert result is True
+        assert result["ok"] is True
+        assert result["model"] == "llama3.2"
 
     def test_returns_true_on_successful_pull(self) -> None:
-        """Returns True after a successful ollama pull."""
-        from skcapstone.onboard import _step_ollama_models
-
-        call_count = {"n": 0}
-
-        def fake_run(cmd, **kwargs):
-            call_count["n"] += 1
-            if "list" in cmd:
-                return MagicMock(returncode=0, stdout="")  # model not present
-            return MagicMock(returncode=0)  # pull succeeds
-
-        with patch("subprocess.run", side_effect=fake_run), \
-             patch("click.confirm", return_value=True):
-            result = _step_ollama_models({"ollama": True})
-
-        assert result is True
-
-    def test_returns_false_on_pull_failure(self) -> None:
-        """Returns False when ollama pull exits non-zero."""
+        """Returns ok=True after a successful ollama pull."""
         from skcapstone.onboard import _step_ollama_models
 
         def fake_run(cmd, **kwargs):
             if "list" in cmd:
                 return MagicMock(returncode=0, stdout="")
-            return MagicMock(returncode=1)  # pull fails
+            return MagicMock(returncode=0)
 
         with patch("subprocess.run", side_effect=fake_run), \
+             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]), \
              patch("click.confirm", return_value=True):
             result = _step_ollama_models({"ollama": True})
 
-        assert result is False
+        assert result["ok"] is True
+
+    def test_returns_false_on_pull_failure(self) -> None:
+        """Returns ok=False when ollama pull exits non-zero."""
+        from skcapstone.onboard import _step_ollama_models
+
+        def fake_run(cmd, **kwargs):
+            if "list" in cmd:
+                return MagicMock(returncode=0, stdout="")
+            return MagicMock(returncode=1)
+
+        with patch("subprocess.run", side_effect=fake_run), \
+             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]), \
+             patch("click.confirm", return_value=True):
+            result = _step_ollama_models({"ollama": True})
+
+        assert result["ok"] is False
 
     def test_returns_false_on_timeout(self) -> None:
-        """Returns False when ollama pull times out."""
+        """Returns ok=False when ollama pull times out."""
         from skcapstone.onboard import _step_ollama_models
 
         def fake_run(cmd, **kwargs):
@@ -225,10 +231,11 @@ class TestStepOllamaModels:
             raise subprocess.TimeoutExpired(cmd, 600)
 
         with patch("subprocess.run", side_effect=fake_run), \
+             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]), \
              patch("click.confirm", return_value=True):
             result = _step_ollama_models({"ollama": True})
 
-        assert result is False
+        assert result["ok"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -306,59 +313,55 @@ class TestStepConfigFiles:
 
 
 class TestStepSystemdService:
-    """Tests for _step_systemd_service()."""
+    """Tests for Linux systemd and platform dispatch."""
 
     def test_returns_false_on_non_linux(self) -> None:
-        """Returns False immediately on non-Linux platforms."""
-        from skcapstone.onboard import _step_systemd_service
+        """Returns False immediately on unsupported non-Linux/macOS platforms."""
+        from skcapstone.onboard import _step_autostart_service
 
-        with patch("platform.system", return_value="Darwin"):
-            result = _step_systemd_service()
+        with patch("platform.system", return_value="Windows"):
+            result = _step_autostart_service()
 
         assert result is False
 
     def test_returns_false_when_user_declines(self) -> None:
         """Returns False when user does not confirm the install."""
-        from skcapstone.onboard import _step_systemd_service
+        from skcapstone.onboard import _step_systemd_service_linux
 
-        with patch("platform.system", return_value="Linux"), \
-             patch("click.confirm", return_value=False):
-            result = _step_systemd_service()
+        with patch("click.confirm", return_value=False):
+            result = _step_systemd_service_linux()
 
         assert result is False
 
     def test_returns_false_when_systemd_unavailable(self) -> None:
         """Returns False when systemd user session is not running."""
-        from skcapstone.onboard import _step_systemd_service
+        from skcapstone.onboard import _step_systemd_service_linux
 
-        with patch("platform.system", return_value="Linux"), \
-             patch("click.confirm", return_value=True), \
+        with patch("click.confirm", return_value=True), \
              patch("skcapstone.systemd.systemd_available", return_value=False):
-            result = _step_systemd_service()
+            result = _step_systemd_service_linux()
 
         assert result is False
 
     def test_returns_true_on_successful_install(self) -> None:
         """Returns True when systemd install succeeds."""
-        from skcapstone.onboard import _step_systemd_service
+        from skcapstone.onboard import _step_systemd_service_linux
 
-        with patch("platform.system", return_value="Linux"), \
-             patch("click.confirm", return_value=True), \
+        with patch("click.confirm", return_value=True), \
              patch("skcapstone.systemd.systemd_available", return_value=True), \
              patch("skcapstone.systemd.install_service", return_value={"installed": True, "enabled": True}):
-            result = _step_systemd_service()
+            result = _step_systemd_service_linux()
 
         assert result is True
 
     def test_returns_false_on_install_failure(self) -> None:
         """Returns False when install_service reports not installed."""
-        from skcapstone.onboard import _step_systemd_service
+        from skcapstone.onboard import _step_systemd_service_linux
 
-        with patch("platform.system", return_value="Linux"), \
-             patch("click.confirm", return_value=True), \
+        with patch("click.confirm", return_value=True), \
              patch("skcapstone.systemd.systemd_available", return_value=True), \
              patch("skcapstone.systemd.install_service", return_value={"installed": False}):
-            result = _step_systemd_service()
+            result = _step_systemd_service_linux()
 
         assert result is False
 
@@ -419,54 +422,39 @@ class TestStepTestConsciousness:
         assert result is False
 
     def test_returns_true_when_loop_responds(self, tmp_home: Path) -> None:
-        """Returns True when LLMBridge.generate returns a non-empty response."""
+        """Returns True when the configured Ollama callback yields a response."""
         from skcapstone.onboard import _step_test_consciousness
 
-        mock_bridge = MagicMock()
-        mock_bridge.generate.return_value = "Hello, I am running fine."
-        mock_builder = MagicMock()
-        mock_builder.build.return_value = "system prompt"
-        mock_config = MagicMock()
-        mock_config.max_context_tokens = 8000
+        mock_config = MagicMock(ollama_model="llama3.2", ollama_host="http://localhost:11434")
+        mock_callback = MagicMock(return_value="Hello, I am running fine.")
 
         with patch("click.confirm", return_value=True), \
              patch("skcapstone.consciousness_config.load_consciousness_config", return_value=mock_config), \
-             patch("skcapstone.consciousness_loop.LLMBridge", return_value=mock_bridge), \
-             patch("skcapstone.consciousness_loop.SystemPromptBuilder", return_value=mock_builder), \
-             patch("skcapstone.consciousness_loop._classify_message",
-                   return_value=MagicMock(tags=[], estimated_tokens=10)):
+             patch("skseed.llm.ollama_callback", return_value=mock_callback):
             result = _step_test_consciousness(tmp_home)
 
         assert result is True
 
     def test_returns_false_when_loop_returns_empty(self, tmp_home: Path) -> None:
-        """Returns False when LLMBridge.generate returns an empty string."""
+        """Returns False when the configured Ollama callback yields an empty string."""
         from skcapstone.onboard import _step_test_consciousness
 
-        mock_bridge = MagicMock()
-        mock_bridge.generate.return_value = ""
-        mock_builder = MagicMock()
-        mock_builder.build.return_value = "system prompt"
-        mock_config = MagicMock()
-        mock_config.max_context_tokens = 8000
+        mock_config = MagicMock(ollama_model="llama3.2", ollama_host="http://localhost:11434")
+        mock_callback = MagicMock(return_value="")
 
         with patch("click.confirm", return_value=True), \
              patch("skcapstone.consciousness_config.load_consciousness_config", return_value=mock_config), \
-             patch("skcapstone.consciousness_loop.LLMBridge", return_value=mock_bridge), \
-             patch("skcapstone.consciousness_loop.SystemPromptBuilder", return_value=mock_builder), \
-             patch("skcapstone.consciousness_loop._classify_message",
-                   return_value=MagicMock(tags=[], estimated_tokens=10)):
+             patch("skseed.llm.ollama_callback", return_value=mock_callback):
             result = _step_test_consciousness(tmp_home)
 
         assert result is False
 
     def test_returns_false_on_exception(self, tmp_home: Path) -> None:
-        """Returns False when consciousness config raises an exception."""
+        """Returns False when the Ollama callback raises an exception."""
         from skcapstone.onboard import _step_test_consciousness
 
         with patch("click.confirm", return_value=True), \
-             patch("skcapstone.consciousness_config.load_consciousness_config",
-                   side_effect=RuntimeError("no config")):
+             patch("skseed.llm.ollama_callback", side_effect=RuntimeError("backend down")):
             result = _step_test_consciousness(tmp_home)
 
         assert result is False

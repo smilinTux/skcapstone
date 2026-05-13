@@ -30,6 +30,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_REGISTRY_URL = "https://skills.smilintux.org/api"
 
 
+def _skill_to_dict(entry: Any) -> dict[str, Any]:
+    """Normalize a remote skill entry into a plain dict."""
+    if hasattr(entry, "model_dump"):
+        return entry.model_dump()
+    if isinstance(entry, dict):
+        return entry
+    result: dict[str, Any] = {}
+    for key in ("name", "version", "description", "tags", "category", "pip", "git"):
+        if hasattr(entry, key):
+            result[key] = getattr(entry, key)
+    return result
+
+
 class RegistryClient:
     """Thin wrapper around skskills.remote.RemoteRegistry.
 
@@ -74,7 +87,7 @@ class RegistryClient:
             List of skill entry dicts with name, version, description, etc.
         """
         index = self._remote.fetch_index()
-        return [s.model_dump() for s in index.skills]
+        return [_skill_to_dict(s) for s in index.skills]
 
     def search(self, query: str) -> list[dict[str, Any]]:
         """Search remote skills by name, description, or tags.
@@ -86,7 +99,7 @@ class RegistryClient:
             List of matching skill entry dicts.
         """
         results = self._remote.search(query)
-        return [s.model_dump() for s in results]
+        return [_skill_to_dict(s) for s in results]
 
     def get_skill(self, name: str, version: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Get info about a specific remote skill.
@@ -99,7 +112,7 @@ class RegistryClient:
             Skill entry dict or None if not found.
         """
         entry = self._remote.get_skill_info(name, version)
-        return entry.model_dump() if entry else None
+        return _skill_to_dict(entry) if entry else None
 
     def install(
         self,

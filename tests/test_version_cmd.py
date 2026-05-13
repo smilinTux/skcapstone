@@ -214,7 +214,7 @@ class TestVersionCommand:
     def _run(self, args: list[str], agent_home: Path):
         from skcapstone.cli import main
 
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         with patch("urllib.request.urlopen", side_effect=OSError), \
              patch("skcapstone.daemon.read_pid", return_value=None):
             return runner.invoke(
@@ -253,7 +253,7 @@ class TestVersionCommand:
         """Shows running + PID when daemon is alive."""
         from skcapstone.cli import main
 
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         with patch("urllib.request.urlopen", side_effect=OSError), \
              patch("skcapstone.daemon.read_pid", return_value=42001):
             result = runner.invoke(
@@ -276,7 +276,7 @@ class TestVersionCommand:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_resp.read.return_value = payload
 
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         with patch("urllib.request.urlopen", return_value=mock_resp), \
              patch("skcapstone.daemon.read_pid", return_value=None):
             result = runner.invoke(
@@ -299,7 +299,7 @@ class TestDoctorVerbose:
     def _run_doctor(self, args: list[str], agent_home: Path):
         from skcapstone.cli import main
 
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         return runner.invoke(
             main,
             ["doctor", "--home", str(agent_home)] + args,
@@ -349,7 +349,7 @@ class TestDoctorVerbose:
         """--help output documents the --verbose flag."""
         from skcapstone.cli import main
 
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         result = runner.invoke(main, ["doctor", "--help"])
         assert result.exit_code == 0
         assert "--verbose" in result.output

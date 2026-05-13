@@ -247,7 +247,7 @@ function claude {
 
 # codex (OpenAI Codex CLI — https://github.com/openai/codex)
 function codex {
-    _sk_launch codex "--full-auto" "$@"
+    _sk_launch codex "" "$@"
 }
 
 # opencode (opencode.ai)

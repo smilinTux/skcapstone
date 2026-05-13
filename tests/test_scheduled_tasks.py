@@ -221,15 +221,20 @@ class TestTaskSchedulerExecution:
 
 
 class TestBuildScheduler:
-    def test_registers_four_standard_tasks(self, tmp_path):
+    def test_registers_current_standard_tasks(self, tmp_path):
         stop = threading.Event()
         scheduler = build_scheduler(tmp_path, stop)
         names = {s["name"] for s in scheduler.status()}
         assert names == {
             "heartbeat_pulse",
+            "sync_inbox_scan",
             "backend_reprobe",
             "memory_promotion_sweep",
             "profile_freshness_check",
+            "dreaming_reflection",
+            "service_health_check",
+            "itil_escalation_check",
+            "itil_auto_close",
         }
 
     def test_heartbeat_interval_is_30s(self, tmp_path):
@@ -292,12 +297,16 @@ class TestMemoryPromotionTask:
         with patch("skcapstone.memory_promoter.PromotionEngine", return_value=mock_engine):
             callback()  # should not raise
 
-    def test_import_error_propagates_as_exception(self, tmp_path):
-        """If PromotionEngine raises on import the task should propagate (caught by runner)."""
+    def test_import_error_is_logged_without_raising(self, tmp_path):
+        """If PromotionEngine setup fails the background task should log and continue."""
+        import time
+
         callback = make_memory_promotion_task(tmp_path)
-        with patch("skcapstone.memory_promoter.PromotionEngine", side_effect=RuntimeError("unavailable")):
-            with pytest.raises(RuntimeError, match="unavailable"):
-                callback()
+        with patch("skcapstone.memory_promoter.PromotionEngine", side_effect=RuntimeError("unavailable")),              patch("skcapstone.scheduled_tasks.logger.error") as mock_error:
+            callback()
+            time.sleep(0.05)
+
+        mock_error.assert_called()
 
 
 class TestBackendReprobeTask:

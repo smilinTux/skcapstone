@@ -22,7 +22,7 @@ from skcapstone.testrunner import PackageResult, TestReport
 
 @pytest.fixture()
 def runner():
-    return CliRunner(mix_stderr=False)
+    return CliRunner()
 
 
 @pytest.fixture()

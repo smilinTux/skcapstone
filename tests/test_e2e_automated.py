@@ -217,11 +217,14 @@ class TestDaemonStartup:
             data = json.loads(resp.read())
 
         status = str(data.get("status", "")).lower()
-        # Accept various status strings that indicate the loop is running
+        # Accept both the legacy status/conscious contract and the current
+        # enabled-based daemon payload.
         active_statuses = {"active", "ok", "running", "started", "conscious"}
-        assert status in active_statuses or data.get("conscious") is True, (
-            f"Expected active status, got: {data}"
-        )
+        assert (
+            data.get("enabled") is True
+            or status in active_statuses
+            or data.get("conscious") is True
+        ), f"Expected active status, got: {data}"
 
 
 class TestMessageRoundTrip:

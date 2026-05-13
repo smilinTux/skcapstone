@@ -164,9 +164,14 @@ def store(
         soul_context=soul_context,
     )
 
-    # Reason: high-importance memories skip straight to mid-term
+    # Reason: high-importance memories can skip straight to mid-term,
+    # but only if the verifier agrees the promotion is coherent.
     if entry.importance >= 0.7 and entry.layer == MemoryLayer.SHORT_TERM:
-        entry.layer = MemoryLayer.MID_TERM
+        from .memory_verifier import verify_before_promotion
+
+        verdict = verify_before_promotion(home, entry)
+        if verdict.should_promote:
+            entry.layer = MemoryLayer.MID_TERM
 
     _save_entry(home, entry)
     _update_index(home, entry)
@@ -524,21 +529,28 @@ def _find_by_id(home: Path, memory_id: str) -> Optional[MemoryEntry]:
     return None
 
 
-def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> None:
+def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> bool:
     """Promote a memory to the next tier."""
     if entry.layer == MemoryLayer.SHORT_TERM:
+        from .memory_verifier import verify_before_promotion
+
+        verdict = verify_before_promotion(home, entry)
+        if not verdict.should_promote:
+            _save_entry(home, entry)
+            return False
         entry.layer = MemoryLayer.MID_TERM
     elif entry.layer == MemoryLayer.MID_TERM:
         entry.layer = MemoryLayer.LONG_TERM
     else:
         _save_entry(home, entry)
-        return
+        return False
 
     if old_path.exists():
         old_path.unlink()
     _save_entry(home, entry)
     _update_index(home, entry)
     logger.info("Promoted memory %s to %s", entry.memory_id, entry.layer.value)
+    return True
 
 
 def _update_index(home: Path, entry: MemoryEntry) -> None:

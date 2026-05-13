@@ -211,7 +211,7 @@ class TestRefreshContextCli:
     """Tests for `skcapstone refresh-context` CLI command."""
 
     def _run(self, *args, home: str | None = None) -> "click.testing.Result":
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         cmd: list[str] = ["refresh-context"]
         if home:
             cmd += ["--home", home]
@@ -255,7 +255,7 @@ class TestRefreshContextCli:
 
     def test_falls_back_to_cwd_without_git(self, tmp_agent_home: Path, tmp_path: Path):
         """Without --dest and outside a git repo, writes to cwd/CLAUDE.md."""
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         written: list[Path] = []
 
         with runner.isolated_filesystem(temp_dir=tmp_path) as iso_dir:

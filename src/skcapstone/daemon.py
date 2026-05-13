@@ -887,7 +887,14 @@ class DaemonService:
         """Attempt to load SKComm, AgentRuntime, and ConsciousnessLoop."""
         try:
             from skcomm.core import SKComm
+            from .sync_engine import ensure_comms_dirs, get_comms_root
+
             self._skcomm = SKComm.from_config()
+            expected_comms_root = get_comms_root(self.config.shared_root)
+            ensure_comms_dirs(self.config.shared_root)
+            for transport in self._skcomm.router.transports:
+                if getattr(transport, "name", "") == "syncthing" and hasattr(transport, "configure"):
+                    transport.configure({"comms_root": str(expected_comms_root)})
             logger.info("SKComm loaded — %d transports", len(self._skcomm.router.transports))
         except ImportError:
             logger.warning("SKComm not installed — inbox polling disabled")

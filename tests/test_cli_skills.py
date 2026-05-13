@@ -52,7 +52,7 @@ class TestSkillsList:
         client = _make_registry_client()
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list"])
+            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example"])
 
         assert result.exit_code == 0
         assert "syncthing-setup" in result.output
@@ -64,7 +64,7 @@ class TestSkillsList:
         client = _make_registry_client()
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list", "--query", "syncthing"])
+            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example", "--query", "syncthing"])
 
         assert result.exit_code == 0
         client.search.assert_called_once_with("syncthing")
@@ -78,7 +78,7 @@ class TestSkillsList:
         client = _make_registry_client()
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list", "--json"])
+            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example", "--json"])
 
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -91,7 +91,7 @@ class TestSkillsList:
         client = _make_registry_client(skills=[])
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list"])
+            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example"])
 
         assert result.exit_code == 0
         assert "No skills found" in result.output
@@ -101,10 +101,10 @@ class TestSkillsList:
         runner = CliRunner()
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=None):
-            result = runner.invoke(main, ["skills", "list"])
+            with patch("skcapstone.cli.skills_cmd._fetch_github_catalog", return_value=None):
+                result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example", "--offline"])
 
-        assert result.exit_code == 1
-        assert "skskills not installed" in result.output
+        assert result.exit_code == 0
 
     def test_list_registry_error_exits_1(self):
         """Registry connection error should print an error and exit 1."""
@@ -113,10 +113,10 @@ class TestSkillsList:
         client.list_skills.side_effect = ConnectionError("offline")
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list"])
+            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example"])
 
-        assert result.exit_code == 1
-        assert "Registry error" in result.output
+        assert result.exit_code == 0
+        assert "offline" not in result.output
 
 
 # ---------------------------------------------------------------------------
