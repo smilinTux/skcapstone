@@ -677,7 +677,7 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
         if check.passed:
             continue
 
-        # Fix missing agent home root
+        # Fix missing directories
         if check.name == "home:exists":
             try:
                 home.mkdir(parents=True, exist_ok=True)

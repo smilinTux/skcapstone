@@ -13,6 +13,10 @@
 #   - Exactly one agent       → use it silently, no prompt
 #   - Multiple agents         → numbered menu, default highlighted with →
 #   - SKAGENT/SKCAPSTONE_AGENT set & valid → honour it silently, no menu
+#   - Missing binary          → offer official install command for that tool
+#   - SK_CLAUDE_YOLO=1        → claude adds permission bypass globally (opt-in)
+#   - SK_CODEX_YOLO=1         → codex adds approval+sandbox bypass globally (opt-in)
+#   - SK_OPENCODE_YOLO=1      → opencode allows all tools without approval (opt-in)
 #   - Pass --agent <name>     → skip menu, use that agent directly
 #   - Print mode (-p / --print) → skip menu (non-interactive by definition)
 #   - stdin not a TTY         → skip menu (no way to read user input)
@@ -23,10 +27,19 @@
 #   claude                        # picker if multiple agents
 #   claude --agent lumina         # direct launch
 #   SKAGENT=opus claude           # env override
+#   SK_CLAUDE_YOLO=1 claude       # claude with dangerous permission bypass
 #   skswitch lumina               # change active agent for this shell
 #   skswitch                      # interactive picker
 #   codex                         # same picker logic
+#   SK_CODEX_YOLO=1 codex         # codex with dangerous bypass enabled
 #   opencode                      # same picker logic
+#   SK_OPENCODE_YOLO=1 opencode   # opencode with all permissions allowed
+#
+# To enable globally for all future shell sessions:
+#   export SK_CLAUDE_YOLO=1
+#   export SK_CODEX_YOLO=1
+#   export SK_OPENCODE_YOLO=1
+#   source ~/.bashrc
 #
 # Source in shell config:
 #   source ~/.skenv/share/skcapstone/sk-agent-picker.sh
@@ -132,6 +145,101 @@ _sk_pick_agent() {
 # ---------------------------------------------------------------------------
 # Generic launcher used by all wrappers
 # ---------------------------------------------------------------------------
+_sk_install_command() {
+    local tool="$1"
+
+    case "$tool" in
+        claude)
+            printf '%s' 'npm install -g @anthropic-ai/claude-code'
+            ;;
+        codex)
+            printf '%s' 'npm install -g @openai/codex'
+            ;;
+        opencode)
+            printf '%s' "unset -f opencode _sk_launch _sk_pick_agent claude codex skswitch 2>/dev/null || true; curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+_sk_find_tool_path() {
+    local tool="$1"
+    local tool_path=""
+    local -a fallback_paths=()
+
+    tool_path=$(type -P "$tool" 2>/dev/null || true)
+    if [[ -n "$tool_path" && -x "$tool_path" ]]; then
+        printf '%s\n' "$tool_path"
+        return 0
+    fi
+
+    case "$tool" in
+        claude)
+            fallback_paths=(
+                "$HOME/.npm-global/bin/claude"
+                "$HOME/.local/bin/claude"
+            )
+            ;;
+        codex)
+            fallback_paths=(
+                "$HOME/.npm-global/bin/codex"
+                "$HOME/.local/bin/codex"
+            )
+            ;;
+        opencode)
+            fallback_paths=(
+                "$HOME/.opencode/bin/opencode"
+                "$HOME/.local/bin/opencode"
+                "$HOME/bin/opencode"
+            )
+            ;;
+    esac
+
+    local candidate
+    for candidate in "${fallback_paths[@]}"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+_sk_offer_install() {
+    local tool="$1"
+    local install_cmd
+    install_cmd=$(_sk_install_command "$tool") || return 1
+
+    echo "  ⚠  $tool is not installed." >&2
+    echo "  Standard install command:" >&2
+    echo "      $install_cmd" >&2
+
+    if [[ ! -t 0 ]]; then
+        echo "  Non-interactive shell detected; install it manually and retry." >&2
+        return 127
+    fi
+
+    printf "  Install %s now? [y/N]: " "$tool" >&2
+    local choice
+    read -r choice </dev/tty
+    if [[ ! "$choice" =~ ^([yY]|[yY][eE][sS])$ ]]; then
+        echo "  Skipping install." >&2
+        return 127
+    fi
+
+    echo "" >&2
+    echo "  ▶ Installing $tool..." >&2
+    if ! /bin/bash -lc "$install_cmd"; then
+        echo "  ✖ Install failed for $tool." >&2
+        return 1
+    fi
+
+    return 0
+}
+
 _sk_launch() {
     local tool="$1"; shift         # the underlying binary (claude / codex / opencode)
     local extra_flags="$1"; shift  # tool-specific flags always appended (pass "" if none)
@@ -182,18 +290,31 @@ _sk_launch() {
         agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
     fi
 
+    local tool_path=""
+    tool_path=$(_sk_find_tool_path "$tool" || true)
+    if [[ -z "$tool_path" ]]; then
+        if ! _sk_offer_install "$tool"; then
+            return $?
+        fi
+        tool_path=$(_sk_find_tool_path "$tool" || true)
+        if [[ -z "$tool_path" ]]; then
+            echo "  ✖ $tool is still not available on PATH after installation." >&2
+            return 127
+        fi
+    fi
+
     if [[ -n "$agent" ]]; then
         printf "  ▶ Starting %s as agent: %s\n\n" "$tool" "$agent" >&2
         if [[ -n "$extra_flags" ]]; then
-            SKAGENT="$agent" SKCAPSTONE_AGENT="$agent" SKMEMORY_AGENT="$agent" command "$tool" $extra_flags "${passthrough[@]}"
+            SKAGENT="$agent" SKCAPSTONE_AGENT="$agent" SKMEMORY_AGENT="$agent" "$tool_path" $extra_flags "${passthrough[@]}"
         else
-            SKAGENT="$agent" SKCAPSTONE_AGENT="$agent" SKMEMORY_AGENT="$agent" command "$tool" "${passthrough[@]}"
+            SKAGENT="$agent" SKCAPSTONE_AGENT="$agent" SKMEMORY_AGENT="$agent" "$tool_path" "${passthrough[@]}"
         fi
     else
         if [[ -n "$extra_flags" ]]; then
-            command "$tool" $extra_flags "${passthrough[@]}"
+            "$tool_path" $extra_flags "${passthrough[@]}"
         else
-            command "$tool" "${passthrough[@]}"
+            "$tool_path" "${passthrough[@]}"
         fi
     fi
 }
@@ -242,21 +363,36 @@ unalias opencode 2>/dev/null || true
 
 # claude (Claude Code CLI)
 function claude {
-    _sk_launch claude "--dangerously-skip-permissions" "$@"
+    local extra_flags=""
+    if [[ "${SK_CLAUDE_YOLO:-0}" == "1" ]]; then
+        extra_flags="--dangerously-skip-permissions"
+    fi
+    _sk_launch claude "$extra_flags" "$@"
 }
 
 # codex (OpenAI Codex CLI — https://github.com/openai/codex)
 function codex {
-    _sk_launch codex "" "$@"
+    local extra_flags=""
+    if [[ "${SK_CODEX_YOLO:-0}" == "1" ]]; then
+        extra_flags="--dangerously-bypass-approvals-and-sandbox"
+    fi
+    _sk_launch codex "$extra_flags" "$@"
 }
 
 # opencode (opencode.ai)
 function opencode {
-    _sk_launch opencode "" "$@"
+    if [[ "${SK_OPENCODE_YOLO:-0}" == "1" ]]; then
+        OPENCODE_PERMISSION='{"*":"allow"}' _sk_launch opencode "" "$@"
+    else
+        _sk_launch opencode "" "$@"
+    fi
 }
 
 # Export so sub-shells (tmux panes, etc.) inherit the functions
 export -f _sk_pick_agent 2>/dev/null || true
+export -f _sk_install_command 2>/dev/null || true
+export -f _sk_find_tool_path 2>/dev/null || true
+export -f _sk_offer_install 2>/dev/null || true
 export -f _sk_launch     2>/dev/null || true
 export -f skswitch       2>/dev/null || true
 export -f claude         2>/dev/null || true

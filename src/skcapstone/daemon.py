@@ -888,7 +888,6 @@ class DaemonService:
         try:
             from skcomm.core import SKComm
             from .sync_engine import ensure_comms_dirs, get_comms_root
-
             self._skcomm = SKComm.from_config()
             expected_comms_root = get_comms_root(self.config.shared_root)
             ensure_comms_dirs(self.config.shared_root)

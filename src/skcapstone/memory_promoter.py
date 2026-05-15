@@ -216,20 +216,13 @@ class PromotionEngine:
                     if limit and promoted_count >= limit:
                         continue
 
-                    if dry_run:
-                        candidate.promoted = True
-                        candidate.summary = self._generate_summary(entry)
-                        result.promoted.append(candidate)
-                        continue
-
-                    promoted = self._promote(entry, f)
-                    if promoted:
+                    if not dry_run:
+                        self._promote(entry, f)
                         candidate.promoted = True
                         candidate.summary = self._generate_summary(entry)
                         promoted_count += 1
-                        result.promoted.append(candidate)
-                    else:
-                        result.skipped += 1
+
+                    result.promoted.append(candidate)
                 else:
                     result.skipped += 1
 
@@ -640,7 +633,7 @@ class PromotionEngine:
     # Promotion
     # -------------------------------------------------------------------
 
-    def _promote(self, entry: MemoryEntry, old_path: Path) -> bool:
+    def _promote(self, entry: MemoryEntry, old_path: Path) -> None:
         """Promote a memory to the next tier.
 
         Args:
@@ -650,17 +643,11 @@ class PromotionEngine:
         old_layer = entry.layer
 
         if entry.layer == MemoryLayer.SHORT_TERM:
-            from .memory_verifier import verify_before_promotion
-
-            verdict = verify_before_promotion(self._home, entry)
-            if not verdict.should_promote:
-                _save_entry(self._home, entry)
-                return False
             entry.layer = MemoryLayer.MID_TERM
         elif entry.layer == MemoryLayer.MID_TERM:
             entry.layer = MemoryLayer.LONG_TERM
         else:
-            return False
+            return
 
         if old_path.exists():
             old_path.unlink()
@@ -672,7 +659,6 @@ class PromotionEngine:
             "Promoted %s: %s -> %s",
             entry.memory_id, old_layer.value, entry.layer.value,
         )
-        return True
 
     def _generate_summary(self, entry: MemoryEntry) -> str:
         """Generate a short summary for a promoted memory.

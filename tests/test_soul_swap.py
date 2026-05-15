@@ -257,10 +257,9 @@ class TestSoulListDiscovery:
         fake_repo = tmp_path / "nonexistent-repo" / "blueprints"
         available = manager.list_available(repo_path=fake_repo)
 
-        # Should still find the installed soul; fallback GitHub entries are allowed.
-        installed_casey = next(e for e in available if e["name"] == "casey")
-        assert installed_casey["source"] == "installed"
-        assert {e["source"] for e in available} <= {"installed", "github"}
+        # Should still find installed soul
+        assert any(e["name"] == "casey" for e in available)
+        assert all(e["source"] == "installed" for e in available)
 
 
 class TestSoulPreservesCustomProfile:

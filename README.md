@@ -164,6 +164,44 @@ skcapstone status
 # → SINGULAR ✓ (Conscious + Synced = Sovereign Singularity)
 ```
 
+### Sample Shell Config
+
+The installer sources the SKCapstone launcher from
+`~/.skenv/share/skcapstone/sk-agent-picker.sh`. A practical `~/.bashrc`
+sample looks like this:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.npm-global/bin:$PATH"
+export PATH="$HOME/.skenv/bin:$PATH"
+export PATH="$HOME/.opencode/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
+
+export SKCAPSTONE_HOME="$HOME/.skcapstone"
+export SKCAPSTONE_AGENT="jarvis"
+
+_SK_PICKER="$HOME/.skenv/share/skcapstone/sk-agent-picker.sh"
+if [[ -f "$_SK_PICKER" ]]; then
+    # shellcheck source=/dev/null
+    source "$_SK_PICKER"
+fi
+unset _SK_PICKER
+
+# Optional: globally enable YOLO mode for all three launchers
+export SK_CLAUDE_YOLO=1
+export SK_CODEX_YOLO=1
+export SK_OPENCODE_YOLO=1
+```
+
+That gives you:
+
+- `claude`, `codex`, and `opencode` wrappers that launch the selected SK agent
+- `skswitch` for changing the active agent in the current shell
+- Optional global dangerous-mode flags for the three supported coding CLIs
+
+See [docs/CUSTOM_AGENT.md](docs/CUSTOM_AGENT.md) for launcher behavior,
+per-command overrides, and missing-binary install prompts.
+
 ---
 
 ## Windows Quickstart

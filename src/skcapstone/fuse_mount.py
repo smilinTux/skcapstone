@@ -516,13 +516,8 @@ class SovereignFS:
         self._home = agent_home
         from . import active_agent_name
 
-        agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name() or ""
-        if (agent_home / "memory").exists() or agent_home.parent.name == "agents":
-            self._memory_dir = agent_home / "memory"
-        elif agent_name:
-            self._memory_dir = agent_home / "agents" / agent_name / "memory"
-        else:
-            self._memory_dir = agent_home / "memory"
+        agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
+        self._memory_dir = agent_home / "agents" / agent_name / "memory"
         # Buffer for outbox writes: maps virtual path → bytes written so far
         self._outbox_buffers: Dict[str, bytes] = {}
 

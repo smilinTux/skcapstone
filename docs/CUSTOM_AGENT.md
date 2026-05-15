@@ -319,6 +319,76 @@ skswitch                      # Interactive picker (if multiple agents)
 SKAGENT=jarvis claude         # One-shot override for a single command
 ```
 
+### Launcher Wrappers for `claude`, `codex`, and `opencode`
+
+The shell launcher in `~/.skenv/share/skcapstone/sk-agent-picker.sh` wraps
+the three supported coding CLIs so they all launch against the same SK agent
+selection flow.
+
+What the launcher does:
+
+- Honors `SKAGENT` and `SKCAPSTONE_AGENT` when already set
+- Shows an interactive picker when multiple agents exist
+- Supports `--agent <name>` and `--agent=<name>` one-shot overrides
+- Exports the chosen agent to the launched process
+- Applies tool-specific YOLO flags when enabled through env vars
+- Resolves the real binary path before launch so exported shell functions do not shadow the executable
+- Offers the standard install command if `claude`, `codex`, or `opencode` is missing
+
+Sample `~/.bashrc`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.npm-global/bin:$PATH"
+export PATH="$HOME/.skenv/bin:$PATH"
+export PATH="$HOME/.opencode/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
+
+export SKCAPSTONE_HOME="$HOME/.skcapstone"
+export SKCAPSTONE_AGENT="jarvis"
+
+_SK_PICKER="$HOME/.skenv/share/skcapstone/sk-agent-picker.sh"
+if [[ -f "$_SK_PICKER" ]]; then
+    # shellcheck source=/dev/null
+    source "$_SK_PICKER"
+fi
+unset _SK_PICKER
+
+export SK_CLAUDE_YOLO=1
+export SK_CODEX_YOLO=1
+export SK_OPENCODE_YOLO=1
+```
+
+Common usage:
+
+```bash
+claude
+codex
+opencode
+
+claude --agent lumina
+codex --agent jarvis
+opencode --agent opus
+
+SKAGENT=sovereign codex
+skswitch tester
+opencode
+```
+
+YOLO mode:
+
+- `SK_CLAUDE_YOLO=1` adds `--dangerously-skip-permissions`
+- `SK_CODEX_YOLO=1` adds `--dangerously-bypass-approvals-and-sandbox`
+- `SK_OPENCODE_YOLO=1` sets `OPENCODE_PERMISSION='{"*":"allow"}'`
+
+Missing binary handling:
+
+- `claude` offers `npm install -g @anthropic-ai/claude-code`
+- `codex` offers `npm install -g @openai/codex`
+- `opencode` offers `curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path`
+
+In non-interactive shells, the launcher prints the standard install command and exits instead of hanging on a prompt.
+
 ### systemd Services
 
 For background daemons, set the agent via the templated service unit:
