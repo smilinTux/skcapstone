@@ -592,6 +592,7 @@ def register_status_commands(main: click.Group) -> None:
             "transport": "Transport (SKComm)",
             "sync": "Sync (Singularity)",
             "codex": "Codex Integration",
+            "harness": "AI Harness (Claude Code)",
         }
 
         for cat_key in [
@@ -603,6 +604,7 @@ def register_status_commands(main: click.Group) -> None:
             "transport",
             "sync",
             "codex",
+            "harness",
         ]:
             checks = categories.get(cat_key, [])
             if not checks:

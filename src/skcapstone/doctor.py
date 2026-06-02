@@ -122,6 +122,7 @@ def run_diagnostics(home: Path) -> DiagnosticReport:
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
     report.checks.extend(_check_codex())
+    report.checks.extend(_check_harness_env(home))
     report.checks.extend(_check_versions())
 
     return report
@@ -688,6 +689,220 @@ def _check_versions() -> list[Check]:
     return checks
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# AI-harness (Claude Code) environment checks
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def _claude_config_home() -> Path:
+    """Resolve the Claude Code config directory (honours CLAUDE_CONFIG_DIR)."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")).expanduser()
+
+
+def _load_json_safe(path: Path) -> dict:
+    """Load JSON from *path*, returning {} on any error (missing/invalid)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _expected_mcp_servers() -> dict[str, dict]:
+    """Spec for the SK* MCP servers an agent expects, with derived env.
+
+    Agent name and home are derived from the environment so the spec stays
+    portable across agents/machines (no hardcoded identity).
+    """
+    agent = os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "sovereign"
+    sk_home = os.environ.get("SKCAPSTONE_HOME") or str(Path("~/.skcapstone").expanduser())
+    return {
+        "skmemory": {
+            "binary": "skmemory-mcp",
+            "env": {"SKAGENT": agent, "SKMEMORY_AGENT": agent, "SKCAPSTONE_HOME": sk_home},
+            "autofix": True,
+        },
+        "skcapstone": {
+            "binary": "skcapstone-mcp",
+            "env": {"SKAGENT": agent, "SKCAPSTONE_AGENT": agent, "SKCAPSTONE_HOME": sk_home},
+            "autofix": True,
+        },
+        # skchat identity (SKCHAT_IDENTITY) is account-specific — never guessed.
+        "skchat": {"binary": "skchat-mcp", "env": {}, "autofix": False},
+    }
+
+
+def _registered_mcp_servers() -> set[str]:
+    """MCP server names from the locations Claude Code actually reads.
+
+    Reads global + per-project ``mcpServers`` in ``~/.claude.json`` and a
+    checked-in ``.mcp.json`` in the current directory.
+    """
+    names: set[str] = set()
+    cc = _load_json_safe(Path("~/.claude.json").expanduser())
+    names.update((cc.get("mcpServers") or {}).keys())
+    for proj in (cc.get("projects") or {}).values():
+        if isinstance(proj, dict):
+            names.update((proj.get("mcpServers") or {}).keys())
+    dotmcp = _load_json_safe(Path(".mcp.json").resolve())
+    names.update((dotmcp.get("mcpServers") or {}).keys())
+    return names
+
+
+def _dead_config_mcp_servers() -> set[str]:
+    """MCP server names defined ONLY where Claude Code does NOT read them.
+
+    Namely ``~/.claude/settings.json``'s ``mcpServers`` block and a
+    top-level ``~/.claude/mcp.json`` — both silently ignored by Claude Code.
+    """
+    ch = _claude_config_home()
+    names: set[str] = set()
+    names.update((_load_json_safe(ch / "settings.json").get("mcpServers") or {}).keys())
+    names.update(_load_json_safe(ch / "mcp.json").keys())
+    return names
+
+
+def _check_harness_env(home: Path) -> list[Check]:
+    """Validate the AI-harness (Claude Code) environment configuration.
+
+    Catches the silent traps that leave an agent waking up cold:
+      * MCP servers defined where Claude Code never reads them,
+      * a SessionStart hook pointing at a stale/missing ``skcapstone`` binary,
+      * a missing ``skwhisper`` CLI shim when the whisper layer is in use.
+
+    No-ops gracefully (single informational check) when Claude Code is not
+    detected, so non-Claude-Code users are not spammed with failures.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        List of Check results in the ``harness`` category.
+    """
+    checks: list[Check] = []
+
+    if not Path("~/.claude.json").expanduser().exists():
+        checks.append(Check(
+            name="harness:claude-code",
+            description="Claude Code config (~/.claude.json)",
+            passed=True,
+            detail="not detected — skipping harness checks",
+            category="harness",
+        ))
+        return checks
+
+    registered = _registered_mcp_servers()
+    dead = _dead_config_mcp_servers()
+
+    for name, spec in _expected_mcp_servers().items():
+        if name in registered:
+            checks.append(Check(
+                name=f"harness:mcp:{name}",
+                description=f"MCP server '{name}' registered with Claude Code",
+                passed=True,
+                detail="present in a config Claude Code reads",
+                category="harness",
+            ))
+            continue
+
+        if name in dead:
+            detail = "defined ONLY in settings.json/mcp.json (not read by Claude Code)"
+        else:
+            detail = "not registered"
+        binary = shutil.which(spec["binary"]) or spec["binary"]
+        if spec["autofix"]:
+            env_flags = " ".join(f"-e {k}={v}" for k, v in spec["env"].items())
+            fix = f"claude mcp add {name} --scope user {env_flags} -- {binary}"
+        else:
+            fix = (
+                f"claude mcp add {name} --scope user -e SKCHAT_IDENTITY=<your-identity> "
+                f"-- {binary}  # identity is account-specific"
+            )
+        checks.append(Check(
+            name=f"harness:mcp:{name}",
+            description=f"MCP server '{name}' registered with Claude Code",
+            passed=False,
+            detail=detail,
+            fix=fix,
+            category="harness",
+        ))
+
+    # SessionStart hook must reference an existing skcapstone binary.
+    settings = _load_json_safe(_claude_config_home() / "settings.json")
+    hook_cmds = [
+        h.get("command", "")
+        for entry in (settings.get("hooks", {}).get("SessionStart") or [])
+        for h in (entry.get("hooks") or [])
+        if "skcapstone" in h.get("command", "")
+    ]
+    if hook_cmds:
+        live = shutil.which("skcapstone")
+        live_real = str(Path(live).resolve()) if live else None
+        missing = None
+        stale = None
+        hook_binary = ""
+        for cmd in hook_cmds:
+            hook_binary = cmd.strip().split()[0] if cmd.strip() else ""
+            if "/" in hook_binary:
+                resolved = Path(hook_binary).expanduser()
+                if not resolved.exists():
+                    missing = hook_binary
+                    break
+                # Present but pointing at a *different* skcapstone than PATH —
+                # this is the stale-install trap (e.g. an old pyenv shim).
+                if live_real and str(resolved.resolve()) != live_real:
+                    stale = hook_binary
+            elif not shutil.which(hook_binary):
+                missing = hook_binary
+                break
+
+        if missing:
+            checks.append(Check(
+                name="harness:hook:sessionstart",
+                description="SessionStart hook skcapstone binary",
+                passed=False,
+                detail=f"hook references missing binary: {missing}",
+                fix=f"Repoint the hook at {live or 'the live skcapstone'} (skcapstone doctor --fix)",
+                category="harness",
+            ))
+        elif stale:
+            checks.append(Check(
+                name="harness:hook:sessionstart",
+                description="SessionStart hook skcapstone binary",
+                passed=False,
+                detail=f"hook uses {stale}, but PATH skcapstone is {live} (possible stale install)",
+                fix=f"Repoint the hook at {live} (skcapstone doctor --fix)",
+                category="harness",
+            ))
+        else:
+            checks.append(Check(
+                name="harness:hook:sessionstart",
+                description="SessionStart hook skcapstone binary",
+                passed=True,
+                detail=hook_binary,
+                category="harness",
+            ))
+
+    # skwhisper CLI shim — only required when this agent uses the whisper layer.
+    if (home / "skwhisper").exists():
+        wpath = shutil.which("skwhisper")
+        checks.append(Check(
+            name="harness:skwhisper",
+            description="skwhisper CLI on PATH",
+            passed=bool(wpath),
+            detail=wpath or "not found (whisper layer present but no CLI shim)",
+            fix=(
+                ""
+                if wpath
+                else "Add a shim on PATH that runs `python -m skwhisper` "
+                "with the skwhisper repo on PYTHONPATH"
+            ),
+            category="harness",
+        ))
+
+    return checks
+
+
 @dataclass
 class FixResult:
     """Result of attempting to auto-fix a failing check.
@@ -869,6 +1084,95 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
                     success=False,
                     error=str(exc),
                 ))
+
+        # Register a missing MCP server with Claude Code (user scope).
+        elif check.name.startswith("harness:mcp:"):
+            name = check.name.split(":", 2)[2]
+            spec = _expected_mcp_servers().get(name)
+            if not spec or not spec.get("autofix"):
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error="manual fix required (identity is account-specific) — see hint",
+                ))
+            elif not shutil.which("claude"):
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error="claude CLI not found on PATH",
+                ))
+            else:
+                binary = shutil.which(spec["binary"]) or spec["binary"]
+                cmd = ["claude", "mcp", "add", name, "--scope", "user"]
+                for key, val in spec["env"].items():
+                    cmd += ["-e", f"{key}={val}"]
+                cmd += ["--", binary]
+                try:
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    if proc.returncode == 0:
+                        results.append(FixResult(
+                            check_name=check.name,
+                            success=True,
+                            action=f"Registered MCP server '{name}' (user scope)",
+                        ))
+                    else:
+                        results.append(FixResult(
+                            check_name=check.name,
+                            success=False,
+                            error=(proc.stderr or proc.stdout).strip()[:200],
+                        ))
+                except (subprocess.SubprocessError, OSError) as exc:
+                    results.append(FixResult(
+                        check_name=check.name,
+                        success=False,
+                        error=str(exc),
+                    ))
+
+        # Repoint a stale SessionStart hook at the live skcapstone binary.
+        elif check.name == "harness:hook:sessionstart":
+            live = shutil.which("skcapstone")
+            settings_path = _claude_config_home() / "settings.json"
+            if not live:
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error="live skcapstone not found on PATH",
+                ))
+            else:
+                try:
+                    data = json.loads(settings_path.read_text(encoding="utf-8"))
+                    changed = False
+                    for entry in data.get("hooks", {}).get("SessionStart", []):
+                        for hook in entry.get("hooks", []):
+                            cmd_str = hook.get("command", "")
+                            if "skcapstone" not in cmd_str:
+                                continue
+                            parts = cmd_str.split()
+                            if parts and parts[0] != live:
+                                parts[0] = live
+                                hook["command"] = " ".join(parts)
+                                changed = True
+                    if changed:
+                        settings_path.write_text(
+                            json.dumps(data, indent=2) + "\n", encoding="utf-8"
+                        )
+                        results.append(FixResult(
+                            check_name=check.name,
+                            success=True,
+                            action=f"Repointed SessionStart hook to {live}",
+                        ))
+                    else:
+                        results.append(FixResult(
+                            check_name=check.name,
+                            success=False,
+                            error="no stale skcapstone hook command found to repair",
+                        ))
+                except (OSError, json.JSONDecodeError) as exc:
+                    results.append(FixResult(
+                        check_name=check.name,
+                        success=False,
+                        error=str(exc),
+                    ))
 
     return results
 

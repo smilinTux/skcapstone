@@ -25,11 +25,13 @@ from skcapstone.doctor import (
     DiagnosticReport,
     _check_codex,
     _check_agent_home,
+    _check_harness_env,
     _check_identity,
     _check_memory,
     _check_packages,
     run_fixes,
     run_diagnostics,
+    run_fixes,
 )
 
 
@@ -318,3 +320,132 @@ class TestCLIDoctorCommand:
         assert result.exit_code == 0
         assert "Python Packages" in result.output
         assert "passed" in result.output or "checks" in result.output.lower()
+
+
+def _write_claude_config(home_root: Path, *, claude_json: dict, settings: dict | None = None,
+                         mcp_json: dict | None = None) -> Path:
+    """Lay down a fake Claude Code config tree under *home_root*. Returns the
+    .claude config dir."""
+    (home_root / ".claude.json").write_text(json.dumps(claude_json))
+    cc = home_root / ".claude"
+    cc.mkdir(exist_ok=True)
+    if settings is not None:
+        (cc / "settings.json").write_text(json.dumps(settings))
+    if mcp_json is not None:
+        (cc / "mcp.json").write_text(json.dumps(mcp_json))
+    return cc
+
+
+class TestCheckHarnessEnv:
+    """Test the AI-harness (Claude Code) environment checks."""
+
+    def _by_name(self, checks):
+        return {c.name: c for c in checks}
+
+    def test_gate_when_no_claude_code(self, tmp_path, monkeypatch):
+        """No ~/.claude.json → one informational passing check, no failures."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        checks = _check_harness_env(tmp_path / ".skcapstone")
+        assert len(checks) == 1
+        assert checks[0].name == "harness:claude-code"
+        assert checks[0].passed is True
+
+    def test_registered_mcp_servers_pass(self, tmp_path, monkeypatch):
+        """Servers present in ~/.claude.json mcpServers pass."""
+        cc = _write_claude_config(tmp_path, claude_json={
+            "mcpServers": {"skmemory": {}, "skcapstone": {}, "skchat": {}},
+        })
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
+        by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
+        assert by["harness:mcp:skmemory"].passed is True
+        assert by["harness:mcp:skcapstone"].passed is True
+        assert by["harness:mcp:skchat"].passed is True
+
+    def test_dead_config_is_detected(self, tmp_path, monkeypatch):
+        """A server defined only in settings.json/mcp.json (ignored by CC) fails
+        with a dead-config detail and a `claude mcp add` fix hint."""
+        cc = _write_claude_config(
+            tmp_path,
+            claude_json={"mcpServers": {}},
+            settings={"mcpServers": {"skmemory": {}}},
+            mcp_json={"skchat": {}},
+        )
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
+        by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
+        assert by["harness:mcp:skmemory"].passed is False
+        assert "ONLY" in by["harness:mcp:skmemory"].detail
+        assert "claude mcp add skmemory" in by["harness:mcp:skmemory"].fix
+
+    def test_unregistered_mcp_detected(self, tmp_path, monkeypatch):
+        """A server registered nowhere fails with a 'not registered' detail."""
+        cc = _write_claude_config(tmp_path, claude_json={"mcpServers": {}})
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
+        by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
+        assert by["harness:mcp:skcapstone"].passed is False
+        assert by["harness:mcp:skcapstone"].detail == "not registered"
+
+    def test_stale_hook_binary_detected(self, tmp_path, monkeypatch):
+        """A hook pointing at an existing-but-different skcapstone than the one
+        on PATH (the stale-install trap) is flagged."""
+        live = tmp_path / "skenv" / "skcapstone"
+        stale = tmp_path / "pyenv" / "skcapstone"
+        live.parent.mkdir(); stale.parent.mkdir()
+        live.write_text("#live"); stale.write_text("#stale")
+        cc = _write_claude_config(
+            tmp_path,
+            claude_json={"mcpServers": {"skmemory": {}, "skcapstone": {}, "skchat": {}}},
+            settings={"hooks": {"SessionStart": [{"hooks": [
+                {"type": "command", "command": f"{stale} context show --format claude-md"}]}]}},
+        )
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
+        monkeypatch.setattr("skcapstone.doctor.shutil.which",
+                            lambda name: str(live) if name == "skcapstone" else None)
+        by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
+        c = by["harness:hook:sessionstart"]
+        assert c.passed is False
+        assert "stale" in c.detail.lower()
+
+    def test_hook_on_live_binary_passes(self, tmp_path, monkeypatch):
+        """A hook pointing at the live skcapstone passes."""
+        live = tmp_path / "skenv" / "skcapstone"
+        live.parent.mkdir(); live.write_text("#live")
+        cc = _write_claude_config(
+            tmp_path,
+            claude_json={"mcpServers": {"skmemory": {}, "skcapstone": {}, "skchat": {}}},
+            settings={"hooks": {"SessionStart": [{"hooks": [
+                {"type": "command", "command": f"{live} context show --format claude-md"}]}]}},
+        )
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
+        monkeypatch.setattr("skcapstone.doctor.shutil.which",
+                            lambda name: str(live) if name == "skcapstone" else None)
+        by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
+        assert by["harness:hook:sessionstart"].passed is True
+
+    def test_fix_repoints_stale_hook(self, tmp_path, monkeypatch):
+        """run_fixes rewrites a stale SessionStart hook to the live binary."""
+        live = tmp_path / "skenv" / "skcapstone"
+        live.parent.mkdir(); live.write_text("#live")
+        cc = _write_claude_config(
+            tmp_path,
+            claude_json={"mcpServers": {}},
+            settings={"hooks": {"SessionStart": [{"hooks": [
+                {"type": "command", "command": "/old/path/skcapstone context show --format claude-md"}]}]}},
+        )
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
+        monkeypatch.setattr("skcapstone.doctor.shutil.which",
+                            lambda name: str(live) if name == "skcapstone" else None)
+        report = DiagnosticReport()
+        report.checks.append(Check(name="harness:hook:sessionstart",
+                                   description="x", passed=False, category="harness"))
+        results = run_fixes(report, tmp_path / ".skcapstone")
+        assert any(r.success and r.check_name == "harness:hook:sessionstart" for r in results)
+        updated = json.loads((cc / "settings.json").read_text())
+        new_cmd = updated["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert new_cmd.split()[0] == str(live)
