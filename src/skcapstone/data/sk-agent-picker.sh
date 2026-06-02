@@ -50,6 +50,12 @@
 # Core picker — returns chosen agent name on stdout, menu on stderr
 # ---------------------------------------------------------------------------
 _sk_pick_agent() {
+    # --force skips the SKAGENT-match shortcut so the menu is always shown
+    # when the user explicitly invokes the picker (e.g. `skswitch` no-args).
+    local force=0
+    if [[ "$1" == "--force" ]]; then
+        force=1; shift
+    fi
     local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
     local -a agents=()
 
@@ -89,7 +95,7 @@ _sk_pick_agent() {
 
     # If env explicitly selected a real agent, skip the menu entirely.
     # Same if stdin isn't a TTY (we'd hang waiting for input that can't come).
-    if [[ $env_match -eq 1 ]] || [[ ! -t 0 ]]; then
+    if [[ ! -t 0 ]] || { [[ $env_match -eq 1 ]] && [[ $force -eq 0 ]]; }; then
         echo "$default"; return 0
     fi
 
@@ -326,8 +332,8 @@ function skswitch {
     local agent="$1"
 
     if [[ -z "$agent" ]]; then
-        # No argument — show interactive picker
-        agent=$(_sk_pick_agent)
+        # No argument — show interactive picker (force, so SKAGENT doesn't suppress it)
+        agent=$(_sk_pick_agent --force)
         if [[ -z "$agent" ]]; then
             echo "No agents found in ${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents/" >&2
             return 1
