@@ -225,6 +225,31 @@ class TestConsciousnessPillar:
         state = initialize_consciousness(tmp_agent_home)
         assert state.topics_tracked == 3
 
+    def test_active_with_daemon_fresh_whisper_and_patterns(
+        self, tmp_agent_home: Path, monkeypatch
+    ):
+        """Fresh SKWhisper context plus tracked patterns is active when daemon is active."""
+        agent_name = "jarvis"
+        monkeypatch.setenv("SKCAPSTONE_AGENT", agent_name)
+        whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
+        whisper_dir.mkdir(parents=True, exist_ok=True)
+        (whisper_dir / "whisper.md").write_text("# Whisper context\n")
+        (whisper_dir / "patterns.json").write_text(json.dumps({
+            "topics": {"sovereignty": {}, "memory": {}}
+        }))
+
+        class Result:
+            stdout = "active\n"
+
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda *args, **kwargs: Result(),
+        )
+
+        state = initialize_consciousness(tmp_agent_home)
+
+        assert state.status == PillarStatus.ACTIVE
+
     def test_trip_sessions_counted(self, tmp_agent_home: Path):
         """trip_sessions counts .json files in the sktrip directory."""
         import os

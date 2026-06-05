@@ -27,6 +27,7 @@ import time
 import urllib.error
 from pathlib import Path
 import urllib.request
+from urllib.parse import urlparse
 from typing import Any
 
 logger = logging.getLogger("skcapstone.service_health")
@@ -210,6 +211,34 @@ def _tcp_check(name: str, host: str, port: int) -> dict[str, Any]:
     return result
 
 
+def _pid_check(name: str, pid_path: Path) -> dict[str, Any]:
+    """Check a local daemon that advertises health through a PID file."""
+    result: dict[str, Any] = {
+        "name": name,
+        "url": f"pid://{pid_path}",
+        "status": "unknown",
+        "latency_ms": 0,
+        "version": None,
+        "error": None,
+    }
+    t0 = time.monotonic()
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        result["status"] = "up"
+    except FileNotFoundError:
+        result["status"] = "down"
+        result["error"] = "PID file missing"
+    except ProcessLookupError:
+        result["status"] = "down"
+        result["error"] = "process not found"
+    except Exception as exc:
+        result["status"] = "down"
+        result["error"] = str(exc)[:200]
+    result["latency_ms"] = round((time.monotonic() - t0) * 1000, 1)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Aggregate check
 # ---------------------------------------------------------------------------
@@ -249,15 +278,18 @@ def check_all_services() -> list[dict[str, Any]]:
         cfg = _load_agent_yaml("skvector")
         if cfg.get("enabled", True):
             if not qdrant_base:
-                # Reconstruct URL from host/port/https
-                host = cfg.get("host", "localhost")
-                port = cfg.get("port", 6333)
-                proto = "https" if cfg.get("https") or int(port) == 443 else "http"
-                if int(port) in (80, 443):
-                    qdrant_base = f"{proto}://{host}"
+                if cfg.get("url"):
+                    qdrant_base = str(cfg["url"])
                 else:
-                    qdrant_base = f"{proto}://{host}:{port}"
-            if not qdrant_api_key and cfg.get("api_key"):
+                    # Reconstruct URL from host/port/https
+                    host = cfg.get("host", "localhost")
+                    port = cfg.get("port", 6333)
+                    proto = "https" if cfg.get("https") or int(port) == 443 else "http"
+                    if int(port) in (80, 443):
+                        qdrant_base = f"{proto}://{host}"
+                    else:
+                        qdrant_base = f"{proto}://{host}:{port}"
+            if not qdrant_api_key and cfg.get("api_key") and cfg["api_key"] != "CHANGE_ME":
                 qdrant_api_key = cfg["api_key"]
     if not qdrant_base:
         qdrant_base = "http://localhost:6333"
@@ -275,6 +307,12 @@ def check_all_services() -> list[dict[str, Any]]:
     if not graph_host or not graph_port_str:
         cfg = _load_agent_yaml("skgraph")
         if cfg.get("enabled", True):
+            if cfg.get("url") and (not graph_host or not graph_port_str):
+                parsed = urlparse(str(cfg["url"]))
+                if not graph_host and parsed.hostname:
+                    graph_host = parsed.hostname
+                if not graph_port_str and parsed.port:
+                    graph_port_str = str(parsed.port)
             if not graph_host and cfg.get("host"):
                 graph_host = str(cfg["host"])
             if not graph_port_str and cfg.get("port"):
@@ -319,8 +357,10 @@ def check_all_services() -> list[dict[str, Any]]:
     results.append(_http_check("skcapstone daemon", daemon_url))
 
     # -- skchat daemon -------------------------------------------------------
-    chat_base = os.environ.get("SKCHAT_DAEMON_URL", "http://localhost:9385")
-    if chat_base.lower() != "disabled":
+    chat_base = os.environ.get("SKCHAT_DAEMON_URL", "")
+    if not chat_base:
+        results.append(_pid_check("skchat daemon", Path.home() / ".skchat" / "daemon.pid"))
+    elif chat_base.lower() != "disabled":
         chat_url = chat_base.rstrip("/") + "/health"
         results.append(_http_check("skchat daemon", chat_url))
 

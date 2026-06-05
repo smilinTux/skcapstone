@@ -121,6 +121,7 @@ def run_diagnostics(home: Path) -> DiagnosticReport:
     report.checks.extend(_check_memory(home))
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
+    report.checks.extend(_check_codex())
     report.checks.extend(_check_versions())
 
     return report
@@ -615,6 +616,49 @@ def _check_sync(home: Path) -> list[Check]:
     return checks
 
 
+def _check_codex() -> list[Check]:
+    """Check Codex global SK agent prompt bootstrap."""
+    codex_detected = bool(os.environ.get("CODEX_HOME")) or (Path.home() / ".codex").exists()
+    codex_detected = codex_detected or shutil.which("codex") is not None
+
+    if not codex_detected:
+        return [
+            Check(
+                name="codex:agent_context",
+                description="Codex SK agent context bootstrap",
+                passed=True,
+                detail="Codex not detected (optional)",
+                category="codex",
+            )
+        ]
+
+    try:
+        from .codex_setup import check_codex_setup
+
+        configured, detail = check_codex_setup()
+        return [
+            Check(
+                name="codex:agent_context",
+                description="Codex SK agent context bootstrap",
+                passed=configured,
+                detail=detail,
+                fix="" if configured else "skcapstone doctor --fix",
+                category="codex",
+            )
+        ]
+    except OSError as exc:
+        return [
+            Check(
+                name="codex:agent_context",
+                description="Codex SK agent context bootstrap",
+                passed=False,
+                detail=str(exc),
+                fix="skcapstone doctor --fix",
+                category="codex",
+            )
+        ]
+
+
 def _check_versions() -> list[Check]:
     """Check for outdated ecosystem packages."""
     checks = []
@@ -800,6 +844,24 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
                     check_name=check.name,
                     success=True,
                     action=f"Created sync directories at {sync_dir}",
+                ))
+            except OSError as exc:
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=False,
+                    error=str(exc),
+                ))
+
+        # Fix Codex global SK agent context bootstrap
+        elif check.name == "codex:agent_context":
+            try:
+                from .codex_setup import ensure_codex_setup
+
+                actions = ensure_codex_setup()
+                results.append(FixResult(
+                    check_name=check.name,
+                    success=True,
+                    action=", ".join(actions) if actions else "Codex bootstrap already configured",
                 ))
             except OSError as exc:
                 results.append(FixResult(

@@ -591,9 +591,19 @@ def register_status_commands(main: click.Group) -> None:
             "memory": "Memory (SKMemory)",
             "transport": "Transport (SKComm)",
             "sync": "Sync (Singularity)",
+            "codex": "Codex Integration",
         }
 
-        for cat_key in ["packages", "system", "agent", "identity", "memory", "transport", "sync"]:
+        for cat_key in [
+            "packages",
+            "system",
+            "agent",
+            "identity",
+            "memory",
+            "transport",
+            "sync",
+            "codex",
+        ]:
             checks = categories.get(cat_key, [])
             if not checks:
                 continue

@@ -222,6 +222,28 @@ for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
     fi
 done
 
+# ---------------------------------------------------------------------------
+# Wire Codex global agent bootstrap.
+#
+# Codex reads ~/.codex/AGENTS.md into the prompt, so SKAGENT environment
+# variables alone are not enough. The helper below creates an idempotent
+# loader script and AGENTS.md guidance; `skcapstone doctor --fix` repairs the
+# same files later if needed.
+# ---------------------------------------------------------------------------
+echo ""
+if "$SKENV/bin/python" - <<'PY' 2>/dev/null
+from skcapstone.codex_setup import ensure_codex_setup
+
+actions = ensure_codex_setup()
+for action in actions:
+    print(f"  {action}")
+PY
+then
+    echo "Codex SK agent bootstrap verified"
+else
+    echo "Codex SK agent bootstrap skipped — run 'skcapstone doctor --fix' later"
+fi
+
 echo ""
 if [[ "$failures" -eq 0 ]]; then
     echo "=== Installation complete ==="

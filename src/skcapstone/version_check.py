@@ -9,11 +9,13 @@ standalone ``skcapstone version-check`` CLI command.
 from __future__ import annotations
 
 import json
+import logging
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
 from typing import Optional
 
+logger = logging.getLogger(__name__)
 
 ECOSYSTEM_PACKAGES = [
     "skmemory",
@@ -83,7 +85,7 @@ def _get_installed_version(package_name: str) -> Optional[str]:
 
         return version(package_name)
     except Exception as e:
-        logger.warning("version_check.py: %s", e)
+        logger.debug("version_check.py metadata lookup failed: %s", e)
         # Try import-based fallback for packages with dashes
         try:
             mod_name = package_name.replace("-", "_")
@@ -92,7 +94,7 @@ def _get_installed_version(package_name: str) -> Optional[str]:
             mod = importlib.import_module(mod_name)
             return getattr(mod, "__version__", None)
         except Exception as e:
-            logger.warning("version_check.py: %s", e)
+            logger.debug("version_check.py import fallback failed: %s", e)
             return None
 
 

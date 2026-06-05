@@ -19,6 +19,45 @@ from .. import active_agent_name
 from ..models import ConsciousnessState, PillarStatus
 
 
+def _resolve_agent_name(home: Path) -> str:
+    """Resolve an agent name without leaking host state into explicit homes."""
+    agents_dir = home / "agents"
+    candidates: list[str] = []
+    if agents_dir.exists():
+        candidates = sorted(
+            entry.name
+            for entry in agents_dir.iterdir()
+            if entry.is_dir() and not entry.name.endswith("-template")
+        )
+
+    try:
+        real_shared_root = (
+            home.expanduser().resolve()
+            == Path(os.environ.get("SKCAPSTONE_HOME", "~/.skcapstone")).expanduser().resolve()
+        )
+    except OSError:
+        real_shared_root = False
+
+    env_agent = (
+        os.environ.get("SKAGENT")
+        or os.environ.get("SKCAPSTONE_AGENT")
+        or os.environ.get("SKMEMORY_AGENT")
+        or ""
+    ).strip()
+    if env_agent and (real_shared_root or env_agent in candidates or (home / "skwhisper").exists()):
+        return env_agent
+
+    if candidates:
+        return candidates[0]
+
+    # Only consult global active-agent discovery for the real shared root. Unit
+    # tests and callers that pass a temp or exported home should stay isolated.
+    if real_shared_root:
+        return active_agent_name() or ""
+
+    return ""
+
+
 def initialize_consciousness(home: Path) -> ConsciousnessState:
     """Initialize consciousness pillar by checking SKWhisper state.
 
@@ -28,11 +67,11 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
     Returns:
         ConsciousnessState with current status.
     """
-    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name() or ""
+    agent_name = _resolve_agent_name(home)
     # home may be the agent dir (~/.skcapstone/agents/jarvis/) or the
     # shared root (~/.skcapstone/). Check for skwhisper/ directly first.
     whisper_dir = home / "skwhisper"
-    if not whisper_dir.exists():
+    if not whisper_dir.exists() and agent_name:
         whisper_dir = home / "agents" / agent_name / "skwhisper"
 
     state = ConsciousnessState()
@@ -90,11 +129,13 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
     try:
         import subprocess
 
-        service_candidates = [
-            f"skcapstone@{agent_name}",  # multi-agent template unit
-            "skcapstone",                 # legacy single-agent unit
-            "skwhisper",                  # standalone skwhisper daemon
-        ]
+        service_candidates = []
+        if agent_name:
+            service_candidates.append(f"skcapstone@{agent_name}")
+            service_candidates.extend([
+                "skcapstone",                 # legacy single-agent unit
+                "skwhisper",                  # standalone skwhisper daemon
+            ])
         for service_name in service_candidates:
             result = subprocess.run(
                 ["systemctl", "--user", "is-active", service_name],
@@ -111,7 +152,9 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
         state.whisper_active = False
 
     # Check SKTrip sessions
-    trip_dir = home / "agents" / agent_name / "sktrip"
+    trip_dir = home / "sktrip"
+    if not trip_dir.exists() and agent_name:
+        trip_dir = home / "agents" / agent_name / "sktrip"
     if trip_dir.exists():
         state.trip_sessions = len(list(trip_dir.glob("*.json")))
 
@@ -124,7 +167,11 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
         skwhisper_installed = False
 
     # Determine status
-    if state.whisper_active and state.sessions_digested > 0 and state.whisper_md is not None:
+    if (
+        state.whisper_active
+        and (state.sessions_digested > 0 or state.topics_tracked > 0)
+        and state.whisper_md is not None
+    ):
         if state.whisper_md_age_hours < 24:
             state.status = PillarStatus.ACTIVE
         else:
@@ -134,8 +181,9 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
         state.status = PillarStatus.DEGRADED
     elif state.sessions_digested > 0 or state.whisper_md is not None:
         state.status = PillarStatus.DEGRADED
-    elif skwhisper_installed:
-        # Package is installed but service not running and no data yet — at least DEGRADED
+    elif skwhisper_installed and whisper_dir.exists():
+        # Package is installed and an agent whisper directory exists, but there
+        # is no usable context yet.
         state.status = PillarStatus.DEGRADED
     else:
         state.status = PillarStatus.MISSING

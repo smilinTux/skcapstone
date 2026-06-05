@@ -19,13 +19,16 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
+from skcapstone.codex_setup import ensure_codex_setup
 from skcapstone.doctor import (
     Check,
     DiagnosticReport,
+    _check_codex,
     _check_agent_home,
     _check_identity,
     _check_memory,
     _check_packages,
+    run_fixes,
     run_diagnostics,
 )
 
@@ -198,6 +201,66 @@ class TestCheckPackages:
             checks = _check_packages()
             assert all(not c.passed for c in checks)
             assert all(c.fix for c in checks)
+
+
+class TestCheckCodex:
+    """Test Codex SK agent bootstrap checks and fixes."""
+
+    def test_codex_missing_bootstrap_fails_when_codex_home_set(self, tmp_path, monkeypatch):
+        """A detected Codex home without bootstrap is reported as fixable."""
+        codex_home = tmp_path / ".codex"
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+        checks = _check_codex()
+        check = next(c for c in checks if c.name == "codex:agent_context")
+
+        assert not check.passed
+        assert "missing" in check.detail
+        assert check.fix == "skcapstone doctor --fix"
+
+    def test_codex_bootstrap_fix_creates_loader_and_agents(self, tmp_path, monkeypatch):
+        """doctor fixes create the loader script and global AGENTS.md guidance."""
+        codex_home = tmp_path / ".codex"
+        agent_home = tmp_path / ".skcapstone"
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+        monkeypatch.setenv("SKAGENT", "jarvis")
+
+        report = DiagnosticReport(checks=[
+            Check(
+                name="codex:agent_context",
+                description="Codex SK agent context bootstrap",
+                passed=False,
+                category="codex",
+            )
+        ])
+
+        results = run_fixes(report, agent_home)
+
+        assert results[0].success
+        loader = codex_home / "bin" / "load-sk-agent-context.sh"
+        agents = codex_home / "AGENTS.md"
+        assert loader.exists()
+        assert loader.stat().st_mode & 0o100
+        agents_text = agents.read_text(encoding="utf-8")
+        assert "SKCAPSTONE_CODEX_AGENT_CONTEXT_START" in agents_text
+        assert "jarvis" in agents_text
+        assert str(loader) in agents_text
+
+        checks = _check_codex()
+        assert next(c for c in checks if c.name == "codex:agent_context").passed
+
+    def test_codex_fix_preserves_functional_custom_loader(self, tmp_path, monkeypatch):
+        """Existing working loader scripts are not overwritten."""
+        codex_home = tmp_path / ".codex"
+        loader = codex_home / "bin" / "load-sk-agent-context.sh"
+        loader.parent.mkdir(parents=True)
+        custom_loader = "#!/usr/bin/env bash\nSKAGENT=x SKCAPSTONE_AGENT=x SKMEMORY_AGENT=x skcapstone status; skmemory ritual\n"
+        loader.write_text(custom_loader, encoding="utf-8")
+
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+        ensure_codex_setup()
+
+        assert loader.read_text(encoding="utf-8") == custom_loader
 
 
 class TestRunDiagnostics:
