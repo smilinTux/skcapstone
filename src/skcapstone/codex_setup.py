@@ -63,6 +63,7 @@ export SKCAPSTONE_AGENT="$AGENT"
 export SKMEMORY_AGENT="${SKMEMORY_AGENT:-$AGENT}"
 
 AGENT_HOME="$SKCAPSTONE_HOME/agents/$AGENT"
+export SKWHISPER_CONFIG="${SKWHISPER_CONFIG:-$AGENT_HOME/config/skwhisper.toml}"
 MEMORIES="${SKCAPSTONE_CONTEXT_MEMORIES:-10}"
 
 echo "# SK Agent Bootstrap"
@@ -85,6 +86,17 @@ if command -v skmemory >/dev/null 2>&1; then
   skmemory ritual --full || skmemory ritual || true
 else
   echo "skmemory command not found on PATH."
+fi
+
+echo
+echo "## skwhisper context"
+WHISPER_CONTEXT="$AGENT_HOME/skwhisper/whisper.md"
+if [[ -f "$WHISPER_CONTEXT" ]]; then
+  sed -n '1,220p' "$WHISPER_CONTEXT"
+elif command -v skwhisper >/dev/null 2>&1 && [[ -f "$SKWHISPER_CONFIG" ]]; then
+  skwhisper -c "$SKWHISPER_CONFIG" status || true
+else
+  echo "No SKWhisper context found for $AGENT."
 fi
 """
 
@@ -155,6 +167,7 @@ def has_functional_loader_bootstrap(text: str) -> bool:
         "SKMEMORY_AGENT",
         "skcapstone",
         "skmemory",
+        "skwhisper",
     )
     return all(token in text for token in required)
 

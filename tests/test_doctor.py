@@ -254,7 +254,7 @@ class TestCheckCodex:
         codex_home = tmp_path / ".codex"
         loader = codex_home / "bin" / "load-sk-agent-context.sh"
         loader.parent.mkdir(parents=True)
-        custom_loader = "#!/usr/bin/env bash\nSKAGENT=x SKCAPSTONE_AGENT=x SKMEMORY_AGENT=x skcapstone status; skmemory ritual\n"
+        custom_loader = "#!/usr/bin/env bash\nSKAGENT=x SKCAPSTONE_AGENT=x SKMEMORY_AGENT=x skcapstone status; skmemory ritual; skwhisper status\n"
         loader.write_text(custom_loader, encoding="utf-8")
 
         monkeypatch.setenv("CODEX_HOME", str(codex_home))
