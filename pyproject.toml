@@ -33,6 +33,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "croniter>=2.0",
     "click>=8.1,<9.0",
     "cloud9-protocol>=1.0.0",
     "mcp>=1.0,<2.0",
