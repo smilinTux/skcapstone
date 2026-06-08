@@ -220,6 +220,12 @@ class TaskScheduler:
         matches *host_aliases*.  Initialises a :class:`SchedulerState` for
         tracking run history and a :class:`JobRunner` for dispatching jobs.
 
+        **Call before** :meth:`start`.  The attributes ``_config_jobs``,
+        ``_state``, and ``_job_runner`` are not lock-protected against
+        concurrent mutation while the scheduler thread is running.
+        ``build_scheduler`` already calls this before ``start()``, so
+        documenting this constraint is sufficient for v1.
+
         Args:
             jobs: Full list of :class:`~skcapstone.scheduler_jobs.JobSpec`
                 instances as returned by
@@ -252,11 +258,21 @@ class TaskScheduler:
         Skips silently when no config jobs are loaded or state/runner are not
         initialised (i.e. :meth:`load_config_jobs` has not been called).
 
-        For each due job an overlap lock is acquired via
-        :meth:`~skcapstone.scheduler_runner.JobRunner.lock`.  If the lock
-        cannot be obtained the job is skipped for this tick.  The run result
-        is recorded via
-        :meth:`~skcapstone.scheduler_state.SchedulerState.record_run`.
+        Each due job is dispatched to its own short-lived daemon thread so
+        the tick returns immediately.  Long-running jobs (e.g. ``agent``
+        type, timeout up to 900 s) therefore never block the scheduler daemon
+        thread — which also drives heartbeats and all built-in tasks.
+
+        The due-check is intentionally kept in the tick thread (it is cheap).
+        The overlap lock is acquired *inside* the worker thread so it spans
+        the actual run; :meth:`_run_config_job` handles lock + run + state.
+
+        Note: because ``record_run`` is called asynchronously inside the
+        worker, the next tick may evaluate the same job as "due" before
+        ``record_run`` completes.  The per-job overlap lock prevents a second
+        concurrent execution in that window — the second worker acquires
+        ``got=False`` and returns immediately.  :class:`SchedulerState` uses
+        a ``threading.Lock`` so concurrent ``record_run`` calls are safe.
 
         Args:
             now: Reference UTC timestamp for due-checks.  Defaults to
@@ -268,16 +284,44 @@ class TaskScheduler:
         for job in self._config_jobs:
             if not is_due(job, self._state.last_run(job.name), now):
                 continue
-            with self._job_runner.lock(job) as got:
-                if not got:
-                    logger.debug("job '%s' still running — skip", job.name)
-                    continue
-                result = self._job_runner.run(job)
-                self._state.record_run(
-                    job.name, now=now, ok=result.ok, error=result.error
-                )
-                if not result.ok:
-                    logger.warning("job '%s' failed: %s", job.name, result.error)
+            threading.Thread(
+                target=self._run_config_job,
+                args=(job, now),
+                name=f"skjob-{job.name}",
+                daemon=True,
+            ).start()
+
+    def _run_config_job(self, job: "JobSpec", fire_time: datetime) -> None:
+        """Run a single config job in its own thread: lock, execute, record.
+
+        This method is the body of the per-job daemon thread spawned by
+        :meth:`tick_config_jobs`.  It acquires the per-job overlap lock,
+        runs the job via the configured :class:`~skcapstone.scheduler_runner.JobRunner`,
+        then records the result via
+        :class:`~skcapstone.scheduler_state.SchedulerState`.
+
+        If the lock cannot be obtained the method returns immediately without
+        running or recording — this is the safe path when the previous run is
+        still in progress (which can happen if a job's execution time exceeds
+        one tick interval).
+
+        Args:
+            job: The :class:`~skcapstone.scheduler_jobs.JobSpec` to execute.
+            fire_time: The UTC timestamp at which this job was determined to be
+                due (propagated to :meth:`~skcapstone.scheduler_state.SchedulerState.record_run`
+                so state timestamps reflect the scheduled fire time rather than
+                the wall-clock time of completion).
+        """
+        with self._job_runner.lock(job) as got:
+            if not got:
+                logger.debug("job '%s' still running — skip", job.name)
+                return
+            result = self._job_runner.run(job)
+            self._state.record_run(
+                job.name, now=fire_time, ok=result.ok, error=result.error
+            )
+            if not result.ok:
+                logger.warning("job '%s' failed: %s", job.name, result.error)
 
     # ------------------------------------------------------------------
     # Internal

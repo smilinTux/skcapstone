@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,7 @@ class SchedulerState:
         """
         self.state_file: Path = Path(root) / "scheduler" / hostname / "state.json"
         self._data: dict[str, dict] = {}
+        self._write_lock = threading.Lock()
         if self.state_file.exists():
             try:
                 self._data = json.loads(
@@ -118,14 +120,15 @@ class SchedulerState:
                 ``True``; stored as ``last_error`` otherwise.
         """
         ts: datetime = now or datetime.now(timezone.utc)
-        rec: dict = self.get(job)
-        rec["last_run"] = ts.isoformat()
-        rec["last_status"] = "ok" if ok else "error"
-        rec["last_error"] = "" if ok else error
-        rec["run_count"] = rec.get("run_count", 0) + (1 if ok else 0)
-        rec["error_count"] = rec.get("error_count", 0) + (0 if ok else 1)
-        self._data[job] = rec
-        self._flush()
+        with self._write_lock:
+            rec: dict = self.get(job)
+            rec["last_run"] = ts.isoformat()
+            rec["last_status"] = "ok" if ok else "error"
+            rec["last_error"] = "" if ok else error
+            rec["run_count"] = rec.get("run_count", 0) + (1 if ok else 0)
+            rec["error_count"] = rec.get("error_count", 0) + (0 if ok else 1)
+            self._data[job] = rec
+            self._flush()
 
     def all(self) -> dict[str, dict]:
         """Return a shallow copy of all job state records.
