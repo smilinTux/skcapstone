@@ -177,10 +177,10 @@ gtd-inbox-triage:
   enabled: true
 ```
 
-## Open questions for spec review
+## Resolved decisions (post-review)
 
-- Cron parsing: add `croniter` as a dependency (recommended) vs. a minimal
-  in-tree parser?
-- Should `scheduler status` optionally aggregate across nodes (read peers'
-  node-local state via the synced tree, read-only) for a fleet view — or stay
-  strictly per-node for v1? (Leaning per-node for v1.)
+- **Cron parsing:** use `croniter` as a dependency (battle-tested; avoids a
+  hand-rolled parser in a fleet-synced package).
+- **`scheduler status` scope:** strictly per-node for v1. A read-only aggregate
+  fleet view (reading peers' node-local state via the synced tree) is deferred
+  to a later iteration.
