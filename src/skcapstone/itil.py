@@ -172,6 +172,7 @@ class Problem(BaseModel):
     related_incident_ids: list[str] = Field(default_factory=list)
     related_change_id: Optional[str] = None
     kedb_id: Optional[str] = None
+    gtd_item_ids: list[str] = Field(default_factory=list)
     timeline: list[dict[str, Any]] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
 
@@ -507,7 +508,12 @@ class ITILManager:
         })
 
         # Auto-create GTD project
-        self._create_gtd_project_for_problem(problem)
+        gtd_id = self._create_gtd_project_for_problem(problem)
+        if gtd_id:
+            problem.gtd_item_ids.append(gtd_id)
+            self._update_record(
+                self.problems_dir, problem.id, problem.title, problem.model_dump()
+            )
 
         return problem
 
@@ -537,6 +543,9 @@ class ITILManager:
             prb.timeline.append(
                 _make_timeline_entry(agent, f"status:{current}->{new_status}", note)
             )
+
+            if new_status == ProblemStatus.RESOLVED.value:
+                self._complete_gtd_items(prb.gtd_item_ids)
 
         if root_cause:
             prb.root_cause = root_cause
