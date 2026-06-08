@@ -89,7 +89,7 @@ def register_scheduler_commands(main: click.Group) -> None:
     @scheduler.command("run")
     @click.argument("job_name")
     def run_now(job_name: str) -> None:
-        """Run a job now (respects node affinity)."""
+        """Run a job now on this node (manual override; ignores schedule and affinity)."""
         jobs = {j.name: j for j in load_jobs(_jobs_path())}
         job = jobs.get(job_name)
         if not job:

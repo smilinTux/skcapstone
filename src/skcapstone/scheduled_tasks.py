@@ -291,7 +291,7 @@ class TaskScheduler:
                 daemon=True,
             ).start()
 
-    def _run_config_job(self, job: "JobSpec", fire_time: datetime) -> None:
+    def _run_config_job(self, job: JobSpec, fire_time: datetime) -> None:
         """Run a single config job in its own thread: lock, execute, record.
 
         This method is the body of the per-job daemon thread spawned by
