@@ -23,7 +23,7 @@ import logging
 import os
 import shlex
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator
@@ -123,6 +123,11 @@ class JobRunner:
             os.close(fd)
             yield True
         finally:
+            # NOTE: if the process is SIGKILL'd or the host crashes, this unlink
+            # never runs and the lockfile blocks the job until removed. The PID
+            # written above is the hook for a future staleness check (compare to
+            # /proc/<pid> and unlink if the process is gone); v1 relies on
+            # operators clearing stale locks on restart.
             with contextlib.suppress(OSError):
                 lock_path.unlink()
 
