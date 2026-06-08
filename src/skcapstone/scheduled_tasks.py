@@ -26,6 +26,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
+from .scheduler_jobs import JobSpec, is_due, job_runs_here
+from .scheduler_runner import JobRunner
+from .scheduler_state import SchedulerState
+
 logger = logging.getLogger("skcapstone.scheduled_tasks")
 
 
@@ -131,6 +135,10 @@ class TaskScheduler:
         self._tasks: list[ScheduledTask] = []
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
+        self._config_jobs: list[JobSpec] = []
+        self._host_aliases: set[str] = set()
+        self._state: Optional[SchedulerState] = None
+        self._job_runner: Optional[JobRunner] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -199,6 +207,78 @@ class TaskScheduler:
                 for t in self._tasks
             ]
 
+    def load_config_jobs(
+        self,
+        jobs: list[JobSpec],
+        hostname: str,
+        host_aliases: set[str],
+        state_root: Path,
+    ) -> None:
+        """Load config-driven jobs and initialise per-host execution state.
+
+        Filters *jobs* to only those that are enabled and whose node affinity
+        matches *host_aliases*.  Initialises a :class:`SchedulerState` for
+        tracking run history and a :class:`JobRunner` for dispatching jobs.
+
+        Args:
+            jobs: Full list of :class:`~skcapstone.scheduler_jobs.JobSpec`
+                instances as returned by
+                :func:`~skcapstone.scheduler_jobs.load_jobs`.
+            hostname: The current host's primary identifier (typically
+                ``socket.gethostname()``), used as the state sub-directory.
+            host_aliases: Full set of aliases for the current host, used for
+                node-affinity matching via
+                :func:`~skcapstone.scheduler_jobs.job_runs_here`.
+            state_root: Root directory under which per-host scheduler state
+                (``scheduler/<hostname>/state.json``) and log files are stored.
+        """
+        self._host_aliases = host_aliases
+        self._state = SchedulerState(root=state_root, hostname=hostname)
+        self._job_runner = JobRunner(
+            log_dir=state_root / "scheduler" / hostname / "logs"
+        )
+        self._config_jobs = [
+            j for j in jobs if j.enabled and job_runs_here(j, host_aliases)
+        ]
+        logger.info(
+            "Loaded %d config job(s) for host %s",
+            len(self._config_jobs),
+            hostname,
+        )
+
+    def tick_config_jobs(self, now: Optional[datetime] = None) -> None:
+        """Fire any config-driven jobs that are due at *now*.
+
+        Skips silently when no config jobs are loaded or state/runner are not
+        initialised (i.e. :meth:`load_config_jobs` has not been called).
+
+        For each due job an overlap lock is acquired via
+        :meth:`~skcapstone.scheduler_runner.JobRunner.lock`.  If the lock
+        cannot be obtained the job is skipped for this tick.  The run result
+        is recorded via
+        :meth:`~skcapstone.scheduler_state.SchedulerState.record_run`.
+
+        Args:
+            now: Reference UTC timestamp for due-checks.  Defaults to
+                ``datetime.now(timezone.utc)`` when not provided.
+        """
+        if not self._config_jobs or self._state is None or self._job_runner is None:
+            return
+        now = now or datetime.now(timezone.utc)
+        for job in self._config_jobs:
+            if not is_due(job, self._state.last_run(job.name), now):
+                continue
+            with self._job_runner.lock(job) as got:
+                if not got:
+                    logger.debug("job '%s' still running — skip", job.name)
+                    continue
+                result = self._job_runner.run(job)
+                self._state.record_run(
+                    job.name, now=now, ok=result.ok, error=result.error
+                )
+                if not result.ok:
+                    logger.warning("job '%s' failed: %s", job.name, result.error)
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -213,6 +293,8 @@ class TaskScheduler:
             for task in tasks_snapshot:
                 if task.is_due(now):
                     task.run()
+
+            self.tick_config_jobs(now)
 
             self._stop_event.wait(timeout=self._tick_interval)
 
@@ -575,5 +657,17 @@ def build_scheduler(
         )
     except Exception:
         logger.debug("ITIL scheduled tasks not available — skipped")
+
+    from .scheduler_jobs import load_jobs, current_host_aliases
+    import socket
+    jobs_path = Path(home) / "config" / "jobs.yaml"
+    jobs = load_jobs(jobs_path)
+    if jobs:
+        scheduler.load_config_jobs(
+            jobs=jobs,
+            hostname=socket.gethostname(),
+            host_aliases=current_host_aliases(),
+            state_root=Path(home),
+        )
 
     return scheduler
