@@ -93,6 +93,7 @@ from .service_cmd import register_service_commands
 from .telegram import register_telegram_commands
 from .joule_cmd import register_joule_commands
 from .alerts import register_alerts_commands
+from .scheduler_cmd import register_scheduler_commands
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -148,3 +149,4 @@ register_service_commands(main)
 register_telegram_commands(main)
 register_joule_commands(main)
 register_alerts_commands(main)
+register_scheduler_commands(main)
