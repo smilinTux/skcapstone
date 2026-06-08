@@ -20,8 +20,10 @@ Typical usage::
 from __future__ import annotations
 
 import os
+import re
 import socket
-from dataclasses import dataclass, field
+import warnings
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Union
@@ -30,6 +32,10 @@ from typing import Optional, Union
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+_DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*$")
+_UNIT_SECONDS: dict[str, float] = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+
 
 def _parse_duration(value: Union[str, int, float]) -> float:
     """Convert a human-readable duration string or plain number to seconds.
@@ -42,7 +48,8 @@ def _parse_duration(value: Union[str, int, float]) -> float:
         Duration in seconds as a float.
 
     Raises:
-        ValueError: If the string suffix is unrecognised.
+        ValueError: If the string is unparseable, contains a negative value,
+            or has an unrecognised suffix.
 
     Examples:
         >>> _parse_duration("300s")
@@ -53,18 +60,13 @@ def _parse_duration(value: Union[str, int, float]) -> float:
         600.0
     """
     if isinstance(value, (int, float)):
+        if value < 0:
+            raise ValueError(f"duration must be non-negative, got {value!r}")
         return float(value)
-    s = str(value).strip()
-    if s.endswith("d"):
-        return float(s[:-1]) * 86400
-    if s.endswith("h"):
-        return float(s[:-1]) * 3600
-    if s.endswith("m"):
-        return float(s[:-1]) * 60
-    if s.endswith("s"):
-        return float(s[:-1])
-    # Plain numeric string (no suffix)
-    return float(s)
+    m = _DURATION_RE.match(str(value))
+    if not m:
+        raise ValueError(f"invalid duration: {value!r}")
+    return float(m.group(1)) * _UNIT_SECONDS[m.group(2)]
 
 
 # ---------------------------------------------------------------------------
@@ -132,8 +134,24 @@ def load_jobs(config_path: Path) -> list[JobSpec]:
     jobs_raw: dict = (data or {}).get("jobs") or {}
     result: list[JobSpec] = []
 
+    _KNOWN_KEYS = {
+        "type", "schedule", "every", "nodes", "agent", "prompt",
+        "command", "callback", "timeout", "enabled",
+    }
+
     for name, raw in jobs_raw.items():
         raw = dict(raw or {})
+
+        # Warn on unrecognised keys before consuming 'every'
+        unknown = set(raw.keys()) - _KNOWN_KEYS
+        if unknown:
+            warnings.warn(
+                f"Job {name!r} has unrecognised key(s): {sorted(unknown)}. "
+                "Typo in config? Job may not behave as expected.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Convert 'every' → 'every_seconds'
         every_raw = raw.pop("every", None)
         every_seconds: Optional[float] = None
@@ -279,8 +297,9 @@ def current_host_aliases() -> set[str]:
 
     Example::
 
+        # With SK_NODE_ALIAS=".41" set in the environment:
         aliases = current_host_aliases()
-        # e.g. {'cbrd21-laptop12thgenintelcore', '.41'}
+        # e.g. {'my-host', '.41'}   — hostname + SK_NODE_ALIAS token
     """
     aliases: set[str] = {socket.gethostname()}
     env_alias = os.environ.get("SK_NODE_ALIAS", "")

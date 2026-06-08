@@ -11,9 +11,12 @@ Each group corresponds to one implementation commit:
 # ---------------------------------------------------------------------------
 # Group A — JobSpec + load_jobs
 # ---------------------------------------------------------------------------
+import warnings
 from pathlib import Path
 
-from skcapstone.scheduler_jobs import JobSpec, load_jobs
+import pytest
+
+from skcapstone.scheduler_jobs import JobSpec, _parse_duration, is_due, load_jobs
 
 
 def test_load_jobs_parses_yaml(tmp_path: Path):
@@ -105,3 +108,48 @@ def test_current_host_aliases_includes_env_alias(monkeypatch):
     monkeypatch.setenv("SK_NODE_ALIAS", ".41, noroc-test")
     a = current_host_aliases()
     assert ".41" in a and "noroc-test" in a
+
+
+# ---------------------------------------------------------------------------
+# _parse_duration — validation (fix 2)
+# ---------------------------------------------------------------------------
+
+def test_parse_duration_rejects_negative():
+    with pytest.raises(ValueError):
+        _parse_duration("-5m")
+
+
+def test_parse_duration_rejects_garbage():
+    with pytest.raises(ValueError):
+        _parse_duration("abc")
+
+
+def test_parse_duration_valid_units():
+    assert _parse_duration("300s") == 300.0
+    assert _parse_duration("5m") == 300.0
+    assert _parse_duration("1h") == 3600.0
+    assert _parse_duration("1d") == 86400.0
+    assert _parse_duration(90) == 90.0
+
+
+# ---------------------------------------------------------------------------
+# load_jobs — warn on unknown keys (fix 3)
+# ---------------------------------------------------------------------------
+
+def test_load_jobs_warns_on_unknown_key(tmp_path):
+    cfg = tmp_path / "jobs.yaml"
+    cfg.write_text(
+        "jobs:\n  bad:\n    shcedule: '0 6 * * *'\n    type: shell\n",
+        encoding="utf-8",
+    )
+    with pytest.warns(UserWarning):
+        load_jobs(cfg)
+
+
+# ---------------------------------------------------------------------------
+# is_due — no-schedule never fires (fix 4)
+# ---------------------------------------------------------------------------
+
+def test_is_due_no_schedule_never_fires():
+    j = JobSpec(name="x")
+    assert not is_due(j, last_run=None)
