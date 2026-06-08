@@ -1,0 +1,31 @@
+# Reference for ~/.skcapstone/config/jobs.yaml — the skscheduler registry.
+#
+# This file is Syncthing-synced across the fleet. Each node runs its own
+# scheduler (inside the skcapstone daemon) and fires ONLY the jobs whose
+# `nodes` affinity includes that host. Scheduler run-state is node-local and
+# never synced (see ~/.skcapstone/.stignore -> `scheduler`).
+#
+# Job fields:
+#   schedule: "<cron>"   OR   every: <30s|5m|1h|1d|seconds>   (one of the two)
+#   type:    agent | shell | python
+#   nodes:   all | [<host alias>, ...]      (alias via SK_NODE_ALIAS env)
+#   agent:   <name>      (agent type) — runs `claude -p "<prompt>" --agent <name>`
+#   prompt:  "<text>"    (agent type)
+#   command: "<cmd>"     (shell type)
+#   callback: module:fn  (python type)
+#   timeout: <seconds>   (default 900)
+#   enabled: true|false
+
+jobs:
+  gtd-inbox-triage:
+    schedule: "0 6 * * *"      # daily 06:00
+    type: agent
+    nodes: [".41"]
+    agent: lumina
+    prompt: >
+      Triage the GTD inbox: for each item, clarify into next-action /
+      project / someday-maybe, or archive noise; move resolved-ITIL items
+      to done; surface stale projects. Use the gtd_* and itil_* MCP tools.
+      Keep it concise.
+    timeout: 900
+    enabled: true
