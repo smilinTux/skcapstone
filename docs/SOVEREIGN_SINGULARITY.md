@@ -170,15 +170,21 @@ Syncthing shares the **entire agent home** — every pillar syncs in real-time.
 
 ```
 ~/.skcapstone/                    ← Syncthing share root
-├── .stignore                     # Protects private keys from syncing
+├── .stignore                     # Per-device ignore rules (see table above)
 ├── manifest.json                 # Agent manifest
 ├── identity/                     # Pillar: Identity (CapAuth)
 │   ├── identity.json
 │   └── agent.pub                 # Public key (syncs to all nodes)
 ├── memory/                       # Pillar: Memory (SKMemory)
-│   ├── short-term/
-│   ├── mid-term/
-│   └── long-term/
+│   ├── short-term/               # UUID-named files — sync cleanly
+│   ├── mid-term/                 # UUID-named files — sync cleanly
+│   ├── long-term/                # UUID-named files — sync cleanly
+│   └── promotion-log.json        # ⛔ .stignore — per-host, written hourly
+├── heartbeats/                   # ⛔ .stignore — per-host operational
+├── metrics/
+│   └── daily/                    # ⛔ .stignore — per-host aggregation
+├── logs/
+│   └── daemon.log                # ⛔ .stignore — local runtime output
 ├── trust/                        # Pillar: Trust (Cloud 9)
 │   ├── trust.json
 │   └── febs/                     # Feeling Energy Bundles
@@ -192,6 +198,7 @@ Syncthing shares the **entire agent home** — every pillar syncs in real-time.
 ├── sync/                         # Seed push/pull protocol
 │   ├── sync-manifest.json
 │   ├── sync-state.json
+│   ├── heartbeats/               # ✅ v2 heartbeats: {node_id}.json (host-unique)
 │   ├── outbox/                   # Seeds TO SEND
 │   ├── inbox/                    # Seeds RECEIVED from peers
 │   └── archive/                  # Processed seeds (audit trail)
@@ -249,7 +256,29 @@ The `skcapstone-sync` shared folder shares the entire agent home:
 ```
 
 A `.stignore` file at `~/.skcapstone/.stignore` prevents private keys
-from syncing to other nodes (`*.key`, `*.pem`).
+from syncing to other nodes and excludes per-host operational files that
+would cause merge conflicts.
+
+**Important:** `.stignore` is per-device — Syncthing does NOT sync it
+between nodes. Each node needs its own copy. The canonical content is
+defined in `skcapstone/skills/syncthing_setup.py:STIGNORE_CONTENTS` and
+written by `skcapstone init` / `full_setup()`.
+
+#### .stignore — What's Excluded and Why
+
+| Pattern | Reason |
+|---------|--------|
+| `*.key`, `*.pem`, `**/private.*` | Private key material must never leave the node |
+| `daemon.pid` | Runtime PID file, local only |
+| `memory/promotion-log.json` | Written hourly by `PromotionEngine.sweep()` on every host independently — same filename, different content = conflict |
+| `/heartbeats` | v1 heartbeats (root-level) written every 60s per-host. Use skcomm v2 `heartbeat publish --node-id` which writes to `sync/heartbeats/` with host-unique filenames (syncs cleanly) |
+| `metrics/daily/` | Daily metrics aggregated independently per-host |
+| `logs/daemon.log` | Local daemon output |
+
+**Design rule:** Files with **unique IDs** (UUID-named memory files, seeds)
+sync cleanly. **Singleton mutable files** written by processes on multiple
+hosts will always conflict — either exclude them from sync or make the
+filename host-unique (e.g. `{agent}-{hostname}.json`).
 
 **Upgrade note:** If you previously had Syncthing pointed at `~/.skcapstone/sync/`,
 running `skcapstone init` or `full_setup()` will automatically upgrade the share

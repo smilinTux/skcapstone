@@ -23,12 +23,16 @@ SYNC_DIR = AGENT_HOME / "sync"
 SHARED_FOLDER_ID = "skcapstone-sync"
 
 # Reason: .stignore protects private keys from leaving this node
+# and prevents conflicts on per-host operational files
 STIGNORE_CONTENTS = """\
 // SKCapstone Sovereign Singularity — Syncthing ignore rules
 // Private key material must never leave this node
 *.key
 *.pem
 **/private.*
+
+// Python venv (platform-specific)
+venv
 
 // Python cache
 __pycache__
@@ -39,6 +43,28 @@ __pycache__
 .DS_Store
 Thumbs.db
 desktop.ini
+
+// Runtime files
+daemon.pid
+
+// Per-host operational files — written independently on each node,
+// NOT unique-ID-named, so Syncthing cannot merge them without conflicts.
+// Memory data (UUID-named files) syncs fine; these are metadata/telemetry.
+memory/promotion-log.json
+/heartbeats
+metrics/daily
+logs/daemon.log
+
+// Local-only dirs (not synced)
+sessions
+conversations
+backups
+prompt_versions
+deployments
+connectors
+pubsub
+file-transfer
+souls
 """
 
 # Reason: Syncthing stores its config in different locations per platform

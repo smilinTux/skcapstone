@@ -4,7 +4,7 @@ Housekeeping — storage pruning for the sovereign agent.
 Prunes stale files that accumulate in the agent profile:
 - ACK files in ~/.skcomm/acks/ (age-based, 24h default)
 - Delivered envelopes in ~/.skcapstone/sync/comms/outbox/ (age-based, 48h)
-- Seed snapshots in ~/.skcapstone/sync/sync/outbox/ (count-based, keep 10)
+- Seed snapshots in ~/.skcapstone/sync/outbox/ (count-based, keep 10)
 
 These directories grow unbounded and can bloat a ~15MB profile to 300MB+.
 Run via daemon loop (hourly) or CLI: ``skcapstone housekeeping [--dry-run]``.
@@ -114,7 +114,7 @@ def prune_seeds(
 ) -> int:
     """Keep only the most recent seeds per agent, delete the rest.
 
-    Seed files in ~/.skcapstone/sync/sync/outbox/ are named like
+    Seed files in ~/.skcapstone/sync/outbox/ are named like
     ``<agent>-<timestamp>.json.gpg`` or ``<agent>-<timestamp>.json``.
     A new seed is pushed every 5 minutes by the daemon, so they
     accumulate quickly.
@@ -189,7 +189,7 @@ def run_housekeeping(
     targets = {
         "acks": skcomm_home / "acks",
         "comms_outbox": skcapstone_home / "sync" / "comms" / "outbox",
-        "seed_outbox": skcapstone_home / "sync" / "sync" / "outbox",
+        "seed_outbox": skcapstone_home / "sync" / "outbox",
     }
 
     for key, path in targets.items():

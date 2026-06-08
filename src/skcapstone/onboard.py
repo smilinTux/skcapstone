@@ -119,18 +119,18 @@ def _step_identity(home_path: Path, name: str, email: str | None) -> tuple[str, 
 
         skeleton_dirs = [
             # Shared root directories
-            home_path / "heartbeats",
+            home_path / "heartbeats",       # ⛔ .stignore (per-host, use sync/heartbeats/ for v2)
             home_path / "peers",
             home_path / "coordination" / "tasks",
             home_path / "coordination" / "agents",
-            home_path / "logs",
+            home_path / "logs",             # ⛔ .stignore (per-host runtime logs)
             home_path / "comms" / "inbox",
             home_path / "comms" / "outbox",
             home_path / "comms" / "archive",
             home_path / "archive",
             home_path / "deployments",
             home_path / "docs",
-            home_path / "metrics",
+            home_path / "metrics",          # metrics/daily/ ⛔ .stignore (per-host)
             # Per-agent directories
             agent_dir / "memory" / "short-term",
             agent_dir / "memory" / "mid-term",
@@ -366,6 +366,10 @@ def _step_heartbeat(home_path: Path, agent_name: str, fingerprint: str) -> bool:
                 f"platform=[cyan]{hb.platform}[/]"
             )
             _info(f"Heartbeat file: {home_path}/heartbeats/{agent_name}.json")
+            _info(
+                "Note: heartbeats/ is .stignore'd (per-host). "
+                "Use skcomm heartbeat publish --node-id for cross-node sync."
+            )
             return True
         except Exception as exc:
             s.stop()
