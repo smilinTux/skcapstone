@@ -14,6 +14,13 @@ from pathlib import Path
 __version__ = "0.6.8"
 __author__ = "smilinTux"
 
+# Canonical default agent for the entire SK* suite. This is THE single source
+# of truth for the fallback agent name — used by Python paths directly and
+# propagated to the shell picker + child processes via `skcapstone shell-init`
+# (which emits `export SK_DEFAULT_AGENT=<this>`). Override with the
+# SK_DEFAULT_AGENT environment variable.
+DEFAULT_AGENT = (os.environ.get("SK_DEFAULT_AGENT") or "lumina").strip() or "lumina"
+
 
 def _default_home() -> str:
     """Platform-aware default home for skcapstone."""
@@ -29,8 +36,9 @@ def _detect_active_agent(root: str | None = None) -> str | None:
     """Best-effort active agent discovery.
 
     Resolution order:
-    1. Explicit SKCAPSTONE_AGENT environment variable
-    2. First non-template directory under ~/.skcapstone/agents
+    1. Explicit SKAGENT / SKCAPSTONE_AGENT environment variable
+    2. SK_DEFAULT_AGENT (defaults to "lumina") if that agent dir exists
+    3. First non-template directory under ~/.skcapstone/agents (alphabetical)
 
     Returns:
         The active agent name if one can be resolved, else None.
@@ -49,7 +57,9 @@ def _detect_active_agent(root: str | None = None) -> str | None:
         for entry in agents_dir.iterdir()
         if entry.is_dir() and not entry.name.endswith("-template")
     )
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    return DEFAULT_AGENT if DEFAULT_AGENT in candidates else candidates[0]
 
 
 # Root of the skcapstone tree (shared infra lives here)

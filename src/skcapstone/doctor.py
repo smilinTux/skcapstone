@@ -714,7 +714,13 @@ def _expected_mcp_servers() -> dict[str, dict]:
     Agent name and home are derived from the environment so the spec stays
     portable across agents/machines (no hardcoded identity).
     """
-    agent = os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "sovereign"
+    from . import DEFAULT_AGENT
+
+    agent = (
+        os.environ.get("SKAGENT")
+        or os.environ.get("SKCAPSTONE_AGENT")
+        or DEFAULT_AGENT
+    )
     sk_home = os.environ.get("SKCAPSTONE_HOME") or str(Path("~/.skcapstone").expanduser())
     return {
         "skmemory": {

@@ -273,9 +273,9 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
     system_info: dict = {}
     active_conversations: int = 0
     try:
-        from . import SHARED_ROOT
+        from . import SHARED_ROOT, DEFAULT_AGENT
         identity_path = home / "identity" / "identity.json"
-        agent_name = "opus"
+        agent_name = DEFAULT_AGENT
         if identity_path.exists():
             ident = json.loads(identity_path.read_text(encoding="utf-8"))
             agent_name = ident.get("name", agent_name).lower()

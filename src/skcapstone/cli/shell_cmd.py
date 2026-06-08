@@ -70,10 +70,16 @@ def register_shell_commands(main: click.Group) -> None:
         so a single `pip install skcapstone` (PyPI, editable, or via
         install.sh) is enough — no external script copy required.
         """
+        from .. import DEFAULT_AGENT
+
         path = _picker_path()
         if not path.is_file():
             click.echo(f"# skcapstone: picker missing at {path}", err=True)
             sys.exit(1)
+        # Propagate the canonical default agent (single source of truth lives
+        # in skcapstone.DEFAULT_AGENT) so the picker and every child process
+        # inherit one authoritative value without re-hardcoding it in shell.
+        click.echo(f'export SK_DEFAULT_AGENT="{DEFAULT_AGENT}"')
         click.echo(f'source "{path}"')
 
     @main.command("shell-picker-path")

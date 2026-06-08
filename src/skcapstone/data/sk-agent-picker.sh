@@ -83,7 +83,16 @@ _sk_pick_agent() {
     # Validate SKAGENT against actual agent list.
     # If it's set but not in the list (stale env), fall back to first agent.
     local env_agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
+    # Fallback default: SK_DEFAULT_AGENT (lumina) when it exists in the agent
+    # list, otherwise the first agent alphabetically.
+    local sk_default="${SK_DEFAULT_AGENT:-lumina}"
     local default="${agents[0]}"
+    for agent in "${agents[@]}"; do
+        if [[ "$agent" == "$sk_default" ]]; then
+            default="$sk_default"
+            break
+        fi
+    done
     local env_match=0
     for agent in "${agents[@]}"; do
         if [[ "$agent" == "$env_agent" ]]; then
@@ -285,7 +294,13 @@ _sk_launch() {
         if [[ -z "$agent" ]]; then
             local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
             if [[ -d "$agents_dir" ]]; then
-                agent=$(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '%f\n' | sort | head -1)
+                # Prefer SK_DEFAULT_AGENT (lumina) if present, else first alphabetically.
+                local _skd="${SK_DEFAULT_AGENT:-lumina}"
+                if [[ -d "$agents_dir/$_skd" ]]; then
+                    agent="$_skd"
+                else
+                    agent=$(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '%f\n' | sort | head -1)
+                fi
             fi
         fi
     fi
