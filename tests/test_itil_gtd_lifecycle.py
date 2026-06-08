@@ -12,7 +12,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_gtd_dir(tmp_path: Path, monkeypatch):
+def _isolate_gtd_dir(tmp_path: Path, monkeypatch) -> None:
     """Redirect _shared_root() so GTD files land in tmp_path, not ~/.skcapstone."""
     import skcapstone.mcp_tools._helpers as _helpers
 

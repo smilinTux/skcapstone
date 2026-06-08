@@ -1071,7 +1071,7 @@ class ITILManager:
             return None
 
     def _complete_gtd_items(self, gtd_item_ids: list[str]) -> None:
-        """Mark linked GTD items as done when an incident is resolved."""
+        """Mark linked GTD items as done when the owning ITIL record resolves."""
         try:
             from .mcp_tools.gtd_tools import (
                 _find_item_across_lists,
