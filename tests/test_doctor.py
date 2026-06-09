@@ -26,6 +26,7 @@ from skcapstone.doctor import (
     _check_codex,
     _check_agent_home,
     _check_harness_env,
+    _check_yolo,
     _check_identity,
     _check_memory,
     _check_packages,
@@ -427,6 +428,54 @@ class TestCheckHarnessEnv:
         by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
         assert by["harness:hook:sessionstart"].passed is True
 
+    def test_non_binary_hook_under_skcapstone_repos_ignored(self, tmp_path, monkeypatch):
+        """A hook script whose PATH merely contains 'skcapstone' (e.g. one under
+        skcapstone-repos/) must NOT be treated as a stale skcapstone binary."""
+        live = tmp_path / "skenv" / "skcapstone"
+        live.parent.mkdir(); live.write_text("#live")
+        # A real-world false-positive: a skmemory hook living under a
+        # skcapstone-repos/ checkout — its basename is NOT 'skcapstone'.
+        script = tmp_path / "skcapstone-repos" / "skmemory" / "hooks" / "sk-activity-inject.sh"
+        script.parent.mkdir(parents=True); script.write_text("#!/bin/sh\n")
+        cc = _write_claude_config(
+            tmp_path,
+            claude_json={"mcpServers": {}},
+            settings={"hooks": {"SessionStart": [{"hooks": [
+                {"type": "command", "command": str(script)}]}]}},
+        )
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
+        monkeypatch.setattr("skcapstone.doctor.shutil.which",
+                            lambda name: str(live) if name == "skcapstone" else None)
+        by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
+        # No skcapstone-binary hook present → the check emits no sessionstart result.
+        assert "harness:hook:sessionstart" not in by
+
+    def test_fix_does_not_rewrite_non_binary_hook(self, tmp_path, monkeypatch):
+        """run_fixes must not destructively rewrite a non-binary hook whose path
+        merely contains 'skcapstone'."""
+        live = tmp_path / "skenv" / "skcapstone"
+        live.parent.mkdir(); live.write_text("#live")
+        script = tmp_path / "skcapstone-repos" / "hooks" / "inject.sh"
+        script.parent.mkdir(parents=True); script.write_text("#!/bin/sh\n")
+        cc = _write_claude_config(
+            tmp_path,
+            claude_json={"mcpServers": {}},
+            settings={"hooks": {"SessionStart": [{"hooks": [
+                {"type": "command", "command": str(script)}]}]}},
+        )
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
+        monkeypatch.setattr("skcapstone.doctor.shutil.which",
+                            lambda name: str(live) if name == "skcapstone" else None)
+        report = DiagnosticReport()
+        report.checks.append(Check(name="harness:hook:sessionstart",
+                                   description="x", passed=False, category="harness"))
+        run_fixes(report, tmp_path / ".skcapstone")
+        # The script path must be left untouched (not rewritten to the binary).
+        updated = json.loads((cc / "settings.json").read_text())
+        assert updated["hooks"]["SessionStart"][0]["hooks"][0]["command"] == str(script)
+
     def test_fix_repoints_stale_hook(self, tmp_path, monkeypatch):
         """run_fixes rewrites a stale SessionStart hook to the live binary."""
         live = tmp_path / "skenv" / "skcapstone"
@@ -449,3 +498,53 @@ class TestCheckHarnessEnv:
         updated = json.loads((cc / "settings.json").read_text())
         new_cmd = updated["hooks"]["SessionStart"][0]["hooks"][0]["command"]
         assert new_cmd.split()[0] == str(live)
+
+
+class TestCheckYolo:
+    """Permission-bypass (SK_*_YOLO) wiring checks."""
+
+    @staticmethod
+    def _by_name(checks):
+        return {c.name: c for c in checks}
+
+    def _clean_env(self, monkeypatch, tmp_path):
+        """Point HOME at tmp_path and clear all YOLO vars."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        for var in ("SK_CLAUDE_YOLO", "SK_CODEX_YOLO", "SK_OPENCODE_YOLO"):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_default_off_reports_safe(self, tmp_path, monkeypatch):
+        """No env var and no rc persistence → single safe-default summary."""
+        self._clean_env(monkeypatch, tmp_path)
+        checks = _check_yolo()
+        assert len(checks) == 1
+        assert checks[0].name == "harness:yolo"
+        assert checks[0].passed is True
+        assert "disabled" in checks[0].detail
+
+    def test_enabled_globally_passes(self, tmp_path, monkeypatch):
+        """Env set AND persisted in ~/.bashrc → ENABLED, passing."""
+        self._clean_env(monkeypatch, tmp_path)
+        (tmp_path / ".bashrc").write_text("export SK_CLAUDE_YOLO=1\n")
+        monkeypatch.setenv("SK_CLAUDE_YOLO", "1")
+        by = self._by_name(_check_yolo())
+        assert by["harness:yolo:claude"].passed is True
+        assert "ENABLED" in by["harness:yolo:claude"].detail
+
+    def test_active_but_not_persisted_warns(self, tmp_path, monkeypatch):
+        """Env set but no rc persistence → warns with a fix hint."""
+        self._clean_env(monkeypatch, tmp_path)
+        (tmp_path / ".bashrc").write_text("# nothing here\n")
+        monkeypatch.setenv("SK_CLAUDE_YOLO", "1")
+        by = self._by_name(_check_yolo())
+        assert by["harness:yolo:claude"].passed is False
+        assert "NOT persisted" in by["harness:yolo:claude"].detail
+        assert "export SK_CLAUDE_YOLO=1" in by["harness:yolo:claude"].fix
+
+    def test_persisted_not_in_env_passes(self, tmp_path, monkeypatch):
+        """Persisted in rc but not yet in env (fresh shell) → informational pass."""
+        self._clean_env(monkeypatch, tmp_path)
+        (tmp_path / ".bashrc").write_text("export SK_CODEX_YOLO=1\n")
+        by = self._by_name(_check_yolo())
+        assert by["harness:yolo:codex"].passed is True
+        assert "re-source" in by["harness:yolo:codex"].detail

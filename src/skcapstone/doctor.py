@@ -891,6 +891,28 @@ def _dead_config_mcp_servers() -> set[str]:
     return names
 
 
+def _is_skcapstone_binary_cmd(command: str) -> bool:
+    """True only when a hook command's *executable* is the skcapstone binary.
+
+    The SessionStart-hook check must not match on a bare ``"skcapstone" in
+    command`` substring: that false-positives on a hook script living under a
+    ``skcapstone-repos/`` path (e.g. skmemory's ``sk-activity-inject.sh``) and
+    on the sibling ``skcapstone-mcp`` binary — neither of which is the
+    ``skcapstone`` CLI. Matching the first token's basename is precise.
+
+    Args:
+        command: The full hook command string.
+
+    Returns:
+        True iff the command's first whitespace-delimited token is the
+        ``skcapstone`` executable (by basename).
+    """
+    parts = command.strip().split()
+    if not parts:
+        return False
+    return Path(parts[0]).name == "skcapstone"
+
+
 def _check_harness_env(home: Path) -> list[Check]:
     """Validate the AI-harness (Claude Code) environment configuration.
 
@@ -962,7 +984,7 @@ def _check_harness_env(home: Path) -> list[Check]:
         h.get("command", "")
         for entry in (settings.get("hooks", {}).get("SessionStart") or [])
         for h in (entry.get("hooks") or [])
-        if "skcapstone" in h.get("command", "")
+        if _is_skcapstone_binary_cmd(h.get("command", ""))
     ]
     if hook_cmds:
         live = shutil.which("skcapstone")
@@ -1012,6 +1034,8 @@ def _check_harness_env(home: Path) -> list[Check]:
                 category="harness",
             ))
 
+    checks.extend(_check_yolo())
+
     # skwhisper CLI shim — only required when this agent uses the whisper layer.
     if (home / "skwhisper").exists():
         wpath = shutil.which("skwhisper")
@@ -1026,6 +1050,93 @@ def _check_harness_env(home: Path) -> list[Check]:
                 else "Add a shim on PATH that runs `python -m skwhisper` "
                 "with the skwhisper repo on PYTHONPATH"
             ),
+            category="harness",
+        ))
+
+    return checks
+
+
+def _check_yolo() -> list[Check]:
+    """Report the permission-bypass (YOLO) wiring for the AI harness wrappers.
+
+    The picker's ``claude``/``codex``/``opencode`` wrapper functions append a
+    permission-bypass flag only when the matching ``SK_*_YOLO`` env var is ``1``
+    (see ``sk-agent-picker.sh``). This check surfaces two things that silently
+    diverge otherwise:
+
+      * whether the bypass is active in *this* environment, and
+      * whether it is persisted in a shell rc file so future shells match.
+
+    It is intentionally non-judgemental about ON vs OFF — both are valid
+    depending on the box — and only flags an *inconsistency* (active in the
+    current env but not persisted, so the next fresh shell would behave
+    differently). Detection is best-effort: ``doctor`` runs as a subprocess and
+    cannot see live shell functions, so it reads the env var and greps rc files.
+
+    Returns:
+        One Check per harness tool (claude/codex/opencode) that has YOLO active
+        in the env or persisted in an rc file; nothing for tools left at the
+        safe default, plus a single summary line when all are default-off.
+    """
+    rc_files = [
+        Path.home() / ".bashrc",
+        Path.home() / ".zshrc",
+        Path.home() / ".bash_profile",
+        Path.home() / ".profile",
+    ]
+    rc_text = ""
+    for rc in rc_files:
+        try:
+            rc_text += rc.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+    tools = [
+        ("claude", "SK_CLAUDE_YOLO", "--dangerously-skip-permissions"),
+        ("codex", "SK_CODEX_YOLO", "--dangerously-bypass-approvals-and-sandbox"),
+        ("opencode", "SK_OPENCODE_YOLO", "all-tools-allowed"),
+    ]
+
+    checks: list[Check] = []
+    any_active = False
+    for tool, var, flag in tools:
+        env_on = os.environ.get(var, "0") == "1"
+        persisted = f"export {var}=1" in rc_text or f"{var}=1" in rc_text
+        if not env_on and not persisted:
+            continue
+        any_active = True
+        if env_on and persisted:
+            checks.append(Check(
+                name=f"harness:yolo:{tool}",
+                description=f"{tool} permission bypass ({var})",
+                passed=True,
+                detail=f"ENABLED globally — adds {flag}",
+                category="harness",
+            ))
+        elif env_on and not persisted:
+            checks.append(Check(
+                name=f"harness:yolo:{tool}",
+                description=f"{tool} permission bypass ({var})",
+                passed=False,
+                detail="active in this shell but NOT persisted in any rc file",
+                fix=f"Add `export {var}=1` to ~/.bashrc to make it permanent",
+                category="harness",
+            ))
+        else:  # persisted but not in current env (stale shell / rc not sourced)
+            checks.append(Check(
+                name=f"harness:yolo:{tool}",
+                description=f"{tool} permission bypass ({var})",
+                passed=True,
+                detail="persisted in rc file (re-source the shell to activate)",
+                category="harness",
+            ))
+
+    if not any_active:
+        checks.append(Check(
+            name="harness:yolo",
+            description="AI-harness permission bypass (SK_*_YOLO)",
+            passed=True,
+            detail="disabled — wrappers run with permission prompts (safe default)",
             category="harness",
         ))
 
@@ -1274,7 +1385,10 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
                     for entry in data.get("hooks", {}).get("SessionStart", []):
                         for hook in entry.get("hooks", []):
                             cmd_str = hook.get("command", "")
-                            if "skcapstone" not in cmd_str:
+                            # Match the executable, not a substring — otherwise a
+                            # hook script under skcapstone-repos/ would have its
+                            # path destructively rewritten to the skcapstone binary.
+                            if not _is_skcapstone_binary_cmd(cmd_str):
                                 continue
                             parts = cmd_str.split()
                             if parts and parts[0] != live:

@@ -375,11 +375,22 @@ skswitch tester
 opencode
 ```
 
-YOLO mode:
+YOLO mode (per-tool permission bypass — opt-in):
 
 - `SK_CLAUDE_YOLO=1` adds `--dangerously-skip-permissions`
 - `SK_CODEX_YOLO=1` adds `--dangerously-bypass-approvals-and-sandbox`
 - `SK_OPENCODE_YOLO=1` sets `OPENCODE_PERMISSION='{"*":"allow"}'`
+
+Each var is read live by its wrapper function, so it composes the usual ways:
+
+- **Global:** `export SK_CLAUDE_YOLO=1` in `~/.bashrc` → every launch bypasses.
+- **One launch:** `SK_CLAUDE_YOLO=1 claude` → bypass just this run.
+- **Opt out once** (when global is on): `SK_CLAUDE_YOLO=0 claude`.
+
+`skcapstone doctor` reports the state under `harness:yolo:*`: it flags the
+common trap where the bypass is active in the current shell but not persisted
+to an rc file (so a fresh shell would silently behave differently). Only enable
+YOLO on a trusted, sovereign machine — it removes every permission prompt.
 
 Missing binary handling:
 

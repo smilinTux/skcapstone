@@ -199,6 +199,12 @@ That gives you:
 - `skswitch` for changing the active agent in the current shell
 - Optional global dangerous-mode flags for the three supported coding CLIs
 
+> **YOLO mode disables every permission/approval prompt.** Only enable it on a
+> trusted, sovereign box. To bypass it for a single launch without unsetting the
+> global, run `SK_CLAUDE_YOLO=0 claude`. Verify the wiring (active in the env vs.
+> persisted in an rc file) with `skcapstone doctor` — see the `harness:yolo:*`
+> checks.
+
 See [docs/CUSTOM_AGENT.md](docs/CUSTOM_AGENT.md) for launcher behavior,
 per-command overrides, and missing-binary install prompts.
 
