@@ -35,8 +35,10 @@ logger = logging.getLogger("skcapstone.service_health")
 # Default timeout per service check (seconds).
 CHECK_TIMEOUT = 3
 
-# Hostname tag for multi-machine dedup — prevents Syncthing conflicts when
-# multiple daemons write to the same ITIL incident files.
+# Hostname tag used to attribute one-time state-transition notes (e.g. a
+# service recovering) to the reporting node. Recurring "still down" notes are
+# intentionally never written — see _create_incident_for_down_service and
+# prb-7810b08e for why that churn caused Syncthing conflicts.
 _HOSTNAME = socket.gethostname()
 
 
@@ -387,19 +389,19 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
         error_info = service_result.get("error") or "unreachable"
         mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
 
-        # Dedup: skip if there's already an open incident for this service
+        # Dedup: already tracked by an open incident → do nothing.
+        # We deliberately do NOT append recurring "still down" notes. That
+        # read-modify-write churn on a Syncthing-synced incident file, from
+        # multiple nodes every health cycle, is exactly what produced the
+        # sync-conflicts and 80+-entry timelines tracked in prb-7810b08e.
+        # Outage duration is derivable from the incident's created_at; the
+        # recovery (down->up) edge is handled by _auto_resolve_recovered_service.
         existing = mgr.find_open_incident_for_service(svc_name)
         if existing:
-            # Only add a "still down" note if this host hasn't noted it recently
-            last_notes = [e.get("note", "") for e in (existing.timeline or [])[-3:]]
-            host_tag = f"[{_HOSTNAME}]"
-            if any(host_tag in n and "still down" in n for n in last_notes):
-                logger.debug("Skipping duplicate down note for %s from %s", svc_name, _HOSTNAME)
-            else:
-                mgr.update_incident(
-                    existing.id, "service_health",
-                    note=f"[{_HOSTNAME}] Service {svc_name} still down: {error_info}",
-                )
+            logger.debug(
+                "Service %s already tracked by incident %s; no note appended",
+                svc_name, existing.id,
+            )
             return
         mgr.create_incident(
             title=f"{svc_name} down",
