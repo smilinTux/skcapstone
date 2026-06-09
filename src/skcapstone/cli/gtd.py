@@ -108,9 +108,34 @@ def register_gtd_commands(main: click.Group) -> None:
         console.print()
 
     @gtd.command("status")
-    def gtd_status():
+    @click.option("--brief", is_flag=True,
+                  help="One-line summary (for hooks / session start).")
+    def gtd_status(brief: bool):
         """Summary of all GTD lists."""
         from ..mcp_tools.gtd_tools import _load_list, _GTD_LISTS
+
+        if brief:
+            from datetime import datetime, timezone
+
+            counts = {name: len(_load_list(name)) for name in _GTD_LISTS}
+            now = datetime.now(timezone.utc)
+            stale = 0
+            for p in _load_list("projects"):
+                ts = p.get("moved_at") or p.get("created_at")
+                try:
+                    if ts and (now - datetime.fromisoformat(ts)).days >= 7:
+                        stale += 1
+                except (ValueError, TypeError):
+                    pass
+            stale_str = f" ({stale} stale)" if stale else ""
+            click.echo(
+                f"GTD: {counts.get('inbox', 0)} inbox · "
+                f"{counts.get('next-actions', 0)} next · "
+                f"{counts.get('projects', 0)} projects{stale_str} · "
+                f"{counts.get('waiting-for', 0)} waiting · "
+                f"{counts.get('someday-maybe', 0)} someday"
+            )
+            return
 
         console.print()
         total = 0
