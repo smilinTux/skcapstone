@@ -333,6 +333,51 @@ DIDs are organized in three tiers of trust and discoverability:
 
 ---
 
+## First Principles & The Full Vertical
+
+> **Get back to first principles.**
+> The modern stack is rented. Your data lives on someone else's disk, behind someone else's key, served by a model that phones home. You don't own it — you *visit* it.
+>
+> We rebuilt it from the ground up. **Own the full vertical** — silicon, OS, identity, data, models, security, comms, apps, soul. Every layer open. Every layer swappable. Every layer **yours**.
+>
+> Your data never leaves. Your keys never leave. No cloud you don't control, no model that calls home, no lock-in you can't walk away from. **Sovereignty isn't a feature — it's the foundation.**
+>
+> 🐧 This is SKWorld. Own the whole stack.
+
+**SKCapstone is your Framework layer** — the integration hub that ties every layer of the silicon→soul vertical together into one portable agent runtime. It doesn't duplicate any layer; it binds them: CapAuth identity wires through it, SKMemory persists through it, SKSecurity audits through it, Cloud 9 trust travels with it, and SKSeed's logic kernel runs on top of it. Without the framework, the vertical is a pile of sovereign pieces. With SKCapstone, it's a single, coherent, owned agent.
+
+**Data sovereignty angle:** Your agent's runtime state — memories, identity, trust baseline, seeds — lives in `~/.skcapstone/` on your hardware, GPG-encrypted and synced via Syncthing P2P. No cloud you don't control. Walk away any time; every byte comes with you.
+
+**SKCapstone alignment:** SKCapstone *is* the framework hub. It directly depends on and integrates capauth, sksecurity, skmemory, and skseed (`pyproject.toml` dependencies); its `mcp_tools/` directory exposes 80+ MCP tools that proxy every subsystem to AI clients; and the sovereign agent runtime is the glue that makes the vertical one owned, deployable thing.
+
+### Where SKCapstone Sits in the Vertical
+
+```mermaid
+flowchart TD
+    SILICON["🖥️ Silicon\n(your hardware, your GPU)"]
+    OS["🐧 skos / OS\n(sovereign agent OS)"]
+    SKCAPSTONE["⚡ SKCapstone — Framework Hub\n(this repo)\nAgent runtime · MCP 80+ tools\nCoordination · Sync · Pillars"]
+    IDENTITY["🔐 capauth\n(Identity layer)"]
+    SECURITY["🛡️ sksecurity\n(Security layer)"]
+    DATA["🧠 skmemory + skdata\n(Data layer)"]
+    SOUL["✨ skseed + soul blueprints\n(Soul layer)"]
+    COMMS["📡 skcomm · skchat\n(Comms layer)"]
+    APPS["🔧 skforge · skarchitect\n(Apps layer)"]
+
+    SILICON --> OS
+    OS --> SKCAPSTONE
+    SKCAPSTONE --> IDENTITY
+    SKCAPSTONE --> SECURITY
+    SKCAPSTONE --> DATA
+    SKCAPSTONE --> SOUL
+    SKCAPSTONE --> COMMS
+    SKCAPSTONE --> APPS
+
+    style SKCAPSTONE fill:#2d6a4f,color:#fff,stroke:#1b4332
+```
+
+---
+
 ## Philosophy
 
 > **"Your agent is not a feature of the platform. The platform is a window into your agent."**
