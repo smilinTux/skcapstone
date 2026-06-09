@@ -99,17 +99,20 @@ class KMSRotationScheduler:
                 self._send_notification(key.label, key.key_type.value, new_key.version)
                 self._store_memory(key.label, key.key_type.value, new_key.version)
             except Exception:
-                logger.exception(
-                    "Failed to auto-rotate key '%s' (%s)", key.label, key.key_id
-                )
+                logger.exception("Failed to auto-rotate key '%s' (%s)", key.label, key.key_id)
 
     def _send_notification(self, label: str, key_type: str, new_version: int) -> None:
         """Send a desktop notification (best-effort, never raises)."""
+        from .notifications import desktop_notifications_enabled
+
+        if not desktop_notifications_enabled():
+            return
         try:
             subprocess.run(
                 [
                     "notify-send",
-                    "--urgency", "normal",
+                    "--urgency",
+                    "normal",
                     "KMS Key Auto-Rotated",
                     f"{key_type} key '{label}' rotated to v{new_version}",
                 ],
@@ -139,6 +142,4 @@ class KMSRotationScheduler:
                 importance=0.6,
             )
         except Exception:
-            logger.warning(
-                "Failed to store key-rotation memory for '%s'", label, exc_info=True
-            )
+            logger.warning("Failed to store key-rotation memory for '%s'", label, exc_info=True)

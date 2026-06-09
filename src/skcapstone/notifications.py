@@ -29,6 +29,28 @@ from typing import Optional
 
 logger = logging.getLogger("skcapstone.notifications")
 
+# Values (case-insensitive) that disable desktop notifications.
+_DISABLED_VALUES = frozenset({"0", "false", "no", "off", "silent", "null", "none"})
+
+
+def desktop_notifications_enabled() -> bool:
+    """Return whether desktop notifications should be dispatched.
+
+    Controlled by the ``SKCAPSTONE_DESKTOP_NOTIFY`` environment variable.
+    Defaults to enabled; set it to one of ``0``, ``false``, ``no``, ``off``,
+    ``silent``, ``null`` or ``none`` to suppress every desktop notification
+    path (``gi.repository.Notify``, ``notify-send`` and ``osascript``).
+
+    The test suite forces this off (see ``tests/conftest.py``) so running
+    tests never floods the live desktop's notification tray.
+
+    Returns:
+        True if notifications should be sent, False to suppress them.
+    """
+    value = os.environ.get("SKCAPSTONE_DESKTOP_NOTIFY", "1").strip().lower()
+    return value not in _DISABLED_VALUES
+
+
 # Default dashboard URL (skcapstone dashboard default port)
 _DEFAULT_DASHBOARD_URL = "http://localhost:7778"
 
@@ -180,9 +202,13 @@ class NotificationManager:
             urgency: "low", "normal", or "critical".
 
         Returns:
-            True if the notification was dispatched, False if debounced
-            or no notification system is available.
+            True if the notification was dispatched, False if suppressed,
+            debounced, or no notification system is available.
         """
+        if not desktop_notifications_enabled():
+            logger.debug("Desktop notifications disabled via SKCAPSTONE_DESKTOP_NOTIFY")
+            return False
+
         now = time.monotonic()
         if now - self._last_sent < self._debounce_seconds:
             logger.debug(
@@ -276,9 +302,7 @@ class NotificationManager:
 
             dashboard_url = self._dashboard_url
 
-            def _on_open_dashboard(
-                notification: object, action: str, user_data: object
-            ) -> None:
+            def _on_open_dashboard(notification: object, action: str, user_data: object) -> None:
                 logger.debug("Notification action invoked: open-dashboard")
                 _store_click_event("open-dashboard", dashboard_url)
                 try:
@@ -290,9 +314,7 @@ class NotificationManager:
                 except Exception as exc:
                     logger.debug("xdg-open failed: %s", exc)
 
-            def _on_open_skchat(
-                notification: object, action: str, user_data: object
-            ) -> None:
+            def _on_open_skchat(notification: object, action: str, user_data: object) -> None:
                 logger.debug("Notification action invoked: open-skchat")
                 _store_click_event("open-skchat", "skchat watch")
                 _open_skchat_terminal()
@@ -351,9 +373,7 @@ class NotificationManager:
         # Escape single quotes to prevent injection through osascript
         safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
         safe_body = body.replace("\\", "\\\\").replace('"', '\\"')
-        script = (
-            f'display notification "{safe_body}" with title "{safe_title}"'
-        )
+        script = f'display notification "{safe_body}" with title "{safe_title}"'
         try:
             subprocess.run(
                 ["osascript", "-e", script],

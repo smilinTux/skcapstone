@@ -54,10 +54,17 @@ async def _handle_send_notification(args: dict) -> list[TextContent]:
     if urgency not in {"low", "normal", "critical"}:
         return _error_response("urgency must be one of: low, normal, critical")
 
+    from ..notifications import desktop_notifications_enabled
+
+    if not desktop_notifications_enabled():
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        return _json_response({"sent": False, "suppressed": True, "timestamp": timestamp})
+
     # Run notify-send in a subprocess (non-blocking).
     proc = await asyncio.create_subprocess_exec(
         "notify-send",
-        "--urgency", urgency,
+        "--urgency",
+        urgency,
         title,
         body,
         stdout=asyncio.subprocess.DEVNULL,
@@ -75,14 +82,21 @@ async def _handle_send_notification(args: dict) -> list[TextContent]:
     try:
         import json as _j
         import uuid
+
         home = _home()
         from .. import active_agent_name
 
         agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
         notif_dir = home / "agents" / agent_name / "skcomm" / "notifications"
         notif_dir.mkdir(parents=True, exist_ok=True)
-        entry = {"id": uuid.uuid4().hex[:12], "type": "notification-sent",
-                 "title": title, "body": body, "urgency": urgency, "timestamp": timestamp}
+        entry = {
+            "id": uuid.uuid4().hex[:12],
+            "type": "notification-sent",
+            "title": title,
+            "body": body,
+            "urgency": urgency,
+            "timestamp": timestamp,
+        }
         (notif_dir / f"{entry['id']}.json").write_text(_j.dumps(entry, indent=2))
     except Exception:
         pass  # notification log failure must not block the response

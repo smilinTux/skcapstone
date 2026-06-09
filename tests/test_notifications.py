@@ -7,12 +7,30 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from skcapstone.notifications import NotificationManager, notify, get_manager
+from skcapstone.notifications import (
+    NotificationManager,
+    desktop_notifications_enabled,
+    notify,
+    get_manager,
+)
+
+
+@pytest.fixture(autouse=True)
+def _enable_desktop_notifications(monkeypatch):
+    """Re-enable the desktop-notification guard for this module.
+
+    The session-wide conftest fixture disables notifications so test runs
+    don't flood the live desktop.  Every test here mocks ``subprocess.run`` /
+    ``osascript``, so nothing real is dispatched — they just need the guard
+    on to exercise the dispatch logic.  Guard-specific tests override this.
+    """
+    monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "1")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_mgr(debounce: float = 0.0) -> NotificationManager:
     """Return a fresh NotificationManager with zero debounce by default."""
@@ -23,14 +41,17 @@ def _make_mgr(debounce: float = 0.0) -> NotificationManager:
 # notify-send (Linux)
 # ---------------------------------------------------------------------------
 
+
 class TestNotifyLinux:
     """Tests for Linux notify-send path."""
 
     def test_notify_send_called_with_correct_args(self):
         """notify-send is invoked with urgency, title, body."""
         mgr = _make_mgr()
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run") as mock_run:
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             result = mgr.notify("Hello", "World", urgency="normal")
 
@@ -45,8 +66,10 @@ class TestNotifyLinux:
     def test_notify_send_urgency_low(self):
         """Low urgency maps to notify-send --urgency low."""
         mgr = _make_mgr()
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run") as mock_run:
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             mgr.notify("T", "B", urgency="low")
 
@@ -57,8 +80,10 @@ class TestNotifyLinux:
     def test_notify_send_urgency_critical(self):
         """Critical urgency maps to notify-send --urgency critical."""
         mgr = _make_mgr()
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run") as mock_run:
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             mgr.notify("T", "B", urgency="critical")
 
@@ -68,8 +93,10 @@ class TestNotifyLinux:
     def test_notify_send_not_found_returns_false(self):
         """Returns False gracefully when notify-send binary is missing."""
         mgr = _make_mgr()
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run", side_effect=FileNotFoundError):
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run", side_effect=FileNotFoundError),
+        ):
             result = mgr.notify("T", "B")
 
         assert result is False
@@ -77,12 +104,15 @@ class TestNotifyLinux:
     def test_notify_send_nonzero_exit_returns_false(self):
         """Returns False when notify-send exits non-zero."""
         import subprocess
+
         mgr = _make_mgr()
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch(
-                 "skcapstone.notifications.subprocess.run",
-                 side_effect=subprocess.CalledProcessError(1, "notify-send", stderr=b"err"),
-             ):
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch(
+                "skcapstone.notifications.subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, "notify-send", stderr=b"err"),
+            ),
+        ):
             result = mgr.notify("T", "B")
 
         assert result is False
@@ -90,12 +120,15 @@ class TestNotifyLinux:
     def test_notify_send_timeout_returns_false(self):
         """Returns False when notify-send times out."""
         import subprocess
+
         mgr = _make_mgr()
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch(
-                 "skcapstone.notifications.subprocess.run",
-                 side_effect=subprocess.TimeoutExpired("notify-send", 5),
-             ):
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch(
+                "skcapstone.notifications.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("notify-send", 5),
+            ),
+        ):
             result = mgr.notify("T", "B")
 
         assert result is False
@@ -104,6 +137,7 @@ class TestNotifyLinux:
 # ---------------------------------------------------------------------------
 # osascript (macOS)
 # ---------------------------------------------------------------------------
+
 
 class TestNotifyMacOS:
     """Tests for macOS osascript path."""
@@ -159,6 +193,7 @@ class TestNotifyMacOS:
 # Unsupported platform
 # ---------------------------------------------------------------------------
 
+
 class TestNotifyUnsupportedPlatform:
     """Windows and unknown platforms return False without error."""
 
@@ -185,14 +220,17 @@ class TestNotifyUnsupportedPlatform:
 # Debounce logic
 # ---------------------------------------------------------------------------
 
+
 class TestDebounce:
     """Debounce prevents more than one notification per interval."""
 
     def test_second_call_within_window_is_debounced(self):
         """A second notify() within the debounce window returns False."""
         mgr = NotificationManager(debounce_seconds=5.0)
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run") as mock_run:
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             first = mgr.notify("T", "B")
             second = mgr.notify("T", "B")
@@ -204,8 +242,10 @@ class TestDebounce:
     def test_call_after_window_is_allowed(self):
         """A notify() after the debounce window passes through."""
         mgr = NotificationManager(debounce_seconds=0.05)
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run") as mock_run:
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             mgr.notify("T", "B")
             time.sleep(0.1)
@@ -217,13 +257,17 @@ class TestDebounce:
     def test_debounce_does_not_update_timestamp_on_failed_dispatch(self):
         """Failed dispatch (notify-send missing) does not reset the debounce clock."""
         mgr = NotificationManager(debounce_seconds=5.0)
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run", side_effect=FileNotFoundError):
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run", side_effect=FileNotFoundError),
+        ):
             mgr.notify("T", "B")  # fails → _last_sent stays 0
 
         # Now try again immediately — should not be debounced
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run") as mock_run2:
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run2,
+        ):
             mock_run2.return_value = MagicMock(returncode=0)
             result = mgr.notify("T", "B")
 
@@ -232,8 +276,10 @@ class TestDebounce:
     def test_zero_debounce_allows_rapid_calls(self):
         """debounce_seconds=0 means every call is dispatched."""
         mgr = NotificationManager(debounce_seconds=0)
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run") as mock_run:
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             for _ in range(3):
                 mgr.notify("T", "B")
@@ -245,17 +291,21 @@ class TestDebounce:
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
+
 class TestModuleLevelHelpers:
     """notify() convenience function and get_manager() singleton."""
 
     def test_notify_convenience_function(self):
         """Module-level notify() delegates to the singleton manager."""
-        with patch("skcapstone.notifications.platform.system", return_value="Linux"), \
-             patch("skcapstone.notifications.subprocess.run") as mock_run, \
-             patch("skcapstone.notifications._manager", None):
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+            patch("skcapstone.notifications._manager", None),
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             # Reset singleton so debounce is fresh
             import skcapstone.notifications as _notif_mod
+
             _notif_mod._manager = None
             result = notify("Hello", "World")
 
@@ -264,7 +314,47 @@ class TestModuleLevelHelpers:
     def test_get_manager_returns_singleton(self):
         """get_manager() returns the same instance on repeated calls."""
         import skcapstone.notifications as _notif_mod
+
         _notif_mod._manager = None  # reset
         m1 = get_manager()
         m2 = get_manager()
         assert m1 is m2
+
+
+# ---------------------------------------------------------------------------
+# Desktop-notification guard (SKCAPSTONE_DESKTOP_NOTIFY)
+# ---------------------------------------------------------------------------
+
+
+class TestDesktopNotificationGuard:
+    """SKCAPSTONE_DESKTOP_NOTIFY suppresses every dispatch path."""
+
+    def test_enabled_by_default(self, monkeypatch):
+        """Unset env var means notifications are enabled."""
+        monkeypatch.delenv("SKCAPSTONE_DESKTOP_NOTIFY", raising=False)
+        assert desktop_notifications_enabled() is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", "silent", "null", "none"])
+    def test_disabled_values(self, monkeypatch, value):
+        """Recognised falsy values disable notifications (case-insensitive)."""
+        monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", value.upper())
+        assert desktop_notifications_enabled() is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "on"])
+    def test_enabled_values(self, monkeypatch, value):
+        """Other values keep notifications enabled."""
+        monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", value)
+        assert desktop_notifications_enabled() is True
+
+    def test_notify_short_circuits_when_disabled(self, monkeypatch):
+        """notify() returns False and never shells out when disabled."""
+        monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "0")
+        mgr = _make_mgr()
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
+            result = mgr.notify("Hello", "World")
+
+        assert result is False
+        mock_run.assert_not_called()

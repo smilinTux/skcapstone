@@ -1610,11 +1610,14 @@ class ConsciousnessLoop:
             )
             if response:
                 try:
-                    subprocess.Popen(
-                        ["notify-send", "Opus", response[:100]],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
+                    from skcapstone.notifications import desktop_notifications_enabled
+
+                    if desktop_notifications_enabled():
+                        subprocess.Popen(
+                            ["notify-send", "Opus", response[:100]],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
                 except Exception as _notify_exc:
                     logger.debug("notify-send failed (non-fatal): %s", _notify_exc)
 
