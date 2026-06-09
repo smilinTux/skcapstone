@@ -121,11 +121,134 @@ def run_diagnostics(home: Path) -> DiagnosticReport:
     report.checks.extend(_check_memory(home))
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
+    report.checks.extend(_check_sync_conflicts(home))
+    report.checks.extend(_check_scheduler(home))
     report.checks.extend(_check_codex())
     report.checks.extend(_check_harness_env(home))
     report.checks.extend(_check_versions())
 
     return report
+
+
+def _check_sync_conflicts(home: Path) -> list[Check]:
+    """Detect Syncthing sync-conflict files under the shared root.
+
+    Recurring ``.sync-conflict-*`` files signal concurrent multi-node writes to
+    the same synced file (root cause tracked in prb-7810b08e). Reports a count
+    and the affected top-level areas. Cleanup is intentionally left to a human:
+    the authoritative copy must be chosen per file, so this check warns rather
+    than auto-deleting.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        A single Check, passed only when no conflict files exist.
+    """
+    conflicts: list[Path] = []
+    if home.exists():
+        conflicts = [
+            p
+            for p in home.rglob("*.sync-conflict-*")
+            if ".stversions" not in p.parts
+        ]
+    if not conflicts:
+        return [
+            Check(
+                name="sync:conflicts",
+                description="No Syncthing sync-conflict files",
+                passed=True,
+                detail="clean",
+                category="sync",
+            )
+        ]
+    areas = sorted({p.relative_to(home).parts[0] for p in conflicts})
+    return [
+        Check(
+            name="sync:conflicts",
+            description="Syncthing sync-conflict files present",
+            passed=False,
+            detail=f"{len(conflicts)} conflict file(s) in: {', '.join(areas)}",
+            fix=(
+                "List with: find ~/.skcapstone -name '*.sync-conflict-*' ; keep "
+                "the authoritative copy and remove stale duplicates "
+                "(root cause: prb-7810b08e)."
+            ),
+            category="sync",
+        )
+    ]
+
+
+def _check_scheduler(home: Path) -> list[Check]:
+    """Validate the skscheduler config (jobs.yaml) and its cron dependency.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        Checks for jobs.yaml parseability (an optional file) and croniter
+        availability (required for cron-style schedules).
+    """
+    checks: list[Check] = []
+    jobs_path = home / "config" / "jobs.yaml"
+    if not jobs_path.exists():
+        checks.append(
+            Check(
+                name="scheduler:config",
+                description="skscheduler jobs.yaml",
+                passed=True,
+                detail="not configured (optional)",
+                category="system",
+            )
+        )
+    else:
+        try:
+            from .scheduler_jobs import load_jobs
+
+            jobs = load_jobs(jobs_path)
+            checks.append(
+                Check(
+                    name="scheduler:config",
+                    description="skscheduler jobs.yaml parses",
+                    passed=True,
+                    detail=f"{len(jobs)} job(s)",
+                    category="system",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - report any parse failure
+            checks.append(
+                Check(
+                    name="scheduler:config",
+                    description="skscheduler jobs.yaml parse error",
+                    passed=False,
+                    detail=str(exc)[:120],
+                    fix="Fix the YAML in ~/.skcapstone/config/jobs.yaml",
+                    category="system",
+                )
+            )
+    try:
+        import croniter  # noqa: F401
+
+        checks.append(
+            Check(
+                name="scheduler:croniter",
+                description="croniter installed (cron schedules)",
+                passed=True,
+                detail="ok",
+                category="system",
+            )
+        )
+    except ImportError:
+        checks.append(
+            Check(
+                name="scheduler:croniter",
+                description="croniter missing (cron schedules unavailable)",
+                passed=False,
+                fix="pip install croniter",
+                category="system",
+            )
+        )
+    return checks
 
 
 def _check_packages() -> list[Check]:
