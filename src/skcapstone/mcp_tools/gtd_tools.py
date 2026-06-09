@@ -382,7 +382,7 @@ async def _handle_gtd_capture(args: dict) -> list[TextContent]:
     return _json_response({
         "captured": True,
         "id": item["id"],
-        "text": item["text"],
+        "text": item.get("text") or item.get("title") or "",
         "source": item["source"],
         "privacy": item["privacy"],
         "context": item["context"],
@@ -498,7 +498,7 @@ async def _handle_gtd_clarify(args: dict) -> list[TextContent]:
     return _json_response({
         "clarified": True,
         "id": item["id"],
-        "text": item["text"],
+        "text": item.get("text") or item.get("title") or "",
         "destination": dest_name,
         "status": item["status"],
         "priority": item.get("priority"),
@@ -550,7 +550,7 @@ async def _handle_gtd_move(args: dict) -> list[TextContent]:
     return _json_response({
         "moved": True,
         "id": item["id"],
-        "text": item["text"],
+        "text": item.get("text") or item.get("title") or "",
         "from": source_list,
         "to": dest_name,
         "status": item["status"],
@@ -582,7 +582,7 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
     return _json_response({
         "done": True,
         "id": item["id"],
-        "text": item["text"],
+        "text": item.get("text") or item.get("title") or "",
         "from": source_list,
         "completed_at": item["completed_at"],
         "archive_count": len(archive),

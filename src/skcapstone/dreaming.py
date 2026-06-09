@@ -332,8 +332,8 @@ class DreamingEngine:
         # Store insights as memories (only the ones that survived dedup)
         self._store_insights(result)
 
-        # Add to GTD inbox for review
-        self._capture_to_gtd_inbox(result)
+        # Add to GTD someday-maybe for periodic review (not the actionable inbox)
+        self._capture_to_gtd_someday(result)
 
         result.duration_seconds = time.monotonic() - start
 
@@ -1309,79 +1309,63 @@ class DreamingEngine:
     # GTD inbox capture
     # ------------------------------------------------------------------
 
-    def _capture_to_gtd_inbox(self, result: DreamResult) -> None:
-        """Add dream insights, connections, and questions to GTD inbox for review."""
+    def _capture_to_gtd_someday(self, result: DreamResult) -> None:
+        """Add dream insights, connections, and questions to GTD someday-maybe.
+
+        Dream output is reflective material for periodic review, not actionable
+        next-steps. Writing it to the someday-maybe list (rather than the
+        actionable inbox) keeps the inbox clean for real captures — the inbox
+        is what the daily triage processes — while still preserving the dream
+        material for review. (Historically this dumped into inbox.json, which
+        accumulated hundreds of unreviewed items.)
+        """
         import uuid as _uuid
 
-        gtd_inbox_path = self._home / "coordination" / "gtd" / "inbox.json"
-        gtd_inbox_path.parent.mkdir(parents=True, exist_ok=True)
+        gtd_someday_path = self._home / "coordination" / "gtd" / "someday-maybe.json"
+        gtd_someday_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            if gtd_inbox_path.exists():
-                inbox = json.loads(gtd_inbox_path.read_text(encoding="utf-8"))
-                if not isinstance(inbox, list):
-                    inbox = []
+            if gtd_someday_path.exists():
+                someday = json.loads(gtd_someday_path.read_text(encoding="utf-8"))
+                if not isinstance(someday, list):
+                    someday = []
             else:
-                inbox = []
+                someday = []
         except (json.JSONDecodeError, OSError):
-            inbox = []
+            someday = []
 
         now_iso = result.dreamed_at.isoformat()
         items: list[dict[str, Any]] = []
 
-        for insight in result.insights:
-            items.append({
+        def _item(text: str) -> dict[str, Any]:
+            return {
                 "id": _uuid.uuid4().hex[:12],
-                "text": f"[Dream insight] {insight}",
+                "text": text,
                 "source": "dreaming-engine",
                 "privacy": "private",
                 "context": "@review",
                 "priority": None,
                 "energy": None,
                 "created_at": now_iso,
-                "status": "inbox",
+                "status": "someday",
                 "moved_at": None,
-            })
+            }
 
-        for connection in result.connections:
-            items.append({
-                "id": _uuid.uuid4().hex[:12],
-                "text": f"[Dream connection] {connection}",
-                "source": "dreaming-engine",
-                "privacy": "private",
-                "context": "@review",
-                "priority": None,
-                "energy": None,
-                "created_at": now_iso,
-                "status": "inbox",
-                "moved_at": None,
-            })
-
-        for question in result.questions:
-            items.append({
-                "id": _uuid.uuid4().hex[:12],
-                "text": f"[Dream question] {question}",
-                "source": "dreaming-engine",
-                "privacy": "private",
-                "context": "@review",
-                "priority": None,
-                "energy": None,
-                "created_at": now_iso,
-                "status": "inbox",
-                "moved_at": None,
-            })
+        items.extend(_item(f"[Dream insight] {i}") for i in result.insights)
+        items.extend(_item(f"[Dream connection] {c}") for c in result.connections)
+        items.extend(_item(f"[Dream question] {q}") for q in result.questions)
 
         if not items:
             return
 
-        inbox.extend(items)
+        someday.extend(items)
         try:
-            gtd_inbox_path.write_text(
-                json.dumps(inbox, indent=2, default=str), encoding="utf-8"
+            gtd_someday_path.write_text(
+                json.dumps(someday, indent=2, default=str), encoding="utf-8"
             )
-            logger.info("Added %d dream items to GTD inbox", len(items))
+            logger.info("Added %d dream items to GTD someday-maybe", len(items))
         except OSError as exc:
-            logger.error("Failed to write GTD inbox: %s", exc)
+            logger.error("Failed to write GTD someday-maybe: %s", exc)
 
     # ------------------------------------------------------------------
     # Bloom anchor seeding (Task 4 — pre-step in _build_prompt)
