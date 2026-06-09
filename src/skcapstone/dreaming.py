@@ -51,10 +51,13 @@ class DreamingConfig(BaseModel):
 
     enabled: bool = True
     model: str = "claude-opus-4-6"
-    provider: str = "claude"  # "claude", "nvidia", or "ollama"
+    # 2026-06-08: default to local BeeLlama (abliterated Qwen3.6-27B on the 5060 Ti) —
+    # claude OAuth + the old deepseek ollama fallback both died ~May 3, stalling dreams.
+    provider: str = "ollama"  # "claude", "nvidia", or "ollama"
     claude_model: str = "opus"  # claude CLI --model flag: "opus", "sonnet", "haiku"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
-    ollama_host: str = "http://192.168.0.100:11434"
+    ollama_host: str = "http://192.168.0.100:8082"  # BeeLlama, OpenAI-compatible
+    ollama_model: str = "qwen3.6-27b-abliterated"
     temperature: float = 1.0
     creativity_mode: str = "unhinged"  # "conservative", "balanced", "creative", "unhinged"
     idle_threshold_minutes: int = 30
@@ -1185,15 +1188,17 @@ class DreamingEngine:
             conn = http.client.HTTPConnection(
                 host, port, timeout=self._config.request_timeout
             )
+            # OpenAI-compatible chat endpoint (BeeLlama on :8082, or Ollama's /v1).
             body = json.dumps({
-                "model": "deepseek-r1:32b",
-                "prompt": prompt,
+                "model": getattr(self._config, "ollama_model", "qwen3.6-27b-abliterated"),
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": self._config.temperature,
+                "max_tokens": self._config.max_response_tokens,
                 "stream": False,
-                "options": {"num_predict": self._config.max_response_tokens},
             })
             conn.request(
                 "POST",
-                "/api/generate",
+                "/v1/chat/completions",
                 body,
                 {"Content-Type": "application/json"},
             )
@@ -1202,13 +1207,15 @@ class DreamingEngine:
             conn.close()
 
             if resp.status != 200:
-                logger.warning("Ollama returned %d", resp.status)
+                logger.warning("Dream LLM (ollama/beellama) returned %d", resp.status)
                 return None
 
-            return data.get("response", "")
+            content = data["choices"][0]["message"]["content"]
+            import re as _re
+            return _re.sub(r"<think>.*?</think>", "", content, flags=_re.S).strip()
 
         except Exception as exc:
-            logger.warning("Ollama call failed: %s", exc)
+            logger.warning("Dream LLM (ollama/beellama) call failed: %s", exc)
             return None
 
     @staticmethod
