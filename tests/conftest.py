@@ -20,6 +20,23 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _silence_desktop_notifications(monkeypatch):
+    """Suppress real desktop notifications for the entire test session.
+
+    Several code paths (consciousness_loop, kms_scheduler, the send_notification
+    MCP tool, and NotificationManager) shell out to ``notify-send`` / libnotify.
+    Left unmocked, a test run floods the live desktop's notification tray —
+    and mass-closing that backlog can stall single-threaded shells like
+    Cinnamon, freezing the whole UI.  Forcing the guard off keeps test runs
+    silent regardless of which path fires.
+
+    A test that needs to exercise the real dispatch can re-enable it locally
+    with ``monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "1")``.
+    """
+    monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_agent_env(monkeypatch):
     """Prevent host SKCAPSTONE_AGENT / SKMEMORY_AGENT from leaking into unit tests.
 
@@ -32,6 +49,7 @@ def _isolate_agent_env(monkeypatch):
     monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
     monkeypatch.delenv("SKMEMORY_AGENT", raising=False)
     import skcapstone
+
     monkeypatch.setattr(skcapstone, "SKCAPSTONE_AGENT", "")
     # _detect_active_agent() scans ~/.skcapstone/agents/ even when the env var
     # is cleared, returning a real agent name that routes memory writes to the
