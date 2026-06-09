@@ -102,6 +102,13 @@ class JobSpec:
     callback: Optional[str] = None
     timeout: float = 900.0
     enabled: bool = True
+    # --- reliability / fleet / observability (added 2026-06-09) ---
+    retries: int = 0                 # extra attempts on failure (0 = run once)
+    retry_backoff: float = 0.0       # seconds between attempts (linear)
+    jitter: float = 0.0              # max random splay (s) before dispatch — avoids
+                                     #   fleet thundering-herd on shared cron slots
+    notify: str = "off"              # off | on_failure | on_success | always (sk-alert hook)
+    notify_level: str = "warn"       # sk-alert level for failure notifications
 
 
 def load_jobs(config_path: Path) -> list[JobSpec]:
@@ -137,6 +144,7 @@ def load_jobs(config_path: Path) -> list[JobSpec]:
     _KNOWN_KEYS = {
         "type", "schedule", "every", "nodes", "agent", "prompt",
         "command", "callback", "timeout", "enabled",
+        "retries", "retry_backoff", "jitter", "notify", "notify_level",
     }
 
     for name, raw in jobs_raw.items():
@@ -171,6 +179,11 @@ def load_jobs(config_path: Path) -> list[JobSpec]:
                 callback=raw.get("callback"),
                 timeout=float(raw.get("timeout", 900.0)),
                 enabled=bool(raw.get("enabled", True)),
+                retries=int(raw.get("retries", 0)),
+                retry_backoff=float(raw.get("retry_backoff", 0.0)),
+                jitter=float(raw.get("jitter", 0.0)),
+                notify=str(raw.get("notify", "off")),
+                notify_level=str(raw.get("notify_level", "warn")),
             )
         )
 

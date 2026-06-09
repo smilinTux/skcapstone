@@ -20,7 +20,12 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
+import random
+import shutil
+import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -316,12 +321,71 @@ class TaskScheduler:
             if not got:
                 logger.debug("job '%s' still running — skip", job.name)
                 return
-            result = self._job_runner.run(job)
+            # Jitter: random splay before dispatch so fleet nodes sharing a cron
+            # slot don't stampede a shared resource (LLM endpoint, registry, etc).
+            if getattr(job, "jitter", 0.0) > 0:
+                time.sleep(random.uniform(0.0, float(job.jitter)))
+            # Run with retries + linear backoff for transient infra failures.
+            attempts = max(1, int(getattr(job, "retries", 0)) + 1)
+            result = None
+            for i in range(attempts):
+                result = self._job_runner.run(job)
+                if result.ok:
+                    break
+                if i < attempts - 1:
+                    logger.warning(
+                        "job '%s' attempt %d/%d failed: %s — retrying",
+                        job.name, i + 1, attempts, result.error,
+                    )
+                    backoff = float(getattr(job, "retry_backoff", 0.0))
+                    if backoff > 0:
+                        time.sleep(backoff)
             self._state.record_run(
                 job.name, now=fire_time, ok=result.ok, error=result.error
             )
             if not result.ok:
-                logger.warning("job '%s' failed: %s", job.name, result.error)
+                logger.warning(
+                    "job '%s' failed after %d attempt(s): %s",
+                    job.name, attempts, result.error,
+                )
+            self._maybe_notify(job, result, attempts)
+
+    @staticmethod
+    def _maybe_notify(job: JobSpec, result, attempts: int) -> None:
+        """Fire an sk-alert per the job's ``notify`` policy.
+
+        Policy values: ``off`` (default), ``on_failure``, ``on_success``,
+        ``always``.  Sends the job name, status, attempt count, and a tail of
+        the captured output to Chef's Telegram via the ``sk-alert`` primitive.
+        Never raises — notification failure must not break the scheduler.
+
+        Args:
+            job: The job that ran.
+            result: The :class:`~skcapstone.scheduler_runner.JobResult`.
+            attempts: Number of attempts made (for the message).
+        """
+        mode = getattr(job, "notify", "off")
+        if mode == "off":
+            return
+        want = (
+            mode == "always"
+            or (mode == "on_failure" and not result.ok)
+            or (mode == "on_success" and result.ok)
+        )
+        if not want:
+            return
+        status = "✅ ok" if result.ok else "❌ FAILED"
+        suffix = f" (after {attempts} attempts)" if attempts > 1 else ""
+        tail = "\n".join((result.output or result.error or "").strip().splitlines()[-12:])
+        msg = f"🗓️ skscheduler · {job.name} · {status}{suffix}"
+        if tail:
+            msg += "\n" + tail
+        level = "info" if result.ok else getattr(job, "notify_level", "warn")
+        alert = shutil.which("sk-alert") or os.path.expanduser("~/.skenv/bin/sk-alert")
+        try:
+            subprocess.run([alert, "-l", level, msg], timeout=30, check=False)
+        except Exception as exc:  # noqa: BLE001 — notify must never break the loop
+            logger.warning("notify failed for job '%s': %s", job.name, exc)
 
     # ------------------------------------------------------------------
     # Internal
