@@ -164,6 +164,70 @@ skcapstone status
 # → SINGULAR ✓ (Conscious + Synced = Sovereign Singularity)
 ```
 
+### Realm anchor & agent identity migration
+
+skcapstone resolves identity through **one** canonical resolver — it never
+reimprints identity logic locally (epic `2b264064`; CapAuth is the source of
+truth).
+
+**`~/.skcapstone/cluster.json` — the realm anchor.** A small file describing the
+cluster this operator runs:
+
+```json
+{
+  "realm": "skworld",
+  "operator": "chef",
+  "operator_pubkey_fingerprint": "<40-char PGP fingerprint>"
+}
+```
+
+`realm` and `operator` are *cluster facts* (mirrored into agent identities as-is);
+`operator_pubkey_fingerprint` anchors the operator's signing key. `cluster.json`
+is looked up at `/etc/skcapstone/cluster.json` first, then the agent home.
+
+**Dual-URI agent identity.** `capauth.resolve_agent_identity` returns each agent
+with two identifiers:
+
+```python
+from capauth import resolve_agent_identity
+ident = resolve_agent_identity()      # active agent via SKAGENT
+# ident.capauth_uri  → capauth:<agent>@skworld.io     (wire URI)
+# ident.fqid         → <agent>@<operator>.<realm>     (sovereign FQID, from cluster.json)
+```
+
+The `capauth:<agent>@skworld.io` URI is the wire identifier; the
+`<agent>@<operator>.<realm>` FQID is the sovereign realm address (e.g.
+`lumina@chef.skworld`) — and is what skcomms uses for cross-cluster routing.
+
+**`skcapstone identity migrate` — backfill per-agent identity.json.** Walks
+every *provisioned* agent (one with a CapAuth home under
+`~/.skcapstone/agents/`, excluding `*-template` dirs) and backfills the explicit
+sovereign fields — `realm`, `operator`, `fqid`, `pgp_fingerprint` — into each
+agent's `identity/identity.json`. `realm`/`operator` come from `cluster.json`;
+`fqid`/`pgp_fingerprint` come from `resolve_agent_identity`. Existing values are
+never clobbered, and the operation is idempotent.
+
+```bash
+# Default is a DRY-RUN — prints a plan, writes nothing:
+skcapstone identity migrate
+
+# Apply the plan to the live identity files:
+skcapstone identity migrate --apply        # alias: --write
+```
+
+These are live identity files, so the dry-run is the default; `--apply` (or
+`--write`) actually writes, and `--dry-run` forces preview even if `--apply` is
+also given. Add `--json-out` for machine-readable output.
+
+**Verify with `skcapstone doctor`.** The unified layer is enforced by the
+`identity:*` checks (`doctor.py::_check_identity_consistency`):
+`identity:resolver` (resolver importable), `identity:self` (resolves agent-aware,
+not the `local` floor), `identity:operator` (shared
+`~/.skcapstone/identity/identity.json` has `role: operator`),
+`identity:no-placeholder` (no `@capauth.local` placeholders), and
+`identity:per-agent` (every provisioned agent carries its own identity.json).
+Run `skcapstone doctor` after any identity change or migration.
+
 ### Sample Shell Config
 
 The installer sources the SKCapstone launcher from
