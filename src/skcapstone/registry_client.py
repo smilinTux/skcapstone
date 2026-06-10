@@ -2,10 +2,10 @@
 
 Wraps the skskills RemoteRegistry client to provide a clean interface for
 skcapstone MCP tools and CLI commands to interact with the remote
-skills-registry at skills.smilintux.org.
+skills-registry at skskills.skworld.io.
 
 This module is the integration point between:
-  - skills-registry/ (FastAPI server at skills.smilintux.org/api)
+  - skills-registry/ (FastAPI server at skskills.skworld.io/api)
   - skskills.remote.RemoteRegistry (HTTP client)
   - skcapstone discovery.py (local skill discovery)
 
@@ -27,7 +27,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REGISTRY_URL = "https://skills.smilintux.org/api"
+DEFAULT_REGISTRY_URL = "https://skskills.skworld.io/api"
 
 
 class RegistryClient:

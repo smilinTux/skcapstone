@@ -396,7 +396,7 @@ def discover_skills(home: Path, agent: Optional[str] = None) -> SkillsState:
     1. Per-agent skcapstone skills at ~/.skcapstone/skills/agents/<agent>/
     2. Global registry at ~/.skskills/installed/
     3. Per-agent registry at ~/.skskills/agents/<agent>/
-    4. Remote skills-registry at skills.smilintux.org (optional)
+    4. Remote skills-registry at skskills.skworld.io (optional)
 
     Args:
         home: The agent home directory (~/.skcapstone).

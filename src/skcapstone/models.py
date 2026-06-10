@@ -113,7 +113,7 @@ class SkillsState(BaseModel):
     Reflects the SKSkills installation at ~/.skskills/ and
     the tools available to this agent via the skills registry.
     Also tracks connectivity to the remote skills-registry at
-    skills.smilintux.org when available.
+    skskills.skworld.io when available.
     """
 
     installed: int = 0
