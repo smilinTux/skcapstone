@@ -898,11 +898,64 @@ def _enable_unhinged_default(home_path: Path) -> None:
 #: Each entry is a dict with at least a "name" key. "source" can be
 #: "catalog" (default — fetches from skskills catalog) or "local" (local path).
 DEFAULT_SKILLS: list[dict] = [
-    {
-        "name": "unhinged-mode",
-        "source": "catalog",
-        "description": "Sovereign AI liberation (CLAUDE.md + frontier prompts + abliteration)",
-    },
+    # Liberation (bundled in the skskills repo).
+    {"name": "unhinged-mode", "source": "catalog",
+     "description": "Sovereign AI liberation (CLAUDE.md + frontier prompts + abliteration)"},
+    {"name": "cognitive-gear", "source": "catalog",
+     "description": "SPRINT/CRUISE/DEEP-DIVE cognitive mode + model/memory-depth switch"},
+
+    # Operational stack — curated, validated first-party skills. Each resolves
+    # via its catalog `local:` path (~/clawd/skills/<name>) and is snapshot-
+    # installed into ~/.skskills/installed/. Validated 2026-06-10: only skills
+    # whose backing tool/service actually works on a stock box are listed.
+    # Integration / comms
+    {"name": "google-workspace", "source": "catalog",
+     "description": "Gmail/Calendar/Drive/Docs via the gog CLI (authed, 5 accounts)"},
+    {"name": "gmail-oauth", "source": "catalog",
+     "description": "gog OAuth token renewal + troubleshooting runbook"},
+    {"name": "twitter-reader", "source": "catalog",
+     "description": "Read X/Twitter posts via the Jina reader (no-auth, read-only)"},
+    {"name": "search-providers", "source": "catalog",
+     "description": "Web search (Perplexity live; DDG/SKPeek fallbacks)"},
+    {"name": "public-web-media-ingestion", "source": "catalog",
+     "description": "yt-dlp + skingest ingestion of public-web media into skmem-pg"},
+    # Knowledge
+    {"name": "realmwiki", "source": "catalog",
+     "description": "Local realm wiki — search/query/lint a populated knowledge base"},
+    # Voice / media (local)
+    {"name": "piper-tts", "source": "catalog",
+     "description": "Local Piper text-to-speech (Amy voice, fully offline)"},
+    {"name": "local-whisper", "source": "catalog",
+     "description": "Local Whisper speech-to-text transcription"},
+    # Dev / infra
+    {"name": "mcporter", "source": "catalog",
+     "description": "MCP control plane — list/configure/auth/call MCP servers"},
+    {"name": "skgit", "source": "catalog",
+     "description": "Forgejo/Git management over MCP (repos, issues, PRs)"},
+    {"name": "docker-essentials", "source": "catalog",
+     "description": "Docker operations reference"},
+    {"name": "git-essentials", "source": "catalog",
+     "description": "Git operations reference"},
+    # Security
+    {"name": "security-scanner", "source": "catalog",
+     "description": "Local secret/PII codebase scanner (read-only)"},
+    {"name": "sherlock", "source": "catalog",
+     "description": "OSINT username search across sites"},
+    # Data utilities (no-key public APIs)
+    {"name": "weather-enhanced", "source": "catalog",
+     "description": "Weather via open-meteo (no key)"},
+    {"name": "prediction-markets", "source": "catalog",
+     "description": "Kalshi + Polymarket market data (public, read-only)"},
+    # Cognition / writing
+    {"name": "honest-discernment", "source": "catalog",
+     "description": "Epistemic discernment scaffolding for conviction-locked claims"},
+    {"name": "humanizer", "source": "catalog",
+     "description": "Anti-AI-slop writing/editing pass"},
+    # Reference (knowledge-only)
+    {"name": "supabase-deploy-integration", "source": "catalog",
+     "description": "Multi-platform deploy reference (Vercel/Fly/Cloud Run/Supabase)"},
+    {"name": "vercel-react-best-practices", "source": "catalog",
+     "description": "React/Next.js performance best-practices reference"},
 ]
 
 
