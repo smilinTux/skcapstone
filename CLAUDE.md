@@ -97,6 +97,26 @@ source ~/.skenv/bin/activate
 pytest tests/ -v
 ```
 
+## Identity (unified resolver)
+
+skcapstone does **not** reimplement identity resolution — it delegates to the one
+canonical resolver in CapAuth (epic `2b264064`):
+
+```python
+from capauth import resolve_agent_identity
+ident = resolve_agent_identity()             # active agent via SKAGENT
+# ident.capauth_uri  → capauth:<agent>@skworld.io   (wire)
+# ident.fqid         → <agent>@<operator>.<realm>   (sovereign FQID, from cluster.json)
+```
+
+`skcapstone doctor` enforces the unified layer via the `identity:*` checks
+(`doctor.py::_check_identity_consistency`): resolver importable, self-identity
+resolves agent-aware (not the `local` floor), shared
+`~/.skcapstone/identity/identity.json` is the **operator** (`role: operator`),
+no `@capauth.local` placeholders anywhere, and every provisioned agent (one with
+a CapAuth home) carries its own `identity/identity.json`. Run `skcapstone doctor`
+after any identity change. (skos T6 `0bac4f62`; supersedes `b5fcf55d`.)
+
 ## MCP Tools
 
 ### DID Tools (`mcp_tools/did_tools.py`)

@@ -28,6 +28,9 @@ from skcapstone.doctor import (
     _check_harness_env,
     _check_yolo,
     _check_identity,
+    _check_identity_consistency,
+    _provisioned_agents,
+    _scan_capauth_local,
     _check_memory,
     _check_packages,
     run_fixes,
@@ -548,3 +551,107 @@ class TestCheckYolo:
         by = self._by_name(_check_yolo())
         assert by["harness:yolo:codex"].passed is True
         assert "re-source" in by["harness:yolo:codex"].detail
+
+
+def _mk_agent(home, name, *, capauth=True, identity=True, identity_payload=None):
+    """Create an agent dir under home/agents with optional capauth + identity."""
+    adir = home / "agents" / name
+    (adir / "identity").mkdir(parents=True, exist_ok=True)
+    if capauth:
+        (adir / "capauth").mkdir(parents=True, exist_ok=True)
+    if identity:
+        payload = identity_payload or {
+            "name": name.capitalize(),
+            "capauth_managed": True,
+            "capauth_uri": f"capauth:{name}@skworld.io",
+        }
+        (adir / "identity" / "identity.json").write_text(json.dumps(payload))
+    return adir
+
+
+@pytest.fixture
+def identity_home(tmp_path):
+    """A home with a shared operator identity + two provisioned agents."""
+    home = tmp_path / ".skcapstone"
+    (home / "identity").mkdir(parents=True, exist_ok=True)
+    (home / "identity" / "identity.json").write_text(json.dumps({
+        "name": "Chef", "role": "operator", "capauth_managed": True,
+        "capauth_uri": "capauth:chef@skworld.io",
+    }))
+    _mk_agent(home, "lumina")
+    _mk_agent(home, "opus")
+    return home
+
+
+class TestProvisionedAgents:
+    """_provisioned_agents: only capauth-backed, non-template dirs count."""
+
+    def test_lists_capauth_agents(self, identity_home):
+        assert _provisioned_agents(identity_home) == ["lumina", "opus"]
+
+    def test_excludes_templates_and_scaffolds(self, identity_home):
+        _mk_agent(identity_home, "lumina-template")          # template → excluded
+        _mk_agent(identity_home, "scaffold", capauth=False)  # no capauth → excluded
+        assert _provisioned_agents(identity_home) == ["lumina", "opus"]
+
+    def test_no_agents_dir(self, tmp_path):
+        assert _provisioned_agents(tmp_path / ".skcapstone") == []
+
+
+class TestScanCapauthLocal:
+    """_scan_capauth_local: surfaces the @capauth.local placeholder."""
+
+    def test_clean_home(self, identity_home):
+        assert _scan_capauth_local(identity_home) == []
+
+    def test_detects_placeholder(self, identity_home):
+        _mk_agent(identity_home, "stale", identity_payload={
+            "name": "Stale", "email": "stale@capauth.local",
+        })
+        hits = _scan_capauth_local(identity_home)
+        assert any("stale" in h for h in hits)
+
+
+class TestIdentityConsistency:
+    """_check_identity_consistency: the unified identity layer (skos T6)."""
+
+    def _by_name(self, checks):
+        return {c.name: c for c in checks}
+
+    def test_operator_and_per_agent_pass(self, identity_home):
+        by = self._by_name(_check_identity_consistency(identity_home))
+        assert by["identity:operator"].passed is True
+        assert by["identity:no-placeholder"].passed is True
+        assert by["identity:per-agent"].passed is True
+        assert "all present" in by["identity:per-agent"].detail
+
+    def test_shared_not_operator_fails(self, tmp_path):
+        home = tmp_path / ".skcapstone"
+        (home / "identity").mkdir(parents=True)
+        (home / "identity" / "identity.json").write_text(json.dumps({
+            "name": "test-agent", "role": "agent",
+        }))
+        by = self._by_name(_check_identity_consistency(home))
+        assert by["identity:operator"].passed is False
+        assert "expected 'operator'" in by["identity:operator"].detail
+
+    def test_placeholder_fails(self, identity_home):
+        _mk_agent(identity_home, "stale", identity_payload={
+            "name": "Stale", "email": "stale@capauth.local",
+        })
+        by = self._by_name(_check_identity_consistency(identity_home))
+        assert by["identity:no-placeholder"].passed is False
+
+    def test_missing_per_agent_identity_fails(self, identity_home):
+        # provisioned (has capauth) but no identity.json
+        _mk_agent(identity_home, "ghost", identity=False)
+        by = self._by_name(_check_identity_consistency(identity_home))
+        assert by["identity:per-agent"].passed is False
+        assert "ghost" in by["identity:per-agent"].detail
+
+    def test_resolver_importable(self, identity_home):
+        """The canonical resolver check reports importability of capauth."""
+        by = self._by_name(_check_identity_consistency(identity_home))
+        assert "identity:resolver" in by
+        # capauth is a hard dependency of the suite; resolver must import.
+        assert by["identity:resolver"].passed is True

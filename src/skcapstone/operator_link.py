@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def discover_human_operator(capauth_home: Path | None = None) -> dict[str, str] | None:

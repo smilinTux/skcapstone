@@ -118,6 +118,7 @@ def run_diagnostics(home: Path) -> DiagnosticReport:
     report.checks.extend(_check_system_tools())
     report.checks.extend(_check_agent_home(home))
     report.checks.extend(_check_identity(home))
+    report.checks.extend(_check_identity_consistency(home))
     report.checks.extend(_check_memory(home))
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
@@ -513,6 +514,237 @@ def _check_identity(home: Path) -> list[Check]:
                 description="PGP public key",
                 passed=False,
                 fix="capauth init --name YourName --email you@example.com",
+                category="identity",
+            )
+        )
+
+    return checks
+
+
+# Agents are considered "provisioned" — and therefore expected to carry a
+# per-agent identity.json — when they have a CapAuth home on disk. Empty
+# scaffolds and ``*-template`` directories are intentionally excluded so the
+# check does not red-flag dirs that were never meant to hold a real identity.
+def _provisioned_agents(home: Path) -> list[str]:
+    """List agents that have a CapAuth home (and thus a real identity).
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        Sorted agent names whose ``agents/<name>/capauth/`` dir exists,
+        excluding ``*-template`` scaffolds.
+    """
+    agents_root = home / "agents"
+    if not agents_root.is_dir():
+        return []
+    names = []
+    for d in agents_root.iterdir():
+        if not d.is_dir() or d.name.endswith("-template"):
+            continue
+        if (d / "capauth").is_dir():
+            names.append(d.name)
+    return sorted(names)
+
+
+def _scan_capauth_local(home: Path) -> list[str]:
+    """Find identity.json files still carrying an ``@capauth.local`` placeholder.
+
+    The ``@capauth.local`` suffix was the old placeholder email minted before a
+    real CapAuth profile existed. The unified identity layer (epic 2b264064)
+    eliminated it; any lingering occurrence means a stale/placeholder identity
+    that should be re-minted from the real profile.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        Relative paths (to *home*) of identity.json files containing the
+        placeholder, sorted for stable output.
+    """
+    candidates = [home / "identity" / "identity.json"]
+    agents_root = home / "agents"
+    if agents_root.is_dir():
+        candidates += sorted(agents_root.glob("*/identity/identity.json"))
+    hits: list[str] = []
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            if "@capauth.local" in path.read_text(encoding="utf-8"):
+                hits.append(str(path.relative_to(home)))
+        except OSError:
+            continue
+    return hits
+
+
+def _check_identity_consistency(home: Path) -> list[Check]:
+    """Validate the unified identity layer (epic 2b264064 / skos T6).
+
+    Locks in the single agent-aware resolver and the shared-operator /
+    per-agent-wire split. Five checks in the ``identity`` category:
+
+    1. ``identity:resolver`` — ``capauth.resolve_agent_identity`` is importable
+       (the single canonical resolver every SK package delegates to).
+    2. ``identity:self`` — that resolver returns an agent-aware identity for the
+       active agent (not the ``"local"`` floor) with a populated ``capauth_uri``.
+    3. ``identity:operator`` — the shared ``~/.skcapstone/identity/identity.json``
+       describes the operator (``role == "operator"``), not a stale placeholder.
+    4. ``identity:no-placeholder`` — no identity.json anywhere still carries an
+       ``@capauth.local`` placeholder email.
+    5. ``identity:per-agent`` — every provisioned agent (one with a CapAuth home)
+       has its own per-agent ``identity/identity.json``.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        Up to five Check results in the ``identity`` category.
+    """
+    checks: list[Check] = []
+
+    # 1. The canonical resolver must be importable.
+    resolver = None
+    try:
+        from capauth import resolve_agent_identity as resolver  # type: ignore
+        checks.append(
+            Check(
+                name="identity:resolver",
+                description="Unified identity resolver (capauth.resolve_agent_identity)",
+                passed=True,
+                detail="importable — the single canonical resolver",
+                category="identity",
+            )
+        )
+    except ImportError as exc:
+        checks.append(
+            Check(
+                name="identity:resolver",
+                description="Unified identity resolver (capauth.resolve_agent_identity)",
+                passed=False,
+                detail=str(exc),
+                fix="pip install -e capauth  (epic 2b264064 — capauth is the source of truth)",
+                category="identity",
+            )
+        )
+
+    # 2. Self-identity resolves agent-aware (not the "local" floor).
+    if resolver is not None:
+        try:
+            ident = resolver()
+            aware = bool(ident.agent) and ident.agent != "local" and bool(ident.capauth_uri)
+            fqid = getattr(ident, "fqid", None)
+            detail = f"{ident.agent} → {ident.capauth_uri}" + (f" / {fqid}" if fqid else "")
+            checks.append(
+                Check(
+                    name="identity:self",
+                    description="Self-identity resolves agent-aware",
+                    passed=aware,
+                    detail=detail if aware else f"resolved to floor: {ident.agent!r}",
+                    fix=(
+                        ""
+                        if aware
+                        else "Set SKAGENT (or run `skswitch <agent>`) so the resolver "
+                        "binds a real agent instead of the 'local' floor"
+                    ),
+                    category="identity",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - any resolver failure is a finding
+            checks.append(
+                Check(
+                    name="identity:self",
+                    description="Self-identity resolves agent-aware",
+                    passed=False,
+                    detail=str(exc)[:120],
+                    fix="Investigate capauth.resolve_agent_identity() failure",
+                    category="identity",
+                )
+            )
+
+    # 3. Shared identity.json describes the operator.
+    shared = home / "identity" / "identity.json"
+    operator_ok = False
+    detail = "missing"
+    if shared.exists():
+        try:
+            data = json.loads(shared.read_text(encoding="utf-8"))
+            role = (data.get("role") or "").lower()
+            operator_ok = role == "operator"
+            detail = (
+                f"{data.get('name', '?')} (role={role or 'unset'})"
+                if operator_ok
+                else f"role={role or 'unset'} (expected 'operator')"
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            detail = f"unreadable: {exc}"
+    checks.append(
+        Check(
+            name="identity:operator",
+            description="Shared identity.json = operator",
+            passed=operator_ok,
+            detail=detail,
+            fix=(
+                ""
+                if operator_ok
+                else "Set \"role\": \"operator\" on ~/.skcapstone/identity/identity.json "
+                "(shared file is the operator; agents resolve per-agent)"
+            ),
+            category="identity",
+        )
+    )
+
+    # 4. No @capauth.local placeholder lingers anywhere.
+    placeholders = _scan_capauth_local(home)
+    checks.append(
+        Check(
+            name="identity:no-placeholder",
+            description="No @capauth.local placeholder identities",
+            passed=not placeholders,
+            detail="clean" if not placeholders else f"{len(placeholders)} file(s): {', '.join(placeholders)}",
+            fix=(
+                ""
+                if not placeholders
+                else "Re-mint the listed identity.json from the real CapAuth profile "
+                "(remove the @capauth.local placeholder email)"
+            ),
+            category="identity",
+        )
+    )
+
+    # 5. Every provisioned agent carries a per-agent identity.json.
+    provisioned = _provisioned_agents(home)
+    missing = [
+        a for a in provisioned
+        if not (home / "agents" / a / "identity" / "identity.json").exists()
+    ]
+    if not provisioned:
+        checks.append(
+            Check(
+                name="identity:per-agent",
+                description="Per-agent identity.json for provisioned agents",
+                passed=True,
+                detail="no provisioned agents (none with a CapAuth home)",
+                category="identity",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="identity:per-agent",
+                description="Per-agent identity.json for provisioned agents",
+                passed=not missing,
+                detail=(
+                    f"{len(provisioned)} agent(s), all present"
+                    if not missing
+                    else f"missing for: {', '.join(missing)}"
+                ),
+                fix=(
+                    ""
+                    if not missing
+                    else "Run `capauth init` for the listed agents so each has a "
+                    "per-agent identity/identity.json"
+                ),
                 category="identity",
             )
         )
