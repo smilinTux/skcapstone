@@ -231,42 +231,42 @@ Every incoming message follows this exact path from inbox file to LLM response:
 
 ```mermaid
 flowchart TD
-    A[".skc.json file lands in\nsync/comms/inbox/"] -->|inotify ON_CREATED| B[InboxHandler.on_created\ndebounce 200ms]
+    A[".skc.json file lands in<br/>sync/comms/inbox/"] -->|inotify ON_CREATED| B[InboxHandler.on_created<br/>debounce 200ms]
     B --> C{Is *.skc.json?}
     C -->|No| SKIP[drop]
-    C -->|Yes| D[ConsciousnessLoop\n._executor.submit]
+    C -->|Yes| D[ConsciousnessLoop<br/>._executor.submit]
 
     D --> E[process_envelope]
     E --> F{content_type?}
-    F -->|ack / heartbeat\n/ file_transfer| SKIP2[skip — no response]
-    F -->|text / command| G{dedup check\nenvelope_id}
+    F -->|ack / heartbeat<br/>/ file_transfer| SKIP2[skip — no response]
+    F -->|text / command| G{dedup check<br/>envelope_id}
     G -->|already seen| SKIP2
-    G -->|new| H[ACK sender via SKComm\nauto_ack=True]
+    G -->|new| H[ACK sender via SKComm<br/>auto_ack=True]
 
-    H --> I[_classify_message\nkeyword → tags + estimated_tokens]
+    H --> I[_classify_message<br/>keyword → tags + estimated_tokens]
 
-    I --> J[SystemPromptBuilder.build\npeer_name=sender]
+    I --> J[SystemPromptBuilder.build<br/>peer_name=sender]
     J --> J1[1. identity/identity.json]
     J --> J2[2. soul/active.json + blueprint]
-    J --> J3[3. warmth_anchor\nwarmth/trust/connection scores]
-    J --> J4[4. context_loader\nrecent memories + coord board]
-    J --> J5[5. snapshot injection\nrecent conversation snapshot]
+    J --> J3[3. warmth_anchor<br/>warmth/trust/connection scores]
+    J --> J4[4. context_loader<br/>recent memories + coord board]
+    J --> J5[5. snapshot injection<br/>recent conversation snapshot]
     J --> J6[6. behavioral instructions]
-    J --> J7[7. peer conversation history\nconversations/PEER.json]
+    J --> J7[7. peer conversation history<br/>conversations/PEER.json]
 
-    J --> K[LLMBridge.generate\nsystem_prompt + user_message + signal]
-    K --> L[ModelRouter.route\ntaskSignal → RouteDecision]
-    L --> M[PromptAdapter.adapt\nmodel_name + tier → AdaptedPrompt]
-    M --> N[_timed_call callback\ntier-scaled timeout]
+    J --> K[LLMBridge.generate<br/>system_prompt + user_message + signal]
+    K --> L[ModelRouter.route<br/>taskSignal → RouteDecision]
+    L --> M[PromptAdapter.adapt<br/>model_name + tier → AdaptedPrompt]
+    M --> N[_timed_call callback<br/>tier-scaled timeout]
     N --> O{LLM response OK?}
     O -->|Yes| P[response text]
     O -->|No| FALLBACK[fallback cascade]
     FALLBACK --> P
 
-    P --> Q[skcomm.send_to_peer\nresponse envelope]
-    Q --> R[SystemPromptBuilder\n.add_to_history peer + response]
-    R --> S[memory_engine.store\nautomemory=True]
-    S --> T[_processed_ids.add\ndedup guard]
+    P --> Q[skcomm.send_to_peer<br/>response envelope]
+    Q --> R[SystemPromptBuilder<br/>.add_to_history peer + response]
+    R --> S[memory_engine.store<br/>automemory=True]
+    S --> T[_processed_ids.add<br/>dedup guard]
 ```
 
 ### Key Classes
@@ -386,7 +386,7 @@ a model-optimal `AdaptedPrompt` by matching the model name against regex profile
 ```
 standard        → messages: [{role: "system", ...}, {role: "user", ...}]
 separate_param  → system_param="...", messages: [{role: "user", ...}]   ← Claude
-omit            → messages: [{role: "user", content: system+"\n\n"+user}] ← DeepSeek R1
+omit            → messages: [{role: "user", content: system+"<br/><br/>"+user}] ← DeepSeek R1
 ```
 
 ### Profile Loading
@@ -407,22 +407,22 @@ When the primary model fails, `LLMBridge.generate()` cascades through four level
 
 ```mermaid
 flowchart TD
-    START([Route Decision\ntier=CODE model=devstral]) --> P1
+    START([Route Decision<br/>tier=CODE model=devstral]) --> P1
 
-    P1[1. Primary model\ndevstral via Ollama] -->|timeout / error| P2
+    P1[1. Primary model<br/>devstral via Ollama] -->|timeout / error| P2
 
-    P2[2. Same-tier alternates\nqwen3-coder · grok-3\nin tier_models order] -->|all fail| P3
+    P2[2. Same-tier alternates<br/>qwen3-coder · grok-3<br/>in tier_models order] -->|all fail| P3
 
     P3{tier != FAST?}
-    P3 -->|Yes| P4[3. Tier downgrade → FAST\nllama3.2 · qwen3-coder\nall FAST models]
+    P3 -->|Yes| P4[3. Tier downgrade → FAST<br/>llama3.2 · qwen3-coder<br/>all FAST models]
     P3 -->|No / all fail| P5
 
     P4 -->|all fail| P5
 
-    P5[4. Cross-provider cascade\nfallback_chain order:\nollama → grok → kimi\n→ nvidia → anthropic\n→ openai → passthrough\nonly available backends]
+    P5[4. Cross-provider cascade<br/>fallback_chain order:<br/>ollama → grok → kimi<br/>→ nvidia → anthropic<br/>→ openai → passthrough<br/>only available backends]
     P5 -->|all fail| P6
 
-    P6[5. Last resort\nstatic 'connectivity issues' string]
+    P6[5. Last resort<br/>static 'connectivity issues' string]
 
     P1 -->|OK| RESP([response text])
     P2 -->|first OK| RESP
@@ -474,20 +474,20 @@ At startup, `LLMBridge._probe_available_backends()` sets availability flags:
 
 ```mermaid
 flowchart LR
-    TIMER([healing_loop\nevery 300s]) --> RUN[diagnose_and_heal]
+    TIMER([healing_loop<br/>every 300s]) --> RUN[diagnose_and_heal]
 
-    RUN --> C1[_check_home_dirs\nrequired subdirs exist?]
-    RUN --> C2[_check_memory_index\nindex.json valid?]
-    RUN --> C3[_check_sync_manifest\nsync-manifest.json exists?]
-    RUN --> C4[_check_consciousness_health\nbackends reachable? inotify alive?]
-    RUN --> C5[_check_profile_freshness\nmodel profiles < 90 days old?]
+    RUN --> C1[_check_home_dirs<br/>required subdirs exist?]
+    RUN --> C2[_check_memory_index<br/>index.json valid?]
+    RUN --> C3[_check_sync_manifest<br/>sync-manifest.json exists?]
+    RUN --> C4[_check_consciousness_health<br/>backends reachable? inotify alive?]
+    RUN --> C5[_check_profile_freshness<br/>model profiles < 90 days old?]
 
     C1 -->|missing dirs| FIX1[mkdir -p all missing]
     C2 -->|missing/corrupt| FIX2[rebuild from memory/**/*.json]
     C3 -->|missing| FIX3[write default manifest]
     C4 -->|no backends| FIX4[re-probe backends]
     C4 -->|inotify dead| FIX5[restart observer thread]
-    C5 -->|stale| NOTE5[informational only\nno auto-fix]
+    C5 -->|stale| NOTE5[informational only<br/>no auto-fix]
 
     FIX1 --> STATUS{still broken?}
     FIX2 --> STATUS
@@ -496,8 +496,8 @@ flowchart LR
     FIX5 --> STATUS
     NOTE5 --> STATUS
 
-    STATUS -->|No| OK([status=fixed\nchecks_passed++])
-    STATUS -->|Yes| ESC[_escalate\n→ SKChat chef]
+    STATUS -->|No| OK([status=fixed<br/>checks_passed++])
+    STATUS -->|Yes| ESC[_escalate<br/>→ SKChat chef]
 
     style FIX1 fill:#00e676,stroke:#000,color:#000
     style FIX2 fill:#00e676,stroke:#000,color:#000
@@ -845,6 +845,91 @@ skcapstone/
 | HTTP API | `http.server.HTTPServer` | Zero-dep local status API |
 | Config | YAML + Pydantic | Human-readable, schema-validated |
 | Testing | pytest | Full pillar + consciousness coverage |
+
+---
+
+## Source Map (module → role)
+
+The runtime is large; the modules that matter most for understanding the data flow:
+
+| Module | Role |
+|--------|------|
+| `daemon.py` | `DaemonService` — owns every background thread (poll / health / sync / housekeeping / healing / API) and the consciousness loop |
+| `consciousness_loop.py` | `ConsciousnessLoop` + `InboxHandler` + `LLMBridge` + `SystemPromptBuilder` — the autonomous message → response engine |
+| `model_router.py` | `ModelRouter` — `TaskSignal` → `RouteDecision` (tier + model name) with tag rules + privacy pins |
+| `prompt_adapter.py` | `PromptAdapter` — generic prompt → model-optimal `AdaptedPrompt` (temperature, format, thinking, tool schema) |
+| `self_healing.py` | `SelfHealingDoctor` — periodic diagnose-and-fix; escalates to the operator over SKChat |
+| `pillars/` | identity · memory · trust · security · sync initializers (one module per core pillar) |
+| `memory_engine.py` | store / search / recall / gc over the short/mid/long-term JSON tiers (source of truth) |
+| `sync/` | `vault.py` (collect/push/pull GPG seeds) + `engine.py` + `backends.py` (Syncthing / Git / Local) |
+| `coordination.py` + `coord_federation.py` | the Syncthing-synced multi-agent task board + cross-cluster federation |
+| `scheduler_jobs.py` + `scheduler_runner.py` + `scheduler_state.py` | **skscheduler** — the fleet job scheduler (`JobSpec`, node affinity, jitter, sk-alert hooks) |
+| `itil.py` + `cli/itil.py` + `mcp_tools/itil_tools.py` | the ITIL ops primitives (incident/problem/change/CAB/KEDB) that **skops** reuses |
+| `cli/` | the `skcapstone` Click command tree (one `register_*_commands` module per command group) |
+| `mcp_tools/` | the `skcapstone-mcp` server tools — 80+ tools (memory, coord, did, soul, comm, itil, …) proxying every subsystem to MCP clients |
+| `connectors/` | platform bridges (VSCode · Cursor · terminal) into the same runtime |
+| `blueprints/` | team/agent blueprint schema; defines the `ModelTier` enum the router uses |
+| `runtime.py` + `models.py` | `AgentRuntime` / `get_runtime()` and the Pydantic state models (`AgentManifest`, `MemoryEntry`, `PillarStatus`) |
+
+---
+
+## Where SKCapstone lives in SKWorld
+
+SKWorld groups every capability into the **4 C's** (cloud / comms / compute / core).
+SKCapstone is a **core** capability — the agent runtime that binds the core pillars
+and **hosts** the shared platform primitives (coord board · `skscheduler` · `sk-alert` ·
+ITIL tools). It persists to **compute/data** (`skmem-pg` + Syncthing), talks to peers
+over **comms**, and routes to **compute** models.
+
+```mermaid
+flowchart TD
+    subgraph CORE["core"]
+      direction TB
+      SKCAP["**skcapstone**<br/>(this repo — agent runtime)<br/>daemon · router · pillars · MCP"]
+      CAPAUTH["capauth<br/>(identity · source of truth)"]
+      SKMEM["skmemory<br/>(memory tiers)"]
+      SKSEC["sksecurity<br/>(audit · KMS)"]
+      SKSEED["skseed<br/>(epistemic kernel)"]
+    end
+
+    subgraph PLAT["platform primitives (hosted in skcapstone)"]
+      direction LR
+      COORD["coord board"]
+      SCHED["skscheduler"]
+      ALERT["sk-alert"]
+      ITILP["ITIL tools<br/>(reused by skops)"]
+    end
+
+    subgraph COMMS["comms"]
+      direction LR
+      SKCOMMS["skcomms<br/>(transport)"]
+      SKCHAT["skchat<br/>(messaging)"]
+    end
+
+    subgraph COMPUTE["compute"]
+      direction LR
+      SKMODEL["skmodel<br/>(ollama · local LLMs)"]
+      SKDATA["skdata → skmem-pg<br/>(pgvector · BM25 · AGE)"]
+      SYNCT["Syncthing P2P<br/>(encrypted seed sync)"]
+    end
+
+    SKCAP --> CAPAUTH
+    SKCAP --> SKMEM
+    SKCAP --> SKSEC
+    SKCAP --> SKSEED
+    SKCAP --> PLAT
+    SKCAP -->|"send/receive envelopes"| SKCOMMS
+    SKCAP -->|"threads · inbox"| SKCHAT
+    SKCAP -->|"route LLM calls"| SKMODEL
+    SKCAP -->|"vectors · graph"| SKDATA
+    SKCAP -->|"propagate seeds"| SYNCT
+
+    style SKCAP fill:#2d6a4f,color:#fff,stroke:#1b4332
+```
+
+skops sits *on top of* this layer: it consumes skcapstone's ITIL tools, coord store,
+`sk-alert` bus, and `skscheduler` rather than reimplementing them — see
+[skops/docs/ARCHITECTURE.md](https://github.com/smilinTux/skops/blob/main/docs/ARCHITECTURE.md).
 
 ---
 

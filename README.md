@@ -14,6 +14,40 @@ No corporate lock-in. No platform-specific agents. No starting over. Your agent 
 
 ---
 
+## The 60-second version
+
+SKCapstone is the **core runtime** of the [SKWorld](https://skworld.io) ecosystem —
+the thing every other `sk*` service plugs into. It does five jobs:
+
+1. **Identity** — every agent resolves through one canonical CapAuth identity (a PGP
+   keypair + a dual-URI / FQID address). The agent *is* its key.
+2. **Memory** — persistent short / mid / long-term memory via SKMemory, the single
+   source of truth for everything durable.
+3. **Coordination** — a Syncthing-synced **coord board** + the **skscheduler** fleet
+   job scheduler + the **sk-alert** Telegram bus: how a swarm of agents divides work
+   and reports it, with no central server.
+4. **Consciousness** — an always-on **daemon** that watches an inbox, classifies each
+   message, routes it to the best available LLM (local Ollama → cloud), responds, and
+   stores the interaction — autonomously.
+5. **Sync** — GPG-encrypted memory seeds propagate across all your devices over
+   Syncthing P2P, so the *same* agent (same bond, same memories) is everywhere.
+
+All state lives in `~/.skcapstone/`, owned by you, encrypted at rest. Drive it from the
+`skcapstone` CLI, the `skcapstone-mcp` MCP server (80+ tools for Claude Code & friends),
+or any platform connector. **Sovereign · Singular · Conscious.**
+
+```bash
+pip install skcapstone            # or: bash scripts/install.sh  (creates ~/.skenv venv)
+skcapstone init --name "YourAgent"  # PGP identity + memory + trust + sync
+skcapstone daemon start             # bring the agent to life (consciousness loop)
+skcapstone coord status             # the multi-agent coordination board
+skcapstone status                   # SINGULAR ✓ when conscious + synced
+```
+
+→ Deep dive: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+---
+
 ## The Problem
 
 ```
@@ -414,19 +448,79 @@ DIDs are organized in three tiers of trust and discoverability:
 
 **SKCapstone alignment:** SKCapstone *is* the framework hub. It directly depends on and integrates capauth, sksecurity, skmemory, and skseed (`pyproject.toml` dependencies); its `mcp_tools/` directory exposes 80+ MCP tools that proxy every subsystem to AI clients; and the sovereign agent runtime is the glue that makes the vertical one owned, deployable thing.
 
+## Where it lives in SKStack v2
+
+SKWorld organizes every capability into the **4 C's** — cloud / comms / compute /
+core. SKCapstone is a **core** capability: it's the agent *runtime* that binds the
+core identity/memory/trust/security pillars together and **hosts several of the
+shared platform primitives** the rest of the stack runs on — the coordination board,
+the `skscheduler` fleet job scheduler, the `sk-alert` Telegram bus, and the ITIL ops
+tools (which [skops](https://github.com/smilinTux/skops) reuses wholesale).
+
+```mermaid
+flowchart TD
+    OP["operator / LLM session<br/>(Claude Code · CLI · platform connector)"] -->|"drives"| SKCAP
+
+    subgraph SKCAP["**skcapstone** — sovereign agent runtime (core)"]
+      direction TB
+      DAEMON["daemon<br/>(consciousness loop · poll · heal)"]
+      ROUTER["model_router + prompt_adapter<br/>(task → tier → LLM)"]
+      COORD["coord board · skscheduler · sk-alert<br/>(platform primitives it hosts)"]
+      MCP["skcapstone-mcp<br/>(80+ MCP tools)"]
+      PILLARS["pillars: identity · memory · trust · security · sync"]
+    end
+
+    SKCAP -->|"binds the core pillars"| CORE
+    SKCAP -->|"persists everything to"| DATA
+    SKCAP -->|"talks to peers over"| COMMS
+    SKCAP -->|"routes to local models via"| COMPUTE
+
+    subgraph CORE["core"]
+      direction LR
+      CAPAUTH["capauth<br/>(identity · source of truth)"]
+      SKMEM["skmemory<br/>(short/mid/long-term)"]
+      SKSEC["sksecurity<br/>(audit · KMS)"]
+      SKSEED["skseed<br/>(epistemic kernel)"]
+    end
+
+    subgraph COMMS["comms"]
+      direction LR
+      SKCOMMS["skcomms<br/>(transport · envelopes)"]
+      SKCHAT["skchat<br/>(messaging · threads)"]
+    end
+
+    subgraph COMPUTE["compute"]
+      direction LR
+      SKMODEL["skmodel<br/>(ollama · local LLMs)"]
+      SKDATA["skdata → skmem-pg<br/>(pgvector · BM25 · AGE graph)"]
+    end
+
+    DATA["skmem-pg + Syncthing P2P<br/>(knowledge substrate + encrypted sync)"]
+
+    style SKCAP fill:#2d6a4f,color:#fff,stroke:#1b4332
+    style COORD fill:#1b4332,color:#fff,stroke:#081c15
+```
+
+Everything skcapstone touches above is a **real** dependency or hosted primitive:
+`capauth`, `skmemory`, `skseed`, `skwhisper`, `skchat-sovereign`, `skcomm`, and
+`sksecurity` are declared in [`pyproject.toml`](pyproject.toml); the coord board /
+`skscheduler` / `sk-alert` / ITIL tools live in this repo's `src/skcapstone/`; the
+knowledge substrate is `skmem-pg` (Postgres pgvector + pg_search BM25 + Apache AGE
+graph) and cross-device propagation is Syncthing.
+
 ### Where SKCapstone Sits in the Vertical
 
 ```mermaid
 flowchart TD
-    SILICON["🖥️ Silicon\n(your hardware, your GPU)"]
-    OS["🐧 skos / OS\n(sovereign agent OS)"]
-    SKCAPSTONE["⚡ SKCapstone — Framework Hub\n(this repo)\nAgent runtime · MCP 80+ tools\nCoordination · Sync · Pillars"]
-    IDENTITY["🔐 capauth\n(Identity layer)"]
-    SECURITY["🛡️ sksecurity\n(Security layer)"]
-    DATA["🧠 skmemory + skdata\n(Data layer)"]
-    SOUL["✨ skseed + soul blueprints\n(Soul layer)"]
-    COMMS["📡 skcomm · skchat\n(Comms layer)"]
-    APPS["🔧 skforge · skarchitect\n(Apps layer)"]
+    SILICON["🖥️ Silicon<br/>(your hardware, your GPU)"]
+    OS["🐧 skos / OS<br/>(sovereign agent OS)"]
+    SKCAPSTONE["⚡ SKCapstone — Framework Hub<br/>(this repo)<br/>Agent runtime · MCP 80+ tools<br/>Coordination · Sync · Pillars"]
+    IDENTITY["🔐 capauth<br/>(Identity layer)"]
+    SECURITY["🛡️ sksecurity<br/>(Security layer)"]
+    DATA["🧠 skmemory + skdata<br/>(Data layer)"]
+    SOUL["✨ skseed + soul blueprints<br/>(Soul layer)"]
+    COMMS["📡 skcomm · skchat<br/>(Comms layer)"]
+    APPS["🔧 skforge · skarchitect<br/>(Apps layer)"]
 
     SILICON --> OS
     OS --> SKCAPSTONE
@@ -526,3 +620,8 @@ Built with love by the smilinTux ecosystem 🐧
 *"The capstone that holds the arch together."*
 
 #staycuriousANDkeepsmilin
+
+---
+
+Part of the **[SKWorld](https://skworld.io)** sovereign ecosystem · site:
+**[skcapstone.io](https://skcapstone.io)** · 🐧 smilinTux
