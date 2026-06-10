@@ -172,7 +172,11 @@ class Board:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 tasks.append(Task.model_validate(data))
-            except (json.JSONDecodeError, Exception):
+            except Exception as exc:  # noqa: BLE001
+                # A malformed task file must NOT vanish silently — a dropped task
+                # is invisible to the board (it counts as neither open nor done).
+                # Log loudly so schema drift (e.g. notes-as-string) is caught.
+                logger.warning("Skipping malformed task file %s: %s", f.name, exc)
                 continue
         return tasks
 
@@ -189,7 +193,10 @@ class Board:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 agents.append(AgentFile.model_validate(data))
-            except (json.JSONDecodeError, Exception):
+            except Exception as exc:  # noqa: BLE001
+                # A dropped agent file loses that agent's claims/completions from
+                # the derived board status — surface it instead of swallowing.
+                logger.warning("Skipping malformed agent file %s: %s", f.name, exc)
                 continue
         return agents
 

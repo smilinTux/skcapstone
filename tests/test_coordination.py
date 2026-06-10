@@ -100,6 +100,31 @@ class TestBoard:
         assert len(loaded) == 1
         assert loaded[0].title == "Test task"
 
+    def test_load_tasks_skips_malformed_and_logs(self, board: Board, caplog):
+        """A malformed task file is skipped (not crashed on) and logged loudly.
+
+        Regression: notes-as-string used to fail Pydantic validation, and
+        load_tasks swallowed the error silently — dropping the task from the
+        board entirely (invisible: neither open nor done). The valid task must
+        still load; the bad one must produce a warning, not a silent vanish.
+        """
+        import json
+        import logging
+
+        good = board.create_task(Task(title="Good task"))
+        assert good.exists()
+        # Hand-write a malformed task file (notes as a string, not a list).
+        (board.tasks_dir / "bad.json").write_text(
+            json.dumps({"id": "badtask1", "title": "Bad", "notes": "oops a string"}),
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING):
+            loaded = board.load_tasks()
+        titles = {t.title for t in loaded}
+        assert "Good task" in titles
+        assert "Bad" not in titles
+        assert any("bad.json" in r.message for r in caplog.records)
+
     def test_save_and_load_agent(self, board: Board):
         agent = AgentFile(agent="jarvis", capabilities=["python"])
         board.save_agent(agent)
