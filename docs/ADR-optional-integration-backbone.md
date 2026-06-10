@@ -123,9 +123,18 @@ defaults. Optional — health still works without it.
 
 ### 3.5 Polyglot bridge (skgateway / Node)
 
-Non-Python services hit the daemon's HTTP/MCP endpoint (`pubsub_publish`, `coord_*` MCP tools
-already exist) behind the same presence check (daemon reachable on `:9383`/`:9475`?). Same
-default-on / fall-back-to-native semantics.
+Non-Python services integrate **file-based** — writing the same Syncthing-synced tree under
+`~/.skcapstone` that the Python SDK itself writes. This is preferred over the daemon HTTP/MCP
+path because it is zero-broker and **daemon-independent** (the Python `sdk.alert` doesn't need
+the daemon either — it writes pubsub files directly). Presence = the shared home exists and
+`SK_STANDALONE` is unset. A Node `alert()` mirrors `pubsub.PubSub.publish`'s message format
+(`message_id`/`topic`/`sender`/`payload`/`published_at` ISO-8601/`ttl_seconds`/`tags`) and
+`registerService()` mirrors `sdk.register_service`'s registry entry, so Python consumers
+(`skcapstone alerts`, `service_health`) read them transparently. **Validated** end-to-end:
+skgateway's Node `alert()` → `PubSub.poll()` in Python round-trips intact (see
+`skgateway/src/integration.mjs`, `tests/integration.test.mjs`). Services that genuinely need
+live request/response (not fire-and-forget) can still call the daemon MCP endpoint
+(`:9475`) — but alerts/discovery do not.
 
 ## 4. Integration Contract (frozen surface)
 
