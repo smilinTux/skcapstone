@@ -886,7 +886,7 @@ class DaemonService:
     def _load_components(self) -> None:
         """Attempt to load SKComm, AgentRuntime, and ConsciousnessLoop."""
         try:
-            from skcomm.core import SKComm
+            from skcomms.core import SKComm
             from .sync_engine import ensure_comms_dirs, get_comms_root
             self._skcomm = SKComm.from_config()
             expected_comms_root = get_comms_root(self.config.shared_root)
@@ -1888,7 +1888,7 @@ class DaemonService:
 
                     fingerprint: Optional[str] = None
                     try:
-                        from skcomm.capauth_validator import CapAuthValidator
+                        from skcomms.capauth_validator import CapAuthValidator
                         fingerprint = CapAuthValidator(require_auth=True).validate(token_str)
                     except ImportError:
                         # skcomm not installed — fall back to skcapstone signed tokens

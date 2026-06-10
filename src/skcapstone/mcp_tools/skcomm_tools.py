@@ -63,7 +63,7 @@ async def _handle_comm_notify(args: dict) -> list[TextContent]:
         return _error_response("recipient and message are required")
 
     try:
-        from skcomm.core import SKComm  # type: ignore[import]
+        from skcomms.core import SKComm  # type: ignore[import]
 
         comm = SKComm.from_config()
         report = comm.send(recipient, message)
@@ -91,7 +91,7 @@ async def _handle_comm_status(_args: dict) -> list[TextContent]:
     result: dict = {}
 
     try:
-        import skcomm  # type: ignore[import]
+        import skcomms  # type: ignore[import]
 
         result["installed"] = True
         result["version"] = getattr(skcomm, "__version__", "unknown")
@@ -101,7 +101,7 @@ async def _handle_comm_status(_args: dict) -> list[TextContent]:
         return _json_response(result)
 
     try:
-        from skcomm.core import SKComm  # type: ignore[import]
+        from skcomms.core import SKComm  # type: ignore[import]
 
         comm = SKComm.from_config()
         result["transports"] = [

@@ -366,7 +366,61 @@ def check_all_services() -> list[dict[str, Any]]:
         chat_url = chat_base.rstrip("/") + "/health"
         results.append(_http_check("skchat daemon", chat_url))
 
+    # -- self-registered services (~/.skcapstone/registry/*.json) ------------
+    # Services that called sdk.register_service() become discoverable here
+    # without being hardcoded above. Names already covered by a built-in
+    # check are skipped (built-in wins) so there are no duplicates.
+    known = {r["name"] for r in results}
+    for entry in _load_registry_entries():
+        name = entry.get("name")
+        if not name or name in known:
+            continue
+        health_url = entry.get("health_url")
+        pid_file = entry.get("pid_file")
+        if health_url and str(health_url).lower() != "disabled":
+            results.append(_http_check(name, str(health_url).rstrip("/")))
+        elif pid_file:
+            results.append(_pid_check(name, Path(pid_file).expanduser()))
+        else:
+            results.append({
+                "name": name, "url": None, "status": "unknown",
+                "latency_ms": None, "version": None,
+                "error": "registered without health_url or pid_file",
+            })
+        known.add(name)
+
     return results
+
+
+def _load_registry_entries() -> list[dict[str, Any]]:
+    """Load service self-registration entries from the discovery registry.
+
+    Reads every ``<shared_home>/registry/*.json`` file written by
+    :func:`skcapstone.sdk.register_service`. Missing directory or malformed
+    files are skipped silently — discovery is best-effort.
+
+    Returns:
+        A list of registry entry dicts (each with at least a ``name`` key).
+    """
+    import json
+
+    try:
+        from . import shared_home
+
+        registry_dir = shared_home() / "registry"
+    except Exception:
+        return []
+
+    if not registry_dir.is_dir():
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for path in sorted(registry_dir.glob("*.json")):
+        try:
+            entries.append(json.loads(path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return entries
 
 
 # ---------------------------------------------------------------------------

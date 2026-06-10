@@ -25,20 +25,35 @@ except ImportError:  # pragma: no cover
 # Constants
 # ---------------------------------------------------------------------------
 
-#: Default topics the alerts command subscribes to.
+#: Default topics the alerts command subscribes to. The trailing ``*.<sev>``
+#: wildcards surface alerts published by any sk* service via ``sdk.alert()``,
+#: which follows the ``<service>.<severity>`` topic convention (e.g.
+#: ``skmemory.error``, ``sksecurity.critical``).
 DEFAULT_TOPICS: tuple[str, ...] = (
     "agent.critical",
     "coord.task_failed",
     "consciousness.error",
     "pillar.degraded",
+    "*.critical",
+    "*.error",
+    "*.warn",
 )
 
-#: Rich markup styles per topic prefix (longest match wins).
+#: Rich markup styles per exact topic name.
 _TOPIC_STYLE: dict[str, str] = {
     "agent.critical":     "bold red",
     "coord.task_failed":  "red",
     "consciousness.error": "bold magenta",
     "pillar.degraded":    "yellow",
+}
+
+#: Rich markup styles by severity suffix — used for ``<service>.<severity>``
+#: consumer topics with no exact match in ``_TOPIC_STYLE``.
+_SEVERITY_STYLE: dict[str, str] = {
+    "critical": "bold red",
+    "error":    "red",
+    "warn":     "yellow",
+    "info":     "cyan",
 }
 
 #: Default polling interval in seconds.
@@ -56,9 +71,15 @@ def _style_for_topic(topic: str) -> str:
         topic: Full topic name (e.g. ``"agent.critical"``).
 
     Returns:
-        Rich style string for the topic, or ``"dim"`` if unrecognised.
+        Rich style string for the topic. Exact matches win; otherwise the
+        topic's ``<service>.<severity>`` suffix is used (e.g. ``skmemory.error``
+        → the ``error`` style). Falls back to ``"dim"`` if unrecognised.
     """
-    return _TOPIC_STYLE.get(topic, "dim")
+    exact = _TOPIC_STYLE.get(topic)
+    if exact:
+        return exact
+    suffix = topic.rsplit(".", 1)[-1]
+    return _SEVERITY_STYLE.get(suffix, "dim")
 
 
 def _format_payload(payload: dict) -> str:

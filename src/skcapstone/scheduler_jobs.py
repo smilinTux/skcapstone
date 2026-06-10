@@ -191,6 +191,126 @@ def load_jobs(config_path: Path) -> list[JobSpec]:
 
 
 # ---------------------------------------------------------------------------
+# Group A2 — jobs.d/ drop-in registration (added 2026-06-09)
+# ---------------------------------------------------------------------------
+
+def load_jobs_with_dropins(config_path: Path) -> list[JobSpec]:
+    """Load jobs from ``jobs.yaml`` plus every ``jobs.d/*.yaml`` drop-in.
+
+    This is the conf.d-style merge that lets external sk* services
+    self-register scheduled work without editing the shared ``jobs.yaml``.
+    The base file is loaded first, then each ``jobs.d/<name>.yaml`` (sorted
+    by filename) is overlaid.  When two sources define the same job *name*,
+    the later (drop-in) definition wins and a :class:`UserWarning` is emitted.
+
+    The drop-in directory is resolved as ``config_path.parent / "jobs.d"``.
+
+    Args:
+        config_path: Path to the base ``jobs.yaml``.  Neither the base file
+            nor the drop-in directory need exist; missing sources are
+            silently skipped (an empty list is returned when nothing exists).
+
+    Returns:
+        Merged list of :class:`JobSpec` instances, base jobs first followed
+        by drop-in-only jobs, in deterministic order.
+
+    Example::
+
+        jobs = load_jobs_with_dropins(
+            Path("~/.skcapstone/config/jobs.yaml").expanduser()
+        )
+    """
+    merged: dict[str, JobSpec] = {}
+
+    for spec in load_jobs(config_path):
+        merged[spec.name] = spec
+
+    dropin_dir = config_path.parent / "jobs.d"
+    if dropin_dir.is_dir():
+        for fragment in sorted(dropin_dir.glob("*.yaml")):
+            for spec in load_jobs(fragment):
+                if spec.name in merged:
+                    warnings.warn(
+                        f"Job {spec.name!r} in drop-in {fragment.name!r} "
+                        f"overrides an earlier definition.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                merged[spec.name] = spec
+
+    return list(merged.values())
+
+
+def _dropin_dir(home: Optional[Path] = None) -> Path:
+    """Return the ``config/jobs.d`` drop-in directory under *home*."""
+    base = Path(home) if home else Path("~/.skcapstone").expanduser()
+    return base / "config" / "jobs.d"
+
+
+def register_job(spec: dict, home: Optional[Path] = None) -> Path:
+    """Register a scheduled job by writing a ``jobs.d/<name>.yaml`` fragment.
+
+    This is the programmatic counterpart to hand-editing ``jobs.yaml`` — it
+    lets a service own its own scheduler entry.  The fragment is written
+    atomically; calling again with the same ``name`` overwrites it (idempotent
+    re-registration on every service start is the intended pattern).
+
+    Args:
+        spec: A single job definition.  Must contain ``name`` and exactly one
+            of ``schedule`` or ``every``.  Remaining keys mirror the
+            ``jobs.yaml`` schema (``type``, ``command``/``callback``/``agent``,
+            ``nodes``, ``timeout``, ``retries``, ``notify`` …).
+        home: skcapstone root (defaults to ``~/.skcapstone``).
+
+    Returns:
+        Path to the written ``jobs.d/<name>.yaml`` fragment.
+
+    Raises:
+        ValueError: If ``name`` is missing or neither ``schedule`` nor
+            ``every`` is present.
+    """
+    import yaml  # lazy — pyyaml optional at module level
+
+    spec = dict(spec)
+    name = spec.pop("name", None)
+    if not name:
+        raise ValueError("register_job: spec must include a 'name'")
+    if "schedule" not in spec and "every" not in spec:
+        raise ValueError(
+            f"register_job: job {name!r} must define 'schedule' or 'every'"
+        )
+
+    dropin = _dropin_dir(home)
+    dropin.mkdir(parents=True, exist_ok=True)
+
+    final = dropin / f"{name}.yaml"
+    tmp = dropin / f".{name}.yaml.tmp"
+    tmp.write_text(
+        yaml.safe_dump({"jobs": {name: spec}}, sort_keys=False),
+        encoding="utf-8",
+    )
+    tmp.rename(final)
+    return final
+
+
+def unregister_job(name: str, home: Optional[Path] = None) -> bool:
+    """Remove a previously registered ``jobs.d/<name>.yaml`` fragment.
+
+    Args:
+        name: The job name used at registration.
+        home: skcapstone root (defaults to ``~/.skcapstone``).
+
+    Returns:
+        ``True`` if a fragment existed and was removed, ``False`` otherwise.
+    """
+    fragment = _dropin_dir(home) / f"{name}.yaml"
+    if fragment.exists():
+        fragment.unlink()
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Group B — node affinity
 # ---------------------------------------------------------------------------
 

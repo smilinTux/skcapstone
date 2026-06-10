@@ -9,7 +9,12 @@ from pathlib import Path
 import click
 
 from .. import AGENT_HOME
-from ..scheduler_jobs import load_jobs, current_host_aliases, job_runs_here
+from ..scheduler_jobs import (
+    load_jobs,
+    load_jobs_with_dropins,
+    current_host_aliases,
+    job_runs_here,
+)
 from ..scheduler_runner import JobRunner
 from ..scheduler_state import SchedulerState
 
@@ -58,7 +63,7 @@ def register_scheduler_commands(main: click.Group) -> None:
     @scheduler.command("list")
     def list_jobs() -> None:
         """List all configured jobs and where they run."""
-        jobs = load_jobs(_jobs_path())
+        jobs = load_jobs_with_dropins(_jobs_path())
         if not jobs:
             click.echo("No jobs configured.")
             return
@@ -90,7 +95,7 @@ def register_scheduler_commands(main: click.Group) -> None:
     @click.argument("job_name")
     def run_now(job_name: str) -> None:
         """Run a job now on this node (manual override; ignores schedule and affinity)."""
-        jobs = {j.name: j for j in load_jobs(_jobs_path())}
+        jobs = {j.name: j for j in load_jobs_with_dropins(_jobs_path())}
         job = jobs.get(job_name)
         if not job:
             raise click.ClickException(f"Unknown job: {job_name}")

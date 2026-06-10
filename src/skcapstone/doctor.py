@@ -203,9 +203,9 @@ def _check_scheduler(home: Path) -> list[Check]:
         )
     else:
         try:
-            from .scheduler_jobs import load_jobs
+            from .scheduler_jobs import load_jobs_with_dropins
 
-            jobs = load_jobs(jobs_path)
+            jobs = load_jobs_with_dropins(jobs_path)
             checks.append(
                 Check(
                     name="scheduler:config",
@@ -588,7 +588,7 @@ def _check_transport() -> list[Check]:
     checks = []
 
     try:
-        from skcomm.core import SKComm
+        from skcomms.core import SKComm
 
         comm = SKComm.from_config()
         transport_count = len(comm.router.transports)
