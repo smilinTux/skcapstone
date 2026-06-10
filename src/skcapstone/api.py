@@ -527,7 +527,7 @@ def _check_bearer(
     config = _ctx.get("config")
 
     try:
-        from skcomm.capauth_validator import CapAuthValidator
+        from skcomms.capauth_validator import CapAuthValidator
 
         fingerprint = CapAuthValidator(require_auth=True).validate(token_str)
     except ImportError:
@@ -1738,7 +1738,7 @@ async def websocket_logs(
     config = _ctx.get("config")
 
     try:
-        from skcomm.capauth_validator import CapAuthValidator
+        from skcomms.capauth_validator import CapAuthValidator
 
         fingerprint = CapAuthValidator(require_auth=True).validate(token_str)
     except ImportError:

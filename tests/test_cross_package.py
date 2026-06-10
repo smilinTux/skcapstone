@@ -131,14 +131,14 @@ class TestSKCommFileTransport:
 
     def test_send_and_receive_via_file_transport(self, tmp_path: Path):
         """Message sent via file transport is receivable from the inbox."""
-        from skcomm.models import (
+        from skcomms.models import (
             MessageEnvelope,
             MessageMetadata,
             MessagePayload,
             MessageType,
             RoutingConfig,
         )
-        from skcomm.transports.file import FileTransport
+        from skcomms.transports.file import FileTransport
 
         outbox = tmp_path / "outbox"
         inbox = tmp_path / "inbox"
@@ -170,8 +170,8 @@ class TestSKCommFileTransport:
 
     def test_multiple_messages_ordered(self, tmp_path: Path):
         """Multiple messages are received in order."""
-        from skcomm.models import MessageEnvelope, MessagePayload, MessageType
-        from skcomm.transports.file import FileTransport
+        from skcomms.models import MessageEnvelope, MessagePayload, MessageType
+        from skcomms.transports.file import FileTransport
 
         outbox = tmp_path / "outbox"
         transport = FileTransport(outbox_path=outbox, inbox_path=tmp_path / "noop")
@@ -300,8 +300,8 @@ class TestFullSovereignPipeline:
         )
 
         # 4. Send via file transport
-        from skcomm.models import MessageEnvelope, MessagePayload, MessageType
-        from skcomm.transports.file import FileTransport
+        from skcomms.models import MessageEnvelope, MessagePayload, MessageType
+        from skcomms.transports.file import FileTransport
 
         outbox = tmp_agent_home / "skcomm_outbox"
         peer_inbox = tmp_agent_home / "skcomm_peer_inbox"
@@ -421,7 +421,7 @@ class TestPackageImportCompatibility:
         import capauth
         import skcapstone
         import skchat
-        import skcomm
+        import skcomms
         import skmemory
 
         assert hasattr(capauth, "__version__") or hasattr(capauth, "profile")
@@ -439,7 +439,7 @@ class TestPackageImportCompatibility:
 
     def test_skcomm_core_module(self):
         """skcomm.core has SKComm class."""
-        from skcomm.core import SKComm
+        from skcomms.core import SKComm
 
         assert callable(SKComm.from_config)
 

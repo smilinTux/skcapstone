@@ -1510,7 +1510,7 @@ class ConsciousnessLoop:
             if self._skcomm:
                 try:
                     from skchat.presence import PresenceIndicator, PresenceState
-                    from skcomm.models import MessageType
+                    from skcomms.models import MessageType
 
                     _typing_ind = PresenceIndicator(
                         identity_uri=self._agent_name or "capauth:agent@skchat.local",
@@ -1537,7 +1537,7 @@ class ConsciousnessLoop:
             if self._skcomm:
                 try:
                     from skchat.presence import PresenceIndicator, PresenceState
-                    from skcomm.models import MessageType
+                    from skcomms.models import MessageType
 
                     _stop_ind = PresenceIndicator(
                         identity_uri=self._agent_name or "capauth:agent@skchat.local",

@@ -246,7 +246,7 @@ def _load_capabilities(home: Path, card: IdentityCard) -> None:
         logger.debug("capauth not installed — skipping capauth:identity capability")
 
     try:
-        import skcomm  # noqa: F401
+        import skcomms  # noqa: F401
         caps.append("skcomm:messaging")
     except ImportError:
         logger.debug("skcomm not installed — skipping skcomm:messaging capability")

@@ -428,7 +428,7 @@ class TestConsciousnessAPI:
     @pytest.fixture(autouse=True)
     def patch_snapshot_store(self, tmp_path, monkeypatch):
         """Override the global snapshot store to use a temp directory."""
-        import skcomm.api as api_module
+        import skcomms.api as api_module
         from skcapstone.snapshots import SnapshotStore as _Store
 
         temp_store = _Store(base_dir=tmp_path / "api_snapshots")
@@ -438,7 +438,7 @@ class TestConsciousnessAPI:
     @pytest.fixture
     def client(self):
         from fastapi.testclient import TestClient
-        from skcomm.api import app
+        from skcomms.api import app
 
         return TestClient(app)
 

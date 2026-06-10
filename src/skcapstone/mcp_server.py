@@ -3001,7 +3001,7 @@ async def _handle_send_message(args: dict) -> list[TextContent]:
         return _error_response("recipient and message are required")
 
     try:
-        from skcomm.core import SKComm
+        from skcomms.core import SKComm
         comm = SKComm.from_config()
         report = comm.send(recipient, message)
         return _json_response({
@@ -3025,7 +3025,7 @@ async def _handle_send_message(args: dict) -> list[TextContent]:
 async def _handle_check_inbox(_args: dict) -> list[TextContent]:
     """Check for incoming messages."""
     try:
-        from skcomm.core import SKComm
+        from skcomms.core import SKComm
         comm = SKComm.from_config()
         envelopes = comm.receive()
         return _json_response([

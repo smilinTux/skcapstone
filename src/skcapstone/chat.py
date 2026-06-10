@@ -80,7 +80,7 @@ class AgentChat:
             return True
 
         try:
-            from skcomm.core import SKComm
+            from skcomms.core import SKComm
 
             self._comm = SKComm.from_config()
             return len(self._comm.router.transports) > 0
