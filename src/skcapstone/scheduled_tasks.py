@@ -766,10 +766,10 @@ def build_scheduler(
     except Exception:
         logger.debug("ITIL scheduled tasks not available — skipped")
 
-    from .scheduler_jobs import load_jobs, current_host_aliases
+    from .scheduler_jobs import load_jobs_with_dropins, current_host_aliases
     import socket
     jobs_path = Path(home) / "config" / "jobs.yaml"
-    jobs = load_jobs(jobs_path)
+    jobs = load_jobs_with_dropins(jobs_path)
     if jobs:
         scheduler.load_config_jobs(
             jobs=jobs,
