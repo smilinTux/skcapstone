@@ -1,6 +1,6 @@
 # ADR: skcapstone as the Optional Integration Backbone for the sk* Ecosystem
 
-**Status:** Accepted — **backbone implemented 2026-06-09** (consumer adapters pending)
+**Status:** Accepted — **fully implemented 2026-06-09** (backbone + 8 adapters + dual-mode harness)
 **Author:** Opus (application architect), commissioned by Chef
 **Scope:** skcapstone + all sk* consumer services (skmemory, skcomms, skchat, sksecurity, capauth, skvoice, skseed, cloud9, skgateway)
 
@@ -154,11 +154,28 @@ live request/response (not fire-and-forget) can still call the daemon MCP endpoi
 - No consumer adds a hard `skcapstone` dependency; integration lives behind `extras_require`/optional import.
 - `SK_STANDALONE=1` forces native mode end-to-end.
 
-## 6. Work Breakdown (see coord board, tag `sk-integration`)
+## 6. Reference Implementation
+
+**The canonical adapter pattern is `skmemory/skmemory/integration.py`** (commit `be33179`).
+
+Copy this file to build a new adapter. It demonstrates:
+- The optional `try/except` import guard
+- The `is_present()` / `alert()` / `ensure_schedule()` / `unregister_schedule()` / `register_self()` public API
+- Topic naming: `<service>.<severity>` with the semantic event name in `payload["event"]`
+- The severity → notify escalation (`warn`/`error`/`critical` trigger Telegram/desktop)
+
+All 8 current adapters follow this pattern:
+`skmemory` · `sksecurity` · `skgateway` (Node, file-based) · `skcomms` · `capauth` ·
+`cloud9` · `skvoice` · `skseed`
+
+The dual-mode acceptance harness is `skcapstone/tests/test_integration_backbone.py`.
+
+## 7. Work Breakdown (see coord board, tag `sk-integration`)
 
 - **Backbone (skcapstone):** `skcapstone.sdk` facade · `jobs.d/` drop-in + `register_job()` ·
   canonical alert sink + topic convention · service registry in `service_health`.
-- **Per-consumer adapters (sonnet):** skmemory · skcomm · skchat · sksecurity · capauth ·
-  skvoice · skseed · cloud9 · skgateway (Node HTTP bridge).
-- **Cross-cutting:** dual-mode integration test harness (absent/present) · per-repo README
-  "integration modes + `~/.skcapstone/` filesystem contract" section.
+- **Per-consumer adapters:** skmemory (reference) · sksecurity · skgateway (Node) · skcomms ·
+  capauth · cloud9 · skvoice · skseed — **all DONE**.  skchat (`ad4f721a`) owned by separate
+  thread.
+- **Cross-cutting:** dual-mode integration test harness (114 tests green) · per-repo README
+  "integration modes + `~/.skcapstone/` filesystem contract" sections — **all DONE**.

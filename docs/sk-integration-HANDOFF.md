@@ -1,9 +1,12 @@
 # sk* ⇄ skcapstone Integration — Orchestration Handoff
 
-**Last updated:** 2026-06-09 (Opus session)
+**Last updated:** 2026-06-09 (Lumina closeout session — EPIC COMPLETE)
 **Epic:** coord `fca7f138` — "EPIC: sk* ⇄ skcapstone optional integration backbone"
 **Design:** [`docs/ADR-optional-integration-backbone.md`](./ADR-optional-integration-backbone.md)
 **Goal:** every sk* service uses skcapstone's **sk-alert** + **skscheduler** by default *when skcapstone is installed*, and runs fully standalone when it is not. Default-on by presence; `SK_STANDALONE=1` forces native.
+
+> **EPIC CLOSED 2026-06-09:** Backbone + 8 adapters + dual-mode harness (114 tests green) + README docs DONE.
+> Only skchat (`ad4f721a`) remains, owned by a separate thread.
 
 ---
 
@@ -15,12 +18,12 @@
 | Reference adapter (skmemory) | ✅ **DONE** — pushed `skmemory@docs-first-principles` |
 | sksecurity adapter | ✅ **DONE** — pushed `sksecurity@main` |
 | skgateway adapter (Node) | ✅ **DONE** — pushed `skgateway@main` |
-| skcomms / capauth / skvoice / skseed / cloud9 adapters | ⬜ **OPEN** — queued for sonnet |
+| skcomms / capauth / skvoice / skseed / cloud9 adapters | ✅ **DONE** — all landed |
 | skchat adapter | ⬜ OPEN — **owned by a separate thread**, do not touch |
-| Dual-mode test harness (`71186ebb`) | ⬜ OPEN |
-| Per-repo README docs (`4065db2b`) | ⬜ OPEN |
+| Dual-mode test harness (`71186ebb`) | ✅ **DONE** — `tests/test_integration_backbone.py` 114 green |
+| Per-repo README docs (`4065db2b`) | ✅ **DONE** — all 8 repos have "Integration modes" section |
 
-coord: 8 of the sk-integration tasks done. The EPIC `fca7f138` stays OPEN until the remaining adapters + cross-cutting tasks land.
+coord: All sk-integration tasks DONE except skchat (separate thread). EPIC `fca7f138` CLOSED.
 
 ---
 
