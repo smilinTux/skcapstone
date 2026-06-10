@@ -38,6 +38,9 @@ from .preflight import (
     run_preflight,
 )
 
+import logging
+logger = logging.getLogger(__name__)
+
 console = Console()
 
 # Friendly labels — no jargon

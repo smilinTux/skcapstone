@@ -33,6 +33,9 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
+import logging
+logger = logging.getLogger(__name__)
+
 _MAXLEN = 100
 
 _history: deque[dict] = deque(maxlen=_MAXLEN)

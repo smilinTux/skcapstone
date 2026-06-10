@@ -43,6 +43,9 @@ from rich.table import Table
 
 from . import AGENT_HOME, __version__
 
+import logging
+logger = logging.getLogger(__name__)
+
 console = Console()
 
 COMMANDS = [
