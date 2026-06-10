@@ -242,8 +242,21 @@ def load_jobs_with_dropins(config_path: Path) -> list[JobSpec]:
 
 
 def _dropin_dir(home: Optional[Path] = None) -> Path:
-    """Return the ``config/jobs.d`` drop-in directory under *home*."""
-    base = Path(home) if home else Path("~/.skcapstone").expanduser()
+    """Return the ``config/jobs.d`` drop-in directory under *home*.
+
+    When *home* is not given, the skcapstone shared root is used — which
+    honours the ``SKCAPSTONE_HOME`` environment variable — so drop-ins land in
+    the same tree the scheduler reads from (and tests stay sandboxed).
+    """
+    if home is not None:
+        base = Path(home)
+    else:
+        try:
+            from . import shared_home
+
+            base = shared_home()
+        except Exception:
+            base = Path("~/.skcapstone").expanduser()
     return base / "config" / "jobs.d"
 
 

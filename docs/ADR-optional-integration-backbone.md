@@ -135,7 +135,7 @@ default-on / fall-back-to-native semantics.
 | Scheduled work | `sdk.register_job()` → `jobs.d/<svc>.yaml` → daemon scheduler | service-native systemd timer / thread loop |
 | Coordination | `sdk.coord_create()` | n/a (no-op / local log) |
 | Discovery/health | `sdk.register_service()` → registry | service-native pid/log |
-| Topic naming | `<service>.<severity>` (e.g. `skmemory.error`) | — |
+| Topic naming | `<service>.<severity>` (e.g. `skmemory.error`); the semantic **event name goes in the payload** (`{"event": "sweep_failed", …}`), NOT the topic suffix — this is what lets `skcapstone alerts` (`*.error`/`*.critical`/`*.warn`) route by severity | — |
 | Escape hatch | `SK_STANDALONE=1` forces native even if present | default |
 
 ## 5. Acceptance (system-level)
