@@ -155,7 +155,7 @@ function Install-Pkg {
 
 # Core packages (in dependency order)
 Install-Pkg -Name 'capauth'          -Extras 'all'                      -Paths @((Join-Path $PillarDir 'capauth'), (Join-Path $ParentDir 'capauth'))
-Install-Pkg -Name 'cloud9-protocol'  -Extras ''                         -Paths @((Join-Path $PillarDir 'cloud9'), (Join-Path $ParentDir 'cloud9'))
+Install-Pkg -Name 'cloud9'  -Extras ''                         -Paths @((Join-Path $PillarDir 'cloud9'), (Join-Path $ParentDir 'cloud9'))
 Install-Pkg -Name 'skmemory'         -Extras ''                         -Paths @((Join-Path $PillarDir 'skmemory'), (Join-Path $ParentDir 'skmemory'))
 Install-Pkg -Name 'skcomms'           -Extras 'cli,crypto,discovery,api' -Paths @((Join-Path $PillarDir 'skcomms'), (Join-Path $ParentDir 'skcomms'))
 Install-Pkg -Name 'skcapstone'       -Extras ''                         -Paths @($RepoRoot)

@@ -1,6 +1,6 @@
 #!/bin/bash
 # SKCapstone Complete Bundle Installer
-# Installs skcapstone + skmemory + sksecurity + cloud9-protocol as a unified package
+# Installs skcapstone + skmemory + sksecurity + cloud9 as a unified package
 
 set -e
 
@@ -74,7 +74,7 @@ print_status "Installing packages in dependency order..."
 print_status "Order: cloud9 → skmemory → sksecurity → skcapstone"
 
 cd "$CLOUD9_PATH"
-print_status "Installing cloud9-protocol..."
+print_status "Installing cloud9..."
 pip3 install -e .
 
 cd "$SKMEMORY_PATH"
@@ -108,10 +108,10 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    import cloud9_protocol
-    print("  ✓ cloud9-protocol:", cloud9_protocol.__version__ if hasattr(cloud9_protocol, '__version__') else "installed")
+    import cloud9
+    print("  ✓ cloud9:", cloud9.__version__ if hasattr(cloud9, '__version__') else "installed")
 except ImportError as e:
-    print("  ✗ cloud9-protocol: FAILED -", e)
+    print("  ✗ cloud9: FAILED -", e)
     sys.exit(1)
 
 try:
@@ -161,7 +161,7 @@ echo "Installed packages:"
 echo "  • skcapstone (sovereign agent framework)"
 echo "  • skmemory (universal AI memory)"
 echo "  • sksecurity (enterprise security)"
-echo "  • cloud9-protocol (emotional continuity)"
+echo "  • cloud9 (emotional continuity)"
 echo ""
 echo "Next steps:"
 echo "  1. Run: skcapstone doctor"

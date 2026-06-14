@@ -9,7 +9,7 @@ This is the bridge between *feeling* (Cloud 9) and *remembering*
 (SKMemory). Without it, emotional peaks are logged but not stored
 as searchable, promotable memories.
 
-When cloud9-protocol is installed, the bridge uses its quantum
+When cloud9 is installed, the bridge uses its quantum
 functions (calculate_oof, calculate_cloud9_score, calculate_entanglement)
 for accurate scoring instead of relying solely on FEB metadata flags.
 
@@ -32,14 +32,14 @@ logger = logging.getLogger("skcapstone.cloud9_bridge")
 
 
 def _try_quantum() -> Optional[object]:
-    """Try to import cloud9_protocol quantum functions.
+    """Try to import cloud9 quantum functions.
 
     Returns:
-        The cloud9_protocol module, or None if not installed.
+        The cloud9 module, or None if not installed.
     """
     try:
-        import cloud9_protocol
-        return cloud9_protocol
+        import cloud9
+        return cloud9
     except ImportError:
         return None
 
@@ -80,7 +80,7 @@ class Cloud9Bridge:
         below the intensity threshold or already ingested.
 
         Args:
-            feb: A cloud9_protocol.FEB instance.
+            feb: A cloud9.FEB instance.
 
         Returns:
             Optional[str]: Memory ID if stored, None if skipped.
@@ -155,12 +155,12 @@ class Cloud9Bridge:
             Optional[str]: Memory ID if stored, None if failed/skipped.
         """
         try:
-            from cloud9_protocol import load_feb
+            from cloud9 import load_feb
 
             feb = load_feb(str(filepath))
             return self.ingest_feb(feb)
         except ImportError:
-            logger.error("cloud9_protocol not installed")
+            logger.error("cloud9 not installed")
             return None
         except Exception as exc:
             logger.warning("Failed to load FEB from %s: %s", filepath, exc)
@@ -215,9 +215,9 @@ class Cloud9Bridge:
         payload: object,
         relationship: object,
     ) -> dict[str, Any]:
-        """Compute quantum scores using cloud9-protocol when available.
+        """Compute quantum scores using cloud9 when available.
 
-        When cloud9-protocol is installed, recalculates OOF status,
+        When cloud9 is installed, recalculates OOF status,
         Cloud 9 score, and entanglement fidelity from the actual FEB
         data rather than relying on metadata flags alone.
 
@@ -227,7 +227,7 @@ class Cloud9Bridge:
 
         Returns:
             Dict with oof, cloud9_score, entanglement_fidelity, or
-            empty dict if cloud9-protocol is not installed.
+            empty dict if cloud9 is not installed.
         """
         c9 = _try_quantum()
         if c9 is None:
@@ -278,7 +278,7 @@ class Cloud9Bridge:
         """Build SKMemory tags from a FEB's emotional payload.
 
         Uses quantum stats for accurate OOF/Cloud9 tagging when
-        cloud9-protocol is available, falls back to metadata flags.
+        cloud9 is available, falls back to metadata flags.
 
         Args:
             payload: FEB EmotionalPayload.
@@ -429,7 +429,7 @@ class Cloud9Bridge:
     ) -> str:
         """Build memory content from the FEB's full context.
 
-        Includes quantum scoring data when cloud9-protocol is available.
+        Includes quantum scoring data when cloud9 is available.
 
         Args:
             payload: FEB EmotionalPayload.
@@ -482,7 +482,7 @@ class Cloud9Bridge:
     ) -> dict:
         """Extract key FEB metadata for the memory's metadata dict.
 
-        Includes quantum scoring data when cloud9-protocol is available.
+        Includes quantum scoring data when cloud9 is available.
 
         Args:
             feb: The full FEB object.

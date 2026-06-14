@@ -32,5 +32,5 @@
     ]
   },
   "checksum": "SHA256:replace-this-with-real-checksum-after-editing",
-  "version": "cloud9-protocol-v1.0-cross-compatible"
+  "version": "cloud9-v1.0-cross-compatible"
 }

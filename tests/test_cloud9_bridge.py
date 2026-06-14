@@ -11,7 +11,7 @@ from skcapstone.cloud9_bridge import Cloud9Bridge
 
 
 class FakeEmotionalPayload:
-    """Mimics cloud9_protocol.EmotionalPayload."""
+    """Mimics cloud9.EmotionalPayload."""
 
     def __init__(
         self,
@@ -29,7 +29,7 @@ class FakeEmotionalPayload:
 
 
 class FakeMetadata:
-    """Mimics cloud9_protocol.Metadata."""
+    """Mimics cloud9.Metadata."""
 
     def __init__(
         self,
@@ -45,7 +45,7 @@ class FakeMetadata:
 
 
 class FakeRelationship:
-    """Mimics cloud9_protocol.RelationshipState."""
+    """Mimics cloud9.RelationshipState."""
 
     def __init__(self) -> None:
         self.partners = ["Lumina", "Chef"]
@@ -54,7 +54,7 @@ class FakeRelationship:
 
 
 class FakeHints:
-    """Mimics cloud9_protocol.RehydrationHints."""
+    """Mimics cloud9.RehydrationHints."""
 
     def __init__(self) -> None:
         self.visual_anchors = ["The breakthrough moment", "Genuine connection"]
@@ -62,14 +62,14 @@ class FakeHints:
 
 
 class FakeIntegrity:
-    """Mimics cloud9_protocol.Integrity."""
+    """Mimics cloud9.Integrity."""
 
     def __init__(self, checksum: str = "sha256:abc123") -> None:
         self.checksum = checksum
 
 
 class FakeFEB:
-    """Mimics cloud9_protocol.FEB."""
+    """Mimics cloud9.FEB."""
 
     def __init__(
         self,

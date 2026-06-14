@@ -219,7 +219,7 @@ def discover_trust(home: Path) -> TrustState:
     """Probe for Cloud 9 trust state.
 
     Checks:
-    1. cloud9-protocol pip package (consolidated from cloud9 repo)
+    1. cloud9 pip package (consolidated from cloud9 repo)
     2. ~/.skcapstone/trust/ for FEB files
     3. Existing FEB files in default locations
 

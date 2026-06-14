@@ -586,7 +586,7 @@ def _step_install_pillars() -> dict:
 _IMPORT_SOURCES: list[tuple[str, str, str]] = [
     ("openclaw", "OpenClaw (Jarvis)", "~/.openclaw/workspace"),
     ("claude", "Claude Code", "~/.claude"),
-    ("cloud9", "Cloud 9 FEB Templates", ""),  # always available if cloud9_protocol installed
+    ("cloud9", "Cloud 9 FEB Templates", ""),  # always available if cloud9 installed
 ]
 
 
@@ -659,8 +659,8 @@ def _detect_import_sources(home_path: Path) -> list[dict]:
 
     # --- Cloud 9 FEB Templates ---
     try:
-        import cloud9_protocol
-        c9_pkg = Path(cloud9_protocol.__file__).parent
+        import cloud9
+        c9_pkg = Path(cloud9.__file__).parent
         feb_files = list(c9_pkg.rglob("*.feb"))
         # Also check skcapstone defaults
         defaults_dir = Path(__file__).parent / "defaults"

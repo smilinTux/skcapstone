@@ -24,7 +24,7 @@ ECOSYSTEM_PACKAGES = [
     "sksecurity",
     "skcomms",
     "skchat",
-    "cloud9-protocol",
+    "cloud9",
 ]
 
 

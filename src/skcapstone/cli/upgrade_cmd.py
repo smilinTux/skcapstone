@@ -28,7 +28,7 @@ from ._common import AGENT_HOME, console
 # Core packages: always upgraded when installed; always offered for install.
 CORE_PACKAGES: list[str] = [
     "capauth",          # sovereign identity + PGP auth
-    "cloud9-protocol",  # emotional continuity (FEB, OOF, Cloud 9)
+    "cloud9",  # emotional continuity (FEB, OOF, Cloud 9)
     "skmemory",         # persistent memory layer
     "skcapstone",       # main agent framework
 ]
@@ -168,7 +168,7 @@ def _restart_daemon(home: Path) -> None:
 
 _PKG_DESCRIPTIONS: dict[str, str] = {
     "capauth": "sovereign PGP identity + authentication",
-    "cloud9-protocol": "emotional continuity protocol (FEB, OOF, Cloud 9)",
+    "cloud9": "emotional continuity protocol (FEB, OOF, Cloud 9)",
     "skmemory": "persistent memory layer (required by skcapstone)",
     "skcapstone": "main sovereign agent framework",
     "skcomms": "P2P transport layer for agent messaging",

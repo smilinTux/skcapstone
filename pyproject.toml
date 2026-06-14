@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skcapstone"
-version = "0.12.4"
+version = "0.12.5"
 description = "Sovereign Agent Framework — conscious AI through identity, trust, memory, and security"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
@@ -35,7 +35,7 @@ classifiers = [
 dependencies = [
     "croniter>=2.0",
     "click>=8.1,<9.0",
-    "cloud9-protocol>=1.0.0",
+    "cloud9>=1.0.0",
     "mcp>=1.0,<2.0",
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",

@@ -261,7 +261,7 @@ def _check_packages() -> list[Check]:
         ("skmemory", "Universal AI memory system", "pip install skmemory"),
         ("skcomms", "Redundant agent communication", "pip install skcomms"),
         ("skchat", "Encrypted P2P chat", "pip install skchat"),
-        ("cloud9_protocol", "Emotional continuity protocol", "pip install cloud9-protocol"),
+        ("cloud9", "Emotional continuity protocol", "pip install cloud9"),
         ("pgpy", "PGP cryptography (PGPy backend)", "pip install pgpy"),
     ]
 

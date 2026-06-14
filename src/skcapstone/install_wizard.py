@@ -353,7 +353,7 @@ def _path_fresh_install(
     # --- Step 2: Install packages ---
     if not skip_deps:
         console.print(f"  [bold]Step 2/{total_steps}[/]  Installing software packages...", end=" ")
-        packages = ["capauth", "skmemory", "skcomms", "cloud9-protocol"]
+        packages = ["capauth", "skmemory", "skcomms", "cloud9"]
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", *packages],
@@ -520,7 +520,7 @@ def _path_join_existing(
     # --- Step 2: Install packages ---
     if not skip_deps:
         console.print(f"  [bold]Step 2/{total_steps}[/]  Installing software packages...", end=" ")
-        packages = ["capauth", "skmemory", "skcomms", "cloud9-protocol"]
+        packages = ["capauth", "skmemory", "skcomms", "cloud9"]
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", *packages],
@@ -642,7 +642,7 @@ def _path_update_existing(
     # --- Step 1: Upgrade packages ---
     if not skip_deps:
         console.print(f"  [bold]Step 1/{total_steps}[/]  Updating software packages...", end=" ")
-        packages = ["capauth", "skmemory", "skcomms", "cloud9-protocol", "skcapstone"]
+        packages = ["capauth", "skmemory", "skcomms", "cloud9", "skcapstone"]
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "--upgrade", *packages],

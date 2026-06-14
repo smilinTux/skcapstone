@@ -27,10 +27,10 @@ PACKAGES = {
         "path": "~/clawd/skcapstone-repos/sksecurity",
         "pypi_name": "sksecurity",
     },
-    "cloud9-protocol": {
-        "name": "cloud9-protocol",
+    "cloud9": {
+        "name": "cloud9",
         "path": "~/clawd/skcapstone-repos/cloud9",
-        "pypi_name": "cloud9-protocol",
+        "pypi_name": "cloud9",
     },
 }
 

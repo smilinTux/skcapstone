@@ -100,7 +100,7 @@ ADAPTERS: list[AdapterSpec] = [
     ),
     AdapterSpec(
         service="cloud9",
-        module_path="cloud9_protocol.integration",
+        module_path="cloud9.integration",
         job_name="cloud9_rehydration_check",
     ),
     AdapterSpec(

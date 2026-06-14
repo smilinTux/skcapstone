@@ -458,7 +458,7 @@ def _uninstall_packages() -> None:
     console.print("  Uninstalling packages...", end=" ")
     packages = [
         "skcapstone", "capauth", "skmemory", "skcomms",
-        "cloud9-protocol", "skref", "skchat",
+        "cloud9", "skref", "skchat",
     ]
     try:
         result = subprocess.run(

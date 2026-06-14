@@ -1628,7 +1628,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Check ecosystem package versions against PyPI. "
                 "Shows installed vs latest for skmemory, skcapstone, capauth, "
-                "sksecurity, skcomms, skchat, cloud9-protocol."
+                "sksecurity, skcomms, skchat, cloud9."
             ),
             inputSchema={
                 "type": "object",
