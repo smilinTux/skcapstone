@@ -6,7 +6,7 @@ Covers:
 - list_peers (empty, with peers)
 - get_peer / remove_peer
 - PeerRecord model
-- SKComm peer file creation
+- SKComms peer file creation
 - CLI commands (add, list, remove, show)
 """
 
@@ -30,9 +30,9 @@ from skcapstone.peers import (
 
 @pytest.fixture
 def homes(tmp_path):
-    """Create skcapstone and skcomm home directories."""
+    """Create skcapstone and skcomms home directories."""
     sk = tmp_path / ".skcapstone"
-    sc = tmp_path / ".skcomm"
+    sc = tmp_path / ".skcomms"
     sk.mkdir()
     sc.mkdir()
     return sk, sc
@@ -87,7 +87,7 @@ class TestAddPeerFromCard:
     def test_add_from_card(self, card_file, homes):
         """Card import creates peer records in both registries."""
         sk, sc = homes
-        peer = add_peer_from_card(card_file, skcapstone_home=sk, skcomm_home=sc)
+        peer = add_peer_from_card(card_file, skcapstone_home=sk, skcomms_home=sc)
 
         assert peer.name == "Lumina"
         assert peer.fingerprint == "AABB1122CCDD3344EEFF5566"
@@ -104,7 +104,7 @@ class TestAddPeerFromCard:
         """Nonexistent card raises FileNotFoundError."""
         sk, sc = homes
         with pytest.raises(FileNotFoundError):
-            add_peer_from_card(Path("/nope.json"), skcapstone_home=sk, skcomm_home=sc)
+            add_peer_from_card(Path("/nope.json"), skcapstone_home=sk, skcomms_home=sc)
 
     def test_invalid_json_raises(self, tmp_path, homes):
         """Invalid JSON raises ValueError."""
@@ -112,7 +112,7 @@ class TestAddPeerFromCard:
         bad = tmp_path / "bad.json"
         bad.write_text("{{{not json")
         with pytest.raises(ValueError):
-            add_peer_from_card(bad, skcapstone_home=sk, skcomm_home=sc)
+            add_peer_from_card(bad, skcapstone_home=sk, skcomms_home=sc)
 
     def test_missing_name_raises(self, tmp_path, homes):
         """Card without name raises ValueError."""
@@ -120,7 +120,7 @@ class TestAddPeerFromCard:
         no_name = tmp_path / "noname.json"
         no_name.write_text(json.dumps({"fingerprint": "123"}))
         with pytest.raises(ValueError, match="name"):
-            add_peer_from_card(no_name, skcapstone_home=sk, skcomm_home=sc)
+            add_peer_from_card(no_name, skcapstone_home=sk, skcomms_home=sc)
 
 
 class TestAddPeerManual:
@@ -131,7 +131,7 @@ class TestAddPeerManual:
         sk, sc = homes
         peer = add_peer_manual(
             name="Opus", email="opus@smilintux.org",
-            skcapstone_home=sk, skcomm_home=sc,
+            skcapstone_home=sk, skcomms_home=sc,
         )
         assert peer.name == "Opus"
         assert peer.email == "opus@smilintux.org"
@@ -145,7 +145,7 @@ class TestAddPeerManual:
 
         peer = add_peer_manual(
             name="Opus", public_key_path=key_file,
-            skcapstone_home=sk, skcomm_home=sc,
+            skcapstone_home=sk, skcomms_home=sc,
         )
         assert peer.public_key != ""
         assert peer.trust_level == "verified"
@@ -163,7 +163,7 @@ class TestListPeers:
     def test_list_with_peers(self, card_file, homes):
         """Added peers appear in listing."""
         sk, sc = homes
-        add_peer_from_card(card_file, skcapstone_home=sk, skcomm_home=sc)
+        add_peer_from_card(card_file, skcapstone_home=sk, skcomms_home=sc)
 
         peers = list_peers(skcapstone_home=sk)
         assert len(peers) == 1
@@ -176,7 +176,7 @@ class TestGetPeer:
     def test_get_existing(self, card_file, homes):
         """Known peer is returned."""
         sk, sc = homes
-        add_peer_from_card(card_file, skcapstone_home=sk, skcomm_home=sc)
+        add_peer_from_card(card_file, skcapstone_home=sk, skcomms_home=sc)
 
         peer = get_peer("Lumina", skcapstone_home=sk)
         assert peer is not None
@@ -194,16 +194,16 @@ class TestRemovePeer:
     def test_remove_existing(self, card_file, homes):
         """Removing an existing peer cleans up all files."""
         sk, sc = homes
-        add_peer_from_card(card_file, skcapstone_home=sk, skcomm_home=sc)
+        add_peer_from_card(card_file, skcapstone_home=sk, skcomms_home=sc)
 
-        assert remove_peer("Lumina", skcapstone_home=sk, skcomm_home=sc)
+        assert remove_peer("Lumina", skcapstone_home=sk, skcomms_home=sc)
         assert not (sk / "peers" / "lumina.json").exists()
         assert not (sc / "peers" / "lumina.yml").exists()
 
     def test_remove_unknown(self, homes):
         """Removing unknown peer returns False."""
         sk, sc = homes
-        assert not remove_peer("Nobody", skcapstone_home=sk, skcomm_home=sc)
+        assert not remove_peer("Nobody", skcapstone_home=sk, skcomms_home=sc)
 
 
 class TestCLI:

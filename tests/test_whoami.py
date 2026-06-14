@@ -81,7 +81,7 @@ class TestIdentityCard:
             name="Opus",
             fingerprint="AABB1122",
             entity_type="ai",
-            capabilities=["capauth:identity", "skcomm:messaging"],
+            capabilities=["capauth:identity", "skcomms:messaging"],
             contact_uris=["capauth:AABB1122"],
         )
         json_str = card.model_dump_json()

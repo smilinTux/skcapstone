@@ -35,10 +35,10 @@ def _require_linux() -> None:
 
 SERVICE_NAME = "skcapstone.service"
 SOCKET_NAME = "skcapstone-api.socket"
-HEARTBEAT_SERVICE = "skcomm-heartbeat.service"
-HEARTBEAT_TIMER = "skcomm-heartbeat.timer"
-QUEUE_DRAIN_SERVICE = "skcomm-queue-drain.service"
-QUEUE_DRAIN_TIMER = "skcomm-queue-drain.timer"
+HEARTBEAT_SERVICE = "skcomms-heartbeat.service"
+HEARTBEAT_TIMER = "skcomms-heartbeat.timer"
+QUEUE_DRAIN_SERVICE = "skcomms-queue-drain.service"
+QUEUE_DRAIN_TIMER = "skcomms-queue-drain.timer"
 
 ALL_UNITS = [
     SERVICE_NAME,
@@ -370,7 +370,7 @@ WatchdogSec=120
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.skcapstone %h/.capauth %h/.cloud9 %h/.skcomm %h/.skchat
+ReadWritePaths=%h/.skcapstone %h/.capauth %h/.cloud9 %h/.skcomms %h/.skchat
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectControlGroups=true

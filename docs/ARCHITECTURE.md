@@ -22,8 +22,8 @@ depends only on the one below it:
          │ sends/receives via
          v
   ┌─────────────┐
-  │   SKComm    │  Transport layer — encrypted P2P envelope routing,
-  │  (skcomm)   │  Syncthing + File + TURN backends, peer addressing
+  │   SKComms    │  Transport layer — encrypted P2P envelope routing,
+  │  (skcomms)   │  Syncthing + File + TURN backends, peer addressing
   └──────┬──────┘
          │ verifies identity with
          v
@@ -47,13 +47,13 @@ sender's known public key. Publishes DID documents at three tiers: `did:key`
 (local), `did:web` mesh (Tailscale), and `did:web` public. No other layer
 handles cryptographic identity.
 
-**SKComm (transport)** — Routes `.skc.json` envelopes between agents. Abstracts
+**SKComms (transport)** — Routes `.skc.json` envelopes between agents. Abstracts
 over Syncthing (default), local file drops, and TURN-relay transports. SKChat
-and the daemon's poll loop both call `skcomm.send()` / `skcomm.receive()` — they
+and the daemon's poll loop both call `skcomms.send()` / `skcomms.receive()` — they
 never touch transport internals directly.
 
 **SKChat (messaging)** — Provides the conversation abstraction: threads, per-peer
-history, inbox polling. Calls SKComm for delivery; writes conversation records to
+history, inbox polling. Calls SKComms for delivery; writes conversation records to
 SKMemory. The CLI `skcapstone chat` and the consciousness loop both use SKChat's
 `AgentMessenger` to send responses.
 
@@ -103,7 +103,7 @@ graph TB
         MCP[MCP Server] --> Daemon
         Daemon --> Memory[skmemory]
         Daemon --> Identity[CapAuth Identity]
-        Daemon --> Comms[SKComm Transport]
+        Daemon --> Comms[SKComms Transport]
         Daemon --> Chat[SKChat Messaging]
     end
 
@@ -157,7 +157,7 @@ graph TB
 
     subgraph "DaemonService (port 7777)"
         direction TB
-        POLL[poll_loop<br/>10s SKComm poll]
+        POLL[poll_loop<br/>10s SKComms poll]
         HEALTH[health_loop<br/>60s transport check]
         SYNC_L[sync_loop<br/>5m vault push]
         HOUSE[housekeeping_loop<br/>1h file pruning]
@@ -191,7 +191,7 @@ graph TB
         ESCALATE[_escalate<br/>→ SKChat chef]
     end
 
-    PEER -->|SKComm envelope| SYNC_P
+    PEER -->|SKComms envelope| SYNC_P
     SYNCTHING <-->|P2P sync| SYNC_P
 
     POLL -->|envelopes| BRIDGE
@@ -241,7 +241,7 @@ flowchart TD
     F -->|ack / heartbeat<br/>/ file_transfer| SKIP2[skip — no response]
     F -->|text / command| G{dedup check<br/>envelope_id}
     G -->|already seen| SKIP2
-    G -->|new| H[ACK sender via SKComm<br/>auto_ack=True]
+    G -->|new| H[ACK sender via SKComms<br/>auto_ack=True]
 
     H --> I[_classify_message<br/>keyword → tags + estimated_tokens]
 
@@ -263,7 +263,7 @@ flowchart TD
     O -->|No| FALLBACK[fallback cascade]
     FALLBACK --> P
 
-    P --> Q[skcomm.send_to_peer<br/>response envelope]
+    P --> Q[skcomms.send_to_peer<br/>response envelope]
     Q --> R[SystemPromptBuilder<br/>.add_to_history peer + response]
     R --> S[memory_engine.store<br/>automemory=True]
     S --> T[_processed_ids.add<br/>dedup guard]
@@ -539,7 +539,7 @@ sequenceDiagram
     D->>D: _setup_logging()
     D->>D: _setup_signals() SIGTERM/SIGINT
     D->>D: _load_components()
-    Note over D: SKComm.from_config() → transports
+    Note over D: SKComms.from_config() → transports
     Note over D: get_runtime(home) → AgentManifest
     Note over D: HeartbeatBeacon(home, agent_name)
     D->>C: ConsciousnessLoop(config, state, home, shared_root)
@@ -559,8 +559,8 @@ sequenceDiagram
 
 | Thread | Interval | Action |
 |--------|----------|--------|
-| `daemon-poll` | 10s | `skcomm.receive()` → process envelopes |
-| `daemon-health` | 60s | `skcomm.status()` → `state.record_health()` + beacon pulse |
+| `daemon-poll` | 10s | `skcomms.receive()` → process envelopes |
+| `daemon-health` | 60s | `skcomms.status()` → `state.record_health()` + beacon pulse |
 | `daemon-sync` | 300s | `pillars.sync.push_seed()` → vault push |
 | `daemon-housekeeping` | 3600s | Prune stale ACKs, envelopes, seeds |
 | `daemon-healing` | 300s | `SelfHealingDoctor.diagnose_and_heal()` |
@@ -709,7 +709,7 @@ Configuration is resolved in priority order (first wins):
 | `XAI_API_KEY` | — | Enables Grok backend |
 | `MOONSHOT_API_KEY` | — | Enables Kimi backend |
 | `NVIDIA_API_KEY` | — | Enables NVIDIA backend |
-| `SKCOMM_TURN_SECRET` | — | HMAC secret for coturn credentials |
+| `SKCOMMS_TURN_SECRET` | — | HMAC secret for coturn credentials |
 | `CAPAUTH_API_URL` | local | Remote CapAuth validation endpoint |
 
 ### Multi-Agent Mode

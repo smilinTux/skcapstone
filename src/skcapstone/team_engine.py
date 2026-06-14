@@ -472,7 +472,7 @@ class TeamEngine:
         deployment: TeamDeployment,
         blueprint: BlueprintManifest,
     ) -> TeamChannel:
-        """Bootstrap SKComm file channel for all agents in a deployment.
+        """Bootstrap SKComms file channel for all agents in a deployment.
 
         Identifies the queen agent from the blueprint's coordination config
         (falling back to any agent with role=manager) and provisions per-agent

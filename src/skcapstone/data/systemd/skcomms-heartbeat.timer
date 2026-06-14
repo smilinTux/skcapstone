@@ -1,6 +1,6 @@
 [Unit]
-Description=SKComm Heartbeat Timer — periodic liveness announcements
-Documentation=https://github.com/smilinTux/skcomm
+Description=SKComms Heartbeat Timer — periodic liveness announcements
+Documentation=https://github.com/smilinTux/skcomms
 
 [Timer]
 OnBootSec=30s

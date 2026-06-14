@@ -301,9 +301,9 @@ class TestBuildEnvelope:
     """Tests for the internal _build_envelope helper."""
 
     def test_required_fields_present(self) -> None:
-        """Envelope dict has all required SKComm fields."""
+        """Envelope dict has all required SKComms fields."""
         env = _build_envelope("agent-a", "agent-b", "hello")
-        assert env["skcomm_version"] == "1.0.0"
+        assert env["skcomms_version"] == "1.0.0"
         assert env["sender"] == "agent-a"
         assert env["recipient"] == "agent-b"
         assert env["payload"]["content"] == "hello"

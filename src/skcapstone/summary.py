@@ -197,17 +197,17 @@ def _health_summary(home: Path) -> dict:
 
 
 def _inbox_summary(home: Path) -> dict:
-    """Count unread messages in the SKComm and SKChat inboxes."""
+    """Count unread messages in the SKComms and SKChat inboxes."""
     total = 0
     sources: list[str] = []
 
-    # SKComm file transport inbox
-    skcomm_inbox = home / "comms" / "inbox"
-    if skcomm_inbox.exists():
-        count = sum(1 for f in skcomm_inbox.iterdir() if f.is_file())
+    # SKComms file transport inbox
+    skcomms_inbox = home / "comms" / "inbox"
+    if skcomms_inbox.exists():
+        count = sum(1 for f in skcomms_inbox.iterdir() if f.is_file())
         if count:
             total += count
-            sources.append(f"skcomm:{count}")
+            sources.append(f"skcomms:{count}")
 
     # SKChat local inbox (skchat daemon stores messages here)
     skchat_inbox = home / "skchat" / "inbox"

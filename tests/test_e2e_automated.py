@@ -101,7 +101,7 @@ def _poll_for_response(
             if skc.stat().st_mtime > ref_mtime:
                 return True
 
-        # Check conversations file (passthrough / no-SKComm fallback)
+        # Check conversations file (passthrough / no-SKComms fallback)
         if conv_file.exists() and conv_file.stat().st_mtime > ref_mtime:
             return True
 

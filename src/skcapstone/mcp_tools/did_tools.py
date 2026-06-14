@@ -364,11 +364,11 @@ async def _handle_did_publish(args: dict) -> list[TextContent]:
         except Exception as exc:
             errors.append(f"{path}: {exc}")
 
-    skcomm_home = Path(_os.environ.get("SKCOMM_HOME", str(Path.home() / ".skcomm")))
+    skcomms_home = Path(_os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcomms")))
     did_dir = _home() / "did"
 
     # Tier 2 (mesh) — always written; used by Tailscale Serve
-    _write(skcomm_home / "well-known" / "did.json", _json.dumps(docs[DIDTier.WEB_MESH], indent=2))
+    _write(skcomms_home / "well-known" / "did.json", _json.dumps(docs[DIDTier.WEB_MESH], indent=2))
     # Tier 1 (did:key) — always written; self-contained anchor
     _write(did_dir / "key.json", _json.dumps(docs[DIDTier.KEY], indent=2))
     _write(did_dir / "did_key.txt", gen._ctx.did_key_id)

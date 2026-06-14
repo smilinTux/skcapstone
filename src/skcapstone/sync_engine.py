@@ -2,14 +2,14 @@
 Sync pipeline engine — comms path alignment for Syncthing ↔ consciousness loop.
 
 Verifies that the inbox/outbox directories used by the consciousness loop
-inotify watcher and the SKComm Syncthing transport are aligned under the
+inotify watcher and the SKComms Syncthing transport are aligned under the
 Syncthing-synced comms root, and reports pipeline health.
 
 Pipeline:
     Syncthing → {shared_root}/sync/comms/inbox/{peer}/*.skc.json
              ↓  inotify  (ConsciousnessLoop._INBOX_DIR = "sync/comms/inbox")
     ConsciousnessLoop.process_envelope()
-             ↓  skcomm.send()  — must route to SyncthingTransport with
+             ↓  skcomms.send()  — must route to SyncthingTransport with
                                  comms_root = {shared_root}/sync/comms
     SyncthingTransport → {shared_root}/sync/comms/outbox/{peer}/*.skc.json
              ↓  Syncthing propagates to peer
@@ -17,11 +17,11 @@ Pipeline:
 
 Path alignment requirement
 --------------------------
-The SKComm Syncthing transport must be configured with::
+The SKComms Syncthing transport must be configured with::
 
     comms_root: ~/.skcapstone/sync/comms
 
-in ~/.skcomm/config.yml so its outbox and inbox paths match the paths the
+in ~/.skcomms/config.yml so its outbox and inbox paths match the paths the
 consciousness loop watches via inotify.  This module provides
 :func:`verify_pipeline_paths` to detect mismatches and
 :func:`get_sync_pipeline_status` for the daemon health loop.
@@ -128,19 +128,19 @@ def ensure_comms_dirs(shared_root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def verify_pipeline_paths(shared_root: Path, skcomm=None) -> dict:
+def verify_pipeline_paths(shared_root: Path, skcomms=None) -> dict:
     """Verify inbox/outbox path alignment for the full sync pipeline.
 
     Checks:
 
     1. The consciousness loop's watched inbox dir exists.
     2. The outbox dir exists so responses can be written and synced.
-    3. (Optional) The active SKComm Syncthing transport's ``comms_root``
+    3. (Optional) The active SKComms Syncthing transport's ``comms_root``
        matches ``{shared_root}/sync/comms``.
 
     Args:
         shared_root: The agent SHARED_ROOT.
-        skcomm: Optional :class:`SKComm` instance to inspect transport config.
+        skcomms: Optional :class:`SKComms` instance to inspect transport config.
 
     Returns:
         Dict with keys:
@@ -148,7 +148,7 @@ def verify_pipeline_paths(shared_root: Path, skcomm=None) -> dict:
         - ``inbox_ok`` (bool) — inbox dir exists.
         - ``outbox_ok`` (bool) — outbox dir exists.
         - ``transport_aligned`` (bool | None) — transport comms_root matches
-          (None if skcomm not provided or check failed).
+          (None if skcomms not provided or check failed).
         - ``inbox_path`` (str) — absolute inbox path.
         - ``outbox_path`` (str) — absolute outbox path.
         - ``expected_comms_root`` (str) — the expected comms root.
@@ -168,9 +168,9 @@ def verify_pipeline_paths(shared_root: Path, skcomm=None) -> dict:
         issues.append(f"Outbox dir missing: {outbox}")
 
     transport_aligned: Optional[bool] = None
-    if skcomm is not None:
+    if skcomms is not None:
         try:
-            transport_aligned = _check_transport_alignment(skcomm, expected_root, issues)
+            transport_aligned = _check_transport_alignment(skcomms, expected_root, issues)
         except Exception as exc:
             logger.debug("Transport alignment check failed: %s", exc)
             issues.append(f"Transport alignment check error: {exc}")
@@ -186,11 +186,11 @@ def verify_pipeline_paths(shared_root: Path, skcomm=None) -> dict:
     }
 
 
-def _check_transport_alignment(skcomm, expected_root: Path, issues: list[str]) -> bool:
-    """Walk SKComm router transports and check the Syncthing transport's root.
+def _check_transport_alignment(skcomms, expected_root: Path, issues: list[str]) -> bool:
+    """Walk SKComms router transports and check the Syncthing transport's root.
 
     Args:
-        skcomm: SKComm instance (has ``router`` or ``_router`` attribute).
+        skcomms: SKComms instance (has ``router`` or ``_router`` attribute).
         expected_root: The expected comms root path.
         issues: Mutable list; problem strings are appended here.
 
@@ -198,7 +198,7 @@ def _check_transport_alignment(skcomm, expected_root: Path, issues: list[str]) -
         ``True`` if aligned (or no Syncthing transport registered),
         ``False`` on mismatch.
     """
-    router = getattr(skcomm, "router", None) or getattr(skcomm, "_router", None)
+    router = getattr(skcomms, "router", None) or getattr(skcomms, "_router", None)
     if router is None:
         return True  # can't check — assume ok
 
@@ -214,7 +214,7 @@ def _check_transport_alignment(skcomm, expected_root: Path, issues: list[str]) -
             issues.append(
                 f"SyncthingTransport comms_root mismatch — "
                 f"expected {expected_root}, got {actual_root}. "
-                f"Set comms_root: {expected_root} in ~/.skcomm/config.yml"
+                f"Set comms_root: {expected_root} in ~/.skcomms/config.yml"
             )
             aligned = False
     return aligned

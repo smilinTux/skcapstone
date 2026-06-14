@@ -51,7 +51,7 @@ def sample_card(test_keys: tuple[str, str]) -> AgentCard:
         public_key=pub,
         entity_type="ai",
         transports=[
-            TransportEndpoint(transport="file", address="/tmp/skcomm/drop"),
+            TransportEndpoint(transport="file", address="/tmp/skcomms/drop"),
             TransportEndpoint(transport="nostr", address="abc123" * 10 + "abcd"),
         ],
         capabilities=[

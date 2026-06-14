@@ -2,7 +2,7 @@
 
 Usage:
     skcapstone test                     # run all packages
-    skcapstone test --package skcomm   # run one package
+    skcapstone test --package skcomms   # run one package
     skcapstone test --fast              # stop on first failure
     skcapstone test --json-out          # machine-readable JSON output
     skcapstone test --verbose           # pass -v to pytest
@@ -183,15 +183,15 @@ def register_test_commands(main: click.Group) -> None:
     ) -> None:
         """Run pytest across all ecosystem packages and show a summary table.
 
-        Discovers packages in the monorepo (skcapstone, capauth, skcomm,
+        Discovers packages in the monorepo (skcapstone, capauth, skcomms,
         skchat, skmemory, cloud9) and runs their test suites in
         sequence, then renders a consolidated Rich table.
 
         \b
         Examples:
             skcapstone test
-            skcapstone test --package skcomm
-            skcapstone test -p skcomm -p skchat
+            skcapstone test --package skcomms
+            skcapstone test -p skcomms -p skchat
             skcapstone test --fast --verbose
             skcapstone test --json-out | jq .
         """

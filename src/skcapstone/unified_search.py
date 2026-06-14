@@ -1,7 +1,7 @@
 """
 Unified Search — full-text search across all agent data stores.
 
-Searches memories, conversations, and SKComm messages in one query.
+Searches memories, conversations, and SKComms messages in one query.
 Results are ranked by a combined relevance + recency score.
 
 Data stores searched:
@@ -261,7 +261,7 @@ def _search_messages(
     home: Path,
     pattern: re.Pattern,
 ) -> list[SearchResult]:
-    """Search archived SKComm envelope files (.skc.json).
+    """Search archived SKComms envelope files (.skc.json).
 
     Handles both the legacy schema (payload.text) and the newer
     schema (payload.content).
@@ -271,7 +271,7 @@ def _search_messages(
         pattern: Compiled search pattern.
 
     Returns:
-        List of SearchResult objects from SKComm messages.
+        List of SearchResult objects from SKComms messages.
     """
     results: list[SearchResult] = []
 
@@ -396,7 +396,7 @@ def search(
     """Search across all agent data stores.
 
     Performs full-text regex matching against memories, conversations,
-    SKComm messages, and journal entries. Results are ranked by a
+    SKComms messages, and journal entries. Results are ranked by a
     combined relevance × recency score, highest first.
 
     Args:

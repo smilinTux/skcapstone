@@ -9,8 +9,8 @@ Tools:
     memory_store    — Save content to SKMemory
     memory_search   — Search memories by query
     memory_recall   — Recall a specific memory by ID
-    send_message    — Send a message via SKComm
-    check_inbox     — Check for new SKComm messages
+    send_message    — Send a message via SKComms
+    check_inbox     — Check for new SKComms messages
     sync_push       — Push agent state to sync mesh
     sync_pull       — Pull seeds from peers
     coord_status    — Show coordination board
@@ -227,7 +227,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="send_message",
             description=(
-                "Send a message to another agent via SKComm. "
+                "Send a message to another agent via SKComms. "
                 "Routes through available transports (Syncthing, file)."
             ),
             inputSchema={
@@ -253,7 +253,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="check_inbox",
             description=(
-                "Check for new incoming messages across all SKComm transports. "
+                "Check for new incoming messages across all SKComms transports. "
                 "Returns any unread message envelopes."
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
@@ -1628,7 +1628,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Check ecosystem package versions against PyPI. "
                 "Shows installed vs latest for skmemory, skcapstone, capauth, "
-                "sksecurity, skcomm, skchat, cloud9-protocol."
+                "sksecurity, skcomms, skchat, cloud9-protocol."
             ),
             inputSchema={
                 "type": "object",
@@ -2353,11 +2353,11 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
-        # ── SKComm tools ──────────────────────────────────────
+        # ── SKComms tools ──────────────────────────────────────
         Tool(
             name="comm_notify",
             description=(
-                "Send a notification message via SKComm. Routes through "
+                "Send a notification message via SKComms. Routes through "
                 "available transports (Syncthing, file, Tailscale). "
                 "Supports urgency levels for priority routing."
             ),
@@ -2388,7 +2388,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="comm_status",
             description=(
-                "Show SKComm subsystem status: installed version, "
+                "Show SKComms subsystem status: installed version, "
                 "available transports, connection state, and recent "
                 "delivery statistics."
             ),
@@ -2811,7 +2811,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # SKChat
         "chat_send": _handle_chat_send,
         "chat_history": _handle_chat_history,
-        # SKComm
+        # SKComms
         "comm_notify": _handle_comm_notify,
         "comm_status": _handle_comm_status,
         # CapAuth
@@ -2994,15 +2994,15 @@ async def _handle_memory_recall(args: dict) -> list[TextContent]:
 
 
 async def _handle_send_message(args: dict) -> list[TextContent]:
-    """Send a message via SKComm."""
+    """Send a message via SKComms."""
     recipient = args.get("recipient", "")
     message = args.get("message", "")
     if not recipient or not message:
         return _error_response("recipient and message are required")
 
     try:
-        from skcomms.core import SKComm
-        comm = SKComm.from_config()
+        from skcomms.core import SKComms
+        comm = SKComms.from_config()
         report = comm.send(recipient, message)
         return _json_response({
             "sent": report.success,
@@ -3017,7 +3017,7 @@ async def _handle_send_message(args: dict) -> list[TextContent]:
             ],
         })
     except ImportError:
-        return _error_response("SKComm not installed. Run: pip install skcomm")
+        return _error_response("SKComms not installed. Run: pip install skcomms")
     except Exception as exc:
         return _error_response(f"Send failed: {exc}")
 
@@ -3025,8 +3025,8 @@ async def _handle_send_message(args: dict) -> list[TextContent]:
 async def _handle_check_inbox(_args: dict) -> list[TextContent]:
     """Check for incoming messages."""
     try:
-        from skcomms.core import SKComm
-        comm = SKComm.from_config()
+        from skcomms.core import SKComms
+        comm = SKComms.from_config()
         envelopes = comm.receive()
         return _json_response([
             {
@@ -3042,7 +3042,7 @@ async def _handle_check_inbox(_args: dict) -> list[TextContent]:
             for e in envelopes
         ])
     except ImportError:
-        return _error_response("SKComm not installed. Run: pip install skcomm")
+        return _error_response("SKComms not installed. Run: pip install skcomms")
     except Exception as exc:
         return _error_response(f"Inbox check failed: {exc}")
 
@@ -4818,18 +4818,18 @@ async def _handle_chat_history(args: dict) -> list[TextContent]:
     return await _impl(args)
 
 
-# ── SKComm tools ──────────────────────────────────────────
+# ── SKComms tools ──────────────────────────────────────────
 
 
 async def _handle_comm_notify(args: dict) -> list[TextContent]:
-    """Send a notification via SKComm."""
-    from .mcp_tools.skcomm_tools import _handle_comm_notify as _impl
+    """Send a notification via SKComms."""
+    from .mcp_tools.skcomms_tools import _handle_comm_notify as _impl
     return await _impl(args)
 
 
 async def _handle_comm_status(args: dict) -> list[TextContent]:
-    """Show SKComm subsystem status."""
-    from .mcp_tools.skcomm_tools import _handle_comm_status as _impl
+    """Show SKComms subsystem status."""
+    from .mcp_tools.skcomms_tools import _handle_comm_status as _impl
     return await _impl(args)
 
 

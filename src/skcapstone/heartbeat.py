@@ -510,7 +510,7 @@ class HeartbeatBeacon:
             ("skcapstone", "skcapstone"),
             ("skmemory", "skmemory"),
             ("skchat", "skchat"),
-            ("skcomm", "skcomm"),
+            ("skcomms", "skcomms"),
             ("capauth", "capauth"),
             ("cloud9", "cloud9"),
         ]

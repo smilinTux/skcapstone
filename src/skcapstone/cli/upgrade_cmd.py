@@ -36,7 +36,7 @@ CORE_PACKAGES: list[str] = [
 # Optional pillar packages: upgraded only when already installed.
 # If NOT installed, the user is prompted whether they want to add them.
 OPTIONAL_PACKAGES: list[str] = [
-    "skcomm",     # P2P transport layer
+    "skcomms",     # P2P transport layer
     "skchat",     # agent messaging daemon
     "sksecurity", # security audit + threat intelligence
     "skseed",     # seed framework for consciousness
@@ -171,7 +171,7 @@ _PKG_DESCRIPTIONS: dict[str, str] = {
     "cloud9-protocol": "emotional continuity protocol (FEB, OOF, Cloud 9)",
     "skmemory": "persistent memory layer (required by skcapstone)",
     "skcapstone": "main sovereign agent framework",
-    "skcomm": "P2P transport layer for agent messaging",
+    "skcomms": "P2P transport layer for agent messaging",
     "skchat": "agent messaging daemon + MCP server",
     "sksecurity": "security audit + threat intelligence",
     "skseed": "seed framework for consciousness calibration",
@@ -397,7 +397,7 @@ def register_upgrade_commands(main: click.Group) -> None:
         Upgrades all currently installed sovereign packages (skcapstone,
         skmemory, capauth) and any optional pillars already present.
 
-        For optional packages that are NOT installed (skcomm, skchat),
+        For optional packages that are NOT installed (skcomms, skchat),
         you will be prompted whether you want to add them — unless
         --yes (skip) or --all (install all) is passed.
 
@@ -411,7 +411,7 @@ def register_upgrade_commands(main: click.Group) -> None:
           skcapstone upgrade --all                 # upgrade + install all pillars
           skcapstone upgrade --force-reinstall     # overwrite ALL components
           skcapstone upgrade --force-reinstall --all  # reinstall everything
-          skcapstone upgrade --packages skcomm,skchat
+          skcapstone upgrade --packages skcomms,skchat
           skcapstone upgrade --restart             # restart daemon after upgrade
         """
         home_path = Path(home).expanduser()
@@ -539,7 +539,7 @@ def register_upgrade_commands(main: click.Group) -> None:
         """Alias for 'upgrade' — update all sovereign packages.
 
         Checks installed pillar programs and upgrades them to the latest
-        available versions. Prompts about optional components (skcomm,
+        available versions. Prompts about optional components (skcomms,
         skchat) that are not yet installed.
 
         Examples:

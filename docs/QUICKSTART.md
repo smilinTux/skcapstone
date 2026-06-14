@@ -20,7 +20,7 @@ flowchart LR
     E -->|CODE tier| G[Ollama\ndevstral]
     E -->|REASON tier| H[cloud API\nanthropic / grok / …]
     E -->|fallback cascade| I[passthrough]
-    F & G & H & I --> J[SKComm send\nresponse → sender]
+    F & G & H & I --> J[SKComms send\nresponse → sender]
     J --> K[Daemon HTTP API\n:7777/consciousness]
 ```
 
@@ -90,7 +90,7 @@ pip install "skcapstone[consciousness,comms,seed]"
 | Extra | Installs | Required for |
 |-------|----------|-------------|
 | `consciousness` | `watchdog` | inotify inbox watcher |
-| `comms` | `skcomm` | SKComm message transport |
+| `comms` | `skcomms` | SKComms message transport |
 | `seed` | `skseed` | LLM callbacks (Ollama, Anthropic, etc.) |
 | `identity` | `capauth` | PGP identity pillar |
 
@@ -298,7 +298,7 @@ skcapstone daemon uninstall
 
 ## 7. Send a Test Message
 
-The consciousness loop watches `$SKCOMM_HOME/sync/comms/inbox/` (default `~/.skcomm/sync/comms/inbox/`). Dropping a JSON envelope there triggers an immediate response.
+The consciousness loop watches `$SKCOMMS_HOME/sync/comms/inbox/` (default `~/.skcomms/sync/comms/inbox/`). Dropping a JSON envelope there triggers an immediate response.
 
 ### Quick end-to-end test via CLI
 
@@ -306,12 +306,12 @@ The consciousness loop watches `$SKCOMM_HOME/sync/comms/inbox/` (default `~/.skc
 skcapstone consciousness test "Hello, are you there?"
 ```
 
-This runs the full pipeline (classify → model router → LLM → response) synchronously and prints the result without going through SKComm.
+This runs the full pipeline (classify → model router → LLM → response) synchronously and prints the result without going through SKComms.
 
 ### Manual inbox write (mimics a real peer message)
 
 ```bash
-INBOX=~/.skcomm/sync/comms/inbox
+INBOX=~/.skcomms/sync/comms/inbox
 mkdir -p "$INBOX"
 
 cat > "$INBOX/test-$(date +%s).json" << 'EOF'
@@ -410,7 +410,7 @@ Common causes:
 | Error | Fix |
 |-------|-----|
 | `skseed not installed` | `pip install "skcapstone[seed]"` |
-| `skcomm not installed` | `pip install "skcapstone[comms]"` |
+| `skcomms not installed` | `pip install "skcapstone[comms]"` |
 | `watchdog not installed` | `pip install "skcapstone[consciousness]"` — degrades to polling |
 | `Ollama warmup skipped` | Start Ollama: `ollama serve` then `ollama pull llama3.2` |
 

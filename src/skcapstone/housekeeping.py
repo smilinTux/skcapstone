@@ -2,7 +2,7 @@
 Housekeeping — storage pruning for the sovereign agent.
 
 Prunes stale files that accumulate in the agent profile:
-- ACK files in ~/.skcomm/acks/ (age-based, 24h default)
+- ACK files in ~/.skcomms/acks/ (age-based, 24h default)
 - Delivered envelopes in ~/.skcapstone/sync/comms/outbox/ (age-based, 48h)
 - Seed snapshots in ~/.skcapstone/sync/outbox/ (count-based, keep 10)
 
@@ -26,20 +26,20 @@ DEFAULT_COMMS_MAX_AGE_HOURS = 48
 DEFAULT_SEEDS_KEEP_PER_AGENT = 10
 
 
-def prune_acks(skcomm_home: Path, max_age_hours: int = DEFAULT_ACK_MAX_AGE_HOURS) -> int:
+def prune_acks(skcomms_home: Path, max_age_hours: int = DEFAULT_ACK_MAX_AGE_HOURS) -> int:
     """Remove ACK files older than max_age_hours.
 
-    ACK files in ~/.skcomm/acks/ confirm message delivery but are never
+    ACK files in ~/.skcomms/acks/ confirm message delivery but are never
     read after initial processing. They accumulate indefinitely.
 
     Args:
-        skcomm_home: Path to ~/.skcomm.
+        skcomms_home: Path to ~/.skcomms.
         max_age_hours: Delete ACKs older than this. Default 24.
 
     Returns:
         Number of files deleted.
     """
-    acks_dir = skcomm_home / "acks"
+    acks_dir = skcomms_home / "acks"
     if not acks_dir.is_dir():
         return 0
 
@@ -163,14 +163,14 @@ def prune_seeds(
 
 def run_housekeeping(
     skcapstone_home: Optional[Path] = None,
-    skcomm_home: Optional[Path] = None,
+    skcomms_home: Optional[Path] = None,
     dry_run: bool = False,
 ) -> dict:
     """Run all housekeeping tasks.
 
     Args:
         skcapstone_home: Path to ~/.skcapstone. Defaults to AGENT_HOME.
-        skcomm_home: Path to ~/.skcomm. Defaults to ~/.skcomm.
+        skcomms_home: Path to ~/.skcomms. Defaults to ~/.skcomms.
         dry_run: If True, report what would be deleted without deleting.
 
     Returns:
@@ -180,14 +180,14 @@ def run_housekeeping(
 
     if skcapstone_home is None:
         skcapstone_home = Path(AGENT_HOME).expanduser()
-    if skcomm_home is None:
-        skcomm_home = Path("~/.skcomm").expanduser()
+    if skcomms_home is None:
+        skcomms_home = Path("~/.skcomms").expanduser()
 
     results: dict[str, dict] = {}
 
     # Measure sizes before pruning
     targets = {
-        "acks": skcomm_home / "acks",
+        "acks": skcomms_home / "acks",
         "comms_outbox": skcapstone_home / "sync" / "comms" / "outbox",
         "seed_outbox": skcapstone_home / "sync" / "outbox",
     }
@@ -214,7 +214,7 @@ def run_housekeeping(
         return results
 
     # Actually prune
-    results["acks"]["deleted"] = prune_acks(skcomm_home)
+    results["acks"]["deleted"] = prune_acks(skcomms_home)
     results["comms_outbox"]["deleted"] = prune_comms_outbox(skcapstone_home / "sync")
     results["seed_outbox"]["deleted"] = prune_seeds(targets["seed_outbox"])
 

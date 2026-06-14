@@ -7,16 +7,16 @@ Pipeline under test
 -------------------
     1. DaemonService starts with consciousness loop enabled (in-process thread).
     2. A .skc.json envelope is dropped into the inbox directory,
-       simulating delivery by SKComm or ``skcapstone send``.
+       simulating delivery by SKComms or ``skcapstone send``.
     3. Inotify / watchdog detects the file within 5 s.
     4. ConsciousnessLoop classifies the message and calls LLMBridge.generate().
-    5. Mock SKComm captures the outbound response.
+    5. Mock SKComms captures the outbound response.
     6. All steps complete within 60 s total.
 
 Related coordination tasks
 --------------------------
     [8fbd0130] — Full E2E integration test (this file)
-    [c9e7b9d8] — End-to-end consciousness test: send SKComm message,
+    [c9e7b9d8] — End-to-end consciousness test: send SKComms message,
                  verify autonomous response
 
 Running
@@ -29,8 +29,8 @@ Running
 
 Known daemon startup issues
 ---------------------------
-    * SKComm not configured in test home: DaemonService logs a warning and
-      skips SKComm polling.  Consciousness loop still runs via inotify.
+    * SKComms not configured in test home: DaemonService logs a warning and
+      skips SKComms polling.  Consciousness loop still runs via inotify.
     * Prompt build latency: SystemPromptBuilder.build() loads identity, soul,
       context, and snapshots from disk.  In tests this takes ~3-4 s even with
       empty dirs because it probes optional YAML/JSON files.  Tests account for
@@ -133,7 +133,7 @@ def _make_loop(
             None → let the real bridge run (requires backends).
 
     Returns:
-        (loop, mock_skcomm, inbox_dir) triple.
+        (loop, mock_skcomms, inbox_dir) triple.
     """
     from skcapstone.consciousness_loop import ConsciousnessConfig, ConsciousnessLoop, LLMBridge
 
@@ -162,11 +162,11 @@ def _make_loop(
         mock_bridge.available_backends = {"passthrough": True}
         loop._bridge = mock_bridge
 
-    # Inject a mock SKComm so responses are captured without real transport
-    mock_skcomm = MagicMock()
-    loop.set_skcomm(mock_skcomm)
+    # Inject a mock SKComms so responses are captured without real transport
+    mock_skcomms = MagicMock()
+    loop.set_skcomms(mock_skcomms)
 
-    return loop, mock_skcomm, inbox_dir
+    return loop, mock_skcomms, inbox_dir
 
 
 def _wait_for_http(port: int, path: str = "/status", timeout: float = 20.0) -> bool:
@@ -272,7 +272,7 @@ class TestInboxFileTrigger:
         """_on_inbox_file submits a valid .skc.json for async processing."""
         from skcapstone.consciousness_loop import SystemPromptBuilder
 
-        loop, mock_skcomm, inbox_dir = _make_loop(
+        loop, mock_skcomms, inbox_dir = _make_loop(
             tmp_path, use_inotify=False, mock_generate="pong"
         )
 
@@ -286,7 +286,7 @@ class TestInboxFileTrigger:
             if isinstance(message, str) and message not in ("ACK",):
                 response_event.set()
 
-        mock_skcomm.send.side_effect = _capture_send
+        mock_skcomms.send.side_effect = _capture_send
 
         msg_path, _ = _drop_message(inbox_dir, content="ping")
 
@@ -299,7 +299,7 @@ class TestInboxFileTrigger:
 
         assert got_response, (
             "_on_inbox_file did not produce a response within 10s. "
-            f"SKComm calls: {mock_skcomm.send.call_args_list}"
+            f"SKComms calls: {mock_skcomms.send.call_args_list}"
         )
 
 
@@ -377,18 +377,18 @@ class TestLLMClassifyAndGenerate:
 
 
 # ===========================================================================
-# Test Class 3: Response delivery via SKComm
+# Test Class 3: Response delivery via SKComms
 # ===========================================================================
 
 
 class TestResponseDeliveredViaSkcomm:
-    """Verify that the generated response is sent back through SKComm."""
+    """Verify that the generated response is sent back through SKComms."""
 
     def test_response_sent_to_sender(self, tmp_path: Path) -> None:
-        """Mock SKComm.send() is called with the LLM response directed at the sender."""
+        """Mock SKComms.send() is called with the LLM response directed at the sender."""
         from skcapstone.consciousness_loop import _SimpleEnvelope
 
-        loop, mock_skcomm, _ = _make_loop(
+        loop, mock_skcomms, _ = _make_loop(
             tmp_path, use_inotify=False, mock_generate="Hello from the agent!"
         )
 
@@ -399,21 +399,21 @@ class TestResponseDeliveredViaSkcomm:
         result = loop.process_envelope(envelope)
 
         assert result == "Hello from the agent!"
-        # Verify SKComm.send was called with the response
+        # Verify SKComms.send was called with the response
         response_calls = [
-            call for call in mock_skcomm.send.call_args_list
+            call for call in mock_skcomms.send.call_args_list
             if len(call.args) >= 2 and call.args[1] == "Hello from the agent!"
         ]
         assert response_calls, (
-            f"SKComm.send() was not called with the LLM response. "
-            f"All calls: {mock_skcomm.send.call_args_list}"
+            f"SKComms.send() was not called with the LLM response. "
+            f"All calls: {mock_skcomms.send.call_args_list}"
         )
         assert response_calls[0].args[0] == "alice", (
             f"Response sent to wrong peer: {response_calls[0].args[0]}"
         )
 
     def test_responses_sent_counter_increments(self, tmp_path: Path) -> None:
-        """stats['responses_sent'] increments each time SKComm.send() succeeds."""
+        """stats['responses_sent'] increments each time SKComms.send() succeeds."""
         from skcapstone.consciousness_loop import _SimpleEnvelope
 
         loop, _, _ = _make_loop(tmp_path, use_inotify=False, mock_generate="reply")
@@ -427,8 +427,8 @@ class TestResponseDeliveredViaSkcomm:
 
         assert loop.stats["responses_sent"] == 3
 
-    def test_skcomm_none_does_not_crash(self, tmp_path: Path) -> None:
-        """Loop processes correctly even when no SKComm is set (responses dropped silently)."""
+    def test_skcomms_none_does_not_crash(self, tmp_path: Path) -> None:
+        """Loop processes correctly even when no SKComms is set (responses dropped silently)."""
         from skcapstone.consciousness_loop import (
             ConsciousnessConfig, ConsciousnessLoop, LLMBridge, _SimpleEnvelope,
         )
@@ -442,7 +442,7 @@ class TestResponseDeliveredViaSkcomm:
         with patch.object(LLMBridge, "_probe_ollama", return_value=False):
             loop = ConsciousnessLoop(config, home=home, shared_root=shared)
 
-        # No SKComm set — _skcomm stays None
+        # No SKComms set — _skcomms stays None
         loop._bridge = MagicMock()
         loop._bridge.generate.return_value = "silent reply"
         loop._bridge.available_backends = {"passthrough": True}
@@ -452,7 +452,7 @@ class TestResponseDeliveredViaSkcomm:
             "payload": {"content": "hello", "content_type": "text"},
         }))
         assert result == "silent reply"
-        assert loop.stats["responses_sent"] == 0  # no SKComm → not counted
+        assert loop.stats["responses_sent"] == 0  # no SKComms → not counted
 
 
 # ===========================================================================
@@ -461,7 +461,7 @@ class TestResponseDeliveredViaSkcomm:
 
 
 class TestFullE2EPipeline:
-    """End-to-end: drop .skc.json → inotify → classify → LLM → SKComm response.
+    """End-to-end: drop .skc.json → inotify → classify → LLM → SKComms response.
 
     Asserts the complete pipeline completes within TOTAL_TIMEOUT seconds.
     This is the primary test for task [8fbd0130] and [c9e7b9d8].
@@ -470,13 +470,13 @@ class TestFullE2EPipeline:
     def test_full_pipeline_within_60s(self, tmp_path: Path) -> None:
         """
         Drop a .skc.json, start the consciousness loop with inotify, and assert
-        the mock SKComm.send() is called with a response within TOTAL_TIMEOUT.
+        the mock SKComms.send() is called with a response within TOTAL_TIMEOUT.
 
         Two-phase assertion:
             Phase 1 — Inotify pickup:  _on_inbox_file fires within INOTIFY_TIMEOUT (5 s)
             Phase 2 — Full pipeline:   response is sent within TOTAL_TIMEOUT (60 s)
         """
-        loop, mock_skcomm, inbox_dir = _make_loop(
+        loop, mock_skcomms, inbox_dir = _make_loop(
             tmp_path,
             use_inotify=True,
             mock_generate="E2E test response — pipeline complete.",
@@ -510,7 +510,7 @@ class TestFullE2EPipeline:
             response_captured.append(message)
             response_event.set()
 
-        mock_skcomm.send.side_effect = _capturing_send
+        mock_skcomms.send.side_effect = _capturing_send
 
         # Start inotify + config-watcher threads
         threads = loop.start()
@@ -556,7 +556,7 @@ class TestFullE2EPipeline:
         assert got_response, (
             f"No response captured within {_TOTAL_TIMEOUT}s. "
             f"Pickup at t={t_pickup:.1f}s; total elapsed: {total_elapsed:.1f}s. "
-            f"SKComm calls: {mock_skcomm.send.call_args_list}"
+            f"SKComms calls: {mock_skcomms.send.call_args_list}"
         )
         assert response_captured, "response_captured list is empty"
         assert "E2E test response" in response_captured[0], (
@@ -571,7 +571,7 @@ class TestFullE2EPipeline:
 
     def test_inotify_pickup_within_5s(self, tmp_path: Path) -> None:
         """Assert the inotify watcher detects the inbox file within INOTIFY_TIMEOUT seconds."""
-        loop, mock_skcomm, inbox_dir = _make_loop(tmp_path, use_inotify=True)
+        loop, mock_skcomms, inbox_dir = _make_loop(tmp_path, use_inotify=True)
 
         pickup_event = threading.Event()
         picked_up_paths: list[Path] = []
@@ -776,9 +776,9 @@ class TestDaemonServiceIntegration:
     ) -> None:
         """
         Full integration: start daemon → drop .skc.json → consciousness loop
-        processes the file → response captured on mock SKComm.
+        processes the file → response captured on mock SKComms.
 
-        This covers task [c9e7b9d8]: send SKComm message, verify autonomous response.
+        This covers task [c9e7b9d8]: send SKComms message, verify autonomous response.
         """
         from skcapstone.daemon import DaemonConfig, DaemonService
         from skcapstone.consciousness_loop import LLMBridge
@@ -801,7 +801,7 @@ class TestDaemonServiceIntegration:
         response_event = threading.Event()
         captured_responses: list[str] = []
 
-        mock_skcomm = MagicMock()
+        mock_skcomms = MagicMock()
 
         def _capturing_send(peer, message, **kwargs):
             # Skip heartbeat / typing-indicator sends (they carry message_type kwarg).
@@ -811,7 +811,7 @@ class TestDaemonServiceIntegration:
                 captured_responses.append(message)
                 response_event.set()
 
-        mock_skcomm.send.side_effect = _capturing_send
+        mock_skcomms.send.side_effect = _capturing_send
 
         with (
             patch.object(service, "_setup_signals"),
@@ -827,7 +827,7 @@ class TestDaemonServiceIntegration:
                 t.join(timeout=5)
                 pytest.skip(f"Daemon HTTP not ready within 30s on port {free_port}")
 
-            # Inject mock LLM and mock SKComm into the running consciousness loop
+            # Inject mock LLM and mock SKComms into the running consciousness loop
             consciousness = service._consciousness
             if consciousness is None:
                 service.stop()
@@ -839,7 +839,7 @@ class TestDaemonServiceIntegration:
             mock_bridge.generate.return_value = "Autonomous response — consciousness is active."
             mock_bridge.available_backends = {"passthrough": True}
             consciousness._bridge = mock_bridge
-            consciousness.set_skcomm(mock_skcomm)
+            consciousness.set_skcomms(mock_skcomms)
 
             t_start = time.monotonic()
 
@@ -869,7 +869,7 @@ class TestDaemonServiceIntegration:
 
         assert got_response, (
             f"Consciousness loop did not respond within {_TOTAL_TIMEOUT}s. "
-            f"Elapsed: {total_elapsed:.1f}s. SKComm calls: {mock_skcomm.send.call_args_list}"
+            f"Elapsed: {total_elapsed:.1f}s. SKComms calls: {mock_skcomms.send.call_args_list}"
         )
         assert captured_responses, "No response text captured from consciousness loop"
         assert total_elapsed <= _TOTAL_TIMEOUT, (

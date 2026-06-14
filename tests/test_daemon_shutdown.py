@@ -39,7 +39,7 @@ def _make_service(tmp_path: Path) -> DaemonService:
 
 
 def _make_fake_envelope(sender: str = "peer-a", content: str = "hello") -> SimpleNamespace:
-    """Build a minimal fake SKComm envelope."""
+    """Build a minimal fake SKComms envelope."""
     return SimpleNamespace(
         message_id=str(uuid.uuid4()),
         sender=sender,

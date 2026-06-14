@@ -86,7 +86,7 @@ pip install skcapstone
 
 **Recommended** — all pillars:
 ```bash
-pip install skcapstone skmemory skcomm capauth
+pip install skcapstone skmemory skcomms capauth
 ```
 
 **Full** — everything including optional extras:
@@ -98,7 +98,7 @@ pip install "skcapstone[all]"
 |---------|-------------|
 | `skcapstone` | Core framework, CLI, daemon, coordination |
 | `skmemory` | Persistent memory (short/mid/long-term layers) |
-| `skcomm` | Encrypted agent-to-agent message transport |
+| `skcomms` | Encrypted agent-to-agent message transport |
 | `capauth` | PGP-based sovereign identity pillar |
 
 ### Verify the install
@@ -189,7 +189,7 @@ skcapstone whoami
 │ Handle:        my-agent@skworld.io                                           │
 │ Consciousness: SINGULAR                                                      │
 │ Memories:      0                                                             │
-│ Capabilities:  capauth:identity, skcomm:messaging, skmemory:persistence      │
+│ Capabilities:  capauth:identity, skcomms:messaging, skmemory:persistence      │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   Share this card: skcapstone whoami --export card.json
   Peer imports it: skcapstone peer add --card card.json
@@ -429,8 +429,8 @@ skcapstone doctor
     ✓ Memory store (1 memory across all layers)
     ✓ Memory search index (present)
 
-  Transport (SKComm)
-    ✓ SKComm engine (1 transport configured)
+  Transport (SKComms)
+    ✓ SKComms engine (1 transport configured)
     ✓ Transport: file (available)
 
   29 passed, 0 failed out of 29 checks.
@@ -548,7 +548,7 @@ Common causes and fixes:
 | Log message | Fix |
 |-------------|-----|
 | `skseed not installed` | `pip install "skcapstone[seed]"` |
-| `skcomm not installed` | `pip install skcomm` |
+| `skcomms not installed` | `pip install skcomms` |
 | `watchdog not installed` | `pip install watchdog` (degrades to polling without it) |
 | `Ollama warmup skipped` | Run `ollama serve`, then `ollama pull llama3.2` |
 | `Connection refused: 11434` | Ollama isn't running — start it with `ollama serve` |
@@ -748,7 +748,7 @@ skcapstone context                           # regenerate CLAUDE.md context
 
 ```
 # Install
-pip install skcapstone skmemory skcomm capauth
+pip install skcapstone skmemory skcomms capauth
 
 # First-time setup
 skcapstone init --name "my-agent"

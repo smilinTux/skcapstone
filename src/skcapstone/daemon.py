@@ -715,7 +715,7 @@ class DaemonService:
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
         self._server: Optional[HTTPServer] = None
-        self._skcomm = None
+        self._skcomms = None
         self._runtime = None
         self._consciousness = None
         self._healer = None
@@ -884,22 +884,22 @@ class DaemonService:
             logger.info("Preflight complete — all checks passed")
 
     def _load_components(self) -> None:
-        """Attempt to load SKComm, AgentRuntime, and ConsciousnessLoop."""
+        """Attempt to load SKComms, AgentRuntime, and ConsciousnessLoop."""
         try:
-            from skcomms.core import SKComm
+            from skcomms.core import SKComms
             from .sync_engine import ensure_comms_dirs, get_comms_root
-            self._skcomm = SKComm.from_config()
+            self._skcomms = SKComms.from_config()
             expected_comms_root = get_comms_root(self.config.shared_root)
             ensure_comms_dirs(self.config.shared_root)
-            for transport in self._skcomm.router.transports:
+            for transport in self._skcomms.router.transports:
                 if getattr(transport, "name", "") == "syncthing" and hasattr(transport, "configure"):
                     transport.configure({"comms_root": str(expected_comms_root)})
-            logger.info("SKComm loaded — %d transports", len(self._skcomm.router.transports))
+            logger.info("SKComms loaded — %d transports", len(self._skcomms.router.transports))
         except ImportError:
-            logger.warning("SKComm not installed — inbox polling disabled")
+            logger.warning("SKComms not installed — inbox polling disabled")
         except Exception as exc:
-            logger.warning("SKComm failed to load: %s", exc)
-            self.state.record_error(f"SKComm load: {exc}")
+            logger.warning("SKComms failed to load: %s", exc)
+            self.state.record_error(f"SKComms load: {exc}")
 
         try:
             from .runtime import get_runtime
@@ -936,8 +936,8 @@ class DaemonService:
                         home=self.config.home,
                         shared_root=self.config.shared_root,
                     )
-                    if self._skcomm:
-                        self._consciousness.set_skcomm(self._skcomm)
+                    if self._skcomms:
+                        self._consciousness.set_skcomms(self._skcomms)
                     logger.info("Consciousness loop loaded")
 
                     # Preload Ollama model into RAM so first real message is fast
@@ -991,12 +991,12 @@ class DaemonService:
             self.state.record_error(f"Scheduler build: {exc}")
 
     def _poll_loop(self) -> None:
-        """Continuously poll SKComm inbox for new messages."""
+        """Continuously poll SKComms inbox for new messages."""
         while not self._stop_event.is_set():
             self._component_mgr.heartbeat("poll")
-            if self._skcomm:
+            if self._skcomms:
                 try:
-                    envelopes = self._skcomm.receive()
+                    envelopes = self._skcomms.receive()
                     count = len(envelopes)
                     self.state.record_poll(count)
                     if count > 0:
@@ -1015,9 +1015,9 @@ class DaemonService:
         while not self._stop_event.is_set():
             self._component_mgr.heartbeat("health")
             _sd_notify("WATCHDOG=1")
-            if self._skcomm:
+            if self._skcomms:
                 try:
-                    report = self._skcomm.status()
+                    report = self._skcomms.status()
                     transports = report.get("transports", {})
                     serializable = {}
                     for name, health in transports.items():
@@ -1166,10 +1166,10 @@ class DaemonService:
                 self.state.record_error(f"Process message: {exc}")
 
     def _journal_incoming(self, sender: str, preview: str) -> None:
-        """Auto-journal an incoming SKComm message and store a tagged memory.
+        """Auto-journal an incoming SKComms message and store a tagged memory.
 
         Writes a journal entry (title='From {sender}', moments=[preview]) and
-        stores a short-term memory tagged 'skcomm-received'.  Both operations
+        stores a short-term memory tagged 'skcomms-received'.  Both operations
         are best-effort: failures are logged at DEBUG level and never bubble up.
         """
         try:
@@ -1184,16 +1184,16 @@ class DaemonService:
             logger.debug("Auto-journal write failed: %s", exc)
 
         try:
-            self._store_skcomm_receipt(sender, preview)
-            logger.debug("SKComm receipt stored for incoming message from %s", sender)
+            self._store_skcomms_receipt(sender, preview)
+            logger.debug("SKComms receipt stored for incoming message from %s", sender)
         except Exception as exc:
-            logger.debug("SKComm receipt store failed: %s", exc)
+            logger.debug("SKComms receipt store failed: %s", exc)
 
-    def _store_skcomm_receipt(self, sender: str, preview: str) -> None:
-        """Write a skcomm receipt to the skcomm/received/ directory.
+    def _store_skcomms_receipt(self, sender: str, preview: str) -> None:
+        """Write a skcomms receipt to the skcomms/received/ directory.
 
         These are transport bookkeeping, NOT persistent memories, so they
-        go to ``~/.skcapstone/agents/{agent}/skcomm/received/`` instead of
+        go to ``~/.skcapstone/agents/{agent}/skcomms/received/`` instead of
         polluting the memory/ tree that skmemory indexes.
         """
         import json
@@ -1203,7 +1203,7 @@ class DaemonService:
         from . import active_agent_name
 
         agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-        recv_dir = self.config.home / "agents" / agent_name / "skcomm" / "received"
+        recv_dir = self.config.home / "agents" / agent_name / "skcomms" / "received"
         recv_dir.mkdir(parents=True, exist_ok=True)
 
         receipt_id = uuid.uuid4().hex[:12]
@@ -1891,7 +1891,7 @@ class DaemonService:
                         from skcomms.capauth_validator import CapAuthValidator
                         fingerprint = CapAuthValidator(require_auth=True).validate(token_str)
                     except ImportError:
-                        # skcomm not installed — fall back to skcapstone signed tokens
+                        # skcomms not installed — fall back to skcapstone signed tokens
                         if token_str:
                             try:
                                 from .tokens import import_token, verify_token
@@ -2231,7 +2231,7 @@ class DaemonService:
                     message_id = str(uuid.uuid4())
                     ts = datetime.now(timezone.utc).isoformat()
 
-                    # Build SKComm envelope
+                    # Build SKComms envelope
                     envelope = {
                         "message_id": message_id,
                         "sender": "api",
@@ -2243,7 +2243,7 @@ class DaemonService:
                         },
                     }
 
-                    # Write to SKComm outbox
+                    # Write to SKComms outbox
                     try:
                         outbox = config.shared_root / "sync" / "comms" / "outbox"
                         outbox.mkdir(parents=True, exist_ok=True)

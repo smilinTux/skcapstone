@@ -34,7 +34,7 @@ def _make_loop(tmp_path: Path, config: ConsciousnessConfig | None = None) -> Con
     if config is None:
         config = ConsciousnessConfig(
             auto_memory=False,   # avoid skcapstone.memory_engine I/O
-            auto_ack=False,      # no SKComm needed
+            auto_ack=False,      # no SKComms needed
             use_inotify=False,   # no filesystem watcher needed
         )
 

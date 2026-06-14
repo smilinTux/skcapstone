@@ -467,12 +467,12 @@ class TestCoordTools:
 
 
 # ---------------------------------------------------------------------------
-# SKComm tool tests (graceful fallback)
+# SKComms tool tests (graceful fallback)
 # ---------------------------------------------------------------------------
 
 
 class TestCommTools:
-    """Tests for send_message and check_inbox (SKComm may not be installed)."""
+    """Tests for send_message and check_inbox (SKComms may not be installed)."""
 
     @pytest.mark.asyncio
     async def test_send_message_requires_params(self):
@@ -483,10 +483,10 @@ class TestCommTools:
 
     @pytest.mark.asyncio
     async def test_check_inbox_graceful_fallback(self):
-        """check_inbox returns graceful error when SKComm is unavailable."""
+        """check_inbox returns graceful error when SKComms is unavailable."""
         result = await call_tool("check_inbox", {})
         parsed = _extract_json(result)
-        # Either returns messages list or graceful error about skcomm
+        # Either returns messages list or graceful error about skcomms
         assert isinstance(parsed, list) or "error" in parsed
 
 

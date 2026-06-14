@@ -66,10 +66,10 @@ _TERMINAL_CMDS: list[list[str]] = [
 
 
 def _store_notification_memory(title: str, body: str, urgency: str) -> None:
-    """Log a notification dispatch to the skcomm/notifications/ directory.
+    """Log a notification dispatch to the skcomms/notifications/ directory.
 
     These are transport bookkeeping, not persistent memories, so they
-    go to ``~/.skcapstone/agents/{agent}/skcomm/notifications/`` instead
+    go to ``~/.skcapstone/agents/{agent}/skcomms/notifications/`` instead
     of polluting the memory/ tree that skmemory indexes.
     """
     try:
@@ -84,7 +84,7 @@ def _store_notification_memory(title: str, body: str, urgency: str) -> None:
         from . import active_agent_name
 
         agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-        notif_dir = home / "agents" / agent_name / "skcomm" / "notifications"
+        notif_dir = home / "agents" / agent_name / "skcomms" / "notifications"
         notif_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -103,7 +103,7 @@ def _store_notification_memory(title: str, body: str, urgency: str) -> None:
 
 
 def _store_click_event(action: str, detail: str) -> None:
-    """Log a notification click event to the skcomm/notifications/ directory."""
+    """Log a notification click event to the skcomms/notifications/ directory."""
     try:
         import json as _json
         import uuid
@@ -116,7 +116,7 @@ def _store_click_event(action: str, detail: str) -> None:
         from . import active_agent_name
 
         agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-        notif_dir = home / "agents" / agent_name / "skcomm" / "notifications"
+        notif_dir = home / "agents" / agent_name / "skcomms" / "notifications"
         notif_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

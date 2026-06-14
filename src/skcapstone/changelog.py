@@ -21,7 +21,7 @@ from .coordination import Board, TaskStatus
 
 
 TAG_CATEGORIES = {
-    "feature": ["skcapstone", "skchat", "skcomm", "skmemory", "capauth", "cloud9", "skworld"],
+    "feature": ["skcapstone", "skchat", "skcomms", "skmemory", "capauth", "cloud9", "skworld"],
     "security": ["security", "encryption", "capauth", "integrity", "quantum-resistant", "pgp"],
     "infrastructure": ["ci", "docker", "systemd", "daemon", "syncthing", "pypi", "packaging"],
     "documentation": ["documentation", "docs", "readme", "quickstart", "api"],

@@ -17,7 +17,7 @@
 > - Discovery: `sdk.register_service()` writes `~/.skcapstone/registry/<name>.json`;
 >   `service_health.check_all_services()` unions the registry with built-in defaults.
 >
-> Consumers can now code against `skcapstone.sdk` immediately. **skcomm is folding
+> Consumers can now code against `skcapstone.sdk` immediately. **skcomms is folding
 > into skcomms** (canonical pivot) — target skcomms for that adapter.
 
 ---

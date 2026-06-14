@@ -12,14 +12,14 @@ agent container:
 2. **MCP Server** — host-side skcapstone MCP reachable via env
    (SKCAPSTONE_MCP_HOST / SKCAPSTONE_MCP_SOCKET).  Set one of these so
    containers can call memory_store, coord_claim, etc.
-3. **SKComm Transport** — comms directory bind-mounted at /skcomm so
+3. **SKComms Transport** — comms directory bind-mounted at /skcomms so
    containers share the same file-channel inboxes as local agents.
 
 Prerequisites:
 - Docker daemon running and accessible (DOCKER_HOST or default socket)
 - docker Python SDK: pip install docker
 - Optional: DOCKER_BASE_IMAGE env var to override the default image
-- Optional: SKCOMM_HOME env var for the comms directory
+- Optional: SKCOMMS_HOME env var for the comms directory
 - Optional: SKCAPSTONE_MCP_HOST env var (host:port) or
             SKCAPSTONE_MCP_SOCKET env var (unix socket path)
 """
@@ -83,8 +83,8 @@ class DockerProvider(ProviderBackend):
 
     Sovereign infrastructure wiring
     --------------------------------
-    - **SKComm**: pass ``skcomm_home`` (or set SKCOMM_HOME) to bind-mount
-      the comms directory at ``/skcomm`` inside every container so
+    - **SKComms**: pass ``skcomms_home`` (or set SKCOMMS_HOME) to bind-mount
+      the comms directory at ``/skcomms`` inside every container so
       container agents share the same file-channel inboxes.
     - **MCP server**: pass ``mcp_host`` (host:port) or ``mcp_socket_path``
       to inject the skcapstone MCP endpoint into container env. Containers
@@ -96,8 +96,8 @@ class DockerProvider(ProviderBackend):
         volume_prefix: Prefix for named volumes created per agent.
         docker_host: Docker daemon socket/URL (default: DOCKER_HOST or
             ``unix:///var/run/docker.sock``).
-        skcomm_home: Host-side SKComm comms root directory; bind-mounted at
-            ``/skcomm`` inside containers. Reads SKCOMM_HOME if not set.
+        skcomms_home: Host-side SKComms comms root directory; bind-mounted at
+            ``/skcomms`` inside containers. Reads SKCOMMS_HOME if not set.
         mcp_host: Host:port of the skcapstone MCP server (e.g.
             ``"host-gateway:8765"``). Sets SKCAPSTONE_MCP_HOST inside
             containers. Reads SKCAPSTONE_MCP_HOST env if not set.
@@ -115,7 +115,7 @@ class DockerProvider(ProviderBackend):
         network_name: str = "skcapstone",
         volume_prefix: str = "skcapstone-agent",
         docker_host: Optional[str] = None,
-        skcomm_home: Optional[str] = None,
+        skcomms_home: Optional[str] = None,
         mcp_host: Optional[str] = None,
         mcp_socket_path: Optional[str] = None,
     ) -> None:
@@ -126,7 +126,7 @@ class DockerProvider(ProviderBackend):
         self._network_name = network_name
         self._volume_prefix = volume_prefix
         self._docker_host = docker_host or os.environ.get("DOCKER_HOST", "")
-        self._skcomm_home = skcomm_home or os.environ.get("SKCOMM_HOME", "")
+        self._skcomms_home = skcomms_home or os.environ.get("SKCOMMS_HOME", "")
         self._mcp_host = mcp_host or os.environ.get("SKCAPSTONE_MCP_HOST", "")
         self._mcp_socket_path = (
             mcp_socket_path or os.environ.get("SKCAPSTONE_MCP_SOCKET", "")
@@ -229,7 +229,7 @@ class DockerProvider(ProviderBackend):
     def _build_sovereign_env(self, env_vars: Dict[str, str]) -> None:
         """Inject sovereign infrastructure env vars into the env dict in-place.
 
-        Adds MCP server endpoint and SKComm home when configured so
+        Adds MCP server endpoint and SKComms home when configured so
         container agents can reach the host-side sovereign stack.
 
         Args:
@@ -239,14 +239,14 @@ class DockerProvider(ProviderBackend):
             env_vars["SKCAPSTONE_MCP_HOST"] = self._mcp_host
         if self._mcp_socket_path:
             env_vars["SKCAPSTONE_MCP_SOCKET"] = _MCP_CONTAINER_SOCKET
-        if self._skcomm_home:
-            env_vars["SKCOMM_HOME"] = "/skcomm"
+        if self._skcomms_home:
+            env_vars["SKCOMMS_HOME"] = "/skcomms"
 
     def _build_volumes_config(self, volume_name: str) -> Dict[str, Any]:
         """Build the volumes dict for containers.create().
 
         Always includes the per-agent named volume at /agent.
-        Optionally adds a bind mount for the SKComm comms directory.
+        Optionally adds a bind mount for the SKComms comms directory.
 
         Args:
             volume_name: Named Docker volume for agent state.
@@ -257,8 +257,8 @@ class DockerProvider(ProviderBackend):
         vols: Dict[str, Any] = {
             volume_name: {"bind": "/agent", "mode": "rw"},
         }
-        if self._skcomm_home and Path(self._skcomm_home).exists():
-            vols[self._skcomm_home] = {"bind": "/skcomm", "mode": "rw"}
+        if self._skcomms_home and Path(self._skcomms_home).exists():
+            vols[self._skcomms_home] = {"bind": "/skcomms", "mode": "rw"}
         if self._mcp_socket_path and Path(self._mcp_socket_path).exists():
             vols[self._mcp_socket_path] = {
                 "bind": _MCP_CONTAINER_SOCKET,
@@ -280,7 +280,7 @@ class DockerProvider(ProviderBackend):
 
         The container is created but NOT started here; start() does that.
         Resource limits (CPU, memory) are applied from spec.resources.
-        SKComm and MCP sovereign infrastructure are wired in when
+        SKComms and MCP sovereign infrastructure are wired in when
         configured on this provider.
 
         Args:
@@ -330,7 +330,7 @@ class DockerProvider(ProviderBackend):
             env_vars["SOUL_BLUEPRINT"] = spec.soul_blueprint
         env_vars.update(spec.env)
 
-        # Wire sovereign infrastructure (MCP + SKComm)
+        # Wire sovereign infrastructure (MCP + SKComms)
         self._build_sovereign_env(env_vars)
 
         volumes_config = self._build_volumes_config(volume_name)
@@ -620,9 +620,9 @@ class DockerProvider(ProviderBackend):
         Resource limits, environment variables, and soul blueprint paths
         are all included.
 
-        When ``skcomm_home`` is configured on the provider the compose
-        output includes a named ``skcomm-data`` volume and mounts it at
-        ``/skcomm`` in every agent service.
+        When ``skcomms_home`` is configured on the provider the compose
+        output includes a named ``skcomms-data`` volume and mounts it at
+        ``/skcomms`` in every agent service.
 
         When ``include_mcp_service=True`` a ``skcapstone-mcp`` sidecar
         service is added; all agent containers receive ``SKCAPSTONE_MCP_HOST``
@@ -663,9 +663,9 @@ class DockerProvider(ProviderBackend):
             }
             volumes["skcapstone-mcp-data"] = {}
 
-        has_skcomm = bool(self._skcomm_home)
-        if has_skcomm:
-            volumes["skcomm-data"] = {}
+        has_skcomms = bool(self._skcomms_home)
+        if has_skcomms:
+            volumes["skcomms-data"] = {}
 
         for agent_key, spec in blueprint.agents.items():
             for idx in range(spec.count):
@@ -690,12 +690,12 @@ class DockerProvider(ProviderBackend):
                 elif self._mcp_host:
                     env["SKCAPSTONE_MCP_HOST"] = self._mcp_host
 
-                if has_skcomm:
-                    env["SKCOMM_HOME"] = "/skcomm"
+                if has_skcomms:
+                    env["SKCOMMS_HOME"] = "/skcomms"
 
                 svc_volumes = [f"{volume_name}:/agent"]
-                if has_skcomm:
-                    svc_volumes.append("skcomm-data:/skcomm")
+                if has_skcomms:
+                    svc_volumes.append("skcomms-data:/skcomms")
 
                 deploy_limits: Dict[str, Any] = {
                     "resources": {

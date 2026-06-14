@@ -31,7 +31,7 @@ def mock_report_all_pass():
     return TestReport(
         results=[
             PackageResult(name="skcapstone", passed=10, exit_code=0, duration_s=1.2),
-            PackageResult(name="skcomm", passed=5, exit_code=0, duration_s=0.8),
+            PackageResult(name="skcomms", passed=5, exit_code=0, duration_s=0.8),
         ],
         duration_s=2.0,
     )
@@ -44,7 +44,7 @@ def mock_report_with_failure():
         results=[
             PackageResult(name="skcapstone", passed=10, exit_code=0, duration_s=1.2),
             PackageResult(
-                name="skcomm",
+                name="skcomms",
                 passed=3,
                 failed=2,
                 exit_code=1,
@@ -116,7 +116,7 @@ class TestInvalidPackage:
             "skcapstone.cli.test_cmd.run_all_tests",
             return_value=mock_report_all_pass,
         ):
-            result = runner.invoke(main, ["test", "--package", "skcomm"])
+            result = runner.invoke(main, ["test", "--package", "skcomms"])
         assert result.exit_code == 0
 
 

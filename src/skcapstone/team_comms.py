@@ -1,7 +1,7 @@
 """
-Team Communications — SKComm/SKChat wiring for deployed agent teams.
+Team Communications — SKComms/SKChat wiring for deployed agent teams.
 
-Bootstraps a local file-based SKComm channel for each deployed team so that
+Bootstraps a local file-based SKComms channel for each deployed team so that
 agents can message each other without external infrastructure. Each agent gets
 its own inbox directory; messages are plain JSON envelopes written atomically
 to the recipient's inbox folder.
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # Sentinel value: the queen/manager role name used to discover the broadcast sender
 _QUEEN_ROLES = frozenset({"manager", "queen"})
 
-# File suffix used by the SKComm file transport
+# File suffix used by the SKComms file transport
 _ENVELOPE_SUFFIX = ".skc.json"
 
 
@@ -105,9 +105,9 @@ def _build_envelope(
     content: str,
     thread_id: Optional[str] = None,
 ) -> dict:
-    """Build a minimal SKComm-compatible envelope dict.
+    """Build a minimal SKComms-compatible envelope dict.
 
-    Uses the same schema as skcomm.models.MessageEnvelope so downstream
+    Uses the same schema as skcomms.models.MessageEnvelope so downstream
     consumers can deserialize with MessageEnvelope.from_bytes().
 
     Args:
@@ -121,7 +121,7 @@ def _build_envelope(
     """
     now = datetime.now(timezone.utc).isoformat()
     return {
-        "skcomm_version": "1.0.0",
+        "skcomms_version": "1.0.0",
         "envelope_id": str(uuid.uuid4()),
         "sender": sender,
         "recipient": recipient,
@@ -276,7 +276,7 @@ def send_to_teammate(
 ) -> str:
     """Send a message from one agent to another within the same team.
 
-    Writes a SKComm-compatible envelope JSON file to the recipient's inbox
+    Writes a SKComms-compatible envelope JSON file to the recipient's inbox
     directory. Optionally logs the activity to the coordination board.
 
     Args:
@@ -392,7 +392,7 @@ def receive_messages(
         board: Optional Board instance for activity logging.
 
     Returns:
-        List[dict]: Raw envelope dicts (skcomm MessageEnvelope schema).
+        List[dict]: Raw envelope dicts (skcomms MessageEnvelope schema).
     """
     envelopes = _drain_inbox(agent_name, channel)
 

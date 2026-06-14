@@ -14,9 +14,9 @@ def register_housekeeping_commands(main: click.Group) -> None:
 
     @main.command("housekeeping")
     @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
-    @click.option("--skcomm-home", default="~/.skcomm", type=click.Path(), help="SKComm home directory.")
+    @click.option("--skcomms-home", default="~/.skcomms", type=click.Path(), help="SKComms home directory.")
     @click.option("--dry-run", is_flag=True, help="Report what would be deleted without deleting.")
-    def housekeeping(home: str, skcomm_home: str, dry_run: bool):
+    def housekeeping(home: str, skcomms_home: str, dry_run: bool):
         """Prune stale ACKs, delivered envelopes, and old seeds.
 
         Reclaims disk space from files that accumulate in the agent
@@ -33,7 +33,7 @@ def register_housekeeping_commands(main: click.Group) -> None:
 
         results = run_housekeeping(
             skcapstone_home=Path(home).expanduser(),
-            skcomm_home=Path(skcomm_home).expanduser(),
+            skcomms_home=Path(skcomms_home).expanduser(),
             dry_run=dry_run,
         )
 

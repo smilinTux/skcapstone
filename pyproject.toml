@@ -64,7 +64,7 @@ chat = [
     "skchat-sovereign>=0.1.1",
 ]
 comm = [
-    "skcomm>=0.1.0",
+    "skcomms>=0.1.0",
 ]
 consciousness = [
     "skwhisper>=0.1.0",
@@ -80,7 +80,7 @@ all = [
     "skseed>=0.1.0",
     "skwhisper>=0.1.0",
     "skchat-sovereign>=0.1.1",
-    "skcomm>=0.1.0",
+    "skcomms>=0.1.0",
     "fusepy>=3.0.1",
     "boto3>=1.34",
     "google-cloud-compute>=1.18",

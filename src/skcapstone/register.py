@@ -63,11 +63,11 @@ def _build_package_registry(workspace: Optional[Path] = None) -> list[dict]:
             "openclaw_plugin_path": workspace / "skcapstone" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
-            "name": "skcomm",
-            "mcp_cmd": "skcomm-mcp",
+            "name": "skcomms",
+            "mcp_cmd": "skcomms-mcp",
             "mcp_args": [],
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "skcomm" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace / "pillar-repos" / "skcomms" / "openclaw-plugin" / "src" / "index.ts",
         },
         {
             "name": "skchat",
@@ -121,7 +121,7 @@ def _build_package_registry(workspace: Optional[Path] = None) -> list[dict]:
 _PILLAR_DIR_MAP: dict[str, Optional[str]] = {
     "skmemory": "skmemory",
     "skcapstone": None,  # lives in workspace root, not pillar-repos
-    "skcomm": "skcomm",
+    "skcomms": "skcomms",
     "skchat": "skchat",
     "capauth": "capauth",
     "cloud9": "cloud9",

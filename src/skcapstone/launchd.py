@@ -54,20 +54,20 @@ _SERVICE_DEFS: list[dict] = [
         "logs": "{logs}/memory-compress",
     },
     {
-        "suffix": "skcomm-heartbeat",
-        "args": ["{skenv}/skcomm", "heartbeat"],
+        "suffix": "skcomms-heartbeat",
+        "args": ["{skenv}/skcomms", "heartbeat"],
         "env": {},
         "interval": 60,
         "nice": 19,
-        "logs": "{logs}/skcomm-heartbeat",
+        "logs": "{logs}/skcomms-heartbeat",
     },
     {
-        "suffix": "skcomm-queue-drain",
-        "args": ["{skenv}/skcomm", "queue", "drain"],
+        "suffix": "skcomms-queue-drain",
+        "args": ["{skenv}/skcomms", "queue", "drain"],
         "env": {},
         "interval": 120,
         "nice": 19,
-        "logs": "{logs}/skcomm-queue-drain",
+        "logs": "{logs}/skcomms-queue-drain",
     },
 ]
 
@@ -84,23 +84,23 @@ _OPTIONAL_DEFS: list[dict] = [
         "requires_bin": "skchat",
     },
     {
-        "suffix": "skcomm-api",
-        "args": ["{skenv}/python3", "-m", "uvicorn", "skcomm.api:app",
+        "suffix": "skcomms-api",
+        "args": ["{skenv}/python3", "-m", "uvicorn", "skcomms.api:app",
                  "--host", "127.0.0.1", "--port", "9384", "--log-level", "info"],
         "env": {"SKCHAT_IDENTITY": "capauth:{agent}@skworld.io"},
         "keep_alive": True,
         "throttle": 5,
-        "logs": "{skcomm}/launchd",
-        "requires_bin": "skcomm",
+        "logs": "{skcomms}/launchd",
+        "requires_bin": "skcomms",
     },
     {
-        "suffix": "skcomm-daemon",
-        "args": ["{skenv}/skcomm", "daemon", "--all-agents", "--interval", "5"],
+        "suffix": "skcomms-daemon",
+        "args": ["{skenv}/skcomms", "daemon", "--all-agents", "--interval", "5"],
         "env": {},
         "keep_alive": True,
         "throttle": 5,
-        "logs": "{skcomm}/daemon",
-        "requires_bin": "skcomm",
+        "logs": "{skcomms}/daemon",
+        "requires_bin": "skcomms",
     },
 ]
 
@@ -127,7 +127,7 @@ def _expand(s: str, agent: str) -> str:
         .replace("{home}", home)
         .replace("{logs}", f"{home}/.skcapstone/logs")
         .replace("{skchat}", f"{home}/.skchat")
-        .replace("{skcomm}", f"{home}/.skcomm")
+        .replace("{skcomms}", f"{home}/.skcomms")
     )
 
 
@@ -281,7 +281,7 @@ def install_service(
     log_dirs = [
         Path.home() / ".skcapstone" / "logs",
         Path.home() / ".skchat",
-        Path.home() / ".skcomm",
+        Path.home() / ".skcomms",
     ]
     for d in log_dirs:
         d.mkdir(parents=True, exist_ok=True)
@@ -355,7 +355,7 @@ def service_status(suffix: str = "daemon") -> ServiceStatus:
     """Query the status of a specific SK launchd service.
 
     Args:
-        suffix: Service suffix (e.g., 'daemon', 'skcomm-heartbeat').
+        suffix: Service suffix (e.g., 'daemon', 'skcomms-heartbeat').
 
     Returns:
         ServiceStatus with current state.

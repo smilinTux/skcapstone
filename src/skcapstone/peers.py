@@ -2,7 +2,7 @@
 Sovereign peer management — the other half of P2P discovery.
 
 whoami exports your identity card. This module imports someone
-else's card and registers them as a peer in the SKComm keystore.
+else's card and registers them as a peer in the SKComms keystore.
 The two together form the complete P2P discovery loop.
 
 Flow:
@@ -12,7 +12,7 @@ Flow:
     4. Agent B can now send encrypted messages to Agent A
 
 Peer data is stored at:
-    ~/.skcomm/peers/<name>.yml     — SKComm peer config
+    ~/.skcomms/peers/<name>.yml     — SKComms peer config
     ~/.skcapstone/peers/<name>.json — Extended peer metadata
 """
 
@@ -69,18 +69,18 @@ class PeerRecord(BaseModel):
 def add_peer_from_card(
     card_path: Path,
     skcapstone_home: Optional[Path] = None,
-    skcomm_home: Optional[Path] = None,
+    skcomms_home: Optional[Path] = None,
 ) -> PeerRecord:
     """Import a peer from a whoami identity card.
 
     Reads the card JSON, creates peer records in both skcapstone
-    and skcomm directories, and writes the public key for SKComm
+    and skcomms directories, and writes the public key for SKComms
     encryption.
 
     Args:
         card_path: Path to the exported card.json.
         skcapstone_home: Override skcapstone home. Defaults to ~/.skcapstone/.
-        skcomm_home: Override skcomm home. Defaults to ~/.skcomm/.
+        skcomms_home: Override skcomms home. Defaults to ~/.skcomms/.
 
     Returns:
         PeerRecord: The registered peer.
@@ -116,10 +116,10 @@ def add_peer_from_card(
     )
 
     sk_home = skcapstone_home or Path(SHARED_ROOT).expanduser()
-    sc_home = skcomm_home or Path.home() / ".skcomm"
+    sc_home = skcomms_home or Path.home() / ".skcomms"
 
     _save_skcapstone_peer(sk_home, peer)
-    _save_skcomm_peer(sc_home, peer)
+    _save_skcomms_peer(sc_home, peer)
 
     logger.info("Added peer '%s' (fingerprint: %s)", name, peer.fingerprint[:16])
     return peer
@@ -131,7 +131,7 @@ def add_peer_manual(
     public_key_path: Optional[Path] = None,
     email: str = "",
     skcapstone_home: Optional[Path] = None,
-    skcomm_home: Optional[Path] = None,
+    skcomms_home: Optional[Path] = None,
 ) -> PeerRecord:
     """Add a peer manually by name and optional key file.
 
@@ -141,7 +141,7 @@ def add_peer_manual(
         public_key_path: Path to a .asc public key file (optional).
         email: Contact email (optional).
         skcapstone_home: Override skcapstone home.
-        skcomm_home: Override skcomm home.
+        skcomms_home: Override skcomms home.
 
     Returns:
         PeerRecord: The registered peer.
@@ -160,10 +160,10 @@ def add_peer_manual(
     )
 
     sk_home = skcapstone_home or Path(SHARED_ROOT).expanduser()
-    sc_home = skcomm_home or Path.home() / ".skcomm"
+    sc_home = skcomms_home or Path.home() / ".skcomms"
 
     _save_skcapstone_peer(sk_home, peer)
-    _save_skcomm_peer(sc_home, peer)
+    _save_skcomms_peer(sc_home, peer)
 
     return peer
 
@@ -223,20 +223,20 @@ def get_peer(
 def remove_peer(
     name: str,
     skcapstone_home: Optional[Path] = None,
-    skcomm_home: Optional[Path] = None,
+    skcomms_home: Optional[Path] = None,
 ) -> bool:
-    """Remove a peer from both skcapstone and skcomm registries.
+    """Remove a peer from both skcapstone and skcomms registries.
 
     Args:
         name: Peer name to remove.
         skcapstone_home: Override skcapstone home.
-        skcomm_home: Override skcomm home.
+        skcomms_home: Override skcomms home.
 
     Returns:
         bool: True if the peer was found and removed.
     """
     sk_home = skcapstone_home or Path(SHARED_ROOT).expanduser()
-    sc_home = skcomm_home or Path.home() / ".skcomm"
+    sc_home = skcomms_home or Path.home() / ".skcomms"
     safe = _safe_filename(name)
     removed = False
 
@@ -276,14 +276,14 @@ def _save_skcapstone_peer(home: Path, peer: PeerRecord) -> Path:
     return path
 
 
-def _save_skcomm_peer(home: Path, peer: PeerRecord) -> Path:
-    """Save peer to SKComm peers directory (YAML + public key).
+def _save_skcomms_peer(home: Path, peer: PeerRecord) -> Path:
+    """Save peer to SKComms peers directory (YAML + public key).
 
-    Creates the YAML config that SKComm's KeyStore reads, and
+    Creates the YAML config that SKComms's KeyStore reads, and
     writes the public key as a separate .asc file.
 
     Args:
-        home: skcomm home directory.
+        home: skcomms home directory.
         peer: Peer to save.
 
     Returns:

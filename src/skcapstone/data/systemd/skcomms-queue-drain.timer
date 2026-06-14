@@ -1,6 +1,6 @@
 [Unit]
-Description=SKComm Queue Drain Timer — periodic message retry
-Documentation=https://github.com/smilinTux/skcomm
+Description=SKComms Queue Drain Timer — periodic message retry
+Documentation=https://github.com/smilinTux/skcomms
 
 [Timer]
 OnBootSec=60s

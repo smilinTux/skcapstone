@@ -3,7 +3,7 @@
 Exercises the real interfaces between packages:
     capauth   -> skcapstone   (identity discovery)
     skcapstone -> skmemory    (built-in memory engine)
-    skcomm    -> file transport (message send/receive)
+    skcomms    -> file transport (message send/receive)
     skchat    -> skmemory     (chat history storage)
     full pipeline: identity -> memory -> message -> coord -> sync
 
@@ -122,12 +122,12 @@ class TestCapAuthToSKCapstone:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. SKComm file transport — cross-process message delivery
+# 2. SKComms file transport — cross-process message delivery
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestSKCommFileTransport:
-    """SKComm file transport sends and receives messages via filesystem."""
+class TestSKCommsFileTransport:
+    """SKComms file transport sends and receives messages via filesystem."""
 
     def test_send_and_receive_via_file_transport(self, tmp_path: Path):
         """Message sent via file transport is receivable from the inbox."""
@@ -273,7 +273,7 @@ class TestFullSovereignPipeline:
           1. Init agent with identity, memory, trust, security, sync
           2. Store a memory (skcapstone memory engine)
           3. Create a chat message (skchat models)
-          4. Send it via file transport (skcomm)
+          4. Send it via file transport (skcomms)
           5. Store it as a memory (cross: skchat -> skcapstone)
           6. Create and complete a coord task
           7. Collect a sync seed with everything
@@ -303,8 +303,8 @@ class TestFullSovereignPipeline:
         from skcomms.models import MessageEnvelope, MessagePayload, MessageType
         from skcomms.transports.file import FileTransport
 
-        outbox = tmp_agent_home / "skcomm_outbox"
-        peer_inbox = tmp_agent_home / "skcomm_peer_inbox"
+        outbox = tmp_agent_home / "skcomms_outbox"
+        peer_inbox = tmp_agent_home / "skcomms_peer_inbox"
         transport = FileTransport(outbox_path=outbox, inbox_path=peer_inbox)
 
         envelope = MessageEnvelope(
@@ -417,7 +417,7 @@ class TestPackageImportCompatibility:
     """All five core packages can be imported simultaneously."""
 
     def test_all_packages_importable(self):
-        """capauth, skcapstone, skmemory, skcomm, skchat all import cleanly."""
+        """capauth, skcapstone, skmemory, skcomms, skchat all import cleanly."""
         import capauth
         import skcapstone
         import skchat
@@ -426,7 +426,7 @@ class TestPackageImportCompatibility:
 
         assert hasattr(capauth, "__version__") or hasattr(capauth, "profile")
         assert hasattr(skcapstone, "__version__")
-        assert hasattr(skcomm, "__version__") or True
+        assert hasattr(skcomms, "__version__") or True
         assert hasattr(skchat, "__version__") or True
         assert hasattr(skmemory, "__version__") or True
 
@@ -437,11 +437,11 @@ class TestPackageImportCompatibility:
         assert callable(init_profile)
         assert callable(load_profile)
 
-    def test_skcomm_core_module(self):
-        """skcomm.core has SKComm class."""
-        from skcomms.core import SKComm
+    def test_skcomms_core_module(self):
+        """skcomms.core has SKComms class."""
+        from skcomms.core import SKComms
 
-        assert callable(SKComm.from_config)
+        assert callable(SKComms.from_config)
 
     def test_skchat_models_module(self):
         """skchat.models has ChatMessage and Thread."""
@@ -457,7 +457,7 @@ class TestPackageImportCompatibility:
         for mod in [
             "skcapstone.runtime",
             "capauth.profile",
-            "skcomm.core",
+            "skcomms.core",
             "skchat.models",
             "skcapstone.memory_engine",
             "skcapstone.coordination",

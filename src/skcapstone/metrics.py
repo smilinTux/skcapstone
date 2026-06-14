@@ -59,7 +59,7 @@ class ChatMetrics(BaseModel):
 
 
 class TransportMetrics(BaseModel):
-    """SKComm transport stats."""
+    """SKComms transport stats."""
 
     available: bool = False
     transport_count: int = 0
@@ -338,10 +338,10 @@ class MetricsCollector:
             report.errors.append(f"chat: {exc}")
 
     def _collect_transport(self, report: MetricsReport) -> None:
-        """Collect SKComm transport metrics."""
+        """Collect SKComms transport metrics."""
         try:
-            skcomm_dir = Path.home() / ".skcomm"
-            outbox_dir = skcomm_dir / "outbox"
+            skcomms_dir = Path.home() / ".skcomms"
+            outbox_dir = skcomms_dir / "outbox"
 
             pending = 0
             dead = 0
@@ -350,20 +350,20 @@ class MetricsCollector:
             if (outbox_dir / "dead").exists():
                 dead = len(list((outbox_dir / "dead").glob("*.json")))
 
-            config_path = skcomm_dir / "config.yml"
+            config_path = skcomms_dir / "config.yml"
             transport_count = 0
             if config_path.exists():
                 try:
                     import yaml
 
                     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-                    transports = cfg.get("skcomm", {}).get("transports", {})
+                    transports = cfg.get("skcomms", {}).get("transports", {})
                     transport_count = sum(
                         1 for t in transports.values()
                         if isinstance(t, dict) and t.get("enabled", True)
                     )
                 except Exception as exc:
-                    logger.warning("Failed to parse skcomm transport config: %s", exc)
+                    logger.warning("Failed to parse skcomms transport config: %s", exc)
 
             report.transport = TransportMetrics(
                 available=True,

@@ -1206,11 +1206,11 @@ For each kept job, add an entry (example shape):
     enabled: true
 ```
 
-- [ ] **Step 3: Remove migrated entries from crontab; retire dead `skcomm-heartbeat`**
+- [ ] **Step 3: Remove migrated entries from crontab; retire dead `skcomms-heartbeat`**
 
 ```bash
 crontab -l | grep -v 'memory-eod-rollup.sh' | crontab -   # repeat per migrated line
-systemctl --user disable skcomm-heartbeat.timer 2>/dev/null || true
+systemctl --user disable skcomms-heartbeat.timer 2>/dev/null || true
 ```
 
 - [ ] **Step 4: Verify**

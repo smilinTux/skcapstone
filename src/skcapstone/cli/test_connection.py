@@ -1,4 +1,4 @@
-"""test-connection command — ping a peer via SKComm and measure latency.
+"""test-connection command — ping a peer via SKComms and measure latency.
 
 Usage:
     skcapstone test-connection <peer>
@@ -176,7 +176,7 @@ def register_test_connection_commands(main: click.Group) -> None:
     )
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def test_connection(peer: str, timeout: float, count: int, home: str) -> None:
-        """Test connectivity to a peer by sending a ping via SKComm.
+        """Test connectivity to a peer by sending a ping via SKComms.
 
         Sends a ping message, waits for the peer to reply with a pong,
         and reports the round-trip latency. Exits with code 1 when the

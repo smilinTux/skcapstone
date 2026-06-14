@@ -79,7 +79,7 @@ All tagged `sk-integration` on the coord board. Run `skcapstone coord status` / 
 ### Consumer adapters (mechanical mirrors of skmemory — for sonnet)
 | Task | Repo | Native fallback to preserve | Suggested scheduled job |
 |---|---|---|---|
-| `eae9b815` | **skcomms** (`skcapstone-repos/skcomms`) | peer `_notify_others()` / log; daemon heartbeat thread + systemd | heartbeat/health; note skcomm is folding INTO skcomms (canonical) |
+| `eae9b815` | **skcomms** (`skcapstone-repos/skcomms`) | peer `_notify_others()` / log; daemon heartbeat thread + systemd | heartbeat/health; note skcomms is folding INTO skcomms (canonical) |
 | `44b11628` | **capauth** | log (no native alerting yet) | key-rotation check (signing-daemon TODO — ensure_schedule may be a stub) |
 | `66881a86` | **skvoice** | log; `while True` loop + skvoice systemd | service health / TTS-cache prune |
 | `aaafe0d8` | **skseed** | log; pure kernel (periodic task type only) | belief-audit / germination; already duck-types AdaptedPrompt at `llm.py:40` |
@@ -92,14 +92,14 @@ All tagged `sk-integration` on the coord board. Run `skcapstone coord status` / 
 - `6b9a41a1` — note task (reference-pattern pointer); close once all adapters land.
 
 ### Final step
-Once all adapters + cross-cutting are done, **complete the EPIC `fca7f138`** and consider squashing the `skcomm` superseded task notes.
+Once all adapters + cross-cutting are done, **complete the EPIC `fca7f138`** and consider squashing the `skcomms` superseded task notes.
 
 ---
 
 ## 5. Gotchas / things to know
 
 - **coord CLI:** `skcapstone coord claim <id> --agent <name>` and `complete <id> --agent <name>` (the `--agent` flag is required). `create` uses `--by`. Tasks are immutable after creation (no edit/update subcommand) — supersede by completing + creating a replacement.
-- **Don't commit the other threads' work.** In `skcapstone` the skcomm→skcomms migration shares the repo; in `skmemory` the mxbai-cutover changes (`backends/pgvector_backend.py`, `cli.py`) are unstaged from another thread. Stage only your adapter files explicitly — never `git add -A`.
+- **Don't commit the other threads' work.** In `skcapstone` the skcomms→skcomms migration shares the repo; in `skmemory` the mxbai-cutover changes (`backends/pgvector_backend.py`, `cli.py`) are unstaged from another thread. Stage only your adapter files explicitly — never `git add -A`.
 - **skcapstone remotes:** `github` is canonical (per `~/clawd/scripts/push-pending.sh`); `origin` and `forgejo` also exist and may be stale (the local `@{u}` tracks `forgejo`, which lags — verify against `github/main`).
 - **Test sandboxing:** consumers without a conftest that sets `SKCAPSTONE_HOME` must sandbox it per-test, AND `monkeypatch.setattr(skcapstone, "AGENT_HOME", str(tmp_path))` because skcapstone captures `AGENT_HOME` at import.
 - **Pre-existing broken tests (NOT yours):** `sksecurity/tests/test_truth_engine.py` fails to collect (imports a missing `_check_skmemory`); `skgateway/tests/classifier.test.mjs` has 2 pre-existing failures. Run adapter tests by file to avoid these.

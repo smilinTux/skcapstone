@@ -7,7 +7,7 @@ terminal — no CI server, no IDE, no special tooling.
 
 Usage:
     skcapstone test                     # run all packages
-    skcapstone test --package skcomm    # run one package
+    skcapstone test --package skcomms    # run one package
     skcapstone test --fast              # stop on first failure
     skcapstone test --json-out          # machine-readable results
 """
@@ -26,7 +26,7 @@ from typing import Optional
 ECOSYSTEM_PACKAGES = [
     {"name": "skcapstone", "path": "skcapstone", "tests": "skcapstone/tests"},
     {"name": "capauth", "path": "capauth", "tests": "capauth/tests"},
-    {"name": "skcomm", "path": "skcomm", "tests": "skcomm/tests"},
+    {"name": "skcomms", "path": "skcomms", "tests": "skcomms/tests"},
     {"name": "skchat", "path": "skchat", "tests": "skchat/tests"},
     {"name": "skmemory", "path": "skmemory", "tests": "skmemory/tests"},
     {"name": "cloud9", "path": "cloud9", "tests": "cloud9/tests"},

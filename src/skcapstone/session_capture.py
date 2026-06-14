@@ -70,7 +70,7 @@ _TAG_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bcapauth\b", re.I), "capauth"),
     (re.compile(r"\bskcapstone\b", re.I), "skcapstone"),
     (re.compile(r"\bskmemory\b", re.I), "skmemory"),
-    (re.compile(r"\bskcomm\b", re.I), "skcomm"),
+    (re.compile(r"\bskcomms\b", re.I), "skcomms"),
     (re.compile(r"\bskchat\b", re.I), "skchat"),
     (re.compile(r"\bsyncthing\b", re.I), "syncthing"),
     (re.compile(r"\bMCP\b", re.I), "mcp"),

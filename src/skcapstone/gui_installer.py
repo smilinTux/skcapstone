@@ -399,7 +399,7 @@ class InstallerApp:
         """Execute Path 1 (fresh) or Path 2 (join) install steps."""
         # Install pip packages
         self._log("Installing software packages...")
-        packages = ["capauth", "skmemory", "skcomm", "cloud9-protocol"]
+        packages = ["capauth", "skmemory", "skcomms", "cloud9-protocol"]
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", *packages],
@@ -453,7 +453,7 @@ class InstallerApp:
     def _run_update(self) -> None:
         """Execute Path 3 update steps."""
         self._log("Updating software packages...")
-        packages = ["capauth", "skmemory", "skcomm", "cloud9-protocol", "skcapstone"]
+        packages = ["capauth", "skmemory", "skcomms", "cloud9-protocol", "skcapstone"]
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "--upgrade", *packages],

@@ -169,13 +169,13 @@ class TestDaemonService:
                 assert svc.state.running is False
                 assert not (daemon_home / "daemon.pid").exists()
 
-    def test_poll_loop_with_mock_skcomm(self, daemon_home):
+    def test_poll_loop_with_mock_skcomms(self, daemon_home):
         config = DaemonConfig(home=daemon_home, poll_interval=1, port=0)
         svc = DaemonService(config)
 
         mock_comm = MagicMock()
         mock_comm.receive.return_value = []
-        svc._skcomm = mock_comm
+        svc._skcomms = mock_comm
 
         svc._stop_event = threading.Event()
         t = threading.Thread(target=svc._poll_loop, daemon=True)
@@ -316,8 +316,8 @@ class TestHeartbeatBeaconWiring:
         mock_heartbeat_mod.HeartbeatBeacon.return_value = mock_beacon_instance
 
         patched = {
-            "skcomm": MagicMock(),
-            "skcomm.core": MagicMock(),
+            "skcomms": MagicMock(),
+            "skcomms.core": MagicMock(),
             "skcapstone.runtime": mock_runtime_mod,
             "skcapstone.heartbeat": mock_heartbeat_mod,
             "skcapstone.consciousness_config": MagicMock(),

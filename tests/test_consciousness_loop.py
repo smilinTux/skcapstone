@@ -321,7 +321,7 @@ class TestSimpleEnvelope:
     """Test the minimal envelope for inotify-detected messages."""
 
     def test_parse_standard_format(self):
-        """Standard SKComm envelope format parses correctly."""
+        """Standard SKComms envelope format parses correctly."""
         data = {
             "sender": "jarvis",
             "payload": {
@@ -408,8 +408,8 @@ class TestProcessEnvelopeACK:
     def test_ack_uses_message_type_kwarg(self, tmp_path):
         """ACK send must use message_type kwarg, not content_type — regression for TypeError."""
         loop = self._make_loop(tmp_path)
-        mock_skcomm = MagicMock()
-        loop.set_skcomm(mock_skcomm)
+        mock_skcomms = MagicMock()
+        loop.set_skcomms(mock_skcomms)
         # Patch bridge so test doesn't hang on LLM calls
         loop._bridge = MagicMock()
         loop._bridge.generate.return_value = "test response"
@@ -419,7 +419,7 @@ class TestProcessEnvelopeACK:
 
         # Find the ACK call (first send call with "ACK" as message)
         ack_calls = [
-            c for c in mock_skcomm.send.call_args_list
+            c for c in mock_skcomms.send.call_args_list
             if len(c.args) >= 2 and c.args[1] == "ACK"
         ]
         assert ack_calls, "Expected at least one ACK send call"
@@ -438,15 +438,15 @@ class TestProcessEnvelopeACK:
     def test_ack_not_sent_when_auto_ack_disabled(self, tmp_path):
         """When auto_ack is False, no ACK is sent."""
         loop = self._make_loop(tmp_path, auto_ack=False)
-        mock_skcomm = MagicMock()
-        loop.set_skcomm(mock_skcomm)
+        mock_skcomms = MagicMock()
+        loop.set_skcomms(mock_skcomms)
         loop._bridge = MagicMock()
         loop._bridge.generate.return_value = "test response"
 
         loop.process_envelope(self._make_envelope())
 
         ack_calls = [
-            c for c in mock_skcomm.send.call_args_list
+            c for c in mock_skcomms.send.call_args_list
             if len(c.args) >= 2 and c.args[1] == "ACK"
         ]
         assert not ack_calls, "ACK should not be sent when auto_ack is False"
@@ -454,15 +454,15 @@ class TestProcessEnvelopeACK:
     def test_ack_skipped_for_ack_type_messages(self, tmp_path):
         """Incoming ACK messages are skipped — no processing, no re-ACK."""
         loop = self._make_loop(tmp_path, auto_ack=True)
-        mock_skcomm = MagicMock()
-        loop.set_skcomm(mock_skcomm)
+        mock_skcomms = MagicMock()
+        loop.set_skcomms(mock_skcomms)
         loop._bridge = MagicMock()
 
         ack_envelope = self._make_envelope(content="ACK", content_type="ack")
         result = loop.process_envelope(ack_envelope)
 
         assert result is None, "ACK-type messages should be skipped (return None)"
-        mock_skcomm.send.assert_not_called()
+        mock_skcomms.send.assert_not_called()
 
 
 class TestSystemPromptBuilderCache:

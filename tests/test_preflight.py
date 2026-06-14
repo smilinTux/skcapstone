@@ -301,15 +301,15 @@ class TestPreflightCheckerPackages:
         real_import = builtins.__import__
 
         def _mock_import(name, *args, **kwargs):
-            if name == "skcomm":
-                raise ImportError("no module named skcomm")
+            if name == "skcomms":
+                raise ImportError("no module named skcomms")
             return real_import(name, *args, **kwargs)
 
         checker = PreflightChecker(home=tmp_path)
         with patch("builtins.__import__", side_effect=_mock_import):
             result = checker.check_packages()
         assert result.status == "fail"
-        assert "skcomm" in result.message
+        assert "skcomms" in result.message
 
     def test_all_present_ok(self, tmp_path: Path) -> None:
         checker = PreflightChecker(home=tmp_path)

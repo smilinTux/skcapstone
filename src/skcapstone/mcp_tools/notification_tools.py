@@ -78,7 +78,7 @@ async def _handle_send_notification(args: dict) -> list[TextContent]:
 
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    # Log notification to skcomm/notifications/ (not memory/).
+    # Log notification to skcomms/notifications/ (not memory/).
     try:
         import json as _j
         import uuid
@@ -87,7 +87,7 @@ async def _handle_send_notification(args: dict) -> list[TextContent]:
         from .. import active_agent_name
 
         agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-        notif_dir = home / "agents" / agent_name / "skcomm" / "notifications"
+        notif_dir = home / "agents" / agent_name / "skcomms" / "notifications"
         notif_dir.mkdir(parents=True, exist_ok=True)
         entry = {
             "id": uuid.uuid4().hex[:12],

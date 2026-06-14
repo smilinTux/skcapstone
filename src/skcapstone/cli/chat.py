@@ -197,7 +197,7 @@ def register_chat_commands(main: click.Group) -> None:
     def chat_send(peer: str, message: str, home: str, thread: Optional[str], encrypt: bool):
         """Send a message to a peer agent.
 
-        Stores locally and delivers via SKComm if transports
+        Stores locally and delivers via SKComms if transports
         are configured.
 
         \b
@@ -251,7 +251,7 @@ def register_chat_commands(main: click.Group) -> None:
         """Show recent messages.
 
         Displays messages from local history. Use --poll to check
-        SKComm transports for new messages first. Use --decrypt to
+        SKComms transports for new messages first. Use --decrypt to
         automatically decrypt AES-256-GCM encrypted messages.
 
         \b

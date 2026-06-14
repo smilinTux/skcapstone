@@ -1,7 +1,7 @@
 """
 Peer Directory — transport address map for the sovereignty mesh.
 
-Maps agent names to their SKComm transport addresses (Syncthing outbox
+Maps agent names to their SKComms transport addresses (Syncthing outbox
 paths, WebRTC fingerprints, Tailscale IPs, etc.).
 
 Separate from PeerRecord (PGP identity in peers.py) — this module owns
@@ -222,7 +222,7 @@ class PeerDirectory:
            Syncthing keeps in sync.
 
         Syncthing outbox path is used as the default address because that
-        is where SKComm writes messages for the peer.
+        is where SKComms writes messages for the peer.
 
         Args:
             heartbeats_dir: Override for the heartbeats directory.  Defaults

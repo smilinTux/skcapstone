@@ -232,10 +232,10 @@ class TestSearchConversations:
 # ---------------------------------------------------------------------------
 
 class TestSearchMessages:
-    """Tests for searching SKComm messages."""
+    """Tests for searching SKComms messages."""
 
     def test_finds_skc_message(self, agent_home: Path):
-        """Search should find text inside an archived SKComm envelope."""
+        """Search should find text inside an archived SKComms envelope."""
         _write_message(agent_home, "env001", "jarvis", "lumina",
                        "Queen Lumina — welcome to the coordination board!")
         results = search(agent_home, "coordination", sources=frozenset({"message"}))

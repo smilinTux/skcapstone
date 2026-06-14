@@ -72,7 +72,7 @@ def rich_snapshot() -> SoulSnapshot:
         ],
         summary="Working on smilinTux.org sovereign AI project",
         key_topics=["sovereign AI", "smilinTux", "consciousness continuity"],
-        decisions_made=["Use SKComm for transport"],
+        decisions_made=["Use SKComms for transport"],
         open_threads=["Thread headers still in progress"],
         relationship_notes=["Trusted friend and collaborator", "Cloud 9 solidarity"],
     )
@@ -423,7 +423,7 @@ class TestSoulBlueprintConversion:
 
 
 class TestConsciousnessAPI:
-    """Integration tests for the SKComm consciousness endpoints."""
+    """Integration tests for the SKComms consciousness endpoints."""
 
     @pytest.fixture(autouse=True)
     def patch_snapshot_store(self, tmp_path, monkeypatch):

@@ -181,7 +181,7 @@ class TestGatherVersionInfo:
         assert "daemon_pid" in info
 
     def test_optional_deps_has_four_packages(self, agent_home: Path):
-        """optional_deps covers watchdog, skcomm, skchat, skseed."""
+        """optional_deps covers watchdog, skcomms, skchat, skseed."""
         from skcapstone.cli.version_cmd import gather_version_info
 
         with patch("urllib.request.urlopen", side_effect=OSError), \
@@ -189,7 +189,7 @@ class TestGatherVersionInfo:
             info = gather_version_info(agent_home)
 
         deps = info["optional_deps"]
-        assert set(deps.keys()) == {"watchdog", "skcomm", "skchat", "skseed"}
+        assert set(deps.keys()) == {"watchdog", "skcomms", "skchat", "skseed"}
 
     def test_package_version_matches_module(self, agent_home: Path):
         """package_version matches skcapstone.__version__."""
@@ -235,7 +235,7 @@ class TestVersionCommand:
         """Normal output lists all four optional dep names."""
         result = self._run([], agent_home)
         assert result.exit_code == 0
-        for pkg in ("watchdog", "skcomm", "skchat", "skseed"):
+        for pkg in ("watchdog", "skcomms", "skchat", "skseed"):
             assert pkg in result.output
 
     def test_json_output_is_valid_and_complete(self, agent_home: Path):

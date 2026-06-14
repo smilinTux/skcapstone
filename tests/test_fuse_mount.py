@@ -34,7 +34,7 @@ from skcapstone.fuse_mount import (
     _read_coordination_task,
     _read_document,
     _read_inbox_file,
-    _send_via_skcomm,
+    _send_via_skcomms,
 )
 
 
@@ -426,10 +426,10 @@ class TestFileHelpers:
             fp = _build_fingerprint_txt(agent_home)
         assert fp == b"AABBCCDD\n"
 
-    def test_send_via_skcomm_fallback_to_outbox(self, agent_home: Path) -> None:
+    def test_send_via_skcomms_fallback_to_outbox(self, agent_home: Path) -> None:
         """When CLI is unavailable, message is queued as JSON envelope in outbox."""
         with patch("skcapstone.fuse_mount.subprocess.run", side_effect=FileNotFoundError):
-            result = _send_via_skcomm(agent_home, "jarvis", "Hello Jarvis")
+            result = _send_via_skcomms(agent_home, "jarvis", "Hello Jarvis")
         assert result is True
         outbox = agent_home / "comms" / "outbox"
         files = list(outbox.glob("jarvis_*.json"))
@@ -658,12 +658,12 @@ class TestSovereignFS:
             sovereign_fs.write("/memories/short/x.md", b"data", offset=0, fh=0)
         assert exc_info.value.errno == errno.EACCES
 
-    def test_flush_sends_via_skcomm(
+    def test_flush_sends_via_skcomms(
         self, sovereign_fs: SovereignFS
     ) -> None:
-        """Flushing an outbox file invokes _send_via_skcomm with correct args."""
+        """Flushing an outbox file invokes _send_via_skcomms with correct args."""
         sovereign_fs._outbox_buffers["/outbox/jarvis.msg"] = b"Test message"
-        with patch("skcapstone.fuse_mount._send_via_skcomm", return_value=True) as mock_send:
+        with patch("skcapstone.fuse_mount._send_via_skcomms", return_value=True) as mock_send:
             sovereign_fs.flush("/outbox/jarvis.msg", fh=0)
         mock_send.assert_called_once_with(
             sovereign_fs._home, "jarvis", "Test message"
@@ -674,14 +674,14 @@ class TestSovereignFS:
     def test_flush_strips_msg_suffix(self, sovereign_fs: SovereignFS) -> None:
         """Flush extracts the recipient by stripping the .msg suffix."""
         sovereign_fs._outbox_buffers["/outbox/lumina.msg"] = b"Hi"
-        with patch("skcapstone.fuse_mount._send_via_skcomm", return_value=True) as mock_send:
+        with patch("skcapstone.fuse_mount._send_via_skcomms", return_value=True) as mock_send:
             sovereign_fs.flush("/outbox/lumina.msg", fh=0)
         assert mock_send.call_args[0][1] == "lumina"
 
     def test_flush_empty_buffer_no_send(self, sovereign_fs: SovereignFS) -> None:
-        """Flushing an empty buffer does not call _send_via_skcomm."""
+        """Flushing an empty buffer does not call _send_via_skcomms."""
         sovereign_fs._outbox_buffers["/outbox/ava.msg"] = b""
-        with patch("skcapstone.fuse_mount._send_via_skcomm") as mock_send:
+        with patch("skcapstone.fuse_mount._send_via_skcomms") as mock_send:
             sovereign_fs.flush("/outbox/ava.msg", fh=0)
         mock_send.assert_not_called()
 
@@ -723,7 +723,7 @@ class TestSovereignFS:
     def test_release_flushes_outbox(self, sovereign_fs: SovereignFS) -> None:
         """Release calls flush, which sends the outbox buffer."""
         sovereign_fs._outbox_buffers["/outbox/ava.msg"] = b"Goodbye"
-        with patch("skcapstone.fuse_mount._send_via_skcomm", return_value=True) as mock_send:
+        with patch("skcapstone.fuse_mount._send_via_skcomms", return_value=True) as mock_send:
             sovereign_fs.release("/outbox/ava.msg", fh=0)
         mock_send.assert_called_once()
 

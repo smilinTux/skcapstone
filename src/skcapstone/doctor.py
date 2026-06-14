@@ -259,7 +259,7 @@ def _check_packages() -> list[Check]:
         ("skcapstone", "Sovereign agent framework", "pip install skcapstone"),
         ("capauth", "PGP-based sovereign identity", "pip install capauth"),
         ("skmemory", "Universal AI memory system", "pip install skmemory"),
-        ("skcomm", "Redundant agent communication", "pip install skcomm"),
+        ("skcomms", "Redundant agent communication", "pip install skcomms"),
         ("skchat", "Encrypted P2P chat", "pip install skchat"),
         ("cloud9_protocol", "Emotional continuity protocol", "pip install cloud9-protocol"),
         ("pgpy", "PGP cryptography (PGPy backend)", "pip install pgpy"),
@@ -816,18 +816,18 @@ def _check_memory(home: Path) -> list[Check]:
 
 
 def _check_transport() -> list[Check]:
-    """Check SKComm transport availability."""
+    """Check SKComms transport availability."""
     checks = []
 
     try:
-        from skcomms.core import SKComm
+        from skcomms.core import SKComms
 
-        comm = SKComm.from_config()
+        comm = SKComms.from_config()
         transport_count = len(comm.router.transports)
         checks.append(
             Check(
-                name="transport:skcomm",
-                description="SKComm engine",
+                name="transport:skcomms",
+                description="SKComms engine",
                 passed=True,
                 detail=f"{transport_count} transport(s) configured",
                 category="transport",
@@ -841,7 +841,7 @@ def _check_transport() -> list[Check]:
                     description="Active transports",
                     passed=False,
                     detail="No transports configured",
-                    fix="Configure transports in ~/.skcomm/config.yml",
+                    fix="Configure transports in ~/.skcomms/config.yml",
                     category="transport",
                 )
             )
@@ -863,21 +863,21 @@ def _check_transport() -> list[Check]:
     except ImportError:
         checks.append(
             Check(
-                name="transport:skcomm",
-                description="SKComm engine",
+                name="transport:skcomms",
+                description="SKComms engine",
                 passed=False,
-                fix="pip install skcomm",
+                fix="pip install skcomms",
                 category="transport",
             )
         )
     except Exception as exc:
         checks.append(
             Check(
-                name="transport:skcomm",
-                description="SKComm engine",
+                name="transport:skcomms",
+                description="SKComms engine",
                 passed=False,
                 detail=str(exc),
-                fix="Check ~/.skcomm/config.yml",
+                fix="Check ~/.skcomms/config.yml",
                 category="transport",
             )
         )

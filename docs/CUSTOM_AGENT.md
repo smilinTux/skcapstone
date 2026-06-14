@@ -205,8 +205,8 @@ with `SKAGENT` set, all servers pick it up automatically.
       "command": "skcapstone-mcp",
       "args": []
     },
-    "skcomm": {
-      "command": "/home/you/.skenv/bin/skcomm-mcp",
+    "skcomms": {
+      "command": "/home/you/.skenv/bin/skcomms-mcp",
       "args": []
     },
     "skchat": {

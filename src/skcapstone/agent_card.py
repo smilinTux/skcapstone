@@ -6,7 +6,7 @@ with you: identity, public key, contact transports, capabilities,
 and trust level.
 
 Cards are JSON files signed with the agent's PGP key. They can be
-shared over SKComm, published to Nostr, posted as QR codes, or
+shared over SKComms, published to Nostr, posted as QR codes, or
 exchanged via any out-of-band channel.
 
 Usage:

@@ -1,7 +1,7 @@
 """skcapstone.sdk — the stable public integration facade for sk* services.
 
 This module is the **only** surface that downstream sk* services
-(skmemory, skcomm/skcomms, skchat, sksecurity, capauth, skvoice, skseed,
+(skmemory, skcomms/skcomms, skchat, sksecurity, capauth, skvoice, skseed,
 cloud9, skgateway, …) should import.  Everything here is semver-tracked and
 will not break across minor releases; the internal modules it wraps
 (``pubsub``, ``scheduler_jobs``, ``coordination``, ``notifications``,

@@ -3,7 +3,7 @@
 Covers:
 - Happy path: peer responds with pong, latency reported
 - Timeout: peer never replies, command exits with code 1
-- No-transport: SKComm has no live transport, error reported
+- No-transport: SKComms has no live transport, error reported
 - Payload helpers: _make_ping_payload / _is_pong_for / _is_ping / _make_pong_payload
 - --count > 1: multi-ping summary statistics
 """

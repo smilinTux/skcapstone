@@ -643,7 +643,7 @@ def doctor(home: str, json_out: bool):
         "agent": "Agent Home",
         "identity": "Identity (CapAuth)",
         "memory": "Memory (SKMemory)",
-        "transport": "Transport (SKComm)",
+        "transport": "Transport (SKComms)",
         "sync": "Sync (Singularity)",
     }
 
@@ -2818,7 +2818,7 @@ def completions_uninstall(shell_name: str):
 
 
 @main.command("test")
-@click.option("--package", "-p", default=None, help="Test a single package (e.g., skcomm, capauth).")
+@click.option("--package", "-p", default=None, help="Test a single package (e.g., skcomms, capauth).")
 @click.option("--fast", is_flag=True, help="Stop on first package failure.")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose pytest output.")
 @click.option("--json-out", is_flag=True, help="Machine-readable JSON report.")
@@ -2826,7 +2826,7 @@ def completions_uninstall(shell_name: str):
 def test_cmd(package: str, fast: bool, verbose: bool, json_out: bool, timeout: int):
     """Run tests across all ecosystem packages.
 
-    Discovers skcapstone, capauth, skcomm, skchat, skmemory, and
+    Discovers skcapstone, capauth, skcomms, skchat, skmemory, and
     cloud9 test suites and runs them with a consolidated summary.
     Works from any terminal — no CI server required.
 
@@ -2834,7 +2834,7 @@ def test_cmd(package: str, fast: bool, verbose: bool, json_out: bool, timeout: i
 
         skcapstone test
 
-        skcapstone test --package skcomm
+        skcapstone test --package skcomms
 
         skcapstone test --fast --verbose
 
@@ -3037,7 +3037,7 @@ def peer_list(sk_home: str, json_out: bool):
 def peer_remove(name: str, sk_home: str):
     """Remove a peer by name.
 
-    Removes from both skcapstone and skcomm registries.
+    Removes from both skcapstone and skcomms registries.
 
     Examples:
 
@@ -3398,7 +3398,7 @@ def chat():
 def chat_send(peer: str, message: str, home: str, thread: Optional[str]):
     """Send a message to a peer agent.
 
-    Stores locally and delivers via SKComm if transports
+    Stores locally and delivers via SKComms if transports
     are configured.
 
     Examples:
@@ -3436,7 +3436,7 @@ def chat_inbox(home: str, limit: int, poll: bool):
     """Show recent messages.
 
     Displays messages from local history. Use --poll to check
-    SKComm transports for new messages first.
+    SKComms transports for new messages first.
 
     Examples:
 

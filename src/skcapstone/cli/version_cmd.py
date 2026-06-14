@@ -84,7 +84,7 @@ def gather_version_info(home: Path) -> dict:
 
     optional_deps = {
         "watchdog": _check_optional_dep("watchdog"),
-        "skcomm": _check_optional_dep("skcomm"),
+        "skcomms": _check_optional_dep("skcomms"),
         "skchat": _check_optional_dep("skchat"),
         "skseed": _check_optional_dep("skseed"),
     }

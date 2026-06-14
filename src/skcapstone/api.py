@@ -139,7 +139,7 @@ class HealthResponse(BaseModel):
     )
     backend_health: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Per-transport liveness flags (e.g. {skcomm: true}).",
+        description="Per-transport liveness flags (e.g. {skcomms: true}).",
     )
     disk_free_gb: float = Field(0.0, description="Free disk space in gigabytes.")
     memory_usage_mb: float = Field(0.0, description="Current RSS memory usage in MB.")
@@ -507,7 +507,7 @@ def _check_bearer(
 ) -> str:
     """Validate a CapAuth Bearer token for privileged endpoints.
 
-    Attempts CapAuth validation first (if skcomm is installed), then falls
+    Attempts CapAuth validation first (if skcomms is installed), then falls
     back to skcapstone signed token verification.
 
     Args:
@@ -1330,7 +1330,7 @@ async def send_message(
 ) -> SendMessageResponse:
     """Send a message to a named peer.
 
-    Writes the message envelope to the SKComm outbox for delivery by the
+    Writes the message envelope to the SKComms outbox for delivery by the
     transport layer.  If the consciousness loop is running the message is
     also processed inline to generate a reply.
 

@@ -38,7 +38,7 @@ PER_AGENT_DIRS = [
 
 PER_AGENT_FILES = [
     "manifest.json",
-    "skcomm.yml",
+    "skcomms.yml",
 ]
 
 # Directories that stay at root (shared infrastructure)

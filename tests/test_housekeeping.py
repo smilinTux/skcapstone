@@ -14,8 +14,8 @@ from skcapstone.housekeeping import (
 
 
 @pytest.fixture
-def skcomm_home(tmp_path):
-    """Create a mock ~/.skcomm directory with test ACK files."""
+def skcomms_home(tmp_path):
+    """Create a mock ~/.skcomms directory with test ACK files."""
     acks_dir = tmp_path / "acks"
     acks_dir.mkdir()
     return tmp_path
@@ -39,13 +39,13 @@ class TestPruneAcks:
         """Returns 0 when acks directory doesn't exist."""
         assert prune_acks(tmp_path) == 0
 
-    def test_empty_acks_dir(self, skcomm_home):
+    def test_empty_acks_dir(self, skcomms_home):
         """Returns 0 when acks directory is empty."""
-        assert prune_acks(skcomm_home) == 0
+        assert prune_acks(skcomms_home) == 0
 
-    def test_deletes_old_acks(self, skcomm_home):
+    def test_deletes_old_acks(self, skcomms_home):
         """Deletes ACK files older than max_age_hours."""
-        acks_dir = skcomm_home / "acks"
+        acks_dir = skcomms_home / "acks"
         # Create 5 old files (mtime set to 48h ago)
         old_time = time.time() - (48 * 3600)
         for i in range(5):
@@ -59,22 +59,22 @@ class TestPruneAcks:
             f = acks_dir / f"fresh-{i}.json"
             f.write_text("{}")
 
-        deleted = prune_acks(skcomm_home, max_age_hours=24)
+        deleted = prune_acks(skcomms_home, max_age_hours=24)
         assert deleted == 5
         remaining = list(acks_dir.iterdir())
         assert len(remaining) == 3
 
-    def test_respects_max_age(self, skcomm_home):
+    def test_respects_max_age(self, skcomms_home):
         """Only deletes files older than the specified max_age."""
-        acks_dir = skcomm_home / "acks"
+        acks_dir = skcomms_home / "acks"
         # File 1h old
         f = acks_dir / "recent.json"
         f.write_text("{}")
         import os
         os.utime(f, (time.time() - 3600, time.time() - 3600))
 
-        assert prune_acks(skcomm_home, max_age_hours=2) == 0
-        assert prune_acks(skcomm_home, max_age_hours=0) == 1
+        assert prune_acks(skcomms_home, max_age_hours=2) == 0
+        assert prune_acks(skcomms_home, max_age_hours=0) == 1
 
 
 class TestPruneCommsOutbox:
@@ -155,7 +155,7 @@ class TestRunHousekeeping:
     def test_dry_run(self, tmp_path):
         """Dry run reports counts without deleting."""
         # Set up dirs
-        acks_dir = tmp_path / "skcomm" / "acks"
+        acks_dir = tmp_path / "skcomms" / "acks"
         acks_dir.mkdir(parents=True)
         for i in range(3):
             f = acks_dir / f"old-{i}.json"
@@ -165,7 +165,7 @@ class TestRunHousekeeping:
 
         results = run_housekeeping(
             skcapstone_home=tmp_path / "skcapstone",
-            skcomm_home=tmp_path / "skcomm",
+            skcomms_home=tmp_path / "skcomms",
             dry_run=True,
         )
 
@@ -176,7 +176,7 @@ class TestRunHousekeeping:
 
     def test_full_run(self, tmp_path):
         """Full run deletes files and reports summary."""
-        acks_dir = tmp_path / "skcomm" / "acks"
+        acks_dir = tmp_path / "skcomms" / "acks"
         acks_dir.mkdir(parents=True)
         for i in range(2):
             f = acks_dir / f"old-{i}.json"
@@ -186,7 +186,7 @@ class TestRunHousekeeping:
 
         results = run_housekeeping(
             skcapstone_home=tmp_path / "skcapstone",
-            skcomm_home=tmp_path / "skcomm",
+            skcomms_home=tmp_path / "skcomms",
             dry_run=False,
         )
 

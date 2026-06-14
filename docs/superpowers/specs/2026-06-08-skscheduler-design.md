@@ -16,7 +16,7 @@ place to define, run, or observe jobs:
    on .41**.
 2. **Legacy user crontab** — 5 jobs pointing at a stale pre-skcapstone path
    (`~/dkloud.douno.it/.../docs/memory/memory/scripts/`).
-3. **systemd user timers** — `skcapstone-context` (active), `skcomm-heartbeat`
+3. **systemd user timers** — `skcapstone-context` (active), `skcomms-heartbeat`
    (dead), `direnv-backup`.
 4. **Claude Code crons** — separate scheduled-agent system.
 
@@ -132,7 +132,7 @@ skcapstone scheduler logs <job> [--tail]
   confirming each is still wanted** — the `~/dkloud.douno.it/...` path predates
   skcapstone and may be dead. Remove from crontab once migrated.
 - **systemd timers:** fold `skcapstone-context` in as a `shell`/`python` job;
-  retire the dead `skcomm-heartbeat`. Keep `direnv-backup` out of scope.
+  retire the dead `skcomms-heartbeat`. Keep `direnv-backup` out of scope.
 - **`service_health`:** declare `nodes: all` (each node probes its own localhost),
   but its *incident writes* are pinned/serialized per the `prb-7810b08e` fix —
   closing the original conflict loop.

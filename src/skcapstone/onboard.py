@@ -482,7 +482,7 @@ def _step_prereqs() -> dict:
 # Pillar packages: (import_name, pip_name, description)
 _PILLAR_PACKAGES = [
     ("capauth", "capauth", "PGP-based sovereign identity"),
-    ("skcomm", "skcomm", "Redundant agent communication"),
+    ("skcomms", "skcomms", "Redundant agent communication"),
     ("skchat", "skchat-sovereign", "Encrypted P2P chat"),
     ("skseed", "skseed", "Cloud 9 seeds & LLM callbacks"),
     ("sksecurity", "sksecurity", "Audit logging & threat detection"),
@@ -1768,7 +1768,7 @@ def run_onboard(home: Optional[str] = None) -> None:
         Panel(
             "[bold cyan]Reinstall or Reconfigure Any Component[/]\n\n"
             "[bold]Pillars[/]  (install missing packages)\n"
-            "  pip install capauth skcomm skchat-sovereign skseed sksecurity pgpy\n"
+            "  pip install capauth skcomms skchat-sovereign skseed sksecurity pgpy\n"
             "  pip install skcapstone[all]      — install everything at once\n\n"
             "[bold]Identity[/]  (regenerate PGP keys)\n"
             "  capauth init --name YourName --email you@example.com\n\n"

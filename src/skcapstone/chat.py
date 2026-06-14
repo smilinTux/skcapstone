@@ -2,7 +2,7 @@
 Interactive agent-to-agent chat for the sovereign terminal.
 
 Provides a real-time terminal chat experience between agents using
-SKChat for message models and SKComm for transport. Works from any
+SKChat for message models and SKComms for transport. Works from any
 terminal on any platform — no IDE dependency.
 
 Usage:
@@ -52,7 +52,7 @@ _TEXT_SUFFIXES = {
 class AgentChat:
     """Interactive chat engine for sovereign agent communication.
 
-    Wraps SKChat models and SKComm transport into a simple
+    Wraps SKChat models and SKComms transport into a simple
     send/receive/poll interface suitable for terminal use.
 
     Args:
@@ -71,7 +71,7 @@ class AgentChat:
     # ------------------------------------------------------------------
 
     def _ensure_comm(self) -> bool:
-        """Lazily initialize the SKComm engine.
+        """Lazily initialize the SKComms engine.
 
         Returns:
             bool: True if communication layer is available.
@@ -80,15 +80,15 @@ class AgentChat:
             return True
 
         try:
-            from skcomms.core import SKComm
+            from skcomms.core import SKComms
 
-            self._comm = SKComm.from_config()
+            self._comm = SKComms.from_config()
             return len(self._comm.router.transports) > 0
         except ImportError:
-            logger.info("skcomm not installed")
+            logger.info("skcomms not installed")
             return False
         except Exception as exc:
-            logger.info("SKComm init failed: %s", exc)
+            logger.info("SKComms init failed: %s", exc)
             return False
 
     def _ensure_history(self):
@@ -123,7 +123,7 @@ class AgentChat:
         """Send a message to a peer agent.
 
         Stores locally in SKMemory-backed history and delivers via
-        SKComm if transports are available.
+        SKComms if transports are available.
 
         Args:
             recipient: Peer agent name or CapAuth identity.
@@ -249,7 +249,7 @@ class AgentChat:
 
         Wraps the original message in a forward envelope that records the
         original sender and timestamp, then delivers it to target_peer via
-        SKComm and stores it locally in history.
+        SKComms and stores it locally in history.
 
         Args:
             original_msg: Original message dict (from inbox or receive).
@@ -634,7 +634,7 @@ class AgentChat:
 # ---------------------------------------------------------------------------
 
 def _pack_chat_payload(msg) -> str:
-    """Serialize a ChatMessage for SKComm transport.
+    """Serialize a ChatMessage for SKComms transport.
 
     Args:
         msg: ChatMessage instance.
@@ -654,7 +654,7 @@ def _pack_chat_payload(msg) -> str:
 
 
 def _unpack_chat_payload(payload: str, sender: str, recipient: str) -> dict:
-    """Deserialize a chat payload from SKComm.
+    """Deserialize a chat payload from SKComms.
 
     Falls back to plain text if not structured JSON.
 

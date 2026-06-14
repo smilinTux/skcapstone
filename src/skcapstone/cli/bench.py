@@ -1,7 +1,7 @@
-"""Benchmark SKComm transport throughput and latency.
+"""Benchmark SKComms transport throughput and latency.
 
 Sends N messages of a configurable size through each available
-SKComm transport. Reports p50/p95/p99 latency, throughput (msg/s),
+SKComms transport. Reports p50/p95/p99 latency, throughput (msg/s),
 and error rate.
 
 The file transport is benchmarked via a local temp-dir loopback
@@ -25,14 +25,14 @@ from rich.table import Table
 
 from ._common import console
 
-# Mirrors skcomm.core.BUILTIN_TRANSPORTS — kept local to avoid hard dep
+# Mirrors skcomms.core.BUILTIN_TRANSPORTS — kept local to avoid hard dep
 _BUILTIN_TRANSPORTS: dict[str, str] = {
-    "file": "skcomm.transports.file",
-    "syncthing": "skcomm.transports.syncthing",
-    "nostr": "skcomm.transports.nostr",
-    "websocket": "skcomm.transports.websocket",
-    "tailscale": "skcomm.transports.tailscale",
-    "webrtc": "skcomm.transports.webrtc",
+    "file": "skcomms.transports.file",
+    "syncthing": "skcomms.transports.syncthing",
+    "nostr": "skcomms.transports.nostr",
+    "websocket": "skcomms.transports.websocket",
+    "tailscale": "skcomms.transports.tailscale",
+    "webrtc": "skcomms.transports.webrtc",
 }
 
 
@@ -70,9 +70,9 @@ def _bench_file_loopback(count: int, size: int) -> dict:
         Result dict with status, mode, latency percentiles, throughput,
         and error counts.
     """
-    tmp = tempfile.mkdtemp(prefix="skcomm_bench_")
+    tmp = tempfile.mkdtemp(prefix="skcomms_bench_")
     try:
-        mod = importlib.import_module("skcomm.transports.file")
+        mod = importlib.import_module("skcomms.transports.file")
         factory = getattr(mod, "create_transport", None)
         if factory is None:
             return {"status": "error", "error": "no create_transport() in file transport"}
@@ -108,7 +108,7 @@ def _bench_file_loopback(count: int, size: int) -> dict:
         }
 
     except ImportError:
-        return {"status": "unavailable", "error": "skcomm not installed"}
+        return {"status": "unavailable", "error": "skcomms not installed"}
     except Exception as exc:
         return {"status": "error", "error": str(exc)[:120]}
     finally:
@@ -247,7 +247,7 @@ def run_bench(
 def _render_table(results: list[dict], count: int, size: int, health_count: int) -> None:
     """Render benchmark results as a Rich table with a fastest-transport summary."""
     table = Table(
-        title=f"SKComm Transport Benchmark  [{count} msgs × {size}B | health×{health_count}]",
+        title=f"SKComms Transport Benchmark  [{count} msgs × {size}B | health×{health_count}]",
         show_header=True,
         header_style="bold magenta",
     )
@@ -333,7 +333,7 @@ def register_bench_commands(main: click.Group) -> None:
         transports: tuple,
         json_out: bool,
     ) -> None:
-        """Benchmark SKComm transport throughput and latency.
+        """Benchmark SKComms transport throughput and latency.
 
         Sends COUNT messages of SIZE bytes through each available transport
         and reports p50/p95/p99 latency, throughput (msg/s), and error rate.
@@ -357,7 +357,7 @@ def register_bench_commands(main: click.Group) -> None:
         if not json_out:
             scope = ", ".join(selected) if selected else "all transports"
             console.print(
-                f"[bold]SKComm Transport Benchmark[/]  "
+                f"[bold]SKComms Transport Benchmark[/]  "
                 f"scope={scope}  count={count}  size={size}B  "
                 f"health-count={health_count}"
             )

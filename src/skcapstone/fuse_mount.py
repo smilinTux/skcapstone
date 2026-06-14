@@ -15,11 +15,11 @@ Virtual directory layout::
     ├── identity/
     │   ├── card.json       — CapAuth identity card
     │   └── fingerprint.txt — PGP fingerprint
-    ├── inbox/              — SKComm incoming messages (read-only)
-    ├── outbox/             — Write here to send via SKComm
+    ├── inbox/              — SKComms incoming messages (read-only)
+    ├── outbox/             — Write here to send via SKComms
     └── coordination/       — Task board files (.json)
 
-Writing to ``/outbox/<agent_name>.msg`` enqueues a message via SKComm.
+Writing to ``/outbox/<agent_name>.msg`` enqueues a message via SKComms.
 
 Dependencies (optional):
     pip install skcapstone[fuse]  # pulls in fusepy
@@ -315,7 +315,7 @@ def _build_fingerprint_txt(agent_home: Path) -> bytes:
 
 
 def _list_inbox(agent_home: Path) -> List[str]:
-    """List files in the SKComm inbox.
+    """List files in the SKComms inbox.
 
     Args:
         agent_home: Agent home directory.
@@ -330,7 +330,7 @@ def _list_inbox(agent_home: Path) -> List[str]:
 
 
 def _read_inbox_file(agent_home: Path, filename: str) -> Optional[bytes]:
-    """Read a message from the SKComm inbox.
+    """Read a message from the SKComms inbox.
 
     Args:
         agent_home: Agent home directory.
@@ -417,12 +417,12 @@ def _read_coordination_task(agent_home: Path, filename: str) -> Optional[bytes]:
 
 
 # ---------------------------------------------------------------------------
-# SKComm send helper
+# SKComms send helper
 # ---------------------------------------------------------------------------
 
 
-def _send_via_skcomm(agent_home: Path, recipient: str, message: str) -> bool:
-    """Send a message via SKComm by writing to the outbox directory.
+def _send_via_skcomms(agent_home: Path, recipient: str, message: str) -> bool:
+    """Send a message via SKComms by writing to the outbox directory.
 
     Attempts to use the skcapstone CLI for delivery. Falls back to writing
     an envelope JSON file in the outbox directory.
@@ -498,7 +498,7 @@ class SovereignFS:
 
     Exposes agent memories, identity, inbox, outbox, and coordination tasks
     as a read-mostly virtual filesystem. Writing to ``/outbox/<agent>.msg``
-    delivers a message via SKComm.
+    delivers a message via SKComms.
 
     This class is designed to be used with ``fusepy``:
 
@@ -832,7 +832,7 @@ class SovereignFS:
         return 0
 
     def flush(self, path: str, fh: int) -> int:
-        """Flush an outbox file buffer, delivering the message via SKComm.
+        """Flush an outbox file buffer, delivering the message via SKComms.
 
         Called when an outbox file handle is closed. The accumulated buffer
         is interpreted as the message body; the filename (without ``.msg``)
@@ -864,7 +864,7 @@ class SovereignFS:
             return 0
 
         if message:
-            _send_via_skcomm(self._home, recipient, message)
+            _send_via_skcomms(self._home, recipient, message)
 
         # Clear buffer after sending
         self._outbox_buffers.pop(path, None)

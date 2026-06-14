@@ -1,9 +1,9 @@
 """
 Consciousness Loop — autonomous agent message processing.
 
-Watches the SKComm inbox for incoming messages, classifies them,
+Watches the SKComms inbox for incoming messages, classifies them,
 routes to the appropriate LLM via the model router, and sends
-responses back through SKComm. Self-heals when backends go down
+responses back through SKComms. Self-heals when backends go down
 by cascading through fallback providers.
 
 Architecture:
@@ -1183,7 +1183,7 @@ def _classify_message(content: str) -> TaskSignal:
 
 
 class InboxHandler:
-    """File system event handler for SKComm inbox.
+    """File system event handler for SKComms inbox.
 
     Watches for new *.skc.json files and submits them for processing.
 
@@ -1250,7 +1250,7 @@ class ConsciousnessLoop:
         self._state = daemon_state
         self._home = Path(home) if home else Path(AGENT_HOME).expanduser()
         self._shared_root = Path(shared_root) if shared_root else Path(_SR).expanduser()
-        self._skcomm = None
+        self._skcomms = None
         self._observer = None
         self._executor = ThreadPoolExecutor(
             max_workers=config.max_concurrent_requests,
@@ -1315,13 +1315,13 @@ class ConsciousnessLoop:
             logger.warning("PeerDirectory unavailable, peer tracking disabled: %s", exc)
             self._peer_dir = None
 
-    def set_skcomm(self, skcomm) -> None:
-        """Inject SKComm instance for sending responses.
+    def set_skcomms(self, skcomms) -> None:
+        """Inject SKComms instance for sending responses.
 
         Args:
-            skcomm: An initialized SKComm instance.
+            skcomms: An initialized SKComms instance.
         """
-        self._skcomm = skcomm
+        self._skcomms = skcomms
 
     def start(self) -> list[threading.Thread]:
         """Start inotify watcher, sync watcher, and consciousness worker threads.
@@ -1421,12 +1421,12 @@ class ConsciousnessLoop:
             4. Build system prompt
             5. Search memories for sender context (top 3, appended to system prompt)
             6. Call LLMBridge.generate()
-            7. Send response via SKComm
+            7. Send response via SKComms
             8. Store interaction as memory
             9. Update conversation history
 
         Args:
-            envelope: A MessageEnvelope from SKComm.
+            envelope: A MessageEnvelope from SKComms.
 
         Returns:
             Response text if a response was generated, None otherwise.
@@ -1482,9 +1482,9 @@ class ConsciousnessLoop:
                     logger.debug("Desktop notification failed: %s", _notif_exc)
 
             # Send ACK
-            if self._config.auto_ack and self._skcomm:
+            if self._config.auto_ack and self._skcomms:
                 try:
-                    self._skcomm.send(sender, "ACK", message_type="ack")
+                    self._skcomms.send(sender, "ACK", message_type="ack")
                 except Exception as exc:
                     logger.debug("ACK send failed: %s", exc)
 
@@ -1507,7 +1507,7 @@ class ConsciousnessLoop:
             t_prompt = time.monotonic()
 
             # Send typing indicator before generation so peer UI shows animation
-            if self._skcomm:
+            if self._skcomms:
                 try:
                     from skchat.presence import PresenceIndicator, PresenceState
                     from skcomms.models import MessageType
@@ -1516,7 +1516,7 @@ class ConsciousnessLoop:
                         identity_uri=self._agent_name or "capauth:agent@skchat.local",
                         state=PresenceState.TYPING,
                     )
-                    self._skcomm.send(
+                    self._skcomms.send(
                         sender, _typing_ind.model_dump_json(), message_type=MessageType.HEARTBEAT
                     )
                 except Exception as _ti_exc:
@@ -1534,7 +1534,7 @@ class ConsciousnessLoop:
             t_llm = time.monotonic()
 
             # Send typing stop so peer UI clears the animation
-            if self._skcomm:
+            if self._skcomms:
                 try:
                     from skchat.presence import PresenceIndicator, PresenceState
                     from skcomms.models import MessageType
@@ -1543,7 +1543,7 @@ class ConsciousnessLoop:
                         identity_uri=self._agent_name or "capauth:agent@skchat.local",
                         state=PresenceState.ONLINE,
                     )
-                    self._skcomm.send(
+                    self._skcomms.send(
                         sender, _stop_ind.model_dump_json(), message_type=MessageType.HEARTBEAT
                     )
                 except Exception as _ts_exc:
@@ -1574,9 +1574,9 @@ class ConsciousnessLoop:
                 logger.debug("Quality scoring failed (non-fatal): %s", _sq_exc)
 
             # Send response
-            if response and self._skcomm:
+            if response and self._skcomms:
                 try:
-                    self._skcomm.send(sender, response)
+                    self._skcomms.send(sender, response)
                     self._responses_sent += 1
                     _ph = self._prompt_builder.current_prompt_hash
                     if _ph:

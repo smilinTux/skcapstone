@@ -233,6 +233,6 @@ class TestRunAllTests:
 
     def test_filter_by_package_names(self, tmp_path: Path):
         """Only requested packages appear in the report."""
-        report = run_all_tests(tmp_path, packages=["skcomm", "skchat"])
+        report = run_all_tests(tmp_path, packages=["skcomms", "skchat"])
         names = [r.name for r in report.results]
-        assert names == ["skcomm", "skchat"]
+        assert names == ["skcomms", "skchat"]

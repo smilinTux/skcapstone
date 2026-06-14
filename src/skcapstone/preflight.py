@@ -489,15 +489,15 @@ class PreflightChecker:
         )
 
     def check_packages(self) -> CheckResult:
-        """Verify skcapstone, skseed, and skcomm are importable."""
+        """Verify skcapstone, skseed, and skcomms are importable."""
         missing = []
-        for pkg in ("skcapstone", "skseed", "skcomm"):
+        for pkg in ("skcapstone", "skseed", "skcomms"):
             try:
                 __import__(pkg)
             except ImportError:
                 missing.append(pkg)
         if not missing:
-            return CheckResult("packages", "ok", "skcapstone, skseed, skcomm all importable")
+            return CheckResult("packages", "ok", "skcapstone, skseed, skcomms all importable")
         return CheckResult(
             "packages", "fail",
             f"Missing packages: {', '.join(missing)}",

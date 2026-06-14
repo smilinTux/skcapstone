@@ -589,7 +589,7 @@ def register_status_commands(main: click.Group) -> None:
             "agent": "Agent Home",
             "identity": "Identity (CapAuth)",
             "memory": "Memory (SKMemory)",
-            "transport": "Transport (SKComm)",
+            "transport": "Transport (SKComms)",
             "sync": "Sync (Singularity)",
             "codex": "Codex Integration",
             "harness": "AI Harness (Claude Code)",

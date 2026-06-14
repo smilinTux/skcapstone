@@ -5,11 +5,11 @@ Pipeline under test:
     {shared_root}/sync/comms/inbox/{peer}/*.skc.json   ← Syncthing writes here
     → inotify detects file  (ConsciousnessLoop._run_inotify)
     → ConsciousnessLoop.process_envelope()
-    → skcomm.send(sender, response)
+    → skcomms.send(sender, response)
     → {shared_root}/sync/comms/outbox/{peer}/*.skc.json ← Syncthing syncs this out
 
 Three test classes:
-    TestInboxToOutboxFlow      — mock LLM, drop inbox file, verify skcomm.send called
+    TestInboxToOutboxFlow      — mock LLM, drop inbox file, verify skcomms.send called
     TestOutboxEnvelopeFormat   — verify envelope spec compliance and path layout
     TestSyncStatusInHealth     — verify health snapshot includes sync_pipeline key
 """
@@ -61,11 +61,11 @@ def agent_home(shared_root: Path) -> Path:
 
 
 @pytest.fixture
-def mock_skcomm() -> MagicMock:
-    skcomm = MagicMock()
-    skcomm.send.return_value = None
-    skcomm.receive.return_value = []
-    return skcomm
+def mock_skcomms() -> MagicMock:
+    skcomms = MagicMock()
+    skcomms.send.return_value = None
+    skcomms.receive.return_value = []
+    return skcomms
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ def mock_skcomm() -> MagicMock:
 class TestInboxToOutboxFlow:
     """Drop a file in the inbox and verify the consciousness loop responds."""
 
-    def _make_loop(self, agent_home: Path, shared_root: Path, mock_skcomm):
+    def _make_loop(self, agent_home: Path, shared_root: Path, mock_skcomms):
         """Return a ConsciousnessLoop with a mocked LLM bridge."""
         from skcapstone.consciousness_loop import ConsciousnessConfig, ConsciousnessLoop
 
@@ -100,14 +100,14 @@ class TestInboxToOutboxFlow:
                 shared_root=shared_root,
             )
 
-        loop.set_skcomm(mock_skcomm)
+        loop.set_skcomms(mock_skcomms)
         return loop
 
     def test_inbox_to_outbox_flow(
-        self, shared_root: Path, agent_home: Path, mock_skcomm: MagicMock
+        self, shared_root: Path, agent_home: Path, mock_skcomms: MagicMock
     ):
-        """File dropped in inbox triggers process_envelope and skcomm.send."""
-        loop = self._make_loop(agent_home, shared_root, mock_skcomm)
+        """File dropped in inbox triggers process_envelope and skcomms.send."""
+        loop = self._make_loop(agent_home, shared_root, mock_skcomms)
 
         peer = "alice"
         inbox_peer = get_inbox_dir(shared_root) / peer
@@ -130,15 +130,15 @@ class TestInboxToOutboxFlow:
         loop._on_inbox_file(inbox_file)
         loop._executor.shutdown(wait=True)
 
-        assert mock_skcomm.send.called, "skcomm.send() must be called with the LLM response"
-        recipient_arg = mock_skcomm.send.call_args[0][0]
+        assert mock_skcomms.send.called, "skcomms.send() must be called with the LLM response"
+        recipient_arg = mock_skcomms.send.call_args[0][0]
         assert recipient_arg == peer, "Response must be addressed to the original sender"
 
     def test_skipped_when_sender_missing(
-        self, shared_root: Path, agent_home: Path, mock_skcomm: MagicMock
+        self, shared_root: Path, agent_home: Path, mock_skcomms: MagicMock
     ):
         """Envelopes without a sender field are silently dropped."""
-        loop = self._make_loop(agent_home, shared_root, mock_skcomm)
+        loop = self._make_loop(agent_home, shared_root, mock_skcomms)
 
         inbox_peer = get_inbox_dir(shared_root) / "ghost"
         inbox_peer.mkdir(parents=True, exist_ok=True)
@@ -149,13 +149,13 @@ class TestInboxToOutboxFlow:
         loop._on_inbox_file(inbox_file)
         loop._executor.shutdown(wait=True)
 
-        mock_skcomm.send.assert_not_called()
+        mock_skcomms.send.assert_not_called()
 
     def test_duplicate_envelope_not_reprocessed(
-        self, shared_root: Path, agent_home: Path, mock_skcomm: MagicMock
+        self, shared_root: Path, agent_home: Path, mock_skcomms: MagicMock
     ):
         """The same envelope_id is never processed twice."""
-        loop = self._make_loop(agent_home, shared_root, mock_skcomm)
+        loop = self._make_loop(agent_home, shared_root, mock_skcomms)
 
         peer = "bob"
         inbox_peer = get_inbox_dir(shared_root) / peer
@@ -173,7 +173,7 @@ class TestInboxToOutboxFlow:
         # First call
         loop._on_inbox_file(inbox_file)
         loop._executor.shutdown(wait=True)
-        first_count = mock_skcomm.send.call_count
+        first_count = mock_skcomms.send.call_count
 
         # Recreate the loop's executor for a second submission attempt
         from concurrent.futures import ThreadPoolExecutor
@@ -184,7 +184,7 @@ class TestInboxToOutboxFlow:
         loop._executor.shutdown(wait=True)
 
         # Exactly the same number of sends — second call was deduped
-        assert mock_skcomm.send.call_count == first_count
+        assert mock_skcomms.send.call_count == first_count
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ class TestInboxToOutboxFlow:
 
 
 class TestOutboxEnvelopeFormat:
-    """Verify that outbox envelopes comply with the SKComm envelope spec."""
+    """Verify that outbox envelopes comply with the SKComms envelope spec."""
 
     def test_required_fields_preserved(self, shared_root: Path):
         """write_outbox_envelope writes all envelope fields to the .skc.json."""
@@ -348,7 +348,7 @@ class TestSyncStatusInHealth:
 
     def test_verify_pipeline_detects_transport_misalignment(self, shared_root: Path):
         """verify_pipeline_paths flags a SyncthingTransport with a wrong comms_root."""
-        # Build a mock SKComm with a Syncthing transport pointing to the wrong path
+        # Build a mock SKComms with a Syncthing transport pointing to the wrong path
         wrong_transport = MagicMock()
         wrong_transport.name = "syncthing"
         wrong_transport._root = Path("/tmp/wrong/path")
@@ -356,9 +356,9 @@ class TestSyncStatusInHealth:
         mock_router = MagicMock()
         mock_router.transports = [wrong_transport]
 
-        mock_skcomm = MagicMock()
-        mock_skcomm.router = mock_router
+        mock_skcomms = MagicMock()
+        mock_skcomms.router = mock_router
 
-        result = verify_pipeline_paths(shared_root, skcomm=mock_skcomm)
+        result = verify_pipeline_paths(shared_root, skcomms=mock_skcomms)
         assert result["transport_aligned"] is False
         assert any("mismatch" in issue.lower() for issue in result["issues"])

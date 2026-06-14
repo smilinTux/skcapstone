@@ -1,8 +1,8 @@
-"""SKComm notification and status tools.
+"""SKComms notification and status tools.
 
 Exposes two tools:
-    comm_notify — Send a notification via SKComm transports
-    comm_status — Show SKComm subsystem status
+    comm_notify — Send a notification via SKComms transports
+    comm_status — Show SKComms subsystem status
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ TOOLS: list[Tool] = [
     Tool(
         name="comm_notify",
         description=(
-            "Send a notification message via SKComm. Routes through "
+            "Send a notification message via SKComms. Routes through "
             "available transports (Syncthing, file, Tailscale). "
             "Supports urgency levels for priority routing."
         ),
@@ -46,7 +46,7 @@ TOOLS: list[Tool] = [
     Tool(
         name="comm_status",
         description=(
-            "Show SKComm subsystem status: installed version, "
+            "Show SKComms subsystem status: installed version, "
             "available transports, connection state, and recent "
             "delivery statistics."
         ),
@@ -56,16 +56,16 @@ TOOLS: list[Tool] = [
 
 
 async def _handle_comm_notify(args: dict) -> list[TextContent]:
-    """Send a notification via SKComm."""
+    """Send a notification via SKComms."""
     recipient = args.get("recipient", "")
     message = args.get("message", "")
     if not recipient or not message:
         return _error_response("recipient and message are required")
 
     try:
-        from skcomms.core import SKComm  # type: ignore[import]
+        from skcomms.core import SKComms  # type: ignore[import]
 
-        comm = SKComm.from_config()
+        comm = SKComms.from_config()
         report = comm.send(recipient, message)
         return _json_response({
             "sent": report.success,
@@ -81,29 +81,29 @@ async def _handle_comm_notify(args: dict) -> list[TextContent]:
             ],
         })
     except ImportError:
-        return _error_response("SKComm not installed. Run: pip install skcomm")
+        return _error_response("SKComms not installed. Run: pip install skcomms")
     except Exception as exc:
         return _error_response(f"Notification send failed: {exc}")
 
 
 async def _handle_comm_status(_args: dict) -> list[TextContent]:
-    """Show SKComm subsystem status."""
+    """Show SKComms subsystem status."""
     result: dict = {}
 
     try:
         import skcomms  # type: ignore[import]
 
         result["installed"] = True
-        result["version"] = getattr(skcomm, "__version__", "unknown")
+        result["version"] = getattr(skcomms, "__version__", "unknown")
     except ImportError:
         result["installed"] = False
         result["version"] = None
         return _json_response(result)
 
     try:
-        from skcomms.core import SKComm  # type: ignore[import]
+        from skcomms.core import SKComms  # type: ignore[import]
 
-        comm = SKComm.from_config()
+        comm = SKComms.from_config()
         result["transports"] = [
             t.name for t in getattr(comm, "transports", [])
         ]

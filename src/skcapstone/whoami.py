@@ -48,7 +48,7 @@ class IdentityCard(BaseModel):
         trust_status: Current trust state (active, degraded, missing).
         consciousness: Agent consciousness level.
         memory_count: How many memories the agent holds.
-        contact_uris: Ways to reach this agent (skcomm, email, nostr, etc.).
+        contact_uris: Ways to reach this agent (skcomms, email, nostr, etc.).
         hostname: Machine the card was generated on.
         created_at: When this card was generated.
     """
@@ -247,9 +247,9 @@ def _load_capabilities(home: Path, card: IdentityCard) -> None:
 
     try:
         import skcomms  # noqa: F401
-        caps.append("skcomm:messaging")
+        caps.append("skcomms:messaging")
     except ImportError:
-        logger.debug("skcomm not installed — skipping skcomm:messaging capability")
+        logger.debug("skcomms not installed — skipping skcomms:messaging capability")
 
     try:
         import skchat  # noqa: F401

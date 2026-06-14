@@ -1,4 +1,4 @@
-"""SKComm send/receive messaging tools."""
+"""SKComms send/receive messaging tools."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ TOOLS: list[Tool] = [
     Tool(
         name="send_message",
         description=(
-            "Send a message to another agent via SKComm. "
+            "Send a message to another agent via SKComms. "
             "Routes through available transports (Syncthing, file)."
         ),
         inputSchema={
@@ -36,7 +36,7 @@ TOOLS: list[Tool] = [
     Tool(
         name="check_inbox",
         description=(
-            "Check for new incoming messages across all SKComm transports. "
+            "Check for new incoming messages across all SKComms transports. "
             "Returns any unread message envelopes."
         ),
         inputSchema={"type": "object", "properties": {}, "required": []},
@@ -45,15 +45,15 @@ TOOLS: list[Tool] = [
 
 
 async def _handle_send_message(args: dict) -> list[TextContent]:
-    """Send a message via SKComm."""
+    """Send a message via SKComms."""
     recipient = args.get("recipient", "")
     message = args.get("message", "")
     if not recipient or not message:
         return _error_response("recipient and message are required")
 
     try:
-        from skcomms.core import SKComm
-        comm = SKComm.from_config()
+        from skcomms.core import SKComms
+        comm = SKComms.from_config()
         report = comm.send(recipient, message)
         return _json_response({
             "sent": report.success,
@@ -68,7 +68,7 @@ async def _handle_send_message(args: dict) -> list[TextContent]:
             ],
         })
     except ImportError:
-        return _error_response("SKComm not installed. Run: pip install skcomm")
+        return _error_response("SKComms not installed. Run: pip install skcomms")
     except Exception as exc:
         return _error_response(f"Send failed: {exc}")
 
@@ -76,8 +76,8 @@ async def _handle_send_message(args: dict) -> list[TextContent]:
 async def _handle_check_inbox(_args: dict) -> list[TextContent]:
     """Check for incoming messages."""
     try:
-        from skcomms.core import SKComm
-        comm = SKComm.from_config()
+        from skcomms.core import SKComms
+        comm = SKComms.from_config()
         envelopes = comm.receive()
         return _json_response([
             {
@@ -93,7 +93,7 @@ async def _handle_check_inbox(_args: dict) -> list[TextContent]:
             for e in envelopes
         ])
     except ImportError:
-        return _error_response("SKComm not installed. Run: pip install skcomm")
+        return _error_response("SKComms not installed. Run: pip install skcomms")
     except Exception as exc:
         return _error_response(f"Inbox check failed: {exc}")
 

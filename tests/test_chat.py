@@ -105,8 +105,8 @@ class TestShortTimestamp:
 class TestAgentChatSend:
     """Tests for AgentChat.send() without real transport."""
 
-    def test_send_stores_locally_without_skcomm(self, tmp_home):
-        """Message is stored in history even without SKComm."""
+    def test_send_stores_locally_without_skcomms(self, tmp_home):
+        """Message is stored in history even without SKComms."""
         agent = AgentChat(home=tmp_home, identity="opus")
 
         mock_history = MagicMock()
@@ -120,8 +120,8 @@ class TestAgentChatSend:
         assert result["delivered"] is False
         mock_history.store_message.assert_called_once()
 
-    def test_send_delivers_with_skcomm(self, tmp_home):
-        """Message is delivered when SKComm has transports."""
+    def test_send_delivers_with_skcomms(self, tmp_home):
+        """Message is delivered when SKComms has transports."""
         agent = AgentChat(home=tmp_home, identity="opus")
 
         mock_comm = MagicMock()
@@ -228,7 +228,7 @@ class TestAgentChatForward:
         assert payload["content"] == "Deploy the fleet"
 
     def test_forward_delivers_via_comm(self, tmp_home):
-        """Forward delivers via SKComm when transports are available."""
+        """Forward delivers via SKComms when transports are available."""
         agent = AgentChat(home=tmp_home, identity="opus")
 
         mock_comm = MagicMock()
@@ -360,7 +360,7 @@ class TestCLIChatCommands:
         assert "not found" in result.output.lower() or result.exit_code == 1
 
     def test_chat_forward_stored_locally(self, tmp_home):
-        """chat forward stores message when SKComm unavailable."""
+        """chat forward stores message when SKComms unavailable."""
         from skcapstone.cli import main
 
         original = {
