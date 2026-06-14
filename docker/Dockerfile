@@ -2,7 +2,7 @@
 #
 # Base image for skcapstone AI agent containers deployed by DockerProvider.
 # Each container runs an AI session (via claude CLI) with the full sovereign
-# stack wired in: skcapstone MCP, SKComm transport, soul blueprint.
+# stack wired in: skcapstone MCP, SKComms transport, soul blueprint.
 #
 # Build (from repo root):
 #   docker build -f skcapstone/docker/Dockerfile -t skcapstone-agent:latest .
@@ -15,11 +15,11 @@
 #   SOUL_BLUEPRINT      — path or slug of soul blueprint (optional)
 #   SKCAPSTONE_MCP_HOST — host:port of skcapstone MCP server (optional)
 #   SKCAPSTONE_MCP_SOCKET — unix socket path for MCP (optional)
-#   SKCOMM_HOME         — comms root directory (default: /skcomm)
+#   SKCOMMS_HOME         — comms root directory (default: /skcomms)
 #
 # Volumes:
 #   /agent   — persistent agent state (config, memory, session state)
-#   /skcomm  — SKComm comms directory (bind-mount from host)
+#   /skcomms  — SKComms comms directory (bind-mount from host)
 
 FROM python:3.12-slim
 
@@ -41,16 +41,16 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # --- Python sovereign stack (local source) ----------------------------------
 COPY skcapstone /src/skcapstone
-COPY skcomm /src/skcomm
+COPY skcomms /src/skcomms
 
 RUN pip install --no-cache-dir pydantic pyyaml httpx \
     && pip install --no-cache-dir -e '/src/skcapstone[all]' \
-    && pip install --no-cache-dir -e /src/skcomm
+    && pip install --no-cache-dir -e /src/skcomms
 
 # --- Directories -----------------------------------------------------------
-RUN mkdir -p /agent/memory /agent/scratch /skcomm /run/skcapstone
+RUN mkdir -p /agent/memory /agent/scratch /skcomms /run/skcapstone
 
-VOLUME ["/agent", "/skcomm"]
+VOLUME ["/agent", "/skcomms"]
 
 WORKDIR /agent
 

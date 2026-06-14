@@ -157,7 +157,7 @@ function Install-Pkg {
 Install-Pkg -Name 'capauth'          -Extras 'all'                      -Paths @((Join-Path $PillarDir 'capauth'), (Join-Path $ParentDir 'capauth'))
 Install-Pkg -Name 'cloud9-protocol'  -Extras ''                         -Paths @((Join-Path $PillarDir 'cloud9'), (Join-Path $ParentDir 'cloud9'))
 Install-Pkg -Name 'skmemory'         -Extras ''                         -Paths @((Join-Path $PillarDir 'skmemory'), (Join-Path $ParentDir 'skmemory'))
-Install-Pkg -Name 'skcomm'           -Extras 'cli,crypto,discovery,api' -Paths @((Join-Path $PillarDir 'skcomm'), (Join-Path $ParentDir 'skcomm'))
+Install-Pkg -Name 'skcomms'           -Extras 'cli,crypto,discovery,api' -Paths @((Join-Path $PillarDir 'skcomms'), (Join-Path $ParentDir 'skcomms'))
 Install-Pkg -Name 'skcapstone'       -Extras ''                         -Paths @($RepoRoot)
 Install-Pkg -Name 'skchat-sovereign' -Extras 'all'                      -Paths @((Join-Path $ParentDir 'skchat'))
 Install-Pkg -Name 'skseal'           -Extras ''                         -Paths @((Join-Path $ParentDir 'skseal'))
@@ -203,7 +203,7 @@ Write-Host '[6/6] Verifying installation...'
 
 $ScriptsDir = Join-Path $SKENV 'Scripts'
 $failures = 0
-foreach ($cmd in @('capauth', 'skmemory', 'skcapstone', 'skcomm')) {
+foreach ($cmd in @('capauth', 'skmemory', 'skcapstone', 'skcomms')) {
     $exe = Join-Path $ScriptsDir "$cmd.exe"
     if (Test-Path $exe) {
         try {
@@ -250,6 +250,6 @@ if ($failures -eq 0) {
     Write-Host "=== Installation complete with $failures warning(s) ===" -ForegroundColor Yellow
 }
 Write-Host ''
-Write-Host "Commands available: skcomm, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity, skseed"
+Write-Host "Commands available: skcomms, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity, skseed"
 Write-Host "Venv location:     $SKENV"
 Write-Host "To activate:       & $SKENV\Scripts\Activate.ps1"

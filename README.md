@@ -423,7 +423,7 @@ DIDs are organized in three tiers of trust and discoverability:
 | **Cloud 9** | Trust layer — FEB, entanglement, skills, relationship verification |
 | **SKMemory** | Persistence — Context, history, learned preferences |
 | **SKSecurity** | Protection — Audit, threat detection, key management |
-| **SKComm** | Communication — Encrypted channels between agents |
+| **SKComms** | Communication — Encrypted channels between agents |
 | **SKChat** | Chat — AI-native encrypted messaging |
 | **SKForge** | Generation — Blueprint creation with agent context |
 | **SKSeed** | Epistemic rigor — Steel man collider, truth alignment, memory audit |
@@ -502,7 +502,7 @@ flowchart TD
 ```
 
 Everything skcapstone touches above is a **real** dependency or hosted primitive:
-`capauth`, `skmemory`, `skseed`, `skwhisper`, `skchat-sovereign`, `skcomm`, and
+`capauth`, `skmemory`, `skseed`, `skwhisper`, `skchat-sovereign`, `skcomms`, and
 `sksecurity` are declared in [`pyproject.toml`](pyproject.toml); the coord board /
 `skscheduler` / `sk-alert` / ITIL tools live in this repo's `src/skcapstone/`; the
 knowledge substrate is `skmem-pg` (Postgres pgvector + pg_search BM25 + Apache AGE
@@ -519,7 +519,7 @@ flowchart TD
     SECURITY["🛡️ sksecurity<br/>(Security layer)"]
     DATA["🧠 skmemory + skdata<br/>(Data layer)"]
     SOUL["✨ skseed + soul blueprints<br/>(Soul layer)"]
-    COMMS["📡 skcomm · skchat<br/>(Comms layer)"]
+    COMMS["📡 skcomms · skchat<br/>(Comms layer)"]
     APPS["🔧 skforge · skarchitect<br/>(Apps layer)"]
 
     SILICON --> OS

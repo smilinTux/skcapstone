@@ -130,10 +130,10 @@ else
   fail "pip install skcapstone[dev]"
 fi
 
-# ── 5. Local sibling packages (skseed, skcomm) ─────────────────────────────
+# ── 5. Local sibling packages (skseed, skcomms) ─────────────────────────────
 echo
 echo "Step 5: local sibling packages (if present)"
-for pkg_dir in "$REPO_ROOT/../skseed" "$REPO_ROOT/../skcomm" "$REPO_ROOT/../skmemory" "$REPO_ROOT/../skskills"; do
+for pkg_dir in "$REPO_ROOT/../skseed" "$REPO_ROOT/../skcomms" "$REPO_ROOT/../skmemory" "$REPO_ROOT/../skskills"; do
   pkg_name=$(basename "$pkg_dir")
   if [[ -f "$pkg_dir/pyproject.toml" ]] || [[ -f "$pkg_dir/setup.py" ]]; then
     if "$PIP" install "${PIP_OPTS[@]}" -e "$pkg_dir" 2>&1; then

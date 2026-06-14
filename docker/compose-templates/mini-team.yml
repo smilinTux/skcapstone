@@ -25,9 +25,9 @@ x-agent-defaults: &agent-defaults
     - skcapstone-mcp
   environment:
     SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-    SKCOMM_HOME: /skcomm
+    SKCOMMS_HOME: /skcomms
   volumes:
-    - skcomm-data:/skcomm
+    - skcomms-data:/skcomms
 
 services:
 
@@ -59,10 +59,10 @@ services:
       AGENT_ROLE: manager
       AGENT_MODEL: claude-sonnet-4-6
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - mini-team-manager-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -85,10 +85,10 @@ services:
       AGENT_ROLE: worker
       AGENT_MODEL: claude-haiku-4-5-20251001
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - mini-team-worker-alpha-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -111,10 +111,10 @@ services:
       AGENT_ROLE: worker
       AGENT_MODEL: claude-haiku-4-5-20251001
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - mini-team-worker-beta-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -129,7 +129,7 @@ services:
 # ── Volumes ──────────────────────────────────────────────────────────────
 volumes:
   skcapstone-mcp-data: {}
-  skcomm-data: {}
+  skcomms-data: {}
   mini-team-manager-data: {}
   mini-team-worker-alpha-data: {}
   mini-team-worker-beta-data: {}

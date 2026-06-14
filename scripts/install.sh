@@ -113,7 +113,7 @@ PILLAR="$PARENT/pillar-repos"
 install_pkg "capauth"    "all"                      "$PILLAR/capauth $PARENT/capauth"
 install_pkg "cloud9-protocol" ""                    "$PILLAR/cloud9 $PARENT/cloud9 $PILLAR/cloud9-python $PARENT/cloud9-python"
 install_pkg "skmemory"   ""                         "$PILLAR/skmemory $PARENT/skmemory"
-install_pkg "skcomm"     "cli,crypto,discovery,api" "$PILLAR/skcomm $PARENT/skcomm"
+install_pkg "skcomms"     "cli,crypto,discovery,api" "$PILLAR/skcomms $PARENT/skcomms"
 install_pkg "skcapstone" ""                         "$REPO_ROOT"
 install_pkg "skchat-sovereign" "all"                "$PARENT/skchat"
 install_pkg "skseal"     ""                         "$PARENT/skseal"
@@ -145,7 +145,7 @@ echo "[5/6] Registering skills and MCP servers..."
 echo "[6/6] Verifying installation..."
 
 failures=0
-for cmd in skcomm skcapstone capauth skmemory; do
+for cmd in skcomms skcapstone capauth skmemory; do
     if "$SKENV/bin/$cmd" --version &>/dev/null; then
         echo "  $cmd OK"
     else
@@ -251,7 +251,7 @@ else
     echo "=== Installation complete with $failures warning(s) ==="
 fi
 echo ""
-echo "Commands available: skcomm, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity, skseed"
+echo "Commands available: skcomms, skcapstone, capauth, skchat, skseal, skmemory, skskills, sksecurity, skseed"
 echo "Venv location:     $SKENV"
 echo "To activate:       source $SKENV/bin/activate"
 
@@ -263,7 +263,7 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
     echo "=== Linux Systemd Services ==="
     echo ""
     echo "SKCapstone can install systemd user services so your agent starts"
-    echo "automatically at login. This includes skcapstone, skchat, and skcomm."
+    echo "automatically at login. This includes skcapstone, skchat, and skcomms."
     echo ""
     read -r -p "Install systemd user services? [Y/n] " _SYSTEMD_ANSWER
     _SYSTEMD_ANSWER="${_SYSTEMD_ANSWER:-Y}"
@@ -281,7 +281,7 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
         # skcapstone services
         for _unit in skcapstone.service skcapstone@.service \
                      skcapstone-memory-compress.service skcapstone-memory-compress.timer \
-                     skcomm-heartbeat.service skcomm-heartbeat.timer; do
+                     skcomms-heartbeat.service skcomms-heartbeat.timer; do
             _src="$REPO_ROOT/systemd/$_unit"
             if [[ -f "$_src" ]]; then
                 # Substitute agent name in non-template units
@@ -307,10 +307,10 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             fi
         done
 
-        # skcomm services (sibling repo)
-        _SKCOMM_DIR="$(dirname "$REPO_ROOT")/skcomm/systemd"
-        for _unit in skcomm.service skcomm-daemon.service; do
-            _src="$_SKCOMM_DIR/$_unit"
+        # skcomms services (sibling repo)
+        _SKCOMMS_DIR="$(dirname "$REPO_ROOT")/skcomms/systemd"
+        for _unit in skcomms.service skcomms-daemon.service; do
+            _src="$_SKCOMMS_DIR/$_unit"
             if [[ -f "$_src" ]]; then
                 sed "s/=lumina/=$_AGENT_NAME/g" "$_src" > "$_UNIT_DIR/$_unit"
                 echo "  [OK] $_unit"
@@ -331,7 +331,7 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             systemctl --user enable --now skchat-daemon.service 2>/dev/null && echo "  [STARTED] skchat-daemon" || true
             systemctl --user enable --now skchat-bridges.target 2>/dev/null && echo "  [STARTED] skchat-bridges" || true
             systemctl --user enable skcapstone-context.timer 2>/dev/null && echo "  [ENABLED] skcapstone-context.timer" || true
-            systemctl --user enable skcomm-heartbeat.timer 2>/dev/null && echo "  [ENABLED] skcomm-heartbeat.timer" || true
+            systemctl --user enable skcomms-heartbeat.timer 2>/dev/null && echo "  [ENABLED] skcomms-heartbeat.timer" || true
         else
             echo "  Skipped. Enable later: systemctl --user enable --now skcapstone.service"
         fi

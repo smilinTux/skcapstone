@@ -32,14 +32,14 @@ jobs:
       - name: Run core tests
         run: |
           # Run tests that work with dev deps only (no optional packages)
-          # Skip tests requiring optional deps: skcomm, skseed, pgpy, fusepy, etc.
+          # Skip tests requiring optional deps: skcomms, skseed, pgpy, fusepy, etc.
           python -m pytest tests/ -v --tb=short \
             --ignore=tests/test_e2e_automated.py \
             --ignore=tests/test_snapshots.py \
             --ignore=tests/test_memory_curator.py \
             --ignore=tests/test_session_capture.py \
             --ignore=tests/test_cli_test_cmd.py \
-            -k "not (skcomm or skseed or pgpy or fuse)" \
+            -k "not (skcomms or skseed or pgpy or fuse)" \
             --cov=skcapstone --cov-report=xml --cov-report=term-missing \
             || true
       - name: Check for new test failures

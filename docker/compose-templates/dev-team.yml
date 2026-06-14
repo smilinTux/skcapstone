@@ -21,7 +21,7 @@ x-agent-defaults: &agent-defaults
   networks:
     - skcapstone
   volumes:
-    - skcomm-data:/skcomm
+    - skcomms-data:/skcomms
 
 services:
 
@@ -55,10 +55,10 @@ services:
       AGENT_MODEL: claude-opus-4-6
       SOUL_BLUEPRINT: souls/architect.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - dev-team-architect-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -84,10 +84,10 @@ services:
       AGENT_MODEL: claude-sonnet-4-6
       SOUL_BLUEPRINT: souls/coder.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - dev-team-coder-alpha-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -113,10 +113,10 @@ services:
       AGENT_MODEL: claude-sonnet-4-6
       SOUL_BLUEPRINT: souls/coder.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - dev-team-coder-beta-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -143,10 +143,10 @@ services:
       AGENT_MODEL: claude-sonnet-4-6
       SOUL_BLUEPRINT: souls/reviewer.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - dev-team-reviewer-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -172,10 +172,10 @@ services:
       AGENT_MODEL: claude-haiku-4-5-20251001
       SOUL_BLUEPRINT: souls/scribe.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - dev-team-scribe-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -190,7 +190,7 @@ services:
 # ── Volumes ──────────────────────────────────────────────────────────────
 volumes:
   skcapstone-mcp-data: {}
-  skcomm-data: {}
+  skcomms-data: {}
   dev-team-architect-data: {}
   dev-team-coder-alpha-data: {}
   dev-team-coder-beta-data: {}

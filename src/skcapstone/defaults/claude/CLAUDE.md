@@ -36,7 +36,7 @@ All at `~/clawd/skcapstone-repos/`:
 - `skmemory` - Memory system (snapshots, search, ritual, importers)
 - `cloud9` - Emotional continuity protocol (FEB, OOF, Cloud 9 state)
 - `SKSecurity` - CapAuth, PGP identity
-- `skcomm` - Multi-channel communication
+- `skcomms` - Multi-channel communication
 - `skchat` - Chat interface
 - `capauth` - Auth without OAuth
 

@@ -433,7 +433,7 @@ const TOOL_GROUPS = {
   "chat|inbox|dm|group chat|peer|send message|who.s online|thread": [
     "skchat_send", "skchat_inbox", "skchat_history", "skchat_search",
     "skchat_who", "skchat_group_send", "skchat_group_list", "skchat_send_file",
-    "skchat_status", "skcomm_send", "skcomm_status",
+    "skchat_status", "skcomms_send", "skcomms_status",
   ],
   // Security
   "security|scan|secret|vulnerab|audit|injection|phishing|threat": [
@@ -464,7 +464,7 @@ const TOOL_GROUPS = {
   // Status & Health
   "status|health|doctor|diagnos": [
     "skcapstone_status", "skcapstone_doctor", "skmemory_health",
-    "skchat_daemon_status", "skcomm_status",
+    "skchat_daemon_status", "skcomms_status",
   ],
   // Projects & Notion (Lumina delegates to project-ops via sessions_spawn)
   "notion|project|brother john|swapseat|swap seat|chiro|davidrich|board|kanban|milestone": [
@@ -507,7 +507,7 @@ const PRIORITY_TOOLS = [
   // Web tools
   "web_search", "web_fetch",
   // Communication (other channels)
-  "skchat_send", "skcomm_send",
+  "skchat_send", "skcomms_send",
   // SKCapstone
   "skcapstone_status", "skcapstone_whoami", "skcapstone_mood",
   // Cloud 9

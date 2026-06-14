@@ -15,7 +15,7 @@
   the Command/Arguments and Triggers sections for other tasks:
     - MemoryCompress:  Command=skcapstone.exe memory compress, Trigger=Weekly
     - SyncWatcher:     Command=python.exe -m skcapstone.cli sync poll, Trigger=Repetition/2min
-    - Heartbeat:       Command=skcomm.exe heartbeat, Trigger=Repetition/1min
+    - Heartbeat:       Command=skcomms.exe heartbeat, Trigger=Repetition/1min
     - Housekeeping:    See install-tasks.ps1 for the batch wrapper approach
 -->
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">

@@ -18,7 +18,7 @@ of current tasks and agent assignments. It works in any terminal.
 ## Agent Switching
 
 `SKAGENT` is the primary env var for selecting the active agent across all SK*
-packages (skcapstone, skmemory, skcomm, skchat). Legacy vars `SKCAPSTONE_AGENT`
+packages (skcapstone, skmemory, skcomms, skchat). Legacy vars `SKCAPSTONE_AGENT`
 and `SKMEMORY_AGENT` are still supported as fallbacks.
 
 ```bash

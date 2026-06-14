@@ -517,7 +517,7 @@ classDiagram
 
 SKJoule is not standalone. It connects to every major component of the SK
 ecosystem. The coord board in SKCapstone triggers Joule minting. SKMemory
-stores work records. SKComm enables peer-to-peer transfers. SKVector and
+stores work records. SKComms enables peer-to-peer transfers. SKVector and
 SKGraph provide verification data.
 
 ```mermaid
@@ -536,7 +536,7 @@ flowchart TD
         MEM_REP["Reputation Logs"]
     end
 
-    subgraph "SKComm"
+    subgraph "SKComms"
         COMM_P2P["P2P Token Transfers"]
         COMM_MSG["Agent-to-Agent Messaging"]
         COMM_SYNC["Syncthing Distribution"]
@@ -593,7 +593,7 @@ flowchart TD
 **Data flow summary:**
 - SKCapstone provides the task lifecycle (claim, work, complete) and cost data
 - SKMemory persists all work records, P&L snapshots, and reputation logs
-- SKComm handles peer-to-peer Joule transfers between agents
+- SKComms handles peer-to-peer Joule transfers between agents
 - SKVector/SKGraph enable work verification through embeddings and provenance
 - OpenClaw is the execution environment where agents actually do work
 - On-chain contracts handle final token minting and cross-chain bridging

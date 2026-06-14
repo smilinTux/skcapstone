@@ -19,9 +19,9 @@ CONFIG_FILE="/agent/config.json"
 MCP_CONFIG_FILE="/agent/mcp_config.json"
 STATE_FILE="/agent/session_state.json"
 LOG_FILE="/agent/agent.log"
-SKCOMM_HOME="${SKCOMM_HOME:-/skcomm}"
-INBOX_DIR="${SKCOMM_HOME}/${TEAM_NAME}/${AGENT_NAME}/inbox"
-OUTBOX_DIR="${SKCOMM_HOME}/${TEAM_NAME}/${AGENT_NAME}/outbox"
+SKCOMMS_HOME="${SKCOMMS_HOME:-/skcomms}"
+INBOX_DIR="${SKCOMMS_HOME}/${TEAM_NAME}/${AGENT_NAME}/inbox"
+OUTBOX_DIR="${SKCOMMS_HOME}/${TEAM_NAME}/${AGENT_NAME}/outbox"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -146,7 +146,7 @@ SYSTEM_PROMPT_FILE="/agent/system_prompt.txt"
 } > "$SYSTEM_PROMPT_FILE"
 
 # ---------------------------------------------------------------------------
-# Set up SKComm directories
+# Set up SKComms directories
 # ---------------------------------------------------------------------------
 
 mkdir -p "$INBOX_DIR" "$OUTBOX_DIR" /agent/memory /agent/scratch

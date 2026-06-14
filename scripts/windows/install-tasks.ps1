@@ -62,7 +62,7 @@ if (-not $SkenvPath) {
 
 $PythonExe      = Join-Path $SkenvPath 'Scripts\python.exe'
 $SKCapstoneExe  = Join-Path $SkenvPath 'Scripts\skcapstone.exe'
-$SKCommExe      = Join-Path $SkenvPath 'Scripts\skcomm.exe'
+$SKCommsExe      = Join-Path $SkenvPath 'Scripts\skcomms.exe'
 
 if (-not (Test-Path $PythonExe)) {
     Write-Host "ERROR: Python not found at $PythonExe" -ForegroundColor Red
@@ -261,10 +261,10 @@ if (Remove-ExistingTask 'SKCapstone-SyncWatcher') {
 }
 
 # ---------------------------------------------------------------------------
-# Task 4: Health Monitor / Heartbeat (equivalent to skcomm-heartbeat.timer
-#         and skcomm-queue-drain.timer combined)
+# Task 4: Health Monitor / Heartbeat (equivalent to skcomms-heartbeat.timer
+#         and skcomms-queue-drain.timer combined)
 #   Trigger: Every 60 seconds after logon
-#   Action:  skcomm heartbeat && skcomm queue drain
+#   Action:  skcomms heartbeat && skcomms queue drain
 # ---------------------------------------------------------------------------
 Write-Host '[4/5] Health Monitor Heartbeat (every 60s)...' -ForegroundColor Green
 
@@ -279,9 +279,9 @@ if (Remove-ExistingTask 'SKCapstone-Heartbeat') {
     $content = @"
 @echo off
 echo [%date% %time%] === heartbeat started === >> "$logFile"
-"$SKCommExe" heartbeat >> "$logFile" 2>&1
+"$SKCommsExe" heartbeat >> "$logFile" 2>&1
 echo [%date% %time%] heartbeat exit: %ERRORLEVEL% >> "$logFile"
-"$SKCommExe" queue drain >> "$logFile" 2>&1
+"$SKCommsExe" queue drain >> "$logFile" 2>&1
 echo [%date% %time%] queue-drain exit: %ERRORLEVEL% >> "$logFile"
 echo [%date% %time%] === heartbeat finished === >> "$logFile"
 "@
@@ -310,7 +310,7 @@ echo [%date% %time%] === heartbeat finished === >> "$logFile"
         -Trigger $trigger `
         -Settings $settings `
         -Principal $principal `
-        -Description 'Heartbeat + queue drain — equivalent to skcomm-heartbeat.timer + skcomm-queue-drain.timer' | Out-Null
+        -Description 'Heartbeat + queue drain — equivalent to skcomms-heartbeat.timer + skcomms-queue-drain.timer' | Out-Null
 
     Write-Host '  Registered: Every 60 seconds after logon'
     $registered++

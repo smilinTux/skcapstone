@@ -4,12 +4,13 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.skcapstone.skcomm-heartbeat</string>
+  <string>com.skcapstone.skcomms-queue-drain</string>
 
   <key>ProgramArguments</key>
   <array>
-    <string>${HOME}/.skenv/bin/skcomm</string>
-    <string>heartbeat</string>
+    <string>${HOME}/.skenv/bin/skcomms</string>
+    <string>queue</string>
+    <string>drain</string>
   </array>
 
   <key>EnvironmentVariables</key>
@@ -18,16 +19,16 @@
     <string>${HOME}/.skenv/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
 
-  <!-- Every 60 seconds -->
+  <!-- Every 2 minutes -->
   <key>StartInterval</key>
-  <integer>60</integer>
+  <integer>120</integer>
 
   <key>Nice</key>
   <integer>19</integer>
 
   <key>StandardOutPath</key>
-  <string>${HOME}/.skcapstone/logs/skcomm-heartbeat.stdout.log</string>
+  <string>${HOME}/.skcapstone/logs/skcomms-queue-drain.stdout.log</string>
   <key>StandardErrorPath</key>
-  <string>${HOME}/.skcapstone/logs/skcomm-heartbeat.stderr.log</string>
+  <string>${HOME}/.skcapstone/logs/skcomms-queue-drain.stderr.log</string>
 </dict>
 </plist>

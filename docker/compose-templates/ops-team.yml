@@ -9,7 +9,7 @@
 #   docker compose up -d
 #
 # Key points:
-#   - security-sentinel has read-only access to /skcomm for audit trails
+#   - security-sentinel has read-only access to /skcomms for audit trails
 #   - monitor polls heartbeats every 30m via the MCP heartbeat tools
 #   - ops-agent handles restarts, rotations, and scaling via trustee_* tools
 
@@ -53,10 +53,10 @@ services:
       AGENT_MODEL: claude-sonnet-4-6
       SOUL_BLUEPRINT: souls/ops-lead.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - ops-team-ops-lead-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -82,10 +82,10 @@ services:
       AGENT_MODEL: claude-sonnet-4-6
       SOUL_BLUEPRINT: souls/sentinel.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - ops-team-security-sentinel-data:/agent
-      - skcomm-data:/skcomm:ro
+      - skcomms-data:/skcomms:ro
     deploy:
       resources:
         limits:
@@ -109,12 +109,12 @@ services:
       AGENT_ROLE: ops
       AGENT_MODEL: claude-haiku-4-5-20251001
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
       # Poll interval for heartbeat checks (seconds)
       MONITOR_INTERVAL: "1800"
     volumes:
       - ops-team-monitor-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -139,12 +139,12 @@ services:
       AGENT_ROLE: ops
       AGENT_MODEL: claude-haiku-4-5-20251001
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
       # Docker socket for trustee operations (restart, rotate, scale)
       DOCKER_HOST: "unix:///var/run/docker.sock"
     volumes:
       - ops-team-ops-agent-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
       # Bind Docker socket so the ops agent can restart containers
       - /var/run/docker.sock:/var/run/docker.sock:ro
     deploy:
@@ -161,7 +161,7 @@ services:
 # ── Volumes ──────────────────────────────────────────────────────────────
 volumes:
   skcapstone-mcp-data: {}
-  skcomm-data: {}
+  skcomms-data: {}
   ops-team-ops-lead-data: {}
   ops-team-security-sentinel-data: {}
   ops-team-monitor-data: {}

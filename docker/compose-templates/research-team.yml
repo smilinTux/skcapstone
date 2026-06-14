@@ -18,7 +18,7 @@ x-agent-defaults: &agent-defaults
   networks:
     - skcapstone
   volumes:
-    - skcomm-data:/skcomm
+    - skcomms-data:/skcomms
 
 services:
 
@@ -52,10 +52,10 @@ services:
       AGENT_MODEL: claude-opus-4-6
       SOUL_BLUEPRINT: souls/research-lead.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - research-team-research-lead-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -81,10 +81,10 @@ services:
       AGENT_MODEL: claude-sonnet-4-6
       SOUL_BLUEPRINT: souls/researcher.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - research-team-researcher-alpha-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -110,10 +110,10 @@ services:
       AGENT_MODEL: claude-sonnet-4-6
       SOUL_BLUEPRINT: souls/researcher.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - research-team-researcher-beta-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -140,10 +140,10 @@ services:
       AGENT_MODEL: claude-sonnet-4-6
       SOUL_BLUEPRINT: souls/analyst.yaml
       SKCAPSTONE_MCP_HOST: "skcapstone-mcp:8765"
-      SKCOMM_HOME: /skcomm
+      SKCOMMS_HOME: /skcomms
     volumes:
       - research-team-analyst-data:/agent
-      - skcomm-data:/skcomm
+      - skcomms-data:/skcomms
     deploy:
       resources:
         limits:
@@ -158,7 +158,7 @@ services:
 # ── Volumes ──────────────────────────────────────────────────────────────
 volumes:
   skcapstone-mcp-data: {}
-  skcomm-data: {}
+  skcomms-data: {}
   research-team-research-lead-data: {}
   research-team-researcher-alpha-data: {}
   research-team-researcher-beta-data: {}

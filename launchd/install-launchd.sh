@@ -1,6 +1,6 @@
 #!/bin/bash
 # install-launchd.sh — Install SK launchd plists on macOS
-# Usage: ./install-launchd.sh [--all | --skcapstone | --skchat | --skcomm | --cloud9]
+# Usage: ./install-launchd.sh [--all | --skcapstone | --skchat | --skcomms | --cloud9]
 #
 # Copies plist templates to ~/Library/LaunchAgents/, expands ${HOME},
 # and optionally loads them immediately.
@@ -23,7 +23,7 @@ REPOS_ROOT="$(dirname "$REPOS_DIR")"  # skcapstone-repos/
 declare -A PLIST_DIRS=(
     [skcapstone]="$REPOS_ROOT/skcapstone/launchd"
     [skchat]="$REPOS_ROOT/skchat/launchd"
-    [skcomm]="$REPOS_ROOT/skcomm/launchd"
+    [skcomms]="$REPOS_ROOT/skcomms/launchd"
     [cloud9]="$REPOS_ROOT/cloud9/launchd"
 )
 
@@ -91,7 +91,7 @@ usage() {
     echo "  --all          Install all components"
     echo "  --skcapstone   Install skcapstone plists (daemon, memory-compress, heartbeat, queue-drain)"
     echo "  --skchat       Install skchat plists (daemon, lumina-bridge, opus-bridge)"
-    echo "  --skcomm       Install skcomm plists (api server, daemon)"
+    echo "  --skcomms       Install skcomms plists (api server, daemon)"
     echo "  --cloud9       Install cloud9 plists (daemon)"
     echo "  --load         Also load/start services after installing"
     echo "  --uninstall    Remove all SK plists and unload services"
@@ -109,10 +109,10 @@ fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --all)        COMPONENTS=(skcapstone skchat skcomm cloud9) ;;
+        --all)        COMPONENTS=(skcapstone skchat skcomms cloud9) ;;
         --skcapstone) COMPONENTS+=(skcapstone) ;;
         --skchat)     COMPONENTS+=(skchat) ;;
-        --skcomm)     COMPONENTS+=(skcomm) ;;
+        --skcomms)     COMPONENTS+=(skcomms) ;;
         --cloud9)     COMPONENTS+=(cloud9) ;;
         --load)       DO_LOAD=true ;;
         --uninstall)  uninstall_plists ;;
@@ -128,7 +128,7 @@ if [[ ${#COMPONENTS[@]} -eq 0 ]]; then
 fi
 
 # Create log directories
-mkdir -p "$HOME/.skcapstone/logs" "$HOME/.skchat" "$HOME/.skcomm" "$HOME/.openclaw/logs"
+mkdir -p "$HOME/.skcapstone/logs" "$HOME/.skchat" "$HOME/.skcomms" "$HOME/.openclaw/logs"
 
 # Install
 for comp in "${COMPONENTS[@]}"; do
