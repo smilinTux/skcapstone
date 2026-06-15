@@ -37,14 +37,14 @@ incidents/            # Case workspace (problem → incident → artifacts)
 knowledge/            # Primary corpus (markdown)
 templates/            # Filing templates
 profiles/             # Person/company YAML profiles
-models/bge-legal-v1/  # Sovereign embedding model (local)
+models/mxbai-embed-large/  # Sovereign embedding model (local)
 ```
 
 Key infrastructure:
-- **Qdrant** at `skvector.nativeassetmanagement.com` (collection: `hammertime-v3`, 1024-dim cosine, `bge-legal-v1`)
+- **Qdrant** at `skvector.nativeassetmanagement.com` (collection: `hammertime-v3`, 1024-dim cosine, `mxbai-embed-large`)
 - **FalkorDB** at `skgraph.nativeassetmanagement.com:6381` (graph: `hammertime-v2`)
-- **7-node GPU cluster** (chiap01–chiap08 + chiwk12) running Ollama with bge-legal-v1
-- **Embedding model**: `chefboyrave21/bge-legal-v1` (1024-dim, sovereign HuggingFace model)
+- **7-node GPU cluster** (chiap01–chiap08 + chiwk12) running Ollama with mxbai-embed-large
+- **Embedding model**: `mixedbread-ai/mxbai-embed-large-v1` (1024-dim, sovereign HuggingFace model)
 
 ---
 
@@ -64,7 +64,7 @@ hammerTime's decomposition is domain-specialized for legal documents but structu
 5. **Agency/court extraction**: 20+ named agencies (IRS, Fed Reserve, CFPB, OCC, etc.)
 6. **Claim confidence scoring**: chunks marked `high/medium/low` based on claim indicator phrases
 7. **Section-title tracking per chunk**: exact heading ancestry embedded in each chunk
-8. **CHUNK_TARGET = 900 chars / 450 tokens** (calibrated for bge-legal-v1's 512-token hard limit)
+8. **CHUNK_TARGET = 900 chars / 450 tokens** (calibrated for mxbai-embed-large's 512-token hard limit)
 9. **Relationship extraction**: 6 rel types: CITES, CONTRADICTS, SUPERSEDES, REQUIRES, DEFINES, ESTABLISHES
 10. **`secondary` / `form` document-type classification** via title term matching
 
@@ -350,7 +350,7 @@ All skills are `.md` files in `.cursor/skills/` — trigger phrases map to skill
 
 ## recall_collections Recommendation
 
-`hammertime-v3` (Qdrant at `skvector.nativeassetmanagement.com`, 1024-dim, bge-legal-v1) should be added to `recall_collections` for:
+`hammertime-v3` (Qdrant at `skvector.nativeassetmanagement.com`, 1024-dim, mxbai-embed-large) should be added to `recall_collections` for:
 
 | Agent | Justification |
 |-------|---------------|
@@ -359,8 +359,8 @@ All skills are `.md` files in `.cursor/skills/` — trigger phrases map to skill
 | **scholar** | Research-focused agent — direct benefit from legal corpus retrieval |
 | **coder** | Lower priority but useful for regulatory/compliance code generation |
 
-**Configuration note:** The bge-legal-v1 model is 1024-dim while the default skmemory collection uses a different embedding model. Recall from `hammertime-v3` requires either:
-1. Using the same bge-legal-v1 model for query embedding (requires the local model at `models/bge-legal-v1/` or via Ollama), OR
+**Configuration note:** The mxbai-embed-large model is 1024-dim while the default skmemory collection uses a different embedding model. Recall from `hammertime-v3` requires either:
+1. Using the same mxbai-embed-large model for query embedding (requires the local model at `models/mxbai-embed-large/` or via Ollama), OR
 2. Adding a separate recall path in `context_bridge_lib.py` that hammerTime already implements
 
 The cleanest path: add `hammertime-v3` as a read-only recall collection that only `context-bridge.py` / `issue-pack.py` queries, surfacing results back into skmemory's context system through the bridge interface that already exists in `context_bridge_lib.py`.
@@ -373,7 +373,7 @@ The cleanest path: add `hammertime-v3` as a read-only recall collection that onl
 
 | Library | hammerTime Use | skcapstone/skmemory Status | Recommendation |
 |---------|---------------|--------------------------|----------------|
-| `sentence-transformers` | L4 embedding (bge-legal-v1 via SentenceTransformer) | Used in skmemory | Already adopted |
+| `sentence-transformers` | L4 embedding (mxbai-embed-large via SentenceTransformer) | Used in skmemory | Already adopted |
 | `qdrant-client` | Vector store (hammertime-v3) | Used in skmemory | Already adopted |
 | `redis` (FalkorDB) | Graph DB via GRAPH.QUERY commands | Not in skmemory | Add for graph layer if FalkorDB adopted |
 | `falkordb` | Newer FalkorDB Python client | Not in skmemory | Optional — redis path works |
@@ -389,7 +389,7 @@ The cleanest path: add `hammertime-v3` as a read-only recall collection that onl
 | Concern | skmemory | hammerTime |
 |---------|----------|------------|
 | Storage unit | `Memory` object (agent-personal) | Document chunk (corpus-shared) |
-| Embedding dimensions | Variable (default model) | 1024 (bge-legal-v1 sovereign) |
+| Embedding dimensions | Variable (default model) | 1024 (mxbai-embed-large sovereign) |
 | Graph node | Generic `Memory` node | 15 typed nodes (Statute, Court, Agency, etc.) |
 | Graph relationships | RELATED_TO primarily | 18 typed rels including CITES, CONTRADICTS, SUPERSEDES |
 | Retrieval | Semantic similarity only | Hybrid: semantic + overlay + authority weight + state boost |

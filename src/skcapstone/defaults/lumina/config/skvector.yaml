@@ -46,11 +46,11 @@ embedding:
   # For provider: openai, set model to e.g. "text-embedding-3-small" (1536-dim)
 
 # Alternative sovereign embedding model (HuggingFace):
-#   model: chefboyrave21/bge-legal-v1   (1024-dim, legal domain fine-tuned)
+#   model: mixedbread-ai/mxbai-embed-large-v1   (1024-dim, legal domain fine-tuned)
 #   provider: sentence_transformers
 #
-# If using bge-legal-v1 locally, set HAMMERTIME_ROOT env var to the
-# directory containing models/bge-legal-v1/
+# If using mxbai-embed-large locally, set HAMMERTIME_ROOT env var to the
+# directory containing models/mxbai-embed-large/
 
 # ── Ingestion ────────────────────────────────────────────────────────────────
 batch_size: 100         # Memories to embed per batch during bulk ingest
