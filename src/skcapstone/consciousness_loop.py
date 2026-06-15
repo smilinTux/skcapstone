@@ -1220,6 +1220,81 @@ class InboxHandler:
 
 
 # ---------------------------------------------------------------------------
+# Auto-reply loop safety
+# ---------------------------------------------------------------------------
+
+
+def _norm_identity(value) -> str:
+    """Normalize a peer/agent identity to a bare, comparable handle.
+
+    ``capauth:lumina@skworld.io`` -> ``lumina``; ``Lumina`` -> ``lumina``;
+    ``opus`` -> ``opus``. Lets the self-send guard and loop breaker compare
+    apples to apples regardless of URI scheme/host decoration.
+    """
+    s = (value or "").strip().lower()
+    if ":" in s:
+        s = s.split(":", 1)[1]  # drop scheme, e.g. "capauth:"
+    if "@" in s:
+        s = s.split("@", 1)[0]  # drop host, e.g. "@skworld.io"
+    return s
+
+
+class _AutoReplyGuard:
+    """Circuit breaker that stops runaway auto-reply loops to a single peer.
+
+    Tracks auto-reply events per normalized peer in a sliding window. If more
+    than ``max_replies`` land within ``window_s`` seconds, the breaker trips
+    for that peer for ``cooldown_s`` seconds and :meth:`allow` returns False —
+    suppressing further auto-replies so agent<->agent feedback storms die.
+    Self-heals: once the flood stops and the window drains, replies resume.
+
+    Thresholds are deliberately well above human conversation cadence so real
+    chats are never throttled; only machine loops hit them.
+    """
+
+    def __init__(
+        self,
+        max_replies: int = 10,
+        window_s: float = 60.0,
+        cooldown_s: float = 300.0,
+    ) -> None:
+        self.max_replies = max_replies
+        self.window_s = window_s
+        self.cooldown_s = cooldown_s
+        self._events: dict[str, deque] = defaultdict(deque)
+        self._tripped_until: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, peer: str, now: float) -> bool:
+        """Record an intended auto-reply to ``peer``; return whether it's allowed.
+
+        Args:
+            peer: Sender/peer identity (any URI form — normalized internally).
+            now: Monotonic timestamp (seconds). Injectable for testing.
+        """
+        key = _norm_identity(peer)
+        with self._lock:
+            if now < self._tripped_until.get(key, 0.0):
+                return False
+            dq = self._events[key]
+            cutoff = now - self.window_s
+            while dq and dq[0] <= cutoff:
+                dq.popleft()
+            if len(dq) >= self.max_replies:
+                # Trip: open the breaker for this peer and clear the window.
+                self._tripped_until[key] = now + self.cooldown_s
+                dq.clear()
+                return False
+            dq.append(now)
+            return True
+
+    def is_tripped(self, peer: str, now: float) -> bool:
+        """Whether the breaker is currently open (cooling down) for ``peer``."""
+        with self._lock:
+            return now < self._tripped_until.get(_norm_identity(peer), 0.0)
+
+
+# ---------------------------------------------------------------------------
 # Consciousness Loop
 # ---------------------------------------------------------------------------
 
@@ -1305,6 +1380,9 @@ class ConsciousnessLoop:
         # Deduplication state
         self._processed_ids: set[str] = set()
         self._processed_ids_lock = threading.Lock()
+
+        # Loop safety — circuit breaker for runaway agent<->agent reply storms
+        self._autoreply_guard = _AutoReplyGuard()
 
         # Peer directory — tracks transport addresses of known peers
         try:
@@ -1449,6 +1527,22 @@ class ConsciousnessLoop:
             sender = getattr(envelope, "sender", "unknown")
             content = getattr(envelope.payload, "content", "")
             if not content or not content.strip():
+                return None
+
+            # Loop safety (must run before ACK/notify/generate so a runaway
+            # loop produces zero side effects):
+            #   1. Never auto-reply to ourselves — kills self-addressed loops.
+            #   2. Trip a per-peer circuit breaker on reply storms — kills
+            #      agent<->agent ping-pong (see _AutoReplyGuard).
+            if _norm_identity(sender) == _norm_identity(self._agent_name):
+                logger.warning("Skipping auto-reply to self (%s) — loop guard", sender)
+                return None
+            if not self._autoreply_guard.allow(sender, time.monotonic()):
+                logger.warning(
+                    "Auto-reply circuit breaker tripped for %s — suppressing reply "
+                    "to break a runaway loop",
+                    sender,
+                )
                 return None
 
             # Extract threading fields
@@ -1976,8 +2070,11 @@ class ConsciousnessLoop:
                 logger.debug("Skipping message for %s (we are %s)", recipient, self._agent_name)
                 return
 
-            # Deduplication by message_id
-            message_id = data.get("message_id") or data.get("envelope_id", "")
+            # Deduplication by message_id (envelopes vary: message_id /
+            # envelope_id / id — accept any so dedupe is never silently skipped)
+            message_id = (
+                data.get("message_id") or data.get("envelope_id") or data.get("id", "")
+            )
             if message_id:
                 with self._processed_ids_lock:
                     if message_id in self._processed_ids:
