@@ -109,7 +109,7 @@ class ConsciousnessConfig(BaseModel):
         ]
     )
     ollama_host: str = "http://localhost:11434"
-    ollama_model: str = "llama3.2"
+    ollama_model: str = "qwen3.5:4b"
     desktop_notifications: bool = True
 
 
@@ -322,18 +322,34 @@ class LLMBridge:
 
         name_base = model_name.lower().split(":")[0]
 
-        # LOCAL tier always goes to Ollama
-        if tier == ModelTier.LOCAL:
+        # When SKC_LOCAL_OPENAI_URL is set, local inference is served by an
+        # OpenAI-compatible endpoint (e.g. a Vulkan llama-server on an iGPU, or
+        # SKGateway) instead of a native Ollama daemon. Gated on the env var so
+        # default behavior (native Ollama) is unchanged for unconfigured hosts.
+        def _local_callback():
+            local_url = os.environ.get("SKC_LOCAL_OPENAI_URL")
+            if local_url:
+                from skseed.llm import openai_callback
+
+                return openai_callback(
+                    model=model_name,
+                    base_url=local_url,
+                    api_key=os.environ.get("SKC_LOCAL_OPENAI_KEY") or "local",
+                )
             return ollama_callback(model=model_name)
+
+        # LOCAL tier always goes to local inference
+        if tier == ModelTier.LOCAL:
+            return _local_callback()
 
         # Pattern matching on model name
         for patterns, backend in self._MODEL_PATTERNS:
             if any(p in name_base for p in patterns):
                 return self._callback_for_backend(backend, model=model_name)
 
-        # Models that run on Ollama (local inference)
+        # Models that run on local inference (Ollama / OpenAI-compatible)
         if any(p in name_base for p in _OLLAMA_MODEL_PATTERNS):
-            return ollama_callback(model=model_name)
+            return _local_callback()
 
         # Walk fallback chain for first available backend
         for backend in self._fallback_chain:
