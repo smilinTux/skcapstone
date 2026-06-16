@@ -1200,10 +1200,9 @@ class DaemonService:
         import uuid
         from datetime import datetime, timezone
 
-        from . import active_agent_name
-
-        agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-        recv_dir = self.config.home / "agents" / agent_name / "skcomms" / "received"
+        # config.home is already ~/.skcapstone/agents/{agent}; don't re-prepend
+        # "agents/{agent}" or receipts nest under agents/{agent}/agents/{agent}/.
+        recv_dir = self.config.home / "skcomms" / "received"
         recv_dir.mkdir(parents=True, exist_ok=True)
 
         receipt_id = uuid.uuid4().hex[:12]
