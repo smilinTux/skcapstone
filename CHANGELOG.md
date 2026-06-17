@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.0] — 2026-06-16
+
+### Added
+- **Legacy & broadcast comms-outbox sweep in housekeeping.** New
+  `prune_legacy_comms()` sweeps the v1 outbox layouts that the v2-only
+  housekeeping never reached: `~/.skcapstone/comms/outbox/<recipient>/` and
+  every `~/.skcapstone/agents/<agent>/comms/outbox/<recipient>/`. Stale
+  `*.skc.json` envelopes (>7d) are deleted; a v1 broadcast subdir literally
+  named `*` is removed wholesale regardless of age. Wired into
+  `run_housekeeping` as the `legacy_comms` target (with dry-run counting via
+  `_count_stale_legacy_comms`) and surfaced in the `skcapstone housekeeping`
+  CLI table.
+- **Weekly housekeeping default job.** A standalone `jobs.d` drop-in
+  (`config/jobs.d/housekeeping.yaml`, schedule `0 4 * * 0`) runs
+  `skcapstone housekeeping` weekly as a safety net decoupled from the daemon.
+  Bundled in package defaults and installed idempotently into
+  `~/.skcapstone/config/jobs.d/` on a fresh `init` (never overwrites an
+  existing user file).
+
+### Fixed
+- Prevents the unbounded profile growth that overheated a Framework 13 laptop
+  (462k files in `~/.skcapstone`). Root cause: ~256k stale v1 `recipient="*"`
+  presence-broadcast envelopes accumulating in directories literally named
+  `*` under the legacy v1 outbox paths, which the existing v2 housekeeping
+  never swept.
+
+---
+
 ## [0.9.0] — 2026-03-02
 
 ### Sprint 15 — Exception Handlers, LLM Retry, Tests, Docs, Systemd, Deps
