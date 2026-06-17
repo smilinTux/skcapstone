@@ -117,6 +117,17 @@ no `@capauth.local` placeholders anywhere, and every provisioned agent (one with
 a CapAuth home) carries its own `identity/identity.json`. Run `skcapstone doctor`
 after any identity change. (skos T6 `0bac4f62`; supersedes `b5fcf55d`.)
 
+## Agent Capability Manifest (`skcapstone agent profile`)
+
+`skcapstone agent profile [--agent NAME] [--json] [--init]` renders the unified
+per-agent capability manifest — **soul** (active overlay), **model** profile
+patterns, **MCP servers + exposed tools** (read from `<home>/config/<agent>-mcp.yaml`,
+the same file the skchat Telegram tool-router uses), the **bridge curation**
+(which of those tools / what voice policy the live bridge exposes), and installed
+**skills**. `--init` writes a `profile.yaml` (a `bridge:` block: `tools: default|all|[list]`,
+`voice_reply: voice|always|off`) into the agent home; `telegram_bridge.py` reads it
+(env `SKC_BRIDGE_*` still wins when set). Code: `cli/agent_profile_cmd.py`.
+
 ## MCP Tools
 
 ### DID Tools (`mcp_tools/did_tools.py`)
