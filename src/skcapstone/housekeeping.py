@@ -5,15 +5,27 @@ Prunes stale files that accumulate in the agent profile:
 - ACK files in ~/.skcomms/acks/ (age-based, 24h default)
 - Delivered envelopes in ~/.skcapstone/sync/comms/outbox/ (age-based, 48h)
 - Seed snapshots in ~/.skcapstone/sync/outbox/ (count-based, keep 10)
+- Legacy v1 comms outboxes (age-based, 7d) — both the root path
+  ~/.skcapstone/comms/outbox/<recipient>/ and every per-agent path
+  ~/.skcapstone/agents/<agent>/comms/outbox/<recipient>/, plus any v1
+  broadcast subdir literally named ``*`` (removed wholesale)
 
 These directories grow unbounded and can bloat a ~15MB profile to 300MB+.
 Run via daemon loop (hourly) or CLI: ``skcapstone housekeeping [--dry-run]``.
+
+Incident background (2026-06-16): a Framework 13 laptop overheated because
+~/.skcapstone had grown to 462k files. Root cause was ~256k stale v1 broadcast
+envelopes accumulating in directories literally named ``*`` (a v1
+``recipient="*"`` presence-broadcast was written as a literal ``*`` directory).
+They lived in the legacy v1 outbox paths that the v2-only housekeeping never
+swept, so they grew unbounded. :func:`prune_legacy_comms` sweeps those paths.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import shutil
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -24,6 +36,7 @@ logger = logging.getLogger("skcapstone.housekeeping")
 DEFAULT_ACK_MAX_AGE_HOURS = 24
 DEFAULT_COMMS_MAX_AGE_HOURS = 48
 DEFAULT_SEEDS_KEEP_PER_AGENT = 10
+DEFAULT_LEGACY_COMMS_MAX_AGE_HOURS = 168  # 7 days — legacy v1 data is long-dead
 
 
 def prune_acks(skcomms_home: Path, max_age_hours: int = DEFAULT_ACK_MAX_AGE_HOURS) -> int:
@@ -61,9 +74,7 @@ def prune_acks(skcomms_home: Path, max_age_hours: int = DEFAULT_ACK_MAX_AGE_HOUR
     return deleted
 
 
-def prune_comms_outbox(
-    sync_dir: Path, max_age_hours: int = DEFAULT_COMMS_MAX_AGE_HOURS
-) -> int:
+def prune_comms_outbox(sync_dir: Path, max_age_hours: int = DEFAULT_COMMS_MAX_AGE_HOURS) -> int:
     """Remove delivered envelopes older than max_age_hours.
 
     The comms outbox at ~/.skcapstone/sync/comms/outbox/<agent>/
@@ -109,9 +120,7 @@ def prune_comms_outbox(
     return deleted
 
 
-def prune_seeds(
-    outbox_dir: Path, keep_per_agent: int = DEFAULT_SEEDS_KEEP_PER_AGENT
-) -> int:
+def prune_seeds(outbox_dir: Path, keep_per_agent: int = DEFAULT_SEEDS_KEEP_PER_AGENT) -> int:
     """Keep only the most recent seeds per agent, delete the rest.
 
     Seed files in ~/.skcapstone/sync/outbox/ are named like
@@ -161,12 +170,142 @@ def prune_seeds(
     return deleted
 
 
+def _legacy_outbox_dirs(skcapstone_home: Path) -> list[Path]:
+    """Return all legacy v1 comms-outbox roots that exist under *skcapstone_home*.
+
+    Two legacy layouts are swept:
+    - ``<home>/comms/outbox`` — the v1 root path.
+    - ``<home>/agents/<agent>/comms/outbox`` — the v1 per-agent path.
+
+    Args:
+        skcapstone_home: Path to ~/.skcapstone.
+
+    Returns:
+        List of existing outbox directories (may be empty).
+    """
+    roots: list[Path] = []
+
+    root_outbox = skcapstone_home / "comms" / "outbox"
+    if root_outbox.is_dir():
+        roots.append(root_outbox)
+
+    agents_dir = skcapstone_home / "agents"
+    if agents_dir.is_dir():
+        for agent_dir in agents_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            agent_outbox = agent_dir / "comms" / "outbox"
+            if agent_outbox.is_dir():
+                roots.append(agent_outbox)
+
+    return roots
+
+
+def prune_legacy_comms(
+    skcapstone_home: Path,
+    max_age_hours: int = DEFAULT_LEGACY_COMMS_MAX_AGE_HOURS,
+) -> int:
+    """Sweep legacy v1 comms outboxes and v1 broadcast artifacts.
+
+    The v2 housekeeping only prunes ``~/.skcapstone/sync/comms/outbox`` and
+    never reaches the v1 layouts, so they grow unbounded. This sweeps BOTH:
+    - ``<home>/comms/outbox/<recipient>/`` (v1 root path)
+    - ``<home>/agents/<agent>/comms/outbox/<recipient>/`` (v1 per-agent path)
+
+    Within each outbox it recurses one level into per-recipient subdirs
+    (including a subdir whose name is literally ``*``) and deletes envelope
+    files (``*.skc.json``) older than *max_age_hours*.
+
+    Special case: a recipient subdir literally named ``*`` is a v1
+    ``recipient="*"`` broadcast artifact (never valid v2). The entire dir tree
+    is removed regardless of age via :func:`shutil.rmtree`, guarded against
+    symlink escape and confined to the outbox dir.
+
+    Now-empty recipient and outbox directories are removed afterward.
+
+    Args:
+        skcapstone_home: Path to ~/.skcapstone.
+        max_age_hours: Delete envelopes older than this. Default 168 (7 days).
+
+    Returns:
+        Number of files deleted.
+    """
+    cutoff = time.time() - (max_age_hours * 3600)
+    deleted = 0
+
+    for outbox_dir in _legacy_outbox_dirs(skcapstone_home):
+        try:
+            recipient_dirs = list(outbox_dir.iterdir())
+        except OSError as exc:
+            logger.warning("Failed to scan legacy outbox %s: %s", outbox_dir, exc)
+            continue
+
+        for recipient in recipient_dirs:
+            # Never follow symlinks — stay inside skcapstone_home.
+            if recipient.is_symlink():
+                continue
+
+            # v1 broadcast artifact: a subdir literally named "*". Remove whole
+            # tree regardless of age (never valid v2).
+            if recipient.is_dir() and recipient.name == "*":
+                try:
+                    file_count = sum(1 for p in recipient.rglob("*") if p.is_file())
+                    shutil.rmtree(recipient)
+                    deleted += file_count
+                    logger.info(
+                        "Removed v1 broadcast dir %s (%d files)",
+                        recipient,
+                        file_count,
+                    )
+                except OSError as exc:
+                    logger.warning("Failed to remove broadcast dir %s: %s", recipient, exc)
+                continue
+
+            if not recipient.is_dir():
+                continue
+
+            for path in recipient.iterdir():
+                if not path.is_file() or path.is_symlink():
+                    continue
+                if not path.name.endswith(".skc.json"):
+                    continue
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        path.unlink()
+                        deleted += 1
+                except OSError as exc:
+                    logger.warning("Failed to delete legacy envelope %s: %s", path, exc)
+
+            # Remove now-empty recipient directory
+            try:
+                if recipient.is_dir() and not any(recipient.iterdir()):
+                    recipient.rmdir()
+            except OSError:
+                pass
+
+        # Remove now-empty outbox directory
+        try:
+            if outbox_dir.is_dir() and not any(outbox_dir.iterdir()):
+                outbox_dir.rmdir()
+        except OSError:
+            pass
+
+    if deleted:
+        logger.info("Pruned %d legacy comms files from %s", deleted, skcapstone_home)
+    return deleted
+
+
 def run_housekeeping(
     skcapstone_home: Optional[Path] = None,
     skcomms_home: Optional[Path] = None,
     dry_run: bool = False,
 ) -> dict:
     """Run all housekeeping tasks.
+
+    The ``legacy_comms`` target's reported size/path is the v1 root outbox
+    (``<home>/comms/outbox``) for display only — :func:`prune_legacy_comms`
+    additionally sweeps every ``<home>/agents/<agent>/comms/outbox`` and
+    removes any v1 broadcast subdir literally named ``*``.
 
     Args:
         skcapstone_home: Path to ~/.skcapstone. Defaults to AGENT_HOME.
@@ -190,6 +329,9 @@ def run_housekeeping(
         "acks": skcomms_home / "acks",
         "comms_outbox": skcapstone_home / "sync" / "comms" / "outbox",
         "seed_outbox": skcapstone_home / "sync" / "outbox",
+        # Size/path reported is the v1 root outbox only; the sweep also covers
+        # every agents/<agent>/comms/outbox (see prune_legacy_comms).
+        "legacy_comms": skcapstone_home / "comms" / "outbox",
     }
 
     for key, path in targets.items():
@@ -210,6 +352,9 @@ def run_housekeeping(
         results["seed_outbox"]["would_delete"] = _count_excess_seeds(
             targets["seed_outbox"], DEFAULT_SEEDS_KEEP_PER_AGENT
         )
+        results["legacy_comms"]["would_delete"] = _count_stale_legacy_comms(
+            skcapstone_home, DEFAULT_LEGACY_COMMS_MAX_AGE_HOURS
+        )
         results["dry_run"] = True
         return results
 
@@ -217,6 +362,7 @@ def run_housekeeping(
     results["acks"]["deleted"] = prune_acks(skcomms_home)
     results["comms_outbox"]["deleted"] = prune_comms_outbox(skcapstone_home / "sync")
     results["seed_outbox"]["deleted"] = prune_seeds(targets["seed_outbox"])
+    results["legacy_comms"]["deleted"] = prune_legacy_comms(skcapstone_home)
 
     # Measure sizes after
     for key, path in targets.items():
@@ -255,11 +401,7 @@ def _count_stale_files(directory: Path, max_age_hours: int) -> int:
     if not directory.is_dir():
         return 0
     cutoff = time.time() - (max_age_hours * 3600)
-    return sum(
-        1
-        for p in directory.iterdir()
-        if p.is_file() and p.stat().st_mtime < cutoff
-    )
+    return sum(1 for p in directory.iterdir() if p.is_file() and p.stat().st_mtime < cutoff)
 
 
 def _count_stale_comms(outbox_dir: Path, max_age_hours: int) -> int:
@@ -295,4 +437,53 @@ def _count_excess_seeds(outbox_dir: Path, keep_per_agent: int) -> int:
         excess = len(files) - keep_per_agent
         if excess > 0:
             count += excess
+    return count
+
+
+def _count_stale_legacy_comms(skcapstone_home: Path, max_age_hours: int) -> int:
+    """Count legacy comms files that would be deleted (for dry-run).
+
+    Mirrors :func:`prune_legacy_comms`: counts stale ``*.skc.json`` envelopes
+    older than *max_age_hours* across all legacy outbox roots, plus *every*
+    file under any recipient subdir literally named ``*`` (those are removed
+    wholesale regardless of age).
+
+    Args:
+        skcapstone_home: Path to ~/.skcapstone.
+        max_age_hours: Age threshold matching the prune default.
+
+    Returns:
+        Number of files that would be deleted.
+    """
+    cutoff = time.time() - (max_age_hours * 3600)
+    count = 0
+
+    for outbox_dir in _legacy_outbox_dirs(skcapstone_home):
+        try:
+            recipient_dirs = list(outbox_dir.iterdir())
+        except OSError:
+            continue
+
+        for recipient in recipient_dirs:
+            if recipient.is_symlink():
+                continue
+
+            if recipient.is_dir() and recipient.name == "*":
+                count += sum(1 for p in recipient.rglob("*") if p.is_file())
+                continue
+
+            if not recipient.is_dir():
+                continue
+
+            for path in recipient.iterdir():
+                if not path.is_file() or path.is_symlink():
+                    continue
+                if not path.name.endswith(".skc.json"):
+                    continue
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        count += 1
+                except OSError:
+                    pass
+
     return count

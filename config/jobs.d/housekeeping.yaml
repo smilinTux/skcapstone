@@ -1,0 +1,20 @@
+# Weekly housekeeping safety-net job (repo template).
+#
+# Canonical copy ships bundled in the package at
+# src/skcapstone/defaults/config/jobs.d/housekeeping.yaml and is copied into
+# ~/.skcapstone/config/jobs.d/ on a fresh init by ensure_skeleton()
+# (idempotent — never overwrites an existing user file). This repo-root copy
+# is a human-readable reference / manual-install convenience.
+#
+# Decoupled from the daemon: even if the hourly in-daemon housekeeping loop is
+# not running, this weekly job reclaims disk and prevents the
+# legacy/broadcast comms-outbox bloat that overheated a Framework 13 laptop
+# (462k files; ~256k stale v1 "*" broadcast envelopes).
+jobs:
+  housekeeping:
+    type: shell
+    schedule: "0 4 * * 0"   # Sunday 04:00 — weekly safety net
+    command: skcapstone housekeeping
+    nodes: all
+    timeout: 600
+    enabled: true

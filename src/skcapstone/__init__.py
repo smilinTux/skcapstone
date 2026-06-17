@@ -11,7 +11,7 @@ import os
 import platform
 from pathlib import Path
 
-__version__ = "0.6.8"
+__version__ = "0.13.0"
 __author__ = "smilinTux"
 
 # Canonical default agent for the entire SK* suite. This is THE single source
@@ -187,3 +187,40 @@ def ensure_skeleton(agent_name: str | None = None) -> None:
         agent_dir / "comms" / "archive",
     ):
         d.mkdir(parents=True, exist_ok=True)
+
+    # Install bundled default scheduler drop-ins (idempotent — never overwrites
+    # an existing user file). This ships the weekly housekeeping safety-net job.
+    _install_default_jobs_dropins(root)
+
+
+def _install_default_jobs_dropins(root: Path) -> None:
+    """Copy bundled ``defaults/config/jobs.d/*.yaml`` into ``<root>/config/jobs.d``.
+
+    Idempotent: a drop-in that already exists at the destination is left
+    untouched so the operator's edits are never clobbered. Missing bundled
+    sources are silently skipped. Failures are best-effort (skeleton creation
+    must not be blocked by a copy error).
+
+    Args:
+        root: Shared skcapstone root (``~/.skcapstone``).
+    """
+    src_dir = Path(__file__).parent / "defaults" / "config" / "jobs.d"
+    if not src_dir.is_dir():
+        return
+
+    dest_dir = root / "config" / "jobs.d"
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    import shutil
+
+    for src in src_dir.glob("*.yaml"):
+        dest = dest_dir / src.name
+        if dest.exists():
+            continue  # never overwrite an existing user file
+        try:
+            shutil.copyfile(src, dest)
+        except OSError:
+            pass
