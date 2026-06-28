@@ -125,3 +125,7 @@ select = ["E", "F", "I", "N", "W"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: cross-component test requiring real services/network (excluded from default CI unit run)",
+    "e2e: live end-to-end test requiring an installed skcapstone CLI / running daemon (excluded from default CI unit run)",
+]
