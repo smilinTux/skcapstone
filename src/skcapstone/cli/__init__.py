@@ -70,6 +70,7 @@ from .housekeeping import register_housekeeping_commands  # noqa: E402
 from .identity_cmd import register_identity_commands  # noqa: E402
 from .itil import register_itil_commands  # noqa: E402
 from .joule_cmd import register_joule_commands  # noqa: E402
+from .journal_cmd import register_journal_commands  # noqa: E402
 from .logs_cmd import register_logs_commands  # noqa: E402
 from .mcp_cmd import register_mcp_commands  # noqa: E402
 from .memory import register_memory_commands  # noqa: E402
@@ -169,3 +170,4 @@ register_identity_commands(main)
 register_selftest_commands(main)
 register_fleet_commands(main)
 register_atlas_commands(main)
+register_journal_commands(main)

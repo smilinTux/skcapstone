@@ -17,6 +17,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   restart budget and gives up. Opt-in: with neither channel configured this
   is a no-op, and dedup keys stop per-tick spam while a component stays dark.
 
+- **Coord a88bfb18: `skcapstone journal summary --week`.** Weekly LLM-generated
+  recap of journal entries — gathers the last N days (7 by default) and
+  produces a concise summary of themes, notable moments, and emotional arc.
+
 ### Changed
 
 - **Card e1d24370: add a byte-reproducible package build procedure.** The
