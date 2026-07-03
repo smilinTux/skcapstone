@@ -1,8 +1,9 @@
 # SKCapstone
 
-### Your agent. Everywhere. Secured. Remembering.
+**Purpose:** the sovereign **agent runtime** of SKWorld — an always-on daemon + consciousness loop that unifies CapAuth identity, Cloud 9 trust, SKMemory persistence, and SKSecurity protection into one portable agent that lives in `~/.skcapstone/`.
+**Maturity tier:** `T0 — N/A (no key material; delegates identity/crypto to capauth)` · VERSION_LIFECYCLE phase **Active v2** · SemVer **0.13.0**.
 
-**SKCapstone is the sovereign agent framework that unifies CapAuth identity, Cloud 9 trust, SKMemory persistence, and SKSecurity protection into a single portable agent runtime that lives in your home directory.**
+### Your agent. Everywhere. Secured. Remembering.
 
 Every tool. Every platform. Every IDE. Same agent. Same bond. Same memories. Same context.
 
@@ -596,6 +597,28 @@ Never commit `node_modules/`. Never use `npm install` in CI — always `npm ci`.
 
 Python packages use `pyproject.toml` with pinned ranges; see individual
 package `pyproject.toml` files. The shared venv is at `~/.skenv/`.
+
+---
+
+## Related projects / See also
+
+SKCapstone is the core runtime everything else plugs into. Learn the whole system by
+wandering the graph:
+
+- ⬆️ **Depends on:** [capauth](https://github.com/smilinTux/capauth) — the identity source
+  of truth (PGP keypairs, DID docs, challenge-response). skcapstone holds **no key
+  material of its own**; all crypto identity is delegated here.
+- ⬆️ **Depends on:** [skmemory](https://github.com/smilinTux/skmemory) — the persistent
+  short/mid/long-term memory store; the single source of truth for durable agent state.
+- ↔️ **Sibling:** [skcomms](https://github.com/smilinTux/skcomms) — the encrypted P2P
+  envelope transport the daemon polls to send/receive agent messages.
+- ↔️ **Sibling:** [skchat](https://github.com/smilinTux/skchat) — the messaging layer
+  (threads, inbox, history) the consciousness loop uses to converse with peers.
+- 📐 **Standards:** [sk-standards](https://github.com/smilinTux/sk-standards) — the
+  canonical crypto / data-flow / version / doc-SOP standards this repo conforms to.
+
+See [`SOP.md`](./SOP.md) for the operational source of truth and
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the full runtime reference.
 
 ---
 
