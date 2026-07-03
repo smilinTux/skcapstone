@@ -101,6 +101,15 @@ async def _handle_send_notification(args: dict) -> list[TextContent]:
     except Exception:
         pass  # notification log failure must not block the response
 
+    # Record as a memory tagged 'notification' so `skcapstone notifications`
+    # (which searches memories tagged notification) surfaces it.
+    try:
+        from ..notifications import record_notification_memory
+
+        record_notification_memory(title, body, urgency)
+    except Exception:
+        pass  # memory record failure must not block the response
+
     return _json_response({"sent": True, "timestamp": timestamp})
 
 

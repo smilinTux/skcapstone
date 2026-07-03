@@ -21,6 +21,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   recap of journal entries — gathers the last N days (7 by default) and
   produces a concise summary of themes, notable moments, and emotional arc.
 
+- **Coord 020dcfb0: record `notification`-tagged memories on send.** Every
+  desktop notification dispatch now records a matching `notification`-tagged
+  memory, so `skcapstone notifications` can show real history instead of an
+  always-empty feed.
+
 ### Changed
 
 - **Card e1d24370: add a byte-reproducible package build procedure.** The
