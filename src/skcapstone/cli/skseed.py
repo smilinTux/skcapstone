@@ -20,6 +20,35 @@ from ._common import AGENT_HOME, console
 
 
 # ---------------------------------------------------------------------------
+# SKSeed store-flow validation
+# ---------------------------------------------------------------------------
+
+# Store-level size/type constraints applied on top of the schema checks in
+# ``validate_seed_data`` before a seed is committed to the memory store.
+MAX_SEED_SUMMARY_CHARS = 200_000
+MAX_SEED_KEY_CLAIMS = 500
+
+
+class SeedValidationError(ValueError):
+    """Raised when a seed fails SKSeed validation before it hits the store.
+
+    Subclasses :class:`ValueError` so existing callers (the CLI ``ingest``
+    command and the ``skseed_ingest`` MCP handler) that already handle
+    ``ValueError`` surface a clear error message without new plumbing.
+
+    Attributes:
+        errors: List of hard validation errors that caused the rejection.
+        warnings: List of non-fatal warnings gathered during validation.
+    """
+
+    def __init__(self, errors: list[str], warnings: Optional[list[str]] = None):
+        self.errors = list(errors)
+        self.warnings = list(warnings or [])
+        detail = "; ".join(self.errors) or "unspecified error"
+        super().__init__(f"Seed failed SKSeed validation: {detail}")
+
+
+# ---------------------------------------------------------------------------
 # Text extraction helpers
 # ---------------------------------------------------------------------------
 
@@ -215,6 +244,11 @@ def ingest_document(
         content_type=content_type,
         tags=tags,
     )
+
+    # Validate the seed against the SKSeed schema + store-level size/type
+    # constraints BEFORE it hits the store (or is written to disk). Raises
+    # SeedValidationError (a ValueError) with a clear message on failure.
+    validate_seed_for_store(seed_data)
 
     # Write seed.json if requested
     seed_path = output_seed
@@ -506,6 +540,76 @@ def validate_seed_data(data: dict) -> dict:
                 "integrity.checksum should use 'algorithm:hex' format "
                 f"(e.g. sha256:abc...), got: {checksum!r}"
             )
+
+    return result
+
+
+def validate_seed_for_store(
+    data: dict,
+    *,
+    max_summary_chars: int = MAX_SEED_SUMMARY_CHARS,
+    max_key_claims: int = MAX_SEED_KEY_CLAIMS,
+) -> dict:
+    """Validate a seed for the memory-store flow, raising on failure.
+
+    Runs the full :func:`validate_seed_data` schema check and adds
+    store-level size/type constraints (bounded summary length, bounded
+    key-claim count, tags must be a list). Unlike ``validate_seed_data``
+    (which is non-raising and used for reporting), this is the guard the
+    ingestion pipeline calls *before* a seed hits ``MemoryStore.snapshot``
+    so malformed input is rejected with a clear error instead of being
+    silently stored.
+
+    Args:
+        data: Parsed seed data (as produced by ``_generate_seed_json`` or
+            supplied by a caller).
+        max_summary_chars: Upper bound on ``experience.summary`` length.
+        max_key_claims: Upper bound on the number of ``experience.key_claims``.
+
+    Returns:
+        The validation result dict on success (valid seeds only).
+
+    Raises:
+        SeedValidationError: If the seed is structurally invalid or violates
+            a store-level size/type constraint.
+    """
+    result = validate_seed_data(data)
+
+    if not isinstance(data, dict):
+        # validate_seed_data already flagged this; raise immediately.
+        raise SeedValidationError(result["errors"], result["warnings"])
+
+    # ---- store-level size/type constraints ----
+    exp = data.get("experience")
+    if isinstance(exp, dict):
+        summary = exp.get("summary", "")
+        if isinstance(summary, str) and len(summary) > max_summary_chars:
+            result["errors"].append(
+                f"experience.summary is too large "
+                f"({len(summary)} chars > {max_summary_chars} limit)"
+            )
+            result["valid"] = False
+
+        key_claims = exp.get("key_claims")
+        if isinstance(key_claims, list) and len(key_claims) > max_key_claims:
+            result["errors"].append(
+                f"experience.key_claims has too many entries "
+                f"({len(key_claims)} > {max_key_claims} limit)"
+            )
+            result["valid"] = False
+
+    # metadata.tags must be a list when present (type constraint)
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        tags = metadata.get("tags")
+        if tags is not None and not isinstance(tags, list):
+            result["errors"].append(
+                f"metadata.tags must be a list, got {type(tags).__name__}"
+            )
+            result["valid"] = False
+
+    if not result["valid"]:
+        raise SeedValidationError(result["errors"], result["warnings"])
 
     return result
 
