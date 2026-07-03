@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **ITIL → GTD is now a push adapter on the skos `gtd-ingest` port.**
+  `itil.py::_gtd_emit()` builds `GtdCapture(source="itil", source_ref=<id>)` and
+  routes incidents/problems/changes through `skos.gtd_ingest.capture()` (deduped by
+  ID, idempotent), with a legacy fallback if skos isn't importable. Same sev →
+  next-action/inbox routing; the store is now unified with all other GTD sources.
+  See skos `docs/gtd-ingest-architecture.md` + `docs/gtd-ingest-SOP.md`.
+
+---
+
 ## [0.13.0] — 2026-06-16
 
 ### Added
