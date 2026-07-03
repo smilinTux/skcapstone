@@ -196,6 +196,9 @@ max_history_messages: 10    # conversation turns kept in context
 auto_memory: true           # store significant exchanges to memory
 auto_ack: true              # send ACK before generating response
 max_concurrent_requests: 3  # parallel LLM requests
+rate_limit_enabled: true    # per-sender intake throttle (sliding window)
+rate_limit_max_messages: 20 # max messages per sender per window (≤0 disables)
+rate_limit_window_s: 60.0   # sliding-window length in seconds
 fallback_chain:
   - ollama
   - grok
@@ -368,8 +371,16 @@ curl -s http://127.0.0.1:7777/health    # transport health
 ```bash
 skcapstone daemon status          # daemon uptime, message count, transport health
 skcapstone consciousness status   # loop stats, backend table
+skcapstone consciousness classification  # today's message classification tag distribution
 skcapstone status                 # full six-pillar overview
 ```
+
+> The daemon logs an INFO `Classified message` record for every inbound
+> message and tracks the per-tag distribution (`classification_usage`), exposed
+> on the `/consciousness` endpoint and via `consciousness classification`
+> (add `--json-out` for machine-readable output). On startup the daemon also
+> runs a pillar-health check and fires a single desktop notification if any
+> pillar is `DEGRADED`/`ERROR`.
 
 ---
 

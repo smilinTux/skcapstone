@@ -5,6 +5,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Per-sender consciousness rate limiting.** The consciousness loop now
+  throttles inbound message intake with a thread-safe, per-sender sliding
+  window (`_RateLimiter`). Over-limit messages are skipped (logged, never
+  crashing the loop); each sender has an isolated window that resets over time,
+  and sender identities are normalized before counting. Configurable via new
+  `ConsciousnessConfig` keys `rate_limit_enabled` (default `true`),
+  `rate_limit_max_messages` (default `20`), and `rate_limit_window_s`
+  (default `60.0`); a non-positive `rate_limit_max_messages` disables limiting.
+- **Startup pillar-degradation health check + notify.** New
+  `skcapstone.health` module (`startup_health_check` / `degraded_pillars`)
+  evaluates every pillar's status at startup and emits a single `critical`
+  desktop notification (reusing `skcapstone.notifications`) summarizing any
+  `DEGRADED` / `ERROR` pillars. Healthy startups (all pillars `ACTIVE` or
+  `MISSING`) notify nothing. Wired into `runtime.py`.
+- **Message-classification logging + `consciousness classification` CLI.**
+  `ConsciousnessMetrics.record_classification()` tracks per-tag counts
+  (persisted in daily snapshots and surfaced in `to_dict()` /
+  the `/consciousness` endpoint as `classification_usage`). The loop now emits
+  an INFO `Classified message` log record (sender, tags, ~tokens, privacy) and
+  records the tag distribution — observability only, routing behavior is
+  unchanged. New `skcapstone consciousness classification` command shows
+  today's tag distribution as a Rich table (with `--json-out`), reading the
+  live daemon first and falling back to today's daily metrics file.
+
+---
+
 ## [0.13.0] — 2026-06-16
 
 ### Added
