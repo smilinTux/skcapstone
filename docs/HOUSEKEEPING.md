@@ -7,6 +7,10 @@ megabytes — or, in one real incident, **462k files** that overheated a laptop
 (see [Incident background](#incident-background)). Housekeeping reclaims that
 space. It is always safe to run.
 
+> Housekeeping prunes the transient files you never read again. To preserve the
+> state you can **never regenerate**, see [Backup](BACKUP.md) — the portable
+> `skcapstone backup` CLI and the recommended GFS cron rotation.
+
 ## What it prunes
 
 | Target          | Path                                                                    | Policy                          |
