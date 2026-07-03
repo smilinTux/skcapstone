@@ -844,3 +844,144 @@ class ConsciousnessMetrics:
         """Stop background persistence and flush a final save."""
         self._stop_event.set()
         self.save()
+
+
+# ---------------------------------------------------------------------------
+# Prometheus text-exposition rendering
+# ---------------------------------------------------------------------------
+
+# Content-Type header for the Prometheus text exposition format (v0.0.4).
+PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+
+def _prom_escape_label(value: str) -> str:
+    """Escape a Prometheus label value (backslash, double-quote, newline)."""
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+    )
+
+
+def _prom_num(value: Any) -> str:
+    """Render a numeric metric value; non-finite/None become 0."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return "0"
+    if f != f or f in (float("inf"), float("-inf")):  # NaN / inf
+        return "0"
+    # Emit integers without a trailing ``.0`` for readability.
+    if f.is_integer():
+        return str(int(f))
+    return repr(f)
+
+
+def render_prometheus(data: dict) -> str:
+    """Render a consciousness-metrics dict as Prometheus text exposition v0.0.4.
+
+    Accepts the same dict shape produced by
+    :meth:`ConsciousnessMetrics.to_dict` (also the payload served at
+    ``/api/v1/metrics`` and persisted to the daily JSON files that the
+    ``skcapstone metrics`` CLI reads), so a single data source feeds both
+    the human CLI and machine scraping.
+
+    Args:
+        data: Metrics snapshot dict (may be partial / empty).
+
+    Returns:
+        A newline-terminated string in Prometheus text-exposition format.
+    """
+    data = data or {}
+    lines: list[str] = []
+
+    def family(name: str, help_text: str, mtype: str, samples: list[tuple[str, Any]]) -> None:
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} {mtype}")
+        for labels, value in samples:
+            suffix = f"{{{labels}}}" if labels else ""
+            lines.append(f"{name}{suffix} {_prom_num(value)}")
+
+    # ── Scalar counters ───────────────────────────────────────────────
+    family(
+        "skcapstone_messages_processed_total",
+        "Messages processed by the consciousness loop today.",
+        "counter",
+        [("", data.get("messages_processed", 0))],
+    )
+    family(
+        "skcapstone_responses_sent_total",
+        "Responses sent by the consciousness loop today.",
+        "counter",
+        [("", data.get("responses_sent", 0))],
+    )
+    family(
+        "skcapstone_errors_total",
+        "Errors encountered by the consciousness loop today.",
+        "counter",
+        [("", data.get("errors", 0))],
+    )
+
+    # ── Response-time summary (min/avg/p99/max/count) ─────────────────
+    rt = data.get("response_time_ms") or {}
+    family(
+        "skcapstone_response_time_ms",
+        "Consciousness-loop response time in milliseconds (today).",
+        "gauge",
+        [
+            ('stat="min"', rt.get("min", 0)),
+            ('stat="avg"', rt.get("avg", 0)),
+            ('stat="p99"', rt.get("p99", 0)),
+            ('stat="max"', rt.get("max", 0)),
+        ],
+    )
+    family(
+        "skcapstone_response_time_ms_count",
+        "Number of response-time samples recorded today.",
+        "counter",
+        [("", rt.get("count", 0))],
+    )
+
+    # ── Labelled counters ─────────────────────────────────────────────
+    family(
+        "skcapstone_backend_requests_total",
+        "Requests dispatched per backend today.",
+        "counter",
+        [
+            (f'backend="{_prom_escape_label(bk)}"', cnt)
+            for bk, cnt in sorted((data.get("backend_usage") or {}).items())
+        ],
+    )
+    family(
+        "skcapstone_tier_requests_total",
+        "Requests dispatched per model tier today.",
+        "counter",
+        [
+            (f'tier="{_prom_escape_label(tier)}"', cnt)
+            for tier, cnt in sorted((data.get("tier_usage") or {}).items())
+        ],
+    )
+    family(
+        "skcapstone_messages_per_peer_total",
+        "Messages processed per peer today.",
+        "counter",
+        [
+            (f'peer="{_prom_escape_label(peer)}"', cnt)
+            for peer, cnt in sorted((data.get("messages_per_peer") or {}).items())
+        ],
+    )
+
+    # ── Quality averages ──────────────────────────────────────────────
+    quality = data.get("quality_avg") or {}
+    family(
+        "skcapstone_quality_avg",
+        "Average response quality scores today (0.0-1.0).",
+        "gauge",
+        [
+            (f'dimension="{dim}"', quality.get(dim, 0.0))
+            for dim in ("length", "coherence", "latency", "overall")
+        ],
+    )
+
+    return "\n".join(lines) + "\n"

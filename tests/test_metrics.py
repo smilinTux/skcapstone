@@ -630,3 +630,55 @@ class TestConsciousnessMetrics:
         d = cm.to_dict()
         assert "a" * 64 in d["messages_per_peer"]
         assert long_peer not in d["messages_per_peer"]
+
+
+class TestPrometheusRender:
+    """Tests for the Prometheus text-exposition renderer (``/metrics``)."""
+
+    def test_content_type_is_v004(self) -> None:
+        """The exported content type is the Prometheus v0.0.4 text format."""
+        from skcapstone.metrics import PROMETHEUS_CONTENT_TYPE
+
+        assert PROMETHEUS_CONTENT_TYPE == "text/plain; version=0.0.4; charset=utf-8"
+
+    def test_empty_metrics_render_zeros(self) -> None:
+        """An empty dict still emits well-formed scalar families set to 0."""
+        from skcapstone.metrics import render_prometheus
+
+        out = render_prometheus({})
+        assert "# TYPE skcapstone_messages_processed_total counter" in out
+        assert "skcapstone_messages_processed_total 0" in out
+        assert out.endswith("\n")
+
+    def test_help_and_type_precede_samples(self) -> None:
+        """Each family has exactly one HELP and one TYPE line before samples."""
+        from skcapstone.metrics import render_prometheus
+
+        out = render_prometheus({"messages_processed": 7})
+        assert out.count("# HELP skcapstone_messages_processed_total") == 1
+        assert out.count("# TYPE skcapstone_messages_processed_total") == 1
+        assert "skcapstone_messages_processed_total 7" in out
+
+    def test_from_consciousness_metrics_dict(self, tmp_path: Path) -> None:
+        """Renderer consumes the same to_dict payload the CLI/daemon use."""
+        from skcapstone.metrics import render_prometheus
+
+        cm = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        cm.record_message("alice")
+        cm.record_response(120.5, "ollama", "fast")
+        cm.record_error()
+        out = render_prometheus(cm.to_dict())
+        assert "skcapstone_messages_processed_total 1" in out
+        assert "skcapstone_responses_sent_total 1" in out
+        assert "skcapstone_errors_total 1" in out
+        assert 'skcapstone_backend_requests_total{backend="ollama"} 1' in out
+        assert 'skcapstone_tier_requests_total{tier="fast"} 1' in out
+        assert 'skcapstone_messages_per_peer_total{peer="alice"} 1' in out
+        assert "skcapstone_response_time_ms_count 1" in out
+
+    def test_label_values_are_escaped(self) -> None:
+        """Backslashes and double-quotes in label values are escaped."""
+        from skcapstone.metrics import render_prometheus
+
+        out = render_prometheus({"backend_usage": {'we"ird\\one': 3}})
+        assert 'skcapstone_backend_requests_total{backend="we\\"ird\\\\one"} 3' in out

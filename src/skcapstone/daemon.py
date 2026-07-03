@@ -31,6 +31,7 @@ from typing import Optional
 
 from . import AGENT_HOME, SHARED_ROOT
 from . import activity as _activity
+from .metrics import PROMETHEUS_CONTENT_TYPE, render_prometheus
 
 logger = logging.getLogger("skcapstone.daemon")
 
@@ -2171,6 +2172,14 @@ class DaemonService:
                     else:
                         self._json_response({"error": "consciousness not loaded"}, status=503)
 
+                # ── Prometheus text-exposition scrape endpoint ────────────
+                elif self.path == "/metrics":
+                    data = consciousness.metrics.to_dict() if consciousness else {}
+                    self._text_response(
+                        render_prometheus(data),
+                        content_type=PROMETHEUS_CONTENT_TYPE,
+                    )
+
                 else:
                     self._json_response(
                         {
@@ -2193,6 +2202,7 @@ class DaemonService:
                                 "/api/v1/components",
                                 "/api/v1/activity (SSE activity stream)",
                                 "/api/v1/metrics",
+                                "/metrics (Prometheus text exposition)",
                                 "/ws (WebSocket streaming)",
                                 "/api/v1/logs (WebSocket log stream, CapAuth required)",
                             ]
@@ -2327,6 +2337,20 @@ class DaemonService:
                 body = html.encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self._add_cors_headers()
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _text_response(
+                self,
+                text: str,
+                status: int = 200,
+                content_type: str = "text/plain; charset=utf-8",
+            ):
+                body = text.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
                 self._add_cors_headers()
                 self.end_headers()

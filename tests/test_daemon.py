@@ -233,6 +233,33 @@ class TestDaemonAPI:
             finally:
                 svc.stop()
 
+    def test_api_prometheus_metrics(self, daemon_home):
+        """GET /metrics returns Prometheus text exposition (v0.0.4)."""
+        config = DaemonConfig(home=daemon_home, port=0, poll_interval=60)
+        svc = DaemonService(config)
+        svc.state.running = True
+
+        with patch.object(svc, "_load_components"):
+            svc.config.port = _find_free_port()
+            svc._write_pid()
+            svc._start_api_server()
+
+            time.sleep(0.5)
+
+            try:
+                url = f"http://127.0.0.1:{svc.config.port}/metrics"
+                with urllib.request.urlopen(url, timeout=2) as resp:
+                    body = resp.read().decode("utf-8")
+                    ctype = resp.headers.get("Content-Type", "")
+                    assert resp.status == 200
+                    assert ctype == "text/plain; version=0.0.4; charset=utf-8"
+                    # Consciousness is not loaded in this test → zeroed families.
+                    assert "# TYPE skcapstone_messages_processed_total counter" in body
+                    assert "skcapstone_messages_processed_total 0" in body
+                    assert body.endswith("\n")
+            finally:
+                svc.stop()
+
 
 class TestHeartbeatBeaconWiring:
     """Tests that HeartbeatBeacon is wired into the daemon health loop."""
