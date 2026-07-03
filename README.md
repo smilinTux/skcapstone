@@ -573,6 +573,7 @@ See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIG
 | [Architecture](docs/ARCHITECTURE.md) | Technical deep dive |
 | [Security Design](docs/SECURITY_DESIGN.md) | Four-layer security model |
 | [Token System](docs/TOKEN_SYSTEM.md) | PGP-signed capability tokens |
+| [Backup](docs/BACKUP.md) | Portable `backup` CLI + recommended GFS cron rotation |
 
 ## Contributing
 
