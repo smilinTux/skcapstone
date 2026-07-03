@@ -467,6 +467,35 @@ class TestConsciousnessMetrics:
         cm.record_error()
         assert cm.to_dict()["errors"] == 2
 
+    def test_record_classification_counts_tags(self, cm: ConsciousnessMetrics) -> None:
+        """record_classification counts each tag independently."""
+        cm.record_classification(["code", "analyze"])
+        cm.record_classification(["code"])
+        cm.record_classification(["general"])
+        usage = cm.to_dict()["classification_usage"]
+        assert usage["code"] == 2
+        assert usage["analyze"] == 1
+        assert usage["general"] == 1
+
+    def test_record_classification_empty_falls_back_general(
+        self, cm: ConsciousnessMetrics
+    ) -> None:
+        """Empty tags are recorded as 'general'."""
+        cm.record_classification([])
+        assert cm.to_dict()["classification_usage"]["general"] == 1
+
+    def test_classification_usage_persists(self, tmp_path: Path) -> None:
+        """classification_usage survives save() + reload."""
+        cm1 = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        cm1.record_classification(["creative"])
+        cm1.record_classification(["creative", "code"])
+        cm1.save()
+
+        cm2 = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        usage = cm2.to_dict()["classification_usage"]
+        assert usage["creative"] == 2
+        assert usage["code"] == 1
+
     # ------------------------------------------------------------------
     # Histogram
     # ------------------------------------------------------------------

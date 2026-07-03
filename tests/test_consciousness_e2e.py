@@ -95,6 +95,41 @@ class TestFullPipelineMockLLM:
         loop.process_envelope(_text_envelope("ping"))
         assert loop.stats["messages_processed"] == 1
 
+    def test_classification_emits_log_record(self, tmp_path, caplog):
+        """A classified message emits an INFO 'Classified message' log record."""
+        loop = _make_loop(tmp_path)
+
+        mock_bridge = MagicMock()
+        mock_bridge.generate.return_value = "sure"
+        mock_bridge.available_backends = {"passthrough": True}
+        loop._bridge = mock_bridge
+
+        with caplog.at_level("INFO", logger="skcapstone.consciousness"):
+            loop.process_envelope(_text_envelope("please debug this function"))
+
+        records = [
+            r for r in caplog.records
+            if r.name == "skcapstone.consciousness"
+            and r.getMessage().startswith("Classified message from")
+        ]
+        assert records, "expected a classification log record"
+        msg = records[0].getMessage()
+        assert "test-peer" in msg
+        assert "code" in msg  # 'debug'/'function' → code tag
+
+    def test_classification_recorded_in_metrics(self, tmp_path):
+        """The loop records classification tags into its metrics."""
+        loop = _make_loop(tmp_path)
+
+        mock_bridge = MagicMock()
+        mock_bridge.generate.return_value = "ok"
+        mock_bridge.available_backends = {"passthrough": True}
+        loop._bridge = mock_bridge
+
+        loop.process_envelope(_text_envelope("please debug this function"))
+        usage = loop._metrics.to_dict()["classification_usage"]
+        assert usage.get("code", 0) >= 1
+
 
 class TestPipelineSkipsAckMessages:
     """test_pipeline_skips_ack_messages — ACK envelopes are ignored."""
