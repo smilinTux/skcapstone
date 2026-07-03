@@ -12,6 +12,7 @@ from skcapstone.notifications import (
     desktop_notifications_enabled,
     notify,
     get_manager,
+    record_notification_memory,
 )
 
 
@@ -324,6 +325,37 @@ class TestModuleLevelHelpers:
 # ---------------------------------------------------------------------------
 # Desktop-notification guard (SKCAPSTONE_DESKTOP_NOTIFY)
 # ---------------------------------------------------------------------------
+
+
+class TestNotificationHistory:
+    """record_notification_memory backs `skcapstone notifications` history."""
+
+    def test_record_is_searchable_by_notification_tag(self, tmp_path, monkeypatch):
+        """A recorded notification is found via the CLI read path (tag search)."""
+        # Isolate from the unified skmemory backend — file storage only.
+        monkeypatch.setattr("skcapstone.memory_engine._get_unified", lambda: None)
+        from skcapstone.memory_engine import search
+
+        home = tmp_path / ".skcapstone"
+        home.mkdir()
+
+        entry = record_notification_memory(
+            "Build done", "All tests green", "normal", home=str(home)
+        )
+        assert entry is not None
+        assert "notification" in entry.tags
+        assert entry.metadata["title"] == "Build done"
+
+        # Mirrors `skcapstone notifications`: search memories tagged 'notification'.
+        results = search(home=home, query="notification", tags=["notification"], limit=10)
+        assert len(results) == 1
+        assert results[0].memory_id == entry.memory_id
+        assert "Build done" in results[0].content
+
+    def test_record_missing_home_returns_none(self, tmp_path):
+        """Nonexistent home is skipped gracefully (no exception)."""
+        missing = tmp_path / "does-not-exist"
+        assert record_notification_memory("t", "b", home=str(missing)) is None
 
 
 class TestDesktopNotificationGuard:

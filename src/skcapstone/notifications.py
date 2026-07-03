@@ -102,6 +102,53 @@ def _store_notification_memory(title: str, body: str, urgency: str) -> None:
         logger.debug("Failed to store notification log: %s", exc)
 
 
+def record_notification_memory(
+    title: str,
+    body: str,
+    urgency: str = "normal",
+    home: Optional[str] = None,
+) -> object | None:
+    """Record a dispatched notification as a memory tagged ``notification``.
+
+    This is what backs ``skcapstone notifications`` (which searches memories
+    tagged ``notification``). Stored as a low-importance short-term memory so
+    it stays searchable without cluttering higher memory layers.
+
+    Args:
+        title: Notification title.
+        body: Notification body text.
+        urgency: "low", "normal", or "critical".
+        home: Override agent home (defaults to the live ``AGENT_HOME`` root).
+
+    Returns:
+        The created ``MemoryEntry``, or ``None`` if storage failed / was skipped.
+    """
+    try:
+        from . import AGENT_HOME, memory_engine
+
+        home_path = Path(home).expanduser() if home else Path(AGENT_HOME).expanduser()
+        if not home_path.exists():
+            return None
+
+        content = f"Notification: {title} — {body}"
+        return memory_engine.store(
+            home=home_path,
+            content=content,
+            tags=["notification"],
+            source="notification",
+            importance=0.3,
+            metadata={
+                "type": "notification-sent",
+                "title": title,
+                "body": body,
+                "urgency": urgency,
+            },
+        )
+    except Exception as exc:
+        logger.debug("Failed to record notification memory: %s", exc)
+        return None
+
+
 def _store_click_event(action: str, detail: str) -> None:
     """Log a notification click event to the skcomms/notifications/ directory."""
     try:
@@ -231,6 +278,7 @@ class NotificationManager:
         if dispatched:
             self._last_sent = time.monotonic()
             _store_notification_memory(title, body, urgency)
+            record_notification_memory(title, body, urgency)
         return dispatched
 
     # ------------------------------------------------------------------
