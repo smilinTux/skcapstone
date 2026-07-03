@@ -649,6 +649,11 @@ class ConsciousnessMetrics:
         self._tier_usage: dict[str, int] = {}
         self._messages_per_peer: dict[str, int] = {}
 
+        # Per-classification-tag counters (observability only — the loop's
+        # routing decision is unaffected). A message may carry several tags,
+        # so each tag is counted independently.
+        self._classification_usage: dict[str, int] = {}
+
         # Quality score accumulators (running sums + count for avg)
         self._quality_sum_length: float = 0.0
         self._quality_sum_coherence: float = 0.0
@@ -697,6 +702,28 @@ class ConsciousnessMetrics:
                 self._response_times = self._response_times[-1000:]
             self._backend_usage[backend] = self._backend_usage.get(backend, 0) + 1
             self._tier_usage[tier] = self._tier_usage.get(tier, 0) + 1
+
+    def record_classification(
+        self, tags: Any, estimated_tokens: int = 0
+    ) -> None:
+        """Record how an inbound message was classified.
+
+        Increments a counter for each classification tag so operators can see
+        the distribution of message types the loop is handling. Logging /
+        observability only — it never influences routing behavior.
+
+        Args:
+            tags: Iterable of classification tags (e.g. ``["code", "analyze"]``).
+                Falls back to ``["general"]`` when empty.
+            estimated_tokens: Rough token estimate for the message (unused for
+                counting; accepted so callers can pass the full signal shape).
+        """
+        tag_list = list(tags) if tags else ["general"]
+        with self._lock:
+            for tag in tag_list:
+                self._classification_usage[tag] = (
+                    self._classification_usage.get(tag, 0) + 1
+                )
 
     def record_error(self) -> None:
         """Record a processing error."""
@@ -769,6 +796,7 @@ class ConsciousnessMetrics:
                 "backend_usage": dict(self._backend_usage),
                 "tier_usage": dict(self._tier_usage),
                 "messages_per_peer": dict(self._messages_per_peer),
+                "classification_usage": dict(self._classification_usage),
                 "quality_avg": quality_avg,
                 "quality_sums": {
                     "length": self._quality_sum_length,
@@ -824,6 +852,9 @@ class ConsciousnessMetrics:
                 self._backend_usage = dict(data.get("backend_usage", {}))
                 self._tier_usage = dict(data.get("tier_usage", {}))
                 self._messages_per_peer = dict(data.get("messages_per_peer", {}))
+                self._classification_usage = dict(
+                    data.get("classification_usage", {})
+                )
                 # response_times are session-only; do not restore
                 # Restore quality score accumulators
                 sums = data.get("quality_sums", {})

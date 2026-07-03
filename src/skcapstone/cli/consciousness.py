@@ -293,6 +293,77 @@ def register_consciousness_commands(main: click.Group) -> None:
         )
         console.print()
 
+    @consciousness.command("classification")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
+    @click.option("--json-out", is_flag=True, help="Output as JSON.")
+    @click.option("--port", default=7777, help="Daemon API port (tries live daemon first).")
+    def consciousness_classification(home: str, json_out: bool, port: int):
+        """Show how today's inbound messages were classified.
+
+        Displays the per-tag distribution of message classifications
+        (code / analyze / creative / simple / general) recorded by the
+        consciousness loop. Reads the live daemon first, then falls back
+        to today's daily metrics file.
+        """
+        import urllib.request
+        from datetime import datetime, timezone
+
+        usage: dict = {}
+
+        # Try live daemon first — it may hold unsaved in-memory counters.
+        try:
+            url = f"http://127.0.0.1:{port}/consciousness"
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                data = json.loads(resp.read())
+                if "classification_usage" in data:
+                    usage = data["classification_usage"]
+        except Exception:
+            pass  # Daemon unreachable — fall through to file
+
+        # Fall back to daily metrics file.
+        if not usage:
+            home_path = Path(home).expanduser()
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily = home_path / "metrics" / "daily" / f"{date_str}.json"
+            if daily.exists():
+                try:
+                    file_data = json.loads(daily.read_text(encoding="utf-8"))
+                    usage = file_data.get("classification_usage", {})
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to read daily classification metrics from %s: %s", daily, exc
+                    )
+
+        if not usage:
+            if json_out:
+                click.echo(json.dumps({"total": 0, "message": "No classification data for today"}))
+            else:
+                console.print("\n  [yellow]No message classifications recorded today.[/]\n")
+            return
+
+        if json_out:
+            click.echo(json.dumps(usage, indent=2))
+            return
+
+        from rich.table import Table
+
+        total = sum(usage.values())
+        table = Table(title=f"Message Classification — {total} tag hit(s) today", show_header=True)
+        table.add_column("Tag", style="bold")
+        table.add_column("Count", justify="right")
+        table.add_column("Share", justify="right")
+        table.add_column("Bar")
+
+        for tag, count in sorted(usage.items(), key=lambda kv: kv[1], reverse=True):
+            share = (count / total) if total else 0.0
+            filled = int(round(share * 20))
+            bar = "█" * filled + "░" * (20 - filled)
+            table.add_row(tag, str(count), f"{share * 100:.0f}%", f"[cyan]{bar}[/]")
+
+        console.print()
+        console.print(table)
+        console.print()
+
     @consciousness.command("profiles")
     @click.option("--show", "do_show", is_flag=True, help="List all profiles.")
     @click.option("--stale", "do_stale", is_flag=True, help="Show profiles older than 90 days.")

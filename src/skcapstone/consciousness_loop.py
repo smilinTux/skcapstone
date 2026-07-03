@@ -1685,6 +1685,22 @@ class ConsciousnessLoop:
                 signal.privacy_sensitive = True
             t_classify = time.monotonic()
 
+            # Observability: log how this message was classified and record the
+            # tag distribution. Logging only — routing decision is unchanged.
+            logger.info(
+                "Classified message from %s: tags=%s tokens~%d privacy=%s",
+                sender,
+                signal.tags,
+                signal.estimated_tokens,
+                signal.privacy_sensitive,
+            )
+            try:
+                self._metrics.record_classification(
+                    signal.tags, signal.estimated_tokens
+                )
+            except Exception as _cls_exc:
+                logger.debug("Classification metric record failed: %s", _cls_exc)
+
             # Build system prompt (thread-aware)
             system_prompt = self._prompt_builder.build(
                 peer_name=sender,
