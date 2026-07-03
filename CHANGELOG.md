@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-03
+
 ### Added
 - **Per-sender consciousness rate limiting.** The consciousness loop now
   throttles inbound message intake with a thread-safe, per-sender sliding
