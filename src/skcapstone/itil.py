@@ -1001,74 +1001,57 @@ class ITILManager:
         path.write_text(content, encoding="utf-8")
         return path
 
-    # ── GTD integration helpers ───────────────────────────────────────
+    # ── GTD integration — ITIL is a push adapter on the skos gtd-ingest port ──
+
+    def _gtd_emit(self, text: str, source_ref: str, status: str,
+                  priority: Optional[str] = None) -> Optional[str]:
+        """Emit a GTD item through the skos gtd-ingest capture() sink (deduped by
+        (source, source_ref)). Falls back to the legacy direct writer if skos is
+        not importable, so skcapstone never hard-depends on skos at runtime.
+        See skos/docs/gtd-ingest-architecture.md."""
+        try:
+            from skos.gtd_ingest import GtdCapture, capture  # the port
+            return capture(GtdCapture(
+                text=text, source="itil", source_ref=source_ref, context="@ops",
+                priority=priority, status=status, meta={"itil_id": source_ref}))
+        except Exception:
+            try:
+                from .mcp_tools.gtd_tools import _make_item, _load_list, _save_list
+                list_for = {"next": "next-actions", "project": "projects",
+                            "waiting": "waiting-for", "someday": "someday-maybe"}.get(status, "inbox")
+                item = _make_item(text=text, source="itil", context="@ops")
+                item["status"] = status
+                item["source_ref"] = source_ref
+                if priority:
+                    item["priority"] = priority
+                items = _load_list(list_for)
+                items.append(item)
+                _save_list(list_for, items)
+                return item["id"]
+            except Exception:
+                logger.debug("Failed to emit GTD item for %s", source_ref)
+                return None
 
     def _create_gtd_item_for_incident(self, incident: Incident) -> Optional[str]:
-        """Auto-create a GTD inbox/next-action item for an incident."""
-        try:
-            from .mcp_tools.gtd_tools import _make_item, _load_list, _save_list
-
-            priority_map = {"sev1": "critical", "sev2": "high", "sev3": "medium", "sev4": "low"}
-            priority = priority_map.get(incident.severity.value, "medium")
-
-            text = f"[ITIL:{incident.id}] {incident.title}"
-            item = _make_item(text=text, source="itil", context="@ops")
-            item["priority"] = priority
-
-            if incident.severity.value in ("sev1", "sev2"):
-                # Urgent: go straight to next-actions
-                item["status"] = "next"
-                items = _load_list("next-actions")
-                items.append(item)
-                _save_list("next-actions", items)
-            else:
-                # Minor: inbox for processing
-                items = _load_list("inbox")
-                items.append(item)
-                _save_list("inbox", items)
-
-            return item["id"]
-        except Exception:
-            logger.debug("Failed to create GTD item for incident %s", incident.id)
-            return None
+        """Auto-create a GTD next-action (sev1/sev2) or inbox item (sev3/sev4)."""
+        priority = {"sev1": "critical", "sev2": "high",
+                    "sev3": "medium", "sev4": "low"}.get(incident.severity.value, "medium")
+        status = "next" if incident.severity.value in ("sev1", "sev2") else "inbox"
+        return self._gtd_emit(f"[ITIL:{incident.id}] {incident.title}",
+                              incident.id, status, priority)
 
     def _create_gtd_project_for_problem(self, problem: Problem) -> Optional[str]:
         """Auto-create a GTD project for a problem investigation."""
-        try:
-            from .mcp_tools.gtd_tools import _make_item, _load_list, _save_list
-
-            text = f"[ITIL:{problem.id}] Investigate: {problem.title}"
-            item = _make_item(text=text, source="itil", context="@ops")
-            item["status"] = "project"
-
-            projects = _load_list("projects")
-            projects.append(item)
-            _save_list("projects", projects)
-
-            return item["id"]
-        except Exception:
-            logger.debug("Failed to create GTD project for problem %s", problem.id)
-            return None
+        return self._gtd_emit(f"[ITIL:{problem.id}] Investigate: {problem.title}",
+                              problem.id, "project")
 
     def _create_gtd_item_for_change(self, change: Change) -> Optional[str]:
         """Auto-create a GTD next-action for an approved change."""
-        try:
-            from .mcp_tools.gtd_tools import _make_item, _load_list, _save_list
-
-            text = f"[ITIL:{change.id}] Implement: {change.title}"
-            item = _make_item(text=text, source="itil", context="@ops")
-            item["status"] = "next"
-            item["priority"] = "high"
-
-            items = _load_list("next-actions")
-            items.append(item)
-            _save_list("next-actions", items)
-
-            change.gtd_item_ids.append(item["id"])
-            return item["id"]
-        except Exception:
-            logger.debug("Failed to create GTD item for change %s", change.id)
-            return None
+        gtd_id = self._gtd_emit(f"[ITIL:{change.id}] Implement: {change.title}",
+                                change.id, "next", "high")
+        if gtd_id:
+            change.gtd_item_ids.append(gtd_id)
+        return gtd_id
 
     def _complete_gtd_items(self, gtd_item_ids: list[str]) -> None:
         """Mark linked GTD items as done when the owning ITIL record resolves."""
