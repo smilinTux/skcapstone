@@ -15,6 +15,10 @@
 #
 # Compressed core is ~0.4-0.5 GB, so full rotation steady-state is ~15-18 GB.
 #
+# Off-site (3-2-1, opt-in):  set  OFFSITE_DEST="<host>:<path>"  in
+#   ~/.skcapstone/config/backup.env  to also rsync the whole rotation to another
+#   host each run (best-effort — a failed push alerts but never fails the backup).
+#
 # Restore:  tar -xzf <archive> -C /path/to/restore-root
 #   then rebuild the vector index:  skmemory reindex   (or skcapstone doctor)
 # ============================================================================
@@ -137,4 +141,27 @@ Y=$(count "$BACKUP_BASE/yearly")
 TOTAL=$(du -sh "$BACKUP_BASE" 2>/dev/null | cut -f1)
 
 log "Rotation complete: ${D} daily, ${W} weekly, ${M} monthly, ${Y} yearly (total ${TOTAL})"
+
+# --- off-site replication (opt-in, 3-2-1) -----------------------------------
+# Set OFFSITE_DEST="<host>:<path>" (an ssh/rsync target) in config/backup.env
+# to mirror the whole rotation off the box. Unset ⇒ local-only (skipped).
+CONF="$SRC_ROOT/config/backup.env"
+# shellcheck source=/dev/null
+[ -f "$CONF" ] && . "$CONF"
+if [ -n "${OFFSITE_DEST:-}" ]; then
+  OFF_HOST="${OFFSITE_DEST%%:*}"
+  OFF_PATH="${OFFSITE_DEST#*:}"
+  SSH_OPTS="ssh -o BatchMode=yes -o ConnectTimeout=10"
+  if $SSH_OPTS "$OFF_HOST" "mkdir -p '$OFF_PATH/gfs'" >>"$LOG" 2>&1 && \
+     rsync -a --delete -e "$SSH_OPTS" "$BACKUP_BASE/" "$OFF_HOST:$OFF_PATH/gfs/" >>"$LOG" 2>&1; then
+    log "Off-site push OK → $OFFSITE_DEST"
+  else
+    log "Off-site push FAILED → $OFFSITE_DEST"
+    command -v sk-alert >/dev/null 2>&1 && \
+      sk-alert "⚠️ skcapstone off-site backup push to $OFF_HOST FAILED" >/dev/null 2>&1 || true
+  fi
+else
+  log "Off-site: not configured (set OFFSITE_DEST in config/backup.env for 3-2-1)"
+fi
+
 log "=== GFS backup complete ==="

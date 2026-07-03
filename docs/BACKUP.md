@@ -83,6 +83,29 @@ Backups land in `~/.skcapstone/backups/gfs/{daily,weekly,monthly,yearly}/`, each
 `*.tar.gz` beside a matching `*.sha256`. Progress is logged to
 `~/.skcapstone/logs/skcapstone-gfs-backup.log`.
 
+### Off-site replication (3-2-1, opt-in)
+
+Local rotation is the floor; a copy **off the box** is what survives disk or
+machine loss. Set an rsync/ssh target in `~/.skcapstone/config/backup.env` and
+every run mirrors the whole rotation to it:
+
+```bash
+# ~/.skcapstone/config/backup.env   (chmod 600 — keep operator hosts out of the repo)
+OFFSITE_DEST="othermachine:/home/you/skcapstone-offsite/<thisbox>"
+```
+
+- Uses key-based ssh (`BatchMode`) — no passwords in cron; set up a key to the
+  target first.
+- **Best-effort:** a failed push logs + fires `sk-alert` but never fails the
+  local backup — you still have today's archive on disk.
+- Mirrors with `rsync -a --delete`, so the off-site copy tracks the same GFS
+  retention (pruned tiers are pruned there too). Checksums travel with the
+  archives, so you can `sha256sum -c` on the far side.
+- Unset ⇒ local-only (logged as such).
+
+Encrypt the off-site copy at rest if the target isn't trusted — the flat memory
+tiers are plaintext-on-disk by default.
+
 ### Safety
 
 - **Disk guard.** The script refuses to run (and fires `sk-alert` if present)

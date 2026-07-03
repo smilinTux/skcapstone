@@ -15,7 +15,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   churn (comms queues, logs, skwhisper cache, media renders) so a ~0.8 GB home
   compresses to ~80 MB and the whole rotation stays a few GB. Includes a 2 GB
   free-space guard (fires `sk-alert` on low disk) and per-file `.sha256`
-  sidecars. Documented in [docs/BACKUP.md](docs/BACKUP.md) alongside the
+  sidecars. Optional **off-site 3-2-1 replication**: set `OFFSITE_DEST` in
+  `~/.skcapstone/config/backup.env` and each run also `rsync`s the whole
+  rotation to another host (best-effort — a failed push alerts but never fails
+  the local backup). Documented in [docs/BACKUP.md](docs/BACKUP.md) alongside the
   portable `skcapstone backup` CLI, with a cross-link from
   [docs/HOUSEKEEPING.md](docs/HOUSEKEEPING.md) (backup preserves / housekeeping
   prunes) and a Documentation-table row in the README.
