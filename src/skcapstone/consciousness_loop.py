@@ -695,6 +695,26 @@ class LLMBridge:
 # System Prompt Builder
 # ---------------------------------------------------------------------------
 
+# Section priorities for context-window budgeting.  When the assembled prompt
+# would exceed the token budget, sections with priority < ``_PROTECTED_MIN_PRIORITY``
+# (the "middle" — agent-context memories / snapshots) are trimmed or dropped
+# first (lowest priority first), so that soul, identity, behavioral rules, and
+# the most-recent peer history always survive.
+_PRIO_SOUL = 100          # personality overlay — never dropped
+_PRIO_BEHAVIORAL = 95     # response rules — never dropped
+_PRIO_IDENTITY = 90       # who the agent is — never dropped
+_PRIO_HISTORY = 85        # most-recent conversation — never dropped
+_PRIO_WARMTH = 80         # warmth anchor — never dropped
+_PRIO_SNAPSHOT = 40       # recent snapshot — trimmable middle
+_PRIO_CONTEXT = 30        # gathered memories/journal — trimmable middle
+
+# Sections at or above this priority are preserved verbatim; only lower-priority
+# sections are trimmed to fit the budget.
+_PROTECTED_MIN_PRIORITY = 50
+
+# Marker appended to a section (or the whole prompt) that had to be shortened.
+_TRIM_MARKER = "\n[...trimmed]"
+
 
 class SystemPromptBuilder:
     """Assembles the full agent system prompt from identity, soul, and context.
@@ -754,53 +774,122 @@ class SystemPromptBuilder:
         Returns:
             Combined system prompt string, truncated to max_tokens.
         """
-        sections: list[str] = []
+        # Each section is (name, text, priority).  Kept in assembly order for
+        # the final prompt; priority only governs what gets trimmed when the
+        # assembled prompt would overflow the context-window budget.
+        sections: list[tuple[str, str, int]] = []
 
         # 1. Identity (cached 60s — file rarely changes)
         identity = self._get_cached("identity", self._load_identity)
         if identity:
-            sections.append(identity)
+            sections.append(("identity", identity, _PRIO_IDENTITY))
 
         # 2. Soul overlay (cached 60s — file rarely changes)
         soul = self._get_cached("soul", self._load_soul)
         if soul:
-            sections.append(soul)
+            sections.append(("soul", soul, _PRIO_SOUL))
 
         # 3. Warmth anchor (cached 60s — file rarely changes)
         warmth = self._get_cached("warmth", self._load_warmth_anchor)
         if warmth:
-            sections.append(warmth)
+            sections.append(("warmth", warmth, _PRIO_WARMTH))
 
         # 4. Agent context (cached 60s — gather_context is expensive)
         context = self._get_cached("context", self._load_context)
         if context:
-            sections.append(context)
+            sections.append(("context", context, _PRIO_CONTEXT))
 
         # 5. Snapshot injection
         snapshot = self._load_snapshot()
         if snapshot:
-            sections.append(snapshot)
+            sections.append(("snapshot", snapshot, _PRIO_SNAPSHOT))
 
         # 6. Behavioral instructions
-        sections.append(self._behavioral_instructions())
+        sections.append(
+            ("behavioral", self._behavioral_instructions(), _PRIO_BEHAVIORAL)
+        )
 
         # 7. Peer history (thread-aware)
         if peer_name:
             history = self._get_peer_history(peer_name, thread_id=thread_id)
             if history:
-                sections.append(history)
+                sections.append(("history", history, _PRIO_HISTORY))
 
-        combined = "\n\n".join(sections)
-
-        # Rough truncation (4 chars ≈ 1 token)
-        max_chars = self._max_tokens * 4
-        if len(combined) > max_chars:
-            combined = combined[:max_chars] + "\n[...truncated]"
+        # Fit within the context-window budget: no-op for the common small case,
+        # prioritized trim of the least-relevant middle when oversized.
+        combined = self._fit_to_budget(sections)
 
         # Prompt versioning — hash and persist when content changes
         self._track_prompt_version(combined)
 
         return combined
+
+    def _fit_to_budget(self, sections: list[tuple[str, str, int]]) -> str:
+        """Join *sections* into a prompt that fits the context-window budget.
+
+        The budget is ``max_tokens * 4`` characters (4 chars ≈ 1 token — the
+        same estimate used throughout skcapstone).  When the full assembly fits,
+        it is returned unchanged (the common case — zero behavior change).
+
+        When the assembly would overflow, sections are trimmed by priority:
+        protected sections (priority >= :data:`_PROTECTED_MIN_PRIORITY` — soul,
+        identity, warmth, behavioral rules, and the most-recent peer history)
+        are preserved verbatim, while the trimmable "middle" (gathered memories
+        and snapshots) is shortened or dropped lowest-priority-first until the
+        prompt fits.  Sections are always re-emitted in their original assembly
+        order so the prompt still reads naturally.
+
+        As a last resort — if the protected sections alone exceed the budget —
+        the whole prompt is tail-truncated so the hard cap is never breached.
+
+        Args:
+            sections: List of ``(name, text, priority)`` tuples in assembly order.
+
+        Returns:
+            The assembled (and, if necessary, trimmed) prompt string.
+        """
+        sep = "\n\n"
+        max_chars = max(0, self._max_tokens * 4)
+
+        # Mutable working copies (name, text, priority); drop empties.
+        secs = [[n, t, p] for (n, t, p) in sections if t]
+        if not secs:
+            return ""
+
+        full = sep.join(s[1] for s in secs)
+        if len(full) <= max_chars:
+            return full
+
+        # Over budget — prioritized trim.
+        sep_overhead = len(sep) * (len(secs) - 1) if len(secs) > 1 else 0
+        protected_chars = sum(len(s[1]) for s in secs if s[2] >= _PROTECTED_MIN_PRIORITY)
+
+        # Characters available for the trimmable middle after protecting the rest.
+        trim_budget = max_chars - protected_chars - sep_overhead
+        if trim_budget < 0:
+            # Even the protected sections overflow — last-resort tail truncation.
+            keep = max(0, max_chars - len(_TRIM_MARKER))
+            return full[:keep] + _TRIM_MARKER
+
+        # Allocate the remaining budget to trimmable sections, highest priority
+        # first; truncate the one that no longer fits and drop the rest.
+        remaining = trim_budget
+        for s in sorted(
+            (s for s in secs if s[2] < _PROTECTED_MIN_PRIORITY),
+            key=lambda s: s[2],
+            reverse=True,
+        ):
+            if remaining <= 0:
+                s[1] = ""
+            elif len(s[1]) <= remaining:
+                remaining -= len(s[1])
+            else:
+                keep = remaining - len(_TRIM_MARKER)
+                s[1] = (s[1][:keep] + _TRIM_MARKER) if keep > 0 else ""
+                remaining = 0
+
+        # Reassemble in original order, dropping now-empty sections.
+        return sep.join(s[1] for s in secs if s[1])
 
     def _track_prompt_version(self, prompt: str) -> None:
         """Hash the prompt and persist a version file when it changes.
