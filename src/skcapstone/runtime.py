@@ -147,6 +147,15 @@ class AgentRuntime:
                 ", ".join(missing),
             )
 
+        # Startup pillar-health check — notify on degradation (best-effort;
+        # must never break awakening).
+        try:
+            from .health import startup_health_check
+
+            startup_health_check(self.manifest)
+        except Exception as exc:
+            logger.debug("Startup health check skipped: %s", exc)
+
         return self.manifest
 
     def save_manifest(self) -> None:
