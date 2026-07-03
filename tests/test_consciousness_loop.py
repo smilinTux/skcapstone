@@ -17,6 +17,7 @@ from skcapstone.consciousness_loop import (
     SystemPromptBuilder,
     _classify_message,
     _OllamaPool,
+    _RateLimiter,
     _SimpleEnvelope,
     InboxHandler,
 )
@@ -463,6 +464,98 @@ class TestProcessEnvelopeACK:
 
         assert result is None, "ACK-type messages should be skipped (return None)"
         mock_skcomms.send.assert_not_called()
+
+
+class TestRateLimiter:
+    """Per-sender sliding-window intake rate limiter."""
+
+    def test_under_limit_passes(self):
+        rl = _RateLimiter(max_messages=3, window_s=60.0)
+        assert rl.allow("alice", now=0.0)
+        assert rl.allow("alice", now=1.0)
+        assert rl.allow("alice", now=2.0)
+        assert rl.current_count("alice", now=2.0) == 3
+
+    def test_over_limit_throttled(self):
+        rl = _RateLimiter(max_messages=2, window_s=60.0)
+        assert rl.allow("bob", now=0.0)
+        assert rl.allow("bob", now=1.0)
+        # Third within the window is rejected.
+        assert not rl.allow("bob", now=2.0)
+        assert not rl.allow("bob", now=3.0)
+
+    def test_window_resets(self):
+        rl = _RateLimiter(max_messages=2, window_s=10.0)
+        assert rl.allow("carol", now=0.0)
+        assert rl.allow("carol", now=1.0)
+        assert not rl.allow("carol", now=2.0)  # over limit
+        # After the window fully drains, the sender resumes.
+        assert rl.allow("carol", now=12.0)
+        assert rl.current_count("carol", now=12.0) == 1
+
+    def test_per_sender_isolation(self):
+        rl = _RateLimiter(max_messages=1, window_s=60.0)
+        assert rl.allow("dave", now=0.0)
+        assert not rl.allow("dave", now=1.0)  # dave over limit
+        # A different sender is unaffected.
+        assert rl.allow("erin", now=1.0)
+
+    def test_identity_normalized(self):
+        """URI-decorated identities collapse to the same sender bucket."""
+        rl = _RateLimiter(max_messages=1, window_s=60.0)
+        assert rl.allow("capauth:frank@skworld.io", now=0.0)
+        assert not rl.allow("Frank", now=1.0)
+
+    def test_zero_max_disables_limiting(self):
+        rl = _RateLimiter(max_messages=0, window_s=60.0)
+        for i in range(100):
+            assert rl.allow("greta", now=float(i))
+
+
+class TestProcessEnvelopeRateLimit:
+    """process_envelope honors the per-sender rate limiter."""
+
+    def _make_loop(self, tmp_path, **rl_kwargs):
+        config = ConsciousnessConfig(
+            auto_ack=False,
+            fallback_chain=["passthrough"],
+            **rl_kwargs,
+        )
+        loop = ConsciousnessLoop(config, home=tmp_path / ".skcapstone")
+        loop._bridge = MagicMock()
+        loop._bridge.generate.return_value = "resp"
+        loop.set_skcomms(MagicMock())
+        return loop
+
+    def _make_envelope(self, sender="peer", content="hello"):
+        data = {"sender": sender, "payload": {"content": content, "content_type": "text"}}
+        return _SimpleEnvelope(data)
+
+    def test_over_limit_message_skipped(self, tmp_path):
+        loop = self._make_loop(
+            tmp_path, rate_limit_max_messages=2, rate_limit_window_s=60.0
+        )
+        # First two are processed (generate a response); third is throttled.
+        assert loop.process_envelope(self._make_envelope()) is not None
+        assert loop.process_envelope(self._make_envelope()) is not None
+        assert loop.process_envelope(self._make_envelope()) is None
+
+    def test_injected_rate_limiter_used(self, tmp_path):
+        rl = _RateLimiter(max_messages=100, window_s=60.0)
+        config = ConsciousnessConfig(auto_ack=False, fallback_chain=["passthrough"])
+        loop = ConsciousnessLoop(
+            config, home=tmp_path / ".skcapstone", rate_limiter=rl
+        )
+        assert loop._rate_limiter is rl
+
+    def test_disabled_flag_bypasses_limit(self, tmp_path):
+        loop = self._make_loop(
+            tmp_path, rate_limit_enabled=False, rate_limit_max_messages=1
+        )
+        # Even past the (tiny) limit, messages keep being processed.
+        assert loop.process_envelope(self._make_envelope()) is not None
+        assert loop.process_envelope(self._make_envelope()) is not None
+        assert loop.process_envelope(self._make_envelope()) is not None
 
 
 class TestSystemPromptBuilderCache:

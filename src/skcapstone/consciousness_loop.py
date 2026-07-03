@@ -111,6 +111,11 @@ class ConsciousnessConfig(BaseModel):
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "qwen3.5:4b"
     desktop_notifications: bool = True
+    # Per-sender intake rate limiting (sliding window). Defaults are well above
+    # normal human/agent conversation cadence — only floods get throttled.
+    rate_limit_enabled: bool = True
+    rate_limit_max_messages: int = 20
+    rate_limit_window_s: float = 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -1310,6 +1315,58 @@ class _AutoReplyGuard:
             return now < self._tripped_until.get(_norm_identity(peer), 0.0)
 
 
+class _RateLimiter:
+    """Per-sender sliding-window rate limiter for inbound message intake.
+
+    Independent of :class:`_AutoReplyGuard` (which guards *outbound* auto-reply
+    storms): this throttles how many *incoming* messages a single sender may
+    have processed within ``window_s`` seconds. Over-limit messages are
+    rejected (:meth:`allow` returns False) so the caller can log-and-skip
+    without crashing. Each sender has an isolated window, and the window
+    self-drains as time advances, so a sender resumes once it slows down.
+
+    Thread-safe. ``now`` is injected (monotonic seconds) for testability.
+    """
+
+    def __init__(self, max_messages: int = 20, window_s: float = 60.0) -> None:
+        self.max_messages = max_messages
+        self.window_s = window_s
+        self._events: dict[str, deque] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def allow(self, sender: str, now: float) -> bool:
+        """Record an intended intake for ``sender``; return whether it's allowed.
+
+        A non-positive ``max_messages`` disables limiting (always allowed).
+
+        Args:
+            sender: Sender identity (any URI form — normalized internally).
+            now: Monotonic timestamp (seconds). Injectable for testing.
+        """
+        if self.max_messages <= 0:
+            return True
+        key = _norm_identity(sender)
+        with self._lock:
+            dq = self._events[key]
+            cutoff = now - self.window_s
+            while dq and dq[0] <= cutoff:
+                dq.popleft()
+            if len(dq) >= self.max_messages:
+                return False
+            dq.append(now)
+            return True
+
+    def current_count(self, sender: str, now: float) -> int:
+        """Number of live (in-window) events for ``sender`` at time ``now``."""
+        key = _norm_identity(sender)
+        with self._lock:
+            dq = self._events[key]
+            cutoff = now - self.window_s
+            while dq and dq[0] <= cutoff:
+                dq.popleft()
+            return len(dq)
+
+
 # ---------------------------------------------------------------------------
 # Consciousness Loop
 # ---------------------------------------------------------------------------
@@ -1334,6 +1391,7 @@ class ConsciousnessLoop:
         daemon_state: Any = None,
         home: Optional[Path] = None,
         shared_root: Optional[Path] = None,
+        rate_limiter: Optional["_RateLimiter"] = None,
     ) -> None:
         from skcapstone import AGENT_HOME, SHARED_ROOT as _SR
 
@@ -1399,6 +1457,14 @@ class ConsciousnessLoop:
 
         # Loop safety — circuit breaker for runaway agent<->agent reply storms
         self._autoreply_guard = _AutoReplyGuard()
+
+        # Per-sender intake rate limiter (injectable for testing). Throttles a
+        # single sender's inbound message processing to protect the loop from
+        # floods without crashing.
+        self._rate_limiter = rate_limiter or _RateLimiter(
+            max_messages=config.rate_limit_max_messages,
+            window_s=config.rate_limit_window_s,
+        )
 
         # Peer directory — tracks transport addresses of known peers
         try:
@@ -1558,6 +1624,20 @@ class ConsciousnessLoop:
                     "Auto-reply circuit breaker tripped for %s — suppressing reply "
                     "to break a runaway loop",
                     sender,
+                )
+                return None
+
+            # Per-sender intake rate limiting — throttle floods from a single
+            # sender. Over-limit messages are skipped (not crashed); the
+            # sender's window self-drains so it resumes once it slows down.
+            if self._config.rate_limit_enabled and not self._rate_limiter.allow(
+                sender, time.monotonic()
+            ):
+                logger.warning(
+                    "Rate limit exceeded for %s (>%d msgs / %.0fs) — skipping message",
+                    sender,
+                    self._config.rate_limit_max_messages,
+                    self._config.rate_limit_window_s,
                 )
                 return None
 
