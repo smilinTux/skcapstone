@@ -16,7 +16,7 @@ import importlib.resources
 from pathlib import Path
 from typing import Optional
 
-from skmemory.register import detect_environments, register_package
+from skmemory.register import detect_environments, register_mcp, register_package
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -181,6 +181,36 @@ def find_skill_md(pkg_name: str, workspace: Optional[Path] = None) -> Optional[P
     return None
 
 
+# ── skskills plugin discovery ───────────────────────────────────────────────
+
+
+def _discover_plugin_servers(workspace: Path) -> list[dict]:
+    """Scan skskills-compiled plugin envelopes for MCP servers.
+
+    Reads <workspace>/skskills/dist/*/.mcp.json (the `skskills plugin build`
+    output) and returns one entry per server:
+      {plugin, name, transport, command, args, url}
+    transport is 'stdio' (has command) or 'remote' (has url).
+    """
+    import json
+    out: list[dict] = []
+    dist = workspace / "skskills" / "dist"
+    for mcp_json in sorted(dist.glob("*/.mcp.json")):
+        plugin = mcp_json.parent.name
+        try:
+            servers = (json.loads(mcp_json.read_text()) or {}).get("mcpServers", {})
+        except (OSError, json.JSONDecodeError):
+            continue
+        for name, spec in servers.items():
+            if spec.get("command"):
+                out.append({"plugin": plugin, "name": name, "transport": "stdio",
+                            "command": spec["command"], "args": spec.get("args", []), "url": None})
+            elif spec.get("url"):
+                out.append({"plugin": plugin, "name": name, "transport": "remote",
+                            "command": None, "args": [], "url": spec["url"]})
+    return out
+
+
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 
@@ -245,5 +275,20 @@ def register_all(
             environments=environments,
             dry_run=dry_run,
         )
+
+    results["plugins"] = {}
+    for srv in _discover_plugin_servers(workspace):
+        key = f'{srv["plugin"]}:{srv["name"]}'
+        if srv["transport"] == "stdio":
+            if dry_run:
+                results["plugins"][key] = {"action": "would-register", "transport": "stdio"}
+            else:
+                results["plugins"][key] = register_mcp(
+                    name=srv["name"], command=srv["command"], args=srv["args"],
+                    environments=environments)
+        else:
+            # url/http/sse: register_mcp has no url path yet — surface, don't mis-write.
+            results["plugins"][key] = {"action": "skip",
+                "reason": "remote (url) MCP server — register manually or via `claude mcp add`"}
 
     return results
