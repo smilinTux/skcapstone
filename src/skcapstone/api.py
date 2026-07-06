@@ -50,7 +50,7 @@ try:
         status,
     )
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse, StreamingResponse
+    from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
     from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel, Field
 except ImportError as _exc:
@@ -1476,6 +1476,179 @@ async def get_metrics(
         return MetricsResponse(**{k: v for k, v in raw.items() if k in MetricsResponse.model_fields})
     except Exception:
         return MetricsResponse()
+
+
+# ── /metrics (Prometheus exposition) ──────────────────────────────────────────
+
+# Prometheus text exposition version served by GET /metrics.
+_PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+
+def _prom_escape_label(value: str) -> str:
+    """Escape a Prometheus label value per the text exposition format.
+
+    Backslashes, double quotes, and newlines must be escaped in label
+    values (metric/label *names* are assumed to be safe literals here).
+
+    Args:
+        value: Raw label value.
+
+    Returns:
+        The escaped label value, safe to embed inside double quotes.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _prom_line(name: str, value: float, labels: Optional[Dict[str, str]] = None) -> str:
+    """Render a single Prometheus sample line.
+
+    Args:
+        name: Metric name.
+        value: Numeric sample value (rendered as int when integral).
+        labels: Optional label key→value mapping.
+
+    Returns:
+        A single exposition line, without a trailing newline.
+    """
+    if labels:
+        label_str = ",".join(
+            f'{k}="{_prom_escape_label(str(v))}"' for k, v in labels.items()
+        )
+        head = f"{name}{{{label_str}}}"
+    else:
+        head = name
+    # Render integral floats without a decimal point for cleaner output.
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return f"{head} {value}"
+
+
+def _collect_prometheus_metrics() -> str:
+    """Assemble the Prometheus text exposition for the daemon.
+
+    Wires each metric to a real source where cheap:
+      * ``consciousness_messages_total`` — consciousness metrics collector.
+      * ``memory_count{layer=...}`` — ``memory_engine.get_stats``.
+      * ``coord_tasks_total{status=...}`` — coordination ``Board`` task views.
+      * ``heartbeat_peers_alive`` — fresh heartbeats in the shared household.
+      * ``llm_errors_total`` — consciousness loop response/LLM error counter.
+
+    Each source is guarded independently so a failure in one collector never
+    blanks the whole endpoint (Prometheus scrapes must not hard-fail).
+
+    Returns:
+        The full exposition text (ends with a trailing newline).
+    """
+    config = _ctx.get("config")
+    consciousness = _ctx.get("consciousness")
+    lines: List[str] = []
+
+    # ── consciousness_messages_total (counter) — REAL ─────────────────────────
+    messages_total = 0
+    llm_errors_total = 0
+    if consciousness is not None:
+        try:
+            raw = consciousness.metrics.to_dict()
+            messages_total = int(raw.get("messages_processed", 0) or 0)
+            # The consciousness metrics ``errors`` counter is incremented only in
+            # the response-generation path (LLM bridge call + response send), so
+            # it is the real, closest-available source for LLM errors.
+            llm_errors_total = int(raw.get("errors", 0) or 0)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Prometheus: failed to read consciousness metrics: %s", exc)
+    lines.append("# HELP consciousness_messages_total Messages processed by the consciousness loop.")
+    lines.append("# TYPE consciousness_messages_total counter")
+    lines.append(_prom_line("consciousness_messages_total", messages_total))
+
+    # ── memory_count{layer=...} (gauge) — REAL ────────────────────────────────
+    lines.append("# HELP memory_count Number of memory entries by layer.")
+    lines.append("# TYPE memory_count gauge")
+    layer_counts = {"short_term": 0, "mid_term": 0, "long_term": 0}
+    if config is not None:
+        try:
+            from .memory_engine import get_stats as _mem_stats
+
+            ms = _mem_stats(config.home)
+            layer_counts = {
+                "short_term": int(getattr(ms, "short_term", 0) or 0),
+                "mid_term": int(getattr(ms, "mid_term", 0) or 0),
+                "long_term": int(getattr(ms, "long_term", 0) or 0),
+            }
+        except Exception as exc:
+            logger.warning("Prometheus: failed to read memory stats: %s", exc)
+    for layer, count in layer_counts.items():
+        lines.append(_prom_line("memory_count", count, {"layer": layer}))
+
+    # ── coord_tasks_total{status=...} (gauge) — REAL ──────────────────────────
+    lines.append("# HELP coord_tasks_total Coordination board tasks by status.")
+    lines.append("# TYPE coord_tasks_total gauge")
+    status_counts = {"open": 0, "claimed": 0, "in_progress": 0, "done": 0}
+    if config is not None:
+        try:
+            from .coordination import Board
+
+            views = Board(config.home).get_task_views()
+            for v in views:
+                key = v.status.value
+                status_counts[key] = status_counts.get(key, 0) + 1
+        except Exception as exc:
+            logger.warning("Prometheus: failed to read coordination board: %s", exc)
+    for st, count in status_counts.items():
+        lines.append(_prom_line("coord_tasks_total", count, {"status": st}))
+
+    # ── heartbeat_peers_alive (gauge) — REAL ──────────────────────────────────
+    lines.append("# HELP heartbeat_peers_alive Household agents with a fresh heartbeat.")
+    lines.append("# TYPE heartbeat_peers_alive gauge")
+    peers_alive = 0
+    if config is not None:
+        try:
+            heartbeats_dir = config.shared_root / "heartbeats"
+            if heartbeats_dir.exists():
+                for hb_path in heartbeats_dir.glob("*.json"):
+                    try:
+                        hb = json.loads(hb_path.read_text(encoding="utf-8"))
+                        if _hb_alive(hb):
+                            peers_alive += 1
+                    except Exception:
+                        continue
+        except Exception as exc:
+            logger.warning("Prometheus: failed to count alive heartbeats: %s", exc)
+    lines.append(_prom_line("heartbeat_peers_alive", peers_alive))
+
+    # ── llm_errors_total (counter) — REAL (consciousness response error path) ──
+    lines.append("# HELP llm_errors_total Errors in the consciousness LLM response path.")
+    lines.append("# TYPE llm_errors_total counter")
+    lines.append(_prom_line("llm_errors_total", llm_errors_total))
+
+    return "\n".join(lines) + "\n"
+
+
+@app.get(
+    "/metrics",
+    summary="Prometheus metrics exposition",
+    tags=["Metrics"],
+    responses={
+        200: {
+            "description": "Prometheus text exposition (version 0.0.4).",
+            "content": {"text/plain": {}},
+        },
+    },
+)
+async def get_prometheus_metrics(
+    _key: Optional[str] = Depends(_check_api_key),
+) -> "PlainTextResponse":
+    """Expose daemon metrics in Prometheus text exposition format.
+
+    Hand-rolled exposition (no ``prometheus_client`` dependency).  Metrics are
+    wired to real daemon sources — consciousness message/error counters, memory
+    layer counts, coordination task counts, and live household heartbeats.
+
+    Returns:
+        A ``PlainTextResponse`` with the ``text/plain; version=0.0.4`` content
+        type expected by Prometheus scrapers.
+    """
+    body = _collect_prometheus_metrics()
+    return PlainTextResponse(content=body, media_type=_PROM_CONTENT_TYPE)
 
 
 # ── /api/v1/skstacks/argocd/status helpers ────────────────────────────────────

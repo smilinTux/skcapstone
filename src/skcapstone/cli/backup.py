@@ -25,28 +25,48 @@ def register_backup_commands(main: click.Group) -> None:
         """
 
     @backup.command("create")
-    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
+    @click.option("--home", default=None, type=click.Path(),
+                  help="Agent home directory. Overrides --agent when set.")
+    @click.option("--agent", default=None, help="Agent name (e.g. lumina, opus).")
     @click.option("--output", "-o", default=None, type=click.Path(), help="Output directory.")
-    def backup_create(home: str, output: str):
+    def backup_create(home: str, agent: str, output: str):
         """Create a full backup of the sovereign agent state.
 
         Archives identity, memories, trust, config, coordination,
         and agent card into a compressed tarball with integrity checksums.
 
+        By default this backs up the active agent's per-agent home
+        (~/.skcapstone/agents/<name>/), NOT the shared operator root —
+        that is where the flat memory tiers actually live.
+
         Examples:
 
             skcapstone backup create
 
+            skcapstone backup create --agent opus
+
             skcapstone backup create -o /mnt/usb/backups
         """
         from ..backup import create_backup
+        from .. import agent_home, SKCAPSTONE_AGENT
 
-        home_path = Path(home).expanduser()
+        # --home wins if given; otherwise resolve the per-agent home so the
+        # flat memory tiers (agents/<name>/memory/{short,mid,long}-term) are
+        # captured instead of the near-empty shared root memory/ dir.
+        agent_name = agent or SKCAPSTONE_AGENT
+        if home:
+            home_path = Path(home).expanduser()
+        else:
+            home_path = agent_home(agent_name or None)
         out_dir = Path(output).expanduser() if output else None
 
         try:
-            console.print("\n[cyan]Creating backup...[/]")
-            result = create_backup(home=home_path, output_dir=out_dir)
+            console.print(
+                f"\n[cyan]Creating backup[/] [dim]({home_path})[/]..."
+            )
+            result = create_backup(
+                home=home_path, output_dir=out_dir, agent_name=agent_name or "",
+            )
 
             size_mb = result["archive_size"] / 1024 / 1024
             console.print(Panel(
