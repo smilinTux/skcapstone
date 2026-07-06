@@ -54,6 +54,168 @@ DEFAULT_PORT = 7777
 PID_FILE = "daemon.pid"
 LOG_DIR = "logs"
 
+# Prometheus text exposition content type served by GET /metrics.
+PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+
+def _prom_escape_label(value: str) -> str:
+    """Escape a Prometheus label value per the text exposition format.
+
+    Backslashes, double quotes, and newlines must be escaped inside label
+    values.  Metric and label *names* are trusted literals here.
+
+    Args:
+        value: Raw label value.
+
+    Returns:
+        The escaped value, safe to embed inside double quotes.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _prom_line(name: str, value, labels: Optional[dict] = None) -> str:
+    """Render a single Prometheus sample line (no trailing newline).
+
+    Args:
+        name: Metric name.
+        value: Numeric sample value (integral floats rendered without a point).
+        labels: Optional label key→value mapping.
+
+    Returns:
+        One exposition line.
+    """
+    if labels:
+        label_str = ",".join(
+            f'{k}="{_prom_escape_label(str(v))}"' for k, v in labels.items()
+        )
+        head = f"{name}{{{label_str}}}"
+    else:
+        head = name
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return f"{head} {value}"
+
+
+def _hb_is_alive(hb: dict) -> bool:
+    """Return True when a heartbeat dict is within its TTL.
+
+    Standalone twin of ``DaemonHandler._hb_alive`` so the Prometheus builder
+    can be exercised without instantiating the HTTP handler.
+
+    Args:
+        hb: Heartbeat dict with ``timestamp`` and optional ``ttl_seconds``.
+
+    Returns:
+        True when fresh, False when expired or unparseable.
+    """
+    ts_str = hb.get("timestamp", "")
+    ttl = hb.get("ttl_seconds", 300)
+    if not ts_str:
+        return False
+    try:
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) <= ts + timedelta(seconds=ttl)
+    except Exception:
+        return False
+
+
+def build_prometheus_metrics(config, consciousness=None) -> str:
+    """Assemble the Prometheus text exposition for the daemon.
+
+    Metrics are wired to real daemon sources where cheap; each source is
+    guarded independently so one failing collector never blanks the whole
+    scrape.  Exposes:
+
+      * ``consciousness_messages_total`` — consciousness metrics collector.
+      * ``memory_count{layer=...}`` — ``memory_engine.get_stats``.
+      * ``coord_tasks_total{status=...}`` — coordination ``Board`` task views.
+      * ``heartbeat_peers_alive`` — fresh heartbeats in the shared household.
+      * ``llm_errors_total`` — consciousness loop response/LLM error counter.
+
+    Args:
+        config: ``DaemonConfig`` (provides ``home`` and ``shared_root``).
+        consciousness: Optional consciousness loop with a ``.metrics`` collector.
+
+    Returns:
+        The full exposition text (ends with a trailing newline).
+    """
+    lines: list = []
+
+    # ── consciousness_messages_total (counter) — REAL ─────────────────────────
+    messages_total = 0
+    llm_errors_total = 0
+    if consciousness is not None:
+        try:
+            raw = consciousness.metrics.to_dict()
+            messages_total = int(raw.get("messages_processed", 0) or 0)
+            # The consciousness ``errors`` counter is incremented only in the
+            # response-generation path (LLM bridge call + response send), so it
+            # is the real, closest-available source for LLM errors.
+            llm_errors_total = int(raw.get("errors", 0) or 0)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Prometheus: failed to read consciousness metrics: %s", exc)
+    lines.append("# HELP consciousness_messages_total Messages processed by the consciousness loop.")
+    lines.append("# TYPE consciousness_messages_total counter")
+    lines.append(_prom_line("consciousness_messages_total", messages_total))
+
+    # ── memory_count{layer=...} (gauge) — REAL ────────────────────────────────
+    lines.append("# HELP memory_count Number of memory entries by layer.")
+    lines.append("# TYPE memory_count gauge")
+    layer_counts = {"short_term": 0, "mid_term": 0, "long_term": 0}
+    try:
+        from .memory_engine import get_stats as _mem_stats
+
+        ms = _mem_stats(config.home)
+        layer_counts = {
+            "short_term": int(getattr(ms, "short_term", 0) or 0),
+            "mid_term": int(getattr(ms, "mid_term", 0) or 0),
+            "long_term": int(getattr(ms, "long_term", 0) or 0),
+        }
+    except Exception as exc:
+        logger.warning("Prometheus: failed to read memory stats: %s", exc)
+    for layer, count in layer_counts.items():
+        lines.append(_prom_line("memory_count", count, {"layer": layer}))
+
+    # ── coord_tasks_total{status=...} (gauge) — REAL ──────────────────────────
+    lines.append("# HELP coord_tasks_total Coordination board tasks by status.")
+    lines.append("# TYPE coord_tasks_total gauge")
+    status_counts = {"open": 0, "claimed": 0, "in_progress": 0, "done": 0}
+    try:
+        from .coordination import Board
+
+        for v in Board(config.home).get_task_views():
+            key = v.status.value
+            status_counts[key] = status_counts.get(key, 0) + 1
+    except Exception as exc:
+        logger.warning("Prometheus: failed to read coordination board: %s", exc)
+    for st, count in status_counts.items():
+        lines.append(_prom_line("coord_tasks_total", count, {"status": st}))
+
+    # ── heartbeat_peers_alive (gauge) — REAL ──────────────────────────────────
+    lines.append("# HELP heartbeat_peers_alive Household agents with a fresh heartbeat.")
+    lines.append("# TYPE heartbeat_peers_alive gauge")
+    peers_alive = 0
+    try:
+        heartbeats_dir = config.shared_root / "heartbeats"
+        if heartbeats_dir.exists():
+            for hb_path in heartbeats_dir.glob("*.json"):
+                try:
+                    hb = json.loads(hb_path.read_text(encoding="utf-8"))
+                    if _hb_is_alive(hb):
+                        peers_alive += 1
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.warning("Prometheus: failed to count alive heartbeats: %s", exc)
+    lines.append(_prom_line("heartbeat_peers_alive", peers_alive))
+
+    # ── llm_errors_total (counter) — REAL (consciousness response error path) ──
+    lines.append("# HELP llm_errors_total Errors in the consciousness LLM response path.")
+    lines.append("# TYPE llm_errors_total counter")
+    lines.append(_prom_line("llm_errors_total", llm_errors_total))
+
+    return "\n".join(lines) + "\n"
+
 
 def _sd_notify(state: str) -> bool:
     """Send a notification to systemd via the NOTIFY_SOCKET.
@@ -2171,6 +2333,15 @@ class DaemonService:
                     else:
                         self._json_response({"error": "consciousness not loaded"}, status=503)
 
+                elif self.path == "/metrics":
+                    # Prometheus text exposition (hand-rolled, no extra deps).
+                    try:
+                        body = build_prometheus_metrics(config, consciousness)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.warning("Failed to build Prometheus metrics: %s", exc)
+                        body = ""
+                    self._text_response(body, content_type=PROM_CONTENT_TYPE)
+
                 else:
                     self._json_response(
                         {
@@ -2193,6 +2364,7 @@ class DaemonService:
                                 "/api/v1/components",
                                 "/api/v1/activity (SSE activity stream)",
                                 "/api/v1/metrics",
+                                "/metrics (Prometheus text exposition)",
                                 "/ws (WebSocket streaming)",
                                 "/api/v1/logs (WebSocket log stream, CapAuth required)",
                             ]
@@ -2327,6 +2499,20 @@ class DaemonService:
                 body = html.encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self._add_cors_headers()
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _text_response(
+                self,
+                text: str,
+                status: int = 200,
+                content_type: str = "text/plain; charset=utf-8",
+            ):
+                body = text.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
                 self._add_cors_headers()
                 self.end_headers()

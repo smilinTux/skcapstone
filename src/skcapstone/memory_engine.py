@@ -32,6 +32,12 @@ logger = logging.getLogger("skcapstone.memory")
 
 SHORT_TERM_TTL_HOURS = 72
 
+# Sidecar JSON files that live inside a memory tier dir but are NOT MemoryEntry
+# objects (e.g. the render-rating rollup written by skchat.rating). They share
+# the tier directory for sync convenience but must be skipped by the loader so
+# they don't spam "Failed to load memory" warnings every cycle.
+_NON_MEMORY_SIDECARS = frozenset({"render_scores.json"})
+
 
 def _get_unified():
     """Lazy accessor for the unified skmemory backend.
@@ -78,6 +84,18 @@ def _load_entry(path: Path) -> Optional[MemoryEntry]:
     Returns:
         MemoryEntry or None if the file is invalid.
     """
+    # Known non-memory sidecars (e.g. render_scores.json) live in the tier dir
+    # but aren't MemoryEntry objects — skip them silently.
+    if path.name in _NON_MEMORY_SIDECARS:
+        return None
+    # Empty/truncated files (0 bytes) carry no recoverable memory — skip quietly
+    # at debug level rather than warning on every load cycle.
+    try:
+        if path.stat().st_size == 0:
+            logger.debug("Skipping empty memory file %s", path)
+            return None
+    except OSError:
+        pass
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return MemoryEntry(**data)
