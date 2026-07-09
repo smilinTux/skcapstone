@@ -37,9 +37,10 @@ def desktop_notifications_enabled() -> bool:
     """Return whether desktop notifications should be dispatched.
 
     Controlled by the ``SKCAPSTONE_DESKTOP_NOTIFY`` environment variable.
-    Defaults to enabled; set it to one of ``0``, ``false``, ``no``, ``off``,
-    ``silent``, ``null`` or ``none`` to suppress every desktop notification
-    path (``gi.repository.Notify``, ``notify-send`` and ``osascript``).
+    Defaults to DISABLED (opt-in): background agents must NOT flood the desktop
+    tray. Set it to ``1``/``true``/``yes``/``on`` to enable desktop popups
+    (``gi.repository.Notify``, ``notify-send`` and ``osascript``) on a machine
+    where you actually want them. Any disabled/unset value suppresses them.
 
     The test suite forces this off (see ``tests/conftest.py``) so running
     tests never floods the live desktop's notification tray.
@@ -47,7 +48,7 @@ def desktop_notifications_enabled() -> bool:
     Returns:
         True if notifications should be sent, False to suppress them.
     """
-    value = os.environ.get("SKCAPSTONE_DESKTOP_NOTIFY", "1").strip().lower()
+    value = os.environ.get("SKCAPSTONE_DESKTOP_NOTIFY", "0").strip().lower()
     return value not in _DISABLED_VALUES
 
 
