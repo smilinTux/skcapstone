@@ -329,10 +329,11 @@ class TestModuleLevelHelpers:
 class TestDesktopNotificationGuard:
     """SKCAPSTONE_DESKTOP_NOTIFY suppresses every dispatch path."""
 
-    def test_enabled_by_default(self, monkeypatch):
-        """Unset env var means notifications are enabled."""
+    def test_disabled_by_default(self, monkeypatch):
+        """Unset env var means notifications are DISABLED (opt-in): background
+        agents must not flood the desktop tray unless explicitly enabled."""
         monkeypatch.delenv("SKCAPSTONE_DESKTOP_NOTIFY", raising=False)
-        assert desktop_notifications_enabled() is True
+        assert desktop_notifications_enabled() is False
 
     @pytest.mark.parametrize("value", ["0", "false", "no", "off", "silent", "null", "none"])
     def test_disabled_values(self, monkeypatch, value):
