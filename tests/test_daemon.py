@@ -332,6 +332,77 @@ class TestHeartbeatBeaconWiring:
             config.home, "test-agent"
         )
 
+    def test_load_components_wires_none_consciousness_loop_when_disabled(self, daemon_home):
+        """Critical constraint: --no-consciousness must still register (a None) loop ref."""
+        import sys
+        from skcapstone import dreaming_job
+
+        config = DaemonConfig(home=daemon_home, port=0, consciousness_enabled=False)
+        svc = DaemonService(config)
+
+        mock_runtime = MagicMock()
+        mock_runtime.manifest.name = "test-agent"
+        mock_runtime.is_initialized = True
+        mock_runtime_mod = MagicMock()
+        mock_runtime_mod.get_runtime.return_value = mock_runtime
+
+        patched = {
+            "skcomms": MagicMock(),
+            "skcomms.core": MagicMock(),
+            "skcapstone.runtime": mock_runtime_mod,
+            "skcapstone.heartbeat": MagicMock(),
+            "skcapstone.consciousness_config": MagicMock(),
+            "skcapstone.consciousness_loop": MagicMock(),
+            "skcapstone.self_healing": MagicMock(),
+        }
+        dreaming_job.set_consciousness_loop("stale-from-a-previous-agent")
+        try:
+            with patch.dict(sys.modules, patched):
+                svc._load_components()
+            assert svc._consciousness is None
+            assert dreaming_job.get_consciousness_loop() is None
+        finally:
+            dreaming_job.set_consciousness_loop(None)
+
+    def test_load_components_wires_active_consciousness_loop_when_enabled(self, daemon_home):
+        import sys
+        from skcapstone import dreaming_job
+
+        config = DaemonConfig(home=daemon_home, port=0, consciousness_enabled=True)
+        svc = DaemonService(config)
+
+        mock_runtime = MagicMock()
+        mock_runtime.manifest.name = "test-agent"
+        mock_runtime.is_initialized = True
+        mock_runtime_mod = MagicMock()
+        mock_runtime_mod.get_runtime.return_value = mock_runtime
+
+        mock_loop_instance = MagicMock()
+        mock_loop_cls = MagicMock(return_value=mock_loop_instance)
+        mock_loop_instance._config.enabled = True
+
+        mock_cfg_mod = MagicMock()
+        mock_cfg_mod.load_consciousness_config.return_value = MagicMock(enabled=True)
+        mock_loop_mod = MagicMock()
+        mock_loop_mod.ConsciousnessLoop = mock_loop_cls
+
+        patched = {
+            "skcomms": MagicMock(),
+            "skcomms.core": MagicMock(),
+            "skcapstone.runtime": mock_runtime_mod,
+            "skcapstone.heartbeat": MagicMock(),
+            "skcapstone.consciousness_config": mock_cfg_mod,
+            "skcapstone.consciousness_loop": mock_loop_mod,
+            "skcapstone.self_healing": MagicMock(),
+        }
+        try:
+            with patch.dict(sys.modules, patched):
+                svc._load_components()
+            assert svc._consciousness is mock_loop_instance
+            assert dreaming_job.get_consciousness_loop() is mock_loop_instance
+        finally:
+            dreaming_job.set_consciousness_loop(None)
+
 
 class TestHouseholdAPI:
     """Tests for the household and conversation HTTP endpoints."""

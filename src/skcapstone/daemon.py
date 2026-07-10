@@ -1137,6 +1137,7 @@ class DaemonService:
         # Build task scheduler (beacon + consciousness must be ready first)
         try:
             from .scheduled_tasks import build_scheduler
+            from .dreaming_job import set_consciousness_loop
 
             # Get sync_watcher from consciousness loop if available
             _sync_watcher = getattr(self._consciousness, "_sync_watcher", None)
@@ -1147,6 +1148,10 @@ class DaemonService:
                 beacon=self._beacon,
                 sync_watcher=_sync_watcher,
             )
+            # Give the (in-process) dreaming-reflection jobs.yaml job the same
+            # consciousness_loop reference the built-in task used to receive
+            # directly — None under --no-consciousness, an active loop otherwise.
+            set_consciousness_loop(self._consciousness)
             logger.info("Task scheduler built — %d task(s)", len(self._scheduler._tasks))
         except Exception as exc:
             logger.warning("Task scheduler failed to build: %s", exc)
