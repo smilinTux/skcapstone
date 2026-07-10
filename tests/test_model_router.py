@@ -249,6 +249,82 @@ class TestTagRulePriority:
 
 
 # ---------------------------------------------------------------------------
+# Caller-alignment: real production callers' exact tags must actually match
+# a rule (regression coverage for the 2026-07-09 model-router audit — these
+# tags previously fell through to the token-count fallback because no rule
+# keyword overlapped them).
+# ---------------------------------------------------------------------------
+
+
+class TestRealCallerTagAlignment:
+    """Each real ModelRouter caller's exact tag list must hit a tag rule.
+
+    Evidence (verified 2026-07-09):
+    - emotion_tracker.py:333            tags=["classification", "fast"]
+    - context_window.py:307             tags=["summary", "context"]
+    - conversation_summarizer.py:142    tags=["summary", "conversation"]
+    - memory_compressor.py:357          tags=["compression", "memory", <dynamic tag>]
+    All four are cheap background/housekeeping tasks and should land on FAST.
+    """
+
+    # NOTE: estimated_tokens is deliberately set to 20_000 (> the router's
+    # 16_000 token-fallback threshold, model_router.py:_LARGE_TOKEN_THRESHOLD)
+    # in every test below. With a SMALL token estimate, the pre-fix router
+    # already "accidentally" lands on FAST via the token fallback (verified
+    # by direct execution 2026-07-09), which would make a small-token test
+    # pass before AND after the fix — proving nothing. A large token estimate
+    # makes the bug visible: pre-fix it wrongly falls through to REASON
+    # (token fallback), post-fix the tag rule correctly wins and returns FAST
+    # regardless of token count. This also mirrors real usage —
+    # memory_compressor.py estimates estimated_tokens=len(prompt)//4+512,
+    # which crosses 16_000 for any prompt over ~62 KB.
+
+    def test_emotion_tracker_sentiment_classification_tags(
+        self, router: ModelRouter
+    ) -> None:
+        signal = TaskSignal(
+            description="1-token sentiment classification",
+            tags=["classification", "fast"],
+            estimated_tokens=20_000,
+        )
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+    def test_context_window_compression_tags(self, router: ModelRouter) -> None:
+        signal = TaskSignal(
+            description="Compress conversation context window",
+            tags=["summary", "context"],
+            estimated_tokens=20_000,
+        )
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+    def test_conversation_summarizer_tags(self, router: ModelRouter) -> None:
+        signal = TaskSignal(
+            description="Summarize peer conversation",
+            tags=["summary", "conversation"],
+            estimated_tokens=20_000,
+        )
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+    def test_memory_compressor_tags_with_dynamic_group_tag(
+        self, router: ModelRouter
+    ) -> None:
+        # `tag` in memory_compressor.py is a dynamic per-group label (e.g. "gtd",
+        # "identity") that can't be enumerated — the static "compression"/"memory"
+        # keywords must be sufficient on their own (set-intersection semantics
+        # only need ONE overlapping keyword to fire).
+        signal = TaskSignal(
+            description="Compress 12 memories tagged 'gtd'",
+            tags=["compression", "memory", "gtd"],
+            estimated_tokens=20_000,
+        )
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+
+# ---------------------------------------------------------------------------
 # Config load from YAML
 # ---------------------------------------------------------------------------
 
