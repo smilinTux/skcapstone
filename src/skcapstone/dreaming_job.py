@@ -13,6 +13,14 @@ back via :func:`get_consciousness_loop`.
 """
 from __future__ import annotations
 
+import logging
+
+from . import shared_home
+from .consciousness_config import load_dreaming_config
+from .dreaming import DreamingEngine
+
+logger = logging.getLogger("skcapstone.dreaming_job")
+
 _consciousness_loop: object | None = None
 
 
@@ -36,3 +44,31 @@ def get_consciousness_loop() -> object | None:
         explicitly cleared.
     """
     return _consciousness_loop
+
+
+def run_dreaming_job() -> None:
+    """Zero-arg entrypoint for the ``dreaming-reflection`` jobs.yaml job.
+
+    Resolves the shared home, loads the dreaming config from
+    ``consciousness.yaml``, and — if enabled — runs one DreamingEngine cycle
+    using whatever consciousness_loop was registered via
+    :func:`set_consciousness_loop`. ``None`` (the `--no-consciousness` case)
+    is a fully supported value: ``DreamingEngine.is_idle()`` falls back to
+    ``mood.json`` when its ``consciousness_loop`` is ``None``.
+    """
+    home = shared_home()
+    config = load_dreaming_config(home)
+    if config is None or not config.enabled:
+        logger.debug("Dreaming job: disabled via config — skipping")
+        return
+    engine = DreamingEngine(
+        home=home, config=config, consciousness_loop=get_consciousness_loop()
+    )
+    result = engine.dream()
+    if result and result.memories_created:
+        logger.info(
+            "Dreaming: %d memories created from reflection",
+            len(result.memories_created),
+        )
+    elif result and result.skipped_reason:
+        logger.debug("Dreaming skipped: %s", result.skipped_reason)
