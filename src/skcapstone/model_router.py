@@ -147,7 +147,21 @@ class ModelRouterConfig(BaseModel):
                     priority=10,
                 ),
                 TagRule(
-                    keywords=["format", "rename", "lint", "simple", "trivial"],
+                    keywords=[
+                        "format", "rename", "lint", "simple", "trivial",
+                        # Real-caller alignment (2026-07-09 model-router audit):
+                        # these are the exact tags emotion_tracker.py,
+                        # context_window.py, conversation_summarizer.py, and
+                        # memory_compressor.py pass today. All four are cheap
+                        # background/housekeeping calls (sentiment
+                        # classification, context compression, conversation
+                        # summarization, memory compression) that belong on
+                        # the cheapest tier — this rule previously never fired
+                        # for any of them, silently falling through to the
+                        # token-count fallback instead.
+                        "fast", "classification", "summary", "context",
+                        "conversation", "compression", "memory",
+                    ],
                     tier=ModelTier.FAST,
                     priority=10,
                 ),
