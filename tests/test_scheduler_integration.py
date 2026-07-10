@@ -85,3 +85,54 @@ def test_tick_does_not_block_on_slow_job(tmp_path):
     assert elapsed < 1.0, f"tick must not block on the job, but took {elapsed:.3f}s"
     assert started.wait(2), "job worker should have started in background"
     release.set()
+
+
+def test_dreaming_reflection_job_fires_end_to_end(tmp_path, monkeypatch):
+    """Full plumbing: jobs.yaml -> TaskScheduler -> JobRunner -> run_dreaming_job()."""
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "jobs.yaml").write_text(
+        "jobs:\n"
+        "  dreaming-reflection:\n"
+        "    every: 1s\n"
+        "    type: python\n"
+        "    nodes: all\n"
+        "    callback: skcapstone.dreaming_job:run_dreaming_job\n",
+        encoding="utf-8",
+    )
+
+    from skcapstone import dreaming_job
+    from skcapstone.dreaming import DreamingConfig
+
+    calls = []
+    monkeypatch.setattr(
+        dreaming_job, "load_dreaming_config", lambda home: DreamingConfig(enabled=True)
+    )
+
+    class FakeEngine:
+        def __init__(self, **kw):
+            calls.append(kw)
+
+        def dream(self):
+            return None
+
+    monkeypatch.setattr(dreaming_job, "DreamingEngine", FakeEngine)
+
+    from skcapstone.scheduled_tasks import build_scheduler
+
+    sched = build_scheduler(home=tmp_path, stop_event=threading.Event())
+    sched.tick_config_jobs()
+
+    import time
+    for _ in range(50):
+        if calls:
+            break
+        time.sleep(0.05)
+    assert calls, "run_dreaming_job should have fired via the jobs.yaml config-job path"
+    assert calls[0]["consciousness_loop"] is None  # nothing registered it in this test process
+
+    from skcapstone.scheduler_state import SchedulerState
+    import socket
+
+    st = SchedulerState(root=tmp_path, hostname=socket.gethostname())
+    assert st.last_run("dreaming-reflection") is not None
