@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 
 from skcapstone.blueprints.schema import ModelTier
 
-
 # ---------------------------------------------------------------------------
 # Supporting models
 # ---------------------------------------------------------------------------

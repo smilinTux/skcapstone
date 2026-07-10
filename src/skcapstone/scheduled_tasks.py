@@ -28,8 +28,8 @@ import shutil
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -724,8 +724,9 @@ def build_scheduler(
     except Exception:
         logger.debug("ITIL scheduled tasks not available — skipped")
 
-    from .scheduler_jobs import load_jobs_with_dropins, current_host_aliases
     import socket
+
+    from .scheduler_jobs import current_host_aliases, load_jobs_with_dropins
     jobs_path = Path(home) / "config" / "jobs.yaml"
     jobs = load_jobs_with_dropins(jobs_path)
     if jobs:
