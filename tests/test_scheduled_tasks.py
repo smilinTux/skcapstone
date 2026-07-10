@@ -258,6 +258,13 @@ class TestBuildScheduler:
         task = next(s for s in scheduler.status() if s["name"] == "profile_freshness_check")
         assert task["interval_seconds"] == 86400
 
+    def test_dreaming_reflection_is_not_a_builtin_task(self, tmp_path):
+        """dreaming moved to jobs.yaml (2026-07-09) - must not double-fire as a builtin."""
+        stop = threading.Event()
+        scheduler = build_scheduler(tmp_path, stop)
+        names = {s["name"] for s in scheduler.status()}
+        assert "dreaming_reflection" not in names
+
 
 # ---------------------------------------------------------------------------
 # Individual task callback tests
