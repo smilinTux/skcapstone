@@ -44,6 +44,8 @@ _FALLBACK_STIGNORE = """\
 **/*.db-wal
 **/*.db-shm
 **/*.sync-conflict-*
+.stversions
+**/.stversions
 **/*.pid
 daemon.pid
 **/daemon.log
@@ -57,6 +59,7 @@ file-transfer
 **/skwhisper/state.json
 **/memory/archive
 **/comms/archive
+**/skcomms/acks
 
 // Python cache
 __pycache__

@@ -2,13 +2,18 @@
 Housekeeping — storage pruning for the sovereign agent.
 
 Prunes stale files that accumulate in the agent profile:
-- ACK files in ~/.skcomms/acks/ (age-based, 24h default)
+- ACK files in ~/.skcapstone/skcomms/acks/ (age-based, 24h default) — the
+  canonical skcomms home (SKCOMMS_HOME default), NOT the dead ~/.skcomms path
 - Delivered envelopes in ~/.skcapstone/sync/comms/outbox/ (age-based, 48h)
 - Seed snapshots in ~/.skcapstone/sync/outbox/ (count-based, keep 10)
 - Legacy v1 comms outboxes (age-based, 7d) — both the root path
   ~/.skcapstone/comms/outbox/<recipient>/ and every per-agent path
   ~/.skcapstone/agents/<agent>/comms/outbox/<recipient>/, plus any v1
   broadcast subdir literally named ``*`` (removed wholesale)
+- Runtime comms junk (age-based): the skcomms mailbox/federation inbox
+  ~/.skcapstone/skcomms/inbox/ (72h), consumed-message archives in every
+  comms/archive tree (48h), and FLAT ~/.skcapstone/agents/<agent>/comms/outbox
+  envelopes that prune_legacy_comms's subdir-only sweep never reached (48h)
 
 These directories grow unbounded and can bloat a ~15MB profile to 300MB+.
 Run via daemon loop (hourly) or CLI: ``skcapstone housekeeping [--dry-run]``.
@@ -45,6 +50,19 @@ DEFAULT_INBOX_MAX_AGE_HOURS = 168  # 7 days
 # Deadletter TTL: quarantined envelopes are kept for inspection but must not
 # grow unbounded (they replicate to every peer). Backstop only.
 DEFAULT_DEADLETTER_MAX_AGE_HOURS = 168  # 7 days
+# skcomms mailbox/federation inbox ({home}/skcomms/inbox) is largely STATIC but
+# accumulates (266k observed). Conservative TTL — these are delivered/consumed
+# mailbox envelopes; comfortably past any consume latency at 72h.
+DEFAULT_SKCOMMS_INBOX_MAX_AGE_HOURS = 72  # 3 days
+# Consumed messages archived by FileTransport.receive into comms/archive
+# (agents/<agent>/comms/archive + {home}/comms/archive, ~170k observed). These
+# are ALREADY delivered — safe to reclaim at a short TTL.
+DEFAULT_COMMS_ARCHIVE_MAX_AGE_HOURS = 48  # 2 days
+# Live v2 per-agent comms outbox flat envelopes (agents/<agent>/comms/outbox,
+# ~54k observed). A shared-filesystem write is a delivered queue hand-off; by
+# 48h it has long since synced + been consumed. Tighter than the 7d legacy TTL
+# because these are live, high-churn outboxes (not long-dead v1 data).
+DEFAULT_OUTBOX_FLAT_MAX_AGE_HOURS = 48  # 2 days
 
 
 def _pid_is_alive(pidfile: Path) -> bool:
@@ -485,6 +503,132 @@ def prune_derived_junk(skcapstone_home: Path) -> int:
     return removed
 
 
+def prune_skcomms_inbox(
+    skcapstone_home: Path,
+    max_age_hours: int = DEFAULT_SKCOMMS_INBOX_MAX_AGE_HOURS,
+) -> int:
+    """TTL-prune the skcomms mailbox/federation inbox tree.
+
+    Targets ``{skcapstone_home}/skcomms/inbox`` — the canonical skcomms home
+    (``skcomms.home.skcomms_home()`` defaults to ``~/.skcapstone/skcomms``).
+    The tree is swept RECURSIVELY: per-peer mailbox subdirs
+    (``inbox/<peer>/*.skc.json``) and the bulk ``inbox/archive`` subtree.
+
+    This inbox is largely static but accumulates unbounded (266k files
+    observed on a live node), pinning the Syncthing scanner. These are
+    delivered/consumed mailbox envelopes, so a conservative TTL reclaims them
+    safely. Only ``*.skc.json`` files are removed (never symlinks/dotfiles).
+
+    Args:
+        skcapstone_home: Path to ~/.skcapstone.
+        max_age_hours: Delete envelopes older than this. Default 72 (3 days).
+
+    Returns:
+        Number of files deleted.
+    """
+    inbox_root = skcapstone_home / "skcomms" / "inbox"
+    return _prune_skc_tree_by_ttl(inbox_root, max_age_hours, "skcomms_inbox")
+
+
+def prune_comms_archive(
+    skcapstone_home: Path,
+    max_age_hours: int = DEFAULT_COMMS_ARCHIVE_MAX_AGE_HOURS,
+) -> int:
+    """TTL-prune consumed-message archives (FileTransport.receive archive).
+
+    ``FileTransport.receive`` archives every consumed inbox file into
+    ``comms/archive``. Nothing ever deletes them, so they grow unbounded
+    (~170k observed). They are ALREADY-CONSUMED messages — safe to reclaim.
+
+    Sweeps BOTH:
+    - ``{home}/comms/archive`` (root path)
+    - every ``{home}/agents/<agent>/comms/archive`` (per-agent path)
+
+    Each root is swept recursively; only ``*.skc.json`` files older than
+    *max_age_hours* are removed (never symlinks/dotfiles).
+
+    Args:
+        skcapstone_home: Path to ~/.skcapstone.
+        max_age_hours: Delete archived envelopes older than this. Default 48.
+
+    Returns:
+        Number of files deleted.
+    """
+    deleted = 0
+    deleted += _prune_skc_tree_by_ttl(
+        skcapstone_home / "comms" / "archive", max_age_hours, "comms_archive"
+    )
+
+    agents_dir = skcapstone_home / "agents"
+    if agents_dir.is_dir():
+        for agent_dir in agents_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            deleted += _prune_skc_tree_by_ttl(
+                agent_dir / "comms" / "archive", max_age_hours, "comms_archive"
+            )
+    return deleted
+
+
+def prune_comms_outbox_flat(
+    skcapstone_home: Path,
+    max_age_hours: int = DEFAULT_OUTBOX_FLAT_MAX_AGE_HOURS,
+) -> int:
+    """TTL-prune FLAT envelopes directly in the live v2 comms outboxes.
+
+    The live v2 file transport writes envelopes FLAT into each outbox
+    (``agents/<agent>/comms/outbox/<id>.skc.json``), but
+    :func:`prune_legacy_comms` only reaches files nested one level down inside
+    per-recipient SUBDIRS. So the flat outbox files (~54k observed) were never
+    pruned. This closes that gap.
+
+    It reuses :func:`_legacy_outbox_dirs` to enumerate the outbox roots
+    (``{home}/comms/outbox`` + every ``agents/<agent>/comms/outbox``) and
+    deletes only FLAT ``*.skc.json`` files directly in each root — it does NOT
+    descend into per-recipient subdirs (those stay owned by
+    :func:`prune_legacy_comms`), so the two never double-handle a file.
+
+    A shared-filesystem write is a delivered queue hand-off; by *max_age_hours*
+    (48h default, tighter than the 7d legacy TTL) it has long since synced and
+    been consumed. In-flight ``.tmp`` / leading-dot files are skipped.
+
+    Args:
+        skcapstone_home: Path to ~/.skcapstone.
+        max_age_hours: Delete envelopes older than this. Default 48 (2 days).
+
+    Returns:
+        Number of files deleted.
+    """
+    cutoff = time.time() - (max_age_hours * 3600)
+    deleted = 0
+
+    for outbox_dir in _legacy_outbox_dirs(skcapstone_home):
+        try:
+            entries = list(outbox_dir.iterdir())
+        except OSError as exc:
+            logger.warning("Failed to scan outbox %s: %s", outbox_dir, exc)
+            continue
+
+        for path in entries:
+            # Only flat envelope files; recipient subdirs belong to legacy prune.
+            if not path.is_file() or path.is_symlink():
+                continue
+            if path.name.startswith("."):
+                continue
+            if not path.name.endswith(".skc.json"):
+                continue
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    deleted += 1
+            except OSError as exc:
+                logger.warning("Failed to delete outbox envelope %s: %s", path, exc)
+
+    if deleted:
+        logger.info("Pruned %d flat comms-outbox envelopes under %s", deleted, skcapstone_home)
+    return deleted
+
+
 def run_housekeeping(
     skcapstone_home: Optional[Path] = None,
     skcomms_home: Optional[Path] = None,
@@ -510,7 +654,15 @@ def run_housekeeping(
     if skcapstone_home is None:
         skcapstone_home = Path(AGENT_HOME).expanduser()
     if skcomms_home is None:
-        skcomms_home = Path("~/.skcomms").expanduser()
+        # The canonical skcomms home is ~/.skcapstone/skcomms (skcomms.home
+        # .skcomms_home() default, honoring SKCOMMS_HOME) — NOT ~/.skcomms.
+        # The old ~/.skcomms default meant prune_acks swept a dead path while
+        # the real acks piled up at {home}/skcomms/acks (179k observed). Derive
+        # from skcapstone_home so a custom shared_root stays consistent.
+        env_home = os.environ.get("SKCOMMS_HOME")
+        skcomms_home = (
+            Path(env_home).expanduser() if env_home else skcapstone_home / "skcomms"
+        )
 
     results: dict[str, dict] = {}
 
@@ -526,6 +678,13 @@ def run_housekeeping(
         # consciousness loop actually consumes / quarantines to), recursively.
         "inbox": skcapstone_home / "sync" / "comms" / "inbox",
         "deadletter": skcapstone_home / "sync" / "comms" / "deadletter",
+        # Runtime comms junk (F: comms-runtime-junk). The skcomms mailbox inbox
+        # is a single tree; comms_archive/comms_outbox_flat report the ROOT path
+        # for display only — their sweeps also cover every agents/<agent>/comms/*
+        # (see the respective prune functions).
+        "skcomms_inbox": skcapstone_home / "skcomms" / "inbox",
+        "comms_archive": skcapstone_home / "comms" / "archive",
+        "comms_outbox_flat": skcapstone_home / "comms" / "outbox",
     }
 
     for key, path in targets.items():
@@ -563,6 +722,15 @@ def run_housekeeping(
         results["deadletter"]["would_delete"] = _count_stale_deadletter(
             skcapstone_home, DEFAULT_DEADLETTER_MAX_AGE_HOURS
         )
+        results["skcomms_inbox"]["would_delete"] = _count_stale_skc_tree(
+            skcapstone_home / "skcomms" / "inbox", DEFAULT_SKCOMMS_INBOX_MAX_AGE_HOURS
+        )
+        results["comms_archive"]["would_delete"] = _count_stale_comms_archive(
+            skcapstone_home, DEFAULT_COMMS_ARCHIVE_MAX_AGE_HOURS
+        )
+        results["comms_outbox_flat"]["would_delete"] = _count_stale_outbox_flat(
+            skcapstone_home, DEFAULT_OUTBOX_FLAT_MAX_AGE_HOURS
+        )
         results["derived_junk"]["would_delete"] = _count_derived_junk(skcapstone_home)
         results["dry_run"] = True
         return results
@@ -574,6 +742,9 @@ def run_housekeeping(
     results["legacy_comms"]["deleted"] = prune_legacy_comms(skcapstone_home)
     results["inbox"]["deleted"] = prune_inbox(skcapstone_home)
     results["deadletter"]["deleted"] = prune_deadletter(skcapstone_home)
+    results["skcomms_inbox"]["deleted"] = prune_skcomms_inbox(skcapstone_home)
+    results["comms_archive"]["deleted"] = prune_comms_archive(skcapstone_home)
+    results["comms_outbox_flat"]["deleted"] = prune_comms_outbox_flat(skcapstone_home)
     results["derived_junk"]["deleted"] = prune_derived_junk(skcapstone_home)
 
     # Measure sizes after
@@ -741,6 +912,52 @@ def _count_stale_deadletter(skcapstone_home: Path, max_age_hours: int) -> int:
     ``sync/comms/deadletter`` older than *max_age_hours*.
     """
     return _count_stale_skc_tree(skcapstone_home / "sync" / "comms" / "deadletter", max_age_hours)
+
+
+def _count_stale_comms_archive(skcapstone_home: Path, max_age_hours: int) -> int:
+    """Count consumed-archive envelopes that would be pruned (for dry-run).
+
+    Mirrors :func:`prune_comms_archive`: recursive ``*.skc.json`` under
+    ``{home}/comms/archive`` plus every ``agents/<agent>/comms/archive``.
+    """
+    count = _count_stale_skc_tree(skcapstone_home / "comms" / "archive", max_age_hours)
+    agents_dir = skcapstone_home / "agents"
+    if agents_dir.is_dir():
+        for agent_dir in agents_dir.iterdir():
+            if agent_dir.is_dir():
+                count += _count_stale_skc_tree(
+                    agent_dir / "comms" / "archive", max_age_hours
+                )
+    return count
+
+
+def _count_stale_outbox_flat(skcapstone_home: Path, max_age_hours: int) -> int:
+    """Count flat outbox envelopes that would be pruned (for dry-run).
+
+    Mirrors :func:`prune_comms_outbox_flat`: FLAT ``*.skc.json`` files directly
+    in each outbox root (``{home}/comms/outbox`` + every
+    ``agents/<agent>/comms/outbox``), NOT descending into recipient subdirs.
+    """
+    cutoff = time.time() - (max_age_hours * 3600)
+    count = 0
+    for outbox_dir in _legacy_outbox_dirs(skcapstone_home):
+        try:
+            entries = list(outbox_dir.iterdir())
+        except OSError:
+            continue
+        for path in entries:
+            if not path.is_file() or path.is_symlink():
+                continue
+            if path.name.startswith("."):
+                continue
+            if not path.name.endswith(".skc.json"):
+                continue
+            try:
+                if path.stat().st_mtime < cutoff:
+                    count += 1
+            except OSError:
+                pass
+    return count
 
 
 def _count_derived_junk(skcapstone_home: Path) -> int:
