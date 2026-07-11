@@ -1,0 +1,11 @@
+[Unit]
+Description=SKCapstone Housekeeping Timer — decoupled prune safety net for non-daemon nodes
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

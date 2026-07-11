@@ -22,13 +22,41 @@ AGENT_HOME = Path.home() / ".skcapstone"
 SYNC_DIR = AGENT_HOME / "sync"
 SHARED_FOLDER_ID = "skcapstone-sync"
 
-# Reason: .stignore protects private keys from leaving this node
-STIGNORE_CONTENTS = """\
+# Reason: the .stignore both protects private keys AND keeps derived/runtime
+# state (chroma, DB indexes, logs, sessions, pidfiles, comms/archive) from
+# pinning the Syncthing scanner. It is the SAME bundled template that
+# skcapstone.ensure_skeleton installs — loaded here so the two never drift.
+_STIGNORE_TEMPLATE = Path(__file__).resolve().parent.parent / "defaults" / ".stignore"
+
+# Fallback used only if the packaged template is somehow unavailable.
+_FALLBACK_STIGNORE = """\
 // SKCapstone Sovereign Singularity — Syncthing ignore rules
 // Private key material must never leave this node
 *.key
 *.pem
 **/private.*
+**/telegram.session
+
+// Derived / runtime state (never source of truth)
+**/memory/chroma
+**/chroma.bak*
+**/memory/index.db
+**/*.db-wal
+**/*.db-shm
+**/*.sync-conflict-*
+**/*.pid
+daemon.pid
+**/daemon.log
+logs
+sessions
+conversations
+backups
+deployments
+pubsub
+file-transfer
+**/skwhisper/state.json
+**/memory/archive
+**/comms/archive
 
 // Python cache
 __pycache__
@@ -40,6 +68,17 @@ __pycache__
 Thumbs.db
 desktop.ini
 """
+
+
+def _load_stignore_template() -> str:
+    """Read the bundled .stignore template, falling back to an inline copy."""
+    try:
+        return _STIGNORE_TEMPLATE.read_text(encoding="utf-8")
+    except OSError:
+        return _FALLBACK_STIGNORE
+
+
+STIGNORE_CONTENTS = _load_stignore_template()
 
 # Reason: Syncthing stores its config in different locations per platform
 if platform.system() == "Windows":
