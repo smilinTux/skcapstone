@@ -41,6 +41,11 @@ class TestTemplateContents:
             "**/memory/archive",
             "**/comms/archive",
             "__pycache__",
+            # F5: terminal/local comms staging must not replicate to peers.
+            "deadletter",
+            "**/deadletter",
+            "processing",
+            "**/processing",
         ):
             assert pattern in text, f"missing derived-exclude rule: {pattern!r}"
 

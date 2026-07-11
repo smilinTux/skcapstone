@@ -36,6 +36,12 @@ file-transfer
 **/skwhisper/state.json
 **/memory/archive
 **/comms/archive
+// Terminal/local comms staging — node-local, must not replicate to peers.
+// deadletter = quarantined poison envelopes; processing = in-flight staging.
+deadletter
+**/deadletter
+processing
+**/processing
 
 // --- Python / build / OS junk ---
 __pycache__

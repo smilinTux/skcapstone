@@ -42,6 +42,47 @@ DEFAULT_LEGACY_COMMS_MAX_AGE_HOURS = 168  # 7 days — legacy v1 data is long-de
 # reclaims envelopes on nodes with no live consumer. It must comfortably exceed
 # consume latency — never set it below the daemon poll interval.
 DEFAULT_INBOX_MAX_AGE_HOURS = 168  # 7 days
+# Deadletter TTL: quarantined envelopes are kept for inspection but must not
+# grow unbounded (they replicate to every peer). Backstop only.
+DEFAULT_DEADLETTER_MAX_AGE_HOURS = 168  # 7 days
+
+
+def _pid_is_alive(pidfile: Path) -> bool:
+    """Return True if *pidfile* names a live process (must be preserved).
+
+    A pidfile is considered NOT alive (safe to delete) if it is unreadable,
+    empty, non-integer, names a non-positive PID, or names a PID that no longer
+    exists (``ProcessLookupError`` from ``os.kill(pid, 0)``). A PID that exists
+    but is owned by another user raises ``PermissionError`` — that still proves
+    the process is alive, so it is preserved.
+
+    Args:
+        pidfile: Path to a ``*.pid`` file.
+
+    Returns:
+        True if the named process is alive; False otherwise.
+    """
+    try:
+        raw = pidfile.read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if not raw:
+        return False
+    try:
+        pid = int(raw)
+    except ValueError:
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False  # no such process — stale pidfile
+    except PermissionError:
+        return True  # exists, owned by another user
+    except OSError:
+        return False
+    return True
 
 
 def prune_acks(skcomms_home: Path, max_age_hours: int = DEFAULT_ACK_MAX_AGE_HOURS) -> int:
@@ -300,80 +341,93 @@ def prune_legacy_comms(
     return deleted
 
 
-def _inbox_dirs(skcapstone_home: Path) -> list[Path]:
-    """Return all comms-inbox roots that exist under *skcapstone_home*.
+def _prune_skc_tree_by_ttl(root: Path, max_age_hours: int, label: str) -> int:
+    """Recursively delete ``*.skc.json`` files older than *max_age_hours* under *root*.
 
-    Mirrors :func:`_legacy_outbox_dirs` but for inbox delivery targets:
-    - ``<home>/comms/inbox`` — the root path.
-    - ``<home>/agents/<agent>/comms/inbox`` — every per-agent path.
+    Symlink-safe (symlinked files skipped; ``rglob`` does not descend into
+    symlinked directories) and dotfile/.tmp-safe (``*.skc.json`` never matches a
+    ``.tmp`` file, and leading-dot names are skipped explicitly).
 
     Args:
-        skcapstone_home: Path to ~/.skcapstone.
+        root: Directory tree to sweep.
+        max_age_hours: Delete envelopes older than this.
+        label: Human label for the log line.
 
     Returns:
-        List of existing inbox directories (may be empty).
+        Number of files deleted.
     """
-    roots: list[Path] = []
+    if not root.is_dir():
+        return 0
 
-    root_inbox = skcapstone_home / "comms" / "inbox"
-    if root_inbox.is_dir():
-        roots.append(root_inbox)
+    cutoff = time.time() - (max_age_hours * 3600)
+    deleted = 0
 
-    agents_dir = skcapstone_home / "agents"
-    if agents_dir.is_dir():
-        for agent_dir in agents_dir.iterdir():
-            if not agent_dir.is_dir():
-                continue
-            agent_inbox = agent_dir / "comms" / "inbox"
-            if agent_inbox.is_dir():
-                roots.append(agent_inbox)
+    for path in root.rglob("*.skc.json"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        if path.name.startswith("."):
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                deleted += 1
+        except OSError as exc:
+            logger.warning("Failed to delete %s envelope %s: %s", label, path, exc)
 
-    return roots
+    if deleted:
+        logger.info("Pruned %d stale %s envelopes under %s", deleted, label, root)
+    return deleted
 
 
 def prune_inbox(
     skcapstone_home: Path,
     max_age_hours: int = DEFAULT_INBOX_MAX_AGE_HOURS,
 ) -> int:
-    """Delete inbox envelopes older than *max_age_hours* (TTL backstop, F6).
+    """Delete inbox envelopes older than *max_age_hours* (TTL backstop, F3/F6).
 
     This is the safety net for nodes whose consumer never ran: the primary GC
-    is delete-on-consume in the consciousness loop. Only ``*.skc.json`` files
-    are touched (never symlinks, never other files), across both the root
-    ``<home>/comms/inbox`` and every ``<home>/agents/<agent>/comms/inbox``.
+    is delete-on-consume in the consciousness loop. It targets the exact tree
+    the consciousness loop consumes — ``{shared_root}/sync/comms/inbox`` — and
+    sweeps it RECURSIVELY (per-peer ``inbox/<peer>/*.skc.json`` subdirs).
+
+    It deliberately does NOT touch ``agents/<agent>/comms/inbox``: that is
+    SKCHAT's inbox, consumed by a different service (skchat/skcomms owns its
+    lifecycle via ``FileTransport.prune_inbox``). Only ``*.skc.json`` files are
+    removed (never symlinks, dotfiles, or other files).
 
     Args:
-        skcapstone_home: Path to ~/.skcapstone.
+        skcapstone_home: Shared root (``~/.skcapstone``); the sweep runs under
+            its ``sync/comms/inbox`` subtree.
         max_age_hours: Delete envelopes older than this. Default 168 (7 days).
 
     Returns:
         Number of files deleted.
     """
-    cutoff = time.time() - (max_age_hours * 3600)
-    deleted = 0
+    inbox_root = skcapstone_home / "sync" / "comms" / "inbox"
+    return _prune_skc_tree_by_ttl(inbox_root, max_age_hours, "inbox")
 
-    for inbox_dir in _inbox_dirs(skcapstone_home):
-        try:
-            entries = list(inbox_dir.iterdir())
-        except OSError as exc:
-            logger.warning("Failed to scan inbox %s: %s", inbox_dir, exc)
-            continue
 
-        for path in entries:
-            if not path.is_file() or path.is_symlink():
-                continue
-            if not path.name.endswith(".skc.json"):
-                continue
-            try:
-                if path.stat().st_mtime < cutoff:
-                    path.unlink()
-                    deleted += 1
-            except OSError as exc:
-                logger.warning("Failed to delete inbox envelope %s: %s", path, exc)
+def prune_deadletter(
+    skcapstone_home: Path,
+    max_age_hours: int = DEFAULT_DEADLETTER_MAX_AGE_HOURS,
+) -> int:
+    """Delete deadletter envelopes older than *max_age_hours* (F5).
 
-    if deleted:
-        logger.info("Pruned %d stale inbox envelopes under %s", deleted, skcapstone_home)
-    return deleted
+    Quarantined (malformed/oversized/poison) envelopes are moved to
+    ``{shared_root}/sync/comms/deadletter`` by the consciousness loop. They are
+    kept for inspection but replicate to every peer, so an unbounded deadletter
+    tree bloats the whole cluster. This TTL backstop reclaims them. Recursive,
+    symlink-safe, ``*.skc.json`` only.
+
+    Args:
+        skcapstone_home: Shared root (``~/.skcapstone``).
+        max_age_hours: Delete envelopes older than this. Default 168 (7 days).
+
+    Returns:
+        Number of files deleted.
+    """
+    dead_root = skcapstone_home / "sync" / "comms" / "deadletter"
+    return _prune_skc_tree_by_ttl(dead_root, max_age_hours, "deadletter")
 
 
 def prune_derived_junk(skcapstone_home: Path) -> int:
@@ -382,7 +436,9 @@ def prune_derived_junk(skcapstone_home: Path) -> int:
     Sweeps the whole profile tree for:
     - ``**/chroma.bak*`` — stale ChromaDB backup dumps (dirs removed wholesale
       via :func:`shutil.rmtree`, files unlinked). Live ``chroma`` is untouched.
-    - ``**/*.pid`` — stale pidfiles.
+    - ``**/*.pid`` — pidfiles whose process is NOT alive. A pidfile naming a
+      live PID (e.g. the running daemon's own ``daemon.pid``) is preserved;
+      only dead / empty / garbage pidfiles are removed.
 
     Symlinks are never followed. Best-effort; individual failures are logged and
     skipped.
@@ -414,6 +470,9 @@ def prune_derived_junk(skcapstone_home: Path) -> int:
 
     for path in skcapstone_home.rglob("*.pid"):
         if path.is_symlink() or not path.is_file():
+            continue
+        # NEVER delete a live daemon's pidfile — only stale/garbage ones.
+        if _pid_is_alive(path):
             continue
         try:
             path.unlink()
@@ -463,9 +522,10 @@ def run_housekeeping(
         # Size/path reported is the v1 root outbox only; the sweep also covers
         # every agents/<agent>/comms/outbox (see prune_legacy_comms).
         "legacy_comms": skcapstone_home / "comms" / "outbox",
-        # Size/path reported is the root comms/inbox only; the TTL sweep also
-        # covers every agents/<agent>/comms/inbox (see prune_inbox).
-        "inbox": skcapstone_home / "comms" / "inbox",
+        # The inbox/deadletter TTL sweeps run under sync/comms (the tree the
+        # consciousness loop actually consumes / quarantines to), recursively.
+        "inbox": skcapstone_home / "sync" / "comms" / "inbox",
+        "deadletter": skcapstone_home / "sync" / "comms" / "deadletter",
     }
 
     for key, path in targets.items():
@@ -500,6 +560,9 @@ def run_housekeeping(
         results["inbox"]["would_delete"] = _count_stale_inbox(
             skcapstone_home, DEFAULT_INBOX_MAX_AGE_HOURS
         )
+        results["deadletter"]["would_delete"] = _count_stale_deadletter(
+            skcapstone_home, DEFAULT_DEADLETTER_MAX_AGE_HOURS
+        )
         results["derived_junk"]["would_delete"] = _count_derived_junk(skcapstone_home)
         results["dry_run"] = True
         return results
@@ -510,6 +573,7 @@ def run_housekeeping(
     results["seed_outbox"]["deleted"] = prune_seeds(targets["seed_outbox"])
     results["legacy_comms"]["deleted"] = prune_legacy_comms(skcapstone_home)
     results["inbox"]["deleted"] = prune_inbox(skcapstone_home)
+    results["deadletter"]["deleted"] = prune_deadletter(skcapstone_home)
     results["derived_junk"]["deleted"] = prune_derived_junk(skcapstone_home)
 
     # Measure sizes after
@@ -642,39 +706,41 @@ def _count_stale_legacy_comms(skcapstone_home: Path, max_age_hours: int) -> int:
     return count
 
 
+def _count_stale_skc_tree(root: Path, max_age_hours: int) -> int:
+    """Count ``*.skc.json`` files older than *max_age_hours* under *root* (dry-run)."""
+    if not root.is_dir():
+        return 0
+    cutoff = time.time() - (max_age_hours * 3600)
+    count = 0
+    for path in root.rglob("*.skc.json"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        if path.name.startswith("."):
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                count += 1
+        except OSError:
+            pass
+    return count
+
+
 def _count_stale_inbox(skcapstone_home: Path, max_age_hours: int) -> int:
     """Count inbox envelopes that would be pruned (for dry-run).
 
-    Mirrors :func:`prune_inbox`: counts ``*.skc.json`` files older than
-    *max_age_hours* across the root and every per-agent inbox.
-
-    Args:
-        skcapstone_home: Path to ~/.skcapstone.
-        max_age_hours: Age threshold matching the prune default.
-
-    Returns:
-        Number of files that would be deleted.
+    Mirrors :func:`prune_inbox`: recursive ``*.skc.json`` under
+    ``sync/comms/inbox`` older than *max_age_hours*.
     """
-    cutoff = time.time() - (max_age_hours * 3600)
-    count = 0
+    return _count_stale_skc_tree(skcapstone_home / "sync" / "comms" / "inbox", max_age_hours)
 
-    for inbox_dir in _inbox_dirs(skcapstone_home):
-        try:
-            entries = list(inbox_dir.iterdir())
-        except OSError:
-            continue
-        for path in entries:
-            if not path.is_file() or path.is_symlink():
-                continue
-            if not path.name.endswith(".skc.json"):
-                continue
-            try:
-                if path.stat().st_mtime < cutoff:
-                    count += 1
-            except OSError:
-                pass
 
-    return count
+def _count_stale_deadletter(skcapstone_home: Path, max_age_hours: int) -> int:
+    """Count deadletter envelopes that would be pruned (for dry-run).
+
+    Mirrors :func:`prune_deadletter`: recursive ``*.skc.json`` under
+    ``sync/comms/deadletter`` older than *max_age_hours*.
+    """
+    return _count_stale_skc_tree(skcapstone_home / "sync" / "comms" / "deadletter", max_age_hours)
 
 
 def _count_derived_junk(skcapstone_home: Path) -> int:
@@ -697,7 +763,7 @@ def _count_derived_junk(skcapstone_home: Path) -> int:
         if not path.is_symlink():
             count += 1
     for path in skcapstone_home.rglob("*.pid"):
-        if path.is_file() and not path.is_symlink():
+        if path.is_file() and not path.is_symlink() and not _pid_is_alive(path):
             count += 1
     return count
 
@@ -721,6 +787,8 @@ def _derived_junk_size(skcapstone_home: Path) -> int:
     for path in skcapstone_home.rglob("*.pid"):
         if path.is_symlink() or not path.is_file():
             continue
+        if _pid_is_alive(path):
+            continue  # live pidfile is not junk — do not count its bytes as freeable
         try:
             total += path.stat().st_size
         except OSError:

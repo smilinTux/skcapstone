@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -49,10 +50,25 @@ logger = logging.getLogger("skcapstone.consciousness")
 # Default inbox path under shared root
 _INBOX_DIR = "sync/comms/inbox"
 
-# Sibling of the inbox where malformed/oversized envelopes are quarantined.
-# Presence-on-disk in the inbox == unconsumed; a deadlettered file is moved out
-# so it is neither re-scanned nor left to pile up (RC5 remediation, F5).
+# Sibling of the inbox where malformed/oversized/poison envelopes are
+# quarantined. Presence-on-disk in the inbox == unconsumed; a deadlettered file
+# is moved out so it is neither re-scanned nor left to pile up (RC5, F5).
 _DEADLETTER_DIR = "sync/comms/deadletter"
+
+# Staging sibling for directed envelopes that are IN-FLIGHT. A directed inbox
+# file is atomically renamed here BEFORE being submitted to the worker pool, and
+# deleted only after the worker SUCCEEDS. This makes delivery crash-safe: a
+# worker/process failure leaves the envelope in processing/ (never lost), and
+# the rescan re-submits it. (F2)
+_PROCESSING_DIR = "sync/comms/processing"
+
+# A staged envelope that keeps failing is deadlettered after this many attempts
+# so a poison message cannot be retried forever. (F2)
+_MAX_PROCESS_ATTEMPTS = 5
+
+# The rescan only resubmits processing/ files older than this, so it never races
+# an in-flight worker that just staged a file. (F2)
+_PROCESSING_STALE_SECONDS = 120
 
 # Allowlist for peer name characters (alphanumeric + safe punctuation, no path separators)
 _PEER_NAME_SAFE_RE = re.compile(r"[^a-zA-Z0-9_\-@\.]")
@@ -122,6 +138,9 @@ class ConsciousnessConfig(BaseModel):
     rate_limit_enabled: bool = True
     rate_limit_max_messages: int = 20
     rate_limit_window_s: float = 60.0
+    # Catch-up rescan cadence: re-submits anything stuck in processing/ and any
+    # inbox files the create-only inotify watcher missed. (F2)
+    rescan_interval_s: int = 300
 
 
 # ---------------------------------------------------------------------------
@@ -1461,6 +1480,11 @@ class ConsciousnessLoop:
         self._processed_ids: set[str] = set()
         self._processed_ids_lock = threading.Lock()
 
+        # Per-staged-file retry counters (in-memory; F2). Keyed by the processing
+        # filename. Reset on restart — at-least-once delivery is the guarantee.
+        self._process_attempts: dict[str, int] = {}
+        self._process_attempts_lock = threading.Lock()
+
         # Loop safety — circuit breaker for runaway agent<->agent reply storms
         self._autoreply_guard = _AutoReplyGuard()
 
@@ -1531,6 +1555,22 @@ class ConsciousnessLoop:
         )
         t_cfg.start()
         threads.append(t_cfg)
+
+        # Startup catch-up: recover anything stranded in processing/ or already
+        # sitting in the inbox before the create-only watcher started (F2).
+        try:
+            self.rescan_inbox()
+        except Exception as exc:
+            logger.warning("Startup inbox rescan failed: %s", exc)
+
+        # Periodic catch-up rescan
+        t_rescan = threading.Thread(
+            target=self._run_rescan,
+            name="consciousness-rescan",
+            daemon=True,
+        )
+        t_rescan.start()
+        threads.append(t_rescan)
 
         logger.info(
             "Consciousness loop started — inotify=%s backends=%s",
@@ -2163,12 +2203,13 @@ class ConsciousnessLoop:
             logger.debug("Failed to remove consumed inbox file %s: %s", path, exc)
 
     def _deadletter_inbox_file(self, path: Path) -> None:
-        """Quarantine a malformed/oversized envelope out of the inbox.
+        """Quarantine a malformed/oversized/poison envelope out of the inbox.
 
         Moves the file to the ``deadletter/`` sibling of the inbox so it is
         neither re-scanned nor left to pile up, while preserving it for
-        inspection. Name collisions are resolved with a millisecond suffix so
-        two bad files never clobber each other. Best-effort.
+        inspection. Name collisions are resolved with a random uuid suffix so
+        two bad files never clobber each other (a millisecond suffix could
+        collide under bursts). Best-effort.
 
         Args:
             path: Path to the offending ``.skc.json`` file.
@@ -2178,9 +2219,11 @@ class ConsciousnessLoop:
             dead_dir.mkdir(parents=True, exist_ok=True)
             dest = dead_dir / path.name
             if dest.exists():
-                dest = dead_dir / f"{path.stem}.{int(time.time() * 1000)}{path.suffix}"
+                dest = dead_dir / f"{uuid.uuid4().hex[:8]}-{path.name}"
             shutil.move(str(path), str(dest))
             logger.warning("Routed inbox file to deadletter: %s -> %s", path, dest)
+            # Drop any retry counter for a now-deadlettered staged file.
+            self._clear_attempts(path)
         except FileNotFoundError:
             pass
         except OSError as exc:
@@ -2235,33 +2278,39 @@ class ConsciousnessLoop:
                 self._deadletter_inbox_file(path)
                 return
 
-            # Filter by recipient — skip messages not addressed to this agent
+            # Recipient routing. An EMPTY recipient is a broadcast: every
+            # co-resident agent sharing this inbox must receive it, so a
+            # broadcast is processed but LEFT on disk for the TTL prune (F6). A
+            # non-empty recipient addressed to another agent is skipped (their
+            # loop handles it; the TTL prune reclaims it).
             recipient = data.get("recipient", "")
+            is_broadcast = not recipient
             if self._agent_name and recipient and recipient.lower() != self._agent_name:
                 logger.debug("Skipping message for %s (we are %s)", recipient, self._agent_name)
                 return
 
             # Deduplication by message_id (envelopes vary: message_id /
-            # envelope_id / id — accept any so dedupe is never silently skipped)
+            # envelope_id / id — accept any so dedupe is never silently skipped).
+            # NOTE: we only PEEK here; the id is marked processed *after* a
+            # successful submit/stage so a dropped message is never marked (F7).
             message_id = (
                 data.get("message_id") or data.get("envelope_id") or data.get("id", "")
             )
             if message_id:
                 with self._processed_ids_lock:
-                    if message_id in self._processed_ids:
-                        logger.debug("Skipping duplicate message: %s", message_id)
-                        # Already consumed once — drop the redundant copy so
-                        # duplicates cannot accumulate on disk (F5).
+                    already_seen = message_id in self._processed_ids
+                if already_seen:
+                    logger.debug("Skipping duplicate message: %s", message_id)
+                    # A directed duplicate is dropped so copies can't pile up
+                    # (F5); a broadcast duplicate is LEFT for co-resident agents
+                    # and reclaimed by the TTL prune (F6).
+                    if not is_broadcast:
                         self._consume_inbox_file(path)
-                        return
-                    self._processed_ids.add(message_id)
-                    # Cap at 1000 entries to prevent unbounded growth
-                    if len(self._processed_ids) > 1000:
-                        # Remove oldest (but sets are unordered, so just clear half)
-                        to_keep = list(self._processed_ids)[-500:]
-                        self._processed_ids = set(to_keep)
+                    return
 
-            # Rate limiting: check executor queue depth
+            # Rate limiting: check executor queue depth. On backpressure the
+            # message is DROPPED but left on disk and NOT marked processed, so
+            # the rescan / TTL backstop can retry it later (F7).
             try:
                 queue_size = self._executor._work_queue.qsize()
                 if queue_size >= self._config.max_concurrent_requests * 2:
@@ -2278,18 +2327,214 @@ class ConsciousnessLoop:
             sig_status = self._verify_message_signature(data)
             logger.info("Message from %s signature: %s", sig_sender, sig_status)
 
-            # Construct a minimal envelope-like object
-            envelope = _SimpleEnvelope(data)
-            self._executor.submit(self.process_envelope, envelope)
+            if is_broadcast:
+                # Process but do NOT stage/delete — the shared copy stays put so
+                # every co-resident agent receives it; the TTL prune reclaims it.
+                envelope = _SimpleEnvelope(data)
+                try:
+                    self._executor.submit(self.process_envelope, envelope)
+                except Exception as exc:
+                    logger.warning("Failed to submit broadcast %s: %s", path, exc)
+                    return
+                self._mark_processed(message_id)
+                return
 
-            # Delete-on-consume (F5, primary GC guarantee): the envelope has been
-            # handed to the executor, so its on-disk copy is no longer needed.
-            # Only reached on a successful submit — a raising submit falls through
-            # to the except below and leaves the file for retry / the TTL backstop.
-            self._consume_inbox_file(path)
+            # Directed to us: stage the envelope OUT of the shared inbox before
+            # submit (atomic rename). The staged copy is deleted only after the
+            # worker SUCCEEDS; a transient failure leaves it in processing/ for
+            # the rescan; a poison message is deadlettered (F2).
+            staged = self._stage_for_processing(path)
+            if staged is None:
+                # Rename failed / file vanished — leave the original for retry.
+                return
+            try:
+                self._executor.submit(self._process_staged, staged)
+            except Exception as exc:
+                # Staged copy survives in processing/; the rescan will resubmit.
+                logger.warning("Failed to submit staged envelope %s: %s", staged, exc)
+                return
+            self._mark_processed(message_id)
 
         except Exception as exc:
             logger.warning("Failed to process inbox file %s: %s", path, exc)
+
+    def _mark_processed(self, message_id: str) -> None:
+        """Record *message_id* as processed (dedupe), capping set growth.
+
+        Called only after a successful submit/stage so a dropped or failed
+        message is never marked processed (F7).
+
+        Args:
+            message_id: The envelope's message id (may be empty — then a no-op).
+        """
+        if not message_id:
+            return
+        with self._processed_ids_lock:
+            self._processed_ids.add(message_id)
+            if len(self._processed_ids) > 1000:
+                self._processed_ids = set(list(self._processed_ids)[-500:])
+
+    def _stage_for_processing(self, path: Path) -> Optional[Path]:
+        """Atomically move a directed inbox file into ``processing/`` (F2).
+
+        The unique uuid-prefixed name avoids collisions in the flat staging dir
+        while preserving the ``.skc.json`` suffix (so the rescan's glob matches).
+
+        Args:
+            path: Path to the directed ``.skc.json`` inbox file.
+
+        Returns:
+            The new staged path, or ``None`` if the move failed / file vanished.
+        """
+        try:
+            proc = self._shared_root / _PROCESSING_DIR
+            proc.mkdir(parents=True, exist_ok=True)
+            dest = proc / f"{uuid.uuid4().hex}-{path.name}"
+            path.rename(dest)  # atomic within the same filesystem
+            return dest
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            logger.warning("Failed to stage inbox file %s for processing: %s", path, exc)
+            return None
+
+    def _load_staged_envelope(self, staged: Path) -> Optional["_SimpleEnvelope"]:
+        """Read a staged file back into an envelope, or ``None`` if unreadable."""
+        try:
+            raw = staged.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        return _SimpleEnvelope(data)
+
+    def _bump_attempts(self, staged: Path) -> int:
+        """Increment and return the retry count for *staged*."""
+        key = staged.name
+        with self._process_attempts_lock:
+            n = self._process_attempts.get(key, 0) + 1
+            self._process_attempts[key] = n
+            return n
+
+    def _clear_attempts(self, staged: Path) -> None:
+        """Forget the retry count for *staged* (on success or deadletter)."""
+        with self._process_attempts_lock:
+            self._process_attempts.pop(staged.name, None)
+
+    def _process_staged(self, staged: Path) -> None:
+        """Worker entrypoint for a staged directed envelope (F2).
+
+        Deletes the staged file only after :meth:`process_envelope` returns
+        normally (a ``None`` return is a legit no-reply, still a success). A
+        RAISED exception is a processing failure: the file is left in
+        processing/ for the rescan to retry, and deadlettered once it has failed
+        :data:`_MAX_PROCESS_ATTEMPTS` times (poison-message guard).
+
+        Args:
+            staged: Path to the staged ``.skc.json`` file under processing/.
+        """
+        envelope = self._load_staged_envelope(staged)
+        if envelope is None:
+            # Unreadable/garbage staged file — quarantine it (never re-loop).
+            if staged.exists():
+                self._deadletter_inbox_file(staged)
+            return
+
+        try:
+            self.process_envelope(envelope)
+        except Exception as exc:
+            attempts = self._bump_attempts(staged)
+            if attempts >= _MAX_PROCESS_ATTEMPTS:
+                logger.error(
+                    "Staged envelope %s failed %d times — deadlettering: %s",
+                    staged,
+                    attempts,
+                    exc,
+                )
+                self._deadletter_inbox_file(staged)
+            else:
+                logger.warning(
+                    "Transient failure processing %s (attempt %d/%d), leaving for retry: %s",
+                    staged,
+                    attempts,
+                    _MAX_PROCESS_ATTEMPTS,
+                    exc,
+                )
+            return
+
+        # Success — remove the staged copy and forget its retry counter.
+        self._clear_attempts(staged)
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.debug("Failed to remove processed staged file %s: %s", staged, exc)
+
+    def rescan_inbox(self) -> int:
+        """Re-submit anything the create-only watcher missed or a crash stranded.
+
+        The inotify watcher is create-only, so (a) files present before the
+        watcher started and (b) files left in ``processing/`` by a crashed or
+        failed worker would otherwise never be picked up. This catch-up pass
+        resubmits both. Safe to call repeatedly (dedupe + the stale guard prevent
+        double-processing of in-flight work).
+
+        Returns:
+            Number of envelopes resubmitted.
+        """
+        submitted = 0
+
+        # 1. Stranded processing/ files (older than the stale guard so we never
+        #    race a worker that just staged one).
+        proc = self._shared_root / _PROCESSING_DIR
+        if proc.is_dir():
+            now = time.time()
+            for f in list(proc.rglob("*.skc.json")):
+                if not f.is_file() or f.is_symlink() or f.name.startswith("."):
+                    continue
+                try:
+                    if now - f.stat().st_mtime < _PROCESSING_STALE_SECONDS:
+                        continue
+                except OSError:
+                    continue
+                try:
+                    self._executor.submit(self._process_staged, f)
+                    submitted += 1
+                except Exception as exc:
+                    logger.debug("Rescan resubmit failed for %s: %s", f, exc)
+
+        # 2. Pre-existing inbox files (recursive per-peer). Route each through
+        #    the normal handler so validation/staging/broadcast rules apply.
+        inbox = self._shared_root / _INBOX_DIR
+        if inbox.is_dir():
+            for f in list(inbox.rglob("*.skc.json")):
+                if not f.is_file() or f.is_symlink() or f.name.startswith("."):
+                    continue
+                self._on_inbox_file(f)
+                submitted += 1
+
+        if submitted:
+            logger.info("Inbox rescan resubmitted %d envelope(s)", submitted)
+        return submitted
+
+    def _run_rescan(self) -> None:
+        """Periodic catch-up rescan thread (F2)."""
+        interval = max(30, int(self._config.rescan_interval_s))
+        while not self._stop_event.is_set():
+            self._stop_event.wait(timeout=interval)
+            if self._stop_event.is_set():
+                break
+            try:
+                self.rescan_inbox()
+            except Exception as exc:
+                logger.debug("Periodic inbox rescan error: %s", exc)
 
     @property
     def metrics(self) -> ConsciousnessMetrics:

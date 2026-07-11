@@ -46,7 +46,15 @@ def register_housekeeping_commands(main: click.Group) -> None:
         table.add_column("Size Before", justify="right")
         table.add_column("Action", justify="right", style="green")
 
-        keys = ("acks", "comms_outbox", "seed_outbox", "legacy_comms", "inbox", "derived_junk")
+        keys = (
+            "acks",
+            "comms_outbox",
+            "seed_outbox",
+            "legacy_comms",
+            "inbox",
+            "deadletter",
+            "derived_junk",
+        )
         for key in keys:
             info = results.get(key, {})
             path = info.get("path", "?")

@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=skcapstone housekeeping
+ExecStart=%h/.skenv/bin/skcapstone housekeeping
 Nice=15
 
 NoNewPrivileges=true
@@ -15,3 +15,4 @@ ReadWritePaths=%h/.skcapstone %h/.skcomms
 PrivateTmp=true
 
 Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
