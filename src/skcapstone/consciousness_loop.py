@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -47,6 +48,11 @@ logger = logging.getLogger("skcapstone.consciousness")
 
 # Default inbox path under shared root
 _INBOX_DIR = "sync/comms/inbox"
+
+# Sibling of the inbox where malformed/oversized envelopes are quarantined.
+# Presence-on-disk in the inbox == unconsumed; a deadlettered file is moved out
+# so it is neither re-scanned nor left to pile up (RC5 remediation, F5).
+_DEADLETTER_DIR = "sync/comms/deadletter"
 
 # Allowlist for peer name characters (alphanumeric + safe punctuation, no path separators)
 _PEER_NAME_SAFE_RE = re.compile(r"[^a-zA-Z0-9_\-@\.]")
@@ -2138,17 +2144,61 @@ class ConsciousnessLoop:
             logger.debug("Signature verification error for %s: %s", sender, exc)
             return "failed"
 
+    def _consume_inbox_file(self, path: Path) -> None:
+        """Remove a successfully-consumed envelope from the inbox.
+
+        Presence-on-disk is the durable "unconsumed" marker (F5): once the
+        envelope has been submitted for processing (or is a redundant
+        duplicate), the file is deleted so it never re-accumulates. Best-effort;
+        a vanished file is fine.
+
+        Args:
+            path: Path to the consumed ``.skc.json`` file.
+        """
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.debug("Failed to remove consumed inbox file %s: %s", path, exc)
+
+    def _deadletter_inbox_file(self, path: Path) -> None:
+        """Quarantine a malformed/oversized envelope out of the inbox.
+
+        Moves the file to the ``deadletter/`` sibling of the inbox so it is
+        neither re-scanned nor left to pile up, while preserving it for
+        inspection. Name collisions are resolved with a millisecond suffix so
+        two bad files never clobber each other. Best-effort.
+
+        Args:
+            path: Path to the offending ``.skc.json`` file.
+        """
+        try:
+            dead_dir = self._shared_root / _DEADLETTER_DIR
+            dead_dir.mkdir(parents=True, exist_ok=True)
+            dest = dead_dir / path.name
+            if dest.exists():
+                dest = dead_dir / f"{path.stem}.{int(time.time() * 1000)}{path.suffix}"
+            shutil.move(str(path), str(dest))
+            logger.warning("Routed inbox file to deadletter: %s -> %s", path, dest)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Failed to deadletter inbox file %s: %s", path, exc)
+
     def _on_inbox_file(self, path: Path) -> None:
         """Handle a new file detected in the inbox.
 
         Args:
             path: Path to the new .skc.json file.
         """
-        # Size cap: reject files larger than 1MB
+        # Size cap: reject files larger than 1MB. Oversized payloads can never
+        # be processed — quarantine them instead of leaving them to re-scan.
         try:
             file_size = path.stat().st_size
             if file_size > 1_000_000:
                 logger.warning("Inbox file too large (%d bytes): %s", file_size, path)
+                self._deadletter_inbox_file(path)
                 return
         except OSError:
             return
@@ -2163,17 +2213,26 @@ class ConsciousnessLoop:
                     break
                 time.sleep(0.05)
             if not raw:
+                # Writer may still be flushing — leave the file for a later pass
+                # (and the TTL backstop). Do not deadletter a transient empty.
                 logger.debug("Inbox file still empty after retries, skipping: %s", path)
                 return
-            data = json.loads(raw)
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("Malformed JSON envelope: %s", path)
+                self._deadletter_inbox_file(path)
+                return
 
             if not isinstance(data, dict):
                 logger.warning("Invalid envelope format (not a dict): %s", path)
+                self._deadletter_inbox_file(path)
                 return
 
             # Require sender field
             if not data.get("sender") and not data.get("from"):
                 logger.warning("Envelope missing sender: %s", path)
+                self._deadletter_inbox_file(path)
                 return
 
             # Filter by recipient — skip messages not addressed to this agent
@@ -2191,6 +2250,9 @@ class ConsciousnessLoop:
                 with self._processed_ids_lock:
                     if message_id in self._processed_ids:
                         logger.debug("Skipping duplicate message: %s", message_id)
+                        # Already consumed once — drop the redundant copy so
+                        # duplicates cannot accumulate on disk (F5).
+                        self._consume_inbox_file(path)
                         return
                     self._processed_ids.add(message_id)
                     # Cap at 1000 entries to prevent unbounded growth
@@ -2219,6 +2281,12 @@ class ConsciousnessLoop:
             # Construct a minimal envelope-like object
             envelope = _SimpleEnvelope(data)
             self._executor.submit(self.process_envelope, envelope)
+
+            # Delete-on-consume (F5, primary GC guarantee): the envelope has been
+            # handed to the executor, so its on-disk copy is no longer needed.
+            # Only reached on a successful submit — a raising submit falls through
+            # to the except below and leaves the file for retry / the TTL backstop.
+            self._consume_inbox_file(path)
 
         except Exception as exc:
             logger.warning("Failed to process inbox file %s: %s", path, exc)

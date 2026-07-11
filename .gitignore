@@ -17,3 +17,6 @@ htmlcov/
 
 .stfolder
 .stignore
+# but DO ship the bundled Syncthing ignore templates under defaults/
+!src/skcapstone/defaults/.stignore
+!src/skcapstone/defaults/**/.stignore

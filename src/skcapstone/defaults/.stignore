@@ -1,0 +1,52 @@
+// SKCapstone Sovereign Singularity — Syncthing ignore rules
+//
+// Exclude-by-listing: everything under the shared root syncs UNLESS matched
+// here. Source-of-truth (memory/{short,mid,long}-term JSON, soul, seeds,
+// journal.md, trust/febs, coordination, comms/inbox, comms/outbox) is NOT
+// listed, so it replicates. Everything below is derived/runtime/node-local and
+// must never leave this node or pin the scanner (F7 remediation).
+
+// --- Private key material (never leaves this node) ---
+*.key
+*.pem
+**/private.*
+**/telegram.session
+
+// --- Vector store / DB indexes (rebuilt locally from the flat files) ---
+**/memory/chroma
+**/chroma.bak*
+**/memory/index.db
+**/*.db-wal
+**/*.db-shm
+
+// --- Sync conflicts, pidfiles, logs ---
+**/*.sync-conflict-*
+**/*.pid
+daemon.pid
+**/daemon.log
+logs
+
+// --- Runtime / session state (node-local, large, not source of truth) ---
+sessions
+conversations
+backups
+deployments
+pubsub
+file-transfer
+**/skwhisper/state.json
+**/memory/archive
+**/comms/archive
+
+// --- Python / build / OS junk ---
+__pycache__
+*.pyc
+.cache
+*.tmp
+.venv
+venv
+.git
+
+// OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
