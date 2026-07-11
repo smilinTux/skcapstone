@@ -19,8 +19,11 @@
 **/*.db-wal
 **/*.db-shm
 
-// --- Sync conflicts, pidfiles, logs ---
+// --- Sync conflicts, versioned trash, pidfiles, logs ---
 **/*.sync-conflict-*
+// Syncthing's own versioning/trash trees — never re-sync deleted content.
+.stversions
+**/.stversions
 **/*.pid
 daemon.pid
 **/daemon.log
@@ -36,6 +39,10 @@ file-transfer
 **/skwhisper/state.json
 **/memory/archive
 **/comms/archive
+// Post-delivery ack receipts — ephemeral, node-local, never source of truth.
+// (skcomms/inbox + comms/inbox + comms/outbox are live transport paths and are
+// deliberately NOT excluded — pruning keeps them small instead.)
+**/skcomms/acks
 // Terminal/local comms staging — node-local, must not replicate to peers.
 // deadletter = quarantined poison envelopes; processing = in-flight staging.
 deadletter

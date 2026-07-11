@@ -46,6 +46,11 @@ class TestTemplateContents:
             "**/deadletter",
             "processing",
             "**/processing",
+            # Comms runtime-junk: post-delivery ack receipts + Syncthing
+            # versioned-trash trees must never replicate.
+            "**/skcomms/acks",
+            ".stversions",
+            "**/.stversions",
         ):
             assert pattern in text, f"missing derived-exclude rule: {pattern!r}"
 
