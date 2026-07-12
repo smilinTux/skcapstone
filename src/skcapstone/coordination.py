@@ -379,6 +379,24 @@ class Board:
 
         return self._write_task_raw(task_id, _mutate)
 
+    def unblocked_task_ids(self) -> set[str]:
+        """Task ids whose dependencies are all completed (Phase-0 compute).
+
+        A task is unblocked when its dependencies are a subset of the union of
+        every agent's completed_tasks. Tasks with no dependencies are trivially
+        unblocked.
+
+        Returns:
+            set[str]: Task ids that are unblocked.
+        """
+        completed: set[str] = set()
+        for ag in self.load_agents():
+            completed.update(ag.completed_tasks)
+        return {
+            t.id for t in self.load_tasks()
+            if set(t.dependencies).issubset(completed)
+        }
+
     def get_task_views(self) -> list[TaskView]:
         """Build enriched task views with derived status.
 

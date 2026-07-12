@@ -465,3 +465,33 @@ class TestCloseTaskObsolete:
         ap = {x.id: x for x in board.load_tasks()}["99cc00dd"].meta["autopilot"]
         assert len(ap["scores"]) == 1
         assert ap["obsolete"]["reason"] == "not worth pursuing"
+
+
+class TestUnblockedTaskIds:
+    """Tests for Board.unblocked_task_ids."""
+
+    def test_no_deps_is_unblocked(self, board: Board):
+        board.create_task(Task(id="aaa11111", title="Free"))
+        assert "aaa11111" in board.unblocked_task_ids()
+
+    def test_blocked_until_dep_completed(self, board: Board):
+        board.create_task(Task(id="bbb22222", title="Dep"))
+        board.create_task(Task(id="ccc33333", title="Needs dep",
+                               dependencies=["bbb22222"]))
+        assert "ccc33333" not in board.unblocked_task_ids()
+        board.claim_task("jarvis", "bbb22222")
+        board.complete_task("jarvis", "bbb22222")
+        unblocked = board.unblocked_task_ids()
+        assert "ccc33333" in unblocked
+        assert "bbb22222" in unblocked
+
+    def test_union_across_agents(self, board: Board):
+        board.create_task(Task(id="ddd44444", title="d1"))
+        board.create_task(Task(id="eee55555", title="d2"))
+        board.create_task(Task(id="fff66666", title="needs both",
+                               dependencies=["ddd44444", "eee55555"]))
+        board.claim_task("jarvis", "ddd44444")
+        board.complete_task("jarvis", "ddd44444")
+        board.claim_task("opus", "eee55555")
+        board.complete_task("opus", "eee55555")
+        assert "fff66666" in board.unblocked_task_ids()
