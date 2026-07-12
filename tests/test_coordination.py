@@ -248,6 +248,30 @@ class TestBoardMd:
         assert "Building tokens" in md
 
 
+class TestTaskMeta:
+    """Tests for the new Task.meta field (autopilot back-compat)."""
+
+    def test_meta_defaults_empty(self):
+        t = Task(title="No meta")
+        assert t.meta == {}
+
+    def test_meta_roundtrip(self):
+        t = Task(title="With meta", meta={"autopilot": {"phase": "grade"}})
+        t2 = Task.model_validate(t.model_dump())
+        assert t2.meta == {"autopilot": {"phase": "grade"}}
+
+    def test_legacy_task_file_without_meta_loads(self, board: Board):
+        """A task file written before meta existed must still load with meta == {}."""
+        (board.tasks_dir / "legacy1-old.json").write_text(
+            json.dumps({"id": "legacy1", "title": "Legacy"}),
+            encoding="utf-8",
+        )
+        tasks = board.load_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].id == "legacy1"
+        assert tasks[0].meta == {}
+
+
 class TestCorruptFiles:
     """Edge cases: malformed JSON, missing fields."""
 

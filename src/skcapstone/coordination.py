@@ -106,6 +106,7 @@ class Task(BaseModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    meta: dict = Field(default_factory=dict)
 
 
 class AgentFile(BaseModel):
