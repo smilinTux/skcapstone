@@ -495,3 +495,39 @@ class TestUnblockedTaskIds:
         board.claim_task("opus", "eee55555")
         board.complete_task("opus", "eee55555")
         assert "fff66666" in board.unblocked_task_ids()
+
+
+class TestReleaseStaleClaims:
+    """Tests for Board.release_stale_claims (staleness keyed on last_seen)."""
+
+    def _write_agent_last_seen(self, board: Board, agent: str, iso: str,
+                               claimed, current):
+        """Write an agent file with a specific last_seen timestamp."""
+        af = AgentFile(agent=agent, claimed_tasks=list(claimed),
+                       current_task=current)
+        data = af.model_dump()
+        data["last_seen"] = iso  # override the auto-now stamp on disk
+        (board.agents_dir / f"{agent}.json").write_text(
+            json.dumps(data), encoding="utf-8")
+
+    def test_releases_when_agent_stale(self, board: Board):
+        from datetime import datetime, timezone, timedelta
+        old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        self._write_agent_last_seen(board, "jarvis", old,
+                                    claimed=["aa11", "bb22"], current="aa11")
+        released = board.release_stale_claims("jarvis", older_than_seconds=3600)
+        assert set(released) == {"aa11", "bb22"}
+        af = board.load_agent("jarvis")
+        assert af.claimed_tasks == []
+        assert af.current_task is None
+
+    def test_fresh_agent_not_released(self, board: Board):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        self._write_agent_last_seen(board, "opus", now,
+                                    claimed=["cc33"], current="cc33")
+        assert board.release_stale_claims("opus", older_than_seconds=3600) == []
+        assert board.load_agent("opus").claimed_tasks == ["cc33"]
+
+    def test_unknown_agent_returns_empty(self, board: Board):
+        assert board.release_stale_claims("nobody", older_than_seconds=1) == []

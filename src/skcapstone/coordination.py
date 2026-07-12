@@ -397,6 +397,37 @@ class Board:
             if set(t.dependencies).issubset(completed)
         }
 
+    def release_stale_claims(self, agent: str, older_than_seconds: int) -> list[str]:
+        """Release an agent's uncompleted claims if it has gone stale.
+
+        AgentFile carries no per-claim timestamp, only last_seen, so staleness
+        is keyed on last_seen: if the agent has not been seen for
+        older_than_seconds, all of its claimed_tasks (uncompleted by
+        construction) are released and current_task is cleared if it pointed at
+        a released id. Returns the released ids (empty if the agent is unknown,
+        fresh, or holds no claims).
+        """
+        af = self.load_agent(agent)
+        if af is None:
+            return []
+        try:
+            last_seen = datetime.fromisoformat(af.last_seen)
+        except (ValueError, TypeError):
+            return []
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - last_seen).total_seconds()
+        if age < older_than_seconds:
+            return []
+        released = list(af.claimed_tasks)
+        if not released:
+            return []
+        af.claimed_tasks = []
+        if af.current_task in released:
+            af.current_task = None
+        self.save_agent(af)
+        return released
+
     def get_task_views(self) -> list[TaskView]:
         """Build enriched task views with derived status.
 
