@@ -291,6 +291,38 @@ class Board:
         os.replace(tmp, path)
         return path
 
+    def score_task(self, task_id: str, round: int, score: int, notes: str = "",
+                   harness: str = "", phase: str | None = None,
+                   ref: str | None = None) -> Path:
+        """Record an autopilot grade on a task (meta.autopilot.scores[]).
+
+        Idempotent: a re-grade of the same (round, harness) replaces that entry
+        in place instead of appending a duplicate. Goes through _write_task_raw,
+        so all other keys are preserved.
+        """
+        def _mutate(d: dict) -> None:
+            ap = d.setdefault("meta", {}).setdefault("autopilot", {})
+            scores = ap.setdefault("scores", [])
+            entry = {
+                "round": round,
+                "score": score,
+                "notes": notes,
+                "ts": _now_iso(),
+                "harness": harness,
+            }
+            for i, existing in enumerate(scores):
+                if existing.get("round") == round and existing.get("harness") == harness:
+                    scores[i] = entry
+                    break
+            else:
+                scores.append(entry)
+            if phase:
+                ap["phase"] = phase
+            if ref:
+                ap["pr" if ref.startswith("http") else "artifact"] = ref
+
+        return self._write_task_raw(task_id, _mutate)
+
     def get_task_views(self) -> list[TaskView]:
         """Build enriched task views with derived status.
 

@@ -374,3 +374,36 @@ class TestWriteTaskRaw:
     def test_missing_task_raises(self, board: Board):
         with pytest.raises(FileNotFoundError):
             board._write_task_raw("nope", lambda d: None)
+
+
+class TestScoreTask:
+    """Tests for Board.score_task."""
+
+    def test_appends_score_and_shape(self, board: Board):
+        board.create_task(Task(id="aa11bb22", title="Score me"))
+        board.score_task("aa11bb22", round=1, score=4, notes="thin tests",
+                         harness="claude_code", phase="grade")
+        t = {x.id: x for x in board.load_tasks()}["aa11bb22"]
+        ap = t.meta["autopilot"]
+        assert ap["phase"] == "grade"
+        assert len(ap["scores"]) == 1
+        s = ap["scores"][0]
+        assert s["round"] == 1 and s["score"] == 4
+        assert s["notes"] == "thin tests" and s["harness"] == "claude_code"
+        assert "ts" in s
+
+    def test_ref_routes_pr_vs_artifact(self, board: Board):
+        board.create_task(Task(id="cc33dd44", title="Ref"))
+        board.score_task("cc33dd44", round=1, score=5, ref="https://gh/pr/1")
+        board.score_task("cc33dd44", round=2, score=5, ref="worktree/xyz")
+        ap = {x.id: x for x in board.load_tasks()}["cc33dd44"].meta["autopilot"]
+        assert ap["pr"] == "https://gh/pr/1"
+        assert ap["artifact"] == "worktree/xyz"
+
+    def test_idempotent_same_round_harness(self, board: Board):
+        board.create_task(Task(id="ee55ff66", title="Idem"))
+        board.score_task("ee55ff66", round=1, score=3, harness="h1")
+        board.score_task("ee55ff66", round=1, score=5, harness="h1")  # re-grade
+        scores = {x.id: x for x in board.load_tasks()}["ee55ff66"].meta["autopilot"]["scores"]
+        assert len(scores) == 1
+        assert scores[0]["score"] == 5
