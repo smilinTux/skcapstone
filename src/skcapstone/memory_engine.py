@@ -573,10 +573,38 @@ def _update_index(home: Path, entry: MemoryEntry) -> None:
 
 
 def _remove_from_index(home: Path, memory_id: str) -> None:
-    """Remove an entry from the search index."""
+    """Remove an entry from both search indexes.
+
+    Removes the entry from the plain-JSON ``index.json`` used by this engine and
+    from skmemory's SQLite ``index.db`` when present. Keeping index.db in step is
+    what prevents "skmemory drift": archiving a memory moves its flat file out of
+    the active tiers, so a lingering SQLite row would be reported as a phantom
+    orphan by ``skmemory health``/drift checks. Best-effort — a missing db, a
+    missing table, or a lock never blocks archival (the flat file is truth).
+    """
     index = _load_index(home)
     index.pop(memory_id, None)
     _save_index(home, index)
+    _remove_from_sqlite_index(home, memory_id)
+
+
+def _remove_from_sqlite_index(home: Path, memory_id: str) -> None:
+    """Delete a memory's row from skmemory's SQLite index.db, if it exists."""
+    db_path = _memory_dir(home) / "index.db"
+    if not db_path.exists():
+        return
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path), timeout=8)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000;")
+            conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # pragma: no cover - defensive, never blocks archival
+        logger.debug("index.db prune skipped for %s: %s", memory_id, exc)
 
 
 def _load_index(home: Path) -> dict:
