@@ -407,3 +407,39 @@ class TestScoreTask:
         scores = {x.id: x for x in board.load_tasks()}["ee55ff66"].meta["autopilot"]["scores"]
         assert len(scores) == 1
         assert scores[0]["score"] == 5
+
+
+class TestUpdateTask:
+    """Tests for Board.update_task (reversible autonomous edits)."""
+
+    def test_updates_and_snapshots_edits(self, board: Board):
+        board.create_task(Task(id="11aa22bb", title="Edit me",
+                               description="old", tags=["x"]))
+        board.update_task("11aa22bb", description="new",
+                          acceptance_criteria=["ac1"], add_tags=["y"],
+                          run_id="run-1")
+        t = {x.id: x for x in board.load_tasks()}["11aa22bb"]
+        assert t.description == "new"
+        assert t.acceptance_criteria == ["ac1"]
+        assert t.tags == ["x", "y"]
+        edits = t.meta["autopilot"]["edits"]
+        by_field = {e["field"]: e for e in edits}
+        assert by_field["description"]["old"] == "old"
+        assert by_field["description"]["new"] == "new"
+        assert by_field["tags"]["old"] == ["x"]
+        assert by_field["tags"]["new"] == ["x", "y"]
+        assert all(e["run_id"] == "run-1" and "ts" in e for e in edits)
+
+    def test_add_tags_dedupes_and_no_noop_edit(self, board: Board):
+        board.create_task(Task(id="33cc44dd", title="Tags", tags=["x"]))
+        board.update_task("33cc44dd", add_tags=["x"])  # already present -> no change
+        t = {x.id: x for x in board.load_tasks()}["33cc44dd"]
+        assert t.tags == ["x"]
+        assert t.meta.get("autopilot", {}).get("edits", []) == []
+
+    def test_none_args_leave_fields_untouched(self, board: Board):
+        board.create_task(Task(id="55ee66ff", title="Keep", description="keep"))
+        board.update_task("55ee66ff", acceptance_criteria=["only-ac"])
+        t = {x.id: x for x in board.load_tasks()}["55ee66ff"]
+        assert t.description == "keep"
+        assert t.acceptance_criteria == ["only-ac"]

@@ -323,6 +323,41 @@ class Board:
 
         return self._write_task_raw(task_id, _mutate)
 
+    def update_task(self, task_id: str, description: str | None = None,
+                    acceptance_criteria: list[str] | None = None,
+                    add_tags: list[str] | None = None,
+                    run_id: str | None = None) -> Path:
+        """Rewrite task fields and snapshot each change for reversibility.
+
+        Backs the Phase-0 stale action. A None argument leaves that field
+        untouched. Every field that actually changes is snapshotted into
+        meta.autopilot.edits[] as {field, old, new, ts, run_id}. Goes through
+        the atomic raw-dict helper.
+        """
+        def _mutate(d: dict) -> None:
+            ap = d.setdefault("meta", {}).setdefault("autopilot", {})
+            edits = ap.setdefault("edits", [])
+            ts = _now_iso()
+            if description is not None and description != d.get("description", ""):
+                edits.append({"field": "description", "old": d.get("description", ""),
+                              "new": description, "ts": ts, "run_id": run_id})
+                d["description"] = description
+            if acceptance_criteria is not None and \
+                    acceptance_criteria != d.get("acceptance_criteria", []):
+                edits.append({"field": "acceptance_criteria",
+                              "old": d.get("acceptance_criteria", []),
+                              "new": acceptance_criteria, "ts": ts, "run_id": run_id})
+                d["acceptance_criteria"] = acceptance_criteria
+            if add_tags:
+                existing = list(d.get("tags", []))
+                merged = existing + [t for t in add_tags if t not in existing]
+                if merged != existing:
+                    edits.append({"field": "tags", "old": existing,
+                                  "new": merged, "ts": ts, "run_id": run_id})
+                    d["tags"] = merged
+
+        return self._write_task_raw(task_id, _mutate)
+
     def get_task_views(self) -> list[TaskView]:
         """Build enriched task views with derived status.
 
