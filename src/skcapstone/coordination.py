@@ -358,6 +358,27 @@ class Board:
 
         return self._write_task_raw(task_id, _mutate)
 
+    def close_task_obsolete(self, task_id: str, reason: str,
+                            run_id: str | None = None) -> Path:
+        """Mark a task obsolete on the task file itself.
+
+        Task files carry no status field: done/claimed status is derived from
+        agents/*.json, and autopilot is not the completing agent, so faking a
+        done state via an agent file would misattribute completion. Instead
+        obsolete is recorded as a machine-readable meta.autopilot.obsolete block
+        plus a human-readable line appended to notes[]. Reversible and
+        auditable, via the atomic raw-dict helper.
+        """
+        def _mutate(d: dict) -> None:
+            ts = _now_iso()
+            ap = d.setdefault("meta", {}).setdefault("autopilot", {})
+            ap["obsolete"] = {"reason": reason, "run_id": run_id, "ts": ts}
+            notes = d.setdefault("notes", [])
+            if isinstance(notes, list):
+                notes.append(f"[obsolete {ts}] {reason}")
+
+        return self._write_task_raw(task_id, _mutate)
+
     def get_task_views(self) -> list[TaskView]:
         """Build enriched task views with derived status.
 

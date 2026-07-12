@@ -443,3 +443,25 @@ class TestUpdateTask:
         t = {x.id: x for x in board.load_tasks()}["55ee66ff"]
         assert t.description == "keep"
         assert t.acceptance_criteria == ["only-ac"]
+
+
+class TestCloseTaskObsolete:
+    """Tests for Board.close_task_obsolete."""
+
+    def test_marks_obsolete_meta_and_note(self, board: Board):
+        board.create_task(Task(id="77aa88bb", title="Stale work"))
+        board.close_task_obsolete("77aa88bb", "superseded by epic X", run_id="run-9")
+        t = {x.id: x for x in board.load_tasks()}["77aa88bb"]
+        ob = t.meta["autopilot"]["obsolete"]
+        assert ob["reason"] == "superseded by epic X"
+        assert ob["run_id"] == "run-9"
+        assert "ts" in ob
+        assert any("superseded by epic X" in n for n in t.notes)
+
+    def test_preserves_existing_scores(self, board: Board):
+        board.create_task(Task(id="99cc00dd", title="Had a score"))
+        board.score_task("99cc00dd", round=1, score=2)
+        board.close_task_obsolete("99cc00dd", "not worth pursuing")
+        ap = {x.id: x for x in board.load_tasks()}["99cc00dd"].meta["autopilot"]
+        assert len(ap["scores"]) == 1
+        assert ap["obsolete"]["reason"] == "not worth pursuing"
