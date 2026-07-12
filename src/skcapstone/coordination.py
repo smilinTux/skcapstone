@@ -15,17 +15,23 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import socket
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    """UTC now as an ISO-8601 string (shared by autopilot mutators)."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _slugify_filename(text: str) -> str:
@@ -250,6 +256,39 @@ class Board:
         path.write_text(
             json.dumps(task.model_dump(), indent=2) + "\n"
         , encoding="utf-8")
+        return path
+
+    def _write_task_raw(self, task_id: str, mutate: Callable[[dict], None]) -> Path:
+        """Atomically mutate a task's raw JSON dict, preserving all keys.
+
+        This is the ONLY task-file mutation helper. It locates
+        tasks/<id>-*.json, loads the raw dict (NOT through the Task model, so
+        non-model keys such as meta.autopilot are never dropped), applies
+        mutate(d) in place, and writes the result back atomically via a temp
+        file plus os.replace.
+
+        Single-writer safety is a hard precondition: only one process may call
+        this at a time. autopilot-daily is pinned to a single node
+        (nodes: [noroc2027]) for exactly this reason.
+
+        Raises:
+            FileNotFoundError: If no task file matches the id.
+        """
+        matches = sorted(self.tasks_dir.glob(f"{task_id}-*.json"))
+        if not matches:
+            exact = self.tasks_dir / f"{task_id}.json"
+            if exact.exists():
+                matches = [exact]
+        if not matches:
+            raise FileNotFoundError(
+                f"No task file for id {task_id} in {self.tasks_dir}"
+            )
+        path = matches[0]
+        data = json.loads(path.read_text(encoding="utf-8"))
+        mutate(data)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
         return path
 
     def get_task_views(self) -> list[TaskView]:

@@ -346,3 +346,31 @@ class TestBriefing:
         assert "Claude Code" in text
         assert "Aider" in text
         assert "Windsurf" in text
+
+
+class TestWriteTaskRaw:
+    """Tests for the atomic single-writer raw-dict helper."""
+
+    def test_preserves_unknown_keys(self, board: Board):
+        """A key the Task model does not know about must survive a raw write."""
+        path = board.create_task(Task(id="abc12345", title="Raw"))
+        d = json.loads(path.read_text(encoding="utf-8"))
+        d["legacy_unknown"] = {"kept": True}
+        path.write_text(json.dumps(d), encoding="utf-8")
+
+        board._write_task_raw("abc12345", lambda x: x.__setitem__("touched", 1))
+
+        after = json.loads(path.read_text(encoding="utf-8"))
+        assert after["legacy_unknown"] == {"kept": True}
+        assert after["touched"] == 1
+        assert after["title"] == "Raw"
+
+    def test_returns_path_and_no_tmp_left(self, board: Board):
+        board.create_task(Task(id="def45678", title="Tmp"))
+        p = board._write_task_raw("def45678", lambda d: d.setdefault("meta", {}).__setitem__("x", 1))
+        assert p.exists()
+        assert list(board.tasks_dir.glob("*.tmp")) == []
+
+    def test_missing_task_raises(self, board: Board):
+        with pytest.raises(FileNotFoundError):
+            board._write_task_raw("nope", lambda d: None)
