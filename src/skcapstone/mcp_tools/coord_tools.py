@@ -94,6 +94,27 @@ TOOLS: list[Tool] = [
             "required": ["title"],
         },
     ),
+    Tool(
+        name="coord_score",
+        description=(
+            "Record an autopilot grade on a coordination task. Appends to "
+            "meta.autopilot.scores[] idempotently (same round+harness updates "
+            "in place). Optionally sets phase and a pr/artifact ref."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to score"},
+                "round": {"type": "integer", "description": "Grading round number"},
+                "score": {"type": "integer", "description": "Score value (rubric 1-5)"},
+                "notes": {"type": "string", "description": "Grader notes"},
+                "harness": {"type": "string", "description": "Harness / grader identity"},
+                "phase": {"type": "string", "description": "Autopilot phase label"},
+                "ref": {"type": "string", "description": "PR URL (http*) or artifact ref"},
+            },
+            "required": ["task_id", "round", "score"],
+        },
+    ),
 ]
 
 
@@ -215,9 +236,40 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
     })
 
 
+async def _handle_coord_score(args: dict) -> list[TextContent]:
+    """Record an autopilot grade on a task."""
+    from ..coordination import Board
+
+    task_id = args.get("task_id", "")
+    if not task_id or "round" not in args or "score" not in args:
+        return _error_response("task_id, round, and score are required")
+
+    board = Board(_shared_root())
+    try:
+        path = board.score_task(
+            task_id,
+            round=int(args["round"]),
+            score=int(args["score"]),
+            notes=args.get("notes", ""),
+            harness=args.get("harness", ""),
+            phase=args.get("phase"),
+            ref=args.get("ref"),
+        )
+    except FileNotFoundError as exc:
+        return _error_response(str(exc))
+    return _json_response({
+        "scored": True,
+        "task_id": task_id,
+        "round": int(args["round"]),
+        "score": int(args["score"]),
+        "path": str(path),
+    })
+
+
 HANDLERS: dict = {
     "coord_status": _handle_coord_status,
     "coord_claim": _handle_coord_claim,
     "coord_complete": _handle_coord_complete,
     "coord_create": _handle_coord_create,
+    "coord_score": _handle_coord_score,
 }
