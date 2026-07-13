@@ -493,10 +493,10 @@ flowchart TD
     subgraph COMPUTE["compute"]
       direction LR
       SKMODEL["skmodel<br/>(ollama · local LLMs)"]
-      SKDATA["skdata → skmem-pg<br/>(pgvector · BM25 · AGE graph)"]
+      SKDATA["skdata → skmem-pg (per-node)<br/>(pgvector · BM25 · AGE graph)"]
     end
 
-    DATA["skmem-pg + Syncthing P2P<br/>(knowledge substrate + encrypted sync)"]
+    DATA["skmem-pg (per-node local index) + Syncthing P2P<br/>(rebuildable derived index + encrypted flat/wiki sync)"]
 
     style SKCAP fill:#2d6a4f,color:#fff,stroke:#1b4332
     style COORD fill:#1b4332,color:#fff,stroke:#081c15
@@ -506,8 +506,20 @@ Everything skcapstone touches above is a **real** dependency or hosted primitive
 `capauth`, `skmemory`, `skseed`, `skwhisper`, `skchat-sovereign`, `skcomms`, and
 `sksecurity` are declared in [`pyproject.toml`](pyproject.toml); the coord board /
 `skscheduler` / `sk-alert` / ITIL tools live in this repo's `src/skcapstone/`; the
-knowledge substrate is `skmem-pg` (Postgres pgvector + pg_search BM25 + Apache AGE
-graph) and cross-device propagation is Syncthing.
+query index is `skmem-pg` (Postgres pgvector + pg_search BM25 + Apache AGE graph)
+and cross-device propagation is Syncthing.
+
+`skmem-pg` is a **per-node, local, rebuildable derived index**, not a shared or
+streaming-replicated substrate and not a SPOF. Each node runs its OWN writable
+Postgres on `localhost:5432` (fleet-wide uniform port; per-node override via
+`SKMEMORY_PG_DSN`), and agents connect only to `localhost`. The `memories` table
+is a derived cache in the same class as the SQLite `index.db`: it is rebuilt from
+the Syncthing-synced flat JSON by the reconcile engine, and embeddings are a
+deterministic function of flat content plus mxbai on `.100`, so any node
+regenerates them locally. The `docs` / `file_locations` wiki-canon is built
+per-node by skingest from the git-synced wiki. HA/DR is node self-sufficiency plus
+rebuild-from-source (flat files and git wiki, both replicated), not a
+primary/replica or failover topology.
 
 ### Where SKCapstone Sits in the Vertical
 
