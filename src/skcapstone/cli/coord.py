@@ -150,6 +150,31 @@ def register_coord_commands(main: click.Group) -> None:
         # board.complete_task() automatically mints Joules via _mint_joules_for_task
         console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
 
+    @coord.command("score")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--round", "round_", required=True, type=int, help="Grading round number.")
+    @click.option("--score", required=True, type=int, help="Score value (rubric 1-5).")
+    @click.option("--notes", default="", help="Grader notes.")
+    @click.option("--harness", default="", help="Harness / grader identity.")
+    @click.option("--phase", default=None, help="Autopilot phase label.")
+    @click.option("--ref", default=None, help="PR URL (http*) or artifact ref.")
+    def coord_score(task_id, home, round_, score, notes, harness, phase, ref):
+        """Record an autopilot grade on a task (meta.autopilot.scores)."""
+        from ..coordination import Board
+
+        validate_task_id(task_id)
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
+        try:
+            path = board.score_task(task_id, round=round_, score=score, notes=notes,
+                                    harness=harness, phase=phase, ref=ref)
+        except FileNotFoundError as e:
+            console.print(f"\n  [red]Error:[/] {e}\n")
+            sys.exit(1)
+        console.print(f"\n  [green]Scored:[/] [{task_id}] round {round_} = {score}")
+        console.print(f"  [dim]{path}[/]\n")
+
     @coord.command("board")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def coord_board(home):
