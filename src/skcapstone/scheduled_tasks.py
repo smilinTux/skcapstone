@@ -169,7 +169,12 @@ class TaskScheduler:
         Returns:
             The created ScheduledTask (caller may inspect it at runtime).
         """
-        task = ScheduledTask(name=name, interval_seconds=interval_seconds, callback=callback, delay_first_run=delay_first_run)
+        task = ScheduledTask(
+            name=name,
+            interval_seconds=interval_seconds,
+            callback=callback,
+            delay_first_run=delay_first_run,
+        )
         with self._lock:
             self._tasks.append(task)
         logger.debug("Registered scheduled task '%s' every %.0fs", name, interval_seconds)
@@ -247,12 +252,8 @@ class TaskScheduler:
         """
         self._host_aliases = host_aliases
         self._state = SchedulerState(root=state_root, hostname=hostname)
-        self._job_runner = JobRunner(
-            log_dir=state_root / "scheduler" / hostname / "logs"
-        )
-        self._config_jobs = [
-            j for j in jobs if j.enabled and job_runs_here(j, host_aliases)
-        ]
+        self._job_runner = JobRunner(log_dir=state_root / "scheduler" / hostname / "logs")
+        self._config_jobs = [j for j in jobs if j.enabled and job_runs_here(j, host_aliases)]
         logger.info(
             "Loaded %d config job(s) for host %s",
             len(self._config_jobs),
@@ -337,18 +338,21 @@ class TaskScheduler:
                 if i < attempts - 1:
                     logger.warning(
                         "job '%s' attempt %d/%d failed: %s — retrying",
-                        job.name, i + 1, attempts, result.error,
+                        job.name,
+                        i + 1,
+                        attempts,
+                        result.error,
                     )
                     backoff = float(getattr(job, "retry_backoff", 0.0))
                     if backoff > 0:
                         time.sleep(backoff)
-            self._state.record_run(
-                job.name, now=fire_time, ok=result.ok, error=result.error
-            )
+            self._state.record_run(job.name, now=fire_time, ok=result.ok, error=result.error)
             if not result.ok:
                 logger.warning(
                     "job '%s' failed after %d attempt(s): %s",
-                    job.name, attempts, result.error,
+                    job.name,
+                    attempts,
+                    result.error,
                 )
             self._maybe_notify(job, result, attempts)
 
@@ -550,9 +554,7 @@ def make_profile_freshness_task(home: Path, max_age_days: int = 7) -> Callable[[
                 mtime = datetime.fromtimestamp(profile.stat().st_mtime, tz=timezone.utc)
                 age_days = (now - mtime).days
                 if age_days > max_age_days:
-                    warnings.append(
-                        f"model profile '{profile.stem}' is {age_days}d old"
-                    )
+                    warnings.append(f"model profile '{profile.stem}' is {age_days}d old")
 
         if warnings:
             for msg in warnings:
@@ -565,6 +567,13 @@ def make_profile_freshness_task(home: Path, max_age_days: int = 7) -> Callable[[
 
 def make_itil_auto_close_task(home: Path) -> Callable[[], None]:
     """Return a callback that auto-closes resolved incidents after 24h stable.
+
+    The close is now a plain append of a ``status:closed`` event to this node's
+    own ``auto-close@<host>.jsonl`` writer file (via
+    :meth:`ITILManager.auto_close_resolved` -> :meth:`update_incident`).
+    Concurrent closes from multiple nodes fold idempotently - the first valid
+    close wins - so this task no longer needs single-node pinning (pinning it
+    via jobs affinity remains harmless belt-and-suspenders).
 
     Args:
         home: Shared root directory.
@@ -599,7 +608,10 @@ def make_itil_escalation_task(home: Path) -> Callable[[], None]:
             for b in breaches:
                 logger.warning(
                     "ITIL SLA breach: %s (%s) unacknowledged for %d min (limit: %d min)",
-                    b["id"], b["severity"], b["elapsed_minutes"], b["sla_minutes"],
+                    b["id"],
+                    b["severity"],
+                    b["elapsed_minutes"],
+                    b["sla_minutes"],
                 )
         else:
             logger.debug("ITIL escalation check: no SLA breaches")
@@ -727,6 +739,7 @@ def build_scheduler(
     import socket
 
     from .scheduler_jobs import current_host_aliases, load_jobs_with_dropins
+
     jobs_path = Path(home) / "config" / "jobs.yaml"
     jobs = load_jobs_with_dropins(jobs_path)
     if jobs:
