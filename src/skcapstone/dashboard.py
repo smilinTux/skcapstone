@@ -472,6 +472,16 @@ def create_app(home: Path):
     async def api_card(request):
         return _json(dk.get_card(home, request.path_params["card_id"]))
 
+    async def api_ai_suggestions(request):
+        from . import agent_run as ar
+
+        use_llm = request.query_params.get("llm", "1") != "0"
+        # The LLM (auto-routed, thinking-on) can take ~15s; give it headroom when
+        # explicitly asked (the client fetches heuristics first, then upgrades).
+        timeout = 35.0 if use_llm else 1.0
+        return _json(ar.suggest_next_steps(
+            home, request.path_params["card_id"], use_llm=use_llm, timeout=timeout))
+
     async def api_card_mutate(request):
         card_id = request.path_params["card_id"]
         action = request.path_params["action"]
@@ -567,6 +577,7 @@ def create_app(home: Path):
         Route("/api/daemon", _get_route(_get_daemon_json)),
         Route("/api/kanban", api_kanban),
         Route("/api/card/{card_id}", api_card),
+        Route("/api/card/{card_id}/ai-suggestions", api_ai_suggestions),
         Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
         Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),
         Route("/api/events", api_events),

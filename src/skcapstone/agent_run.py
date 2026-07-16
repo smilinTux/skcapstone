@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from .card_store import CardStore
+from .card_store import CardCore, CardStore
 
 logger = logging.getLogger("skcapstone.agent_run")
 
@@ -55,6 +55,42 @@ def _iso(dt: datetime) -> str:
 # Attach + fold
 # ---------------------------------------------------------------------------
 
+def ensure_card(home: Path, card_id: str) -> bool:
+    """Make sure ``card_id`` exists in the CardStore.
+
+    ITIL records (inc-/prb-/chg-) created after the migration may not yet be
+    CardStore cards; this lazily materializes one from the ITIL record so AI
+    next-steps attach uniformly to tasks and ITIL tickets.
+    """
+    store = CardStore(home)
+    if store.fold(card_id) is not None:
+        return True
+    from .card import card_from_change, card_from_incident, card_from_problem
+    from .itil import ITILManager
+
+    mgr = ITILManager(Path(home).expanduser())
+    card = None
+    if card_id.startswith("inc-"):
+        rec = next((i for i in mgr.list_incidents() if i.id == card_id), None)
+        card = card_from_incident(rec) if rec else None
+    elif card_id.startswith("prb-"):
+        rec = next((p for p in mgr.list_problems() if p.id == card_id), None)
+        card = card_from_problem(rec) if rec else None
+    elif card_id.startswith("chg-"):
+        rec = next((c for c in mgr.list_changes() if c.id == card_id), None)
+        card = card_from_change(rec) if rec else None
+    if card is None:
+        return False
+    store.create(CardCore(
+        id=card.id, kind=card.kind.value, title=card.title, description=card.description,
+        created_by=card.originator, created_at=card.created_at or _iso(_now()),
+        initial_priority=card.priority, initial_swimlane=card.swimlane,
+        initial_labels=list(card.labels), meta=dict(card.meta),
+    ))
+    store.append_event(card_id, "move", "itil-import", column=card.status.value)
+    return True
+
+
 def request_run(
     home: Path,
     card_id: str,
@@ -68,6 +104,7 @@ def request_run(
         return {"error": f"invalid mode '{mode}'"}
     if not (instruction or "").strip():
         return {"error": "instruction required"}
+    ensure_card(home, card_id)
     store = CardStore(home)
     card = store.fold(card_id)
     if card is None:
@@ -97,6 +134,121 @@ def list_queued(home: Path) -> list[dict]:
         run = card.meta.get("agent_run")
         if run and run.get("state") == QUEUED:
             out.append({"card_id": card.id, "kind": card.kind.value, "run": run})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Recommended next-steps (shown by default in the composer)
+# ---------------------------------------------------------------------------
+
+# Instant, always-available defaults by card kind. Each is {text, mode}.
+_HEURISTIC = {
+    "task": [
+        {"text": "Draft an implementation plan and list the files to touch.", "mode": "propose"},
+        {"text": "Implement it behind a flag, add tests, and open a draft PR.", "mode": "execute"},
+        {"text": "Write and run tests for this in a scratch worktree.", "mode": "dry-run"},
+    ],
+    "bug": [
+        {"text": "Reproduce the bug and write a failing test.", "mode": "dry-run"},
+        {"text": "Fix the root cause and open a draft PR with the test.", "mode": "execute"},
+        {"text": "Investigate and summarize the likely root cause.", "mode": "propose"},
+    ],
+    "incident": [
+        {"text": "Investigate the root cause and post findings on the incident.", "mode": "propose"},
+        {"text": "Propose remediation steps (do not apply them yet).", "mode": "propose"},
+        {"text": "Draft a KEDB entry with symptoms and a workaround.", "mode": "dry-run"},
+    ],
+    "problem": [
+        {"text": "Analyze the root cause and propose a permanent fix.", "mode": "propose"},
+        {"text": "Draft a workaround and a KEDB entry.", "mode": "dry-run"},
+        {"text": "Link the related incidents and open a change to fix it.", "mode": "propose"},
+    ],
+    "change": [
+        {"text": "Draft the implementation plan and rollback plan (do not implement).", "mode": "propose"},
+        {"text": "Assess the risk and prepare the CAB summary.", "mode": "propose"},
+        {"text": "Prepare the implementation in a worktree for review after CAB approval.", "mode": "dry-run"},
+    ],
+}
+
+
+def _heuristic_suggestions(card) -> list[dict]:
+    kind = card.kind.value
+    if kind == "task" and "bug" in {l.lower() for l in card.labels}:
+        kind = "bug"
+    return list(_HEURISTIC.get(kind, _HEURISTIC["task"]))
+
+
+def suggest_next_steps(home: Path, card_id: str, use_llm: bool = True,
+                       timeout: float = 12.0) -> dict:
+    """Recommend a few AI next-step options for a card.
+
+    Tries skgateway for card-tailored suggestions; always falls back to instant
+    heuristics so the composer is never blank or slow.
+
+    Returns ``{"suggestions": [{"text","mode"}...], "source": "llm"|"heuristic"}``.
+    """
+    ensure_card(home, card_id)
+    store = CardStore(home)
+    card = store.fold(card_id)
+    if card is None:
+        return {"error": "card not found", "suggestions": []}
+    heuristics = _heuristic_suggestions(card)
+    if not use_llm:
+        return {"suggestions": heuristics, "source": "heuristic"}
+
+    try:
+        from . import skgateway_client as gw
+
+        recent = "; ".join(a.get("text", "") for a in card.meta.get("comments", [])[-3:])
+        prompt = (
+            "You suggest next-step instructions an AI agent can execute on a work item. "
+            "Return ONLY a JSON array of 3 objects, each {\"text\": <one concise imperative "
+            "instruction>, \"mode\": one of propose|dry-run|execute}. Prefer 'propose' for "
+            "analysis, 'dry-run' for reversible/scratch work, 'execute' only for a change that "
+            "should produce a draft PR. For kind 'change', never suggest 'execute'.\n\n"
+            f"Kind: {card.kind.value}\nTitle: {card.title}\n"
+            f"Description: {(card.description or '')[:400]}\n"
+            f"Status: {card.status.value}\nLabels: {', '.join(card.labels)}\n"
+            f"Recent notes: {recent}\n"
+        )
+        text = gw.chat(
+            [{"role": "user", "content": prompt}],
+            max_tokens=1024, temperature=0.4, timeout=timeout,
+        )
+        parsed = _parse_suggestions(text)
+        if parsed:
+            # never let the LLM propose execute on a change
+            if card.kind.value == "change":
+                for s in parsed:
+                    if s["mode"] == "execute":
+                        s["mode"] = "propose"
+            return {"suggestions": parsed[:4], "source": "llm"}
+    except Exception as exc:  # noqa: BLE001
+        logger.info("suggest_next_steps LLM path failed: %s", exc)
+    return {"suggestions": heuristics, "source": "heuristic"}
+
+
+def _parse_suggestions(text: Optional[str]) -> list[dict]:
+    """Extract a [{text,mode}] list from an LLM response (tolerant)."""
+    if not text:
+        return []
+    import json as _json
+    import re
+
+    m = re.search(r"\[.*\]", text, re.DOTALL)
+    if not m:
+        return []
+    try:
+        raw = _json.loads(m.group(0))
+    except ValueError:
+        return []
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict) and item.get("text"):
+            mode = item.get("mode", "propose")
+            if mode not in MODES:
+                mode = "propose"
+            out.append({"text": str(item["text"]).strip(), "mode": mode})
     return out
 
 

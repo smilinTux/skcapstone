@@ -1,6 +1,7 @@
 // ITIL cockpit: overview KPIs, breach-risk, CAB queue, discipline tables, and
 // record detail (stepper + lineage + timeline). Live-refreshes over SSE.
 import { esc, getJSON, toast, timeShort } from "./api.js";
+import { renderAIComposer, wireAIComposer } from "./ai_compose.js";
 
 const SEV_VAR = { sev1: "sev1", sev2: "sev2", sev3: "sev3", sev4: "sev4" };
 const CHANGE_STEPS = ["proposed", "reviewing", "approved", "implementing", "deployed", "verified"];
@@ -191,9 +192,11 @@ function renderRecord(panel, d) {
       ${d.kind === "change" ? `<div class="notes">type <b>${esc(r.change_type)}</b> · risk <b>${esc(r.risk)}</b>${r.rollback_plan ? "<br>rollback: " + esc(r.rollback_plan) : ""}</div>` : ""}
     </div>
     ${lineage}
-    <div class="psec"><div class="st">Timeline · ${(d.timeline||[]).length} entries</div><div class="act">${tl || '<span style="color:var(--ink3);font-size:11px">no entries</span>'}</div></div>`;
+    <div class="psec"><div class="st">Timeline · ${(d.timeline||[]).length} entries</div><div class="act">${tl || '<span style="color:var(--ink3);font-size:11px">no entries</span>'}</div></div>
+    ${renderAIComposer((r.meta && r.meta.agent_run) || null)}`;
   panel.querySelector(".pclose").addEventListener("click", closePanel);
   panel.querySelectorAll(".lnode[data-rec]").forEach((n) => n.addEventListener("click", () => { const [k, id] = n.dataset.rec.split(":"); openRecord(k, id); }));
+  wireAIComposer(panel, r.id, () => openRecord(d.kind, r.id));
 }
 
 function closePanel() {

@@ -133,6 +133,13 @@ h1{font-size:17px;margin:0;font-weight:680;letter-spacing:-.01em;}
 .seg span{font-size:10.5px;padding:4px 9px;cursor:pointer;color:var(--ink2);user-select:none;}
 .seg span.on{background:var(--ai);color:#fff;font-weight:600;}
 .picker{font-size:11px;padding:4px 8px;border:1px solid var(--hair);border-radius:7px;color:var(--ink2);background:var(--panel);}
+.ai-suggest{margin-bottom:9px;display:flex;flex-direction:column;gap:5px;}
+.suggest-chip{text-align:left;font-size:11.5px;line-height:1.35;padding:7px 9px;border:1px solid color-mix(in srgb,var(--ai) 28%,var(--hair));border-radius:8px;background:var(--panel);color:var(--ink);cursor:pointer;display:flex;gap:7px;align-items:flex-start;transition:border-color .1s,background .1s;}
+.suggest-chip:hover{border-color:var(--ai);background:color-mix(in srgb,var(--ai) 7%,var(--panel));}
+.suggest-chip .sm{flex:none;font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:2px 5px;border-radius:4px;color:#fff;margin-top:1px;}
+.suggest-chip .sm.propose{background:var(--accent);}
+.suggest-chip .sm.dry-run{background:var(--high);}
+.suggest-chip .sm.execute{background:var(--ai);}
 .locknote{font-size:10px;color:var(--ink3);display:flex;align-items:center;gap:4px;margin-top:8px;}
 .runstate{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;}
 .runstate.queued{color:var(--ink2);background:var(--panel2);}

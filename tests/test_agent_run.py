@@ -119,3 +119,42 @@ def test_queue_ai_endpoint_and_capability(home, monkeypatch):
     good = client.post("/api/card/t1/queue-ai", json={"instruction": "x"},
                        headers={"X-SK-Capability": "s3cret"})
     assert good.status_code == 200 and good.json()["ok"]
+
+
+def test_suggest_heuristic(home):
+    d = ar.suggest_next_steps(home, "t1", use_llm=False)
+    assert d["source"] == "heuristic"
+    assert len(d["suggestions"]) >= 3
+    assert all("text" in s and s["mode"] in ("propose", "dry-run", "execute") for s in d["suggestions"])
+
+
+def test_ensure_card_and_suggest_for_itil(tmp_path):
+    from skcapstone.itil import ITILManager
+    mgr = ITILManager(tmp_path)
+    inc = mgr.create_incident(title="skmem-pg down", severity="sev2", created_by="lumina")
+    # incident is not yet a CardStore card; suggest should materialize it
+    d = ar.suggest_next_steps(tmp_path, inc.id, use_llm=False)
+    assert d["suggestions"] and d["source"] == "heuristic"
+    # incident heuristics mention investigation
+    assert any("investigate" in s["text"].lower() or "root cause" in s["text"].lower()
+               for s in d["suggestions"])
+    # and we can queue an AI run on the ITIL ticket
+    r = ar.request_run(tmp_path, inc.id, "investigate root cause", mode="propose")
+    assert r["ok"]
+    assert ar.current_run(tmp_path, inc.id)["state"] == "queued"
+
+
+def test_change_suggestions_never_execute(tmp_path):
+    from skcapstone.itil import ITILManager
+    mgr = ITILManager(tmp_path)
+    ch = mgr.propose_change(title="Gateway cutover", created_by="lumina")
+    d = ar.suggest_next_steps(tmp_path, ch.id, use_llm=False)
+    assert all(s["mode"] != "execute" for s in d["suggestions"])
+
+
+def test_suggestions_route(home):
+    from starlette.testclient import TestClient
+    from skcapstone.dashboard import create_app
+    client = TestClient(create_app(home))
+    d = client.get("/api/card/t1/ai-suggestions?llm=0").json()
+    assert d["suggestions"] and d["source"] == "heuristic"
