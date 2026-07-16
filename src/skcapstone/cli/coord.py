@@ -291,8 +291,12 @@ def register_coord_commands(main: click.Group) -> None:
     @coord.command("parity")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--show", default=10, type=int, help="Max mismatches to print.")
-    def coord_parity(home, show):
+    @click.option("--check", is_flag=True, default=False,
+                  help="Exit non-zero on any drift (for the soak monitor).")
+    def coord_parity(home, show, check):
         """Diff the legacy board against the CardStore fold (Phase 4 soak check)."""
+        import sys
+
         from ..card_store import parity_check
 
         home_path = Path(home).expanduser()
@@ -308,6 +312,8 @@ def register_coord_commands(main: click.Group) -> None:
         if par["missing"][:show]:
             console.print(f"    [yellow]missing[/]: {par['missing'][:show]}")
         console.print()
+        if check and not ok:
+            sys.exit(1)
 
     @coord.command("maintain")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
