@@ -438,28 +438,96 @@ def create_app(home: Path):
     Returns:
         Starlette: The ASGI application.
     """
+    import asyncio
+
     from starlette.applications import Starlette
-    from starlette.responses import HTMLResponse
-    from starlette.routing import Route
+    from starlette.responses import HTMLResponse, StreamingResponse
+    from starlette.routing import Mount, Route
+    from starlette.staticfiles import StaticFiles
+
+    from . import dashboard_kanban as dk
+
+    static_dir = Path(__file__).parent / "static"
 
     async def index(_request):
         return HTMLResponse(_DASHBOARD_HTML)
+
+    async def board_page(_request):
+        html = (static_dir / "board.html").read_text(encoding="utf-8")
+        return HTMLResponse(html)
 
     def _get_route(fn):
         async def handler(_request):
             return _json(fn(home))
         return handler
 
+    async def api_kanban(_request):
+        return _json(dk.get_kanban(home))
+
+    async def api_card(request):
+        return _json(dk.get_card(home, request.path_params["card_id"]))
+
+    async def api_card_mutate(request):
+        card_id = request.path_params["card_id"]
+        action = request.path_params["action"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        actor = (
+            request.headers.get("x-sk-actor")
+            or body.pop("actor", None)
+            or "dashboard"
+        )
+        result = dk.apply_mutation(home, card_id, action, actor, **body)
+        if result.get("ok"):
+            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor})
+        return _json(result)
+
+    async def api_events(_request):
+        async def stream():
+            q = dk.BUS.subscribe()
+            try:
+                yield ": connected\n\n"
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(q.get(), timeout=20)
+                        yield f"event: {msg.get('type','message')}\ndata: {json.dumps(msg)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"
+            finally:
+                dk.BUS.unsubscribe(q)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     routes = [
         Route("/", index),
         Route("/index.html", index),
+        Route("/board", board_page),
         Route("/api/status", _get_route(_get_agent_status)),
         Route("/api/doctor", _get_route(_get_doctor_report)),
         Route("/api/board", _get_route(_get_board_state)),
         Route("/api/memory", _get_route(_get_memory_stats)),
         Route("/api/daemon", _get_route(_get_daemon_json)),
+        Route("/api/kanban", api_kanban),
+        Route("/api/card/{card_id}", api_card),
+        Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),
+        Route("/api/events", api_events),
     ]
-    return Starlette(routes=routes)
+    if static_dir.exists():
+        routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))
+
+    app = Starlette(routes=routes)
+
+    @app.on_event("startup")
+    async def _start_poll():
+        app.state.poll_task = asyncio.create_task(dk.poll_event_store(home))
+
+    return app
 
 
 class _UvicornServer:

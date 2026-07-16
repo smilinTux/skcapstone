@@ -209,6 +209,10 @@ class CardStore:
                 card.labels.remove(e["label"])
             elif action == "link" and e.get("link_key") is not None:
                 card.links[e["link_key"]] = e.get("link_value")
+            elif action == "note" and e.get("text"):
+                card.meta.setdefault("comments", []).append(
+                    {"ts": e.get("ts"), "writer": e.get("writer"), "text": e["text"]}
+                )
             elif action == "archive":
                 card.archived = True
                 card.meta["archived_at"] = e.get("ts")
@@ -416,6 +420,17 @@ def parity_check(home: Path) -> dict:
             os.environ["SKCOORD_CARD_STORE"] = saved
     stored = {c.id: c for c in store.list_cards(include_archived=True)}
 
+    # Coarse lifecycle bucket: legacy coord can only derive todo/active/done from
+    # its claim files, so kanban-native column moves (ready<->doing<->review) made
+    # on the board live only in the store and must NOT read as backup drift. The
+    # monitor still catches real divergence (a card done/archived in one but not
+    # the other, or a different owner).
+    def _bucket(status_value: str) -> str:
+        return {
+            "backlog": "todo", "ready": "active", "doing": "active",
+            "review": "active", "done": "done",
+        }.get(status_value, status_value)
+
     mismatches: list[dict] = []
     missing: list[str] = []
     matched = 0
@@ -425,7 +440,7 @@ def parity_check(home: Path) -> dict:
             missing.append(cid)
             continue
         diff = {}
-        if lc.status != sc.status:
+        if _bucket(lc.status.value) != _bucket(sc.status.value):
             diff["status"] = [lc.status.value, sc.status.value]
         if (lc.owner or None) != (sc.owner or None):
             diff["owner"] = [lc.owner, sc.owner]

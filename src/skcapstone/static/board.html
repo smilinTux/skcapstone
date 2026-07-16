@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard — Board</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/">Status</a>
+        <a class="tab active" href="/board">Kanban Board</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="live"><span class="dot" id="live-dot"></span><span id="live-text">connecting</span></span>
+      <span class="who mono" id="who">operator</span>
+    </div>
+
+    <div class="filters">
+      <span class="fl">filter</span>
+      <input type="search" id="f-text" placeholder="title / id…" autocomplete="off">
+      <select id="f-owner"><option value="">any owner</option></select>
+      <select id="f-kind">
+        <option value="">any kind</option>
+        <option value="task">task</option>
+        <option value="epic">epic</option>
+        <option value="incident">incident</option>
+        <option value="problem">problem</option>
+        <option value="change">change</option>
+      </select>
+      <select id="f-priority">
+        <option value="">any priority</option>
+        <option value="critical">critical</option>
+        <option value="high">high</option>
+        <option value="medium">medium</option>
+        <option value="low">low</option>
+      </select>
+      <span class="spacer"></span>
+      <button class="btn" id="btn-refresh">Refresh</button>
+    </div>
+
+    <div class="board-scroll"><div class="board" id="board"><div class="emptymsg">Loading board…</div></div></div>
+  </div>
+
+  <div class="overlay" id="overlay"></div>
+  <aside class="panel" id="panel" aria-hidden="true"></aside>
+  <div class="toast" id="toast"></div>
+
+  <script src="/static/vendor/Sortable.min.js"></script>
+  <script type="module" src="/static/js/board.js"></script>
+</body>
+</html>
