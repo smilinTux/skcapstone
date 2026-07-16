@@ -77,3 +77,17 @@ def test_coord_age_backlog_dry_run(tmp_path):
     assert result.exit_code == 0, result.output
     assert "1" in result.output
     assert "ab1" not in board.archived_ids()
+
+
+def test_coord_maintain_runs_both_sweeps(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    old = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
+    board.create_task(Task(id="mt1", title="old done", created_by="o", created_at=old))
+    board.save_agent(AgentFile(agent="o", completed_tasks=["mt1"]))
+    board.create_task(Task(id="mt2", title="old open", created_by="o", created_at=old))
+    result = CliRunner().invoke(main, ["coord", "maintain", "--home", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "mt1" in board.archived_ids()  # done archived
+    assert "mt2" in board.archived_ids()  # stale-open archived

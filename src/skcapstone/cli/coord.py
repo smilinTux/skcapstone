@@ -268,6 +268,31 @@ def register_coord_commands(main: click.Group) -> None:
         verb = "Would archive" if dry_run else "Archived"
         console.print(f"\n  [green]{verb} {len(ids)} stale open task(s) older than {days}d.[/]\n")
 
+    @coord.command("maintain")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--done-days", default=14, type=int,
+                  help="Archive done tasks older than N days.")
+    @click.option("--backlog-days", default=90, type=int,
+                  help="Archive unclaimed open tasks older than N days.")
+    @click.option("--dry-run", is_flag=True, default=False)
+    def coord_maintain(home, done_days, backlog_days, dry_run):
+        """Keep the board bounded: archive old done + ancient open tasks.
+
+        Runs both sweeps in one shot (for the scheduler). Reversible: delete the
+        per-writer archive index to restore.
+        """
+        from ..coordination import Board
+
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
+        done = board.archive_done_tasks(older_than_days=done_days, dry_run=dry_run)
+        stale = board.age_stale_open(older_than_days=backlog_days, dry_run=dry_run)
+        verb = "Would archive" if dry_run else "Archived"
+        console.print(
+            f"\n  [green]{verb} {len(done)} done (>{done_days}d) + "
+            f"{len(stale)} stale-open (>{backlog_days}d) = {len(done) + len(stale)} total.[/]\n"
+        )
+
     @coord.command("move")
     @click.argument("task_id")
     @click.argument("column",

@@ -95,6 +95,37 @@ TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="coord_kanban",
+        description=(
+            "Show the unified kanban board over coord tasks and ITIL tickets. "
+            "Returns per-lane per-column counts, WIP status, and the active "
+            "cards (ready/doing/review). Columns are the lifecycle; swimlanes "
+            "are the card kind (feature/bug/security/expedite/change/problem)."
+        ),
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
+    Tool(
+        name="coord_move",
+        description=(
+            "Move a card to a kanban column (backlog/ready/doing/review/done). "
+            "The explicit move is authoritative for the card's column."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The card/task ID to move"},
+                "column": {
+                    "type": "string",
+                    "enum": ["backlog", "ready", "doing", "review", "done"],
+                    "description": "Target kanban column",
+                },
+                "order": {"type": "integer", "description": "Position within the column"},
+                "agent": {"type": "string", "description": "Writer name (defaults to host)"},
+            },
+            "required": ["task_id", "column"],
+        },
+    ),
+    Tool(
         name="coord_score",
         description=(
             "Record an autopilot grade on a coordination task. Appends to "
@@ -266,10 +297,72 @@ async def _handle_coord_score(args: dict) -> list[TextContent]:
     })
 
 
+async def _handle_coord_kanban(_args: dict) -> list[TextContent]:
+    """Return the unified kanban board state."""
+    from ..card import COLUMN_ORDER, LANE_ORDER, KanbanBoard
+
+    kb = KanbanBoard(_shared_root())
+    grid = kb.grid()
+    counts = {
+        lane: {col: len(grid[lane][col]) for col in COLUMN_ORDER}
+        for lane in LANE_ORDER
+        if any(grid[lane][col] for col in COLUMN_ORDER)
+    }
+    active = [
+        {
+            "id": c.id,
+            "title": c.title,
+            "kind": c.kind.value,
+            "status": c.status.value,
+            "swimlane": c.swimlane,
+            "priority": c.priority,
+            "owner": c.owner,
+        }
+        for lane in LANE_ORDER
+        for col in ("ready", "doing", "review")
+        for c in grid[lane][col]
+    ]
+    all_cards = kb.cards()
+    return _json_response({
+        "counts": counts,
+        "wip": kb.wip_report(),
+        "active": active,
+        "totals": {
+            "active": len(all_cards),
+            "itil": sum(1 for c in all_cards if c.source == "itil"),
+        },
+    })
+
+
+async def _handle_coord_move(args: dict) -> list[TextContent]:
+    """Move a card to a kanban column."""
+    from ..card import CardEvent, CardEventLog, Column
+
+    task_id = args.get("task_id", "")
+    column = args.get("column", "")
+    if not task_id or not column:
+        return _error_response("task_id and column are required")
+    if column not in {c.value for c in Column}:
+        return _error_response(f"invalid column '{column}'")
+
+    CardEventLog(_shared_root()).append(
+        CardEvent(
+            card_id=task_id,
+            action="move",
+            column=column,
+            order=args.get("order"),
+            writer=args.get("agent", "") or "",
+        )
+    )
+    return _json_response({"moved": True, "task_id": task_id, "column": column})
+
+
 HANDLERS: dict = {
     "coord_status": _handle_coord_status,
     "coord_claim": _handle_coord_claim,
     "coord_complete": _handle_coord_complete,
     "coord_create": _handle_coord_create,
+    "coord_kanban": _handle_coord_kanban,
+    "coord_move": _handle_coord_move,
     "coord_score": _handle_coord_score,
 }
