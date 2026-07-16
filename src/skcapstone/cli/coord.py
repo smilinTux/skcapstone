@@ -268,6 +268,47 @@ def register_coord_commands(main: click.Group) -> None:
         verb = "Would archive" if dry_run else "Archived"
         console.print(f"\n  [green]{verb} {len(ids)} stale open task(s) older than {days}d.[/]\n")
 
+    @coord.command("migrate")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--dry-run", is_flag=True, default=False,
+                  help="Report what would import without writing the CardStore.")
+    def coord_migrate(home, dry_run):
+        """Import the legacy board (coord + ITIL + overlay) into the CardStore.
+
+        Idempotent and additive (Phase 4). Nothing reads the CardStore until
+        SKCOORD_CARD_STORE=1. Reversible: rm ~/.skcapstone/cards to undo.
+        """
+        from ..card_store import import_from_legacy
+
+        home_path = Path(home).expanduser()
+        res = import_from_legacy(home_path, dry_run=dry_run)
+        verb = "Would import" if dry_run else "Imported"
+        console.print(
+            f"\n  [green]{verb} {res['imported']} card(s)"
+            f" ({res['skipped']} already present, {res['total']} total).[/]\n"
+        )
+
+    @coord.command("parity")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--show", default=10, type=int, help="Max mismatches to print.")
+    def coord_parity(home, show):
+        """Diff the legacy board against the CardStore fold (Phase 4 soak check)."""
+        from ..card_store import parity_check
+
+        home_path = Path(home).expanduser()
+        par = parity_check(home_path)
+        ok = not par["mismatches"] and not par["missing"]
+        color = "green" if ok else "red"
+        console.print(
+            f"\n  [{color}]checked={par['checked']} matched={par['matched']} "
+            f"mismatches={len(par['mismatches'])} missing={len(par['missing'])}[/]"
+        )
+        for m in par["mismatches"][:show]:
+            console.print(f"    [yellow]{m['id']}[/]: {m['diff']}")
+        if par["missing"][:show]:
+            console.print(f"    [yellow]missing[/]: {par['missing'][:show]}")
+        console.print()
+
     @coord.command("maintain")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--done-days", default=14, type=int,
@@ -308,6 +349,10 @@ def register_coord_commands(main: click.Group) -> None:
         event = CardEvent(card_id=task_id, action="move", column=column, order=order,
                           writer=agent or "")
         CardEventLog(home_path).append(event)
+        from ..card_store import card_store_write_enabled, mirror_coord_move
+
+        if card_store_write_enabled():
+            mirror_coord_move(home_path, task_id, column, agent or "", order=order)
         pos = f" at order {order}" if order is not None else ""
         console.print(f"\n  [green]Moved {task_id} to '{column}'{pos}.[/]\n")
 

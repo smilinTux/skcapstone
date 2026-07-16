@@ -308,12 +308,33 @@ class KanbanBoard:
     def __init__(self, home: Path) -> None:
         self.home = Path(home).expanduser()
 
-    def cards(self) -> list[Card]:
-        """All active (non-archived) cards from both sources."""
+    def cards(self, include_archived: bool = False) -> list[Card]:
+        """All cards from both sources, with the kanban overlay applied.
+
+        When the ``SKCOORD_CARD_STORE=1`` flag is set, the board is served from
+        the event-sourced CardStore (Phase 4) instead of the legacy projection.
+        Default (flag unset/0) keeps the legacy coord + ITIL + overlay path.
+
+        Args:
+            include_archived: When True, archived coord tasks are included with
+                their ``archived`` flag set (used by the Phase 4 importer and
+                parity check). Default False keeps the active-board behavior.
+        """
+        import os
+
+        if os.environ.get("SKCOORD_CARD_STORE") == "1":
+            from .card_store import CardStore
+
+            return CardStore(self.home).list_cards(include_archived=include_archived)
+
         out: list[Card] = []
         board = Board(self.home)
-        for view in board.get_task_views():
-            out.append(card_from_taskview(view))
+        archived_ids = board.archived_ids()
+        for view in board.get_task_views(include_archived=include_archived):
+            c = card_from_taskview(view)
+            if c.id in archived_ids:
+                c.archived = True
+            out.append(c)
         try:
             from .itil import ITILManager
 
@@ -344,6 +365,8 @@ class KanbanBoard:
                     c.labels.append(lb)
             c.links.update(patch["links"])
 
+        if include_archived:
+            return out
         return [c for c in out if not c.archived]
 
     def grid(self) -> dict[str, dict[str, list[Card]]]:

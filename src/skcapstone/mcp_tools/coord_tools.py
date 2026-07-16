@@ -345,7 +345,8 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
     if column not in {c.value for c in Column}:
         return _error_response(f"invalid column '{column}'")
 
-    CardEventLog(_shared_root()).append(
+    root = _shared_root()
+    CardEventLog(root).append(
         CardEvent(
             card_id=task_id,
             action="move",
@@ -354,6 +355,14 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
             writer=args.get("agent", "") or "",
         )
     )
+    try:
+        from ..card_store import card_store_write_enabled, mirror_coord_move
+
+        if card_store_write_enabled():
+            mirror_coord_move(root, task_id, column, args.get("agent", "") or "",
+                              order=args.get("order"))
+    except Exception:  # noqa: BLE001
+        pass
     return _json_response({"moved": True, "task_id": task_id, "column": column})
 
 

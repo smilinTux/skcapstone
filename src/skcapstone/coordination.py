@@ -302,7 +302,28 @@ class Board:
         path.write_text(
             json.dumps(task.model_dump(), indent=2) + "\n"
         , encoding="utf-8")
+        self._mirror_card_store("create", task=task)
         return path
+
+    def _mirror_card_store(self, op: str, **kw) -> None:
+        """Flag-gated dual-write into the event-sourced CardStore (Phase 4).
+
+        A no-op unless ``SKCOORD_CARD_STORE`` is ``1``/``dual``. Best-effort: a
+        CardStore failure never breaks the authoritative coord write.
+        """
+        try:
+            from . import card_store
+
+            if not card_store.card_store_write_enabled():
+                return
+            if op == "create":
+                card_store.mirror_coord_create(self.home, kw["task"])
+            elif op == "claim":
+                card_store.mirror_coord_claim(self.home, kw["task_id"], kw["agent"])
+            elif op == "complete":
+                card_store.mirror_coord_complete(self.home, kw["task_id"], kw["agent"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("CardStore mirror (%s) failed: %s", op, exc)
 
     def _write_task_raw(self, task_id: str, mutate: Callable[[dict], None]) -> Path:
         """Atomically mutate a task's raw JSON dict, preserving all keys.
@@ -636,6 +657,7 @@ class Board:
         agent.current_task = task_id
         agent.state = AgentState.ACTIVE
         self.save_agent(agent)
+        self._mirror_card_store("claim", task_id=task_id, agent=agent_name)
         return agent
 
     def complete_task(self, agent_name: str, task_id: str) -> AgentFile:
@@ -660,6 +682,7 @@ class Board:
         # Mint Joules for completed task
         _mint_joules_for_task(self, task_id, agent_name)
 
+        self._mirror_card_store("complete", task_id=task_id, agent=agent_name)
         return agent
 
     def generate_board_md(self) -> str:
