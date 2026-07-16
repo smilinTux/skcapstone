@@ -1,10 +1,28 @@
-# Cards Storage Cutover (Phase 4) Implementation Plan — SHELVED
+# Cards Storage Cutover (Phase 4) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans if this is ever green-lit. Steps use checkbox (`- [ ]`) syntax.
-
-**Status:** SHELVED. Do NOT execute without Chef's explicit go. See the recommendation below.
+**Status: 4a-4d SHIPPED and proven live (tag pending). 4e (global flip + legacy retirement) remains, gated on a parity soak.**
 
 **Goal:** Replace coord's Task-files + derived-status storage with one event-sourced `cards/<id>/{core.json, events/*.jsonl}` store shared by coord and ITIL, so every work item has a single source of truth.
+
+## Execution status (2026-07-16)
+
+- **4a Card store engine — DONE.** `card_store.py::CardStore` (write-once core + per-writer events + fold). 12 tests.
+- **4b Importer — DONE.** `import_from_legacy()` (idempotent). Live: imported 1750 cards.
+- **4c Parity — DONE and GREEN.** `parity_check()`; live board vs store = 1750/1750 matched, 0 mismatches, 0 missing.
+- **4d Flag-gated read + dual-write — DONE.** `SKCOORD_CARD_STORE=1` serves the board from the store; `Board.create/claim/complete` + `coord move` mirror into the store when the flag is `1`/`dual`. Default OFF = zero behavior change.
+- **4e Retire legacy — NOT DONE (intentionally).** The global flip + legacy archival is the one irreversible, fleet-wide step; it waits for a real parity soak (below).
+
+## Soak-to-flip runbook (the remaining work)
+
+1. **Start dual-write:** set `SKCOORD_CARD_STORE=dual` in every process that writes coord (agent MCP servers, the skcapstone daemon, the Telegram bridge units, interactive shells). Re-run `skcapstone coord migrate` to backfill anything created between the initial import and dual-write going live (idempotent).
+2. **Soak:** for several days across .158 + .41, run `skcapstone coord parity` (a cron is fine). It must stay `mismatches=0 missing=0` while real agents create/claim/complete/move.
+3. **Read cutover:** once parity holds, flip readers to `SKCOORD_CARD_STORE=1`. Watch the dashboard + `coord kanban`.
+4. **4e retire:** flip the default ON in code, move `tasks/*.json` + `agents/*.json` to a read-only `legacy/`, make `BOARD.md` a pure `render(fold(events))` projection, delete the derived-status scan. Roll all nodes together (July-13 ITIL rule).
+5. **Rollback at any point before 4e:** unset the flag; legacy is authoritative again. `rm -rf ~/.skcapstone/cards` fully undoes the import.
+
+---
+
+## Original design notes
 
 ---
 
