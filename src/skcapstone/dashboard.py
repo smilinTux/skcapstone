@@ -445,6 +445,7 @@ def create_app(home: Path):
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
 
+    from . import dashboard_itil as di
     from . import dashboard_kanban as dk
 
     static_dir = Path(__file__).parent / "static"
@@ -452,9 +453,13 @@ def create_app(home: Path):
     async def index(_request):
         return HTMLResponse(_DASHBOARD_HTML)
 
-    async def board_page(_request):
-        html = (static_dir / "board.html").read_text(encoding="utf-8")
-        return HTMLResponse(html)
+    def _page(name):
+        async def handler(_request):
+            return HTMLResponse((static_dir / name).read_text(encoding="utf-8"))
+        return handler
+
+    board_page = _page("board.html")
+    cockpit_page = _page("cockpit.html")
 
     def _get_route(fn):
         async def handler(_request):
@@ -517,6 +522,14 @@ def create_app(home: Path):
         Route("/api/card/{card_id}", api_card),
         Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),
         Route("/api/events", api_events),
+        Route("/cockpit", cockpit_page),
+        Route("/api/itil/overview", lambda r: _json(di.get_overview(home))),
+        Route("/api/itil/incidents", lambda r: _json(di.get_incidents(home))),
+        Route("/api/itil/problems", lambda r: _json(di.get_problems(home))),
+        Route("/api/itil/changes", lambda r: _json(di.get_changes(home))),
+        Route("/api/itil/kedb", lambda r: _json(di.search_kedb(home, r.query_params.get("q", "")))),
+        Route("/api/itil/record/{kind}/{rid}",
+              lambda r: _json(di.get_record(home, r.path_params["kind"], r.path_params["rid"]))),
     ]
     if static_dir.exists():
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))
