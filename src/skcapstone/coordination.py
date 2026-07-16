@@ -510,6 +510,18 @@ class Board:
         Returns:
             list[TaskView]: Tasks with derived status.
         """
+        # Read cutover (Phase 4e): when SKCOORD_CARD_STORE=1, serve from the
+        # event-sourced CardStore. Legacy is still written as a hot backup.
+        try:
+            from . import card_store
+
+            if card_store.card_store_read_enabled():
+                return card_store.task_views_from_store(
+                    self.home, include_archived=include_archived
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("CardStore read failed, falling back to legacy: %s", exc)
+
         tasks = self.load_tasks(include_archived=include_archived)
         agents = self.load_agents()
 

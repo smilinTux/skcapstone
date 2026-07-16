@@ -295,6 +295,54 @@ def card_store_write_enabled() -> bool:
     return os.environ.get("SKCOORD_CARD_STORE") in ("1", "dual")
 
 
+def card_store_read_enabled() -> bool:
+    """True when reads should be served from the CardStore (post-cutover)."""
+    return os.environ.get("SKCOORD_CARD_STORE") == "1"
+
+
+# Reverse of card._STATUS_TO_COLUMN, to reconstruct coord TaskViews from cards.
+_COLUMN_TO_STATUS = {
+    "backlog": "open",
+    "ready": "claimed",
+    "doing": "in_progress",
+    "review": "review",
+    "done": "done",
+}
+
+
+def task_views_from_store(home: Path, include_archived: bool = False) -> list:
+    """Reconstruct coord ``TaskView`` objects from the CardStore.
+
+    Used by ``Board.get_task_views`` when reads are cut over
+    (``SKCOORD_CARD_STORE=1``), so the dashboard, ``coord status``, and claim
+    validation all serve from the event-sourced store while legacy keeps being
+    written as a hot backup.
+    """
+    from .coordination import Task, TaskPriority, TaskStatus, TaskView
+
+    store = CardStore(home)
+    views = []
+    for c in store.list_cards(include_archived=include_archived):
+        try:
+            priority = TaskPriority(c.priority)
+        except ValueError:
+            priority = TaskPriority.MEDIUM
+        task = Task(
+            id=c.id,
+            title=c.title,
+            description=c.description,
+            priority=priority,
+            tags=list(c.labels),
+            created_by=c.originator,
+            created_at=c.created_at,
+            dependencies=list(c.dependencies),
+            meta=dict(c.meta),
+        )
+        status = TaskStatus(_COLUMN_TO_STATUS.get(c.status.value, "open"))
+        views.append(TaskView(task=task, status=status, claimed_by=c.owner))
+    return views
+
+
 def mirror_coord_create(home: Path, task) -> None:
     """Mirror a coord Task creation into the CardStore (best-effort)."""
     from .card import _swimlane_for_tags

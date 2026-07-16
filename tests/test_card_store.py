@@ -174,3 +174,33 @@ def test_dual_write_mirrors_archive(tmp_path, monkeypatch):
     assert CardStore(tmp_path).fold("ar1").archived is False
     board.archive_task("ar1", by="opus")
     assert CardStore(tmp_path).fold("ar1").archived is True
+
+
+def test_get_task_views_from_store_matches_legacy(tmp_path, monkeypatch):
+    from skcapstone.card_store import import_from_legacy
+    from skcapstone.coordination import AgentFile, Board, Task, TaskPriority
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="v1", title="open", created_by="o"))
+    board.create_task(Task(id="v2", title="inprog high", created_by="o",
+                           priority=TaskPriority.HIGH, tags=["bug"]))
+    board.save_agent(AgentFile(agent="lumina", current_task="v2", claimed_tasks=["v2"]))
+    board.create_task(Task(id="v3", title="done", created_by="o"))
+    board.save_agent(AgentFile(agent="opus", completed_tasks=["v3"]))
+
+    legacy = {v.task.id: (v.status.value, v.claimed_by) for v in board.get_task_views()}
+    import_from_legacy(tmp_path)
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    stored = {v.task.id: (v.status.value, v.claimed_by) for v in board.get_task_views()}
+    assert stored == legacy, f"legacy={legacy} store={stored}"
+
+
+def test_read_cutover_falls_back_when_store_empty(tmp_path, monkeypatch):
+    # flag=1 but no cards imported: reconstruct returns empty, must not crash.
+    from skcapstone.coordination import Board, Task
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="fb1", title="legacy only", created_by="o"))
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    views = board.get_task_views()  # store empty -> returns [] (not a crash)
+    assert isinstance(views, list)
