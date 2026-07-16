@@ -8,12 +8,19 @@ card ``kind``. See docs/superpowers/specs/2026-07-16-unified-kanban-card-model.m
 from __future__ import annotations
 
 import html
+import socket
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from .coordination import Board, TaskStatus, TaskView
+
+
+def _now_iso() -> str:
+    """UTC now as an ISO-8601 string."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 class Kind(str, Enum):
@@ -57,6 +64,103 @@ class Card(BaseModel):
     created_at: str = ""
     updated_at: str = ""
     source: str = "coord"
+
+
+# ---------------------------------------------------------------------------
+# Kanban overlay events (Phase 3): explicit moves, order, labels, links
+# ---------------------------------------------------------------------------
+
+
+class CardEvent(BaseModel):
+    """One kanban overlay event (move, order, label, link, priority, swimlane).
+
+    Overlay events let a human or agent operate the board (move a card to a
+    column, order it, tag it) without touching coord's claim-based write path.
+    """
+
+    card_id: str
+    action: str
+    writer: str = ""
+    ts: str = Field(default_factory=_now_iso)
+    seq: int = 0
+    column: str | None = None
+    order: int | None = None
+    priority: str | None = None
+    swimlane: str | None = None
+    label: str | None = None
+    link_key: str | None = None
+    link_value: str | None = None
+
+
+class CardEventLog:
+    """Per-writer append-only overlay log for kanban operations.
+
+    Conflict-free: every writer appends only to
+    ``coordination/card_events/<host>.jsonl`` (same invariant as the agent
+    files and the archive index).
+    """
+
+    def __init__(self, home: Path) -> None:
+        self.home = Path(home).expanduser()
+        self.dir = self.home / "coordination" / "card_events"
+
+    def append(self, event: CardEvent) -> None:
+        """Append one overlay event to this host's log."""
+        self.dir.mkdir(parents=True, exist_ok=True)
+        if not event.writer:
+            event.writer = socket.gethostname()
+        path = self.dir / f"{socket.gethostname()}.jsonl"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(event.model_dump_json() + "\n")
+
+    def read_all(self) -> list[CardEvent]:
+        """Read every overlay event across all writers."""
+        out: list[CardEvent] = []
+        if not self.dir.exists():
+            return out
+        for f in sorted(self.dir.glob("*.jsonl")):
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(CardEvent.model_validate_json(line))
+                except Exception:  # noqa: BLE001
+                    continue
+        return out
+
+
+def fold_overlay(events: list[CardEvent]) -> dict[str, dict]:
+    """Fold overlay events into a per-card patch dict.
+
+    Events apply in ``(ts, writer, seq)`` order: ``move`` sets column + order
+    (last wins), ``set_priority``/``set_swimlane`` last wins, ``add_label``/
+    ``remove_label`` accumulate, ``link`` merges into ``links``.
+    """
+    ordered = sorted(events, key=lambda e: (e.ts, e.writer, e.seq))
+    overlay: dict[str, dict] = {}
+    for e in ordered:
+        patch = overlay.setdefault(
+            e.card_id,
+            {"column": None, "order": None, "priority": None,
+             "swimlane": None, "labels": [], "links": {}},
+        )
+        if e.action == "move":
+            if e.column is not None:
+                patch["column"] = e.column
+            if e.order is not None:
+                patch["order"] = e.order
+        elif e.action == "set_priority" and e.priority is not None:
+            patch["priority"] = e.priority
+        elif e.action == "set_swimlane" and e.swimlane is not None:
+            patch["swimlane"] = e.swimlane
+        elif e.action == "add_label" and e.label and e.label not in patch["labels"]:
+            patch["labels"].append(e.label)
+        elif e.action == "remove_label" and e.label in patch["labels"]:
+            patch["labels"].remove(e.label)
+        elif e.action == "link" and e.link_key is not None:
+            patch["links"][e.link_key] = e.link_value
+    return overlay
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +293,10 @@ COLUMN_ORDER = [c.value for c in Column]  # backlog, ready, doing, review, done
 LANE_ORDER = ["feature", "bug", "security", "expedite", "change", "problem"]
 _PRIORITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
+# WIP limits per column (backlog/done are unlimited). The expedite/incident
+# lane bypasses these by design.
+WIP_LIMITS = {"ready": 8, "doing": 6, "review": 4}
+
 
 class KanbanBoard:
     """Read-only kanban projection over the coord board and the ITIL store.
@@ -215,12 +323,34 @@ class KanbanBoard:
             out += [card_from_change(c) for c in mgr.list_changes()]
         except Exception:  # ITIL store may be absent; projection stays task-only
             pass
+
+        # Apply the kanban overlay (explicit moves, order, labels, links).
+        overlay = fold_overlay(CardEventLog(self.home).read_all())
+        valid_cols = {c.value for c in Column}
+        for c in out:
+            patch = overlay.get(c.id)
+            if not patch:
+                continue
+            if patch["column"] in valid_cols:
+                c.status = Column(patch["column"])
+            if patch["order"] is not None:
+                c.order = patch["order"]
+            if patch["priority"]:
+                c.priority = patch["priority"]
+            if patch["swimlane"]:
+                c.swimlane = patch["swimlane"]
+            for lb in patch["labels"]:
+                if lb not in c.labels:
+                    c.labels.append(lb)
+            c.links.update(patch["links"])
+
         return [c for c in out if not c.archived]
 
     def grid(self) -> dict[str, dict[str, list[Card]]]:
         """Group active cards as ``grid[swimlane][column] -> [cards]``.
 
-        Cards within a cell are ordered by priority then id.
+        Cards within a cell are ordered by explicit order (when set), then
+        priority, then id.
         """
         grid: dict[str, dict[str, list[Card]]] = {
             lane: {col: [] for col in COLUMN_ORDER} for lane in LANE_ORDER
@@ -230,8 +360,30 @@ class KanbanBoard:
             grid[lane][c.status.value].append(c)
         for lane in grid.values():
             for col in lane.values():
-                col.sort(key=lambda c: (_PRIORITY_RANK.get(c.priority, 2), c.id))
+                col.sort(key=lambda c: (c.order if c.order else 9999,
+                                        _PRIORITY_RANK.get(c.priority, 2), c.id))
         return grid
+
+    def wip_report(self) -> dict[str, dict]:
+        """Per-column WIP status. The expedite lane is excluded (bypasses WIP).
+
+        Returns:
+            dict: ``report[column] = {"count", "limit", "over"}``.
+        """
+        counts = {col: 0 for col in COLUMN_ORDER}
+        for c in self.cards():
+            if c.swimlane == "expedite":
+                continue
+            counts[c.status.value] += 1
+        report: dict[str, dict] = {}
+        for col in COLUMN_ORDER:
+            limit = WIP_LIMITS.get(col)
+            report[col] = {
+                "count": counts[col],
+                "limit": limit,
+                "over": limit is not None and counts[col] > limit,
+            }
+        return report
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +445,7 @@ h1{{font-size:19px;margin:0;font-weight:680;letter-spacing:-.01em;}}
 .colhead .name{{font-size:12px;font-weight:650;text-transform:uppercase;letter-spacing:.06em;}}
 .colhead.donecol .name{{color:var(--done);}}
 .wip{{font-size:11px;color:var(--ink3);border:1px solid var(--hair);border-radius:20px;padding:1px 8px;}}
+.wip.over{{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 45%,var(--hair));background:color-mix(in srgb,var(--crit) 10%,transparent);}}
 .lanelabel{{border-right:1px solid var(--hair);border-bottom:1px solid var(--hair2);padding:14px 12px;background:var(--lane);display:flex;flex-direction:column;gap:6px;}}
 .lname{{font-weight:640;font-size:12.5px;}}
 .lkind{{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);font-family:ui-monospace,monospace;}}
@@ -396,15 +549,23 @@ def render_html(kb: "KanbanBoard", title: str = "SKBoard") -> str:
         '</div></header>'
     )
 
+    wip = kb.wip_report()
     parts.append('<div class="board-scroll"><div class="board">')
     # column header row
     parts.append('<div class="corner"></div>')
     for col in COLUMN_ORDER:
         total = sum(len(grid[lane][col]) for lane in LANE_ORDER)
         donecls = " donecol" if col == "done" else ""
+        limit = wip[col]["limit"]
+        if limit is not None:
+            label = f"{wip[col]['count']} / {limit}"
+            overcls = " over" if wip[col]["over"] else ""
+        else:
+            label = str(total)
+            overcls = ""
         parts.append(
             f'<div class="colhead{donecls}"><span class="name">{_COLUMN_LABEL[col]}</span>'
-            f'<span class="wip mono">{total}</span></div>'
+            f'<span class="wip mono{overcls}">{label}</span></div>'
         )
     # lane rows (skip empty lanes to keep the board tight)
     for lane in LANE_ORDER:
