@@ -162,3 +162,15 @@ def test_dual_write_disabled_by_default(tmp_path):
     board.ensure_dirs()
     board.create_task(Task(id="nd1", title="not mirrored", created_by="o"))
     assert CardStore(tmp_path).fold("nd1") is None  # flag off -> no mirror
+
+
+def test_dual_write_mirrors_archive(tmp_path, monkeypatch):
+    from skcapstone.card_store import CardStore
+    from skcapstone.coordination import Board, Task
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "dual")
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="ar1", title="to archive", created_by="opus"))
+    assert CardStore(tmp_path).fold("ar1").archived is False
+    board.archive_task("ar1", by="opus")
+    assert CardStore(tmp_path).fold("ar1").archived is True

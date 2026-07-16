@@ -203,6 +203,7 @@ class Board:
         entry = {"id": task_id, "archived_at": _now_iso(), "archived_by": by}
         with index.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
+        self._mirror_card_store("archive", task_id=task_id, agent=by)
 
     def load_tasks(self, include_archived: bool = False) -> list[Task]:
         """Load all task files from tasks/ directory.
@@ -322,6 +323,8 @@ class Board:
                 card_store.mirror_coord_claim(self.home, kw["task_id"], kw["agent"])
             elif op == "complete":
                 card_store.mirror_coord_complete(self.home, kw["task_id"], kw["agent"])
+            elif op == "archive":
+                card_store.mirror_coord_archive(self.home, kw["task_id"], kw["agent"])
         except Exception as exc:  # noqa: BLE001
             logger.warning("CardStore mirror (%s) failed: %s", op, exc)
 

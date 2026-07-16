@@ -332,6 +332,11 @@ def mirror_coord_move(home: Path, task_id: str, column: str, agent: str,
     CardStore(home).append_event(task_id, "move", agent or "mcp", column=column, order=order)
 
 
+def mirror_coord_archive(home: Path, task_id: str, agent: str) -> None:
+    """Mirror a coord archival into the CardStore."""
+    CardStore(home).append_event(task_id, "archive", agent or "archive")
+
+
 def parity_check(home: Path) -> dict:
     """Diff the legacy board against the CardStore fold.
 
