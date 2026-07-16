@@ -188,6 +188,70 @@ def register_coord_commands(main: click.Group) -> None:
         console.print(md)
         console.print(f"\n  [dim]Written to {path}[/]\n")
 
+    @coord.command("kanban")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--html", "html_out", default=None, type=click.Path(),
+                  help="Write the visual kanban board to this HTML file.")
+    @click.option("--json", "as_json", is_flag=True, default=False,
+                  help="Emit the grid as JSON instead of a text summary.")
+    def coord_kanban(home, html_out, as_json):
+        """Unified kanban board over coord tasks and ITIL tickets.
+
+        Columns are the shared lifecycle (backlog, ready, doing, review, done);
+        swimlanes are the card kind (feature, bug, security, expedite, change,
+        problem). Reads both stores read-only.
+        """
+        import json as _json
+
+        from ..card import COLUMN_ORDER, LANE_ORDER, KanbanBoard, render_html
+
+        home_path = Path(home).expanduser()
+        kb = KanbanBoard(home_path)
+
+        if html_out:
+            out = Path(html_out).expanduser()
+            out.write_text(render_html(kb), encoding="utf-8")
+            console.print(f"\n  [green]Kanban board written to {out}[/]\n")
+            return
+
+        grid = kb.grid()
+        if as_json:
+            payload = {
+                lane: {col: [c.model_dump() for c in grid[lane][col]] for col in COLUMN_ORDER}
+                for lane in LANE_ORDER
+            }
+            click.echo(_json.dumps(payload, indent=2))
+            return
+
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Swimlane", style="bold")
+        for col in COLUMN_ORDER:
+            table.add_column(col.capitalize(), justify="right")
+        for lane in LANE_ORDER:
+            counts = [len(grid[lane][col]) for col in COLUMN_ORDER]
+            if not any(counts):
+                continue
+            table.add_row(lane, *[str(n) if n else "[dim]-[/]" for n in counts])
+        console.print()
+        console.print(Panel(table, title="Kanban (columns x swimlanes)",
+                            border_style="bright_blue"))
+        console.print("  [dim]Full board: [cyan]coord kanban --html board.html[/][/]\n")
+
+    @coord.command("archive-done")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--days", default=14, type=int, help="Archive done tasks older than N days.")
+    @click.option("--dry-run", is_flag=True, default=False,
+                  help="Show what would be archived without writing.")
+    def coord_archive_done(home, days, dry_run):
+        """Age done tasks off the active board (default: older than 14 days)."""
+        from ..coordination import Board
+
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
+        ids = board.archive_done_tasks(older_than_days=days, dry_run=dry_run)
+        verb = "Would archive" if dry_run else "Archived"
+        console.print(f"\n  [green]{verb} {len(ids)} done task(s) older than {days}d.[/]\n")
+
     @coord.command("changelog")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--output", "-o", default=None, type=click.Path(), help="Output file path.")

@@ -19,7 +19,7 @@ import os
 import re
 import socket
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
@@ -160,25 +160,71 @@ class Board:
         self.coord_dir = self.home / "coordination"
         self.tasks_dir = self.coord_dir / "tasks"
         self.agents_dir = self.coord_dir / "agents"
+        self.archive_dir = self.coord_dir / "archive"
 
     def ensure_dirs(self) -> None:
         """Create coordination directories if they don't exist."""
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
         self.agents_dir.mkdir(parents=True, exist_ok=True)
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
 
-    def load_tasks(self) -> list[Task]:
+    def archived_ids(self) -> set[str]:
+        """Union of task ids archived by any writer.
+
+        Reads per-writer archive index files ``archive/<host>.jsonl`` (each
+        line ``{"id", "archived_at", "archived_by"}``). Conflict-free: every
+        writer appends only to its own host file.
+        """
+        ids: set[str] = set()
+        if not self.archive_dir.exists():
+            return ids
+        for f in sorted(self.archive_dir.glob("*.jsonl")):
+            try:
+                for line in f.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    tid = json.loads(line).get("id")
+                    if tid:
+                        ids.add(tid)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skipping malformed archive index %s: %s", f.name, exc)
+                continue
+        return ids
+
+    def archive_task(self, task_id: str, by: str = "") -> None:
+        """Archive a task by appending to this host's archive index.
+
+        Never mutates the task file; the task stays on disk but drops out of
+        the default board views.
+        """
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        index = self.archive_dir / f"{socket.gethostname()}.jsonl"
+        entry = {"id": task_id, "archived_at": _now_iso(), "archived_by": by}
+        with index.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+
+    def load_tasks(self, include_archived: bool = False) -> list[Task]:
         """Load all task files from tasks/ directory.
+
+        Args:
+            include_archived: When False (default), tasks present in the
+                archive index are omitted.
 
         Returns:
             list[Task]: All tasks on the board.
         """
+        archived = set() if include_archived else self.archived_ids()
         tasks: list[Task] = []
         if not self.tasks_dir.exists():
             return tasks
         for f in sorted(self.tasks_dir.glob("*.json")):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
-                tasks.append(Task.model_validate(data))
+                task = Task.model_validate(data)
+                if task.id in archived:
+                    continue
+                tasks.append(task)
             except Exception as exc:  # noqa: BLE001
                 # A malformed task file must NOT vanish silently — a dropped task
                 # is invisible to the board (it counts as neither open nor done).
@@ -428,16 +474,19 @@ class Board:
         self.save_agent(af)
         return released
 
-    def get_task_views(self) -> list[TaskView]:
+    def get_task_views(self, include_archived: bool = False) -> list[TaskView]:
         """Build enriched task views with derived status.
 
         Cross-references tasks against all agent claim files to
         determine each task's effective status and who claimed it.
 
+        Args:
+            include_archived: When False (default), archived tasks are omitted.
+
         Returns:
             list[TaskView]: Tasks with derived status.
         """
-        tasks = self.load_tasks()
+        tasks = self.load_tasks(include_archived=include_archived)
         agents = self.load_agents()
 
         claimed_map: dict[str, str] = {}
@@ -471,6 +520,48 @@ class Board:
                 )
             )
         return views
+
+    def archive_done_tasks(
+        self,
+        older_than_days: int = 14,
+        now: Optional[datetime] = None,
+        dry_run: bool = False,
+    ) -> list[str]:
+        """Age done tasks off the active board.
+
+        A done task is eligible when its age (from the task's created_at, the
+        only timestamp available on the derived-status model) exceeds
+        ``older_than_days``. Archiving appends to this host's archive index and
+        never mutates the task file.
+
+        Args:
+            older_than_days: Age threshold in days.
+            now: Reference time (defaults to UTC now); injectable for tests.
+            dry_run: When True, return the eligible ids without writing.
+
+        Returns:
+            list[str]: The task ids archived (or that would be, if dry_run).
+        """
+        ref = now or datetime.now(timezone.utc)
+        cutoff = ref - timedelta(days=older_than_days)
+        eligible: list[str] = []
+        for view in self.get_task_views():
+            if view.status != TaskStatus.DONE:
+                continue
+            created = view.task.created_at
+            try:
+                ts = datetime.fromisoformat(created)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                # No parseable timestamp: treat as old enough to archive.
+                ts = cutoff - timedelta(days=1)
+            if ts <= cutoff:
+                eligible.append(view.task.id)
+        if not dry_run:
+            for tid in eligible:
+                self.archive_task(tid, by="archive-done")
+        return eligible
 
     def claim_task(self, agent_name: str, task_id: str) -> AgentFile:
         """Have an agent claim a task.
