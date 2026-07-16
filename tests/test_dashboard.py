@@ -24,13 +24,13 @@ import pytest
 import yaml
 
 from skcapstone.dashboard import (
-    DashboardHandler,
     _DASHBOARD_HTML,
     _get_agent_status,
     _get_board_state,
     _get_doctor_report,
     _get_daemon_json,
     _get_memory_stats,
+    create_app,
     start_dashboard,
 )
 
@@ -76,7 +76,18 @@ def dashboard_server(agent_home):
     server = start_dashboard(agent_home, port=port)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    time.sleep(0.3)
+
+    # Wait for uvicorn to be accepting connections (startup timing varies).
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            probe = HTTPConnection("127.0.0.1", port, timeout=1)
+            probe.request("GET", "/")
+            probe.getresponse().read()
+            probe.close()
+            break
+        except OSError:
+            time.sleep(0.1)
 
     yield server, port
 
@@ -452,3 +463,21 @@ class TestDashboardJsonCLI:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["daemon"]["running"] is False
+
+
+class TestStarletteApp:
+    """Phase 1: Starlette app parity via TestClient (fast, non-flaky)."""
+
+    def test_create_app_serves_html_and_json(self, agent_home):
+        from starlette.testclient import TestClient
+        client = TestClient(create_app(agent_home))
+        r = client.get("/")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "SKCapstone" in r.text
+        b = client.get("/api/board")
+        assert b.status_code == 200
+        assert "application/json" in b.headers["content-type"]
+        assert b.headers["access-control-allow-origin"] == "*"
+        assert "tasks" in b.json()
+        assert client.get("/api/nope").status_code == 404

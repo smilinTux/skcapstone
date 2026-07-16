@@ -45,6 +45,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dashboard = [
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
 identity = [
     "capauth>=0.1.0",
 ]

@@ -23,9 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
@@ -410,72 +408,101 @@ loadAll();setInterval(loadAll,15000);
 </html>"""
 
 
-class DashboardHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for the sovereign agent dashboard.
+def _json(data: dict):
+    """Build a JSON API Response matching the legacy shape (indent + CORS).
 
-    Serves the HTML page and JSON API endpoints.
+    ``default=str`` keeps the original tolerance for non-JSON-native values.
+    The CORS header is retained for the cross-origin Flutter ``/api/daemon``
+    consumer; it can be dropped once that client is same-origin.
+    """
+    from starlette.responses import Response
+
+    body = json.dumps(data, indent=2, default=str)
+    return Response(
+        body,
+        media_type="application/json",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+def create_app(home: Path):
+    """Build the Starlette ASGI app for the dashboard.
+
+    Phase 1 (behavior-identical): serves the same self-contained HTML at ``/``
+    and the same read-only GET JSON endpoints, reusing the ``_get_*`` functions.
+    Later phases add ``/static`` modules, POST mutation routes, and SSE.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Starlette: The ASGI application.
+    """
+    from starlette.applications import Starlette
+    from starlette.responses import HTMLResponse
+    from starlette.routing import Route
+
+    async def index(_request):
+        return HTMLResponse(_DASHBOARD_HTML)
+
+    def _get_route(fn):
+        async def handler(_request):
+            return _json(fn(home))
+        return handler
+
+    routes = [
+        Route("/", index),
+        Route("/index.html", index),
+        Route("/api/status", _get_route(_get_agent_status)),
+        Route("/api/doctor", _get_route(_get_doctor_report)),
+        Route("/api/board", _get_route(_get_board_state)),
+        Route("/api/memory", _get_route(_get_memory_stats)),
+        Route("/api/daemon", _get_route(_get_daemon_json)),
+    ]
+    return Starlette(routes=routes)
+
+
+class _UvicornServer:
+    """Adapter exposing ``serve_forever()``/``shutdown()`` over a uvicorn server.
+
+    Preserves the call pattern the CLI and tests use
+    (``start_dashboard(...).serve_forever()``) while running the Starlette app.
+    Signal handlers are disabled so it can run inside a worker thread.
     """
 
-    home: Path = Path.home() / ".skcapstone"
+    def __init__(self, app, port: int) -> None:
+        import uvicorn
 
-    def do_GET(self):
-        """Handle GET requests."""
-        if self.path == "/" or self.path == "/index.html":
-            self._serve_html()
-        elif self.path == "/api/status":
-            self._serve_json(_get_agent_status(self.home))
-        elif self.path == "/api/doctor":
-            self._serve_json(_get_doctor_report(self.home))
-        elif self.path == "/api/board":
-            self._serve_json(_get_board_state(self.home))
-        elif self.path == "/api/memory":
-            self._serve_json(_get_memory_stats(self.home))
-        elif self.path == "/api/daemon":
-            self._serve_json(_get_daemon_json(self.home))
-        else:
-            self.send_error(404, "Not found")
+        config = uvicorn.Config(
+            app, host="127.0.0.1", port=port, log_level="warning", access_log=False
+        )
+        self._server = uvicorn.Server(config)
 
-    def _serve_html(self):
-        """Serve the self-contained HTML dashboard."""
-        content = _DASHBOARD_HTML.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
+    def serve_forever(self) -> None:
+        import threading
 
-    def _serve_json(self, data: dict):
-        """Serve a JSON API response.
+        # uvicorn installs signal handlers in serve(), which only works on the
+        # main thread. On the main thread (CLI / systemd) keep them for graceful
+        # SIGTERM; in a worker thread (tests) disable them.
+        if threading.current_thread() is not threading.main_thread():
+            self._server.install_signal_handlers = lambda: None
+        self._server.run()
 
-        Args:
-            data: Dict to serialize as JSON.
-        """
-        body = json.dumps(data, indent=2, default=str).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        """Suppress default stderr logging — use logger instead."""
-        logger.debug("Dashboard: %s", format % args)
+    def shutdown(self) -> None:
+        self._server.should_exit = True
 
 
-def start_dashboard(home: Path, port: int = DEFAULT_DASHBOARD_PORT) -> HTTPServer:
-    """Start the dashboard HTTP server.
+def start_dashboard(home: Path, port: int = DEFAULT_DASHBOARD_PORT) -> "_UvicornServer":
+    """Start the dashboard server (Starlette + uvicorn).
 
     Args:
         home: Agent home directory.
         port: Port to listen on.
 
     Returns:
-        HTTPServer: The running server (call serve_forever() or
-            handle in a thread).
+        _UvicornServer: call ``serve_forever()`` (blocking) or run in a thread;
+        stop with ``shutdown()``.
     """
-    DashboardHandler.home = home
-
-    server = HTTPServer(("127.0.0.1", port), DashboardHandler)
+    app = create_app(home)
     logger.info("Dashboard running at http://127.0.0.1:%d", port)
-    return server
+    return _UvicornServer(app, port)
