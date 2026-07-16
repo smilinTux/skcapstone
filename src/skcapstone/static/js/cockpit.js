@@ -85,10 +85,14 @@ function renderCAB(list) {
 
 function renderActivity(list) {
   const icon = { escalated: "🔴", resolved: "✅", acknowledged: "👀", created: "🆕", voted: "🗳️", deployed: "🚀", verified: "✅" };
-  document.getElementById("activity").innerHTML = (list || []).map((e) =>
-    `<div class="fitem"><span class="ftime">${esc(timeShort(e.ts))}</span><span class="fic">${icon[e.action] || "•"}</span>
+  const el = document.getElementById("activity");
+  el.innerHTML = (list || []).map((e) =>
+    `<div class="fitem clickable" data-rec="${esc(e.kind || "incident")}:${esc(e.record)}"><span class="ftime">${esc(timeShort(e.ts))}</span><span class="fic">${icon[e.action] || "•"}</span>
       <span class="fbody"><span class="w">${esc(e.record)}</span> ${esc(e.action)}${e.note ? " · " + esc(e.note.slice(0, 60)) : ""}</span></div>`).join("")
     || `<div class="emptymsg">No recent activity</div>`;
+  el.querySelectorAll(".fitem.clickable").forEach((n) => n.addEventListener("click", () => {
+    const [k, id] = n.dataset.rec.split(":"); openRecord(k, id);
+  }));
 }
 
 function renderServices(list) {

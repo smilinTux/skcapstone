@@ -45,6 +45,8 @@
 .fic{width:16px;flex:none;text-align:center;}
 .fbody{flex:1;color:var(--ink2);}
 .fbody .w{color:var(--ink);font-weight:600;}
+.fitem.clickable{cursor:pointer;border-radius:7px;margin:0 -6px;padding-left:6px;padding-right:6px;}
+.fitem.clickable:hover{background:var(--panel2);}
 .svcstrip{display:flex;flex-wrap:wrap;gap:7px;}
 .svc{font-size:11px;padding:4px 9px;border-radius:7px;border:1px solid var(--hair2);display:inline-flex;gap:6px;align-items:center;background:var(--panel2);}
 .svc .d{width:8px;height:8px;border-radius:50%;}

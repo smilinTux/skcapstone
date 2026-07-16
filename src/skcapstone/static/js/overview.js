@@ -1,6 +1,9 @@
 // Overview home: operational summary tiles + active work + recent activity +
 // agent health, from one /api/overview call. Live-refreshes over SSE.
 import { esc, getJSON, timeShort, avatarColor } from "./api.js";
+import { openCard, initPanel } from "./editor.js";
+
+const IS_ID = (s) => /^(inc-|prb-|chg-|[0-9a-f]{6,})/i.test(s || "");
 
 const SEV_VAR = { sev1: "sev1", sev2: "sev2", sev3: "sev3", sev4: "sev4" };
 
@@ -55,16 +58,18 @@ function renderActive(tasks) {
       <span class="kbadge ${esc(t.kind)}">${esc(t.kind)}</span>
       <span class="att">${esc(t.title)}</span>${own}${ai}</div>`;
   }).join("");
-  el.querySelectorAll(".at-item").forEach((n) => n.addEventListener("click", () => { location.href = "/board"; }));
+  el.querySelectorAll(".at-item").forEach((n) => n.addEventListener("click", () => openCard(n.dataset.id)));
 }
 
 function renderActivity(list) {
   const icon = { escalated: "🔴", resolved: "✅", acknowledged: "👀", created: "🆕", voted: "🗳️", deployed: "🚀", verified: "✅" };
-  document.getElementById("activity").innerHTML = list.length
-    ? list.map((e) => `<div class="fitem"><span class="ftime">${esc(timeShort(e.ts))}</span>
+  const el = document.getElementById("activity");
+  el.innerHTML = list.length
+    ? list.map((e) => `<div class="fitem${IS_ID(e.record) ? " clickable" : ""}" data-rec="${esc(e.record || "")}"><span class="ftime">${esc(timeShort(e.ts))}</span>
         <span class="fic">${icon[e.action] || "•"}</span>
         <span class="fbody"><span class="w">${esc(e.record || "")}</span> ${esc(e.action || "")}${e.note ? " · " + esc((e.note || "").slice(0, 60)) : ""}</span></div>`).join("")
     : `<div style="color:var(--ink3);font-size:12px">No recent activity</div>`;
+  el.querySelectorAll(".fitem.clickable").forEach((n) => n.addEventListener("click", () => openCard(n.dataset.rec)));
 }
 
 function renderHealth(agent) {
@@ -97,6 +102,7 @@ function connectSSE() {
   es.addEventListener("error", () => { dot.classList.remove("on"); text.textContent = "reconnecting"; });
 }
 
+initPanel(() => load());   // card detail panel (edit/notes/AI); reload on change
 load();
 connectSSE();
 setInterval(load, 30000);

@@ -91,3 +91,15 @@ def test_board_page_served(home):
     # static assets are mounted
     assert client.get("/static/vendor/Sortable.min.js").status_code == 200
     assert client.get("/static/css/board.css").status_code == 200
+
+
+def test_get_card_opens_itil_record(tmp_path):
+    # an ITIL incident id should open into a card detail (materialized on demand)
+    from skcapstone.itil import ITILManager
+    from skcapstone import dashboard_kanban as dk
+    inc = ITILManager(tmp_path).create_incident(title="skchat down", severity="sev2",
+                                                created_by="opus", affected_services=["skchat"])
+    d = dk.get_card(tmp_path, inc.id)
+    assert d["card"]["id"] == inc.id
+    assert d["card"]["kind"] == "incident"
+    assert isinstance(d["activity"], list)

@@ -63,7 +63,16 @@ def get_kanban(home: Path) -> dict:
 
 
 def get_card(home: Path, card_id: str) -> dict:
-    """A folded card plus its raw event stream (the activity log)."""
+    """A folded card plus its raw event stream (the activity log).
+
+    Tolerant of ITIL ids (inc-/prb-/chg-): materializes the card from the ITIL
+    record if it is not yet in the store, so any item opens into its detail.
+    """
+    try:
+        from . import agent_run
+        agent_run.ensure_card(home, card_id)
+    except Exception:  # noqa: BLE001
+        pass
     store = CardStore(home)
     card = store.fold(card_id)
     if card is None:
