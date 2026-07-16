@@ -219,3 +219,35 @@ def test_parity_forces_legacy_read_even_at_flag_1(tmp_path, monkeypatch):
     par = parity_check(tmp_path)
     # pf2 exists in legacy but not the store -> must be reported as missing
     assert "pf2" in par["missing"], par
+
+
+def test_complete_clears_owner_matches_legacy(tmp_path, monkeypatch):
+    from skcapstone.card_store import CardStore
+    from skcapstone.coordination import Board, Task
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "dual")
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="co1", title="x", created_by="o"))
+    board.claim_task("opus", "co1")
+    board.complete_task("opus", "co1")
+    card = CardStore(tmp_path).fold("co1")
+    assert card.status.value == "done"
+    assert card.owner is None  # matches legacy claimed_by=None for done tasks
+
+
+def test_claim_demotes_bumped_task(tmp_path, monkeypatch):
+    from skcapstone.card_store import CardStore, parity_check
+    from skcapstone.coordination import Board, Task
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "dual")
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="bmp_a", title="a", created_by="o"))
+    board.create_task(Task(id="bmp_b", title="b", created_by="o"))
+    board.claim_task("opus", "bmp_a")   # a is current -> doing
+    board.claim_task("opus", "bmp_b")   # b current, a bumped -> claimed/ready
+    store = CardStore(tmp_path)
+    assert store.fold("bmp_a").status.value == "ready"   # demoted
+    assert store.fold("bmp_b").status.value == "doing"
+    # and parity with legacy holds
+    par = parity_check(tmp_path)
+    assert par["mismatches"] == [], par["mismatches"]

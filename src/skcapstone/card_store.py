@@ -196,6 +196,9 @@ class CardStore:
                 card.status = _CLAIM_COLUMN
             elif action == "complete":
                 card.status = _COMPLETE_COLUMN
+                # coord drops a completed task from claimed_tasks, so its derived
+                # claimed_by is None. Match that so parity holds on done cards.
+                card.owner = None
             elif action == "priority" and e.get("priority"):
                 card.priority = e["priority"]
             elif action == "swimlane" and e.get("swimlane"):

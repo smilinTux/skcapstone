@@ -325,6 +325,10 @@ class Board:
                 card_store.mirror_coord_complete(self.home, kw["task_id"], kw["agent"])
             elif op == "archive":
                 card_store.mirror_coord_archive(self.home, kw["task_id"], kw["agent"])
+            elif op == "demote":
+                card_store.mirror_coord_move(
+                    self.home, kw["task_id"], "ready", kw["agent"]
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("CardStore mirror (%s) failed: %s", op, exc)
 
@@ -667,12 +671,18 @@ class Board:
                 )
 
         agent = self.load_agent(agent_name) or AgentFile(agent=agent_name)
+        # Capture the task being bumped out of current_task: it stays claimed but
+        # is no longer in_progress, so legacy derives it as CLAIMED (ready). The
+        # store must demote it too, else the cutover read shows it as doing.
+        bumped = agent.current_task if agent.current_task not in (None, task_id) else None
         if task_id not in agent.claimed_tasks:
             agent.claimed_tasks.append(task_id)
         agent.current_task = task_id
         agent.state = AgentState.ACTIVE
         self.save_agent(agent)
         self._mirror_card_store("claim", task_id=task_id, agent=agent_name)
+        if bumped is not None:
+            self._mirror_card_store("demote", task_id=bumped, agent=agent_name)
         return agent
 
     def complete_task(self, agent_name: str, task_id: str) -> AgentFile:
