@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 _HOSTNAME = socket.gethostname()
 
 # Column reached by a claim/complete convenience event, to mirror coord.
-_CLAIM_COLUMN = Column.READY
+# coord's claim_task sets current_task, so a claim = in_progress = doing (not ready).
+_CLAIM_COLUMN = Column.DOING
 _COMPLETE_COLUMN = Column.DONE
 
 

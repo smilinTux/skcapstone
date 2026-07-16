@@ -39,7 +39,7 @@ def test_claim_and_complete_convenience(tmp_path):
     store = CardStore(tmp_path)
     store.create(CardCore(id="c4", title="lifecycle"))
     store.append_event("c4", "claim", "lumina", owner="lumina")
-    assert store.fold("c4").status == Column.READY
+    assert store.fold("c4").status == Column.DOING  # coord claim = current_task = in_progress
     assert store.fold("c4").owner == "lumina"
     store.append_event("c4", "complete", "lumina")
     assert store.fold("c4").status == Column.DONE
