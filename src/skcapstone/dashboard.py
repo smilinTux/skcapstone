@@ -448,6 +448,10 @@ def create_app(home: Path):
     from . import dashboard_itil as di
     from . import dashboard_kanban as dk
 
+    def _cmdb():
+        from . import dashboard_cmdb as dc
+        return dc
+
     static_dir = Path(__file__).parent / "static"
 
     async def index(_request):
@@ -609,6 +613,10 @@ def create_app(home: Path):
         Route("/api/itil/kedb", lambda r: _json(di.search_kedb(home, r.query_params.get("q", "")))),
         Route("/api/itil/record/{kind}/{rid}",
               lambda r: _json(di.get_record(home, r.path_params["kind"], r.path_params["rid"]))),
+        Route("/cmdb", _page("cmdb.html")),
+        Route("/api/cmdb/overview", lambda r: _json(_cmdb().get_overview(home))),
+        Route("/api/cmdb/ci/{ci_id}", lambda r: _json(_cmdb().get_ci(home, r.path_params["ci_id"]))),
+        Route("/api/cmdb/seed", lambda r: _json(_cmdb().seed(home)), methods=["POST"]),
     ]
     if static_dir.exists():
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))

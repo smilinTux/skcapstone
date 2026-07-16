@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard — CMDB</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <link rel="stylesheet" href="/static/css/cmdb.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/">Status</a>
+        <a class="tab" href="/cockpit">ITIL Cockpit</a>
+        <a class="tab active" href="/cmdb">Assets (CMDB)</a>
+        <a class="tab" href="/board">Kanban Board</a>
+        <a class="tab" href="/assistant">Assistant</a>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn" id="btn-seed">Seed from inventory</button>
+    </div>
+
+    <div class="kpirow" id="cmdb-health"></div>
+    <div id="cmdb-body"><div class="emptymsg">Loading CMDB…</div></div>
+  </div>
+
+  <div class="overlay" id="overlay"></div>
+  <aside class="panel" id="panel" aria-hidden="true"></aside>
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="/static/js/cmdb.js"></script>
+</body>
+</html>
