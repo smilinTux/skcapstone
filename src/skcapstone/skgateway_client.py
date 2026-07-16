@@ -49,6 +49,43 @@ def chat(messages: list[dict], model: str = DEFAULT_MODEL, max_tokens: int = 204
         return None
 
 
+def chat_stream(messages: list[dict], model: str = DEFAULT_MODEL, max_tokens: int = 2048,
+                temperature: float = 0.3, timeout: float = 60.0,
+                base_url: str = DEFAULT_BASE):
+    """Yield content tokens from the gateway as they stream (OpenAI SSE).
+
+    A blocking generator (urllib); Starlette runs it in a threadpool. Yields
+    nothing and logs on failure so the caller can surface a fallback line.
+    """
+    payload = json.dumps({
+        "model": model, "messages": messages, "max_tokens": max_tokens,
+        "temperature": temperature, "stream": True,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/chat/completions",
+        data=payload, headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", "ignore").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    j = json.loads(data)
+                    delta = (j.get("choices") or [{}])[0].get("delta", {}).get("content")
+                    if delta:
+                        yield delta
+                except ValueError:
+                    continue
+    except (urllib.error.URLError, TimeoutError) as exc:
+        logger.info("skgateway stream failed (%s)", exc)
+        return
+
+
 def available(timeout: float = 2.0, base_url: str = DEFAULT_BASE) -> bool:
     """Cheap reachability probe for the gateway."""
     try:

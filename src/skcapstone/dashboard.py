@@ -546,6 +546,24 @@ def create_app(home: Path):
             dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": requester})
         return _json(result)
 
+    async def api_assistant(request):
+        from . import dashboard_assistant as da
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        prompt = (body.get("prompt") or "").strip()
+        actor = request.headers.get("x-sk-actor") or "operator"
+        cap_ok, _ = _ai_capability_ok(request)
+        if not prompt:
+            return _json({"error": "prompt required"})
+        gen = da.stream_answer(home, prompt, actor=actor, capability_ok=cap_ok)
+        return StreamingResponse(
+            gen, media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     async def api_events(_request):
         async def stream():
             q = dk.BUS.subscribe()
@@ -581,6 +599,8 @@ def create_app(home: Path):
         Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
         Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),
         Route("/api/events", api_events),
+        Route("/api/assistant", api_assistant, methods=["POST"]),
+        Route("/assistant", _page("assistant.html")),
         Route("/cockpit", cockpit_page),
         Route("/api/itil/overview", lambda r: _json(di.get_overview(home))),
         Route("/api/itil/incidents", lambda r: _json(di.get_incidents(home))),
