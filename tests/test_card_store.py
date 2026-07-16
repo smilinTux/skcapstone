@@ -204,3 +204,18 @@ def test_read_cutover_falls_back_when_store_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
     views = board.get_task_views()  # store empty -> returns [] (not a crash)
     assert isinstance(views, list)
+
+
+def test_parity_forces_legacy_read_even_at_flag_1(tmp_path, monkeypatch):
+    from skcapstone.card_store import import_from_legacy, parity_check
+    from skcapstone.coordination import Board, Task
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="pf1", title="x", created_by="o"))
+    import_from_legacy(tmp_path)
+    # add a legacy-only task AFTER import -> real drift the monitor must catch
+    board.create_task(Task(id="pf2", title="legacy only", created_by="o"))
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")  # cutover mode
+    par = parity_check(tmp_path)
+    # pf2 exists in legacy but not the store -> must be reported as missing
+    assert "pf2" in par["missing"], par

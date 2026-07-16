@@ -401,7 +401,16 @@ def parity_check(home: Path) -> dict:
     from .card import KanbanBoard
 
     store = CardStore(home)
-    legacy = {c.id: c for c in KanbanBoard(home).cards(include_archived=True)}
+    # Force the LEGACY projection for the comparison side, even post-cutover when
+    # the flag is 1 (otherwise KanbanBoard would return the store and we would be
+    # comparing the store to itself). This keeps parity a real drift detector for
+    # the legacy hot-backup vs the authoritative store.
+    saved = os.environ.pop("SKCOORD_CARD_STORE", None)
+    try:
+        legacy = {c.id: c for c in KanbanBoard(home).cards(include_archived=True)}
+    finally:
+        if saved is not None:
+            os.environ["SKCOORD_CARD_STORE"] = saved
     stored = {c.id: c for c in store.list_cards(include_archived=True)}
 
     mismatches: list[dict] = []
