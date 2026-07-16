@@ -489,6 +489,53 @@ def create_app(home: Path):
             dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor})
         return _json(result)
 
+    def _ai_capability_ok(request):
+        """Gate the privileged 'queue AI to execute' action.
+
+        Requires a capability token (X-SK-Capability header == SKAI_QUEUE_TOKEN).
+        When no token is configured this is loopback-open (dev); this is the
+        upgrade point for a full capauth-signed grant + tailscale-serve exposure.
+        """
+        import hmac
+        import os
+
+        token = os.environ.get("SKAI_QUEUE_TOKEN")
+        if not token:
+            return True, "loopback-open (no SKAI_QUEUE_TOKEN set)"
+        provided = request.headers.get("x-sk-capability", "")
+        if hmac.compare_digest(provided, token):
+            return True, "capability ok"
+        return False, "missing or invalid capability token"
+
+    async def api_queue_ai(request):
+        from starlette.responses import Response
+
+        from . import agent_run as ar
+
+        card_id = request.path_params["card_id"]
+        ok, reason = _ai_capability_ok(request)
+        if not ok:
+            return Response(
+                json.dumps({"error": "unauthorized: " + reason}),
+                status_code=403, media_type="application/json",
+            )
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        requester = request.headers.get("x-sk-actor") or body.get("requester") or "operator"
+        result = ar.request_run(
+            home, card_id,
+            body.get("instruction", ""),
+            agent=body.get("agent", "lumina"),
+            mode=body.get("mode", "propose"),
+            requester=requester,
+        )
+        result["capability"] = reason
+        if result.get("ok"):
+            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": requester})
+        return _json(result)
+
     async def api_events(_request):
         async def stream():
             q = dk.BUS.subscribe()
@@ -520,6 +567,7 @@ def create_app(home: Path):
         Route("/api/daemon", _get_route(_get_daemon_json)),
         Route("/api/kanban", api_kanban),
         Route("/api/card/{card_id}", api_card),
+        Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
         Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),
         Route("/api/events", api_events),
         Route("/cockpit", cockpit_page),

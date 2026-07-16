@@ -213,6 +213,43 @@ class CardStore:
                 card.meta.setdefault("comments", []).append(
                     {"ts": e.get("ts"), "writer": e.get("writer"), "text": e["text"]}
                 )
+            elif action == "agent_run_request":
+                card.meta["agent_run"] = {
+                    "run_id": e.get("run_id"),
+                    "state": "queued",
+                    "instruction": e.get("instruction", ""),
+                    "agent": e.get("run_agent"),
+                    "mode": e.get("mode", "propose"),
+                    "kind": e.get("kind"),
+                    "requester": e.get("writer"),
+                    "created_at": e.get("ts"),
+                    "activity": [],
+                    "attempts": 0,
+                    "links": {},
+                }
+            elif action == "agent_run_claim":
+                r = card.meta.get("agent_run")
+                if r and r.get("run_id") == e.get("run_id"):
+                    r["state"] = "running"
+                    r["worker"] = e.get("worker")
+                    r["lease_expires"] = e.get("lease_expires")
+                    r["attempts"] = r.get("attempts", 0) + 1
+            elif action == "agent_run_activity":
+                r = card.meta.get("agent_run")
+                if r and r.get("run_id") == e.get("run_id"):
+                    r.setdefault("activity", []).append({
+                        "ts": e.get("ts"), "atype": e.get("atype"),
+                        "text": e.get("text"), "writer": e.get("writer"),
+                    })
+            elif action == "agent_run_state":
+                r = card.meta.get("agent_run")
+                if r and r.get("run_id") == e.get("run_id"):
+                    r["state"] = e.get("state", r.get("state"))
+                    if e.get("last_error"):
+                        r["last_error"] = e.get("last_error")
+                    for k in ("pr", "commit", "branch", "transcript"):
+                        if e.get(k):
+                            r.setdefault("links", {})[k] = e.get(k)
             elif action == "archive":
                 card.archived = True
                 card.meta["archived_at"] = e.get("ts")

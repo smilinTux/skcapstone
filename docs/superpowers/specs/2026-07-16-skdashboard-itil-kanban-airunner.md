@@ -121,6 +121,8 @@ A prompt surface (a tab plus a slide-out) backed by skgateway. Flow: operator ty
 - **Phase 4 - AI runner + tool layer.** `agent_run.py` (AgentRun model + overlay events + fold), a shared **tool layer** (read + act tools over card/ITIL stores), the `queue-ai` endpoint (capauth-gated) + card-panel UI, the `ai-runner` scheduler job (claim-lease + sandbox execute + kind-gate + activity feedback), starting `mode=propose`, then dry-run, then execute behind the gates.
 - **Phase 5 - Assistant console.** `POST /api/assistant` streaming over SSE, skgateway-backed, binding the Phase-4 tool layer (canned analytics + mutations); a console tab/slide-out; capauth on mutating tool calls; `actor=assistant:<operator>` audit.
 
+- **Phase 6 (future) - CMDB / asset management.** Event-sourced Configuration Item records (services, hosts, agents, credentials, ports) like the ITIL store, with CI relationships / a dependency graph, impact analysis linking incidents/problems/changes to affected CIs, and a CMDB view in the cockpit. Auto-populate from fleet inventory (nodes/services/ports). Reference: iTop CMDB (CIs + relationships + impact are first-class). Captured to GTD 2026-07-16.
+
 Each phase ships working, tested software and is independently valuable. Phases 4 and 5 share the tool layer (build it once in Phase 4, bind it interactively in Phase 5).
 
 ---
