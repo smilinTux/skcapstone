@@ -171,7 +171,7 @@ class TestHTTPServer:
         assert resp.status == 200
         assert "text/html" in resp.getheader("Content-Type")
         body = resp.read().decode("utf-8")
-        assert "SKCapstone" in body
+        assert "SKDashboard" in body
         conn.close()
 
     def test_api_status_json(self, dashboard_server):
@@ -474,7 +474,7 @@ class TestStarletteApp:
         r = client.get("/")
         assert r.status_code == 200
         assert "text/html" in r.headers["content-type"]
-        assert "SKCapstone" in r.text
+        assert "SKDashboard" in r.text
         b = client.get("/api/board")
         assert b.status_code == 200
         assert "application/json" in b.headers["content-type"]

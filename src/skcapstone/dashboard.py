@@ -452,16 +452,18 @@ def create_app(home: Path):
         from . import dashboard_cmdb as dc
         return dc
 
-    static_dir = Path(__file__).parent / "static"
+    def _overview_home(h):
+        from . import dashboard_overview as do
+        return do.get_overview_home(h)
 
-    async def index(_request):
-        return HTMLResponse(_DASHBOARD_HTML)
+    static_dir = Path(__file__).parent / "static"
 
     def _page(name):
         async def handler(_request):
             return HTMLResponse((static_dir / name).read_text(encoding="utf-8"))
         return handler
 
+    index = _page("overview.html")
     board_page = _page("board.html")
     cockpit_page = _page("cockpit.html")
 
@@ -593,6 +595,7 @@ def create_app(home: Path):
         Route("/index.html", index),
         Route("/board", board_page),
         Route("/api/status", _get_route(_get_agent_status)),
+        Route("/api/overview", lambda r: _json(_overview_home(home))),
         Route("/api/doctor", _get_route(_get_doctor_report)),
         Route("/api/board", _get_route(_get_board_state)),
         Route("/api/memory", _get_route(_get_memory_stats)),
