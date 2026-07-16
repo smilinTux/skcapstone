@@ -323,6 +323,10 @@ def task_views_from_store(home: Path, include_archived: bool = False) -> list:
     store = CardStore(home)
     views = []
     for c in store.list_cards(include_archived=include_archived):
+        # get_task_views is the COORD task board: coord-origin kinds only.
+        # ITIL cards (incident/problem/change) live in the kanban view, not here.
+        if c.kind.value not in ("task", "epic"):
+            continue
         try:
             priority = TaskPriority(c.priority)
         except ValueError:
