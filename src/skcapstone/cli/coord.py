@@ -252,6 +252,75 @@ def register_coord_commands(main: click.Group) -> None:
         verb = "Would archive" if dry_run else "Archived"
         console.print(f"\n  [green]{verb} {len(ids)} done task(s) older than {days}d.[/]\n")
 
+    @coord.command("age-backlog")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--days", default=90, type=int,
+                  help="Archive unclaimed open tasks older than N days.")
+    @click.option("--dry-run", is_flag=True, default=False,
+                  help="Show what would be archived without writing.")
+    def coord_age_backlog(home, days, dry_run):
+        """Archive ancient unclaimed open tasks (default: older than 90 days)."""
+        from ..coordination import Board
+
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
+        ids = board.age_stale_open(older_than_days=days, dry_run=dry_run)
+        verb = "Would archive" if dry_run else "Archived"
+        console.print(f"\n  [green]{verb} {len(ids)} stale open task(s) older than {days}d.[/]\n")
+
+    @coord.command("move")
+    @click.argument("task_id")
+    @click.argument("column",
+                    type=click.Choice(["backlog", "ready", "doing", "review", "done"]))
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--order", default=None, type=int, help="Position within the column.")
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_move(task_id, column, home, order, agent):
+        """Move a card to a kanban column (backlog/ready/doing/review/done)."""
+        from ..card import CardEvent, CardEventLog
+
+        home_path = Path(home).expanduser()
+        event = CardEvent(card_id=task_id, action="move", column=column, order=order,
+                          writer=agent or "")
+        CardEventLog(home_path).append(event)
+        pos = f" at order {order}" if order is not None else ""
+        console.print(f"\n  [green]Moved {task_id} to '{column}'{pos}.[/]\n")
+
+    @coord.command("label")
+    @click.argument("task_id")
+    @click.argument("label")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--remove", is_flag=True, default=False, help="Remove the label instead.")
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_label(task_id, label, home, remove, agent):
+        """Add (or remove) a label on a card."""
+        from ..card import CardEvent, CardEventLog
+
+        home_path = Path(home).expanduser()
+        action = "remove_label" if remove else "add_label"
+        CardEventLog(home_path).append(
+            CardEvent(card_id=task_id, action=action, label=label, writer=agent or "")
+        )
+        verb = "Removed" if remove else "Added"
+        console.print(f"\n  [green]{verb} label '{label}' on {task_id}.[/]\n")
+
+    @coord.command("link")
+    @click.argument("task_id")
+    @click.argument("key")
+    @click.argument("value")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_link(task_id, key, value, home, agent):
+        """Attach a link (pr/commit/doc/...) to a card."""
+        from ..card import CardEvent, CardEventLog
+
+        home_path = Path(home).expanduser()
+        CardEventLog(home_path).append(
+            CardEvent(card_id=task_id, action="link", link_key=key, link_value=value,
+                      writer=agent or "")
+        )
+        console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")
+
     @coord.command("changelog")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--output", "-o", default=None, type=click.Path(), help="Output file path.")

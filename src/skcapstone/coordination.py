@@ -563,6 +563,45 @@ class Board:
                 self.archive_task(tid, by="archive-done")
         return eligible
 
+    def age_stale_open(
+        self,
+        older_than_days: int = 90,
+        now: Optional[datetime] = None,
+        dry_run: bool = False,
+    ) -> list[str]:
+        """Archive ancient unclaimed open tasks (backlog rot).
+
+        Only tasks that are still OPEN (never claimed, never worked) and whose
+        created_at exceeds ``older_than_days`` are eligible. Conservative by
+        default so live backlog is not swept prematurely.
+
+        Args:
+            older_than_days: Age threshold in days.
+            now: Reference time (defaults to UTC now); injectable for tests.
+            dry_run: When True, return the eligible ids without writing.
+
+        Returns:
+            list[str]: The task ids archived (or that would be, if dry_run).
+        """
+        ref = now or datetime.now(timezone.utc)
+        cutoff = ref - timedelta(days=older_than_days)
+        eligible: list[str] = []
+        for view in self.get_task_views():
+            if view.status != TaskStatus.OPEN:
+                continue
+            try:
+                ts = datetime.fromisoformat(view.task.created_at)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                ts = cutoff - timedelta(days=1)
+            if ts <= cutoff:
+                eligible.append(view.task.id)
+        if not dry_run:
+            for tid in eligible:
+                self.archive_task(tid, by="age-backlog")
+        return eligible
+
     def claim_task(self, agent_name: str, task_id: str) -> AgentFile:
         """Have an agent claim a task.
 

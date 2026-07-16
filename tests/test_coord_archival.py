@@ -53,3 +53,24 @@ def test_archive_done_tasks_dry_run_writes_nothing(tmp_path):
     would = board.archive_done_tasks(older_than_days=14, dry_run=True)
     assert would == ["d3"]
     assert "d3" not in board.archived_ids()
+
+
+def test_age_stale_open_archives_ancient_open(tmp_path):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    ancient = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+    board.create_task(Task(id="s1", title="ancient open", created_by="o", created_at=ancient))
+    board.create_task(Task(id="s2", title="fresh open", created_by="o"))
+    aged = board.age_stale_open(older_than_days=90)
+    assert aged == ["s1"]
+    assert "s1" in board.archived_ids()
+    assert "s2" not in board.archived_ids()
+
+
+def test_age_stale_open_ignores_claimed(tmp_path):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    ancient = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+    board.create_task(Task(id="s3", title="ancient claimed", created_by="o", created_at=ancient))
+    board.save_agent(AgentFile(agent="opus", claimed_tasks=["s3"]))
+    assert board.age_stale_open(older_than_days=90) == []
