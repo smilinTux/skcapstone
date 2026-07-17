@@ -655,3 +655,32 @@ class TestIdentityConsistency:
         assert "identity:resolver" in by
         # capauth is a hard dependency of the suite; resolver must import.
         assert by["identity:resolver"].passed is True
+
+
+class TestTransportCheckNoThreadLeak:
+    """_check_transport must not leak the SKComms outbox retry worker.
+
+    Regression: SKComms.from_config() starts a persistent ``skcomms-outbox-retry``
+    daemon thread. The transport check only reads router state, so it must stop
+    the engine. A polled dashboard once accumulated 400+ leaked workers, which
+    saturated CPU and starved its asyncio event loop.
+    """
+
+    @staticmethod
+    def _retry_thread_count() -> int:
+        import threading
+
+        return sum(
+            1 for t in threading.enumerate() if "outbox-retry" in (t.name or "")
+        )
+
+    def test_check_transport_does_not_leak_retry_thread(self):
+        import time
+
+        from skcapstone.doctor import _check_transport
+
+        before = self._retry_thread_count()
+        for _ in range(3):
+            _check_transport()
+        time.sleep(0.3)  # allow stopped workers to join
+        assert self._retry_thread_count() == before

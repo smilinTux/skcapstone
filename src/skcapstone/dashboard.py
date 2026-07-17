@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -30,6 +31,13 @@ from typing import Optional
 logger = logging.getLogger("skcapstone.dashboard")
 
 DEFAULT_DASHBOARD_PORT = 7778
+
+#: Cache window for the doctor report. ``run_diagnostics`` walks the entire
+#: agent home (a whole-tree rglob for Syncthing conflict files); recomputing it
+#: on every ``/api/doctor`` poll blocks the dashboard's asyncio event loop. The
+#: health picture does not change second-to-second, so a short TTL is safe.
+_DOCTOR_CACHE_TTL = 30.0
+_doctor_cache: dict = {"ts": 0.0, "home": None, "report": None}
 
 
 def _get_agent_status(home: Path) -> dict:
@@ -94,7 +102,11 @@ def _get_agent_status(home: Path) -> dict:
 
 
 def _get_doctor_report(home: Path) -> dict:
-    """Run diagnostics and return as dict.
+    """Run diagnostics and return as dict, cached for ``_DOCTOR_CACHE_TTL``.
+
+    The report is served from an in-process cache so the expensive whole-tree
+    diagnostic scan runs at most once per TTL window regardless of how often
+    the dashboard polls ``/api/doctor``. Transient errors are not cached.
 
     Args:
         home: Agent home directory.
@@ -102,13 +114,22 @@ def _get_doctor_report(home: Path) -> dict:
     Returns:
         dict: Full diagnostic report.
     """
+    now = time.monotonic()
+    cache = _doctor_cache
+    if (
+        cache["report"] is not None
+        and cache["home"] == home
+        and now - cache["ts"] < _DOCTOR_CACHE_TTL
+    ):
+        return cache["report"]
     try:
         from .doctor import run_diagnostics
 
-        report = run_diagnostics(home)
-        return report.to_dict()
+        report = run_diagnostics(home).to_dict()
     except Exception as exc:
         return {"error": str(exc)}
+    cache.update(ts=now, home=home, report=report)
+    return report
 
 
 def _get_board_state(home: Path) -> dict:

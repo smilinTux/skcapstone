@@ -481,3 +481,58 @@ class TestStarletteApp:
         assert b.headers["access-control-allow-origin"] == "*"
         assert "tasks" in b.json()
         assert client.get("/api/nope").status_code == 404
+
+
+class TestDoctorReportCache:
+    """_get_doctor_report caches so the whole-tree diagnostic scan does not
+    run on every /api/doctor poll and block the dashboard's event loop.
+    """
+
+    def test_doctor_report_is_cached_within_ttl(self, tmp_path, monkeypatch):
+        from skcapstone import dashboard as d
+
+        # Reset the module cache so this test is order-independent.
+        d._doctor_cache.update(ts=0.0, home=None, report=None)
+
+        calls = {"n": 0}
+
+        class _FakeReport:
+            def to_dict(self):
+                return {"checks": [], "call": calls["n"]}
+
+        def _fake_run_diagnostics(home):
+            calls["n"] += 1
+            return _FakeReport()
+
+        import skcapstone.doctor as doctor_mod
+
+        monkeypatch.setattr(doctor_mod, "run_diagnostics", _fake_run_diagnostics)
+
+        first = d._get_doctor_report(tmp_path)
+        second = d._get_doctor_report(tmp_path)
+        third = d._get_doctor_report(tmp_path)
+
+        assert calls["n"] == 1  # ran once, served from cache twice
+        assert first == second == third
+
+    def test_doctor_cache_misses_on_different_home(self, tmp_path, monkeypatch):
+        from skcapstone import dashboard as d
+
+        d._doctor_cache.update(ts=0.0, home=None, report=None)
+        calls = {"n": 0}
+
+        class _FakeReport:
+            def to_dict(self):
+                return {"checks": []}
+
+        def _fake_run_diagnostics(home):
+            calls["n"] += 1
+            return _FakeReport()
+
+        import skcapstone.doctor as doctor_mod
+
+        monkeypatch.setattr(doctor_mod, "run_diagnostics", _fake_run_diagnostics)
+
+        d._get_doctor_report(tmp_path / "a")
+        d._get_doctor_report(tmp_path / "b")
+        assert calls["n"] == 2  # different home key -> recompute
