@@ -823,42 +823,49 @@ def _check_transport() -> list[Check]:
         from skcomms.core import SKComms
 
         comm = SKComms.from_config()
-        transport_count = len(comm.router.transports)
-        checks.append(
-            Check(
-                name="transport:skcomms",
-                description="SKComms engine",
-                passed=True,
-                detail=f"{transport_count} transport(s) configured",
-                category="transport",
-            )
-        )
-
-        if transport_count == 0:
+        # from_config() starts a background outbox retry worker thread; a
+        # read-only health check must stop it or it leaks one daemon thread
+        # per run. A polled dashboard once accumulated 400+ such threads,
+        # saturating CPU and starving its event loop.
+        try:
+            transport_count = len(comm.router.transports)
             checks.append(
                 Check(
-                    name="transport:active",
-                    description="Active transports",
-                    passed=False,
-                    detail="No transports configured",
-                    fix="Configure transports in ~/.skcomms/config.yml",
+                    name="transport:skcomms",
+                    description="SKComms engine",
+                    passed=True,
+                    detail=f"{transport_count} transport(s) configured",
                     category="transport",
                 )
             )
-        else:
-            health = comm.router.health_report()
-            for name, info in health.items():
-                status = info.get("status", "unknown")
-                ok = status in ("available", "healthy", "online")
+
+            if transport_count == 0:
                 checks.append(
                     Check(
-                        name=f"transport:{name}",
-                        description=f"Transport: {name}",
-                        passed=ok,
-                        detail=status,
+                        name="transport:active",
+                        description="Active transports",
+                        passed=False,
+                        detail="No transports configured",
+                        fix="Configure transports in ~/.skcomms/config.yml",
                         category="transport",
                     )
                 )
+            else:
+                health = comm.router.health_report()
+                for name, info in health.items():
+                    status = info.get("status", "unknown")
+                    ok = status in ("available", "healthy", "online")
+                    checks.append(
+                        Check(
+                            name=f"transport:{name}",
+                            description=f"Transport: {name}",
+                            passed=ok,
+                            detail=status,
+                            category="transport",
+                        )
+                    )
+        finally:
+            comm.stop()
 
     except ImportError:
         checks.append(

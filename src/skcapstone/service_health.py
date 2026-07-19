@@ -42,10 +42,36 @@ CHECK_TIMEOUT = 3
 _HOSTNAME = socket.gethostname()
 
 
+def _failure_class(error: str | None) -> str:
+    """Coarsely classify a probe error for the deterministic incident id.
+
+    A stable, low-cardinality class (not the raw error string) keeps two nodes
+    detecting the same outage on the same ``_auto_incident_id`` key.
+
+    Args:
+        error: Raw error text from a service check (may be None).
+
+    Returns:
+        One of ``timeout``/``refused``/``http-error``/``unreachable``.
+    """
+    if not error:
+        return "unreachable"
+    e = error.lower()
+    if "timed out" in e or "timeout" in e:
+        return "timeout"
+    if "refused" in e:
+        return "refused"
+    if "no route" in e or "unreachable" in e or "name or service" in e:
+        return "unreachable"
+    if "http" in e:
+        return "http-error"
+    return "unreachable"
+
 
 # ---------------------------------------------------------------------------
 # Per-agent YAML config fallback
 # ---------------------------------------------------------------------------
+
 
 def _load_agent_yaml(config_name: str, agent: str | None = None) -> dict:
     """Load ~/.skcapstone/agents/<agent>/config/<config_name>.yaml.
@@ -67,13 +93,13 @@ def _load_agent_yaml(config_name: str, agent: str | None = None) -> dict:
         return {}
     try:
         import yaml  # type: ignore
+
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         return data if isinstance(data, dict) else {}
     except Exception as exc:
         logger.debug("Failed to load %s: %s", path, exc)
         return {}
-
 
 
 def _load_syncthing_config() -> tuple[str | None, str | None]:
@@ -95,9 +121,7 @@ def _load_syncthing_config() -> tuple[str | None, str | None]:
         return None, None
 
     # Find <gui ...> ... <address>HOST:PORT</address> ... </gui>
-    gui_match = re.search(
-        r"<gui[^>]*>(.*?)</gui>", text, re.S | re.I
-    )
+    gui_match = re.search(r"<gui[^>]*>(.*?)</gui>", text, re.S | re.I)
     addr_in_gui = None
     if gui_match:
         body = gui_match.group(1)
@@ -111,7 +135,9 @@ def _load_syncthing_config() -> tuple[str | None, str | None]:
     if not addr_in_gui:
         return None, api_key
     # GUI tls flag
-    tls = bool(gui_match and ("tls=\"true\"" in gui_match.group(0) or "tls='true'" in gui_match.group(0)))
+    tls = bool(
+        gui_match and ('tls="true"' in gui_match.group(0) or "tls='true'" in gui_match.group(0))
+    )
     proto = "https" if tls else "http"
     return f"{proto}://{addr_in_gui}", api_key
 
@@ -382,11 +408,16 @@ def check_all_services() -> list[dict[str, Any]]:
         elif pid_file:
             results.append(_pid_check(name, Path(pid_file).expanduser()))
         else:
-            results.append({
-                "name": name, "url": None, "status": "unknown",
-                "latency_ms": None, "version": None,
-                "error": "registered without health_url or pid_file",
-            })
+            results.append(
+                {
+                    "name": name,
+                    "url": None,
+                    "status": "unknown",
+                    "latency_ms": None,
+                    "version": None,
+                    "error": "registered without health_url or pid_file",
+                }
+            )
         known.add(name)
 
     return results
@@ -441,20 +472,21 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
 
         svc_name = service_result["name"]
         error_info = service_result.get("error") or "unreachable"
+        failure_class = _failure_class(service_result.get("error"))
         mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
 
-        # Dedup: already tracked by an open incident → do nothing.
-        # We deliberately do NOT append recurring "still down" notes. That
-        # read-modify-write churn on a Syncthing-synced incident file, from
-        # multiple nodes every health cycle, is exactly what produced the
-        # sync-conflicts and 80+-entry timelines tracked in prb-7810b08e.
-        # Outage duration is derivable from the incident's created_at; the
-        # recovery (down->up) edge is handled by _auto_resolve_recovered_service.
+        # Dedup convenience (NOT the authority): the authority is the
+        # deterministic id + create-if-absent (O_EXCL) inside create_incident,
+        # so two nodes detecting the same outage converge on one core.json.
+        # This local find is only a cheap short-circuit so a single node does
+        # not re-emit a 'created' event every health cycle while down - the
+        # read-modify-write churn behind the sync-conflicts in prb-7810b08e.
         existing = mgr.find_open_incident_for_service(svc_name)
         if existing:
             logger.debug(
-                "Service %s already tracked by incident %s; no note appended",
-                svc_name, existing.id,
+                "Service %s already tracked by incident %s; no event appended",
+                svc_name,
+                existing.id,
             )
             return
         mgr.create_incident(
@@ -466,6 +498,7 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
             managed_by="lumina",
             created_by="service_health",
             tags=["auto-detected", "service-health"],
+            failure_class=failure_class,
         )
         logger.info("Auto-created incident for down service: %s", svc_name)
     except Exception as exc:
@@ -486,25 +519,26 @@ def _auto_resolve_recovered_service(service_result: dict[str, Any]) -> None:
 
         if existing.severity.value == "sev4":
             mgr.update_incident(
-                existing.id, "service_health",
+                existing.id,
+                "service_health",
                 new_status="resolved",
                 note=f"Service {svc_name} recovered automatically",
                 resolution_summary="Auto-resolved: service came back up",
             )
-            logger.info("Auto-resolved sev4 incident %s for recovered service %s",
-                        existing.id, svc_name)
+            logger.info(
+                "Auto-resolved sev4 incident %s for recovered service %s", existing.id, svc_name
+            )
         else:
-            # Skip if this host already noted recovery recently
-            last_notes = [e.get("note", "") for e in (existing.timeline or [])[-3:]]
-            host_tag = f"[{_HOSTNAME}]"
-            if not any(host_tag in n and "back up" in n for n in last_notes):
-                mgr.update_incident(
-                    existing.id, "service_health",
-                    note=f"[{_HOSTNAME}] Service {svc_name} appears to be back up",
-                )
+            # Append a recovery note to THIS node's own writer file. The manager
+            # bounds this to one recovery event per host (own-file check), so
+            # there is no last-3-notes timeline guard and no cross-node churn.
+            mgr.note_recovery(
+                existing.id,
+                "service_health",
+                f"[{_HOSTNAME}] Service {svc_name} appears to be back up",
+            )
     except Exception as exc:
-        logger.debug("Failed to auto-resolve incident for %s: %s",
-                      service_result.get("name"), exc)
+        logger.debug("Failed to auto-resolve incident for %s: %s", service_result.get("name"), exc)
 
 
 def make_service_health_task() -> callable:
@@ -523,13 +557,9 @@ def make_service_health_task() -> callable:
 
         if down:
             names = ", ".join(r["name"] for r in down)
-            logger.warning(
-                "Service health: %d/%d down — %s", len(down), len(results), names
-            )
+            logger.warning("Service health: %d/%d down - %s", len(down), len(results), names)
             for r in down:
-                logger.warning(
-                    "  %s (%s): %s", r["name"], r["url"], r["error"] or "unreachable"
-                )
+                logger.warning("  %s (%s): %s", r["name"], r["url"], r["error"] or "unreachable")
                 _create_incident_for_down_service(r)
         else:
             up_count = len(up)

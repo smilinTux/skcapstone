@@ -24,13 +24,13 @@ import pytest
 import yaml
 
 from skcapstone.dashboard import (
-    DashboardHandler,
     _DASHBOARD_HTML,
     _get_agent_status,
     _get_board_state,
     _get_doctor_report,
     _get_daemon_json,
     _get_memory_stats,
+    create_app,
     start_dashboard,
 )
 
@@ -76,7 +76,18 @@ def dashboard_server(agent_home):
     server = start_dashboard(agent_home, port=port)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    time.sleep(0.3)
+
+    # Wait for uvicorn to be accepting connections (startup timing varies).
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            probe = HTTPConnection("127.0.0.1", port, timeout=1)
+            probe.request("GET", "/")
+            probe.getresponse().read()
+            probe.close()
+            break
+        except OSError:
+            time.sleep(0.1)
 
     yield server, port
 
@@ -160,7 +171,7 @@ class TestHTTPServer:
         assert resp.status == 200
         assert "text/html" in resp.getheader("Content-Type")
         body = resp.read().decode("utf-8")
-        assert "SKCapstone" in body
+        assert "SKDashboard" in body
         conn.close()
 
     def test_api_status_json(self, dashboard_server):
@@ -452,3 +463,76 @@ class TestDashboardJsonCLI:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["daemon"]["running"] is False
+
+
+class TestStarletteApp:
+    """Phase 1: Starlette app parity via TestClient (fast, non-flaky)."""
+
+    def test_create_app_serves_html_and_json(self, agent_home):
+        from starlette.testclient import TestClient
+        client = TestClient(create_app(agent_home))
+        r = client.get("/")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "SKDashboard" in r.text
+        b = client.get("/api/board")
+        assert b.status_code == 200
+        assert "application/json" in b.headers["content-type"]
+        assert b.headers["access-control-allow-origin"] == "*"
+        assert "tasks" in b.json()
+        assert client.get("/api/nope").status_code == 404
+
+
+class TestDoctorReportCache:
+    """_get_doctor_report caches so the whole-tree diagnostic scan does not
+    run on every /api/doctor poll and block the dashboard's event loop.
+    """
+
+    def test_doctor_report_is_cached_within_ttl(self, tmp_path, monkeypatch):
+        from skcapstone import dashboard as d
+
+        # Reset the module cache so this test is order-independent.
+        d._doctor_cache.update(ts=0.0, home=None, report=None)
+
+        calls = {"n": 0}
+
+        class _FakeReport:
+            def to_dict(self):
+                return {"checks": [], "call": calls["n"]}
+
+        def _fake_run_diagnostics(home):
+            calls["n"] += 1
+            return _FakeReport()
+
+        import skcapstone.doctor as doctor_mod
+
+        monkeypatch.setattr(doctor_mod, "run_diagnostics", _fake_run_diagnostics)
+
+        first = d._get_doctor_report(tmp_path)
+        second = d._get_doctor_report(tmp_path)
+        third = d._get_doctor_report(tmp_path)
+
+        assert calls["n"] == 1  # ran once, served from cache twice
+        assert first == second == third
+
+    def test_doctor_cache_misses_on_different_home(self, tmp_path, monkeypatch):
+        from skcapstone import dashboard as d
+
+        d._doctor_cache.update(ts=0.0, home=None, report=None)
+        calls = {"n": 0}
+
+        class _FakeReport:
+            def to_dict(self):
+                return {"checks": []}
+
+        def _fake_run_diagnostics(home):
+            calls["n"] += 1
+            return _FakeReport()
+
+        import skcapstone.doctor as doctor_mod
+
+        monkeypatch.setattr(doctor_mod, "run_diagnostics", _fake_run_diagnostics)
+
+        d._get_doctor_report(tmp_path / "a")
+        d._get_doctor_report(tmp_path / "b")
+        assert calls["n"] == 2  # different home key -> recompute

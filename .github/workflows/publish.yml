@@ -21,11 +21,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: python -m pytest tests/ -v --ignore=tests/integration -k "not test_agent_card"
-        continue-on-error: true
 
+  # Both publish jobs are gated on the test job SUCCEEDING (default `needs`
+  # semantics). Do not add `if: always()` here: it would publish broken
+  # packages to PyPI/npm on red tests (coord 62c567cb).
   publish-pypi:
     needs: test
-    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +51,6 @@ jobs:
 
   publish-npm:
     needs: test
-    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

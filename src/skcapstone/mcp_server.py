@@ -376,6 +376,37 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="coord_kanban",
+            description=(
+                "Show the unified kanban board over coord tasks and ITIL "
+                "tickets: per-lane per-column counts, WIP status, and the "
+                "active cards (ready/doing/review). Columns are the lifecycle; "
+                "swimlanes are the card kind."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="coord_move",
+            description=(
+                "Move a card to a kanban column (backlog/ready/doing/review/"
+                "done). The explicit move is authoritative for the column."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The card/task ID"},
+                    "column": {
+                        "type": "string",
+                        "enum": ["backlog", "ready", "doing", "review", "done"],
+                        "description": "Target kanban column",
+                    },
+                    "order": {"type": "integer", "description": "Position within the column"},
+                    "agent": {"type": "string", "description": "Writer name (defaults to host)"},
+                },
+                "required": ["task_id", "column"],
+            },
+        ),
+        Tool(
             name="ritual",
             description=(
                 "Run the Memory Rehydration Ritual. Loads soul blueprint, "
@@ -2696,6 +2727,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "coord_claim": _handle_coord_claim,
         "coord_complete": _handle_coord_complete,
         "coord_create": _handle_coord_create,
+        "coord_kanban": _handle_coord_kanban,
+        "coord_move": _handle_coord_move,
         "ritual": _handle_ritual,
         "soul_show": _handle_soul_show,
         "journal_write": _handle_journal_write,
@@ -3211,6 +3244,18 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
         "priority": task.priority.value,
         "path": str(path),
     })
+
+
+async def _handle_coord_kanban(args: dict) -> list[TextContent]:
+    """Show the unified kanban board (delegates to the modular tool)."""
+    from .mcp_tools.coord_tools import _handle_coord_kanban as _impl
+    return await _impl(args)
+
+
+async def _handle_coord_move(args: dict) -> list[TextContent]:
+    """Move a card to a kanban column (delegates to the modular tool)."""
+    from .mcp_tools.coord_tools import _handle_coord_move as _impl
+    return await _impl(args)
 
 
 # ═══════════════════════════════════════════════════════════

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard — Overview</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <link rel="stylesheet" href="/static/css/overview.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab active" href="/">Overview</a>
+        <a class="tab" href="/cockpit">ITIL Cockpit</a>
+        <a class="tab" href="/cmdb">Assets (CMDB)</a>
+        <a class="tab" href="/board">Kanban Board</a>
+        <a class="tab" href="/assistant">Assistant</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="live"><span class="dot" id="live-dot"></span><span id="live-text">connecting</span></span>
+      <span class="who mono" id="who">operator</span>
+    </div>
+
+    <!-- operational summary tiles (each links to its detail tab) -->
+    <div class="tilerow" id="tiles"></div>
+
+    <div class="ov-grid">
+      <div class="card">
+        <h2>Active work <a class="more" href="/board">board →</a></h2>
+        <div class="cbody" id="active-tasks"><div class="spinner"></div></div>
+      </div>
+      <div class="card">
+        <h2>Recent activity <a class="more" href="/cockpit">cockpit →</a></h2>
+        <div class="cbody feed" id="activity"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Agent health</h2>
+      <div class="cbody" id="agent-health"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay"></div>
+  <aside class="panel" id="panel" aria-hidden="true"></aside>
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="/static/js/overview.js"></script>
+</body>
+</html>

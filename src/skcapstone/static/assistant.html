@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard — Assistant</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/assistant.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/">Status</a>
+        <a class="tab" href="/cockpit">ITIL Cockpit</a>
+        <a class="tab" href="/cmdb">Assets (CMDB)</a>
+        <a class="tab" href="/board">Kanban Board</a>
+        <a class="tab active" href="/assistant">Assistant</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who mono">operator</span>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="msg assistant">
+        <div class="bubble">
+          Ask me about the board and ITIL, or tell me to act on a ticket. For example:
+          <div class="examples">
+            <button class="ex">top 5 incidents by severity</button>
+            <button class="ex">top 2 most-involved tasks</button>
+            <button class="ex">summarize changes awaiting CAB</button>
+            <button class="ex">which incidents are past SLA?</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <form class="composer-bar" id="ask-form">
+      <input type="text" id="ask" placeholder="Ask a report, or 'add a note to inc-… and queue lumina to draft the fix'…" autocomplete="off">
+      <button class="btn primary" id="ask-send" type="submit">Ask</button>
+    </form>
+  </div>
+
+  <script type="module" src="/static/js/assistant.js"></script>
+</body>
+</html>

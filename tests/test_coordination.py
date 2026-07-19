@@ -248,6 +248,30 @@ class TestBoardMd:
         assert "Building tokens" in md
 
 
+class TestTaskMeta:
+    """Tests for the new Task.meta field (autopilot back-compat)."""
+
+    def test_meta_defaults_empty(self):
+        t = Task(title="No meta")
+        assert t.meta == {}
+
+    def test_meta_roundtrip(self):
+        t = Task(title="With meta", meta={"autopilot": {"phase": "grade"}})
+        t2 = Task.model_validate(t.model_dump())
+        assert t2.meta == {"autopilot": {"phase": "grade"}}
+
+    def test_legacy_task_file_without_meta_loads(self, board: Board):
+        """A task file written before meta existed must still load with meta == {}."""
+        (board.tasks_dir / "legacy1-old.json").write_text(
+            json.dumps({"id": "legacy1", "title": "Legacy"}),
+            encoding="utf-8",
+        )
+        tasks = board.load_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].id == "legacy1"
+        assert tasks[0].meta == {}
+
+
 class TestCorruptFiles:
     """Edge cases: malformed JSON, missing fields."""
 
@@ -322,3 +346,188 @@ class TestBriefing:
         assert "Claude Code" in text
         assert "Aider" in text
         assert "Windsurf" in text
+
+
+class TestWriteTaskRaw:
+    """Tests for the atomic single-writer raw-dict helper."""
+
+    def test_preserves_unknown_keys(self, board: Board):
+        """A key the Task model does not know about must survive a raw write."""
+        path = board.create_task(Task(id="abc12345", title="Raw"))
+        d = json.loads(path.read_text(encoding="utf-8"))
+        d["legacy_unknown"] = {"kept": True}
+        path.write_text(json.dumps(d), encoding="utf-8")
+
+        board._write_task_raw("abc12345", lambda x: x.__setitem__("touched", 1))
+
+        after = json.loads(path.read_text(encoding="utf-8"))
+        assert after["legacy_unknown"] == {"kept": True}
+        assert after["touched"] == 1
+        assert after["title"] == "Raw"
+
+    def test_returns_path_and_no_tmp_left(self, board: Board):
+        board.create_task(Task(id="def45678", title="Tmp"))
+        p = board._write_task_raw("def45678", lambda d: d.setdefault("meta", {}).__setitem__("x", 1))
+        assert p.exists()
+        assert list(board.tasks_dir.glob("*.tmp")) == []
+
+    def test_missing_task_raises(self, board: Board):
+        with pytest.raises(FileNotFoundError):
+            board._write_task_raw("nope", lambda d: None)
+
+
+class TestScoreTask:
+    """Tests for Board.score_task."""
+
+    def test_appends_score_and_shape(self, board: Board):
+        board.create_task(Task(id="aa11bb22", title="Score me"))
+        board.score_task("aa11bb22", round=1, score=4, notes="thin tests",
+                         harness="claude_code", phase="grade")
+        t = {x.id: x for x in board.load_tasks()}["aa11bb22"]
+        ap = t.meta["autopilot"]
+        assert ap["phase"] == "grade"
+        assert len(ap["scores"]) == 1
+        s = ap["scores"][0]
+        assert s["round"] == 1 and s["score"] == 4
+        assert s["notes"] == "thin tests" and s["harness"] == "claude_code"
+        assert "ts" in s
+
+    def test_ref_routes_pr_vs_artifact(self, board: Board):
+        board.create_task(Task(id="cc33dd44", title="Ref"))
+        board.score_task("cc33dd44", round=1, score=5, ref="https://gh/pr/1")
+        board.score_task("cc33dd44", round=2, score=5, ref="worktree/xyz")
+        ap = {x.id: x for x in board.load_tasks()}["cc33dd44"].meta["autopilot"]
+        assert ap["pr"] == "https://gh/pr/1"
+        assert ap["artifact"] == "worktree/xyz"
+
+    def test_idempotent_same_round_harness(self, board: Board):
+        board.create_task(Task(id="ee55ff66", title="Idem"))
+        board.score_task("ee55ff66", round=1, score=3, harness="h1")
+        board.score_task("ee55ff66", round=1, score=5, harness="h1")  # re-grade
+        scores = {x.id: x for x in board.load_tasks()}["ee55ff66"].meta["autopilot"]["scores"]
+        assert len(scores) == 1
+        assert scores[0]["score"] == 5
+
+
+class TestUpdateTask:
+    """Tests for Board.update_task (reversible autonomous edits)."""
+
+    def test_updates_and_snapshots_edits(self, board: Board):
+        board.create_task(Task(id="11aa22bb", title="Edit me",
+                               description="old", tags=["x"]))
+        board.update_task("11aa22bb", description="new",
+                          acceptance_criteria=["ac1"], add_tags=["y"],
+                          run_id="run-1")
+        t = {x.id: x for x in board.load_tasks()}["11aa22bb"]
+        assert t.description == "new"
+        assert t.acceptance_criteria == ["ac1"]
+        assert t.tags == ["x", "y"]
+        edits = t.meta["autopilot"]["edits"]
+        by_field = {e["field"]: e for e in edits}
+        assert by_field["description"]["old"] == "old"
+        assert by_field["description"]["new"] == "new"
+        assert by_field["tags"]["old"] == ["x"]
+        assert by_field["tags"]["new"] == ["x", "y"]
+        assert all(e["run_id"] == "run-1" and "ts" in e for e in edits)
+
+    def test_add_tags_dedupes_and_no_noop_edit(self, board: Board):
+        board.create_task(Task(id="33cc44dd", title="Tags", tags=["x"]))
+        board.update_task("33cc44dd", add_tags=["x"])  # already present -> no change
+        t = {x.id: x for x in board.load_tasks()}["33cc44dd"]
+        assert t.tags == ["x"]
+        assert t.meta.get("autopilot", {}).get("edits", []) == []
+
+    def test_none_args_leave_fields_untouched(self, board: Board):
+        board.create_task(Task(id="55ee66ff", title="Keep", description="keep"))
+        board.update_task("55ee66ff", acceptance_criteria=["only-ac"])
+        t = {x.id: x for x in board.load_tasks()}["55ee66ff"]
+        assert t.description == "keep"
+        assert t.acceptance_criteria == ["only-ac"]
+
+
+class TestCloseTaskObsolete:
+    """Tests for Board.close_task_obsolete."""
+
+    def test_marks_obsolete_meta_and_note(self, board: Board):
+        board.create_task(Task(id="77aa88bb", title="Stale work"))
+        board.close_task_obsolete("77aa88bb", "superseded by epic X", run_id="run-9")
+        t = {x.id: x for x in board.load_tasks()}["77aa88bb"]
+        ob = t.meta["autopilot"]["obsolete"]
+        assert ob["reason"] == "superseded by epic X"
+        assert ob["run_id"] == "run-9"
+        assert "ts" in ob
+        assert any("superseded by epic X" in n for n in t.notes)
+
+    def test_preserves_existing_scores(self, board: Board):
+        board.create_task(Task(id="99cc00dd", title="Had a score"))
+        board.score_task("99cc00dd", round=1, score=2)
+        board.close_task_obsolete("99cc00dd", "not worth pursuing")
+        ap = {x.id: x for x in board.load_tasks()}["99cc00dd"].meta["autopilot"]
+        assert len(ap["scores"]) == 1
+        assert ap["obsolete"]["reason"] == "not worth pursuing"
+
+
+class TestUnblockedTaskIds:
+    """Tests for Board.unblocked_task_ids."""
+
+    def test_no_deps_is_unblocked(self, board: Board):
+        board.create_task(Task(id="aaa11111", title="Free"))
+        assert "aaa11111" in board.unblocked_task_ids()
+
+    def test_blocked_until_dep_completed(self, board: Board):
+        board.create_task(Task(id="bbb22222", title="Dep"))
+        board.create_task(Task(id="ccc33333", title="Needs dep",
+                               dependencies=["bbb22222"]))
+        assert "ccc33333" not in board.unblocked_task_ids()
+        board.claim_task("jarvis", "bbb22222")
+        board.complete_task("jarvis", "bbb22222")
+        unblocked = board.unblocked_task_ids()
+        assert "ccc33333" in unblocked
+        assert "bbb22222" in unblocked
+
+    def test_union_across_agents(self, board: Board):
+        board.create_task(Task(id="ddd44444", title="d1"))
+        board.create_task(Task(id="eee55555", title="d2"))
+        board.create_task(Task(id="fff66666", title="needs both",
+                               dependencies=["ddd44444", "eee55555"]))
+        board.claim_task("jarvis", "ddd44444")
+        board.complete_task("jarvis", "ddd44444")
+        board.claim_task("opus", "eee55555")
+        board.complete_task("opus", "eee55555")
+        assert "fff66666" in board.unblocked_task_ids()
+
+
+class TestReleaseStaleClaims:
+    """Tests for Board.release_stale_claims (staleness keyed on last_seen)."""
+
+    def _write_agent_last_seen(self, board: Board, agent: str, iso: str,
+                               claimed, current):
+        """Write an agent file with a specific last_seen timestamp."""
+        af = AgentFile(agent=agent, claimed_tasks=list(claimed),
+                       current_task=current)
+        data = af.model_dump()
+        data["last_seen"] = iso  # override the auto-now stamp on disk
+        (board.agents_dir / f"{agent}.json").write_text(
+            json.dumps(data), encoding="utf-8")
+
+    def test_releases_when_agent_stale(self, board: Board):
+        from datetime import datetime, timezone, timedelta
+        old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        self._write_agent_last_seen(board, "jarvis", old,
+                                    claimed=["aa11", "bb22"], current="aa11")
+        released = board.release_stale_claims("jarvis", older_than_seconds=3600)
+        assert set(released) == {"aa11", "bb22"}
+        af = board.load_agent("jarvis")
+        assert af.claimed_tasks == []
+        assert af.current_task is None
+
+    def test_fresh_agent_not_released(self, board: Board):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        self._write_agent_last_seen(board, "opus", now,
+                                    claimed=["cc33"], current="cc33")
+        assert board.release_stale_claims("opus", older_than_seconds=3600) == []
+        assert board.load_agent("opus").claimed_tasks == ["cc33"]
+
+    def test_unknown_agent_returns_empty(self, board: Board):
+        assert board.release_stale_claims("nobody", older_than_seconds=1) == []

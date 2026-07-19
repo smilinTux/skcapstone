@@ -150,6 +150,31 @@ def register_coord_commands(main: click.Group) -> None:
         # board.complete_task() automatically mints Joules via _mint_joules_for_task
         console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
 
+    @coord.command("score")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--round", "round_", required=True, type=int, help="Grading round number.")
+    @click.option("--score", required=True, type=int, help="Score value (rubric 1-5).")
+    @click.option("--notes", default="", help="Grader notes.")
+    @click.option("--harness", default="", help="Harness / grader identity.")
+    @click.option("--phase", default=None, help="Autopilot phase label.")
+    @click.option("--ref", default=None, help="PR URL (http*) or artifact ref.")
+    def coord_score(task_id, home, round_, score, notes, harness, phase, ref):
+        """Record an autopilot grade on a task (meta.autopilot.scores)."""
+        from ..coordination import Board
+
+        validate_task_id(task_id)
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
+        try:
+            path = board.score_task(task_id, round=round_, score=score, notes=notes,
+                                    harness=harness, phase=phase, ref=ref)
+        except FileNotFoundError as e:
+            console.print(f"\n  [red]Error:[/] {e}\n")
+            sys.exit(1)
+        console.print(f"\n  [green]Scored:[/] [{task_id}] round {round_} = {score}")
+        console.print(f"  [dim]{path}[/]\n")
+
     @coord.command("board")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def coord_board(home):
@@ -162,6 +187,215 @@ def register_coord_commands(main: click.Group) -> None:
         md = board.generate_board_md()
         console.print(md)
         console.print(f"\n  [dim]Written to {path}[/]\n")
+
+    @coord.command("kanban")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--html", "html_out", default=None, type=click.Path(),
+                  help="Write the visual kanban board to this HTML file.")
+    @click.option("--json", "as_json", is_flag=True, default=False,
+                  help="Emit the grid as JSON instead of a text summary.")
+    def coord_kanban(home, html_out, as_json):
+        """Unified kanban board over coord tasks and ITIL tickets.
+
+        Columns are the shared lifecycle (backlog, ready, doing, review, done);
+        swimlanes are the card kind (feature, bug, security, expedite, change,
+        problem). Reads both stores read-only.
+        """
+        import json as _json
+
+        from ..card import COLUMN_ORDER, LANE_ORDER, KanbanBoard, render_html
+
+        home_path = Path(home).expanduser()
+        kb = KanbanBoard(home_path)
+
+        if html_out:
+            out = Path(html_out).expanduser()
+            out.write_text(render_html(kb), encoding="utf-8")
+            console.print(f"\n  [green]Kanban board written to {out}[/]\n")
+            return
+
+        grid = kb.grid()
+        if as_json:
+            payload = {
+                lane: {col: [c.model_dump() for c in grid[lane][col]] for col in COLUMN_ORDER}
+                for lane in LANE_ORDER
+            }
+            click.echo(_json.dumps(payload, indent=2))
+            return
+
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Swimlane", style="bold")
+        for col in COLUMN_ORDER:
+            table.add_column(col.capitalize(), justify="right")
+        for lane in LANE_ORDER:
+            counts = [len(grid[lane][col]) for col in COLUMN_ORDER]
+            if not any(counts):
+                continue
+            table.add_row(lane, *[str(n) if n else "[dim]-[/]" for n in counts])
+        console.print()
+        console.print(Panel(table, title="Kanban (columns x swimlanes)",
+                            border_style="bright_blue"))
+        console.print("  [dim]Full board: [cyan]coord kanban --html board.html[/][/]\n")
+
+    @coord.command("archive-done")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--days", default=14, type=int, help="Archive done tasks older than N days.")
+    @click.option("--dry-run", is_flag=True, default=False,
+                  help="Show what would be archived without writing.")
+    def coord_archive_done(home, days, dry_run):
+        """Age done tasks off the active board (default: older than 14 days)."""
+        from ..coordination import Board
+
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
+        ids = board.archive_done_tasks(older_than_days=days, dry_run=dry_run)
+        verb = "Would archive" if dry_run else "Archived"
+        console.print(f"\n  [green]{verb} {len(ids)} done task(s) older than {days}d.[/]\n")
+
+    @coord.command("age-backlog")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--days", default=90, type=int,
+                  help="Archive unclaimed open tasks older than N days.")
+    @click.option("--dry-run", is_flag=True, default=False,
+                  help="Show what would be archived without writing.")
+    def coord_age_backlog(home, days, dry_run):
+        """Archive ancient unclaimed open tasks (default: older than 90 days)."""
+        from ..coordination import Board
+
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
+        ids = board.age_stale_open(older_than_days=days, dry_run=dry_run)
+        verb = "Would archive" if dry_run else "Archived"
+        console.print(f"\n  [green]{verb} {len(ids)} stale open task(s) older than {days}d.[/]\n")
+
+    @coord.command("migrate")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--dry-run", is_flag=True, default=False,
+                  help="Report what would import without writing the CardStore.")
+    def coord_migrate(home, dry_run):
+        """Import the legacy board (coord + ITIL + overlay) into the CardStore.
+
+        Idempotent and additive (Phase 4). Nothing reads the CardStore until
+        SKCOORD_CARD_STORE=1. Reversible: rm ~/.skcapstone/cards to undo.
+        """
+        from ..card_store import import_from_legacy
+
+        home_path = Path(home).expanduser()
+        res = import_from_legacy(home_path, dry_run=dry_run)
+        verb = "Would import" if dry_run else "Imported"
+        console.print(
+            f"\n  [green]{verb} {res['imported']} card(s)"
+            f" ({res['skipped']} already present, {res['total']} total).[/]\n"
+        )
+
+    @coord.command("parity")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--show", default=10, type=int, help="Max mismatches to print.")
+    @click.option("--check", is_flag=True, default=False,
+                  help="Exit non-zero on any drift (for the soak monitor).")
+    def coord_parity(home, show, check):
+        """Diff the legacy board against the CardStore fold (Phase 4 soak check)."""
+        import sys
+
+        from ..card_store import parity_check
+
+        home_path = Path(home).expanduser()
+        par = parity_check(home_path)
+        ok = not par["mismatches"] and not par["missing"]
+        color = "green" if ok else "red"
+        console.print(
+            f"\n  [{color}]checked={par['checked']} matched={par['matched']} "
+            f"mismatches={len(par['mismatches'])} missing={len(par['missing'])}[/]"
+        )
+        for m in par["mismatches"][:show]:
+            console.print(f"    [yellow]{m['id']}[/]: {m['diff']}")
+        if par["missing"][:show]:
+            console.print(f"    [yellow]missing[/]: {par['missing'][:show]}")
+        console.print()
+        if check and not ok:
+            sys.exit(1)
+
+    @coord.command("maintain")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--done-days", default=14, type=int,
+                  help="Archive done tasks older than N days.")
+    @click.option("--backlog-days", default=90, type=int,
+                  help="Archive unclaimed open tasks older than N days.")
+    @click.option("--dry-run", is_flag=True, default=False)
+    def coord_maintain(home, done_days, backlog_days, dry_run):
+        """Keep the board bounded: archive old done + ancient open tasks.
+
+        Runs both sweeps in one shot (for the scheduler). Reversible: delete the
+        per-writer archive index to restore.
+        """
+        from ..coordination import Board
+
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
+        done = board.archive_done_tasks(older_than_days=done_days, dry_run=dry_run)
+        stale = board.age_stale_open(older_than_days=backlog_days, dry_run=dry_run)
+        verb = "Would archive" if dry_run else "Archived"
+        console.print(
+            f"\n  [green]{verb} {len(done)} done (>{done_days}d) + "
+            f"{len(stale)} stale-open (>{backlog_days}d) = {len(done) + len(stale)} total.[/]\n"
+        )
+
+    @coord.command("move")
+    @click.argument("task_id")
+    @click.argument("column",
+                    type=click.Choice(["backlog", "ready", "doing", "review", "done"]))
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--order", default=None, type=int, help="Position within the column.")
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_move(task_id, column, home, order, agent):
+        """Move a card to a kanban column (backlog/ready/doing/review/done)."""
+        from ..card import CardEvent, CardEventLog
+
+        home_path = Path(home).expanduser()
+        event = CardEvent(card_id=task_id, action="move", column=column, order=order,
+                          writer=agent or "")
+        CardEventLog(home_path).append(event)
+        from ..card_store import card_store_write_enabled, mirror_coord_move
+
+        if card_store_write_enabled():
+            mirror_coord_move(home_path, task_id, column, agent or "", order=order)
+        pos = f" at order {order}" if order is not None else ""
+        console.print(f"\n  [green]Moved {task_id} to '{column}'{pos}.[/]\n")
+
+    @coord.command("label")
+    @click.argument("task_id")
+    @click.argument("label")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--remove", is_flag=True, default=False, help="Remove the label instead.")
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_label(task_id, label, home, remove, agent):
+        """Add (or remove) a label on a card."""
+        from ..card import CardEvent, CardEventLog
+
+        home_path = Path(home).expanduser()
+        action = "remove_label" if remove else "add_label"
+        CardEventLog(home_path).append(
+            CardEvent(card_id=task_id, action=action, label=label, writer=agent or "")
+        )
+        verb = "Removed" if remove else "Added"
+        console.print(f"\n  [green]{verb} label '{label}' on {task_id}.[/]\n")
+
+    @coord.command("link")
+    @click.argument("task_id")
+    @click.argument("key")
+    @click.argument("value")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_link(task_id, key, value, home, agent):
+        """Attach a link (pr/commit/doc/...) to a card."""
+        from ..card import CardEvent, CardEventLog
+
+        home_path = Path(home).expanduser()
+        CardEventLog(home_path).append(
+            CardEvent(card_id=task_id, action="link", link_key=key, link_value=value,
+                      writer=agent or "")
+        )
+        console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")
 
     @coord.command("changelog")
     @click.option("--home", default=AGENT_HOME, type=click.Path())

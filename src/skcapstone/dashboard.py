@@ -23,15 +23,21 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
+import time
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("skcapstone.dashboard")
 
 DEFAULT_DASHBOARD_PORT = 7778
+
+#: Cache window for the doctor report. ``run_diagnostics`` walks the entire
+#: agent home (a whole-tree rglob for Syncthing conflict files); recomputing it
+#: on every ``/api/doctor`` poll blocks the dashboard's asyncio event loop. The
+#: health picture does not change second-to-second, so a short TTL is safe.
+_DOCTOR_CACHE_TTL = 30.0
+_doctor_cache: dict = {"ts": 0.0, "home": None, "report": None}
 
 
 def _get_agent_status(home: Path) -> dict:
@@ -96,7 +102,11 @@ def _get_agent_status(home: Path) -> dict:
 
 
 def _get_doctor_report(home: Path) -> dict:
-    """Run diagnostics and return as dict.
+    """Run diagnostics and return as dict, cached for ``_DOCTOR_CACHE_TTL``.
+
+    The report is served from an in-process cache so the expensive whole-tree
+    diagnostic scan runs at most once per TTL window regardless of how often
+    the dashboard polls ``/api/doctor``. Transient errors are not cached.
 
     Args:
         home: Agent home directory.
@@ -104,13 +114,22 @@ def _get_doctor_report(home: Path) -> dict:
     Returns:
         dict: Full diagnostic report.
     """
+    now = time.monotonic()
+    cache = _doctor_cache
+    if (
+        cache["report"] is not None
+        and cache["home"] == home
+        and now - cache["ts"] < _DOCTOR_CACHE_TTL
+    ):
+        return cache["report"]
     try:
         from .doctor import run_diagnostics
 
-        report = run_diagnostics(home)
-        return report.to_dict()
+        report = run_diagnostics(home).to_dict()
     except Exception as exc:
         return {"error": str(exc)}
+    cache.update(ts=now, home=home, report=report)
+    return report
 
 
 def _get_board_state(home: Path) -> dict:
@@ -410,72 +429,272 @@ loadAll();setInterval(loadAll,15000);
 </html>"""
 
 
-class DashboardHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for the sovereign agent dashboard.
+def _json(data: dict):
+    """Build a JSON API Response matching the legacy shape (indent + CORS).
 
-    Serves the HTML page and JSON API endpoints.
+    ``default=str`` keeps the original tolerance for non-JSON-native values.
+    The CORS header is retained for the cross-origin Flutter ``/api/daemon``
+    consumer; it can be dropped once that client is same-origin.
+    """
+    from starlette.responses import Response
+
+    body = json.dumps(data, indent=2, default=str)
+    return Response(
+        body,
+        media_type="application/json",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+def create_app(home: Path):
+    """Build the Starlette ASGI app for the dashboard.
+
+    Phase 1 (behavior-identical): serves the same self-contained HTML at ``/``
+    and the same read-only GET JSON endpoints, reusing the ``_get_*`` functions.
+    Later phases add ``/static`` modules, POST mutation routes, and SSE.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Starlette: The ASGI application.
+    """
+    import asyncio
+
+    from starlette.applications import Starlette
+    from starlette.responses import HTMLResponse, StreamingResponse
+    from starlette.routing import Mount, Route
+    from starlette.staticfiles import StaticFiles
+
+    from . import dashboard_itil as di
+    from . import dashboard_kanban as dk
+
+    def _cmdb():
+        from . import dashboard_cmdb as dc
+        return dc
+
+    def _overview_home(h):
+        from . import dashboard_overview as do
+        return do.get_overview_home(h)
+
+    static_dir = Path(__file__).parent / "static"
+
+    def _page(name):
+        async def handler(_request):
+            return HTMLResponse((static_dir / name).read_text(encoding="utf-8"))
+        return handler
+
+    index = _page("overview.html")
+    board_page = _page("board.html")
+    cockpit_page = _page("cockpit.html")
+
+    def _get_route(fn):
+        async def handler(_request):
+            return _json(fn(home))
+        return handler
+
+    async def api_kanban(_request):
+        return _json(dk.get_kanban(home))
+
+    async def api_card(request):
+        return _json(dk.get_card(home, request.path_params["card_id"]))
+
+    async def api_ai_suggestions(request):
+        from . import agent_run as ar
+
+        use_llm = request.query_params.get("llm", "1") != "0"
+        # The LLM (auto-routed, thinking-on) can take ~15s; give it headroom when
+        # explicitly asked (the client fetches heuristics first, then upgrades).
+        timeout = 35.0 if use_llm else 1.0
+        return _json(ar.suggest_next_steps(
+            home, request.path_params["card_id"], use_llm=use_llm, timeout=timeout))
+
+    async def api_card_mutate(request):
+        card_id = request.path_params["card_id"]
+        action = request.path_params["action"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        actor = (
+            request.headers.get("x-sk-actor")
+            or body.pop("actor", None)
+            or "dashboard"
+        )
+        result = dk.apply_mutation(home, card_id, action, actor, **body)
+        if result.get("ok"):
+            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor})
+        return _json(result)
+
+    def _ai_capability_ok(request):
+        """Gate the privileged 'queue AI to execute' action.
+
+        Requires a capability token (X-SK-Capability header == SKAI_QUEUE_TOKEN).
+        When no token is configured this is loopback-open (dev); this is the
+        upgrade point for a full capauth-signed grant + tailscale-serve exposure.
+        """
+        import hmac
+        import os
+
+        token = os.environ.get("SKAI_QUEUE_TOKEN")
+        if not token:
+            return True, "loopback-open (no SKAI_QUEUE_TOKEN set)"
+        provided = request.headers.get("x-sk-capability", "")
+        if hmac.compare_digest(provided, token):
+            return True, "capability ok"
+        return False, "missing or invalid capability token"
+
+    async def api_queue_ai(request):
+        from starlette.responses import Response
+
+        from . import agent_run as ar
+
+        card_id = request.path_params["card_id"]
+        ok, reason = _ai_capability_ok(request)
+        if not ok:
+            return Response(
+                json.dumps({"error": "unauthorized: " + reason}),
+                status_code=403, media_type="application/json",
+            )
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        requester = request.headers.get("x-sk-actor") or body.get("requester") or "operator"
+        result = ar.request_run(
+            home, card_id,
+            body.get("instruction", ""),
+            agent=body.get("agent", "lumina"),
+            mode=body.get("mode", "propose"),
+            requester=requester,
+        )
+        result["capability"] = reason
+        if result.get("ok"):
+            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": requester})
+        return _json(result)
+
+    async def api_assistant(request):
+        from . import dashboard_assistant as da
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        prompt = (body.get("prompt") or "").strip()
+        actor = request.headers.get("x-sk-actor") or "operator"
+        cap_ok, _ = _ai_capability_ok(request)
+        if not prompt:
+            return _json({"error": "prompt required"})
+        gen = da.stream_answer(home, prompt, actor=actor, capability_ok=cap_ok)
+        return StreamingResponse(
+            gen, media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    async def api_events(_request):
+        async def stream():
+            q = dk.BUS.subscribe()
+            try:
+                yield ": connected\n\n"
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(q.get(), timeout=20)
+                        yield f"event: {msg.get('type','message')}\ndata: {json.dumps(msg)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"
+            finally:
+                dk.BUS.unsubscribe(q)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    routes = [
+        Route("/", index),
+        Route("/index.html", index),
+        Route("/board", board_page),
+        Route("/api/status", _get_route(_get_agent_status)),
+        Route("/api/overview", lambda r: _json(_overview_home(home))),
+        Route("/api/doctor", _get_route(_get_doctor_report)),
+        Route("/api/board", _get_route(_get_board_state)),
+        Route("/api/memory", _get_route(_get_memory_stats)),
+        Route("/api/daemon", _get_route(_get_daemon_json)),
+        Route("/api/kanban", api_kanban),
+        Route("/api/card/{card_id}", api_card),
+        Route("/api/card/{card_id}/ai-suggestions", api_ai_suggestions),
+        Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
+        Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),
+        Route("/api/events", api_events),
+        Route("/api/assistant", api_assistant, methods=["POST"]),
+        Route("/assistant", _page("assistant.html")),
+        Route("/cockpit", cockpit_page),
+        Route("/api/itil/overview", lambda r: _json(di.get_overview(home))),
+        Route("/api/itil/incidents", lambda r: _json(di.get_incidents(home))),
+        Route("/api/itil/problems", lambda r: _json(di.get_problems(home))),
+        Route("/api/itil/changes", lambda r: _json(di.get_changes(home))),
+        Route("/api/itil/kedb", lambda r: _json(di.search_kedb(home, r.query_params.get("q", "")))),
+        Route("/api/itil/record/{kind}/{rid}",
+              lambda r: _json(di.get_record(home, r.path_params["kind"], r.path_params["rid"]))),
+        Route("/cmdb", _page("cmdb.html")),
+        Route("/api/cmdb/overview", lambda r: _json(_cmdb().get_overview(home))),
+        Route("/api/cmdb/ci/{ci_id}", lambda r: _json(_cmdb().get_ci(home, r.path_params["ci_id"]))),
+        Route("/api/cmdb/seed", lambda r: _json(_cmdb().seed(home)), methods=["POST"]),
+    ]
+    if static_dir.exists():
+        routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))
+
+    app = Starlette(routes=routes)
+
+    @app.on_event("startup")
+    async def _start_poll():
+        app.state.poll_task = asyncio.create_task(dk.poll_event_store(home))
+
+    return app
+
+
+class _UvicornServer:
+    """Adapter exposing ``serve_forever()``/``shutdown()`` over a uvicorn server.
+
+    Preserves the call pattern the CLI and tests use
+    (``start_dashboard(...).serve_forever()``) while running the Starlette app.
+    Signal handlers are disabled so it can run inside a worker thread.
     """
 
-    home: Path = Path.home() / ".skcapstone"
+    def __init__(self, app, port: int) -> None:
+        import uvicorn
 
-    def do_GET(self):
-        """Handle GET requests."""
-        if self.path == "/" or self.path == "/index.html":
-            self._serve_html()
-        elif self.path == "/api/status":
-            self._serve_json(_get_agent_status(self.home))
-        elif self.path == "/api/doctor":
-            self._serve_json(_get_doctor_report(self.home))
-        elif self.path == "/api/board":
-            self._serve_json(_get_board_state(self.home))
-        elif self.path == "/api/memory":
-            self._serve_json(_get_memory_stats(self.home))
-        elif self.path == "/api/daemon":
-            self._serve_json(_get_daemon_json(self.home))
-        else:
-            self.send_error(404, "Not found")
+        config = uvicorn.Config(
+            app, host="127.0.0.1", port=port, log_level="warning", access_log=False
+        )
+        self._server = uvicorn.Server(config)
 
-    def _serve_html(self):
-        """Serve the self-contained HTML dashboard."""
-        content = _DASHBOARD_HTML.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
+    def serve_forever(self) -> None:
+        import threading
 
-    def _serve_json(self, data: dict):
-        """Serve a JSON API response.
+        # uvicorn installs signal handlers in serve(), which only works on the
+        # main thread. On the main thread (CLI / systemd) keep them for graceful
+        # SIGTERM; in a worker thread (tests) disable them.
+        if threading.current_thread() is not threading.main_thread():
+            self._server.install_signal_handlers = lambda: None
+        self._server.run()
 
-        Args:
-            data: Dict to serialize as JSON.
-        """
-        body = json.dumps(data, indent=2, default=str).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        """Suppress default stderr logging — use logger instead."""
-        logger.debug("Dashboard: %s", format % args)
+    def shutdown(self) -> None:
+        self._server.should_exit = True
 
 
-def start_dashboard(home: Path, port: int = DEFAULT_DASHBOARD_PORT) -> HTTPServer:
-    """Start the dashboard HTTP server.
+def start_dashboard(home: Path, port: int = DEFAULT_DASHBOARD_PORT) -> "_UvicornServer":
+    """Start the dashboard server (Starlette + uvicorn).
 
     Args:
         home: Agent home directory.
         port: Port to listen on.
 
     Returns:
-        HTTPServer: The running server (call serve_forever() or
-            handle in a thread).
+        _UvicornServer: call ``serve_forever()`` (blocking) or run in a thread;
+        stop with ``shutdown()``.
     """
-    DashboardHandler.home = home
-
-    server = HTTPServer(("127.0.0.1", port), DashboardHandler)
+    app = create_app(home)
     logger.info("Dashboard running at http://127.0.0.1:%d", port)
-    return server
+    return _UvicornServer(app, port)

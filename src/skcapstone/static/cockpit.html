@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard — ITIL Cockpit</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/">Status</a>
+        <a class="tab active" href="/cockpit">ITIL Cockpit</a>
+        <a class="tab" href="/cmdb">Assets (CMDB)</a>
+        <a class="tab" href="/board">Kanban Board</a>
+        <a class="tab" href="/assistant">Assistant</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="live"><span class="dot" id="live-dot"></span><span id="live-text">connecting</span></span>
+    </div>
+
+    <div class="kpirow" id="kpis"></div>
+
+    <div class="cols2">
+      <div class="card">
+        <h2>SLA breach-risk <span class="badge">by time remaining</span></h2>
+        <div class="cbody breach" id="breach"><div class="emptymsg">Loading…</div></div>
+      </div>
+      <div class="card">
+        <h2>Open incidents by severity</h2>
+        <div class="cbody sevbar" id="sevbar"></div>
+        <h2 style="border-top:1px solid var(--hair2)">Recent activity</h2>
+        <div class="cbody feed" id="activity"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <h2>CAB approval queue <span class="badge">changes in reviewing</span></h2>
+      <div class="cbody cab" id="cab"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <h2>Service health</h2>
+      <div class="cbody"><div class="svcstrip" id="services"></div></div>
+    </div>
+
+    <div class="disc">
+      <button data-disc="incidents" class="on">Incidents</button>
+      <button data-disc="problems">Problems</button>
+      <button data-disc="changes">Changes</button>
+    </div>
+    <div class="disc-view on" id="disc-incidents"><div class="card"><div class="cbody" id="inc-body">Loading…</div></div></div>
+    <div class="disc-view" id="disc-problems"><div class="card"><div class="cbody" id="prb-body">Loading…</div></div></div>
+    <div class="disc-view" id="disc-changes"><div class="card"><div class="cbody" id="chg-body">Loading…</div></div></div>
+  </div>
+
+  <div class="overlay" id="overlay"></div>
+  <aside class="panel" id="panel" aria-hidden="true"></aside>
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="/static/js/cockpit.js"></script>
+</body>
+</html>

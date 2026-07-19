@@ -881,6 +881,13 @@ and **hosts** the shared platform primitives (coord board · `skscheduler` · `s
 ITIL tools). It persists to **compute/data** (`skmem-pg` + Syncthing), talks to peers
 over **comms**, and routes to **compute** models.
 
+`skmem-pg` here is a **per-node derived index**, not a shared or replicated
+substrate. Each node runs its own writable Postgres on `localhost:5432` and
+rebuilds it from the Syncthing-synced flat JSON (memories, via reconcile) and the
+git-synced wiki (docs, via skingest). It is a rebuildable cache, same class as
+the SQLite `index.db`: not streaming-replicated, not a central system of record,
+and not a SPOF. There is no primary/replica or failover for skmem-pg.
+
 ```mermaid
 flowchart TD
     subgraph CORE["core"]
@@ -909,7 +916,7 @@ flowchart TD
     subgraph COMPUTE["compute"]
       direction LR
       SKMODEL["skmodel<br/>(ollama · local LLMs)"]
-      SKDATA["skdata → skmem-pg<br/>(pgvector · BM25 · AGE)"]
+      SKDATA["skdata → skmem-pg (per-node)<br/>(pgvector · BM25 · AGE · rebuilt from flat/wiki)"]
       SYNCT["Syncthing P2P<br/>(encrypted seed sync)"]
     end
 
