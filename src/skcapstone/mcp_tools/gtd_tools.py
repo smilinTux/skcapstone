@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -60,6 +64,108 @@ def _gtd_dir() -> Path:
     return d
 
 
+# ── shared locked / atomic sink ───────────────────────────────────────
+# The unified GTD store has three concurrent writers: this MCP path, the
+# skos.gtd_ingest sink (cron/email/itil/order adapters), and legacy tooling.
+# They must serialize on ONE store lock and never leave a half-written file,
+# or updates get lost / corrupted. skos already shipped that locked, atomic,
+# deduped sink (skos.gtd_ingest: _store_lock / _save / capture, whole-store
+# (source, source_ref) dedupe) and soft-imports our _gtd_dir the other way, so
+# we soft-import its exact mechanism back here. When skos is unavailable we
+# fall back to a byte-for-byte mirror keyed on the SAME .gtd.lock path, so
+# cross-process mutual exclusion with skos holds either way.
+try:  # pragma: no cover - both branches exercised across environments
+    from skos.gtd_ingest import GtdCapture as _GtdCapture
+    from skos.gtd_ingest import _save as _skos_atomic_save
+    from skos.gtd_ingest import _store_lock as _skos_store_lock
+    from skos.gtd_ingest import capture as _skos_capture
+
+    _HAVE_SKOS_SINK = True
+except Exception:  # skos not installed: standalone skcapstone
+    _GtdCapture = None
+    _skos_atomic_save = None
+    _skos_store_lock = None
+    _skos_capture = None
+    _HAVE_SKOS_SINK = False
+
+
+@contextmanager
+def _store_lock():
+    """Advisory flock over the whole GTD store, held across each
+    load-modify-save cycle so concurrent writers (this MCP path, the skos sink,
+    cron) cannot lose updates. Delegates to skos's lock when present so both
+    sides share one lock object; the fallback locks the SAME .gtd.lock file, so
+    mutual exclusion still holds cross-process. Not reentrant."""
+    if _skos_store_lock is not None:
+        with _skos_store_lock():
+            yield
+        return
+    lock_path = _gtd_dir() / ".gtd.lock"
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _atomic_write_json(path: Path, items: list[dict]) -> None:
+    """Crash-safe save: write a temp file in the same dir, fsync, os.replace
+    over the target, fsync the dir. The target is never truncated in place, so
+    a crash leaves either the whole old file or the whole new file, never a
+    partial one. Uses skos.gtd_ingest._save directly when available (every
+    target lives in _gtd_dir()); otherwise mirrors it exactly."""
+    if _skos_atomic_save is not None:
+        _skos_atomic_save(path.name, items)
+        return
+    d = path.parent
+    payload = json.dumps(items, indent=2, ensure_ascii=False, default=str)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(d))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    dfd = os.open(str(d), os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+_ALL_STORE_FILES = list(_GTD_LISTS.values()) + ["archive.json"]
+
+
+def _seen_refs() -> set[tuple[str | None, str]]:
+    """All (source, source_ref) pairs already present anywhere in the store.
+    Mirrors skos.gtd_ingest._seen_refs so dedupe is identical on both write
+    paths. Used only by the local fallback capture (skos's capture() dedupes
+    itself)."""
+    seen: set[tuple[str | None, str]] = set()
+    for fname in _ALL_STORE_FILES:
+        try:
+            items = json.loads((_gtd_dir() / fname).read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, FileNotFoundError):
+            continue
+        if not isinstance(items, list):
+            continue
+        for it in items:
+            ref = it.get("source_ref")
+            if ref:
+                seen.add((it.get("source"), ref))
+    return seen
+
+
 def _load_archive() -> list[dict]:
     """Load the archive list."""
     path = _gtd_dir() / "archive.json"
@@ -70,9 +176,9 @@ def _load_archive() -> list[dict]:
 
 
 def _save_archive(items: list[dict]) -> None:
-    """Persist the archive list."""
-    path = _gtd_dir() / "archive.json"
-    path.write_text(json.dumps(items, indent=2, default=str), encoding="utf-8")
+    """Persist the archive list atomically (crash-safe; see _atomic_write_json).
+    Callers must hold _store_lock() around the load-modify-save cycle."""
+    _atomic_write_json(_gtd_dir() / "archive.json", items)
 
 
 def _find_item_across_lists(item_id: str) -> tuple[str | None, dict | None, int | None]:
@@ -106,9 +212,9 @@ def _load_list(name: str) -> list[dict]:
 
 
 def _save_list(name: str, items: list[dict]) -> None:
-    """Persist a GTD list."""
-    path = _gtd_dir() / _GTD_LISTS[name]
-    path.write_text(json.dumps(items, indent=2, default=str), encoding="utf-8")
+    """Persist a GTD list atomically (crash-safe; see _atomic_write_json).
+    Callers must hold _store_lock() around the load-modify-save cycle."""
+    _atomic_write_json(_gtd_dir() / _GTD_LISTS[name], items)
 
 
 def _make_item(
@@ -163,6 +269,14 @@ TOOLS: list[Tool] = [
                 "context": {
                     "type": "string",
                     "description": "GTD context tag, e.g. @computer, @phone, @home",
+                },
+                "source_ref": {
+                    "type": "string",
+                    "description": (
+                        "Stable dedup key for this source (e.g. gmail thread id, "
+                        "incident id). When set, a repeat (source, source_ref) is "
+                        "skipped so re-captures don't duplicate. Omit for quick-adds."
+                    ),
                 },
             },
             "required": ["text"],
@@ -363,21 +477,72 @@ TOOLS: list[Tool] = [
 
 
 async def _handle_gtd_capture(args: dict) -> list[TextContent]:
-    """Capture an item to the GTD inbox."""
+    """Capture an item to the GTD inbox through the shared locked/atomic sink.
+
+    Prefer skos.gtd_ingest.capture() (Option A): one call does whole-store
+    (source, source_ref) dedupe + flock + atomic save, so the MCP path and the
+    cron/email/itil adapters share exactly one sink. When skos is unavailable,
+    fall back to a local mirror under the SAME store lock. Dedupe only engages
+    when a source_ref is supplied; manual quick-adds without one are always
+    captured (unchanged behavior)."""
     text = args.get("text", "").strip()
     if not text:
         return _error_response("text is required")
 
-    item = _make_item(
-        text=text,
-        source=args.get("source", "manual"),
-        privacy=args.get("privacy", "private"),
-        context=args.get("context"),
-    )
+    source = args.get("source", "manual")
+    source = source if source in _VALID_SOURCES else "manual"
+    privacy = args.get("privacy", "private")
+    privacy = privacy if privacy in _VALID_PRIVACY else "private"
+    context = args.get("context")
+    source_ref = (args.get("source_ref") or "").strip()
 
-    inbox = _load_list("inbox")
-    inbox.append(item)
-    _save_list("inbox", inbox)
+    if _HAVE_SKOS_SINK:
+        new_id = _skos_capture(_GtdCapture(
+            text=text,
+            source=source,
+            source_ref=source_ref,
+            context=context,
+            privacy=privacy,
+            status="inbox",
+        ))
+        inbox = _load_list("inbox")
+        if new_id is None:  # duplicate (source, source_ref) already in store
+            return _json_response({
+                "captured": False,
+                "duplicate": True,
+                "source": source,
+                "source_ref": source_ref,
+                "inbox_count": len(inbox),
+            })
+        item = next((it for it in inbox if it.get("id") == new_id), {})
+        return _json_response({
+            "captured": True,
+            "id": new_id,
+            "text": item.get("text") or text,
+            "source": item.get("source", source),
+            "privacy": item.get("privacy", privacy),
+            "context": item.get("context", context),
+            "created_at": item.get("created_at", ""),
+            "inbox_count": len(inbox),
+        })
+
+    # Fallback: skos not installed. Local locked, atomic, deduped write.
+    with _store_lock():
+        if source_ref and (source, source_ref) in _seen_refs():
+            inbox = _load_list("inbox")
+            return _json_response({
+                "captured": False,
+                "duplicate": True,
+                "source": source,
+                "source_ref": source_ref,
+                "inbox_count": len(inbox),
+            })
+        item = _make_item(text=text, source=source, privacy=privacy, context=context)
+        if source_ref:
+            item["source_ref"] = source_ref
+        inbox = _load_list("inbox")
+        inbox.append(item)
+        _save_list("inbox", inbox)
 
     return _json_response({
         "captured": True,
@@ -444,56 +609,59 @@ async def _handle_gtd_clarify(args: dict) -> list[TextContent]:
     if energy not in _VALID_ENERGIES:
         energy = "medium"
 
-    # Find the item in the inbox
-    inbox = _load_list("inbox")
-    item = None
-    for idx, it in enumerate(inbox):
-        if it.get("id") == item_id:
-            item = inbox.pop(idx)
-            break
+    # Whole find-move-save cycle under the shared store lock so a concurrent
+    # skos-sink / cron write cannot be lost between our load and save.
+    with _store_lock():
+        # Find the item in the inbox
+        inbox = _load_list("inbox")
+        item = None
+        for idx, it in enumerate(inbox):
+            if it.get("id") == item_id:
+                item = inbox.pop(idx)
+                break
 
-    if item is None:
-        return _error_response(f"Item '{item_id}' not found in inbox")
+        if item is None:
+            return _error_response(f"Item '{item_id}' not found in inbox")
 
-    # Update item fields
-    item["context"] = context or item.get("context")
-    item["priority"] = priority
-    item["energy"] = energy
-    item["clarified_at"] = datetime.now(timezone.utc).isoformat()
+        # Update item fields
+        item["context"] = context or item.get("context")
+        item["priority"] = priority
+        item["energy"] = energy
+        item["clarified_at"] = datetime.now(timezone.utc).isoformat()
 
-    # Route based on clarification
-    if actionable and delegate_to:
-        # Delegated → waiting-for
-        item["status"] = "waiting"
-        item["delegate_to"] = delegate_to
-        dest_name = "waiting-for"
-        dest_list = _load_list("waiting-for")
-        dest_list.append(item)
-        _save_list("waiting-for", dest_list)
-    elif actionable and steps == "multi":
-        # Multi-step → projects
-        item["status"] = "project"
-        dest_name = "projects"
-        dest_list = _load_list("projects")
-        dest_list.append(item)
-        _save_list("projects", dest_list)
-    elif actionable:
-        # Single action → next-actions
-        item["status"] = "next"
-        dest_name = "next-actions"
-        dest_list = _load_list("next-actions")
-        dest_list.append(item)
-        _save_list("next-actions", dest_list)
-    else:
-        # Not actionable → someday-maybe
-        item["status"] = "someday"
-        dest_name = "someday-maybe"
-        dest_list = _load_list("someday-maybe")
-        dest_list.append(item)
-        _save_list("someday-maybe", dest_list)
+        # Route based on clarification
+        if actionable and delegate_to:
+            # Delegated → waiting-for
+            item["status"] = "waiting"
+            item["delegate_to"] = delegate_to
+            dest_name = "waiting-for"
+            dest_list = _load_list("waiting-for")
+            dest_list.append(item)
+            _save_list("waiting-for", dest_list)
+        elif actionable and steps == "multi":
+            # Multi-step → projects
+            item["status"] = "project"
+            dest_name = "projects"
+            dest_list = _load_list("projects")
+            dest_list.append(item)
+            _save_list("projects", dest_list)
+        elif actionable:
+            # Single action → next-actions
+            item["status"] = "next"
+            dest_name = "next-actions"
+            dest_list = _load_list("next-actions")
+            dest_list.append(item)
+            _save_list("next-actions", dest_list)
+        else:
+            # Not actionable → someday-maybe
+            item["status"] = "someday"
+            dest_name = "someday-maybe"
+            dest_list = _load_list("someday-maybe")
+            dest_list.append(item)
+            _save_list("someday-maybe", dest_list)
 
-    # Save updated inbox (item removed)
-    _save_list("inbox", inbox)
+        # Save updated inbox (item removed)
+        _save_list("inbox", inbox)
 
     return _json_response({
         "clarified": True,
@@ -521,31 +689,34 @@ async def _handle_gtd_move(args: dict) -> list[TextContent]:
             f"Valid: {', '.join(sorted(_DESTINATION_MAP.keys()))}"
         )
 
-    # Find the item across all lists
-    source_list, item, _ = _find_item_across_lists(item_id)
-    if source_list is None or item is None:
-        return _error_response(f"Item '{item_id}' not found in any GTD list")
+    # Whole find-remove-add cycle under the shared store lock so a concurrent
+    # writer cannot lose the source-list update or the destination append.
+    with _store_lock():
+        # Find the item across all lists
+        source_list, item, _ = _find_item_across_lists(item_id)
+        if source_list is None or item is None:
+            return _error_response(f"Item '{item_id}' not found in any GTD list")
 
-    # Remove from source
-    _remove_item_from_list(source_list, item_id)
+        # Remove from source
+        _remove_item_from_list(source_list, item_id)
 
-    # Update status
-    item["status"] = _STATUS_FROM_DEST[destination]
-    item["moved_at"] = datetime.now(timezone.utc).isoformat()
+        # Update status
+        item["status"] = _STATUS_FROM_DEST[destination]
+        item["moved_at"] = datetime.now(timezone.utc).isoformat()
 
-    # Add to destination
-    if destination == "done":
-        item["completed_at"] = datetime.now(timezone.utc).isoformat()
-        archive = _load_archive()
-        archive.append(item)
-        _save_archive(archive)
-        dest_name = "archive"
-    else:
-        dest_key = _DESTINATION_MAP[destination]
-        dest_list = _load_list(dest_key)
-        dest_list.append(item)
-        _save_list(dest_key, dest_list)
-        dest_name = dest_key
+        # Add to destination
+        if destination == "done":
+            item["completed_at"] = datetime.now(timezone.utc).isoformat()
+            archive = _load_archive()
+            archive.append(item)
+            _save_archive(archive)
+            dest_name = "archive"
+        else:
+            dest_key = _DESTINATION_MAP[destination]
+            dest_list = _load_list(dest_key)
+            dest_list.append(item)
+            _save_list(dest_key, dest_list)
+            dest_name = dest_key
 
     return _json_response({
         "moved": True,
@@ -563,21 +734,24 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
     if not item_id:
         return _error_response("item_id is required")
 
-    # Find the item across all lists
-    source_list, item, _ = _find_item_across_lists(item_id)
-    if source_list is None or item is None:
-        return _error_response(f"Item '{item_id}' not found in any GTD list")
+    # Whole find-remove-archive cycle under the shared store lock so a
+    # concurrent writer cannot lose the source-list or archive update.
+    with _store_lock():
+        # Find the item across all lists
+        source_list, item, _ = _find_item_across_lists(item_id)
+        if source_list is None or item is None:
+            return _error_response(f"Item '{item_id}' not found in any GTD list")
 
-    # Remove from source
-    _remove_item_from_list(source_list, item_id)
+        # Remove from source
+        _remove_item_from_list(source_list, item_id)
 
-    # Mark done and archive
-    item["status"] = "done"
-    item["completed_at"] = datetime.now(timezone.utc).isoformat()
+        # Mark done and archive
+        item["status"] = "done"
+        item["completed_at"] = datetime.now(timezone.utc).isoformat()
 
-    archive = _load_archive()
-    archive.append(item)
-    _save_archive(archive)
+        archive = _load_archive()
+        archive.append(item)
+        _save_archive(archive)
 
     return _json_response({
         "done": True,
