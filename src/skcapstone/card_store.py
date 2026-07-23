@@ -58,6 +58,95 @@ class CardCore(BaseModel):
     meta: dict = Field(default_factory=dict)
 
 
+# Sanctioned legacy overlay actions (coordination/card_events/*.jsonl) mapped
+# onto the store fold's action vocabulary. Anything unmapped is ignored.
+_OVERLAY_TO_STORE_ACTION = {
+    "move": "move",
+    "set_priority": "priority",
+    "set_swimlane": "swimlane",
+    "add_label": "add_label",
+    "remove_label": "remove_label",
+    "link": "link",
+    "assign": "assign",
+    "unassign": "unassign",
+}
+
+_OVERLAY_PAYLOAD_KEYS = (
+    "column", "order", "priority", "swimlane", "label",
+    "link_key", "link_value", "owner",
+)
+
+
+def load_legacy_mutations(home: Path) -> dict[str, list[dict]]:
+    """Synthesize fold events from the sanctioned legacy append-only paths.
+
+    Two legacy write paths remain live post-cutover (as the hot backup) and can
+    carry mutations the store's own logs never saw (flag unset in that process,
+    e.g. cron sweeps, or a best-effort mirror failure):
+
+    - ``coordination/archive/<host>.jsonl`` (``Board.archive_task``) becomes an
+      ``archive`` event stamped with its ``archived_at`` timestamp.
+    - ``coordination/card_events/*.jsonl`` (the kanban overlay) becomes the
+      equivalent store action per ``_OVERLAY_TO_STORE_ACTION``.
+
+    Both are per-writer append-only, so merging them into the fold keeps the
+    conflict-free invariant: no file is ever rewritten, ordering stays
+    ``(ts, writer, seq)``, and a mutation mirrored into BOTH sides simply
+    applies twice idempotently.
+
+    Returns:
+        dict: card_id -> list of synthetic event dicts (fold-shaped).
+    """
+    out: dict[str, list[dict]] = {}
+
+    archive_dir = Path(home).expanduser() / "coordination" / "archive"
+    if archive_dir.exists():
+        for f in sorted(archive_dir.glob("*.jsonl")):
+            try:
+                lines = f.read_text(encoding="utf-8").splitlines()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skipping unreadable archive index %s: %s", f.name, exc)
+                continue
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                tid = entry.get("id")
+                if not tid:
+                    continue
+                out.setdefault(tid, []).append({
+                    "ts": entry.get("archived_at", ""),
+                    "writer": entry.get("archived_by") or "archive",
+                    "seq": 0,
+                    "action": "archive",
+                    "origin": "legacy-archive",
+                })
+
+    from .card import CardEventLog
+
+    for e in CardEventLog(home).read_all():
+        action = _OVERLAY_TO_STORE_ACTION.get(e.action)
+        if action is None:
+            continue
+        ev: dict = {
+            "ts": e.ts,
+            "writer": e.writer,
+            "seq": e.seq,
+            "action": action,
+            "origin": "legacy-overlay",
+        }
+        for k in _OVERLAY_PAYLOAD_KEYS:
+            v = getattr(e, k, None)
+            if v is not None:
+                ev[k] = v
+        out.setdefault(e.card_id, []).append(ev)
+    return out
+
+
 class CardStore:
     """Event-sourced store for unified work-item cards.
 
@@ -68,6 +157,10 @@ class CardStore:
     def __init__(self, home: Path) -> None:
         self.home = Path(home).expanduser()
         self.cards_dir = self.home / "cards"
+        # Per-instance cache of legacy mutations (archive index + overlay).
+        # Instances are short-lived (one per CLI/MCP call), so a single load
+        # keeps list_cards() O(files) instead of rescanning per card.
+        self._legacy_cache: Optional[dict[str, list[dict]]] = None
 
     def ensure_dirs(self) -> None:
         self.cards_dir.mkdir(parents=True, exist_ok=True)
@@ -155,8 +248,26 @@ class CardStore:
         out.sort(key=lambda e: (e.get("ts", ""), e.get("writer", ""), e.get("seq", 0)))
         return out
 
+    def _legacy_events(self, card_id: str) -> list[dict]:
+        """Legacy mutations (archive index + overlay) for one card, cached."""
+        if self._legacy_cache is None:
+            try:
+                self._legacy_cache = load_legacy_mutations(self.home)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Legacy mutation load failed: %s", exc)
+                self._legacy_cache = {}
+        return self._legacy_cache.get(card_id, [])
+
     def fold(self, card_id: str) -> Optional[Card]:
-        """Fold core + events into the current ``Card`` state."""
+        """Fold core + events into the current ``Card`` state.
+
+        The event stream is the union of this card's own store logs AND the
+        sanctioned legacy paths (archive index + card_events overlay), merged
+        in ``(ts, writer, seq)`` order. That is the fold-drift fix (card
+        ba4af853): a mutation that only reached a legacy file (mirror off or
+        failed) still folds into the served state, so ``coord status`` cannot
+        overcount open cards post-cutover.
+        """
         core = self._load_core(card_id)
         if core is None:
             return None
@@ -179,7 +290,13 @@ class CardStore:
             created_at=core.get("created_at", ""),
             source="cards",
         )
-        for e in self._read_events(card_id):
+        events = self._read_events(card_id)
+        legacy_events = self._legacy_events(card_id)
+        if legacy_events:
+            events = events + legacy_events
+            events.sort(key=lambda e: (e.get("ts", ""), e.get("writer", ""),
+                                       e.get("seq", 0)))
+        for e in events:
             action = e.get("action")
             if action == "move":
                 col = e.get("column")
@@ -301,7 +418,15 @@ def import_from_legacy(home: Path, dry_run: bool = False) -> dict:
     from .card import KanbanBoard
 
     store = CardStore(home)
-    legacy = KanbanBoard(home).cards(include_archived=True)
+    # Force the LEGACY projection even post-cutover (flag=1), otherwise
+    # KanbanBoard would serve the store back to us and every card legacy-only
+    # card would look "already present" (i.e. migrate could never import it).
+    saved = os.environ.pop("SKCOORD_CARD_STORE", None)
+    try:
+        legacy = KanbanBoard(home).cards(include_archived=True)
+    finally:
+        if saved is not None:
+            os.environ["SKCOORD_CARD_STORE"] = saved
     imported = 0
     skipped = 0
     for c in legacy:
@@ -434,13 +559,36 @@ def mirror_coord_archive(home: Path, task_id: str, agent: str) -> None:
     CardStore(home).append_event(task_id, "archive", agent or "archive")
 
 
-def parity_check(home: Path) -> dict:
+# Store-served open count may lag legacy by a few cards mid-sync; anything
+# beyond this is drift worth alerting on (card ba4af853 was legacy ~310 vs
+# store 427).
+OPEN_DRIFT_THRESHOLD = 5
+
+
+def _open_count(cards: dict) -> int:
+    """Count coord-board OPEN cards (what ``coord status`` reports as open).
+
+    Open = a task/epic card, not archived, still in the backlog column.
+    """
+    return sum(
+        1 for c in cards.values()
+        if not c.archived
+        and c.kind.value in ("task", "epic")
+        and c.status.value == "backlog"
+    )
+
+
+def parity_check(home: Path, open_drift_threshold: int = OPEN_DRIFT_THRESHOLD) -> dict:
     """Diff the legacy board against the CardStore fold.
 
-    Compares every card on (status, owner, archived, priority, swimlane).
+    Compares every card on (status, owner, archived, priority, swimlane), and
+    computes the PARITY ALERT: whether the store-served open-count diverges
+    from legacy by more than ``open_drift_threshold``.
 
     Returns:
-        dict: ``{"checked": n, "matched": m, "mismatches": [...], "missing": [...]}``.
+        dict: ``{"checked", "matched", "mismatches", "missing",
+        "open_legacy", "open_store", "open_drift", "open_drift_threshold",
+        "open_alert"}``.
     """
     from .card import KanbanBoard
 
@@ -491,9 +639,69 @@ def parity_check(home: Path) -> dict:
             mismatches.append({"id": cid, "diff": diff})
         else:
             matched += 1
+    open_legacy = _open_count(legacy)
+    open_store = _open_count(stored)
+    open_drift = abs(open_legacy - open_store)
     return {
         "checked": len(legacy),
         "matched": matched,
         "mismatches": mismatches,
         "missing": missing,
+        "open_legacy": open_legacy,
+        "open_store": open_store,
+        "open_drift": open_drift,
+        "open_drift_threshold": open_drift_threshold,
+        "open_alert": open_drift > open_drift_threshold,
     }
+
+
+def reconcile_from_legacy(home: Path, dry_run: bool = True) -> dict:
+    """One-time repair: append corrective store events where the fold still
+    diverges from the authoritative legacy board.
+
+    The fold now consumes the legacy archive index and the card_events overlay
+    directly, so the only residual drift is state that lives ONLY in mutable
+    legacy files with no per-event timestamps: claims/completions recorded in
+    ``agents/*.json`` before the mirror was enabled (status + owner). This
+    walks ``parity_check`` mismatches and appends move/assign/unassign/archive
+    events (writer ``reconcile``) to converge the store on legacy.
+
+    Priority/swimlane diffs are intentionally NOT touched: the dashboard
+    writes those store-only, so there legacy is the stale side.
+
+    Additive and idempotent: pure appends, and a second run finds no diffs.
+
+    Returns:
+        dict: ``{"fixed": n}`` or ``{"would_fix": n}`` when dry_run.
+    """
+    par = parity_check(home)
+    store = CardStore(home)
+    count = 0
+    for m in par["mismatches"]:
+        cid = m["id"]
+        diff = m["diff"]
+        actions: list[tuple[str, dict]] = []
+        if "archived" in diff:
+            legacy_archived = diff["archived"][0]
+            if legacy_archived:
+                actions.append(("archive", {}))
+            else:
+                actions.append(("reopen", {"column": diff.get("status", [None])[0]}))
+        if "status" in diff:
+            legacy_col = diff["status"][0]
+            if legacy_col in {c.value for c in Column}:
+                actions.append(("move", {"column": legacy_col}))
+        if "owner" in diff:
+            legacy_owner = diff["owner"][0]
+            if legacy_owner:
+                actions.append(("assign", {"owner": legacy_owner}))
+            else:
+                actions.append(("unassign", {}))
+        if not actions:
+            continue
+        count += 1
+        if dry_run:
+            continue
+        for action, payload in actions:
+            store.append_event(cid, action, "reconcile", **payload)
+    return {"would_fix": count} if dry_run else {"fixed": count}
