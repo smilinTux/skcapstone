@@ -23,7 +23,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import threading
 import time
 import uuid
@@ -1861,17 +1860,10 @@ class ConsciousnessLoop:
                 in_reply_to=in_reply_to or None,
             )
             if response:
-                try:
-                    from skcapstone.notifications import desktop_notifications_enabled
-
-                    if desktop_notifications_enabled():
-                        subprocess.Popen(
-                            ["notify-send", "Opus", response[:100]],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                        )
-                except Exception as _notify_exc:
-                    logger.debug("notify-send failed (non-fatal): %s", _notify_exc)
+                # Wire the send_notification desktop path (sprint18) into the
+                # response handler: emit "Agent response" popup with the first
+                # 120 chars of the reply (card 261d442b). Opt-in gated.
+                self._notify_response(response)
 
                 self._prompt_builder.add_to_history(
                     sender,
@@ -1894,6 +1886,27 @@ class ConsciousnessLoop:
             self._errors += 1
             self._metrics.record_error()
             return None
+
+    def _notify_response(self, response: str) -> None:
+        """Emit a desktop notification for a generated response.
+
+        Routes through the shared send_notification desktop path
+        (``skcapstone.notifications.notify``): title ``"Agent response"``,
+        body the first 120 chars of the reply (card 261d442b).
+
+        Opt-in / fail-quiet: the popup only fires when
+        ``SKCAPSTONE_DESKTOP_NOTIFY`` is enabled, so background agents never
+        flood the desktop tray by default. Any failure is swallowed so a
+        notification problem can never break the consciousness loop.
+        """
+        try:
+            from skcapstone import notifications as _notif
+
+            if not _notif.desktop_notifications_enabled():
+                return
+            _notif.notify("Agent response", response[:120])
+        except Exception as _notify_exc:
+            logger.debug("Response notification failed (non-fatal): %s", _notify_exc)
 
     def _store_interaction_memory(
         self,

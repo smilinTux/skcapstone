@@ -522,6 +522,52 @@ class TestProcessEnvelopeACK:
         mock_skcomms.send.assert_not_called()
 
 
+class TestResponseNotification:
+    """send_notification wiring: desktop popup on a generated response, opt-in gated (card 261d442b)."""
+
+    def _make_loop(self, tmp_path):
+        config = ConsciousnessConfig(fallback_chain=["passthrough"])
+        loop = ConsciousnessLoop(config, home=tmp_path / ".skcapstone")
+        loop.set_skcomms(MagicMock())
+        loop._bridge = MagicMock()
+        loop._bridge.generate.return_value = "hello from the agent"
+        return loop
+
+    def _make_envelope(self, sender="peer", content="hello"):
+        data = {"sender": sender, "payload": {"content": content, "content_type": "text"}}
+        return _SimpleEnvelope(data)
+
+    def test_notification_sent_when_enabled(self, tmp_path, monkeypatch):
+        """With SKCAPSTONE_DESKTOP_NOTIFY on, a response fires the send_notification path."""
+        monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "1")
+        loop = self._make_loop(tmp_path)
+
+        with patch("skcapstone.notifications.notify") as mock_notify:
+            loop.process_envelope(self._make_envelope())
+
+        resp_calls = [
+            c for c in mock_notify.call_args_list
+            if c.args and c.args[0] == "Agent response"
+        ]
+        assert resp_calls, "send_notification path must fire on response when enabled"
+        # Body must be the first 120 chars of the response.
+        assert resp_calls[0].args[1] == "hello from the agent"[:120]
+
+    def test_notification_suppressed_when_disabled(self, tmp_path, monkeypatch):
+        """With SKCAPSTONE_DESKTOP_NOTIFY off (default), the response notification is suppressed."""
+        monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "0")
+        loop = self._make_loop(tmp_path)
+
+        with patch("skcapstone.notifications.notify") as mock_notify:
+            loop.process_envelope(self._make_envelope())
+
+        resp_calls = [
+            c for c in mock_notify.call_args_list
+            if c.args and c.args[0] == "Agent response"
+        ]
+        assert not resp_calls, "response notification must be suppressed when opt-out (default)"
+
+
 class TestRateLimiter:
     """Per-sender sliding-window intake rate limiter."""
 
