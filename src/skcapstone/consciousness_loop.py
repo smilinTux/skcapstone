@@ -155,6 +155,7 @@ _OLLAMA_MODEL_PATTERNS = (
     "deepseek",
     "qwen",
     "codestral",
+    "gemma",
 )
 
 

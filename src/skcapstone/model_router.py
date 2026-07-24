@@ -102,7 +102,24 @@ class ModelRouterConfig(BaseModel):
 
     @classmethod
     def default(cls) -> "ModelRouterConfig":
-        """Return the default configuration with NVIDIA-aligned model assignments.
+        """Return the default configuration with real, backend-resolvable models.
+
+        Every tier's preferred (first) model is a model that actually exists on
+        a configured backend, verified against the live fleet on 2026-07-24:
+
+        - Ollama-routed names (``qwen``/``llama``/``deepseek``/``devstral``/
+          ``mistral``/``nemotron``/``codestral`` patterns; see
+          :data:`skcapstone.consciousness_loop._OLLAMA_MODEL_PATTERNS`) must be
+          actually pulled. The local Ollama daemons (localhost and .100:11434)
+          only serve ``qwen3.5:4b``, ``gemma3:1b`` and ``gemma3:270m`` today,
+          so those are the only Ollama-routed names used here. The previous
+          defaults referenced ``devstral``, ``qwen3-coder``, ``deepseek-r1:8b``
+          and ``llama3.1`` — none of which are pulled — so every request on the
+          CODE, REASON and LOCAL tiers hit a 404 from Ollama.
+        - Cloud-routed names resolve to real provider model ids: Anthropic
+          (``claude-sonnet-4-6``, ``claude-haiku-4-5``, ``claude-opus-4-8`` —
+          all served by SKGateway :18780), xAI (``grok-3``) and Moonshot
+          (``kimi-k2.5``, ``moonshot-v1-128k``).
 
         Returns:
             ModelRouterConfig: Sensible defaults covering all five tiers and
@@ -110,11 +127,11 @@ class ModelRouterConfig(BaseModel):
         """
         return cls(
             tier_models={
-                ModelTier.FAST.value: ["qwen3.5:4b", "qwen3-coder", "grok-3-mini"],
-                ModelTier.CODE.value: ["devstral", "qwen3-coder", "grok-3"],
-                ModelTier.REASON.value: ["deepseek-r1:8b", "llama3.1", "grok-3"],
-                ModelTier.NUANCE.value: ["moonshot-v1-128k", "claude-sonnet-4-5", "kimi-k2.5"],
-                ModelTier.LOCAL.value: ["qwen3.5:4b", "devstral"],
+                ModelTier.FAST.value: ["qwen3.5:4b", "claude-haiku-4-5", "gemma3:1b"],
+                ModelTier.CODE.value: ["claude-sonnet-4-6", "qwen3.5:4b", "grok-3"],
+                ModelTier.REASON.value: ["claude-opus-4-8", "qwen3.5:4b", "grok-3"],
+                ModelTier.NUANCE.value: ["claude-sonnet-4-6", "kimi-k2.5", "moonshot-v1-128k"],
+                ModelTier.LOCAL.value: ["qwen3.5:4b", "gemma3:1b"],
             },
             tag_rules=[
                 TagRule(
@@ -262,8 +279,8 @@ class ModelRouter:
         .. code-block:: yaml
 
             tier_models:
-              fast: [nemotron-49b]
-              code: [devstral]
+              fast: [qwen3.5:4b]
+              code: [claude-sonnet-4-6]
             tag_rules:
               - keywords: [code]
                 tier: code

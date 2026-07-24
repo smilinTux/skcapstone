@@ -427,17 +427,17 @@ class TestModelNameResolution:
     def test_default_code_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="implement feature", tags=["code"])
         decision = router.route(signal)
-        assert decision.model_name == "devstral"
+        assert decision.model_name == "claude-sonnet-4-6"
 
     def test_default_reason_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="system design", tags=["architecture"])
         decision = router.route(signal)
-        assert decision.model_name == "deepseek-r1:8b"
+        assert decision.model_name == "claude-opus-4-8"
 
     def test_default_nuance_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="write copy", tags=["marketing"])
         decision = router.route(signal)
-        assert decision.model_name == "moonshot-v1-128k"
+        assert decision.model_name == "claude-sonnet-4-6"
 
     def test_default_local_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="private task", privacy_sensitive=True)
@@ -461,6 +461,90 @@ class TestModelNameResolution:
         signal = TaskSignal(description="code task", tags=["code"])
         decision = router.route(signal)
         assert decision.model_name == "my-custom-coder"
+
+
+# ---------------------------------------------------------------------------
+# Default-config backend resolvability (regression for card b89794c8)
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultModelsAreReal:
+    """Every model in ``ModelRouterConfig.default()`` must actually exist.
+
+    Regression for card b89794c8 ("Fix model tier defaults — use real Ollama
+    model names"). The prior defaults referenced ``devstral``,
+    ``qwen3-coder``, ``deepseek-r1:8b`` and ``llama3.1`` for the CODE, REASON,
+    FAST and LOCAL tiers. Those names pattern-match the Ollama backend (see
+    ``_OLLAMA_MODEL_PATTERNS``) but were never pulled on any node, so every
+    request on those tiers 404'd.
+
+    A model name is considered real when
+    :func:`skcapstone.consciousness_loop._backend_from_model` resolves it to a
+    known backend AND — if that backend is Ollama — the model is one that is
+    actually pulled on the fleet.
+    """
+
+    # Ollama models actually served by the fleet daemons (localhost + .100),
+    # verified via `GET /api/tags` on 2026-07-24. Any Ollama-routed default
+    # MUST be in this set or the request will 404.
+    PULLED_OLLAMA_MODELS = {"qwen3.5:4b", "gemma3:1b", "gemma3:270m"}
+
+    def _iter_default_models(self):
+        from skcapstone.blueprints.schema import ModelTier
+        from skcapstone.model_router import ModelRouterConfig
+
+        cfg = ModelRouterConfig.default()
+        for tier in (
+            ModelTier.FAST,
+            ModelTier.CODE,
+            ModelTier.REASON,
+            ModelTier.NUANCE,
+            ModelTier.LOCAL,
+        ):
+            for model_name in cfg.tier_models[tier.value]:
+                yield tier, model_name
+
+    def test_every_default_model_resolves_to_a_known_backend(self) -> None:
+        from skcapstone.consciousness_loop import _backend_from_model
+
+        for tier, model_name in self._iter_default_models():
+            backend = _backend_from_model(model_name, tier)
+            assert backend != "unknown", (
+                f"{tier.value} default {model_name!r} resolves to an unknown "
+                f"backend — it is not a real model on any configured provider."
+            )
+
+    def test_ollama_routed_defaults_are_actually_pulled(self) -> None:
+        from skcapstone.consciousness_loop import _backend_from_model
+
+        for tier, model_name in self._iter_default_models():
+            backend = _backend_from_model(model_name, tier)
+            if backend == "ollama":
+                assert model_name in self.PULLED_OLLAMA_MODELS, (
+                    f"{tier.value} default {model_name!r} routes to Ollama but "
+                    f"is not pulled on the fleet {self.PULLED_OLLAMA_MODELS}; "
+                    f"the request would 404."
+                )
+
+    def test_every_tier_preferred_model_is_real(self) -> None:
+        """The preferred (first) model of each tier is what ``route`` returns."""
+        from skcapstone.blueprints.schema import ModelTier
+        from skcapstone.consciousness_loop import _backend_from_model
+        from skcapstone.model_router import ModelRouterConfig
+
+        cfg = ModelRouterConfig.default()
+        for tier in (
+            ModelTier.FAST,
+            ModelTier.CODE,
+            ModelTier.REASON,
+            ModelTier.NUANCE,
+            ModelTier.LOCAL,
+        ):
+            preferred = cfg.tier_models[tier.value][0]
+            backend = _backend_from_model(preferred, tier)
+            assert backend != "unknown"
+            if backend == "ollama":
+                assert preferred in self.PULLED_OLLAMA_MODELS
 
 
 # ---------------------------------------------------------------------------
