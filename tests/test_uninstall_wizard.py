@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# The vault-registry and tailscale helpers live in the optional external
+# ``skref`` package, which is not part of the base skcapstone install. Skip the
+# classes that exercise it when it is unavailable, rather than erroring at
+# import/patch time.
+_HAS_SKREF = importlib.util.find_spec("skref") is not None
+_requires_skref = pytest.mark.skipif(
+    not _HAS_SKREF,
+    reason="optional 'skref' package (vault registry + tailscale helpers) not installed",
+)
 
 from skcapstone.uninstall_wizard import (
     _build_inventory,
@@ -117,6 +128,7 @@ class TestDeleteLocalData:
         _delete_local_data(fake)
 
 
+@_requires_skref
 class TestRegistryDeregister:
     """Tests for skref registry deregister function."""
 
@@ -162,6 +174,7 @@ class TestRegistryDeregister:
         assert result["vaults_removed"] == 0
 
 
+@_requires_skref
 class TestTailscaleLogout:
     """Tests for tailscale logout."""
 
@@ -178,6 +191,7 @@ class TestTailscaleLogout:
         assert logout() is True
 
 
+@_requires_skref
 class TestRemoveAuthKey:
     """Tests for tailscale auth key removal."""
 

@@ -422,7 +422,7 @@ class TestModelNameResolution:
     def test_default_fast_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="quick task", tags=["simple"])
         decision = router.route(signal)
-        assert decision.model_name == "llama3.2"
+        assert decision.model_name == "qwen3.5:4b"
 
     def test_default_code_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="implement feature", tags=["code"])
@@ -442,7 +442,7 @@ class TestModelNameResolution:
     def test_default_local_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="private task", privacy_sensitive=True)
         decision = router.route(signal)
-        assert decision.model_name == "llama3.2"
+        assert decision.model_name == "qwen3.5:4b"
 
     def test_unknown_tier_sentinel(self) -> None:
         """Missing tier config produces an unknown-{tier} sentinel."""

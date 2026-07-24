@@ -182,9 +182,14 @@ def store(
         soul_context=soul_context,
     )
 
-    # Reason: high-importance memories skip straight to mid-term
+    # Reason: high-importance memories skip straight to mid-term, but only
+    # after clearing the truth-check gate (fail-open when unavailable). A
+    # blocked candidate stays in short-term (tagged conflicting by the gate).
     if entry.importance >= 0.7 and entry.layer == MemoryLayer.SHORT_TERM:
-        entry.layer = MemoryLayer.MID_TERM
+        from .memory_verifier import verify_before_promotion
+
+        if verify_before_promotion(home, entry).should_promote:
+            entry.layer = MemoryLayer.MID_TERM
 
     _save_entry(home, entry)
     _update_index(home, entry)
@@ -542,21 +547,38 @@ def _find_by_id(home: Path, memory_id: str) -> Optional[MemoryEntry]:
     return None
 
 
-def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> None:
-    """Promote a memory to the next tier."""
+def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> bool:
+    """Promote a memory to the next tier.
+
+    SHORT_TERM -> MID_TERM transitions pass through the truth-check gate
+    (``memory_verifier.verify_before_promotion``). When the gate blocks the
+    promotion the entry stays in short-term (the verifier tags it as
+    conflicting) and this returns False. The gate is fail-open: when the
+    truth-check backend is unavailable it allows promotion, preserving the
+    prior behavior.
+
+    Returns:
+        True if the memory advanced a tier, False otherwise.
+    """
     if entry.layer == MemoryLayer.SHORT_TERM:
+        # Local import so tests can patch memory_verifier.verify_before_promotion.
+        from .memory_verifier import verify_before_promotion
+
+        if not verify_before_promotion(home, entry).should_promote:
+            return False
         entry.layer = MemoryLayer.MID_TERM
     elif entry.layer == MemoryLayer.MID_TERM:
         entry.layer = MemoryLayer.LONG_TERM
     else:
         _save_entry(home, entry)
-        return
+        return False
 
     if old_path.exists():
         old_path.unlink()
     _save_entry(home, entry)
     _update_index(home, entry)
     logger.info("Promoted memory %s to %s", entry.memory_id, entry.layer.value)
+    return True
 
 
 def _update_index(home: Path, entry: MemoryEntry) -> None:

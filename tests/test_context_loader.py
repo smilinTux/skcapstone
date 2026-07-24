@@ -28,6 +28,43 @@ from skcapstone.pillars.sync import initialize_sync
 from skcapstone.pillars.trust import initialize_trust, record_trust_state
 
 
+@pytest.fixture(autouse=True)
+def _isolate_live_context_sources(monkeypatch, tmp_path):
+    """Keep gather_context() from reading the live ~/.skcapstone environment.
+
+    Three code paths reach past the ``home`` argument into live state:
+      * ``_gather_board`` uses the module-level ``SHARED_ROOT`` (the real
+        ~/.skcapstone board) so every agent sees the same board.
+      * ``_gather_soul`` falls back to ``skmemory.soul.load_soul()`` (the live
+        active soul, e.g. "lumina") when no local overlay exists.
+      * the warmth anchor falls back to ``skmemory.anchor.load_anchor()``.
+    Point the board at this test's own tmp home and stub the skmemory globals
+    so results depend only on the fixture-built agent home, not the host.
+    """
+    import urllib.error
+    import urllib.request
+
+    import skcapstone.context_loader as cl
+
+    monkeypatch.setattr(cl, "SHARED_ROOT", str(tmp_path / ".skcapstone"), raising=False)
+    for mod_name, fn_name in (("skmemory.soul", "load_soul"), ("skmemory.anchor", "load_anchor")):
+        try:
+            mod = __import__(mod_name, fromlist=[fn_name])
+        except Exception:
+            continue
+        if hasattr(mod, fn_name):
+            monkeypatch.setattr(mod, fn_name, lambda *a, **k: None)
+
+    # _gather_consciousness probes a live daemon at http://localhost:7777 with a
+    # 2s timeout. Force the "no daemon" path so results depend on the fixture
+    # home's config, not on whatever happens to be listening on the host (and
+    # so the suite doesn't pay a 2s stall per gather_context call).
+    def _no_daemon(*a, **k):
+        raise urllib.error.URLError("isolated: no daemon in tests")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _no_daemon)
+
+
 def _init_agent(home: Path, name: str = "context-test") -> None:
     """Set up a full agent for testing."""
     generate_identity(home, name)

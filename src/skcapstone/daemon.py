@@ -1134,10 +1134,22 @@ class DaemonService:
             logger.warning("Self-healing doctor failed to load: %s", exc)
             self.state.record_error(f"Self-healing load: {exc}")
 
+        # Register the consciousness-loop reference for the in-process
+        # dreaming-reflection jobs.yaml job. This is a hard constraint that must
+        # hold regardless of whether the task scheduler builds successfully —
+        # None under --no-consciousness, an active loop otherwise. Keeping it
+        # out of the scheduler try-block means a scheduler-build failure can no
+        # longer leave a stale loop reference registered.
+        try:
+            from .dreaming_job import set_consciousness_loop
+
+            set_consciousness_loop(self._consciousness)
+        except Exception as exc:
+            logger.warning("Failed to register consciousness loop reference: %s", exc)
+
         # Build task scheduler (beacon + consciousness must be ready first)
         try:
             from .scheduled_tasks import build_scheduler
-            from .dreaming_job import set_consciousness_loop
 
             # Get sync_watcher from consciousness loop if available
             _sync_watcher = getattr(self._consciousness, "_sync_watcher", None)
@@ -1148,10 +1160,6 @@ class DaemonService:
                 beacon=self._beacon,
                 sync_watcher=_sync_watcher,
             )
-            # Give the (in-process) dreaming-reflection jobs.yaml job the same
-            # consciousness_loop reference the built-in task used to receive
-            # directly — None under --no-consciousness, an active loop otherwise.
-            set_consciousness_loop(self._consciousness)
             logger.info("Task scheduler built — %d task(s)", len(self._scheduler._tasks))
         except Exception as exc:
             logger.warning("Task scheduler failed to build: %s", exc)
