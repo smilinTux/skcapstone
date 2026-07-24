@@ -37,6 +37,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 from skcapstone.blueprints.schema import ModelTier
+from skcapstone.context_window import ContextWindowManager
 from skcapstone.conversation_manager import ConversationManager
 from skcapstone.conversation_store import ConversationStore
 from skcapstone.fallback_tracker import FallbackEvent, FallbackTracker
@@ -1461,6 +1462,14 @@ class ConsciousnessLoop:
             conv_store=self._conv_store,
         )
 
+        # Per-sender context-window manager: tracks token usage per peer and
+        # compresses (summarizes) older history once it crosses 80% of the
+        # model's context budget, so long conversations can't overflow the
+        # model or blow up latency.
+        self._ctx_window = ContextWindowManager(
+            self._home, config.max_context_tokens
+        )
+
         # Metrics collector (persist every 5 min)
         self._metrics = ConsciousnessMetrics(home=self._home)
 
@@ -1880,6 +1889,27 @@ class ConsciousnessLoop:
                     thread_id=thread_id or None,
                 )
 
+            # Context-window guard: after storing this turn, check the sender's
+            # cumulative token usage and compress (summarize) older history if
+            # it has crossed the budget threshold. Non-fatal on any failure.
+            if self._conv_store is not None:
+                try:
+                    if self._ctx_window.check_and_compress(
+                        sender, self._conv_store, self._bridge
+                    ):
+                        # History was rewritten on disk — refresh the in-memory
+                        # snapshot the prompt builder reads from.
+                        self._conv_manager._history[sender] = (
+                            self._conv_store.get_last(
+                                sender, self._config.max_history_messages
+                            )
+                        )
+                        self._store_context_summary_memory(sender)
+                except Exception as _ctx_exc:
+                    logger.debug(
+                        "Context-window check failed (non-fatal): %s", _ctx_exc
+                    )
+
             # Update mood after each cycle
             if self._mood_tracker is not None:
                 try:
@@ -1922,6 +1952,38 @@ class ConsciousnessLoop:
             )
         except Exception as exc:
             logger.debug("Failed to store interaction memory: %s", exc)
+
+    def _store_context_summary_memory(self, peer: str) -> None:
+        """Persist the freshest context-window summary for *peer* as a memory.
+
+        After :meth:`ContextWindowManager.check_and_compress` rewrites a peer's
+        history, the first entry is a summary sentinel (``is_summary``). We save
+        that paragraph as a durable memory so the compressed context isn't lost
+        when the summary itself eventually rolls off.
+
+        Args:
+            peer: Peer whose history was just compressed.
+        """
+        try:
+            if self._conv_store is None:
+                return
+            history = self._conv_store.load(peer)
+            if not history or not history[0].get("is_summary"):
+                return
+            summary_text = str(history[0].get("content", "")).strip()
+            if not summary_text:
+                return
+
+            from skcapstone.memory_engine import store
+
+            store(
+                content=summary_text,
+                tags=["conversation", "context-summary", f"peer:{peer}"],
+                importance=0.5,
+                home=self._home,
+            )
+        except Exception as exc:
+            logger.debug("Failed to store context summary memory: %s", exc)
 
     def _fetch_sender_memories(self, sender: str, content: str) -> str:
         """Search memories relevant to the sender and incoming message content.

@@ -113,6 +113,20 @@ class ConversationStore:
         self._write(peer, history)
         return msg
 
+    def replace(self, peer: str, history: list[dict]) -> None:
+        """Atomically replace a peer's entire history with *history*.
+
+        Used by :class:`~skcapstone.context_window.ContextWindowManager` to
+        swap older messages for a summarised entry when the context window
+        approaches its budget.
+
+        Args:
+            peer: Peer agent name.
+            history: Full replacement history (oldest first).
+        """
+        peer = _sanitize_peer_name(peer)
+        self._write(peer, history)
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------

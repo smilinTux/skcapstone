@@ -38,6 +38,25 @@ TOOLS: list[Tool] = [
             "required": ["message"],
         },
     ),
+    Tool(
+        name="context_stats",
+        description=(
+            "Show per-sender context-window token usage for the consciousness "
+            "loop: token count, message count, percent of the model context "
+            "budget used, the compression threshold (80%), and when each "
+            "sender's history was last compressed. Optionally filter to one peer."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "peer": {
+                    "type": "string",
+                    "description": "Optional peer name to filter to a single sender.",
+                },
+            },
+            "required": [],
+        },
+    ),
 ]
 
 
@@ -108,7 +127,35 @@ async def _handle_consciousness_test(arguments: dict) -> list[TextContent]:
         return _error_response(f"Consciousness test failed: {exc}")
 
 
+async def _handle_context_stats(arguments: dict) -> list[TextContent]:
+    """Handle context_stats tool call — per-sender context-window usage."""
+    try:
+        from ..consciousness_config import load_consciousness_config
+        from ..context_window import ContextWindowManager
+        from ..conversation_store import ConversationStore
+
+        home = _home()
+        config = load_consciousness_config(home)
+        store = ConversationStore(home)
+        mgr = ContextWindowManager(home, config.max_context_tokens)
+        stats = mgr.get_all_stats(store)
+
+        peer = arguments.get("peer")
+        if peer:
+            stats = {peer: stats.get(peer, {})}
+
+        return _json_response({
+            "max_context_tokens": config.max_context_tokens,
+            "threshold_pct": 80,
+            "senders": stats,
+            "sender_count": len(stats),
+        })
+    except Exception as exc:
+        return _error_response(f"Cannot get context stats: {exc}")
+
+
 HANDLERS = {
     "consciousness_status": _handle_consciousness_status,
     "consciousness_test": _handle_consciousness_test,
+    "context_stats": _handle_context_stats,
 }

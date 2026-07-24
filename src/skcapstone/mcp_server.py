@@ -2036,6 +2036,28 @@ async def list_tools() -> list[Tool]:
                 "required": ["message"],
             },
         ),
+        Tool(
+            name="context_stats",
+            description=(
+                "Show per-sender context-window token usage for the "
+                "consciousness loop: token count, message count, percent of the "
+                "model context budget used, the compression threshold (80%), and "
+                "when each sender's history was last compressed. Optionally "
+                "filter to one peer."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "peer": {
+                        "type": "string",
+                        "description": (
+                            "Optional peer name to filter to a single sender."
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        ),
         # Pub/sub stats
         Tool(
             name="pubsub_stats",
@@ -2820,6 +2842,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # Consciousness
         "consciousness_status": _handle_consciousness_status,
         "consciousness_test": _handle_consciousness_test,
+        "context_stats": _handle_context_stats,
         # Pub/sub stats
         "pubsub_stats": _handle_pubsub_stats,
         # Emotion
@@ -4743,6 +4766,12 @@ async def _handle_consciousness_status(args: dict) -> list[TextContent]:
 async def _handle_consciousness_test(args: dict) -> list[TextContent]:
     """Test consciousness pipeline."""
     from .mcp_tools.consciousness_tools import _handle_consciousness_test as _impl
+    return await _impl(args)
+
+
+async def _handle_context_stats(args: dict) -> list[TextContent]:
+    """Show per-sender context-window token usage."""
+    from .mcp_tools.consciousness_tools import _handle_context_stats as _impl
     return await _impl(args)
 
 
