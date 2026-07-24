@@ -34,6 +34,11 @@ def _require_linux() -> None:
         )
 
 SERVICE_NAME = "skcapstone.service"
+TEMPLATE_NAME = "skcapstone@.service"
+# OnFailure= hook unit referenced by both the template and legacy service.
+# Copied alongside the main unit (not enabled/started directly — systemd
+# instantiates it on demand when a service enters the failed state).
+ALERT_TEMPLATE = "skcapstone-alert@.service"
 SOCKET_NAME = "skcapstone-api.socket"
 HEARTBEAT_SERVICE = "skcomms-heartbeat.service"
 HEARTBEAT_TIMER = "skcomms-heartbeat.timer"
@@ -194,6 +199,14 @@ def install_service(
             shutil.copy2(src, target / unit_name)
             copied += 1
 
+    # OnFailure= alert hook. Not enabled/started (systemd instantiates it on
+    # demand) but it must be present in the unit dir or the failure alert
+    # silently no-ops.
+    alert_src = source / ALERT_TEMPLATE
+    if alert_src.exists():
+        shutil.copy2(alert_src, target / ALERT_TEMPLATE)
+        copied += 1
+
     _systemctl("daemon-reload")
     result["installed"] = True
     logger.info("Installed %d unit file(s) to %s (service: %s)", copied, target, service_unit)
@@ -245,7 +258,7 @@ def uninstall_service(unit_dir: Optional[Path] = None) -> dict:
     _systemctl("disable", SERVICE_NAME)
     result["disabled"] = True
 
-    for name in ALL_UNITS:
+    for name in [*ALL_UNITS, TEMPLATE_NAME, ALERT_TEMPLATE]:
         unit_path = target / name
         if unit_path.exists():
             unit_path.unlink()
@@ -358,6 +371,12 @@ Description=SKCapstone Sovereign Agent Daemon
 Documentation=https://github.com/smilinTux/skcapstone
 After=network-online.target syncthing.service
 Wants=network-online.target
+# Crash-loop guard: give up after StartLimitBurst failures inside the
+# interval instead of restarting forever (the .41 outage failure mode).
+StartLimitIntervalSec=1800
+StartLimitBurst=6
+# Page out-of-band when the daemon enters the failed state.
+OnFailure=skcapstone-alert@skcapstone.service
 
 [Service]
 Type=simple
@@ -365,6 +384,13 @@ ExecStart={exec_cmd} daemon start --foreground
 ExecStop={exec_cmd} daemon stop
 Restart=on-failure
 RestartSec=10
+# Exponential restart backoff: 10s, 20s, 40s ... capped at 5 min (systemd >= 254).
+RestartSteps=5
+RestartMaxDelaySec=300
+# Memory caps in the unit, not host state. MemoryHigh throttles before the
+# 4G hard kill; 4G matches the fleet units with ~17x headroom over normal RSS.
+MemoryHigh=3G
+MemoryMax=4G
 WatchdogSec=120
 
 NoNewPrivileges=true

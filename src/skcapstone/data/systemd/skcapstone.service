@@ -3,6 +3,12 @@ Description=SKCapstone Sovereign Agent Daemon
 Documentation=https://github.com/smilinTux/skcapstone
 After=network-online.target ollama.service syncthing.service
 Wants=network-online.target
+# Crash-loop guard: give up after StartLimitBurst failures inside the
+# interval instead of restarting forever (the .41 outage failure mode).
+StartLimitIntervalSec=1800
+StartLimitBurst=6
+# Page out-of-band when the daemon enters the failed state.
+OnFailure=skcapstone-alert@skcapstone.service
 
 [Service]
 Type=simple
@@ -11,7 +17,13 @@ ExecStop=%h/.local/bin/skcapstone daemon stop
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10
-# Cap memory to prevent OOM from large model loading
+# Exponential restart backoff: 10s, 20s, 40s ... capped at 5 min, so a
+# persistently failing daemon does not hot-loop every 10s (systemd >= 254).
+RestartSteps=5
+RestartMaxDelaySec=300
+# Cap memory to prevent OOM from large model loading. MemoryHigh applies
+# reclaim pressure first so a slow leak throttles before the hard kill.
+MemoryHigh=3G
 MemoryMax=4G
 # Keep Ollama models warm for 5 minutes between requests
 Environment=PYTHONUNBUFFERED=1

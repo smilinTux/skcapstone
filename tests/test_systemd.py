@@ -63,6 +63,21 @@ class TestGenerateUnitFile:
         assert "PrivateTmp=true" in content
         assert "ReadWritePaths=" in content
 
+    def test_resource_caps_and_restart_backoff(self) -> None:
+        """Generated unit has memory caps, restart backoff, and an alert hook."""
+        content = generate_unit_file()
+        # Memory caps encode the .41 host fix in the unit, not host state.
+        assert "MemoryMax=4G" in content
+        assert "MemoryHigh=3G" in content
+        # Exponential backoff so a hard-failing daemon does not hot-loop.
+        assert "RestartSteps=5" in content
+        assert "RestartMaxDelaySec=300" in content
+        # Crash-loop guard so a persistent failure stops within a bounded window.
+        assert "StartLimitIntervalSec=1800" in content
+        assert "StartLimitBurst=6" in content
+        # OnFailure hook so a failed daemon pages instead of failing silently.
+        assert "OnFailure=skcapstone-alert@" in content
+
 
 class TestSystemdAvailable:
     """Tests for systemd detection."""
@@ -124,6 +139,23 @@ class TestInstallService:
         start_calls = [c for c in calls if "start" in c]
         assert len(enable_calls) >= 1
         assert len(start_calls) >= 1
+
+    @patch("skcapstone.systemd._systemctl")
+    def test_install_copies_alert_template(self, mock_ctl: MagicMock, tmp_path: Path) -> None:
+        """Install copies the OnFailure alert template so the hook resolves."""
+        from skcapstone.systemd import ALERT_TEMPLATE
+        mock_ctl.return_value = subprocess.CompletedProcess([], 0)
+
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / SERVICE_NAME).write_text("[Unit]\n")
+        (source / ALERT_TEMPLATE).write_text("[Unit]\nDescription=alert\n")
+
+        target = tmp_path / "target"
+        result = install_service(unit_dir=target, source_dir=source)
+
+        assert result["installed"] is True
+        assert (target / ALERT_TEMPLATE).exists()
 
     def test_install_missing_source_returns_false(self, tmp_path: Path) -> None:
         """Install fails gracefully when source unit doesn't exist."""
@@ -250,6 +282,54 @@ class TestUnitConstants:
         """The bundled queue drain service file exists."""
         from skcapstone.systemd import BUNDLED_DIR
         assert (BUNDLED_DIR / QUEUE_DRAIN_SERVICE).exists()
+
+    def test_bundled_alert_template_exists(self) -> None:
+        """The bundled OnFailure alert template exists."""
+        from skcapstone.systemd import ALERT_TEMPLATE, BUNDLED_DIR
+        assert (BUNDLED_DIR / ALERT_TEMPLATE).exists()
+
+
+class TestUnitHardening:
+    """Tests that the bundled agent units carry the .41 outage fixes."""
+
+    def _read(self, name: str) -> str:
+        from skcapstone.systemd import BUNDLED_DIR
+        return (BUNDLED_DIR / name).read_text()
+
+    def test_template_unit_has_memory_caps(self) -> None:
+        """The per-agent template caps memory in the unit, not host state."""
+        content = self._read("skcapstone@.service")
+        assert "MemoryMax=4G" in content
+        assert "MemoryHigh=3G" in content
+
+    def test_template_unit_has_restart_backoff(self) -> None:
+        """The per-agent template has bounded restart backoff and a start limit."""
+        content = self._read("skcapstone@.service")
+        assert "RestartSteps=5" in content
+        assert "RestartMaxDelaySec=300" in content
+        assert "StartLimitIntervalSec=1800" in content
+        assert "StartLimitBurst=6" in content
+
+    def test_template_unit_has_onfailure_hook(self) -> None:
+        """The per-agent template pages via an OnFailure alert unit."""
+        content = self._read("skcapstone@.service")
+        assert "OnFailure=skcapstone-alert@%i.service" in content
+
+    def test_legacy_unit_has_caps_and_backoff(self) -> None:
+        """The legacy single-agent unit gets the same caps and backoff."""
+        content = self._read("skcapstone.service")
+        assert "MemoryMax=4G" in content
+        assert "MemoryHigh=3G" in content
+        assert "RestartSteps=5" in content
+        assert "StartLimitIntervalSec=1800" in content
+        assert "StartLimitBurst=6" in content
+        assert "OnFailure=skcapstone-alert@" in content
+
+    def test_alert_unit_is_oneshot_and_visible(self) -> None:
+        """The alert unit is a oneshot that emits a visible journal event."""
+        content = self._read("skcapstone-alert@.service")
+        assert "Type=oneshot" in content
+        assert "systemd-cat" in content
 
 
 class TestTimerInstall:

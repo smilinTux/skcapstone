@@ -17,6 +17,16 @@ Documentation=https://github.com/smilinTux/skcapstone
 After=network-online.target ollama.service syncthing.service
 Wants=network-online.target
 # Multiple instances may coexist; no conflicts between them.
+# Crash-loop guard: give up after StartLimitBurst failures inside the
+# interval instead of restarting forever. This is the .41 outage failure
+# mode (a failed preflight looping every 10s). With the exponential backoff
+# below, 6 restarts land at ~610s cumulative, well inside the 1800s window,
+# so a persistently failing daemon stops and stays failed within one window.
+StartLimitIntervalSec=1800
+StartLimitBurst=6
+# Page out-of-band when this agent enters the failed state (crash-loop
+# give-up or hard failure) instead of failing silently.
+OnFailure=skcapstone-alert@%i.service
 
 [Service]
 Type=notify
@@ -25,6 +35,17 @@ ExecStop=%h/.skenv/bin/skcapstone daemon stop --agent %i
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10
+# Exponential restart backoff: 10s, 20s, 40s ... capped at 5 min, so a
+# persistently failing daemon does not hot-loop every 10s (systemd >= 254).
+RestartSteps=5
+RestartMaxDelaySec=300
+# Memory caps encode the .41 host fix in the unit (was hand-applied host
+# state only). Normal agent RSS is ~230 MB; the 4G hard cap matches the
+# legacy single-agent unit and the .41 host value, giving ~17x headroom
+# while still stopping a runaway before it OOM-thrashes the box. MemoryHigh
+# applies reclaim pressure first so a slow leak throttles before the kill.
+MemoryHigh=3G
+MemoryMax=4G
 # Watchdog: daemon must call sd_notify("WATCHDOG=1") at least every 5 minutes
 WatchdogSec=300
 # Pass instance name as env var so imported modules that read SKCAPSTONE_AGENT
