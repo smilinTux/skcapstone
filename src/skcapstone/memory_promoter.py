@@ -217,10 +217,10 @@ class PromotionEngine:
                         continue
 
                     if not dry_run:
-                        self._promote(entry, f)
-                        candidate.promoted = True
-                        candidate.summary = self._generate_summary(entry)
-                        promoted_count += 1
+                        if self._promote(entry, f):
+                            candidate.promoted = True
+                            candidate.summary = self._generate_summary(entry)
+                            promoted_count += 1
 
                     result.promoted.append(candidate)
                 else:
@@ -633,21 +633,34 @@ class PromotionEngine:
     # Promotion
     # -------------------------------------------------------------------
 
-    def _promote(self, entry: MemoryEntry, old_path: Path) -> None:
+    def _promote(self, entry: MemoryEntry, old_path: Path) -> bool:
         """Promote a memory to the next tier.
+
+        SHORT_TERM -> MID_TERM transitions pass through the truth-check gate
+        (``memory_verifier.verify_before_promotion``). When the gate blocks the
+        promotion the entry stays in short-term (tagged conflicting) and this
+        returns False. The gate is fail-open when its backend is unavailable.
 
         Args:
             entry: The MemoryEntry to promote.
             old_path: Current file path (will be removed).
+
+        Returns:
+            True if the memory advanced a tier, False otherwise.
         """
         old_layer = entry.layer
 
         if entry.layer == MemoryLayer.SHORT_TERM:
+            # Local import so tests can patch verify_before_promotion.
+            from .memory_verifier import verify_before_promotion
+
+            if not verify_before_promotion(self._home, entry).should_promote:
+                return False
             entry.layer = MemoryLayer.MID_TERM
         elif entry.layer == MemoryLayer.MID_TERM:
             entry.layer = MemoryLayer.LONG_TERM
         else:
-            return
+            return False
 
         if old_path.exists():
             old_path.unlink()
@@ -659,6 +672,7 @@ class PromotionEngine:
             "Promoted %s: %s -> %s",
             entry.memory_id, old_layer.value, entry.layer.value,
         )
+        return True
 
     def _generate_summary(self, entry: MemoryEntry) -> str:
         """Generate a short summary for a promoted memory.

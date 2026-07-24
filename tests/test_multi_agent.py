@@ -25,6 +25,22 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _isolate_daemon_shared_root(monkeypatch, tmp_path):
+    """Keep read_pid/is_running from falling back to the live ~/.skcapstone.
+
+    read_pid checks the passed home first, then falls back to the module-level
+    AGENT_HOME (real ~/.skcapstone) where a running daemon's PID file may live.
+    Point that fallback at an isolated empty tmp dir so the home-scoped PID
+    isolation these tests assert holds regardless of a live daemon on the host.
+    """
+    import skcapstone.daemon as daemon_mod
+
+    isolated_root = tmp_path / "isolated-shared-root"
+    isolated_root.mkdir()
+    monkeypatch.setattr(daemon_mod, "AGENT_HOME", str(isolated_root))
+
+
 def _make_agent_home(tmp_path: Path, agent: str) -> Path:
     """Create a minimal agent home inside tmp_path/agents/<agent>/."""
     home = tmp_path / "agents" / agent

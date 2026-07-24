@@ -12,6 +12,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Import dreaming_job at module load so it is resident in sys.modules before any
+# test enters a ``patch.dict(sys.modules, ...)`` block. Otherwise the first test
+# that triggers ``_load_components`` (which lazily imports skcapstone.dreaming_job)
+# does so *inside* a patch.dict context; on exit patch.dict wipes the newly-added
+# key, and later tests re-import a fresh module whose ``_consciousness_loop``
+# global is a different object than the one _load_components writes to — making
+# TestHeartbeatBeaconWiring order-dependent.
+import skcapstone.dreaming_job  # noqa: F401
+
 from skcapstone.daemon import (
     DaemonConfig,
     DaemonService,
@@ -19,6 +28,22 @@ from skcapstone.daemon import (
     is_running,
     read_pid,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_daemon_shared_root(monkeypatch, tmp_path):
+    """Keep read_pid/is_running from falling back to the live ~/.skcapstone.
+
+    read_pid checks the passed home first, then falls back to the module-level
+    AGENT_HOME (real ~/.skcapstone) where a running daemon's PID file may live.
+    Point that fallback at an isolated empty tmp dir so PID assertions depend
+    only on the per-test home, not on whether a real daemon is running.
+    """
+    import skcapstone.daemon as daemon_mod
+
+    isolated_root = tmp_path / "isolated-shared-root"
+    isolated_root.mkdir()
+    monkeypatch.setattr(daemon_mod, "AGENT_HOME", str(isolated_root))
 
 
 @pytest.fixture

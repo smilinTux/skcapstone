@@ -25,6 +25,31 @@ from skcapstone.model_router import TaskSignal
 from skcapstone.blueprints.schema import ModelTier
 
 
+@pytest.fixture(autouse=True)
+def _isolate_live_prompt_sources(monkeypatch, tmp_path):
+    """Keep SystemPromptBuilder from reading the live ~/.skcapstone environment.
+
+    ``build()`` assembles a live agent-context section (via
+    ``context_loader.gather_context`` -> ``_gather_board``, which reads the
+    module-level ``SHARED_ROOT`` = real ~/.skcapstone board) and a warmth
+    section (via ``skmemory.anchor.load_anchor()``). Both pull host state,
+    which both perturbs assertions (e.g. the emotional baseline) and inflates
+    the prompt enough to truncate away the behavioral/history sections the
+    tests assert on. Point the board at an empty tmp dir and stub the live
+    warmth anchor so prompt assembly is deterministic and host-independent.
+    """
+    import skcapstone.context_loader as cl
+
+    monkeypatch.setattr(cl, "SHARED_ROOT", str(tmp_path / "empty-shared"), raising=False)
+    try:
+        import skmemory.anchor as anchor_mod
+
+        if hasattr(anchor_mod, "load_anchor"):
+            monkeypatch.setattr(anchor_mod, "load_anchor", lambda *a, **k: None)
+    except Exception:
+        pass
+
+
 class TestConsciousnessConfig:
     """ConsciousnessConfig Pydantic model tests."""
 

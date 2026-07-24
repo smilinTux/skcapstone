@@ -253,9 +253,13 @@ class TestSoulListDiscovery:
         manager = SoulManager(home=tmp_path, agent_name="test")
         _install_soul(manager, _make_casey_base_json())
 
-        # Point to a nonexistent repo path
+        # Point to a nonexistent repo path. When the local repo is absent,
+        # list_available falls back to the GitHub blueprint API; stub it to
+        # empty so the test stays offline/deterministic and only the installed
+        # soul is returned.
         fake_repo = tmp_path / "nonexistent-repo" / "blueprints"
-        available = manager.list_available(repo_path=fake_repo)
+        with patch("skcapstone.blueprint_registry._fetch_github_blueprints", return_value=[]):
+            available = manager.list_available(repo_path=fake_repo)
 
         # Should still find installed soul
         assert any(e["name"] == "casey" for e in available)

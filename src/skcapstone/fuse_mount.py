@@ -517,7 +517,17 @@ class SovereignFS:
         from . import active_agent_name
 
         agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
-        self._memory_dir = agent_home / "agents" / agent_name / "memory"
+        # Resolve the memory dir, mirroring memory_engine._memory_dir:
+        # accept either an agent home (~/.skcapstone/agents/<name>) or the
+        # shared root (~/.skcapstone). When no agent can be resolved, fall
+        # back to the flat "home/memory" layout instead of crashing on a
+        # None agent name.
+        if agent_home.parent.name == "agents":
+            self._memory_dir = agent_home / "memory"
+        elif agent_name:
+            self._memory_dir = agent_home / "agents" / agent_name / "memory"
+        else:
+            self._memory_dir = agent_home / "memory"
         # Buffer for outbox writes: maps virtual path → bytes written so far
         self._outbox_buffers: Dict[str, bytes] = {}
 
