@@ -128,25 +128,56 @@ class TestLLMBridge:
         assert "passthrough" in health
         assert "ollama" in health
 
-    @patch("skseed.llm.passthrough_callback")
-    def test_generate_fallback_to_passthrough(self, mock_passthrough):
-        """When no backends available, falls through to passthrough."""
-        mock_cb = MagicMock(return_value="echo response")
-        mock_passthrough.return_value = mock_cb
+    @patch("skseed.llm.ollama_callback")
+    def test_generate_fallback_to_passthrough(self, mock_ollama):
+        """Cascade degrades to passthrough even when ollama is *available* but broken.
 
-        config = ConsciousnessConfig(
-            fallback_chain=["passthrough"],
+        This is the precise regression guard for card 53cb7eaa: ollama is marked
+        available (``_available["ollama"] = True``) but its callback fails. The old
+        buggy cascade resolved each hop via ``_resolve_callback(FAST, f"{backend}-fallback")``;
+        for backend=="passthrough" that string matched no provider pattern, so it
+        walked the fallback_chain again, hit the *available* ollama, and never reached
+        passthrough (blocking on a real CPU-bound call — card 4b91bf41's "timed out").
+        The fixed cascade maps each backend directly via ``_callback_for_backend`` and
+        so degrades to passthrough, returning the user content instead of the canned
+        connectivity-error string.
+
+        ollama_callback is mocked to raise immediately, so the test makes NO real
+        network calls and runs in <1s (previously ~45s against a live Ollama daemon).
+        """
+        from skcapstone.model_router import ModelRouterConfig
+
+        # ollama callback always raises — no network, no CPU-bound timeout.
+        mock_ollama.return_value = MagicMock(side_effect=RuntimeError("ollama broken"))
+
+        # Single FAST model so there are no extra alt-model iterations and the
+        # tier-downgrade path is skipped (already FAST).
+        router_cfg = ModelRouterConfig(
+            tier_models={
+                ModelTier.FAST.value: ["llama3.2"],
+                ModelTier.CODE.value: ["devstral"],
+                ModelTier.REASON.value: ["deepseek-r1:8b"],
+                ModelTier.NUANCE.value: ["moonshot-v1-128k"],
+                ModelTier.LOCAL.value: ["llama3.2"],
+            },
+            tag_rules=[],
         )
-        bridge = LLMBridge(config)
-        # Force all backends unavailable except passthrough
+        config = ConsciousnessConfig(fallback_chain=["ollama", "passthrough"])
+        bridge = LLMBridge(config, router_config=router_cfg)
+        # ollama is AVAILABLE (but broken) — this is what the old cascade walked
+        # into instead of reaching passthrough.
         bridge._available = {k: False for k in bridge._available}
+        bridge._available["ollama"] = True
         bridge._available["passthrough"] = True
 
         signal = TaskSignal(description="test", tags=["general"])
         result = bridge.generate("system", "hello", signal)
-        # Should get a response (either from passthrough or last-resort message)
+        # Must degrade to passthrough (echoing user content), NOT the canned
+        # connectivity-error string that the buggy walk produced.
         assert isinstance(result, str)
-        assert len(result) > 0
+        assert result == "hello", (
+            f"Expected passthrough to echo user message 'hello', got: {result!r}"
+        )
 
     @patch("skseed.llm.ollama_callback")
     def test_generate_passthrough_cascade_returns_user_content(self, mock_ollama):
