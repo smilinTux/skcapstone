@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -169,3 +172,84 @@ class TestDiagnoseAndHeal:
         doctor = SelfHealingDoctor(home)
         doctor.diagnose_and_heal()
         assert doctor.last_report["checks_run"] > 0
+
+
+class TestInotifyRestart:
+    """Regression tests for card 934eae16.
+
+    self_healing._check_consciousness_health() calls
+    consciousness._run_inotify_restart() when it detects a dead inotify
+    observer. Before the fix that method did not exist and the call raised
+    AttributeError, so healing crashed instead of restarting the watcher.
+    """
+
+    def _make_loop(self):
+        """Build a bare ConsciousnessLoop without running heavy __init__."""
+        from skcapstone.consciousness_loop import ConsciousnessLoop
+
+        return object.__new__(ConsciousnessLoop)
+
+    def test_restart_stops_old_observer_and_starts_new_watcher(self, monkeypatch):
+        """_run_inotify_restart stops the dead observer and relaunches _run_inotify."""
+        loop = self._make_loop()
+        old_obs = MagicMock()
+        loop._observer = old_obs
+
+        relaunched = threading.Event()
+        monkeypatch.setattr(loop, "_run_inotify", relaunched.set)
+
+        loop._run_inotify_restart()
+
+        # Old observer torn down.
+        old_obs.stop.assert_called_once()
+        old_obs.join.assert_called_once()
+        assert loop._observer is None
+
+        # New watcher thread was launched and ran _run_inotify.
+        assert relaunched.wait(timeout=2.0), "_run_inotify was not relaunched"
+
+    def test_restart_with_no_observer_still_relaunches(self, monkeypatch):
+        """_run_inotify_restart is safe when there is no prior observer."""
+        loop = self._make_loop()
+        loop._observer = None
+
+        relaunched = threading.Event()
+        monkeypatch.setattr(loop, "_run_inotify", relaunched.set)
+
+        # Must not raise even with nothing to stop.
+        loop._run_inotify_restart()
+
+        assert relaunched.wait(timeout=2.0), "_run_inotify was not relaunched"
+
+    def _fake_consciousness(self, observer):
+        """Consciousness stub with a reachable backend and given observer."""
+        bridge = SimpleNamespace(available_backends={"local": True})
+        return SimpleNamespace(
+            _bridge=bridge,
+            _observer=observer,
+            _run_inotify_restart=MagicMock(),
+        )
+
+    def test_dead_observer_triggers_restart(self, tmp_path):
+        """A dead inotify observer is the triggering event -> restart is called."""
+        dead_observer = MagicMock()
+        dead_observer.is_alive.return_value = False
+        consciousness = self._fake_consciousness(dead_observer)
+
+        doctor = SelfHealingDoctor(tmp_path / ".skcapstone", consciousness_loop=consciousness)
+        result = doctor._check_consciousness_health()
+
+        consciousness._run_inotify_restart.assert_called_once()
+        assert result["status"] == "ok"
+
+    def test_live_observer_is_noop(self, tmp_path):
+        """A healthy observer must NOT trigger a restart (no-op path)."""
+        live_observer = MagicMock()
+        live_observer.is_alive.return_value = True
+        consciousness = self._fake_consciousness(live_observer)
+
+        doctor = SelfHealingDoctor(tmp_path / ".skcapstone", consciousness_loop=consciousness)
+        result = doctor._check_consciousness_health()
+
+        consciousness._run_inotify_restart.assert_not_called()
+        assert result["status"] == "ok"
