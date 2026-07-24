@@ -90,6 +90,7 @@ class CardEvent(BaseModel):
     label: str | None = None
     link_key: str | None = None
     link_value: str | None = None
+    owner: str | None = None
 
 
 class CardEventLog:
@@ -135,7 +136,9 @@ def fold_overlay(events: list[CardEvent]) -> dict[str, dict]:
 
     Events apply in ``(ts, writer, seq)`` order: ``move`` sets column + order
     (last wins), ``set_priority``/``set_swimlane`` last wins, ``add_label``/
-    ``remove_label`` accumulate, ``link`` merges into ``links``.
+    ``remove_label`` accumulate, ``link`` merges into ``links``, ``assign``/
+    ``unassign`` set/clear owner (``owner_set`` marks an explicit change so
+    None-from-unassign is distinguishable from never-touched).
     """
     ordered = sorted(events, key=lambda e: (e.ts, e.writer, e.seq))
     overlay: dict[str, dict] = {}
@@ -143,7 +146,8 @@ def fold_overlay(events: list[CardEvent]) -> dict[str, dict]:
         patch = overlay.setdefault(
             e.card_id,
             {"column": None, "order": None, "priority": None,
-             "swimlane": None, "labels": [], "links": {}},
+             "swimlane": None, "labels": [], "links": {},
+             "owner": None, "owner_set": False},
         )
         if e.action == "move":
             if e.column is not None:
@@ -160,6 +164,12 @@ def fold_overlay(events: list[CardEvent]) -> dict[str, dict]:
             patch["labels"].remove(e.label)
         elif e.action == "link" and e.link_key is not None:
             patch["links"][e.link_key] = e.link_value
+        elif e.action == "assign" and e.owner:
+            patch["owner"] = e.owner
+            patch["owner_set"] = True
+        elif e.action == "unassign":
+            patch["owner"] = None
+            patch["owner_set"] = True
     return overlay
 
 
@@ -364,6 +374,8 @@ class KanbanBoard:
                 if lb not in c.labels:
                     c.labels.append(lb)
             c.links.update(patch["links"])
+            if patch.get("owner_set"):
+                c.owner = patch["owner"]
 
         if include_archived:
             return out

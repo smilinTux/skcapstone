@@ -293,20 +293,34 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--show", default=10, type=int, help="Max mismatches to print.")
     @click.option("--check", is_flag=True, default=False,
                   help="Exit non-zero on any drift (for the soak monitor).")
-    def coord_parity(home, show, check):
+    @click.option("--open-threshold", default=None, type=int,
+                  help="Open-count drift beyond this raises the PARITY ALERT.")
+    def coord_parity(home, show, check, open_threshold):
         """Diff the legacy board against the CardStore fold (Phase 4 soak check)."""
         import sys
 
-        from ..card_store import parity_check
+        from ..card_store import OPEN_DRIFT_THRESHOLD, parity_check
 
         home_path = Path(home).expanduser()
-        par = parity_check(home_path)
-        ok = not par["mismatches"] and not par["missing"]
+        threshold = OPEN_DRIFT_THRESHOLD if open_threshold is None else open_threshold
+        par = parity_check(home_path, open_drift_threshold=threshold)
+        ok = not par["mismatches"] and not par["missing"] and not par["open_alert"]
         color = "green" if ok else "red"
         console.print(
             f"\n  [{color}]checked={par['checked']} matched={par['matched']} "
             f"mismatches={len(par['mismatches'])} missing={len(par['missing'])}[/]"
         )
+        console.print(
+            f"  open: legacy={par['open_legacy']} store={par['open_store']} "
+            f"drift={par['open_drift']} (threshold {par['open_drift_threshold']})"
+        )
+        if par["open_alert"]:
+            console.print(
+                f"  [bold red]PARITY ALERT: store-served open-count diverges "
+                f"from legacy by {par['open_drift']} "
+                f"(> {par['open_drift_threshold']}). Run 'coord migrate' then "
+                f"'coord reconcile --apply' to converge.[/]"
+            )
         for m in par["mismatches"][:show]:
             console.print(f"    [yellow]{m['id']}[/]: {m['diff']}")
         if par["missing"][:show]:
@@ -314,6 +328,29 @@ def register_coord_commands(main: click.Group) -> None:
         console.print()
         if check and not ok:
             sys.exit(1)
+
+    @coord.command("reconcile")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--apply", "apply_", is_flag=True, default=False,
+                  help="Write corrective events (default is a dry-run report).")
+    def coord_reconcile(home, apply_):
+        """Converge the CardStore on the authoritative legacy board.
+
+        One-time repair for drift that predates the mirror (claims/completes
+        recorded only in agents/*.json): appends corrective move/assign/
+        archive events, writer 'reconcile'. Append-only and idempotent.
+        """
+        from ..card_store import reconcile_from_legacy
+
+        home_path = Path(home).expanduser()
+        res = reconcile_from_legacy(home_path, dry_run=not apply_)
+        if apply_:
+            console.print(f"\n  [green]Reconciled {res['fixed']} card(s) to legacy state.[/]\n")
+        else:
+            console.print(
+                f"\n  [yellow]Would reconcile {res['would_fix']} card(s).[/] "
+                f"Re-run with --apply to write.\n"
+            )
 
     @coord.command("maintain")
     @click.option("--home", default=AGENT_HOME, type=click.Path())

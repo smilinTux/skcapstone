@@ -105,3 +105,31 @@ def test_wip_excludes_expedite_lane(tmp_path):
     mgr.create_incident(title="down", severity="sev2", created_by="opus")
     report = KanbanBoard(tmp_path).wip_report()
     assert report["doing"]["count"] == 0
+
+
+# ---- Fold-drift fix (card ba4af853): overlay owner support ----
+
+def test_fold_overlay_assign_and_unassign():
+    events = [
+        CardEvent(card_id="c", action="assign", owner="lumina",
+                  ts="2026-07-16T01:00:00+00:00"),
+    ]
+    ov = fold_overlay(events)["c"]
+    assert ov["owner"] == "lumina"
+    assert ov["owner_set"] is True
+    events.append(CardEvent(card_id="c", action="unassign",
+                            ts="2026-07-16T01:01:00+00:00"))
+    ov = fold_overlay(events)["c"]
+    assert ov["owner"] is None
+    assert ov["owner_set"] is True
+
+
+def test_overlay_assign_applies_to_legacy_projection(tmp_path):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="own1", title="ownable", created_by="o"))
+    CardEventLog(tmp_path).append(
+        CardEvent(card_id="own1", action="assign", owner="lumina")
+    )
+    card = next(c for c in KanbanBoard(tmp_path).cards() if c.id == "own1")
+    assert card.owner == "lumina"
