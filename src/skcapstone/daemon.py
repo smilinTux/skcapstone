@@ -654,6 +654,33 @@ class ComponentManager:
             self._threads[name] = t
         return t
 
+    @staticmethod
+    def _alert_headless(title: str, body: str, dedup_key: str) -> None:
+        """Fire an out-of-band headless alert. Best-effort; never raises.
+
+        The desktop notification transports are useless on a headless server or
+        a laptop with no login session, so a daemon subsystem going dark (no
+        heartbeat / crashed thread) or a component the watchdog has given up on
+        would otherwise be silent out-of-band. This routes the event to the
+        headless transport (:func:`skcapstone.notifications.notify_headless`),
+        which is opt-in (``SKCAPSTONE_ALERT_WEBHOOK`` / ``SKCAPSTONE_HEADLESS_ALERT``)
+        and a no-op when no channel is configured, so default behaviour is
+        unchanged. Any error is swallowed (a failed alert must never break the
+        watchdog).
+
+        Args:
+            title: Alert title.
+            body: Alert body.
+            dedup_key: Stable key so a still-dark component does not re-alert on
+                every watchdog tick within the dedup TTL.
+        """
+        try:
+            from .notifications import notify_headless
+
+            notify_headless(title, body, "critical", dedup_key=dedup_key)
+        except Exception as exc:  # noqa: BLE001 - alerting must never break the watchdog
+            logger.debug("Headless alert for '%s' failed: %s", dedup_key, exc)
+
     def _check_components(self) -> None:
         """Inspect all auto-restart components and restart any that are dead.
 
@@ -672,6 +699,7 @@ class ComponentManager:
 
             t = threads.get(name)
             needs_restart = False
+            dark_reason = ""
 
             if comp.status == "dead":
                 needs_restart = True
@@ -679,15 +707,27 @@ class ComponentManager:
                 logger.warning("Component '%s' thread exited", name)
                 comp.mark_dead("thread exited")
                 needs_restart = True
+                dark_reason = "thread exited"
             elif comp.last_heartbeat:
                 age = (datetime.now(timezone.utc) - comp.last_heartbeat).total_seconds()
                 if age > comp.heartbeat_timeout:
                     logger.warning("Component '%s' heartbeat timeout (%.0fs old)", name, age)
                     comp.mark_dead("heartbeat timeout")
                     needs_restart = True
+                    dark_reason = f"heartbeat timeout ({age:.0f}s, no pulse)"
 
             if not needs_restart:
                 continue
+
+            # Out-of-band, headless alert: a subsystem just went dark (crashed
+            # thread or missed heartbeats). No-op unless an alert channel is
+            # configured; dedup_key stops per-tick spam while it stays dark.
+            if dark_reason:
+                self._alert_headless(
+                    f"agent-dark: {name}",
+                    f"Daemon component '{name}' went dark: {dark_reason}. Watchdog will attempt restart.",
+                    dedup_key=f"agent-dark:{name}",
+                )
 
             # Restart intensity is a *rate*: MAX_RESTARTS within RESTART_WINDOW.
             # A component that blipped a few times over weeks is not crash-looping.
@@ -702,6 +742,12 @@ class ComponentManager:
                     )
                     comp.mark_failed(
                         f"restart budget exhausted ({recent} in {self.RESTART_WINDOW}s)"
+                    )
+                    # Strongest daemon-down signal: the watchdog is out of retries.
+                    self._alert_headless(
+                        f"daemon-down: {name}",
+                        f"Daemon component '{name}' is down: exceeded {recent} restart attempts in {self.RESTART_WINDOW}s. Watchdog gave up; manual intervention needed.",
+                        dedup_key=f"daemon-down:{name}",
                     )
                 continue
 

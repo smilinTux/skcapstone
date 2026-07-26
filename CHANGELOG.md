@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Headless out-of-band alerting for daemon-down / agent-dark.** The daemon
+  watchdog now fires an alert through a configurable non-desktop channel
+  (`SKCAPSTONE_ALERT_WEBHOOK` for a generic webhook POST, or
+  `SKCAPSTONE_HEADLESS_ALERT` to shell out to `sk-alert`) when a component
+  goes dark (crashed thread or missed heartbeat) or the watchdog exhausts its
+  restart budget and gives up. Opt-in: with neither channel configured this
+  is a no-op, and dedup keys stop per-tick spam while a component stays dark.
+
 ### Changed
 
 - **Card e1d24370: add a byte-reproducible package build procedure.** The
