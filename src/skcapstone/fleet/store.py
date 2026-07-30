@@ -91,6 +91,35 @@ def _maybe_sign(payload: dict, signer) -> dict:
     return payload
 
 
+#: Spec fields the autonomous AI operator seat may never change. It can register
+#: and refresh an object, but these fields are the human's ratification lever
+#: (same principle as freeze and plane files). An agent_seat writer's incoming
+#: value must match what is already on disk (an empty list == absent for a new
+#: object, so the AI may create a registration with none ratified).
+_HUMAN_ONLY_SPEC_FIELDS: dict[str, tuple[str, ...]] = {
+    "operatorapp": ("ratifiedStandardActions",),
+}
+
+
+def _guard_human_only_fields(
+    kind: str, spec: dict, existing: dict, writer: "Writer"
+) -> None:
+    """Reject an AI-seat write that would change a human-only spec field."""
+    if not writer.agent_seat:
+        return
+    prev_spec = existing.get("spec", {}) if existing else {}
+    for field in _HUMAN_ONLY_SPEC_FIELDS.get(kind, ()):
+        # Treat an empty list and an absent field as equal, so the AI may create
+        # a fresh registration (nothing ratified) but never add or drop entries.
+        new_val = spec.get(field) or None
+        old_val = prev_spec.get(field) or None
+        if new_val != old_val:
+            raise OwnershipError(
+                f"field {field!r} on {kind} is human-only; the autonomous AI seat "
+                "cannot change it (a human ratifies standard actions)"
+            )
+
+
 def write_spec(
     paths: FleetPaths,
     kind: str,
@@ -116,6 +145,7 @@ def write_spec(
         raise OwnershipError(f"invalid kind/name: {kind!r}/{name!r}")
     path = paths.spec_path(kind, name)
     existing = _load(path) or {}
+    _guard_human_only_fields(kind, spec, existing, writer)
     payload = {
         "kind": kind.capitalize(),
         "name": name,

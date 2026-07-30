@@ -162,6 +162,29 @@ KINDS: dict[str, dict] = {
             "skfleet describe config <name>",
         ],
     },
+    "operatorapp": {
+        "kind": "Operatorapp",
+        "description": "A subapp's operator-facet registration and its human-ratified standard actions.",
+        "spec": {
+            "name": "operatorapp name (the subapp)",
+            "cli": "the app's operator CLI entrypoint (e.g. 'skchat operator')",
+            "repos": "repos the app's operator facet lives in",
+            "contractVersion": "operator-facet contract version the app implements",
+            "proposedStandardActions": "actions the app's manifest proposes as reversible standard",
+            "ratifiedStandardActions": "HUMAN-only: actions a human has ratified as auto-standard",
+            "conditions": "the condition names the app's observe emits",
+        },
+        "status": {
+            "conditions": "list of {type, status, reason, message, lastTransition}",
+        },
+        "conditions": {
+            "ProposalsRatified": "every proposed standard action has been ratified by a human",
+        },
+        "actions": [
+            "skfleet get operatorapps",
+            "skfleet describe operatorapp <name>",
+        ],
+    },
 }
 
 
