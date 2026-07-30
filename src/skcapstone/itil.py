@@ -292,6 +292,7 @@ def _auto_incident_id(service: str, failure_class: str, day_bucket: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Guardrail file: enforces the append only event log invariants above; edit with care.
 class ITILManager:
     """Manages ITIL records on disk as immutable core + folded event logs.
 
