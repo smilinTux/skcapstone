@@ -230,3 +230,8 @@ never lose the freeze card at any step.
 Rollout order: **fleet** (reference adapter) then **skchat**, skgateway,
 skcomms, skmemory, skos. Each app conforms by exposing
 `<app> operator explain / observe / act --json`.
+
+For the full contract each app conforms to, the `operator` block it declares in
+its signed `skworld.module.json`, the `Operatorapp` registration kind (propose
+vs human-ratify), the KEDB seeds, and how these adapters relate to the apps' own
+CLIs, see [OPERATOR_FACET.md](./OPERATOR_FACET.md).
