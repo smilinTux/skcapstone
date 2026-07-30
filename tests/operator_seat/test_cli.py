@@ -56,6 +56,43 @@ def test_pending_empty(tmp_path, monkeypatch):
     assert "no pending decisions" in out.output
 
 
+def _stub_run_once(monkeypatch):
+    # Keep the CLI test off the live adapter probes (subprocess + network): the
+    # publish wiring is what we are testing, not the observe pass.
+    quiet = {
+        "frozen": False,
+        "brief": {"firing": [], "stale": [], "quiet": True, "counts": {"firing": 0, "stale": 0}},
+        "route": "quiet",
+        "proposals": [],
+        "outcomes": [],
+        "report": "all quiet",
+    }
+    monkeypatch.setattr(cli.loop, "run_once", lambda *a, **k: quiet)
+
+
+def test_run_publishes_a_brief_artifact(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    _stub_run_once(monkeypatch)
+    pub = tmp_path / "atlas-brief"
+    out = CliRunner().invoke(cli.operator, ["run", "--publish-dir", str(pub)])
+    assert out.exit_code == 0, out.output
+    index = pub / "index.html"
+    assert index.exists()
+    assert index.read_text().startswith("<!doctype html>")
+    assert (pub / "brief.md").exists()
+
+
+def test_run_no_publish_skips_artifact(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    _stub_run_once(monkeypatch)
+    pub = tmp_path / "atlas-brief-skip"
+    out = CliRunner().invoke(
+        cli.operator, ["run", "--no-publish", "--publish-dir", str(pub)]
+    )
+    assert out.exit_code == 0, out.output
+    assert not pub.exists()
+
+
 def test_apps_register_list_and_ratify(tmp_path, monkeypatch):
     _enroll(tmp_path, monkeypatch)
     r = CliRunner()

@@ -23,7 +23,7 @@ import click
 from ..fleet import store
 from ..fleet.operatorapp_controller import operatorapp_rows
 from ..fleet.paths import default_paths
-from . import decisions, fleet_adapter, loop, notify, proposer, registration
+from . import brief_publish, decisions, fleet_adapter, loop, notify, proposer, registration
 
 
 def _now_iso() -> str:
@@ -75,7 +75,18 @@ def operator() -> None:
     default=False,
     help="Send the report + parked escalations to Telegram (silent when all quiet).",
 )
-def run_cmd(execute: bool, notify_flag: bool) -> None:
+@click.option(
+    "--publish-dir",
+    default=None,
+    help="Where to write the static brief artifact (default: <fleet root>/atlas/brief).",
+)
+@click.option(
+    "--no-publish",
+    is_flag=True,
+    default=False,
+    help="Skip writing the static brief artifact this tick.",
+)
+def run_cmd(execute: bool, notify_flag: bool, publish_dir: str | None, no_publish: bool) -> None:
     """One operator pass: observe, reason, report. Report-only by default."""
     paths = default_paths()
 
@@ -105,6 +116,12 @@ def run_cmd(execute: bool, notify_flag: bool) -> None:
     )
     if res.get("outcomes"):
         click.echo(f"({len(res['outcomes'])} proposal(s); parked escalations await approval)")
+
+    # Publish the static brief artifact per tick (the atlas host serves it).
+    if not no_publish:
+        pub_dir = publish_dir or str(paths.root / "atlas" / "brief")
+        written = brief_publish.publish_brief(res, now, pub_dir)
+        click.echo(f"brief published: {written['html']}")
 
     # Telegram: message the human only when something happened (silent when quiet).
     if notify_flag and res.get("outcomes"):
