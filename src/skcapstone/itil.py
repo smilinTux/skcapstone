@@ -1367,10 +1367,16 @@ class ITILManager:
         related_problem_id: str | None = None,
         managed_by: str = "",
         tags: list[str] | None = None,
+        entry_id: str | None = None,
     ) -> KEDBEntry:
-        """Create a Known Error Database entry (write-once, slug dropped)."""
+        """Create a Known Error Database entry (write-once, slug dropped).
+
+        ``entry_id`` pins the record id (e.g. a stable ``ke-telegram-wedge`` a
+        runbook or adapter references by name); when omitted an ``ke-<uuid>`` id
+        is generated as before.
+        """
         self.ensure_dirs()
-        entry = KEDBEntry(
+        fields = dict(
             title=title,
             symptoms=symptoms,
             root_cause=root_cause,
@@ -1380,6 +1386,9 @@ class ITILManager:
             managed_by=managed_by,
             tags=tags or [],
         )
+        if entry_id is not None:
+            fields["id"] = entry_id
+        entry = KEDBEntry(**fields)
         path = self.kedb_dir / f"{entry.id}.json"
         atomic_write_text(path, json.dumps(entry.model_dump(), indent=2, default=str) + "\n")
         return entry

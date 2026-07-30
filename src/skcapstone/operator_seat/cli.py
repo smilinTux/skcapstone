@@ -23,7 +23,16 @@ import click
 from ..fleet import store
 from ..fleet.operatorapp_controller import operatorapp_rows
 from ..fleet.paths import default_paths
-from . import brief_publish, decisions, fleet_adapter, loop, notify, proposer, registration
+from . import (
+    brief_publish,
+    decisions,
+    fleet_adapter,
+    kedb_seeds,
+    loop,
+    notify,
+    proposer,
+    registration,
+)
 
 
 def _now_iso() -> str:
@@ -184,6 +193,23 @@ def unfreeze_cmd() -> None:
     click.echo("unfrozen: Atlas resumes")
 
 
+@operator.command("kedb-seed")
+def kedb_seed_cmd() -> None:
+    """Seed the ITIL KEDB with the known errors the app adapters reference.
+
+    Create-or-skip: entries that already exist are left as-is, so this is safe to
+    run repeatedly (and alongside `apps register`). Makes every adapter kedb_ref
+    resolve to a real runbook entry instead of a dangling id.
+    """
+    from .. import SHARED_ROOT
+
+    created = kedb_seeds.seed_operator_kedb(SHARED_ROOT)
+    if created:
+        click.echo("seeded: " + ", ".join(created))
+    else:
+        click.echo("kedb already seeded (nothing to do)")
+
+
 @operator.group("apps")
 def apps() -> None:
     """The subapps Atlas operates, registered as fleet Operatorapp objects."""
@@ -204,9 +230,18 @@ def apps_list_cmd() -> None:
 
 @apps.command("register")
 def apps_register_cmd() -> None:
-    """Register or refresh an Operatorapp object per app adapter (seat writer)."""
+    """Register or refresh an Operatorapp object per app adapter (seat writer).
+
+    Also seeds the ITIL KEDB (create-or-skip) so every adapter kedb_ref resolves
+    to a real runbook entry the moment the apps are registered.
+    """
+    from .. import SHARED_ROOT
+
     written = registration.register_all(default_paths(), writer=_seat_writer())
+    seeded = kedb_seeds.seed_operator_kedb(SHARED_ROOT)
     click.echo("registered: " + ", ".join(written))
+    if seeded:
+        click.echo("kedb seeded: " + ", ".join(seeded))
 
 
 @apps.command("ratify")
