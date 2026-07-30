@@ -77,7 +77,9 @@ async def _handle_trust_calibrate(args: dict) -> list[TextContent]:
         return _json_response(cal.model_dump())
 
     if action == "recommend":
-        return _json_response(recommend_thresholds(home))
+        from ..pillars.trust import list_febs
+
+        return _json_response(recommend_thresholds(home, feb_provider=list_febs))
 
     if action == "set":
         key = args.get("key", "")

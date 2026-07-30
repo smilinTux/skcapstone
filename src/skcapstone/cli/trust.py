@@ -171,7 +171,9 @@ def register_trust_commands(main: click.Group) -> None:
             return
 
         if recommend:
-            rec = recommend_thresholds(home_path)
+            from ..pillars.trust import list_febs
+
+            rec = recommend_thresholds(home_path, feb_provider=list_febs)
             console.print(f"\n  [bold]FEB Analysis[/] ({rec['feb_count']} files)")
             stats = rec.get("feb_stats", {})
             if stats:

@@ -287,7 +287,9 @@ def _handle_trust(args: list[str]) -> None:
         from .trust_calibration import load_calibration, recommend_thresholds
 
         if len(args) > 1 and args[1] == "recommend":
-            rec = recommend_thresholds(_home())
+            from .pillars.trust import list_febs
+
+            rec = recommend_thresholds(_home(), feb_provider=list_febs)
             if rec["changes"]:
                 for c in rec["changes"]:
                     console.print(f"  {c}")

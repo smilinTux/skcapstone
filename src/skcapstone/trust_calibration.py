@@ -7,9 +7,11 @@ mcp_server, the trust pillar, the trust MCP tools, and tests). New code should
 import from ``capauth.trust`` directly.
 
 The on-disk calibration format (``~/.skcapstone/trust/calibration.json``) and
-FEB derivation are unchanged. ``recommend_thresholds`` still reads FEB summaries
-via ``skcapstone.pillars.trust.list_febs`` (a lazy import inside capauth), so
-the skcapstone-side behavior is identical.
+FEB derivation are unchanged. ``recommend_thresholds`` no longer imports
+skcapstone (capauth is the L0 core and must not reach up into this subapp).
+Instead it takes a ``feb_provider`` parameter; the skcapstone callers pass
+``skcapstone.pillars.trust.list_febs``, so the skcapstone-side behavior is
+identical while capauth stays dependency-clean.
 
 See the SKWorld platform reconciled design, spine M1.
 """
