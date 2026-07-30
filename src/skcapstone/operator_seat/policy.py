@@ -29,6 +29,7 @@ def classify_change(action: dict[str, Any]) -> dict[str, Any]:
     Args:
         action: Proposed action metadata. Recognized keys: ``name`` (str),
             ``standard`` (bool, proposer's claim the action is pre-ratified),
+            ``reversible`` (bool; an explicit ``False`` forces MAJOR),
             ``blast_radius`` (str), ``risk`` (one of low/medium/high, defaults
             to low), ``freeze`` (bool, marks a fleet freeze/unfreeze action),
             ``rollback_plan`` (any, truthy if a rollback plan is attached),
@@ -42,8 +43,14 @@ def classify_change(action: dict[str, Any]) -> dict[str, Any]:
     if risk not in _RISK_LEVELS:
         risk = "low"
 
+    # Irreversibility fires MAJOR two ways: an irreversible blast radius, or an
+    # action that explicitly declares itself non-reversible (e.g. a session kill
+    # whose blast is low but which cannot be undone). Either forces escalation so
+    # it never reaches the auto/act path.
     blast_radius = action.get("blast_radius")
-    irreversible = blast_radius in IRREVERSIBLE_BLAST_RADII
+    irreversible = (
+        blast_radius in IRREVERSIBLE_BLAST_RADII or action.get("reversible") is False
+    )
     if irreversible:
         risk = "high"
 

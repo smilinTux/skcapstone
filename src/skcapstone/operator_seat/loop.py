@@ -22,6 +22,7 @@ from . import (
     fleet_adapter,
     plan,
     skchat_adapter,
+    skcode_adapter,
     skcomms_adapter,
     skgateway_adapter,
     skmemory_adapter,
@@ -35,6 +36,7 @@ from . import (
 ADAPTERS: dict[str, Callable[..., dict]] = {
     "fleet": fleet_adapter.fleet_observe,
     "skchat": skchat_adapter.observe,
+    "skcode": skcode_adapter.observe,
     "skcomms": skcomms_adapter.observe,
     "skmemory": skmemory_adapter.observe,
     "skgateway": skgateway_adapter.observe,
