@@ -26,12 +26,13 @@ def test_skchat_explain_is_contract_conformant():
     assert adapter.validate_explain(skchat_adapter.skchat_explain()) == []
 
 
-def test_explain_lists_the_four_conditions():
+def test_explain_lists_the_five_conditions():
     assert skchat_adapter.skchat_explain()["conditions"] == [
         "DaemonReady",
         "BridgeAlive",
         "OutboxBounded",
         "AuthEnforced",
+        "CallingReady",
     ]
 
 
@@ -48,6 +49,7 @@ def test_healthy_skchat_is_all_true():
             "outbox_depth": 5,
             "outbox_limit": 1000,
             "auth_enforced": True,
+            "calling_ready": True,
         }
     )
     by_type = {c["type"]: c["status"] for c in obs["conditions"]}
@@ -56,6 +58,7 @@ def test_healthy_skchat_is_all_true():
         "BridgeAlive": "True",
         "OutboxBounded": "True",
         "AuthEnforced": "True",
+        "CallingReady": "True",
     }
 
 
@@ -67,6 +70,7 @@ def test_each_bad_signal_fires_its_condition():
             "outbox_depth": 5000,
             "outbox_limit": 1000,
             "auth_enforced": False,
+            "calling_ready": False,
         }
     )
     by_type = {c["type"]: c["status"] for c in obs["conditions"]}
@@ -74,6 +78,16 @@ def test_each_bad_signal_fires_its_condition():
     assert by_type["BridgeAlive"] == "False"  # health condition fires when False
     assert by_type["OutboxBounded"] == "False"  # over the bound
     assert by_type["AuthEnforced"] == "False"
+    assert by_type["CallingReady"] == "False"  # calling backend down
+
+
+def test_calling_ready_rule():
+    # "down" is the only value that reads not-ready; ok/degraded/None fail safe.
+    assert skchat_adapter._calling_ready("down") is False
+    assert skchat_adapter._calling_ready("DOWN") is False
+    assert skchat_adapter._calling_ready("ok") is True
+    assert skchat_adapter._calling_ready("degraded") is True
+    assert skchat_adapter._calling_ready(None) is True
 
 
 # --- pure probe logic --------------------------------------------------------
@@ -117,6 +131,7 @@ def test_default_probe_fails_safe(monkeypatch, tmp_path):
     assert st["bridge_alive"] is True
     assert st["auth_enforced"] is True
     assert st["outbox_depth"] == 0
+    assert st["calling_ready"] is True
 
 
 # --- act verb ----------------------------------------------------------------

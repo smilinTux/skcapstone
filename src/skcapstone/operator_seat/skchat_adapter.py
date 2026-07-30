@@ -6,7 +6,9 @@ apps: skchat plugs in by exposing the same three verbs the fleet does.
 The observe probes are REAL and injectable (tests never touch a live skchat):
 the daemon health endpoint, the telegram bridge poll age (the silent-wedge
 detector), the real outbox file count (the flood detector that would have caught
-the 1.5M-tombstone incident), and the dataplane-auth state. Every probe fails
+the 1.5M-tombstone incident), the dataplane-auth state, and the calling backend's
+WebRTC signaling health (CallingReady, spec 2.3's deferred fifth condition,
+grounded in the daemon's ``webrtc_signaling`` health field). Every probe fails
 SAFE (reports healthy) rather than raising a false alarm when skchat is
 unreachable.
 
@@ -26,7 +28,15 @@ from typing import Callable
 from ..fleet import store
 from . import actuator
 
-CONDITIONS = ["DaemonReady", "BridgeAlive", "OutboxBounded", "AuthEnforced"]
+#: CallingReady is appended last (spec 2.3); the order MUST match the skchat
+#: manifest's operator.conditions exactly, the drift-guard test asserts it.
+CONDITIONS = [
+    "DaemonReady",
+    "BridgeAlive",
+    "OutboxBounded",
+    "AuthEnforced",
+    "CallingReady",
+]
 
 #: skchat conditions are health-type (they fire when status is False), so they
 #: are NOT problem-when-true; the operator brief treats them correctly by default.
@@ -63,6 +73,10 @@ _OUTBOX_LIMIT = 1000
 _BRIDGE_POLL_MAX_AGE_S = 600
 _DAEMON_HEALTH_URL = "http://localhost:9385/health"
 _UNIT_RESTART_DAEMON = "skchat-daemon.service"
+#: The only WebRTC signaling-health value that means calling cannot be placed
+#: (the transport is not wired). ``ok`` and the TURN-fallback ``degraded`` still
+#: connect, so they read ready.
+_CALLING_DOWN = "down"
 
 
 def _b(value: bool) -> str:
@@ -98,6 +112,16 @@ def _count_outbox(outbox_dir: str | Path) -> int:
     return sum(1 for f in p.iterdir() if f.is_file())
 
 
+def _calling_ready(webrtc_signaling) -> bool:
+    """CallingReady rule: the calling backend is down ONLY when the daemon's
+    WebRTC signaling health reads ``down`` (the transport is not wired). ``ok``,
+    the TURN-fallback ``degraded``, and an unknown/absent value (None) all fail
+    SAFE to ready (True), so a missing signal never raises a false 'calling down'."""
+    if webrtc_signaling is None:
+        return True
+    return str(webrtc_signaling).strip().lower() != _CALLING_DOWN
+
+
 # --- real signal readers (each fails safe = healthy) -------------------------
 
 
@@ -105,11 +129,14 @@ def _outbox_dir() -> str:
     return os.environ.get("SKCOMMS_OUTBOX", str(Path.home() / ".skcomms" / "outbox"))
 
 
-def _probe_daemon_health() -> tuple[bool, bool | None]:
-    """Read the daemon health endpoint. Returns (daemon_ready, auth_enforced).
+def _probe_daemon_health() -> tuple[bool, bool | None, bool]:
+    """Read the daemon health endpoint. Returns (daemon_ready, auth_enforced,
+    calling_ready).
 
-    Fails SAFE: an unreachable daemon reports (ready, auth-unknown) so a probe
-    failure never raises a false 'daemon down' or 'auth off' alarm.
+    ``calling_ready`` is derived from the daemon's ``webrtc_signaling`` health
+    field (absent on an older daemon -> ready). Fails SAFE: an unreachable daemon
+    reports (ready, auth-unknown, calling-ready) so a probe failure never raises
+    a false 'daemon down' / 'auth off' / 'calling down' alarm.
     """
     try:
         import json
@@ -120,9 +147,10 @@ def _probe_daemon_health() -> tuple[bool, bool | None]:
             body = json.loads(r.read())
         ready = bool(body.get("ok", True)) if isinstance(body, dict) else True
         auth = body.get("dataplane_auth") if isinstance(body, dict) else None
-        return ready, (bool(auth) if auth is not None else None)
+        calling = _calling_ready(body.get("webrtc_signaling")) if isinstance(body, dict) else True
+        return ready, (bool(auth) if auth is not None else None), calling
     except Exception:
-        return True, None
+        return True, None, True
 
 
 def _probe_bridge_poll_age() -> float | None:
@@ -160,7 +188,7 @@ def _probe_auth_enforced() -> bool | None:
 def _default_probe() -> dict:
     """Best-effort skchat health from real signals. Fails SAFE (healthy) when
     skchat is unreachable, so an inability to probe never raises a false alarm."""
-    daemon_ready, auth_from_daemon = _probe_daemon_health()
+    daemon_ready, auth_from_daemon, calling_ready = _probe_daemon_health()
     poll_age = _probe_bridge_poll_age()
     auth = auth_from_daemon
     if auth is None:
@@ -172,6 +200,8 @@ def _default_probe() -> dict:
         "outbox_limit": _OUTBOX_LIMIT,
         # Unknown auth fails safe to enforced (True): never cry a false 'auth off'.
         "auth_enforced": True if auth is None else bool(auth),
+        # Unknown calling health fails safe to ready (True).
+        "calling_ready": calling_ready,
     }
 
 
@@ -181,7 +211,7 @@ def _default_probe() -> dict:
 def skchat_explain() -> dict:
     """skchat's self-description in the adapter-contract shape."""
     return {
-        "kinds": ["daemon", "bridge", "outbox", "dataplane-auth"],
+        "kinds": ["daemon", "bridge", "outbox", "dataplane-auth", "calling"],
         "conditions": list(CONDITIONS),
         "actions": [dict(a) for a in _ACTIONS],
     }
@@ -209,6 +239,11 @@ def skchat_observe(probe: Callable[[], dict] | None = None) -> dict:
                 "type": "AuthEnforced",
                 "status": _b(bool(st.get("auth_enforced", True))),
                 "object": "dataplane-auth",
+            },
+            {
+                "type": "CallingReady",
+                "status": _b(bool(st.get("calling_ready", True))),
+                "object": "calling",
             },
         ]
     }
