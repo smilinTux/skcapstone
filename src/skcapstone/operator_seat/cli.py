@@ -24,6 +24,7 @@ from ..fleet import store
 from ..fleet.operatorapp_controller import operatorapp_rows
 from ..fleet.paths import default_paths
 from . import (
+    bootstrap,
     brief_publish,
     decisions,
     fleet_adapter,
@@ -95,11 +96,37 @@ def operator() -> None:
     default=False,
     help="Skip writing the static brief artifact this tick.",
 )
-def run_cmd(execute: bool, notify_flag: bool, publish_dir: str | None, no_publish: bool) -> None:
+@click.option(
+    "--no-bootstrap",
+    is_flag=True,
+    default=False,
+    help="Skip the startup bootstrap (register app adapters + seed the KEDB) this tick.",
+)
+def run_cmd(
+    execute: bool,
+    notify_flag: bool,
+    publish_dir: str | None,
+    no_publish: bool,
+    no_bootstrap: bool,
+) -> None:
     """One operator pass: observe, reason, report. Report-only by default."""
     paths = default_paths()
 
     now = _now_iso()
+
+    # Idempotent startup bootstrap: keep the Operatorapp set and the KEDB current
+    # before the first pass, so registrations and known-error entries are never
+    # stale or missing without a manual command. Writes only registration objects
+    # + missing KEDB entries (both human-safe: the store guard blocks the seat
+    # from writing ratifiedStandardActions, and KEDB seeding is create-or-skip);
+    # it never actuates. Opt out with --no-bootstrap.
+    if not no_bootstrap:
+        from .. import SHARED_ROOT
+
+        boot = bootstrap.bootstrap_operator(paths, writer=_seat_writer(), home=SHARED_ROOT)
+        seeded = boot["seeded"]
+        kedb_note = f"kedb seeded: {', '.join(seeded)}" if seeded else "kedb current"
+        click.echo(f"bootstrap: {len(boot['registered'])} app(s) registered, {kedb_note}")
 
     def _propose(brief, route):
         if brief.get("quiet"):
@@ -237,11 +264,10 @@ def apps_register_cmd() -> None:
     """
     from .. import SHARED_ROOT
 
-    written = registration.register_all(default_paths(), writer=_seat_writer())
-    seeded = kedb_seeds.seed_operator_kedb(SHARED_ROOT)
-    click.echo("registered: " + ", ".join(written))
-    if seeded:
-        click.echo("kedb seeded: " + ", ".join(seeded))
+    boot = bootstrap.bootstrap_operator(default_paths(), writer=_seat_writer(), home=SHARED_ROOT)
+    click.echo("registered: " + ", ".join(boot["registered"]))
+    if boot["seeded"]:
+        click.echo("kedb seeded: " + ", ".join(boot["seeded"]))
 
 
 @apps.command("ratify")

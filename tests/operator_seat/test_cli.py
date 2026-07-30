@@ -6,6 +6,7 @@ from click.testing import CliRunner
 
 from skcapstone.fleet import sknoded, store
 from skcapstone.fleet.paths import FleetPaths
+from skcapstone.itil import ITILManager
 from skcapstone.operator_seat import cli, decisions
 
 
@@ -93,7 +94,82 @@ def test_run_no_publish_skips_artifact(tmp_path, monkeypatch):
     assert not pub.exists()
 
 
+def _redirect_kedb_home(tmp_path, monkeypatch):
+    """Point the operator KEDB home at tmp_path so bootstrap seeding stays
+    hermetic (the CLI reads SHARED_ROOT at call time via `from .. import`)."""
+    home = tmp_path / "shared"
+    monkeypatch.setattr("skcapstone.SHARED_ROOT", str(home))
+    return home
+
+
+def _kedb_ids(home) -> set[str]:
+    kedb_dir = ITILManager(home).kedb_dir
+    if not kedb_dir.exists():
+        return set()
+    return {p.stem for p in kedb_dir.glob("*.json")}
+
+
+def test_run_bootstraps_apps_and_kedb(tmp_path, monkeypatch):
+    paths = _enroll(tmp_path, monkeypatch)
+    _stub_run_once(monkeypatch)
+    home = _redirect_kedb_home(tmp_path, monkeypatch)
+
+    out = CliRunner().invoke(cli.operator, ["run", "--no-publish"])
+    assert out.exit_code == 0, out.output
+    assert "bootstrap:" in out.output
+
+    # All six app adapters registered as Operatorapp objects.
+    for app in ("skchat", "skcode", "skcomms", "skgateway", "skmemory", "skos"):
+        assert store.read_spec(paths, "operatorapp", app) is not None, f"{app} not registered"
+
+    # The KEDB was seeded (every adapter kedb_ref now resolves to a real entry).
+    seeded = _kedb_ids(home)
+    assert seeded, "KEDB was not seeded on run"
+    assert "ke-telegram-wedge" in seeded
+
+
+def test_run_no_bootstrap_skips_apps_and_kedb(tmp_path, monkeypatch):
+    paths = _enroll(tmp_path, monkeypatch)
+    _stub_run_once(monkeypatch)
+    home = _redirect_kedb_home(tmp_path, monkeypatch)
+
+    out = CliRunner().invoke(cli.operator, ["run", "--no-publish", "--no-bootstrap"])
+    assert out.exit_code == 0, out.output
+    assert "bootstrap:" not in out.output
+
+    # Nothing registered, nothing seeded.
+    assert store.read_spec(paths, "operatorapp", "skchat") is None
+    assert _kedb_ids(home) == set()
+
+
+def test_run_bootstrap_is_idempotent_and_preserves_ratification(tmp_path, monkeypatch):
+    paths = _enroll(tmp_path, monkeypatch)
+    _stub_run_once(monkeypatch)
+    home = _redirect_kedb_home(tmp_path, monkeypatch)
+    r = CliRunner()
+
+    # First run registers + seeds.
+    assert r.invoke(cli.operator, ["run", "--no-publish"]).exit_code == 0
+    first_kedb = _kedb_ids(home)
+    assert first_kedb
+
+    # A human ratifies one proposed standard action between runs.
+    rat = r.invoke(cli.operator, ["apps", "ratify", "skchat", "restart-daemon"])
+    assert rat.exit_code == 0, rat.output
+
+    # Second run: seeds nothing new (create-or-skip), does not clobber.
+    out2 = r.invoke(cli.operator, ["run", "--no-publish"])
+    assert out2.exit_code == 0, out2.output
+    assert "kedb current" in out2.output  # no new ids seeded the second pass
+
+    # KEDB unchanged (no duplicates), and the human ratification survived.
+    assert _kedb_ids(home) == first_kedb
+    spec = store.read_spec(paths, "operatorapp", "skchat")["spec"]
+    assert "restart-daemon" in spec["ratifiedStandardActions"]
+
+
 def test_apps_register_list_and_ratify(tmp_path, monkeypatch):
+    _redirect_kedb_home(tmp_path, monkeypatch)
     _enroll(tmp_path, monkeypatch)
     r = CliRunner()
 
