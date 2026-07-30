@@ -50,7 +50,7 @@ dashboard = [
     "uvicorn>=0.30",
 ]
 identity = [
-    "capauth>=0.1.0",
+    "capauth>=0.2.4",
 ]
 security = [
     "sksecurity>=1.2.0",
@@ -81,7 +81,7 @@ docker = [
     "docker>=7.0",
 ]
 all = [
-    "capauth>=0.1.0",
+    "capauth>=0.2.4",
     "sksecurity>=1.2.0",
     "skmemory[skvector]>=0.5.0",
     "skseed>=0.1.0",
