@@ -21,8 +21,9 @@ from datetime import datetime, timezone
 import click
 
 from ..fleet import store
+from ..fleet.operatorapp_controller import operatorapp_rows
 from ..fleet.paths import default_paths
-from . import decisions, fleet_adapter, loop, notify, proposer
+from . import decisions, fleet_adapter, loop, notify, proposer, registration
 
 
 def _now_iso() -> str:
@@ -41,6 +42,17 @@ def _human_writer() -> store.Writer:
     # A CLI invocation is a human at a terminal, never the autonomous seat.
     return store.Writer(
         role="operator", node="cli", identity=store.writer_identity() or "human", agent_seat=False
+    )
+
+
+def _seat_writer() -> store.Writer:
+    # The autonomous operator seat: it may register/refresh app objects, but the
+    # store's human-only guard blocks it from writing ratifiedStandardActions.
+    return store.Writer(
+        role="operator",
+        node=fleet_adapter.self_node_name(),
+        identity="operator",
+        agent_seat=True,
     )
 
 
@@ -153,6 +165,43 @@ def unfreeze_cmd() -> None:
     """Lift the freeze (human only)."""
     store.set_frozen(default_paths(), False, writer=_human_writer())
     click.echo("unfrozen: Atlas resumes")
+
+
+@operator.group("apps")
+def apps() -> None:
+    """The subapps Atlas operates, registered as fleet Operatorapp objects."""
+
+
+@apps.command("list")
+def apps_list_cmd() -> None:
+    """List registered subapps and their ratification state."""
+    rows = operatorapp_rows(default_paths(), _now_iso())
+    if not rows:
+        click.echo("no registered apps (run: skoperator apps register)")
+        return
+    for r in rows:
+        mark = "ok" if r.proposals_ratified else f"{r.ratified_count}/{r.proposed_count} ratified"
+        cli = r.cli or "-"
+        click.echo(f"{r.name:12} {cli:22} proposed={r.proposed_count} [{mark}]")
+
+
+@apps.command("register")
+def apps_register_cmd() -> None:
+    """Register or refresh an Operatorapp object per app adapter (seat writer)."""
+    written = registration.register_all(default_paths(), writer=_seat_writer())
+    click.echo("registered: " + ", ".join(written))
+
+
+@apps.command("ratify")
+@click.argument("app")
+@click.argument("action")
+def apps_ratify_cmd(app: str, action: str) -> None:
+    """Ratify one proposed standard action for an app (human only)."""
+    try:
+        registration.ratify(default_paths(), app, action, writer=_human_writer())
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(f"ratified: {app} may now run {action} auto-standard")
 
 
 def main() -> None:

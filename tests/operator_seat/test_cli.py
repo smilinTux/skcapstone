@@ -54,3 +54,29 @@ def test_pending_empty(tmp_path, monkeypatch):
     _enroll(tmp_path, monkeypatch)
     out = CliRunner().invoke(cli.operator, ["pending"])
     assert "no pending decisions" in out.output
+
+
+def test_apps_register_list_and_ratify(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    r = CliRunner()
+
+    # Nothing registered yet.
+    assert "no registered apps" in r.invoke(cli.operator, ["apps", "list"]).output
+
+    # Register all six app adapters.
+    reg = r.invoke(cli.operator, ["apps", "register"])
+    assert reg.exit_code == 0
+    assert "skchat" in reg.output and "skcode" in reg.output
+
+    # List shows them, none ratified yet.
+    listed = r.invoke(cli.operator, ["apps", "list"]).output
+    assert "skchat" in listed
+    assert "0/2 ratified" in listed  # skchat proposes 2, none ratified
+
+    # Human ratifies one.
+    rat = r.invoke(cli.operator, ["apps", "ratify", "skchat", "restart-daemon"])
+    assert rat.exit_code == 0 and "auto-standard" in rat.output
+
+    # Ratifying an unproposed action is a clean error, not a crash.
+    bad = r.invoke(cli.operator, ["apps", "ratify", "skchat", "purge-outbox"])
+    assert bad.exit_code != 0
