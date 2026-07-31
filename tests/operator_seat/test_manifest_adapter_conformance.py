@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from skcapstone.operator_seat import skchat_adapter, skcode_adapter
+from skcapstone.operator_seat import skchat_adapter, skcode_adapter, skos_adapter
 
 
 def _proposed_standard_actions(actions: list[dict]) -> list[str]:
@@ -29,6 +29,7 @@ def _proposed_standard_actions(actions: list[dict]) -> list[str]:
 _CASES = [
     ("skchat", "skchat.skworld_manifest", "skchat_module_manifest", skchat_adapter),
     ("skcode", "skharness.manifest", "skcode_module_manifest", skcode_adapter),
+    ("skos", "skos.skworld_manifest", "skos_module_manifest", skos_adapter),
 ]
 
 
