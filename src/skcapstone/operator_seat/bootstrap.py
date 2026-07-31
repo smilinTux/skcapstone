@@ -26,7 +26,7 @@ which is human-safe by the same guards the manual subcommands rely on.
 from __future__ import annotations
 
 from ..fleet import store
-from . import kedb_seeds, registration
+from . import discovery, kedb_seeds, registration
 
 
 def bootstrap_operator(paths, *, writer: store.Writer, home) -> dict:
@@ -35,6 +35,13 @@ def bootstrap_operator(paths, *, writer: store.Writer, home) -> dict:
     Idempotent and safe-by-default: only registration objects and missing KEDB
     entries are written, and human ratifications are preserved. Never actuates.
 
+    Manifest-driven discovery (OPS0.3) runs FIRST, gated behind
+    ``SKOPERATOR_MANIFEST_DISCOVERY`` (default OFF): when on, verified non-built-in
+    capability-pack manifests register ALONGSIDE the built-in seven (a manifest
+    never overrides a built-in). When off, ``discovery`` yields nothing and this is
+    byte-identical to the built-in-only bootstrap. Discovery only widens what Atlas
+    registers/proposes; it introduces no auto-ratification and no actuation.
+
     Args:
         paths: The fleet paths (where Operatorapp objects live).
         writer: The autonomous operator seat writer (``agent_seat=True``). The
@@ -42,13 +49,20 @@ def bootstrap_operator(paths, *, writer: store.Writer, home) -> dict:
         home: The ITIL home root used to seed the KEDB (``SHARED_ROOT``).
 
     Returns:
-        ``{"registered": [names...], "seeded": [ids...]}`` where ``registered``
-        is every app registered/refreshed this run (sorted) and ``seeded`` is
-        only the KEDB ids newly created this run (empty once already seeded).
+        ``{"registered": [names...], "seeded": [ids...], "discovered": [names...]}``
+        where ``registered`` is every app registered/refreshed this run (sorted),
+        ``seeded`` is only the KEDB ids newly created this run (empty once already
+        seeded), and ``discovered`` names the manifest-driven apps registered this
+        run (empty when discovery is off).
     """
-    registered = registration.register_all(paths, writer=writer)
+    discovered_specs = discovery.discover_operatorapp_specs()
+    registered = registration.register_all(paths, writer=writer, discovered=discovered_specs)
     seeded = kedb_seeds.seed_operator_kedb(home)
-    return {"registered": registered, "seeded": seeded}
+    return {
+        "registered": registered,
+        "seeded": seeded,
+        "discovered": sorted(s["name"] for s in discovered_specs if s.get("name")),
+    }
 
 
 __all__ = ["bootstrap_operator"]

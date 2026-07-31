@@ -84,9 +84,7 @@ def derive_operatorapp_spec(
     ratifiedStandardActions: that is the human's field.
     """
     actions = explain_payload.get("actions", [])
-    proposed = [
-        a["name"] for a in actions if a.get("standard") and a.get("reversible")
-    ]
+    proposed = [a["name"] for a in actions if a.get("standard") and a.get("reversible")]
     return operatorapp.normalize_operatorapp_spec(
         {
             "name": name,
@@ -98,14 +96,39 @@ def derive_operatorapp_spec(
     )
 
 
+def _write_preserving_ratifications(paths, name: str, spec: dict, *, writer: store.Writer) -> None:
+    """Write an Operatorapp spec, preserving any existing human ratifications.
+
+    A refresh must never blank a human's ratifiedStandardActions (the store's
+    human-only field guard would also reject the seat writing them), so the prior
+    ratified list is carried over onto the fresh spec before the write.
+    """
+    existing = store.read_spec(paths, "operatorapp", name)
+    prior = ((existing or {}).get("spec") or {}).get("ratifiedStandardActions", [])
+    spec = dict(spec)
+    spec["ratifiedStandardActions"] = list(prior)
+    store.write_spec(paths, "operatorapp", name, spec, writer=writer)
+
+
 def register_all(
-    paths, *, writer: store.Writer, registry: dict[str, dict] | None = None
+    paths,
+    *,
+    writer: store.Writer,
+    registry: dict[str, dict] | None = None,
+    discovered: list[dict] | None = None,
 ) -> list[str]:
     """Write or refresh an Operatorapp object for every registered app adapter.
 
     Preserves any existing ratifiedStandardActions on a refresh (so re-registering
     never blanks a human's ratifications, and the store guard passes). Returns the
     names written, sorted.
+
+    ``discovered`` is the optional set of pre-normalized Operatorapp specs from
+    manifest-driven discovery (OPS0.3): each is registered ALONGSIDE the built-ins,
+    but a discovered spec whose name matches a built-in id is skipped so the
+    built-in adapter always keeps precedence (a manifest never overrides a
+    built-in). With ``discovered`` absent (the default) this is byte-identical to
+    the built-in-only registration.
     """
     registry = registry if registry is not None else APP_REGISTRY
     written: list[str] = []
@@ -115,17 +138,18 @@ def register_all(
         spec = derive_operatorapp_spec(
             name, explain_fn(), cli=meta.get("cli"), repos=meta.get("repos")
         )
-        existing = store.read_spec(paths, "operatorapp", name)
-        prior = ((existing or {}).get("spec") or {}).get("ratifiedStandardActions", [])
-        spec["ratifiedStandardActions"] = list(prior)
-        store.write_spec(paths, "operatorapp", name, spec, writer=writer)
+        _write_preserving_ratifications(paths, name, spec, writer=writer)
         written.append(name)
-    return written
+    for spec in discovered or []:
+        name = spec.get("name")
+        if not name or name in registry:
+            continue  # a discovered id matching a built-in never overrides it
+        _write_preserving_ratifications(paths, name, spec, writer=writer)
+        written.append(name)
+    return sorted(written)
 
 
-def ratify(
-    paths, app: str, action: str, *, writer: store.Writer
-) -> dict:
+def ratify(paths, app: str, action: str, *, writer: store.Writer) -> dict:
     """Human-ratify one proposed standard action for an app (adds it to the
     ratified list). The writer must be a human (agent_seat False), else the store
     guard rejects the write.
@@ -150,4 +174,9 @@ def ratify(
     return store.write_spec(paths, "operatorapp", app, spec, writer=writer)
 
 
-__all__ = ["APP_REGISTRY", "derive_operatorapp_spec", "register_all", "ratify"]
+__all__ = [
+    "APP_REGISTRY",
+    "derive_operatorapp_spec",
+    "register_all",
+    "ratify",
+]

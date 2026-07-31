@@ -120,6 +120,45 @@ def test_loop_escalation_parks_for_approval(tmp_path, monkeypatch):
     assert len(decisions.list_pending(ddir)) == 1  # parked, not applied
 
 
+def test_loop_merges_extra_observers_builtins_win(tmp_path, monkeypatch):
+    # A manifest-discovered observer widens what Atlas observes; a built-in id
+    # always wins a clash (fleet stays the real fleet adapter).
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    seen = {}
+
+    def _skbrain_observe(paths_, now_iso_):
+        return {"conditions": [{"type": "OpsSchemaPresent", "status": "Unknown"}]}
+
+    def _fake_fleet(paths_, now_iso_):
+        seen["fleet_called"] = True
+        return {"conditions": []}
+
+    res = loop.run_once(
+        paths,
+        now_iso="2026-07-31T00:00:00Z",
+        extra_observers={"skbrain": _skbrain_observe, "fleet": _fake_fleet},
+        emit=lambda _s: None,
+    )
+    # The discovered observer was included; the built-in fleet observer overrode
+    # the same-named extra (the fake fleet was never called).
+    assert res["brief"] is not None
+    assert "fleet_called" not in seen
+
+
+def test_loop_extra_observers_none_is_byte_identical(tmp_path, monkeypatch):
+    # Default (no extra observers) reasons exactly as before: report-only, no write.
+    paths, _ = _enroll(tmp_path, monkeypatch)
+
+    def _snapshot():
+        return {p: p.read_bytes() for p in (tmp_path / "fleet").rglob("*.json")}
+
+    before = _snapshot()
+    loop.run_once(
+        paths, now_iso="2026-07-31T00:00:00Z", extra_observers=None, emit=lambda _s: None
+    )
+    assert _snapshot() == before
+
+
 def test_loop_frozen_never_applies_even_with_execute(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
     human = store.Writer(role="operator", node="node-158", identity="chef")

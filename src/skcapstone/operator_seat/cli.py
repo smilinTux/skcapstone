@@ -27,6 +27,7 @@ from . import (
     bootstrap,
     brief_publish,
     decisions,
+    discovery,
     fleet_adapter,
     kedb_seeds,
     loop,
@@ -127,6 +128,8 @@ def run_cmd(
         seeded = boot["seeded"]
         kedb_note = f"kedb seeded: {', '.join(seeded)}" if seeded else "kedb current"
         click.echo(f"bootstrap: {len(boot['registered'])} app(s) registered, {kedb_note}")
+        if boot.get("discovered"):
+            click.echo(f"discovered: {', '.join(boot['discovered'])}")
 
     def _propose(brief, route):
         if brief.get("quiet"):
@@ -141,6 +144,11 @@ def run_cmd(
         def apply_fn(prop, cls):  # noqa: E731 - the fleet act verb, only when --execute
             return fleet_adapter.fleet_act(paths, prop, cls, now_iso=now)
 
+    # Manifest-driven observe adapters (OPS0.3): empty when discovery is gated off
+    # (SKOPERATOR_MANIFEST_DISCOVERY unset), so the pass is byte-identical to today.
+    # Each observe closure receives now_iso from the loop when it is called.
+    extra_observers = discovery.discover_observers()
+
     res = loop.run_once(
         paths,
         now_iso=now,
@@ -149,6 +157,7 @@ def run_cmd(
         apply_fn=apply_fn,
         execute=execute,
         emit=click.echo,
+        extra_observers=extra_observers,
     )
     if res.get("outcomes"):
         click.echo(f"({len(res['outcomes'])} proposal(s); parked escalations await approval)")

@@ -68,6 +68,7 @@ def run_once(
     apply_fn: Callable[[dict, dict], Any] | None = None,
     execute: bool = False,
     emit: Callable[[str], Any] = print,
+    extra_observers: dict[str, Callable[..., dict]] | None = None,
 ) -> dict:
     """Run one operator pass.
 
@@ -75,6 +76,12 @@ def run_once(
     escalations, reports, and writes nothing to the fleet. Actuation happens ONLY
     when execute is True AND apply_fn is wired AND the disposition is auto AND the
     fleet is not frozen. Escalations park in decisions_dir when given.
+
+    ``extra_observers`` are the manifest-discovered observe adapters (OPS0.3),
+    ``{name: observe(paths, now_iso)}``. They are merged UNDER the built-in
+    ``ADAPTERS`` (a built-in always wins on a name clash) so discovery only widens
+    what Atlas observes. Empty/None (the default, and whenever discovery is gated
+    off) makes this byte-identical to the built-in-only pass.
 
     Returns {frozen, brief, route, proposals, planned, outcomes, report}.
     """
@@ -96,8 +103,11 @@ def run_once(
         }
 
     ptypes = problem_types if problem_types is not None else set(fleet_adapter.PROBLEM_WHEN_TRUE)
+    # Discovered observers merge UNDER the built-ins: ADAPTERS spreads last so a
+    # built-in always wins a name clash. Each observe fails safe on its own.
+    adapters = {**(extra_observers or {}), **ADAPTERS}
     observations = {
-        name: fn(paths, now_iso).get("conditions", []) for name, fn in ADAPTERS.items()
+        name: fn(paths, now_iso).get("conditions", []) for name, fn in adapters.items()
     }
     the_brief = brief.build_brief(observations, ptypes)
     route = brain.route_brain(the_brief)
