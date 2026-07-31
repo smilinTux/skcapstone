@@ -118,8 +118,8 @@ def test_run_bootstraps_apps_and_kedb(tmp_path, monkeypatch):
     assert out.exit_code == 0, out.output
     assert "bootstrap:" in out.output
 
-    # All six app adapters registered as Operatorapp objects.
-    for app in ("skchat", "skcode", "skcomms", "skgateway", "skmemory", "skos"):
+    # All seven app adapters registered as Operatorapp objects.
+    for app in ("skchat", "skcode", "skcomms", "skdashboard", "skgateway", "skmemory", "skos"):
         assert store.read_spec(paths, "operatorapp", app) is not None, f"{app} not registered"
 
     # The KEDB was seeded (every adapter kedb_ref now resolves to a real entry).
@@ -176,10 +176,10 @@ def test_apps_register_list_and_ratify(tmp_path, monkeypatch):
     # Nothing registered yet.
     assert "no registered apps" in r.invoke(cli.operator, ["apps", "list"]).output
 
-    # Register all six app adapters.
+    # Register all seven app adapters.
     reg = r.invoke(cli.operator, ["apps", "register"])
     assert reg.exit_code == 0
-    assert "skchat" in reg.output and "skcode" in reg.output
+    assert "skchat" in reg.output and "skcode" in reg.output and "skdashboard" in reg.output
 
     # List shows them, none ratified yet.
     listed = r.invoke(cli.operator, ["apps", "list"]).output

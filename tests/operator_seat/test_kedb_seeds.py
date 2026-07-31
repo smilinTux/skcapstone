@@ -3,7 +3,8 @@
 Every kedb_ref an app adapter declares must resolve to a real KEDB entry. These
 tests prove seeding creates one entry per referenced id (with a real workaround),
 that re-running is idempotent, and (the drift guard) that every kedb_ref across
-the six app adapters has a corresponding seed so the set can never silently drift.
+the registered app adapters has a corresponding seed so the set can never silently
+drift.
 Storage is injected on tmp_path: no real filesystem is touched.
 """
 
@@ -94,8 +95,8 @@ def test_existing_entry_is_left_as_is(tmp_path):
 
 
 def test_every_adapter_kedb_ref_is_seeded():
-    """DRIFT GUARD: every kedb_ref declared across the six app adapters must have
-    a seed. If a new adapter action names a new ke-* id without a seed here, this
+    """DRIFT GUARD: every kedb_ref declared across the registered app adapters must
+    have a seed. If a new adapter action names a new ke-* id without a seed here, this
     fails, so the KEDB can never silently fall behind the adapters."""
     missing = referenced_kedb_refs() - kedb_seeds.SEEDED_IDS
     assert not missing, f"adapter kedb_refs with no KEDB seed: {sorted(missing)}"

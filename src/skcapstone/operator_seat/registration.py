@@ -21,6 +21,7 @@ from . import (
     skchat_adapter,
     skcode_adapter,
     skcomms_adapter,
+    skdashboard_adapter,
     skgateway_adapter,
     skmemory_adapter,
     skos_adapter,
@@ -44,6 +45,11 @@ APP_REGISTRY: dict[str, dict] = {
         "explain": skcomms_adapter.skcomms_explain,
         "cli": "skcomms operator",
         "repos": ["skcomms"],
+    },
+    "skdashboard": {
+        "explain": skdashboard_adapter.skdashboard_explain,
+        "cli": "skcapstone dashboard operator",
+        "repos": ["skcapstone"],
     },
     "skgateway": {
         "explain": skgateway_adapter.skgateway_explain,

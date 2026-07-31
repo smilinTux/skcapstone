@@ -7,7 +7,7 @@ import pytest
 from skcapstone.fleet import store
 from skcapstone.fleet.operatorapp_controller import operatorapp_rows
 from skcapstone.fleet.paths import FleetPaths
-from skcapstone.operator_seat import registration, skchat_adapter
+from skcapstone.operator_seat import registration, skchat_adapter, skdashboard_adapter
 
 
 def _paths(tmp_path):
@@ -39,13 +39,39 @@ def test_derive_proposes_only_standard_reversible_actions():
     assert spec["ratifiedStandardActions"] == []
 
 
+def test_derive_skdashboard_produces_a_valid_operatorapp():
+    # skdashboard mirrors skos/skchat: conditions + proposedStandardActions come
+    # straight from the adapter. restart-dashboard is standard+reversible, so it is
+    # the one proposed action; both DashboardReady and BoardReadable are conditions.
+    spec = registration.derive_operatorapp_spec(
+        "skdashboard",
+        skdashboard_adapter.skdashboard_explain(),
+        cli="skcapstone dashboard operator",
+        repos=["skcapstone"],
+    )
+    assert spec["name"] == "skdashboard"
+    assert spec["proposedStandardActions"] == ["restart-dashboard"]
+    assert spec["conditions"] == list(skdashboard_adapter.CONDITIONS)
+    assert spec["cli"] == "skcapstone dashboard operator"
+    assert spec["repos"] == ["skcapstone"]
+    assert spec["ratifiedStandardActions"] == []
+
+
 # --- register_all ------------------------------------------------------------
 
 
 def test_register_all_writes_every_app(tmp_path):
     paths = _paths(tmp_path)
     written = registration.register_all(paths, writer=_seat())
-    assert written == ["skchat", "skcode", "skcomms", "skgateway", "skmemory", "skos"]
+    assert written == [
+        "skchat",
+        "skcode",
+        "skcomms",
+        "skdashboard",
+        "skgateway",
+        "skmemory",
+        "skos",
+    ]
     rows = {r.name: r for r in operatorapp_rows(paths, "2026-07-30T00:00:00Z")}
     assert set(rows) == set(written)
     assert rows["skcode"].cli == "skcode-hostd operator"

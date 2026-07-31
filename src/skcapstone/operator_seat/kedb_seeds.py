@@ -10,7 +10,7 @@ workaround that matches the adapter action's own runbook.
 Seeding is create-or-skip: an existing entry with that id is left exactly as it
 is, never duplicated or overwritten, so it is safe to run every registration.
 
-The drift guard (tests/operator_seat/test_kedb_seeds.py) walks the six app
+The drift guard (tests/operator_seat/test_kedb_seeds.py) walks the registered app
 adapters' explain() actions and asserts every declared ``kedb_ref`` has a seed
 here, so this set can never silently fall behind the adapters.
 """
@@ -110,6 +110,26 @@ OPERATOR_KEDB_SEEDS: list[dict] = [
             "options."
         ),
         "tags": ["operator", "skcode", "session"],
+    },
+    {
+        "id": "ke-skdashboard-down",
+        "title": "skcapstone dashboard down",
+        "symptoms": [
+            "DashboardReady is False",
+            "the dashboard status endpoint (http://127.0.0.1:7778/api/status) is "
+            "unreachable or reports an error, or the board endpoint "
+            "(http://127.0.0.1:7778/api/board) fails to load the coordination board",
+        ],
+        "root_cause": (
+            "the skcapstone dashboard web server is not running or is unhealthy, so "
+            "the coordination board cannot be served."
+        ),
+        "workaround": (
+            "restart the skcapstone dashboard web server "
+            "(systemctl --user restart skcapstone-dashboard.service) and verify "
+            "DashboardReady."
+        ),
+        "tags": ["operator", "skdashboard", "dashboard", "board"],
     },
 ]
 
