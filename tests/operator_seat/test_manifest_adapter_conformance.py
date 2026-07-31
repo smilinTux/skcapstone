@@ -16,7 +16,12 @@ from __future__ import annotations
 
 import pytest
 
-from skcapstone.operator_seat import skchat_adapter, skcode_adapter, skos_adapter
+from skcapstone.operator_seat import (
+    skchat_adapter,
+    skcode_adapter,
+    skdashboard_adapter,
+    skos_adapter,
+)
 
 
 def _proposed_standard_actions(actions: list[dict]) -> list[str]:
@@ -26,10 +31,18 @@ def _proposed_standard_actions(actions: list[dict]) -> list[str]:
 
 
 # (test id, importorskip module, builder attr, adapter module)
+# skdashboard's manifest and adapter both live in THIS repo (skcapstone), so its
+# importorskip always resolves; the guard still locks the two together.
 _CASES = [
     ("skchat", "skchat.skworld_manifest", "skchat_module_manifest", skchat_adapter),
     ("skcode", "skharness.manifest", "skcode_module_manifest", skcode_adapter),
     ("skos", "skos.skworld_manifest", "skos_module_manifest", skos_adapter),
+    (
+        "skdashboard",
+        "skcapstone.skdashboard_manifest",
+        "skdashboard_module_manifest",
+        skdashboard_adapter,
+    ),
 ]
 
 

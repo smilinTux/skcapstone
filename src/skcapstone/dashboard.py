@@ -492,7 +492,7 @@ def create_app(home: Path):
     import asyncio
 
     from starlette.applications import Starlette
-    from starlette.responses import HTMLResponse, StreamingResponse
+    from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
 
@@ -627,6 +627,18 @@ def create_app(home: Path):
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    async def well_known_manifest(request):
+        """skdashboard's SKWorld module manifest (public discovery metadata, no bearer).
+
+        The umbrella shell reads this to learn the Board's entry, nav, and required
+        auth audience/scopes before it has a token. URLs are origin-relative to the
+        request, so they resolve against wherever the dashboard actually answers.
+        Mirrors skchat's webui.py and skcode's daemon.py well-known route.
+        """
+        from .skdashboard_manifest import skdashboard_module_manifest
+
+        return JSONResponse(skdashboard_module_manifest(str(request.base_url)))
+
     async def api_events(_request):
         async def stream():
             q = dk.BUS.subscribe()
@@ -650,6 +662,7 @@ def create_app(home: Path):
     routes = [
         Route("/", index),
         Route("/index.html", index),
+        Route("/.well-known/skworld-module.json", well_known_manifest),
         Route("/board", board_page),
         Route("/api/status", _get_route(_get_agent_status)),
         Route("/api/overview", lambda r: _json(_overview_home(home))),
