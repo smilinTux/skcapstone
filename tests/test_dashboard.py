@@ -523,6 +523,58 @@ class TestStarletteApp:
         assert client.get("/api/nope").status_code == 404
 
 
+class TestSidebarNav:
+    """U1 restyle: the dashboard nav renders as a left sidebar rail.
+
+    The menu was restyled from a horizontal top bar into a vertical left
+    sidebar (matching the shell's left-nav pattern). These checks lock in
+    that (a) the sidebar marker markup is present, (b) every original nav
+    destination still renders, and (c) the shared stylesheet actually
+    positions the rail on the left (fixed, with the rail-width variable).
+    """
+
+    # Every page carries the same section nav; keep the destinations pinned.
+    NAV_LINKS = ("/", "/cockpit", "/cmdb", "/board", "/assistant", "/trust")
+    PAGES = ("/", "/board", "/cockpit", "/cmdb", "/assistant", "/trust")
+
+    def _client(self, agent_home):
+        from starlette.testclient import TestClient
+
+        return TestClient(create_app(agent_home))
+
+    def test_pages_carry_sidebar_marker(self, agent_home):
+        """Each page's nav container is marked as a sidebar rail."""
+        client = self._client(agent_home)
+        for path in self.PAGES:
+            body = client.get(path).text
+            assert 'class="topbar sidebar"' in body, f"{path} missing sidebar marker"
+            assert 'role="navigation"' in body, f"{path} missing nav role"
+
+    def test_all_nav_destinations_present(self, agent_home):
+        """No navigation destination was dropped in the restyle."""
+        client = self._client(agent_home)
+        for path in self.PAGES:
+            body = client.get(path).text
+            for link in self.NAV_LINKS:
+                assert f'href="{link}"' in body, f"{path} lost nav link {link}"
+
+    def test_stylesheet_positions_rail_on_left(self, agent_home):
+        """The shared board.css lays the nav out as a fixed left rail."""
+        css = self._client(agent_home).get("/static/css/board.css").text
+        assert "--rail-w" in css
+        assert "position:fixed" in css
+        # the rail offsets page content by its own width
+        assert "padding-left:var(--rail-w)" in css
+
+    def test_nav_links_have_section_icons(self, agent_home):
+        """Each destination gets an inline-SVG icon mask (icons + labels)."""
+        css = self._client(agent_home).get("/static/css/board.css").text
+        assert "--nav-ic" in css
+        assert 'mask:var(--nav-ic' in css
+        for link in self.NAV_LINKS:
+            assert f'.tab[href="{link}"]' in css, f"no icon for {link}"
+
+
 class TestDoctorReportCache:
     """_get_doctor_report caches so the whole-tree diagnostic scan does not
     run on every /api/doctor poll and block the dashboard's event loop.
