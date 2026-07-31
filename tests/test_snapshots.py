@@ -428,9 +428,17 @@ class TestConsciousnessAPI:
 
         from skcapstone.snapshots import SnapshotStore as _Store
 
+        # Bind the lazily-loaded snapshot types (SoulSnapshot, OOFState,
+        # PersonalityTraits, ConversationMessage, ...) on the skcomms.api
+        # module. Forcing `_SNAPSHOTS_AVAILABLE = True` by hand is NOT enough:
+        # it short-circuits `_load_snapshots()`, leaving `_OOFState` and the
+        # other `as _X` bindings at their None default, so capture_snapshot
+        # would raise `'NoneType' object is not callable`. Calling the loader
+        # binds every type and sets the availability flag itself.
+        assert api_module._load_snapshots() is True
+
         temp_store = _Store(base_dir=tmp_path / "api_snapshots")
         monkeypatch.setattr(api_module, "_snapshot_store", temp_store)
-        monkeypatch.setattr(api_module, "_SNAPSHOTS_AVAILABLE", True)
 
     @pytest.fixture
     def client(self):

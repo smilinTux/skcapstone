@@ -2613,8 +2613,15 @@ async def list_tools() -> list[Tool]:
             name="itil_incident_update",
             description=(
                 "Update an incident: transition status, escalate severity, "
-                "add timeline notes, or resolve. Valid status transitions: "
-                "detected->acknowledged->investigating->resolved->closed."
+                "add timeline notes, or resolve. Valid status transitions "
+                "(per _INCIDENT_TRANSITIONS): "
+                "detected -> {acknowledged, escalated, resolved}; "
+                "acknowledged -> {investigating, escalated, resolved}; "
+                "investigating -> {escalated, resolved}; "
+                "escalated -> {investigating, resolved}; "
+                "resolved -> {closed}; closed is terminal. "
+                "A separate reopen event moves resolved -> investigating "
+                "(fold-only, clears resolved_at/resolution_summary)."
             ),
             inputSchema={
                 "type": "object",
@@ -2747,9 +2754,13 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="itil_change_propose",
             description=(
-                "Propose a change (RFC). Standard changes auto-approve. "
-                "Normal changes require CAB approval. Emergency changes have a "
-                "15-min timeout before auto-approval."
+                "Propose a change (RFC). Standard changes auto-approve at "
+                "fold time. Operator-authored normal changes tagged "
+                "'auto-normal' (not high-risk, with a rollback plan, no "
+                "rejection) also auto-approve. All other normal changes and "
+                "every emergency change follow the CAB path: a human approval "
+                "unblocks, any rejection blocks. Emergency changes have no "
+                "timeout or fast-path auto-approval."
             ),
             inputSchema={
                 "type": "object",

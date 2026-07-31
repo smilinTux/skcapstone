@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 _UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 
 

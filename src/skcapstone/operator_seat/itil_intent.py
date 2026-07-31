@@ -34,6 +34,13 @@ def build_change_record(
         A dict with ``title``, ``description``, ``change_class``, ``risk``,
         ``dry_run``, ``rollback_plan``, ``tags``, ``author``, and
         ``requires_human`` keys.
+
+    Note (drift register D4): ``change_class`` here can be ``major``, which has
+    no matching :class:`skcapstone.itil.ChangeType`. This payload is PURE - the
+    reviewed card that wires the actual create maps ``major`` (and ``normal``
+    without the ``auto-normal`` tag) onto ``ChangeType.NORMAL`` and lets the CAB
+    fold require a ``human`` approval. ``requires_human`` is set here so that
+    boundary can honor the CAB-major convention without re-deriving it.
     """
     name = action.get("name", "unspecified")
     change_class = classification["change_class"]

@@ -77,6 +77,20 @@ class ProblemStatus(str, Enum):
 
 
 class ChangeType(str, Enum):
+    """ITIL change taxonomy for a stored change record.
+
+    NOTE (drift register D4): the operator-seat classifier
+    (`operator_seat/policy.py::classify_change`) uses a four-value taxonomy
+    (standard / normal / major / emergency) for its risk/authority decision.
+    There is deliberately no ``MAJOR`` member here: `major` is an operator-seat
+    risk class, not a persisted change type. At the create boundary a `major`
+    classification maps to ``ChangeType.NORMAL`` WITHOUT the ``auto-normal`` tag,
+    so it falls through `_fold_change` to the CAB derivation and requires a
+    ``human`` approval to unblock. That is the "CAB-major" convention: the AI can
+    never self-authorize a major change. See
+    ITIL_AND_RUNBOOK_OPERATING_MODEL_STANDARD.md section 9 D4.
+    """
+
     STANDARD = "standard"
     NORMAL = "normal"
     EMERGENCY = "emergency"
@@ -110,12 +124,19 @@ class CABDecisionValue(str, Enum):
 # Lifecycle state machines - valid transitions
 # ---------------------------------------------------------------------------
 
+# NOTE (drift register D2): the `resolved -> investigating` reopen edge is
+# deliberately NOT a row here. Reopen is a distinct `reopen` event kind that the
+# fold (`_fold_incident`) owns, because it does more than a status change: it
+# also clears `resolved_at` and `resolution_summary`. Keeping it out of this
+# table means a plain `status` event can never silently reopen an incident
+# without that side effect. The sk-standards ITIL diagram draws it as a
+# fold-only edge; see ITIL_AND_RUNBOOK_OPERATING_MODEL_STANDARD.md section 9 D2.
 _INCIDENT_TRANSITIONS: dict[str, set[str]] = {
     "detected": {"acknowledged", "escalated", "resolved"},
     "acknowledged": {"investigating", "escalated", "resolved"},
     "investigating": {"escalated", "resolved"},
     "escalated": {"investigating", "resolved"},
-    "resolved": {"closed"},
+    "resolved": {"closed"},  # reopen (resolved->investigating) is fold-only, see note above
     "closed": set(),
 }
 

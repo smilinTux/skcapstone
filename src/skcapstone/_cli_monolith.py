@@ -932,7 +932,7 @@ def card_show(filepath: str):
         agent_card = AgentCard.load(filepath)
     except FileNotFoundError:
         console.print(f"[red]Card not found: {filepath}[/]")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     verified = AgentCard.verify_signature(agent_card)
     sig_str = (
@@ -971,7 +971,7 @@ def card_verify(filepath: str):
         agent_card = AgentCard.load(filepath)
     except FileNotFoundError:
         console.print(f"[red]Card not found: {filepath}[/]")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     if not agent_card.signature:
         console.print("[yellow]Card is not signed.[/]")
@@ -1018,7 +1018,7 @@ def card_export(filepath: str, compact: bool):
         agent_card = AgentCard.load(filepath)
     except FileNotFoundError:
         console.print(f"[red]Card not found: {filepath}[/]")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     if compact:
         click.echo(json.dumps(agent_card.to_compact(), indent=2))
@@ -4224,7 +4224,7 @@ def backup_create(home: str, output: str):  # noqa: F811
         )
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/]")
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
 
 @backup.command("restore")
@@ -4273,7 +4273,7 @@ def backup_restore(archive: str, home: str, no_verify: bool):  # noqa: F811
                 console.print(f"  [red]{err}[/]")
     except (FileNotFoundError, ValueError) as exc:
         console.print(f"[red]{exc}[/]")
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
 
 @backup.command("list")

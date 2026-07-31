@@ -129,7 +129,12 @@ def render_markdown(result: dict[str, Any], now_iso: str) -> str:
     stale = brief.get("stale") or []
     outcomes = result.get("outcomes") or []
 
-    lines = [f"# Atlas operator brief", "", f"tick `{now_iso}` | route `{result.get('route') or '-'}`", ""]
+    lines = [
+        "# Atlas operator brief",
+        "",
+        f"tick `{now_iso}` | route `{result.get('route') or '-'}`",
+        "",
+    ]
     if frozen:
         lines.append("**FROZEN** - Atlas is standing down.")
     elif brief.get("quiet"):

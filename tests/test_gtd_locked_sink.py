@@ -31,6 +31,14 @@ import skcapstone.mcp_tools._helpers as _helpers
 def _isolate_gtd_dir(tmp_path: Path, monkeypatch) -> None:
     """Redirect the store into tmp_path so tests never touch ~/.skcapstone."""
     monkeypatch.setattr(_helpers, "SHARED_ROOT", str(tmp_path))
+    # Every test here operates on a genuinely fresh, empty tmp store. On a dev
+    # box that already carries the skos node-initialized marker
+    # (~/.local/state/skos/), skos.gtd_ingest.capture's cold-start guard would
+    # otherwise refuse to write into that empty store and raise
+    # ColdStartGuardError. A clean CI runner has no marker, so this only bites
+    # locally; set the documented escape hatch so the sink-backed tests are
+    # hermetic regardless of host state. This does not relax any assertion.
+    monkeypatch.setenv("SKOS_ALLOW_EMPTY_STORE", "1")
 
 
 # ── 1. atomicity ──────────────────────────────────────────────────────────
