@@ -118,12 +118,20 @@ class ModelRouterConfig(BaseModel):
             the four primary tag-rule groups.
         """
         return cls(
+            # 2026-08-01: default every tier to the sovereign SKGateway role
+            # ``sk-default`` (routes to ornith-big / 35B, with 3-box failover),
+            # then fall back to local ``gemma3:1b`` only if SKGateway is down.
+            # The previous cloud tiers (claude-sonnet/opus, grok-3, kimi) all
+            # needed provider API keys the daemon does not carry, so every call
+            # cascaded to the tiny gemma3:1b. sk-default reaches SKGateway via the
+            # _local_callback OpenAI path (SKC_LOCAL_OPENAI_URL) because "sk-default"
+            # is in _OLLAMA_MODEL_PATTERNS.
             tier_models={
-                ModelTier.FAST.value: ["qwen3.5:4b", "claude-haiku-4-5", "gemma3:1b"],
-                ModelTier.CODE.value: ["claude-sonnet-4-6", "qwen3.5:4b", "grok-3"],
-                ModelTier.REASON.value: ["claude-opus-4-8", "qwen3.5:4b", "grok-3"],
-                ModelTier.NUANCE.value: ["claude-sonnet-4-6", "kimi-k2.5", "moonshot-v1-128k"],
-                ModelTier.LOCAL.value: ["qwen3.5:4b", "gemma3:1b"],
+                ModelTier.FAST.value: ["sk-default", "gemma3:1b"],
+                ModelTier.CODE.value: ["sk-default", "gemma3:1b"],
+                ModelTier.REASON.value: ["sk-default", "gemma3:1b"],
+                ModelTier.NUANCE.value: ["sk-default", "gemma3:1b"],
+                ModelTier.LOCAL.value: ["sk-default", "gemma3:1b"],
             },
             tag_rules=[
                 TagRule(

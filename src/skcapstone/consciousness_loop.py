@@ -156,6 +156,9 @@ _OLLAMA_MODEL_PATTERNS = (
     "qwen",
     "codestral",
     "gemma",
+    # SKGateway roles resolve through the same OpenAI-compatible _local_callback
+    # (SKC_LOCAL_OPENAI_URL -> :18780), so sk-default reaches ornith-big.
+    "sk-default",
 )
 
 
