@@ -83,12 +83,8 @@ def _default_probe() -> dict:
 
     # Unreachable (None) fails safe to ready. A returned body with an "error" key
     # is a real failure and reads as down.
-    dashboard_ready = status is None or not (
-        isinstance(status, dict) and status.get("error")
-    )
-    board_readable = board is None or not (
-        isinstance(board, dict) and board.get("error")
-    )
+    dashboard_ready = status is None or not (isinstance(status, dict) and status.get("error"))
+    board_readable = board is None or not (isinstance(board, dict) and board.get("error"))
     return {"dashboard_ready": dashboard_ready, "board_readable": board_readable}
 
 
@@ -123,9 +119,7 @@ def skdashboard_observe(probe=None) -> dict:
     }
 
 
-def skdashboard_act(
-    paths, proposal: dict, classification: dict, *, runner=None
-) -> dict:
+def skdashboard_act(paths, proposal: dict, classification: dict, *, runner=None) -> dict:
     """Apply a reversible standard skdashboard action via the tested systemd path.
 
     Maps restart-dashboard onto `actuator.honor` (the same `systemctl --user

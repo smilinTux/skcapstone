@@ -86,9 +86,7 @@ OPERATOR_KEDB_SEEDS: list[dict] = [
             "not answer on this host",
         ],
         "root_cause": "the skcode-hostd session-plane host process is down or unresponsive.",
-        "workaround": (
-            "systemctl --user restart skcode-hostd.service and verify HostdReady."
-        ),
+        "workaround": ("systemctl --user restart skcode-hostd.service and verify HostdReady."),
         "tags": ["operator", "skcode", "hostd"],
     },
     {

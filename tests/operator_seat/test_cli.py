@@ -87,9 +87,7 @@ def test_run_no_publish_skips_artifact(tmp_path, monkeypatch):
     _enroll(tmp_path, monkeypatch)
     _stub_run_once(monkeypatch)
     pub = tmp_path / "atlas-brief-skip"
-    out = CliRunner().invoke(
-        cli.operator, ["run", "--no-publish", "--publish-dir", str(pub)]
-    )
+    out = CliRunner().invoke(cli.operator, ["run", "--no-publish", "--publish-dir", str(pub)])
     assert out.exit_code == 0, out.output
     assert not pub.exists()
 

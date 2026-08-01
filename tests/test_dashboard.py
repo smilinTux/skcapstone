@@ -570,7 +570,7 @@ class TestSidebarNav:
         """Each destination gets an inline-SVG icon mask (icons + labels)."""
         css = self._client(agent_home).get("/static/css/board.css").text
         assert "--nav-ic" in css
-        assert 'mask:var(--nav-ic' in css
+        assert "mask:var(--nav-ic" in css
         for link in self.NAV_LINKS:
             assert f'.tab[href="{link}"]' in css, f"no icon for {link}"
 

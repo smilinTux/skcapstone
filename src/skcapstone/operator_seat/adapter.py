@@ -146,8 +146,6 @@ def _validate_observed_condition(index: int, condition: Any) -> list[str]:
     if "status" not in condition:
         violations.append(f"conditions[{index}] missing key 'status'")
     elif condition["status"] not in OBSERVE_STATUSES:
-        violations.append(
-            f"conditions[{index}].status must be one of {sorted(OBSERVE_STATUSES)}"
-        )
+        violations.append(f"conditions[{index}].status must be one of {sorted(OBSERVE_STATUSES)}")
 
     return violations

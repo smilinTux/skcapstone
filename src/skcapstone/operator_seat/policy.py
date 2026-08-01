@@ -48,9 +48,7 @@ def classify_change(action: dict[str, Any]) -> dict[str, Any]:
     # whose blast is low but which cannot be undone). Either forces escalation so
     # it never reaches the auto/act path.
     blast_radius = action.get("blast_radius")
-    irreversible = (
-        blast_radius in IRREVERSIBLE_BLAST_RADII or action.get("reversible") is False
-    )
+    irreversible = blast_radius in IRREVERSIBLE_BLAST_RADII or action.get("reversible") is False
     if irreversible:
         risk = "high"
 
@@ -64,8 +62,6 @@ def classify_change(action: dict[str, Any]) -> dict[str, Any]:
         return {"change_class": "standard", "risk": risk, "auto_approvable": True}
 
     auto_approvable = (
-        risk != "high"
-        and bool(action.get("rollback_plan"))
-        and action.get("author") == "operator"
+        risk != "high" and bool(action.get("rollback_plan")) and action.get("author") == "operator"
     )
     return {"change_class": "normal", "risk": risk, "auto_approvable": auto_approvable}

@@ -52,9 +52,7 @@ def test_normalize_rejects_missing_name() -> None:
 
 def test_normalize_rejects_bad_action_list() -> None:
     with pytest.raises(operatorapp.OperatorappSpecError):
-        operatorapp.normalize_operatorapp_spec(
-            {"name": "skchat", "proposedStandardActions": [""]}
-        )
+        operatorapp.normalize_operatorapp_spec({"name": "skchat", "proposedStandardActions": [""]})
 
 
 # --- conditions --------------------------------------------------------------

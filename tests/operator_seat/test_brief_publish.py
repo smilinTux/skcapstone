@@ -11,7 +11,9 @@ def _firing_result():
     return {
         "frozen": False,
         "brief": {
-            "firing": [{"app": "skchat", "type": "OutboxBounded", "status": "False", "object": "outbox"}],
+            "firing": [
+                {"app": "skchat", "type": "OutboxBounded", "status": "False", "object": "outbox"}
+            ],
             "stale": [],
             "quiet": False,
             "counts": {"firing": 1, "stale": 0},

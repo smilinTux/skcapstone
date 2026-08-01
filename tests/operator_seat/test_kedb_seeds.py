@@ -109,6 +109,4 @@ def test_seed_ids_have_no_dangling_extras():
 
 
 def test_seeded_ids_constant_matches_seed_table():
-    assert kedb_seeds.SEEDED_IDS == frozenset(
-        s["id"] for s in kedb_seeds.OPERATOR_KEDB_SEEDS
-    )
+    assert kedb_seeds.SEEDED_IDS == frozenset(s["id"] for s in kedb_seeds.OPERATOR_KEDB_SEEDS)

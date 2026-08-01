@@ -43,9 +43,7 @@ def operatorapp_rows(paths: FleetPaths, now_iso: str) -> list[OperatorappRow]:
             spec = normalize_operatorapp_spec(payload.get("spec", {}))
         except OperatorappSpecError:
             continue
-        conds = {
-            c["type"]: c["status"] for c in operatorapp_conditions(spec, {}, now_iso)
-        }
+        conds = {c["type"]: c["status"] for c in operatorapp_conditions(spec, {}, now_iso)}
         rows.append(
             OperatorappRow(
                 name=name,

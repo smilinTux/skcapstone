@@ -27,9 +27,7 @@ def _rows(entries: list[dict[str, Any]]) -> str:
         ctype = html.escape(str(e.get("type", "")))
         obj = html.escape(str(e.get("object", "")))
         status = html.escape(str(e.get("status", "")))
-        out.append(
-            f"<tr><td>{app}</td><td>{ctype}</td><td>{obj}</td><td>{status}</td></tr>"
-        )
+        out.append(f"<tr><td>{app}</td><td>{ctype}</td><td>{obj}</td><td>{status}</td></tr>")
     return "\n".join(out)
 
 
@@ -57,9 +55,7 @@ def render_html(result: dict[str, Any], now_iso: str) -> str:
     elif brief.get("quiet"):
         state = '<span class="ok">ALL QUIET</span> nothing firing.'
     else:
-        state = (
-            f'<span class="alert">{len(firing)} firing</span>, {len(stale)} stale.'
-        )
+        state = f'<span class="alert">{len(firing)} firing</span>, {len(stale)} stale.'
 
     firing_table = (
         f"<table><thead><tr><th>app</th><th>condition</th><th>object</th>"

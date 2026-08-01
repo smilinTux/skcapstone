@@ -134,7 +134,13 @@ def test_act_archive_stale_session_uses_cli_runner(tmp_path):
         cli_runner=lambda c: calls.append(c) or _ok_runner(c),
     )
     assert res["performed"] is True
-    assert calls[0][:5] == ["skcode-hostd", "operator", "act", "archive-stale-session", "--session"]
+    assert calls[0][:5] == [
+        "skcode-hostd",
+        "operator",
+        "act",
+        "archive-stale-session",
+        "--session",
+    ]
     assert "sess-42" in calls[0]
 
 

@@ -101,9 +101,7 @@ _HUMAN_ONLY_SPEC_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _guard_human_only_fields(
-    kind: str, spec: dict, existing: dict, writer: "Writer"
-) -> None:
+def _guard_human_only_fields(kind: str, spec: dict, existing: dict, writer: "Writer") -> None:
     """Reject an AI-seat write that would change a human-only spec field."""
     if not writer.agent_seat:
         return

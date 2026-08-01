@@ -23,9 +23,7 @@ def _modelserver(paths, operator, name="vllm-0", **spec_kw) -> dict:
     return store.write_spec(paths, "modelserver", name, spec, writer=operator)
 
 
-def test_modelserver_rows_serving_true_when_observed_matches(
-    paths, operator, noded41
-) -> None:
+def test_modelserver_rows_serving_true_when_observed_matches(paths, operator, noded41) -> None:
     _modelserver(paths, operator, "vllm-0")
     store.write_status(
         paths,
@@ -45,9 +43,7 @@ def test_modelserver_rows_serving_true_when_observed_matches(
     assert row.vram == 24
 
 
-def test_modelserver_rows_serving_false_when_ports_not_open(
-    paths, operator, noded41
-) -> None:
+def test_modelserver_rows_serving_false_when_ports_not_open(paths, operator, noded41) -> None:
     _modelserver(paths, operator, "vllm-0")
     store.write_status(
         paths,
@@ -64,9 +60,7 @@ def test_modelserver_rows_serving_false_when_ports_not_open(
     assert row.vram == 24
 
 
-def test_modelserver_rows_missing_observed_defaults_to_not_serving(
-    paths, operator
-) -> None:
+def test_modelserver_rows_missing_observed_defaults_to_not_serving(paths, operator) -> None:
     _modelserver(paths, operator, "vllm-0")
     row = modelserver_controller.modelserver_rows(paths, NOW)[0]
     assert row.serving is False

@@ -12,8 +12,7 @@ def test_standard_change_payload():
     assert result == {
         "title": "Operator change: restart_service",
         "description": (
-            "Operator-initiated standard change 'restart_service' "
-            "(risk: low, dry_run: true)."
+            "Operator-initiated standard change 'restart_service' " "(risk: low, dry_run: true)."
         ),
         "change_class": "standard",
         "risk": "low",

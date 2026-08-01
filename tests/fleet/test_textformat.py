@@ -47,22 +47,22 @@ def test_humanize_bytes_gb() -> None:
 
 def test_humanize_bytes_fractional_gb() -> None:
     """1.5 GB renders as '1.5GB'."""
-    assert humanize_bytes(int(1.5 * (1024 ** 3))) == "1.5GB"
+    assert humanize_bytes(int(1.5 * (1024**3))) == "1.5GB"
 
 
 def test_humanize_bytes_tb() -> None:
     """1 TB renders as '1.0TB'."""
-    assert humanize_bytes(1024 ** 4) == "1.0TB"
+    assert humanize_bytes(1024**4) == "1.0TB"
 
 
 def test_humanize_bytes_pb() -> None:
     """1 PB renders as '1.0PB'."""
-    assert humanize_bytes(1024 ** 5) == "1.0PB"
+    assert humanize_bytes(1024**5) == "1.0PB"
 
 
 def test_humanize_bytes_larger_than_pb() -> None:
     """Values above PB still render correctly using PB unit."""
-    assert humanize_bytes(2 * 1024 ** 5) == "2.0PB"
+    assert humanize_bytes(2 * 1024**5) == "2.0PB"
 
 
 def test_humanize_bytes_no_io() -> None:

@@ -53,9 +53,7 @@ _CASES = [
 )
 def test_manifest_operator_block_matches_adapter(app, module_name, builder_attr, adapter):
     """The manifest operator block must exactly match the adapter it mirrors."""
-    module = pytest.importorskip(
-        module_name, reason=f"{module_name} (sibling repo) not installed"
-    )
+    module = pytest.importorskip(module_name, reason=f"{module_name} (sibling repo) not installed")
     build = getattr(module, builder_attr)
     operator = build("http://x/")["operator"]
 
