@@ -474,6 +474,30 @@ class Board:
 
         return self._write_task_raw(task_id, _mutate)
 
+    def mark_decomposed(
+        self, task_id: str, children: list[str], run_id: str | None = None
+    ) -> Path:
+        """Park a task that autopilot split into child subtasks.
+
+        Symmetric with close_task_obsolete: task files carry no status field, so a
+        decomposed parent is recorded as a machine-readable
+        meta.autopilot.decomposed block (the child ids) plus a human-readable
+        notes[] line. phase0_assess skips any card carrying this marker, so the
+        parent drops out of the build pool while its children carry the work.
+        Reversible and auditable.
+        """
+
+        def _mutate(d: dict) -> None:
+            ts = _now_iso()
+            ap = d.setdefault("meta", {}).setdefault("autopilot", {})
+            ap["decomposed"] = {"children": list(children), "run_id": run_id, "ts": ts}
+            notes = d.setdefault("notes", [])
+            if isinstance(notes, list):
+                notes.append(f"[decomposed {ts}] into {len(children)} subtasks: "
+                             f"{', '.join(children)}")
+
+        return self._write_task_raw(task_id, _mutate)
+
     def unblocked_task_ids(self) -> set[str]:
         """Task ids whose dependencies are all completed (Phase-0 compute).
 

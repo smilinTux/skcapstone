@@ -448,6 +448,28 @@ class TestUpdateTask:
         assert t.acceptance_criteria == ["only-ac"]
 
 
+class TestMarkDecomposed:
+    """Tests for Board.mark_decomposed (parent parked into N child subtasks)."""
+
+    def test_marks_decomposed_meta_and_note(self, board: Board):
+        board.create_task(Task(id="dd11ee22", title="Vague epic"))
+        board.mark_decomposed("dd11ee22", ["c1", "c2", "c3"], run_id="run-7")
+        t = {x.id: x for x in board.load_tasks()}["dd11ee22"]
+        dec = t.meta["autopilot"]["decomposed"]
+        assert dec["children"] == ["c1", "c2", "c3"]
+        assert dec["run_id"] == "run-7"
+        assert "ts" in dec
+        assert any("decomposed" in n and "c1" in n for n in t.notes)
+
+    def test_preserves_existing_scores(self, board: Board):
+        board.create_task(Task(id="dd33ff44", title="Had a score"))
+        board.score_task("dd33ff44", round=1, score=3)
+        board.mark_decomposed("dd33ff44", ["c9"])
+        ap = {x.id: x for x in board.load_tasks()}["dd33ff44"].meta["autopilot"]
+        assert len(ap["scores"]) == 1
+        assert ap["decomposed"]["children"] == ["c9"]
+
+
 class TestCloseTaskObsolete:
     """Tests for Board.close_task_obsolete."""
 
