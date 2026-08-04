@@ -404,30 +404,39 @@ class TestRouteDecisionContent:
 class TestModelNameResolution:
     """Verify the correct concrete model is selected per tier."""
 
+    # The default config unifies every tier on ``sk-default`` - the SKGateway
+    # auto-router role (SKC_LOCAL_OPENAI_URL -> :18780) that resolves to
+    # ornith-big/35B with 3-box failover, then cascades to gemma3:1b. So the
+    # preferred model each tag routes to is ``sk-default`` regardless of tier.
     def test_default_fast_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="quick task", tags=["simple"])
         decision = router.route(signal)
-        assert decision.model_name == "qwen3.5:4b"
+        assert decision.tier == ModelTier.FAST
+        assert decision.model_name == "sk-default"
 
     def test_default_code_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="implement feature", tags=["code"])
         decision = router.route(signal)
-        assert decision.model_name == "claude-sonnet-4-6"
+        assert decision.tier == ModelTier.CODE
+        assert decision.model_name == "sk-default"
 
     def test_default_reason_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="system design", tags=["architecture"])
         decision = router.route(signal)
-        assert decision.model_name == "claude-opus-4-8"
+        assert decision.tier == ModelTier.REASON
+        assert decision.model_name == "sk-default"
 
     def test_default_nuance_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="write copy", tags=["marketing"])
         decision = router.route(signal)
-        assert decision.model_name == "claude-sonnet-4-6"
+        assert decision.tier == ModelTier.NUANCE
+        assert decision.model_name == "sk-default"
 
     def test_default_local_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="private task", privacy_sensitive=True)
         decision = router.route(signal)
-        assert decision.model_name == "qwen3.5:4b"
+        assert decision.tier == ModelTier.LOCAL
+        assert decision.model_name == "sk-default"
 
     def test_unknown_tier_sentinel(self) -> None:
         """Missing tier config produces an unknown-{tier} sentinel."""
@@ -474,6 +483,13 @@ class TestDefaultModelsAreReal:
     # MUST be in this set or the request will 404.
     PULLED_OLLAMA_MODELS = {"qwen3.5:4b", "gemma3:1b", "gemma3:270m"}
 
+    # SKGateway role aliases. ``_backend_from_model`` buckets these under
+    # "ollama" because they resolve through the same OpenAI-compatible
+    # ``_local_callback`` (SKC_LOCAL_OPENAI_URL -> :18780), but they are served
+    # by SKGateway (auto-router -> ornith), NOT a native Ollama pull, so they
+    # legitimately are not in PULLED_OLLAMA_MODELS and cannot 404 that way.
+    GATEWAY_ROLE_ALIASES = {"sk-default"}
+
     def _iter_default_models(self):
         from skcapstone.blueprints.schema import ModelTier
         from skcapstone.model_router import ModelRouterConfig
@@ -504,7 +520,7 @@ class TestDefaultModelsAreReal:
 
         for tier, model_name in self._iter_default_models():
             backend = _backend_from_model(model_name, tier)
-            if backend == "ollama":
+            if backend == "ollama" and model_name not in self.GATEWAY_ROLE_ALIASES:
                 assert model_name in self.PULLED_OLLAMA_MODELS, (
                     f"{tier.value} default {model_name!r} routes to Ollama but "
                     f"is not pulled on the fleet {self.PULLED_OLLAMA_MODELS}; "
@@ -528,7 +544,7 @@ class TestDefaultModelsAreReal:
             preferred = cfg.tier_models[tier.value][0]
             backend = _backend_from_model(preferred, tier)
             assert backend != "unknown"
-            if backend == "ollama":
+            if backend == "ollama" and preferred not in self.GATEWAY_ROLE_ALIASES:
                 assert preferred in self.PULLED_OLLAMA_MODELS
 
 

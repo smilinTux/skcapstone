@@ -1,13 +1,18 @@
 """Guard rails for CI/publish workflow gating.
 
-Regression tests for coord card 62c567cb: releases must never ship on red
-tests. These tests parse the GitHub Actions workflow files and assert the
-gating invariants hold:
+Release-workflow invariants, parsed from the GitHub Actions workflow files.
 
-* publish.yml: the test job is not masked with continue-on-error, and both
-  publish jobs depend on the test job WITHOUT `if: always()` (so they only
-  run when tests succeed).
-* publish.yml: the tag-vs-pyproject version verification step is preserved.
+publish.yml uses OIDC Trusted Publishing, decoupled from the test gate
+(PR #83 / fe3ed56, by Chef): the token-based, test-gated PyPI job was
+intentionally replaced with the canonical OIDC flow so a red/flaky unrelated
+test can no longer block a tagged release. The invariants now are:
+
+* publish.yml: a `build` job runs `twine check` (artifact integrity gate),
+  and `pypi-publish` depends on `build` and publishes via OIDC (the `pypi`
+  environment with `id-token: write`, no PyPI token).
+* publish.yml: has NO `test` job - PR-time tests live in ci.yml + pytest.yml,
+  not the release path.
+* publish.yml: the npm job keeps the tag -> package.json version sync.
 * ci.yml: no `|| true` masking on any test or lint step; the masked test
   job is retired in favor of pytest.yml as the honest required check.
 * pytest.yml: exists and runs pytest without any `|| true` masking.
@@ -38,41 +43,54 @@ def ci() -> dict:
 
 
 class TestPublishGating:
-    def test_test_job_exists(self, publish):
-        assert "test" in publish["jobs"], "publish.yml must have a test job"
+    """publish.yml: OIDC Trusted Publishing, gated on `build`, not on tests.
 
-    def test_test_job_not_masked(self, publish):
-        job = publish["jobs"]["test"]
-        assert not job.get(
-            "continue-on-error"
-        ), "publish.yml test job must not set continue-on-error at job level"
-        for step in job.get("steps", []):
-            assert not step.get(
-                "continue-on-error"
-            ), f"publish.yml test step masked with continue-on-error: {step}"
-            run = step.get("run") or ""
-            assert "|| true" not in run, f"publish.yml test step masked with '|| true': {step}"
+    PR #83 (fe3ed56) intentionally decoupled the release path from the full
+    test suite. These invariants pin the replacement design so it cannot
+    silently regress to a token-based or red-test-blocked publish.
+    """
 
-    @pytest.mark.parametrize("job_name", ["publish-pypi", "publish-npm"])
-    def test_publish_jobs_gated_on_test_success(self, publish, job_name):
-        job = publish["jobs"][job_name]
+    def test_build_job_runs_twine_check(self, publish):
+        assert "build" in publish["jobs"], "publish.yml must have a build job"
+        runs = "\n".join(s.get("run", "") or "" for s in publish["jobs"]["build"].get("steps", []))
+        assert (
+            "twine check" in runs
+        ), "build job must run `twine check` as the artifact-integrity gate"
+
+    def test_pypi_publish_gated_on_build(self, publish):
+        job = publish["jobs"]["pypi-publish"]
         needs = job.get("needs")
         needs = [needs] if isinstance(needs, str) else (needs or [])
-        assert "test" in needs, f"{job_name} must depend on the test job"
-        cond = str(job.get("if", ""))
-        assert (
-            "always()" not in cond
-        ), f"{job_name} must not use if: always() (it would publish on red tests)"
-        assert (
-            "failure()" not in cond and "cancelled()" not in cond
-        ), f"{job_name} condition must not run on failed/cancelled tests: {cond}"
+        assert "build" in needs, "pypi-publish must depend on the build job"
 
-    def test_version_verification_preserved(self, publish):
-        steps = publish["jobs"]["publish-pypi"]["steps"]
+    def test_pypi_publish_uses_oidc_no_token(self, publish):
+        job = publish["jobs"]["pypi-publish"]
+        assert job.get("environment") == "pypi", "pypi-publish must use the `pypi` environment"
+        perms = job.get("permissions") or {}
+        assert perms.get("id-token") == "write", "pypi-publish must request id-token: write (OIDC)"
+        steps_blob = yaml.safe_dump(job.get("steps", []))
+        assert (
+            "TWINE_PASSWORD" not in steps_blob and "PYPI_TOKEN" not in steps_blob
+        ), "Trusted Publishing must not use a PyPI token"
+        uses = " ".join(s.get("uses", "") or "" for s in job.get("steps", []))
+        assert (
+            "pypa/gh-action-pypi-publish" in uses
+        ), "pypi-publish must publish via pypa/gh-action-pypi-publish (OIDC)"
+
+    def test_release_path_not_gated_on_unrelated_tests(self, publish):
+        # PR #83 intent: a red/flaky unrelated test must never block a release.
+        # PR-time tests live in ci.yml + pytest.yml, not the release path.
+        assert "test" not in publish["jobs"], (
+            "publish.yml intentionally has NO test job (PR #83); the release path "
+            "is gated on `build`/`twine check`, not the full suite"
+        )
+
+    def test_npm_version_sync_preserved(self, publish):
+        steps = publish["jobs"]["publish-npm"]["steps"]
         runs = "\n".join(s.get("run", "") or "" for s in steps)
         assert (
-            "pyproject.toml" in runs and "GITHUB_REF#refs/tags/v" in runs
-        ), "publish-pypi must keep the tag-vs-pyproject version verification"
+            "GITHUB_REF#refs/tags/v" in runs
+        ), "publish-npm must keep the tag -> package.json version sync"
 
 
 class TestCiHonesty:
