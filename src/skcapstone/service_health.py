@@ -3,6 +3,9 @@
 Pings all known services in the sovereign stack and returns structured
 status reports.  Each check uses urllib.request with a 3-second timeout
 so the full sweep completes in bounded time even when services are down.
+A probe that *times out* is retried once (see RETRY_ON_TIMEOUT) before being
+reported down, so a warm-idle service's first-hit cold start does not flap it
+to "down" and file a false incident; non-timeout failures are not retried.
 
 Usage (library):
     from skcapstone.service_health import check_all_services
@@ -26,6 +29,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -34,6 +38,15 @@ logger = logging.getLogger("skcapstone.service_health")
 
 # Default timeout per service check (seconds).
 CHECK_TIMEOUT = 3
+
+# Number of *extra* attempts made when a probe times out (1 => two tries total).
+# A single timed-out probe is not proof a service is down: a warm-idle service
+# can cold-start past CHECK_TIMEOUT on the first hit and answer in milliseconds on
+# the next. Retrying only the timeout class kills that transient before it flaps a
+# healthy service to "down" and files a false ITIL incident (webui-health opus
+# cold-start false-down fired on every 5-min sweep for months). Non-timeout
+# failures (refused/http-error/unreachable) are not retried - those are real.
+RETRY_ON_TIMEOUT = 1
 
 # Hostname tag used to attribute one-time state-transition notes (e.g. a
 # service recovering) to the reporting node. Recurring "still down" notes are
@@ -147,6 +160,41 @@ def _load_syncthing_config() -> tuple[str | None, str | None]:
 # ---------------------------------------------------------------------------
 
 
+def _retry_on_timeout(probe: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run *probe*, retrying up to :data:`RETRY_ON_TIMEOUT` times on a timeout.
+
+    Only the ``timeout`` failure class is retried - a connection refused, HTTP 5xx,
+    or unreachable host is a real, immediate signal and is returned unchanged. When
+    a retry recovers the service the returned dict carries ``retried: True`` so the
+    log trail shows the first attempt was a transient timeout, not a clean pass.
+
+    Args:
+        probe: Zero-arg callable returning a probe result dict (status/error/...).
+
+    Returns:
+        The final probe result dict.
+    """
+    result = probe()
+    attempts = 1
+    while (
+        result.get("status") == "down"
+        and _failure_class(result.get("error")) == "timeout"
+        and attempts <= RETRY_ON_TIMEOUT
+    ):
+        logger.debug(
+            "Probe %s timed out (attempt %d/%d); retrying",
+            result.get("name"),
+            attempts,
+            RETRY_ON_TIMEOUT + 1,
+        )
+        result = probe()
+        attempts += 1
+    if attempts > 1 and result.get("status") == "up":
+        result["retried"] = True
+        logger.info("Probe %s recovered on retry after a timeout", result.get("name"))
+    return result
+
+
 def _http_check(
     name: str,
     url: str,
@@ -154,7 +202,25 @@ def _http_check(
     headers: dict[str, str] | None = None,
     version_key: str | None = None,
 ) -> dict[str, Any]:
-    """Perform an HTTP GET health check against *url*.
+    """Perform an HTTP GET health check against *url*, retrying once on timeout.
+
+    Thin wrapper over :func:`_http_check_once` that applies
+    :func:`_retry_on_timeout` so a single cold-start timeout does not flap a
+    healthy service to "down". See :func:`_http_check_once` for the probe itself.
+    """
+    return _retry_on_timeout(
+        lambda: _http_check_once(name, url, headers=headers, version_key=version_key)
+    )
+
+
+def _http_check_once(
+    name: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    version_key: str | None = None,
+) -> dict[str, Any]:
+    """Perform a single HTTP GET health check against *url*.
 
     Args:
         name: Human-readable service name.
@@ -205,7 +271,15 @@ def _http_check(
 
 
 def _tcp_check(name: str, host: str, port: int) -> dict[str, Any]:
-    """Perform a raw TCP connect check.
+    """Perform a raw TCP connect check, retrying once on timeout.
+
+    Thin wrapper over :func:`_tcp_check_once` (see :func:`_retry_on_timeout`).
+    """
+    return _retry_on_timeout(lambda: _tcp_check_once(name, host, port))
+
+
+def _tcp_check_once(name: str, host: str, port: int) -> dict[str, Any]:
+    """Perform a single raw TCP connect check.
 
     Args:
         name: Human-readable service name.
