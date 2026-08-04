@@ -654,9 +654,7 @@ def _load_index(home: Path) -> dict:
         normalized: dict = {}
         for item in data:
             if isinstance(item, dict) and item.get("memory_id"):
-                normalized[item["memory_id"]] = {
-                    k: v for k, v in item.items() if k != "memory_id"
-                }
+                normalized[item["memory_id"]] = {k: v for k, v in item.items() if k != "memory_id"}
         return normalized
     return {}
 

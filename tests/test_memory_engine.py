@@ -424,7 +424,9 @@ class TestIndexShapeTolerance:
         )
 
         # Must not raise, and the new entry must be indexed.
-        entry = store(home=agent_home, content="[Dream insight] coherence has mass", tags=["dream"])
+        entry = store(
+            home=agent_home, content="[Dream insight] coherence has mass", tags=["dream"]
+        )
 
         index = _load_index(agent_home)
         assert isinstance(index, dict), "index normalizes to a dict"

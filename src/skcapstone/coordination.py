@@ -493,8 +493,9 @@ class Board:
             ap["decomposed"] = {"children": list(children), "run_id": run_id, "ts": ts}
             notes = d.setdefault("notes", [])
             if isinstance(notes, list):
-                notes.append(f"[decomposed {ts}] into {len(children)} subtasks: "
-                             f"{', '.join(children)}")
+                notes.append(
+                    f"[decomposed {ts}] into {len(children)} subtasks: " f"{', '.join(children)}"
+                )
 
         return self._write_task_raw(task_id, _mutate)
 
