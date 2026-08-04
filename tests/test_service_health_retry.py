@@ -43,9 +43,7 @@ def test_retry_recovers_service_that_times_out_once():
 
 def test_persistent_timeout_stays_down_and_stops_retrying():
     """A service that times out on every attempt is reported down, bounded retries."""
-    probe, calls = _make_flaky(
-        [{"name": "svc", "status": "down", "error": "timed out"}]
-    )
+    probe, calls = _make_flaky([{"name": "svc", "status": "down", "error": "timed out"}])
     result = service_health._retry_on_timeout(probe)
     assert result["status"] == "down"
     assert "retried" not in result
@@ -80,9 +78,7 @@ def test_http_check_wrapper_retries_on_timeout(monkeypatch):
             {"name": "web", "status": "up", "latency_ms": 0.9, "error": None},
         ]
     )
-    monkeypatch.setattr(
-        service_health, "_http_check_once", lambda *a, **k: dict(next(seq))
-    )
+    monkeypatch.setattr(service_health, "_http_check_once", lambda *a, **k: dict(next(seq)))
     result = service_health._http_check("web", "http://localhost:9/health")
     assert result["status"] == "up"
     assert result["retried"] is True
@@ -96,9 +92,7 @@ def test_tcp_check_wrapper_retries_on_timeout(monkeypatch):
             {"name": "graph", "status": "up", "latency_ms": 1.2, "error": None},
         ]
     )
-    monkeypatch.setattr(
-        service_health, "_tcp_check_once", lambda *a, **k: dict(next(seq))
-    )
+    monkeypatch.setattr(service_health, "_tcp_check_once", lambda *a, **k: dict(next(seq)))
     result = service_health._tcp_check("graph", "localhost", 6379)
     assert result["status"] == "up"
     assert result["retried"] is True
