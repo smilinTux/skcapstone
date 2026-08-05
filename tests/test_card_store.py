@@ -573,3 +573,92 @@ def test_parity_still_reads_legacy_under_default_on(tmp_path, monkeypatch):
     monkeypatch.delenv("SKCOORD_CARD_STORE", raising=False)  # default-ON
     par = parity_check(tmp_path)
     assert "pd2" in par["missing"], par
+
+
+# --- Phase 4e-retire safety net: store -> legacy exporter -------------------
+
+
+def test_export_to_legacy_round_trips_status(tmp_path):
+    """A store card of each status reconstructs the same legacy status+owner."""
+    from skcapstone.card_store import _forced_legacy_read, export_to_legacy
+    from skcapstone.coordination import Board, TaskStatus
+
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="t_open", title="open task", created_by="opus"))
+    store.create(CardCore(id="t_claim", title="claimed task", created_by="opus"))
+    store.append_event("t_claim", "move", "opus", column="ready")
+    store.append_event("t_claim", "assign", "opus", owner="lumina")
+    store.create(CardCore(id="t_prog", title="prog task", created_by="opus"))
+    store.append_event("t_prog", "claim", "jarvis", owner="jarvis")  # -> doing
+    store.create(CardCore(id="t_done", title="done task", created_by="opus"))
+    store.append_event("t_done", "claim", "lumina", owner="lumina")
+    store.append_event("t_done", "complete", "lumina")
+
+    res = export_to_legacy(tmp_path)
+    assert res["cards"] == 4
+    assert res["tasks_written"] == 4  # no pre-existing legacy files
+
+    with _forced_legacy_read():
+        views = {v.task.id: v for v in Board(tmp_path).get_task_views()}
+
+    assert views["t_open"].status == TaskStatus.OPEN
+    assert views["t_open"].claimed_by is None
+    assert views["t_claim"].status == TaskStatus.CLAIMED
+    assert views["t_claim"].claimed_by == "lumina"
+    assert views["t_prog"].status == TaskStatus.IN_PROGRESS
+    assert views["t_prog"].claimed_by == "jarvis"
+    assert views["t_done"].status == TaskStatus.DONE
+
+
+def test_export_to_legacy_is_idempotent(tmp_path):
+    """A second export writes no new task files and yields the same board."""
+    from skcapstone.card_store import export_to_legacy
+
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="a1", title="one", created_by="opus"))
+    store.append_event("a1", "claim", "lumina", owner="lumina")
+
+    first = export_to_legacy(tmp_path)
+    assert first["tasks_written"] == 1
+    second = export_to_legacy(tmp_path)
+    assert second["tasks_written"] == 0  # already on disk, immutable
+    assert second["cards"] == 1
+
+
+def test_export_to_legacy_preserves_existing_task_files(tmp_path):
+    """Existing immutable task files (with notes) are never overwritten."""
+    from skcapstone.card_store import export_to_legacy
+    from skcapstone.coordination import Board, Task, TaskPriority
+
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    task = Task(
+        id="keep1",
+        title="rich legacy task",
+        description="d",
+        priority=TaskPriority.HIGH,
+        notes=["a note the store never modelled"],
+    )
+    path = board.create_task(task)  # writes legacy file + mirrors to store
+
+    export_to_legacy(tmp_path)
+
+    import json as _json
+
+    on_disk = _json.loads(path.read_text())
+    assert on_disk["notes"] == ["a note the store never modelled"]
+
+
+def test_export_to_legacy_ownerless_done_survives(tmp_path):
+    """A done card with no owner still round-trips as DONE via a synthetic holder."""
+    from skcapstone.card_store import _forced_legacy_read, export_to_legacy
+    from skcapstone.coordination import Board, TaskStatus
+
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="orphan_done", title="ownerless done", created_by="x"))
+    store.append_event("orphan_done", "move", "x", column="done")  # done, no owner
+
+    export_to_legacy(tmp_path)
+    with _forced_legacy_read():
+        views = {v.task.id: v for v in Board(tmp_path).get_task_views()}
+    assert views["orphan_done"].status == TaskStatus.DONE

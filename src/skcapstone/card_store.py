@@ -754,3 +754,141 @@ def reconcile_from_legacy(home: Path, dry_run: bool = True) -> dict:
         for action, payload in actions:
             store.append_event(cid, action, "reconcile", **payload)
     return {"would_fix": count} if dry_run else {"fixed": count}
+
+
+# Column -> legacy coord status. Legacy has no 'review' state (its status is
+# derived purely from agent claim/complete files), so review folds to its
+# closest active legacy equivalent, in_progress.
+_COLUMN_TO_LEGACY_STATUS = {
+    Column.BACKLOG.value: "open",
+    Column.READY.value: "claimed",
+    Column.DOING.value: "in_progress",
+    Column.REVIEW.value: "in_progress",
+    Column.DONE.value: "done",
+}
+
+# Synthetic owner used to hold a done/claimed card that has no owner in the
+# store, so its non-open status still survives a round-trip to the legacy board
+# (legacy status lives only in agent files, which require an owner).
+_EXPORT_OWNER = "legacy-export"
+
+
+def export_to_legacy(home: Path, dry_run: bool = False) -> dict:
+    """Rebuild a current legacy coord board (tasks/ + agents/) from the store.
+
+    The inverse of :func:`import_from_legacy` and the rollback safety net for
+    Phase 4e-retire: once legacy stops being hot-written, flipping
+    ``SKCOORD_CARD_STORE=0`` and running this reconstructs a fully-current
+    legacy projection from the event-sourced store, so the one-way door has a
+    code path back.
+
+    Two layers, treated differently:
+
+    * **Task files** (immutable birth-facts) are only written for store cards
+      that have no legacy file yet (i.e. cards born after retirement). Existing
+      task files are left untouched -- they are immutable and carry richer
+      fields (``notes``) the store does not model. ``acceptance_criteria`` for a
+      synthesized file is recovered from the card's ``core.json``.
+    * **Agent files** (the mutable status layer) are rebuilt: the coord
+      task-status fields (``current_task``, ``claimed_tasks``,
+      ``completed_tasks``) are recomputed from the store, while identity fields
+      (``capabilities``, ``itil_claims``, ``host``, ``notes``, ``state``) on any
+      existing agent file are preserved.
+
+    Only coord-origin ``task``/``epic`` cards drive the coord status layer; ITIL
+    cards (incident/problem/change) have their own store and are ignored here.
+
+    Column -> legacy status: backlog->open (no agent entry), ready->claimed,
+    doing->in_progress, review->in_progress, done->done. Because a legacy agent
+    holds exactly one ``current_task``, an owner with multiple active
+    (doing/review) cards keeps the first as ``current_task`` and the rest fall
+    to ``claimed_tasks`` -- an inherent legacy limitation, not data loss (every
+    card stays owned and non-done).
+
+    Args:
+        home: Agent home whose ``coordination/`` board is rebuilt.
+        dry_run: When True, compute counts without writing any files.
+
+    Returns:
+        dict: ``{"cards": t, "tasks_written": n, "agents_written": m}``.
+    """
+    from .atomic_io import atomic_write_text
+    from .coordination import AgentFile, Board, Task, TaskPriority, _slugify_filename
+
+    store = CardStore(home)
+    board = Board(home)
+    board.ensure_dirs()
+    cards = [c for c in store.list_cards(include_archived=True)]
+    coord_cards = [c for c in cards if c.kind.value in ("task", "epic")]
+
+    # --- Task files: synthesize only for cards with no legacy file ---
+    existing_ids: set[str] = set()
+    for f in board.tasks_dir.glob("*.json"):
+        try:
+            existing_ids.add(json.loads(f.read_text(encoding="utf-8")).get("id"))
+        except Exception:  # noqa: BLE001
+            continue
+    tasks_written = 0
+    for c in coord_cards:
+        if c.id in existing_ids:
+            continue
+        try:
+            priority = TaskPriority(c.priority)
+        except ValueError:
+            priority = TaskPriority.MEDIUM
+        core = store._load_core(c.id) or {}
+        task = Task(
+            id=c.id,
+            title=c.title,
+            description=c.description,
+            priority=priority,
+            tags=list(c.labels),
+            created_by=c.originator,
+            created_at=c.created_at or _now_iso(),
+            acceptance_criteria=list(core.get("acceptance_criteria", []) or []),
+            dependencies=list(c.dependencies),
+        )
+        tasks_written += 1
+        if dry_run:
+            continue
+        slug = _slugify_filename(task.title)[:40]
+        path = board.tasks_dir / f"{task.id}-{slug}.json"
+        atomic_write_text(path, json.dumps(task.model_dump(), indent=2) + "\n")
+
+    # --- Agent status layer: recompute from the store, preserve identity ---
+    claimed: dict[str, list[str]] = {}
+    completed: dict[str, list[str]] = {}
+    in_progress: dict[str, list[str]] = {}
+    for c in coord_cards:
+        status = _COLUMN_TO_LEGACY_STATUS.get(c.status.value, "open")
+        if status == "open":
+            continue
+        owner = c.owner or _EXPORT_OWNER
+        if status == "done":
+            completed.setdefault(owner, []).append(c.id)
+        elif status == "in_progress":
+            in_progress.setdefault(owner, []).append(c.id)
+            claimed.setdefault(owner, []).append(c.id)
+        else:  # claimed
+            claimed.setdefault(owner, []).append(c.id)
+
+    existing_agents = {a.agent: a for a in board.load_agents()}
+    owners = set(claimed) | set(completed) | set(in_progress) | set(existing_agents)
+    agents_written = 0
+    for owner in sorted(owners):
+        base = existing_agents.get(owner)
+        af = base.model_copy(deep=True) if base is not None else AgentFile(agent=owner)
+        af.claimed_tasks = sorted(set(claimed.get(owner, [])))
+        af.completed_tasks = sorted(set(completed.get(owner, [])))
+        ip = in_progress.get(owner, [])
+        af.current_task = ip[0] if ip else None
+        agents_written += 1
+        if dry_run:
+            continue
+        board.save_agent(af)
+
+    return {
+        "cards": len(coord_cards),
+        "tasks_written": tasks_written,
+        "agents_written": agents_written,
+    }

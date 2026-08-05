@@ -421,6 +421,35 @@ def register_coord_commands(main: click.Group) -> None:
                 f"Re-run with --apply to write.\n"
             )
 
+    @coord.command("export-legacy")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        default=False,
+        help="Report what would be written without touching the board.",
+    )
+    def coord_export_legacy(home, dry_run):
+        """Rebuild a current legacy board (tasks/ + agents/) from the CardStore.
+
+        The Phase 4e-retire rollback safety net (inverse of 'coord migrate').
+        After legacy writes are retired, this reconstructs a fully-current
+        legacy projection from the event-sourced store. Rollback recipe:
+        set SKCOORD_CARD_STORE=0, run this, restart -- legacy is authoritative
+        again. Existing (immutable) task files are preserved; only the agent
+        status layer is recomputed.
+        """
+        from ..card_store import export_to_legacy
+
+        home_path = Path(home).expanduser()
+        res = export_to_legacy(home_path, dry_run=dry_run)
+        verb = "Would write" if dry_run else "Wrote"
+        console.print(
+            f"\n  [green]{verb} {res['tasks_written']} new task file(s) + "
+            f"{res['agents_written']} agent file(s) from {res['cards']} "
+            f"store card(s).[/]\n"
+        )
+
     @coord.command("maintain")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
