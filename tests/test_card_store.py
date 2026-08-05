@@ -88,11 +88,14 @@ def test_fold_deterministic_across_writers(tmp_path):
     assert store.fold("c7").status == card.status
 
 
-def test_import_and_parity_roundtrip(tmp_path):
+def test_import_and_parity_roundtrip(tmp_path, monkeypatch):
     from skcapstone.card import CardEvent, CardEventLog
     from skcapstone.card_store import import_from_legacy, parity_check
     from skcapstone.coordination import AgentFile, Board, Task, TaskPriority
 
+    # Legacy-only fixture (models pre-cutover data): disable the live mirror so
+    # import_from_legacy has real backfill work to do.
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="p1", title="open feature", created_by="opus"))
@@ -121,10 +124,11 @@ def test_import_and_parity_roundtrip(tmp_path):
     assert parity["missing"] == []
 
 
-def test_import_is_idempotent(tmp_path):
+def test_import_is_idempotent(tmp_path, monkeypatch):
     from skcapstone.card_store import import_from_legacy
     from skcapstone.coordination import Board, Task
 
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")  # legacy-only fixture
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="i1", title="x", created_by="o"))
@@ -167,14 +171,17 @@ def test_dual_write_mirrors_create_claim_complete(tmp_path, monkeypatch):
     assert store.fold("dw1").status == Column.DONE
 
 
-def test_dual_write_disabled_by_default(tmp_path):
+def test_dual_write_disabled_only_with_explicit_zero(tmp_path, monkeypatch):
+    # Phase 4e: mirroring is ON by default; only an explicit disable token
+    # (the rollback escape hatch) turns it off.
     from skcapstone.card_store import CardStore
     from skcapstone.coordination import Board, Task
 
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="nd1", title="not mirrored", created_by="o"))
-    assert CardStore(tmp_path).fold("nd1") is None  # flag off -> no mirror
+    assert CardStore(tmp_path).fold("nd1") is None  # explicit 0 -> no mirror
 
 
 def test_dual_write_mirrors_archive(tmp_path, monkeypatch):
@@ -229,6 +236,7 @@ def test_parity_forces_legacy_read_even_at_flag_1(tmp_path, monkeypatch):
     from skcapstone.card_store import import_from_legacy, parity_check
     from skcapstone.coordination import Board, Task
 
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")  # legacy-only fixture
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="pf1", title="x", created_by="o"))
@@ -392,12 +400,13 @@ def test_open_count_no_longer_overcounts_archived(tmp_path):
     assert open_ids == {"oc4", "oc5"}
 
 
-def test_parity_open_count_alert(tmp_path):
+def test_parity_open_count_alert(tmp_path, monkeypatch):
     """PARITY ALERT: parity_check must flag when the store-served open count
     diverges from legacy beyond the threshold."""
     from skcapstone.card_store import import_from_legacy, parity_check
     from skcapstone.coordination import Board, Task
 
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")  # legacy-only drift fixture
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="al0", title="seed", created_by="o"))
@@ -434,6 +443,7 @@ def test_import_from_legacy_forces_legacy_read_at_flag_1(tmp_path, monkeypatch):
     from skcapstone.card_store import CardStore, import_from_legacy
     from skcapstone.coordination import Board, Task
 
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")  # legacy-only fixture
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="mg1", title="legacy only", created_by="o"))
@@ -480,3 +490,86 @@ def test_reconcile_repairs_agent_file_claim_drift(tmp_path):
     assert store.fold("rc2").status.value == "done"
     post = parity_check(tmp_path)
     assert post["mismatches"] == [], post["mismatches"]
+
+
+# --- Phase 4e: default-ON flip (store is the default, `=0` is the escape hatch) ---
+
+
+def test_write_enabled_by_default_when_unset(monkeypatch):
+    monkeypatch.delenv("SKCOORD_CARD_STORE", raising=False)
+    from skcapstone.card_store import card_store_read_enabled, card_store_write_enabled
+
+    assert card_store_write_enabled() is True
+    assert card_store_read_enabled() is True
+
+
+def test_disabled_with_explicit_zero(monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")
+    from skcapstone.card_store import card_store_read_enabled, card_store_write_enabled
+
+    assert card_store_write_enabled() is False
+    assert card_store_read_enabled() is False
+
+
+def test_dual_mode_writes_but_reads_legacy(monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "dual")
+    from skcapstone.card_store import card_store_read_enabled, card_store_write_enabled
+
+    assert card_store_write_enabled() is True
+    assert card_store_read_enabled() is False
+
+
+def test_default_on_write_mirrors_without_flag(tmp_path, monkeypatch):
+    monkeypatch.delenv("SKCOORD_CARD_STORE", raising=False)
+    from skcapstone.card_store import CardStore
+    from skcapstone.coordination import Board, Task
+
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="do1", title="mirrored by default", created_by="opus"))
+    assert CardStore(tmp_path).fold("do1") is not None
+
+
+def test_default_on_read_serves_from_store(tmp_path, monkeypatch):
+    monkeypatch.delenv("SKCOORD_CARD_STORE", raising=False)
+    from skcapstone.card import KanbanBoard
+    from skcapstone.coordination import Board, Task
+
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="dr1", title="served from store", created_by="opus"))
+    cards = KanbanBoard(tmp_path).cards()
+    assert any(c.id == "dr1" and c.source == "cards" for c in cards)
+
+
+def test_empty_store_falls_back_to_legacy_catastrophe_guard(tmp_path, monkeypatch):
+    # Default-ON read must NOT silently empty the board if the store is behind.
+    # Create a legacy-only task (writes off), then read with the store enabled:
+    # the guard falls back to the legacy projection rather than returning [].
+    from skcapstone.coordination import Board, Task
+
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")
+    board.create_task(Task(id="cg1", title="legacy only", created_by="o"))
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    views = board.get_task_views()
+    assert any(v.task.id == "cg1" for v in views), "guard must fall back to legacy"
+
+
+def test_parity_still_reads_legacy_under_default_on(tmp_path, monkeypatch):
+    # The force-legacy shim must survive the default-ON flip: a legacy-only task
+    # must still register as store-missing drift (not be masked by a store read).
+    from skcapstone.card_store import import_from_legacy, parity_check
+    from skcapstone.coordination import Board, Task
+
+    monkeypatch.delenv("SKCOORD_CARD_STORE", raising=False)
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="pd1", title="x", created_by="o"))
+    import_from_legacy(tmp_path)
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")  # create legacy-only (no mirror)
+    board.create_task(Task(id="pd2", title="legacy only", created_by="o"))
+    monkeypatch.delenv("SKCOORD_CARD_STORE", raising=False)  # default-ON
+    par = parity_check(tmp_path)
+    assert "pd2" in par["missing"], par

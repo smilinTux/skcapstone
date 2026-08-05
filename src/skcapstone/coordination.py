@@ -557,18 +557,39 @@ class Board:
         Returns:
             list[TaskView]: Tasks with derived status.
         """
-        # Read cutover (Phase 4e): when SKCOORD_CARD_STORE=1, serve from the
-        # event-sourced CardStore. Legacy is still written as a hot backup.
+        # Read cutover (Phase 4e): the event-sourced CardStore is the default
+        # read source. Legacy is still written as a hot backup and remains the
+        # rollback target (SKCOORD_CARD_STORE=0).
         try:
             from . import card_store
 
             if card_store.card_store_read_enabled():
-                return card_store.task_views_from_store(
+                store_views = card_store.task_views_from_store(
                     self.home, include_archived=include_archived
+                )
+                # Catastrophe guard: never silently empty the board if the store
+                # is behind. Fall back to the legacy scan only when the store is
+                # empty but legacy task files exist.
+                if store_views or not any(self.tasks_dir.glob("*.json")):
+                    return store_views
+                logger.warning(
+                    "CardStore returned no tasks but legacy files exist; "
+                    "falling back to the legacy projection (catastrophe guard)."
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning("CardStore read failed, falling back to legacy: %s", exc)
 
+        return self._legacy_task_views(include_archived=include_archived)
+
+    def _legacy_task_views(self, include_archived: bool = False) -> list[TaskView]:
+        """Derive task views from the authoritative legacy task + agent files.
+
+        This is the pre-cutover projection: task files cross-referenced against
+        agent claim/complete files. It is the source of truth for destructive
+        maintenance (archival/aging) regardless of the read flag, because the
+        store mirror is best-effort and a claim/complete recorded only in the
+        legacy agent file must never be missed by a sweep.
+        """
         tasks = self.load_tasks(include_archived=include_archived)
         agents = self.load_agents()
 
@@ -628,7 +649,9 @@ class Board:
         ref = now or datetime.now(timezone.utc)
         cutoff = ref - timedelta(days=older_than_days)
         eligible: list[str] = []
-        for view in self.get_task_views():
+        # Authoritative legacy status: never age off a task on best-effort store
+        # state (a completion recorded only in the legacy agent file must count).
+        for view in self._legacy_task_views():
             if view.status != TaskStatus.DONE:
                 continue
             created = view.task.created_at
@@ -669,7 +692,9 @@ class Board:
         ref = now or datetime.now(timezone.utc)
         cutoff = ref - timedelta(days=older_than_days)
         eligible: list[str] = []
-        for view in self.get_task_views():
+        # Authoritative legacy status: a claim recorded only in the legacy agent
+        # file must protect a task from backlog aging (store may show it open).
+        for view in self._legacy_task_views():
             if view.status != TaskStatus.OPEN:
                 continue
             try:

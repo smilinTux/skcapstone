@@ -1,6 +1,10 @@
 # Cards Storage Cutover (Phase 4) Implementation Plan
 
-**Status: 4a-4d SHIPPED and proven live. READ CUTOVER APPLIED node-wide on noroc2027 (2026-08-05): every coord writer carries `SKCOORD_CARD_STORE=1` (agent daemons via `skcapstone@.service.d`, dashboard, both Telegram bridges, the base `skcapstone.service` that hosts the in-process scheduler -> autopilot/board-maintenance/ai-runner, and interactive shells via `~/.bashrc`). Organic dual-write verified: a flagged CLI create/complete mirrors with 0 converge, and `cardstore-parity-soak` now runs with migrate=0/reconcile=0 (no corrective work) and an explicit ORGANIC-HOLD raw-drift gate. `.41` is a standby scheduler node (not writing); no other live peers. 4e (code default-ON + legacy `tasks/*.json` retirement) remains, gated on a multi-day green organic soak and Chef's explicit go (it is the one irreversible step).**
+**Status: 4a-4d SHIPPED and proven live. READ CUTOVER APPLIED node-wide on noroc2027 (2026-08-05): every coord writer carries `SKCOORD_CARD_STORE=1`. 4e SPLIT (2026-08-05): the reversible core (code default-ON) is SHIPPED; the one-way-door piece (legacy write retirement) is HELD.**
+
+**4e-core DONE (code default-ON):** `card_store_write_enabled()`/`card_store_read_enabled()` now default to the store when `SKCOORD_CARD_STORE` is unset; only an explicit disable token (`0`/`off`/`false`/`no`) reverts to legacy. The store is thus authoritative by code contract, no longer dependent on the per-process drop-ins/`~/.bashrc` env plumbing. Two safety additions ship with it: (1) a catastrophe guard so a behind/empty store never silently empties the board (falls back to the legacy projection when the store is empty but legacy task files exist), and (2) the force-legacy shim used by migrate/parity now pins `=0` instead of unsetting the var (unset now means "on"), so the parity gate stays a real store-vs-legacy drift detector. Rollback is still one env flip: `SKCOORD_CARD_STORE=0` on any process reverts it to a fully-current legacy board (legacy is still hot-written).
+
+**4e-retire HELD (legacy write retirement / move `tasks/*.json` -> read-only `legacy/` / delete the derived-status scan):** blocked on TWO gates. (a) There is NO store->legacy exporter today (only `import_from_legacy` and `reconcile_from_legacy`, both legacy->store), so once legacy stops being written there is no code path back to a current legacy board -- that is the genuine one-way door, independent of "move not delete". (b) The `ORGANIC-HOLD` soak has zero real runs (the gate landed in the soak script after the last manual runs; first scheduled organic run is the next tick). To unblock: either write the store->legacy exporter first (makes retirement reversible) OR let the organic soak accrue multiple green days. `.41` is a standby scheduler node (not writing); no other live peers.
 
 ## Read cutover as-applied (2026-08-05)
 
@@ -17,7 +21,7 @@
 - **4b Importer — DONE.** `import_from_legacy()` (idempotent). Live: imported 1750 cards.
 - **4c Parity — DONE and GREEN.** `parity_check()`; live board vs store = 1750/1750 matched, 0 mismatches, 0 missing.
 - **4d Flag-gated read + dual-write — DONE.** `SKCOORD_CARD_STORE=1` serves the board from the store; `Board.create/claim/complete` + `coord move` mirror into the store when the flag is `1`/`dual`. Default OFF = zero behavior change.
-- **4e Retire legacy — NOT DONE (intentionally).** The global flip + legacy archival is the one irreversible, fleet-wide step; it waits for a real parity soak (below).
+- **4e Split (2026-08-05).** Core (code default-ON + catastrophe guard + force-legacy shim fix) SHIPPED and reversible. Legacy write retirement HELD on two gates: no store->legacy exporter (one-way door) and an empty organic soak. See the status block at the top.
 
 ## Soak-to-flip runbook (the remaining work)
 

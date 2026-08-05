@@ -13,6 +13,7 @@ docs/superpowers/plans/2026-07-16-cards-storage-cutover-phase4-SHELVED.md.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import logging
@@ -28,6 +29,26 @@ from pydantic import BaseModel, Field
 from .card import Card, Column, Kind
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _forced_legacy_read():
+    """Force KanbanBoard to serve the LEGACY projection inside this block.
+
+    Post Phase-4e the store is the default, so simply unsetting the flag would
+    now mean "on". migrate/parity must compare against real legacy, so this
+    pins ``SKCOORD_CARD_STORE=0`` for the duration and restores the prior value.
+    """
+    saved = os.environ.get("SKCOORD_CARD_STORE")
+    os.environ["SKCOORD_CARD_STORE"] = "0"
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("SKCOORD_CARD_STORE", None)
+        else:
+            os.environ["SKCOORD_CARD_STORE"] = saved
+
 
 _HOSTNAME = socket.gethostname()
 
@@ -429,15 +450,11 @@ def import_from_legacy(home: Path, dry_run: bool = False) -> dict:
     from .card import KanbanBoard
 
     store = CardStore(home)
-    # Force the LEGACY projection even post-cutover (flag=1), otherwise
-    # KanbanBoard would serve the store back to us and every card legacy-only
-    # card would look "already present" (i.e. migrate could never import it).
-    saved = os.environ.pop("SKCOORD_CARD_STORE", None)
-    try:
+    # Force the LEGACY projection even post-cutover, otherwise KanbanBoard would
+    # serve the store back to us and every legacy-only card would look "already
+    # present" (i.e. migrate could never import it).
+    with _forced_legacy_read():
         legacy = KanbanBoard(home).cards(include_archived=True)
-    finally:
-        if saved is not None:
-            os.environ["SKCOORD_CARD_STORE"] = saved
     imported = 0
     skipped = 0
     for c in legacy:
@@ -472,14 +489,33 @@ def import_from_legacy(home: Path, dry_run: bool = False) -> dict:
     return {"imported": imported, "skipped": skipped, "total": len(legacy)}
 
 
+# Phase 4e: the CardStore is the DEFAULT store. Only an explicit disable token
+# turns it back off (the instant rollback escape hatch). ``dual`` keeps writing
+# both stores while still serving reads from legacy (used during a bake).
+_CARD_STORE_DISABLED = {"0", "off", "false", "no"}
+
+
+def _card_store_flag() -> str:
+    return (os.environ.get("SKCOORD_CARD_STORE") or "").strip().lower()
+
+
 def card_store_write_enabled() -> bool:
-    """True when coord writes should mirror into the CardStore (soak/cutover)."""
-    return os.environ.get("SKCOORD_CARD_STORE") in ("1", "dual")
+    """True when coord writes should mirror into the CardStore.
+
+    Phase 4e default-ON: writes mirror into the store unless explicitly disabled
+    with ``SKCOORD_CARD_STORE`` in {0, off, false, no}.
+    """
+    return _card_store_flag() not in _CARD_STORE_DISABLED
 
 
 def card_store_read_enabled() -> bool:
-    """True when reads should be served from the CardStore (post-cutover)."""
-    return os.environ.get("SKCOORD_CARD_STORE") == "1"
+    """True when reads should be served from the CardStore.
+
+    Phase 4e default-ON: served from the store unless explicitly disabled, or
+    unless in ``dual`` mode (write-both, read-legacy) used during a bake.
+    """
+    flag = _card_store_flag()
+    return flag not in _CARD_STORE_DISABLED and flag != "dual"
 
 
 # Reverse of card._STATUS_TO_COLUMN, to reconstruct coord TaskViews from cards.
@@ -608,16 +644,11 @@ def parity_check(home: Path, open_drift_threshold: int = OPEN_DRIFT_THRESHOLD) -
     from .card import KanbanBoard
 
     store = CardStore(home)
-    # Force the LEGACY projection for the comparison side, even post-cutover when
-    # the flag is 1 (otherwise KanbanBoard would return the store and we would be
-    # comparing the store to itself). This keeps parity a real drift detector for
-    # the legacy hot-backup vs the authoritative store.
-    saved = os.environ.pop("SKCOORD_CARD_STORE", None)
-    try:
+    # Force the LEGACY projection for the comparison side (otherwise KanbanBoard
+    # would return the store and we would be comparing the store to itself). This
+    # keeps parity a real drift detector for legacy hot-backup vs the store.
+    with _forced_legacy_read():
         legacy = {c.id: c for c in KanbanBoard(home).cards(include_archived=True)}
-    finally:
-        if saved is not None:
-            os.environ["SKCOORD_CARD_STORE"] = saved
     stored = {c.id: c for c in store.list_cards(include_archived=True)}
 
     # Coarse lifecycle bucket: legacy coord can only derive todo/active/done from

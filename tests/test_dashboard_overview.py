@@ -6,7 +6,7 @@ import pytest
 
 from skcapstone import dashboard_overview as do
 from skcapstone.card_store import import_from_legacy
-from skcapstone.coordination import AgentFile, Board, Task
+from skcapstone.coordination import Board, Task
 
 
 @pytest.fixture
@@ -14,7 +14,10 @@ def home(tmp_path):
     b = Board(tmp_path)
     b.ensure_dirs()
     b.create_task(Task(id="a1", title="in progress task", created_by="opus"))
-    b.save_agent(AgentFile(agent="lumina", current_task="a1", claimed_tasks=["a1"]))
+    # Drive status through the mirroring write path (claim_task), so the store
+    # reflects the in-progress state post-cutover -- a raw save_agent bypasses
+    # the mirror and would leave the store showing a1 as backlog.
+    b.claim_task("lumina", "a1")
     import_from_legacy(tmp_path)
     return tmp_path
 

@@ -9,6 +9,7 @@ card ``kind``. See docs/superpowers/specs/2026-07-16-unified-kanban-card-model.m
 from __future__ import annotations
 
 import html
+import logging
 import socket
 from datetime import datetime, timezone
 from enum import Enum
@@ -17,6 +18,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from .coordination import Board, TaskStatus, TaskView
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -338,12 +341,21 @@ class KanbanBoard:
                 their ``archived`` flag set (used by the Phase 4 importer and
                 parity check). Default False keeps the active-board behavior.
         """
-        import os
+        from .card_store import card_store_read_enabled
 
-        if os.environ.get("SKCOORD_CARD_STORE") == "1":
+        if card_store_read_enabled():
             from .card_store import CardStore
 
-            return CardStore(self.home).list_cards(include_archived=include_archived)
+            store_cards = CardStore(self.home).list_cards(include_archived=include_archived)
+            # Catastrophe guard: never silently empty the board if the store is
+            # behind. Fall back to the legacy projection when the store is empty
+            # but legacy task files exist.
+            if store_cards or not any(Board(self.home).tasks_dir.glob("*.json")):
+                return store_cards
+            logger.warning(
+                "CardStore empty but legacy task files exist; serving legacy "
+                "projection (catastrophe guard)."
+            )
 
         out: list[Card] = []
         board = Board(self.home)

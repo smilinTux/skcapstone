@@ -30,10 +30,14 @@ def test_get_kanban_shape(home):
 
 
 def test_get_card_returns_card_and_activity(home):
+    # Post-cutover, activity is the card's event stream. A live-created card
+    # starts with an empty stream; a real mutation (the production write path)
+    # populates it.
+    dk.apply_mutation(home, "t1", "move", "operator", column="ready")
     data = dk.get_card(home, "t1")
     assert data["card"]["id"] == "t1"
     assert isinstance(data["activity"], list)
-    assert data["activity"]  # import wrote at least a move event
+    assert data["activity"]  # the move mutation wrote an event
 
 
 def test_get_card_missing(home):

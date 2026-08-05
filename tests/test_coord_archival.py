@@ -75,3 +75,28 @@ def test_age_stale_open_ignores_claimed(tmp_path):
     board.create_task(Task(id="s3", title="ancient claimed", created_by="o", created_at=ancient))
     board.save_agent(AgentFile(agent="opus", claimed_tasks=["s3"]))
     assert board.age_stale_open(older_than_days=90) == []
+
+
+def test_archive_done_derives_status_from_legacy_at_flag_1(tmp_path, monkeypatch):
+    # Phase 4e: destructive maintenance must read AUTHORITATIVE legacy status,
+    # not the best-effort store mirror, even after the read cutover (flag=1).
+    # A task completed only in the legacy agent file must still be archivable.
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    old = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    board.create_task(Task(id="lg1", title="old done", created_by="opus", created_at=old))
+    board.save_agent(AgentFile(agent="opus", completed_tasks=["lg1"]))  # legacy-only
+    assert board.archive_done_tasks(older_than_days=14, dry_run=True) == ["lg1"]
+
+
+def test_age_stale_open_respects_legacy_claim_at_flag_1(tmp_path, monkeypatch):
+    # A claim recorded only in the legacy agent file must protect the task from
+    # backlog aging, even at flag=1 (store would otherwise see it as open).
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    ancient = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+    board.create_task(Task(id="lg2", title="ancient", created_by="o", created_at=ancient))
+    board.save_agent(AgentFile(agent="opus", claimed_tasks=["lg2"]))  # legacy-only claim
+    assert board.age_stale_open(older_than_days=90) == []
