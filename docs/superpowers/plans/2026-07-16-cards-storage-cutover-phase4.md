@@ -1,6 +1,13 @@
 # Cards Storage Cutover (Phase 4) Implementation Plan
 
-**Status: 4a-4d SHIPPED and proven live (tag pending). 4e (global flip + legacy retirement) remains, gated on a parity soak.**
+**Status: 4a-4d SHIPPED and proven live. READ CUTOVER APPLIED node-wide on noroc2027 (2026-08-05): every coord writer carries `SKCOORD_CARD_STORE=1` (agent daemons via `skcapstone@.service.d`, dashboard, both Telegram bridges, the base `skcapstone.service` that hosts the in-process scheduler -> autopilot/board-maintenance/ai-runner, and interactive shells via `~/.bashrc`). Organic dual-write verified: a flagged CLI create/complete mirrors with 0 converge, and `cardstore-parity-soak` now runs with migrate=0/reconcile=0 (no corrective work) and an explicit ORGANIC-HOLD raw-drift gate. `.41` is a standby scheduler node (not writing); no other live peers. 4e (code default-ON + legacy `tasks/*.json` retirement) remains, gated on a multi-day green organic soak and Chef's explicit go (it is the one irreversible step).**
+
+## Read cutover as-applied (2026-08-05)
+
+- Writer flags (all `=1`): `skcapstone@.service.d/cardstore.conf`, `skcapstone-dashboard.service.d/cardstore.conf`, `skchat-telegram-{lumina,opus}.service.d/cardstore.conf`, `skcapstone.service.d/cardstore.conf` (base daemon + in-process scheduler), and `~/.bashrc` (interactive CLI).
+- Soak gate: `~/.skcapstone/scripts/cardstore-parity-soak.sh` measures RAW pre-converge drift first (ORGANIC-HOLD OK/WARN), then migrate + reconcile as a safety net, then parity as the hard exit gate. Runs `0 */4 * * *` on noroc2027.
+- Rollback (pre-4e): remove the `cardstore.conf` drop-ins + the `~/.bashrc` line, `systemctl --user daemon-reload` + restart, and legacy is authoritative again. `rm -rf ~/.skcapstone/cards` fully undoes the store.
+- Watch item before 4e: ORGANIC-HOLD stays OK and migrate/reconcile stay 0 across several days of real agent activity. Any ORGANIC-HOLD WARN means a writer surfaced without the flag.
 
 **Goal:** Replace coord's Task-files + derived-status storage with one event-sourced `cards/<id>/{core.json, events/*.jsonl}` store shared by coord and ITIL, so every work item has a single source of truth.
 
