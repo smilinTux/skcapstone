@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SKCapstone — Sovereign Agent Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,monospace;
+  background:#0d1117;color:#c9d1d9;min-height:100vh;padding:1.25rem 1.5rem}
+
+/* ── Header ──────────────────────────────────────────────────────── */
+.header{display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:1.25rem;padding-bottom:1rem;border-bottom:1px solid #21262d}
+.header-left h1{font-size:1.35rem;font-weight:700;color:#58a6ff;letter-spacing:-.02em}
+.header-left .sub{font-size:.8rem;color:#484f58;margin-top:.15rem}
+.header-right{display:flex;align-items:center;gap:.75rem}
+.poll-status{font-size:.75rem;color:#484f58}
+.poll-status.ok{color:#3fb950}
+.poll-status.err{color:#f85149}
+.refresh-btn{background:#161b22;color:#58a6ff;border:1px solid #30363d;
+  padding:.3rem .85rem;border-radius:6px;cursor:pointer;font-size:.8rem;
+  transition:background .15s}
+.refresh-btn:hover{background:#21262d}
+
+/* ── Grid ────────────────────────────────────────────────────────── */
+.grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem;margin-bottom:1rem}
+.grid-1{margin-bottom:1rem}
+@media(max-width:720px){.grid-2{grid-template-columns:1fr}}
+
+/* ── Card ────────────────────────────────────────────────────────── */
+.card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:1rem;
+  min-height:80px}
+.card-title{font-size:.8rem;font-weight:600;color:#8b949e;letter-spacing:.06em;
+  text-transform:uppercase;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
+
+/* ── Pills ───────────────────────────────────────────────────────── */
+.pill{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.72rem;
+  font-weight:600;letter-spacing:.03em}
+.pill-ok{background:#0d4429;color:#3fb950;border:1px solid #1a6633}
+.pill-active{background:#0d4429;color:#3fb950;border:1px solid #1a6633}
+.pill-degraded{background:#3d2007;color:#e3b341;border:1px solid #6e3a0a}
+.pill-missing{background:#3d0007;color:#f85149;border:1px solid #6e0010}
+.pill-done{background:#0d4429;color:#3fb950;border:1px solid #1a6633}
+.pill-open{background:#0c2d6b;color:#58a6ff;border:1px solid #1158c7}
+.pill-in_progress{background:#2d1f6b;color:#d2a8ff;border:1px solid #553fa3}
+.pill-claimed{background:#2d1f6b;color:#d2a8ff;border:1px solid #553fa3}
+.pill-high{background:#3d2007;color:#e3b341}
+.pill-critical{background:#3d0007;color:#f85149}
+.pill-medium{background:#0c2d6b;color:#79c0ff}
+.pill-low{background:#1c2128;color:#8b949e}
+
+/* ── Pillar grid ─────────────────────────────────────────────────── */
+.pillar-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem}
+@media(max-width:480px){.pillar-grid{grid-template-columns:repeat(2,1fr)}}
+.pillar-item{background:#0d1117;border:1px solid #21262d;border-radius:6px;
+  padding:.5rem .75rem;display:flex;justify-content:space-between;align-items:center}
+.pillar-name{font-size:.8rem;color:#8b949e;text-transform:capitalize}
+
+/* ── Stat row ────────────────────────────────────────────────────── */
+.stat-row{display:flex;justify-content:space-between;align-items:center;
+  padding:.3rem 0;border-bottom:1px solid #21262d}
+.stat-row:last-child{border-bottom:none}
+.stat-label{font-size:.82rem;color:#8b949e}
+.stat-value{font-size:.82rem;font-weight:600;color:#e6edf3}
+
+/* ── Memory stats ────────────────────────────────────────────────── */
+.mem-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-bottom:.5rem}
+.mem-cell{background:#0d1117;border:1px solid #21262d;border-radius:6px;
+  padding:.6rem;text-align:center}
+.mem-num{font-size:1.6rem;font-weight:700;color:#58a6ff;line-height:1}
+.mem-label{font-size:.7rem;color:#484f58;margin-top:.2rem}
+
+/* ── Consciousness ───────────────────────────────────────────────── */
+.c-stat{display:flex;justify-content:space-between;padding:.3rem 0;
+  border-bottom:1px solid #21262d}
+.c-stat:last-child{border-bottom:none}
+.c-label{font-size:.82rem;color:#8b949e}
+.c-val{font-size:.82rem;font-weight:600;color:#e6edf3}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+.dot-green{background:#3fb950;box-shadow:0 0 4px #3fb95077}
+.dot-red{background:#f85149;box-shadow:0 0 4px #f8514977}
+.dot-yellow{background:#e3b341;box-shadow:0 0 4px #e3b34177}
+.backend-tag{display:inline-block;background:#0c2d6b;color:#79c0ff;
+  border-radius:4px;padding:.1rem .45rem;font-size:.72rem;margin:.1rem .1rem 0 0}
+
+/* ── Board ───────────────────────────────────────────────────────── */
+.board-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;
+  margin-bottom:.75rem}
+.bs-cell{background:#0d1117;border:1px solid #21262d;border-radius:6px;
+  padding:.5rem;text-align:center}
+.bs-num{font-size:1.4rem;font-weight:700;line-height:1}
+.bs-num.done-num{color:#3fb950}
+.bs-num.active-num{color:#d2a8ff}
+.bs-num.open-num{color:#58a6ff}
+.bs-label{font-size:.7rem;color:#484f58;margin-top:.15rem}
+.task-list{max-height:220px;overflow-y:auto}
+.task-row{display:flex;align-items:flex-start;gap:.5rem;padding:.4rem 0;
+  border-bottom:1px solid #161b22}
+.task-row:last-child{border-bottom:none}
+.task-title{flex:1;font-size:.8rem;color:#c9d1d9;line-height:1.35}
+.task-agent{font-size:.72rem;color:#484f58;white-space:nowrap}
+.task-priority{font-size:.7rem}
+
+/* ── Agent header card ───────────────────────────────────────────── */
+.agent-card{background:#161b22;border:1px solid #21262d;border-radius:8px;
+  padding:.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:1rem}
+.agent-name{font-size:1rem;font-weight:700;color:#e6edf3}
+.agent-fp{font-size:.75rem;color:#484f58;font-family:monospace;margin-top:.1rem}
+.agent-badges{display:flex;gap:.4rem;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+
+/* ── Timestamp footer ────────────────────────────────────────────── */
+footer{text-align:center;color:#30363d;font-size:.72rem;margin-top:1.5rem;padding:.5rem 0}
+
+/* ── Spinner ─────────────────────────────────────────────────────── */
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid #30363d;
+  border-top-color:#58a6ff;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:#0d1117}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>&#9670; SKCapstone</h1>
+    <div class="sub" id="hdr-sub">Connecting...</div>
+  </div>
+  <div class="header-right">
+    <span class="poll-status" id="poll-status">&#9679; polling</span>
+    <button class="refresh-btn" onclick="loadAll()">Refresh</button>
+  </div>
+</div>
+
+<!-- Agent identity strip -->
+<div class="agent-card" id="agent-card">
+  <div>
+    <div class="agent-name" id="a-name">—</div>
+    <div class="agent-fp" id="a-fp">—</div>
+  </div>
+  <div class="agent-badges" id="a-badges"></div>
+</div>
+
+<!-- Row 1: Pillars + Consciousness -->
+<div class="grid-2">
+  <div class="card" id="pillars-card">
+    <div class="card-title">Pillars</div>
+    <div class="pillar-grid" id="pillar-grid"><div class="spinner"></div></div>
+  </div>
+  <div class="card" id="consciousness-card">
+    <div class="card-title">Consciousness</div>
+    <div id="c-body"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- Row 2: Memory + Board summary -->
+<div class="grid-2">
+  <div class="card" id="memory-card">
+    <div class="card-title">Memory</div>
+    <div id="m-body"><div class="spinner"></div></div>
+  </div>
+  <div class="card" id="board-summary-card">
+    <div class="card-title">Coordination Board</div>
+    <div id="bs-body"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- Row 3: Active tasks full-width -->
+<div class="grid-1">
+  <div class="card" id="tasks-card">
+    <div class="card-title">Active Tasks</div>
+    <div class="task-list" id="task-list"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<footer id="footer">Last updated: —</footer>
+
+<script>
+'use strict';
+
+const POLL_MS = 5000;
+let pollTimer = null;
+let lastOk = false;
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function pillClass(status) {
+  const s = String(status).toLowerCase().replace(/[^a-z_]/g,'');
+  return 'pill pill-' + (s || 'missing');
+}
+
+function priorityClass(p) {
+  const s = String(p).toLowerCase();
+  return 'pill pill-' + (['critical','high','medium','low'].includes(s) ? s : 'low');
+}
+
+function statusClass(s) {
+  const v = String(s).toLowerCase().replace(/[^a-z_]/g,'');
+  const map = {done:'done',open:'open',in_progress:'in_progress',
+               claimed:'claimed',blocked:'missing'};
+  return 'pill pill-' + (map[v] || 'open');
+}
+
+function fmt(ts) {
+  try { return new Date(ts).toLocaleTimeString(); } catch(e){ return ts; }
+}
+
+// ── data fetch ─────────────────────────────────────────────────────────────
+
+async function loadAll() {
+  try {
+    const resp = await fetch('/api/v1/capstone', {cache:'no-store'});
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    render(data);
+    setPollStatus(true);
+  } catch(e) {
+    setPollStatus(false, e.message);
+  }
+}
+
+// ── poll status indicator ──────────────────────────────────────────────────
+
+function setPollStatus(ok, msg) {
+  const el = document.getElementById('poll-status');
+  lastOk = ok;
+  if (ok) {
+    el.className = 'poll-status ok';
+    el.textContent = '\u25CF live';
+  } else {
+    el.className = 'poll-status err';
+    el.textContent = '\u25CF ' + (msg || 'error');
+  }
+}
+
+// ── renderers ──────────────────────────────────────────────────────────────
+
+function render(data) {
+  renderAgent(data.agent || {});
+  renderPillars(data.pillars || {});
+  renderConsciousness(data.consciousness || {});
+  renderMemory(data.memory || {});
+  renderBoard(data.board || {});
+  document.getElementById('footer').textContent =
+    'Last updated: ' + new Date().toLocaleTimeString() +
+    '  \u00B7  polling every ' + (POLL_MS/1000) + 's';
+}
+
+function renderAgent(a) {
+  document.getElementById('a-name').textContent = a.name || 'unknown';
+  const fp = a.fingerprint || '';
+  document.getElementById('a-fp').textContent =
+    fp.length > 20 ? fp.slice(0,8) + '\u2026' + fp.slice(-8) : (fp || '\u2014');
+
+  const sub = document.getElementById('hdr-sub');
+  sub.textContent = (a.name || 'Agent') + (a.version ? ' v'+a.version : '') +
+    (a.consciousness ? '  \u00B7  ' + a.consciousness : '');
+
+  const bd = document.getElementById('a-badges');
+  let badges = '';
+  if (a.is_conscious) badges += '<span class="pill pill-ok">CONSCIOUS</span> ';
+  if (a.is_singular) badges += '<span class="pill pill-ok">SINGULAR</span> ';
+  bd.innerHTML = badges;
+}
+
+function renderPillars(pillars) {
+  const el = document.getElementById('pillar-grid');
+  const keys = Object.keys(pillars);
+  if (!keys.length) { el.innerHTML = '<span style="color:#484f58">No data</span>'; return; }
+  el.innerHTML = keys.map(k =>
+    `<div class="pillar-item">
+      <span class="pillar-name">${esc(k)}</span>
+      <span class="${pillClass(pillars[k])}">${esc(pillars[k])}</span>
+    </div>`
+  ).join('');
+}
+
+function renderConsciousness(c) {
+  const el = document.getElementById('c-body');
+  const enabled = c.enabled || false;
+  const dot = enabled ? 'dot-green' : 'dot-red';
+  const dotYellow = c.inotify_active ? 'dot-green' : 'dot-yellow';
+  const backends = Array.isArray(c.backends) ? c.backends : [];
+  const backendHtml = backends.length
+    ? backends.map(b => `<span class="backend-tag">${esc(b)}</span>`).join('')
+    : '<span style="color:#484f58">none</span>';
+
+  el.innerHTML = `
+    <div class="c-stat">
+      <span class="c-label"><span class="dot ${dot}"></span>Status</span>
+      <span class="c-val">${enabled ? 'active' : 'disabled'}</span>
+    </div>
+    <div class="c-stat">
+      <span class="c-label">Messages processed</span>
+      <span class="c-val">${c.messages_processed ?? 0}</span>
+    </div>
+    <div class="c-stat">
+      <span class="c-label">Responses sent</span>
+      <span class="c-val">${c.responses_sent ?? 0}</span>
+    </div>
+    <div class="c-stat">
+      <span class="c-label">Active conversations</span>
+      <span class="c-val">${c.active_conversations ?? 0}</span>
+    </div>
+    <div class="c-stat">
+      <span class="c-label">Errors</span>
+      <span class="c-val">${c.errors ?? 0}</span>
+    </div>
+    <div class="c-stat">
+      <span class="c-label"><span class="dot ${dotYellow}"></span>iNotify</span>
+      <span class="c-val">${c.inotify_active ? 'active' : 'off'}</span>
+    </div>
+    <div class="c-stat" style="flex-direction:column;align-items:flex-start;gap:.25rem">
+      <span class="c-label">LLM backends</span>
+      <span>${backendHtml}</span>
+    </div>`;
+}
+
+function renderMemory(m) {
+  const el = document.getElementById('m-body');
+  const status = m.status || '';
+  el.innerHTML = `
+    <div class="mem-grid">
+      <div class="mem-cell">
+        <div class="mem-num">${m.total ?? 0}</div>
+        <div class="mem-label">Total</div>
+      </div>
+      <div class="mem-cell">
+        <div class="mem-num">${m.short_term ?? 0}</div>
+        <div class="mem-label">Short-term</div>
+      </div>
+      <div class="mem-cell">
+        <div class="mem-num">${m.mid_term ?? 0}</div>
+        <div class="mem-label">Mid-term</div>
+      </div>
+      <div class="mem-cell">
+        <div class="mem-num">${m.long_term ?? 0}</div>
+        <div class="mem-label">Long-term</div>
+      </div>
+    </div>
+    ${status ? `<div style="margin-top:.4rem"><span class="${pillClass(status)}">${esc(status)}</span></div>` : ''}`;
+}
+
+function renderBoard(b) {
+  const s = b.summary || {};
+  const bsEl = document.getElementById('bs-body');
+  bsEl.innerHTML = `
+    <div class="board-summary">
+      <div class="bs-cell">
+        <div class="bs-num done-num">${s.done ?? 0}</div>
+        <div class="bs-label">Done</div>
+      </div>
+      <div class="bs-cell">
+        <div class="bs-num active-num">${s.in_progress ?? 0}</div>
+        <div class="bs-label">Active</div>
+      </div>
+      <div class="bs-cell">
+        <div class="bs-num open-num">${(s.open ?? 0) + (s.claimed ?? 0)}</div>
+        <div class="bs-label">Open</div>
+      </div>
+    </div>
+    <div style="font-size:.75rem;color:#484f58">${s.total ?? 0} tasks total</div>`;
+
+  const active = (b.active || []);
+  const tlEl = document.getElementById('task-list');
+  if (!active.length) {
+    tlEl.innerHTML = '<div style="color:#484f58;padding:.5rem 0;font-size:.82rem">No active tasks</div>';
+    return;
+  }
+  tlEl.innerHTML = active.map(t => `
+    <div class="task-row">
+      <span class="${statusClass(t.status)}">${esc(t.status)}</span>
+      <span class="task-title">${esc(t.title)}</span>
+      <span class="${priorityClass(t.priority)}">${esc(t.priority)}</span>
+      <span class="task-agent">${t.claimed_by ? esc(t.claimed_by) : ''}</span>
+    </div>`).join('');
+}
+
+// ── boot ───────────────────────────────────────────────────────────────────
+
+loadAll();
+pollTimer = setInterval(loadAll, POLL_MS);
+</script>
+</body>
+</html>

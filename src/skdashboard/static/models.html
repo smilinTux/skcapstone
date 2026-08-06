@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard — Models</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <style>
+    #models-body { padding: 12px 16px; }
+    .models-help { color: var(--muted, #9aa4b2); font-size: 13px; margin: 4px 0 12px; }
+    .models-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .models-toolbar input[type=search] { flex: 1; min-width: 200px; padding: 7px 10px; border-radius: 8px;
+      border: 1px solid var(--border, #2a3140); background: var(--surface, #10151f); color: inherit; }
+    .model-row { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-bottom: 1px solid var(--border, #222); }
+    .model-row .id { font-weight: 600; }
+    .model-row .prov { color: var(--muted, #9aa4b2); font-size: 12px; margin-left: 8px; }
+    .badge-free { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+      background: #1f6f4a; color: #d7ffe9; margin-left: 8px; }
+    .model-row .grow { flex: 1; }
+    /* toggle */
+    .sw { position: relative; width: 40px; height: 22px; }
+    .sw input { opacity: 0; width: 0; height: 0; }
+    .sw span { position: absolute; inset: 0; cursor: pointer; background: #3a4150; border-radius: 22px; transition: .15s; }
+    .sw span:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px;
+      background: #fff; border-radius: 50%; transition: .15s; }
+    .sw input:checked + span { background: #7c5cff; }
+    .sw input:checked + span:before { transform: translateX(18px); }
+    .dirty-note { color: #ffb454; font-size: 12px; margin-left: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar sidebar" role="navigation" aria-label="Dashboard sections">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/">Status</a>
+        <a class="tab" href="/cockpit">ITIL Cockpit</a>
+        <a class="tab" href="/cmdb">Assets (CMDB)</a>
+        <a class="tab" href="/board">Kanban Board</a>
+        <a class="tab" href="/assistant">Assistant</a>
+        <a class="tab" href="/trust">Trust</a>
+        <a class="tab active" href="/models">Models</a>
+      </div>
+      <div class="spacer"></div>
+      <span id="dirty" class="dirty-note"></span>
+      <button class="btn" id="btn-save">Save</button>
+    </div>
+
+    <div class="kpirow" id="models-kpi"></div>
+    <div id="models-body"><div class="emptymsg">Loading models…</div></div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script type="module">
+    const body = document.getElementById('models-body');
+    const kpi = document.getElementById('models-kpi');
+    const dirtyEl = document.getElementById('dirty');
+    const saveBtn = document.getElementById('btn-save');
+    const toast = document.getElementById('toast');
+
+    // Prefix-aware API base: works standalone (page at /models -> API '') AND
+    // embedded under the skchat shell proxy (page at /skdashboard/models -> API
+    // '/skdashboard', so fetches hit /skdashboard/api/... and reach the dashboard
+    // through the reverse proxy instead of escaping the prefix).
+    const API = location.pathname.replace(/\/models\/?$/, '');
+
+    let models = [];              // [{id, provider, free, advertised}]
+    const enabled = new Set();    // ids currently enabled (mutable, local)
+    let query = '';
+    let freeOnly = false;
+    let dirty = false;
+
+    function showToast(msg) {
+      toast.textContent = msg; toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2600);
+    }
+
+    function markDirty(v) { dirty = v; dirtyEl.textContent = v ? 'unsaved changes' : ''; }
+
+    async function load() {
+      body.innerHTML = '<div class="emptymsg">Loading models…</div>';
+      try {
+        const r = await fetch(API + '/api/models');
+        const d = await r.json();
+        models = (d.data || []).slice();
+        enabled.clear();
+        for (const m of models) if (m.advertised) enabled.add(m.id);
+        markDirty(false);
+        render();
+      } catch (e) {
+        body.innerHTML = '<div class="emptymsg">Could not reach the gateway admin API.</div>';
+      }
+    }
+
+    function visible() {
+      const q = query.trim().toLowerCase();
+      return models.filter(m => {
+        if (freeOnly && m.free !== true) return false;
+        if (!q) return true;
+        return (m.id || '').toLowerCase().includes(q) || (m.provider || '').toLowerCase().includes(q);
+      });
+    }
+
+    function render() {
+      const vis = visible();
+      kpi.innerHTML =
+        `<div class="kpi"><div class="k">${models.length}</div><div class="l">discovered</div></div>` +
+        `<div class="kpi"><div class="k">${enabled.size}</div><div class="l">enabled</div></div>`;
+      const rows = vis.map(m => {
+        const on = enabled.has(m.id) ? 'checked' : '';
+        const free = m.free === true ? '<span class="badge-free">FREE</span>' : '';
+        return `<div class="model-row">
+          <div class="grow"><span class="id">${escapeHtml(m.id)}</span>
+            <span class="prov">${escapeHtml(m.provider || '')}</span>${free}</div>
+          <label class="sw"><input type="checkbox" data-id="${escapeAttr(m.id)}" ${on}><span></span></label>
+        </div>`;
+      }).join('');
+      const controls = `<div class="models-help">Enabled models are advertised on the gateway (<code>/v1/models</code>)
+        and offered in the reply-model picker and to the brain, everywhere. This is the same allowlist the
+        skchat app "Manage models" screen writes.</div>
+        <div class="models-toolbar">
+          <input type="search" id="q" placeholder="Filter by id or provider" value="${escapeAttr(query)}">
+          <label><input type="checkbox" id="freeonly" ${freeOnly ? 'checked' : ''}> Free only</label>
+          <button class="btn" id="enable-all">Enable all shown</button>
+          <button class="btn" id="disable-all">Disable all shown</button>
+        </div>`;
+      body.innerHTML = controls + (rows || '<div class="emptymsg">No models match.</div>');
+
+      document.getElementById('q').addEventListener('input', e => { query = e.target.value; render(); });
+      document.getElementById('freeonly').addEventListener('change', e => { freeOnly = e.target.checked; render(); });
+      document.getElementById('enable-all').addEventListener('click', () => { for (const m of visible()) enabled.add(m.id); markDirty(true); render(); });
+      document.getElementById('disable-all').addEventListener('click', () => { for (const m of visible()) enabled.delete(m.id); markDirty(true); render(); });
+      body.querySelectorAll('input[type=checkbox][data-id]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          if (cb.checked) enabled.add(cb.dataset.id); else enabled.delete(cb.dataset.id);
+          markDirty(true); render();
+        });
+      });
+    }
+
+    async function save() {
+      // If everything is enabled, persist [] (advertise-all) so future models auto-include.
+      const enableAll = models.length > 0 && models.every(m => enabled.has(m.id));
+      const payload = enableAll ? [] : Array.from(enabled);
+      saveBtn.disabled = true;
+      try {
+        const r = await fetch(API + '/api/models/advertise', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: payload }),
+        });
+        if (!r.ok) throw new Error('save failed');
+        showToast(`Saved: ${enabled.size} model${enabled.size === 1 ? '' : 's'} enabled`);
+        markDirty(false);
+        await load();
+      } catch (e) {
+        showToast('Could not save (gateway offline)');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    }
+
+    function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+    function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+
+    saveBtn.addEventListener('click', save);
+    load();
+  </script>
+</body>
+</html>

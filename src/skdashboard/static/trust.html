@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard - Trust Graph</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <style>
+    /* Trust graph panel. Self-contained, no external assets. */
+    .tg-layout{display:grid;grid-template-columns:1fr 288px;gap:14px;align-items:start;}
+    @media(max-width:860px){.tg-layout{grid-template-columns:1fr;}}
+    .tg-canvas{background:var(--panel);border:1px solid var(--hair);border-radius:12px;
+      box-shadow:var(--shadowc);overflow:hidden;position:relative;min-height:520px;}
+    .tg-canvas svg{display:block;width:100%;height:100%;min-height:520px;cursor:grab;}
+    .tg-side{display:flex;flex-direction:column;gap:14px;}
+    .tg-card{background:var(--panel);border:1px solid var(--hair);border-radius:12px;
+      box-shadow:var(--shadowc);padding:13px 14px;}
+    .tg-card h2{margin:0 0 10px;font-size:13px;letter-spacing:.02em;}
+    .tg-legend-row{display:flex;align-items:center;gap:9px;padding:4px 0;font-size:12px;color:var(--ink2);}
+    .tg-swatch{width:14px;height:14px;border-radius:50%;flex:none;border:1.5px solid rgba(0,0,0,.15);}
+    .tg-edgekey{width:26px;height:0;flex:none;border-top-width:3px;border-top-style:solid;}
+    .tg-detail dt{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-top:8px;}
+    .tg-detail dd{margin:2px 0 0;font-size:12.5px;color:var(--ink);word-break:break-all;font-family:ui-monospace,monospace;}
+    .tg-detail .placeholder{color:var(--ink3);font-family:inherit;font-size:12.5px;}
+    .tg-node{cursor:pointer;}
+    .tg-node text{font-size:11px;fill:var(--ink2);pointer-events:none;user-select:none;}
+    .tg-node.self text{fill:var(--ink);font-weight:700;}
+    .tg-node.dim{opacity:.22;}
+    .tg-edge.dim{opacity:.08;}
+    .tg-tooltip{position:absolute;pointer-events:none;background:var(--panel2);border:1px solid var(--hair);
+      border-radius:8px;padding:6px 9px;font-size:11.5px;color:var(--ink);box-shadow:var(--shadow);
+      opacity:0;transition:opacity .08s;max-width:240px;z-index:5;}
+    .tg-stat{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--ink2);}
+    .tg-stat b{color:var(--ink);font-family:ui-monospace,monospace;}
+    .tg-note{margin-top:8px;font-size:11.5px;color:var(--high);}
+    .tg-empty{padding:60px 24px;text-align:center;color:var(--ink3);}
+    .tg-empty h3{color:var(--ink2);margin:0 0 6px;font-size:15px;}
+    .btn.active{background:var(--accent);color:#fff;border-color:transparent;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar sidebar" role="navigation" aria-label="Dashboard sections">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/">Status</a>
+        <a class="tab" href="/cockpit">ITIL Cockpit</a>
+        <a class="tab" href="/cmdb">Assets (CMDB)</a>
+        <a class="tab" href="/board">Kanban Board</a>
+        <a class="tab" href="/assistant">Assistant</a>
+        <a class="tab active" href="/trust">Trust</a>
+        <a class="tab" href="/models">Models</a>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn" id="tg-relayout">Re-layout</button>
+    </div>
+
+    <div class="tg-layout">
+      <div class="tg-canvas" id="tg-canvas">
+        <div class="tg-empty" id="tg-empty" style="display:none">
+          <h3>No trust relationships yet</h3>
+          <div>Once this agent issues capability tokens, forms FEB bonds, syncs
+          with peers, or meets collaborators on the board, they appear here.</div>
+        </div>
+        <div class="tg-tooltip" id="tg-tooltip"></div>
+      </div>
+
+      <div class="tg-side">
+        <div class="tg-card">
+          <h2>Selection</h2>
+          <dl class="tg-detail" id="tg-detail">
+            <div class="placeholder">Hover or click a node to inspect it.</div>
+          </dl>
+        </div>
+        <div class="tg-card">
+          <h2>Graph</h2>
+          <div id="tg-stats"><div class="tg-stat"><span>Loading...</span></div></div>
+          <div class="tg-note" id="tg-note" style="display:none"></div>
+        </div>
+        <div class="tg-card">
+          <h2>Node kinds</h2>
+          <div id="tg-legend-nodes"></div>
+          <h2 style="margin-top:12px">Trust edges</h2>
+          <div id="tg-legend-edges"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    // Palette is theme-independent (vivid hues read on light + dark panels).
+    // Node kinds mirror trust_graph.py node_type values (agent / peer / service),
+    // plus operator/human fallbacks. The central agent renders as "self".
+    var NODE_COLORS = {
+      self:     "#7b5cf0",
+      agent:    "#2f9e6b",
+      peer:     "#2196F3",
+      service:  "#FF9800",
+      operator: "#9C27B0",
+      human:    "#E91E63",
+      _default: "#7a869e"
+    };
+    var NODE_LABELS = {
+      self: "self (this agent)", agent: "agent", peer: "peer",
+      service: "service", operator: "operator", human: "partner"
+    };
+    // Edge trust types mirror trust_graph.py edge_type values. Each gets a
+    // distinct color AND dash pattern so they are separable without color.
+    var EDGE_STYLES = {
+      token:    {color: "#4CAF50", dash: "",        label: "token (capability grant)"},
+      feb:      {color: "#E91E63", dash: "5,4",     label: "feb (emotional bond)"},
+      sync:     {color: "#2196F3", dash: "1,5",     label: "sync (vault peer)"},
+      coord:    {color: "#FF9800", dash: "8,3,2,3", label: "coord (board collaborator)"},
+      operator: {color: "#9C27B0", dash: "",        label: "operator (owns agent)"},
+      _default: {color: "#7a869e", dash: "3,3",     label: "other"}
+    };
+    var SVGNS = "http://www.w3.org/2000/svg";
+
+    var canvas = document.getElementById("tg-canvas");
+    var emptyEl = document.getElementById("tg-empty");
+    var tooltip = document.getElementById("tg-tooltip");
+    var detailEl = document.getElementById("tg-detail");
+
+    var state = {nodes: [], edges: [], selfId: null, adj: {}, svg: null, W: 900, H: 520};
+
+    function nodeColor(t) { return NODE_COLORS[t] || NODE_COLORS._default; }
+    function edgeStyle(t) { return EDGE_STYLES[t] || EDGE_STYLES._default; }
+
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+        return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c];
+      });
+    }
+
+    // Deterministic pseudo-random so a "Re-layout" is stable per seed.
+    function makeRng(seed) {
+      var s = seed >>> 0;
+      return function () {
+        s = (s * 1664525 + 1013904223) >>> 0;
+        return s / 4294967296;
+      };
+    }
+
+    // Compact hand-rolled force-directed layout (Fruchterman-Reingold style):
+    // node-node repulsion, spring attraction along edges, gravity to center.
+    function layout(nodes, edges, W, H, seed) {
+      var rng = makeRng(seed || 1);
+      var n = nodes.length;
+      if (!n) return;
+      var cx = W / 2, cy = H / 2;
+      var k = Math.sqrt((W * H) / (n + 1)) * 0.72;
+      nodes.forEach(function (nd, i) {
+        var a = (i / n) * Math.PI * 2;
+        var r = 40 + rng() * Math.min(W, H) * 0.32;
+        nd.x = cx + Math.cos(a) * r;
+        nd.y = cy + Math.sin(a) * r;
+      });
+      var byId = {};
+      nodes.forEach(function (nd) { byId[nd.id] = nd; });
+      var iters = 320;
+      for (var it = 0; it < iters; it++) {
+        var t = (1 - it / iters);
+        nodes.forEach(function (nd) { nd.dx = 0; nd.dy = 0; });
+        for (var i = 0; i < n; i++) {
+          for (var j = i + 1; j < n; j++) {
+            var a = nodes[i], b = nodes[j];
+            var dx = a.x - b.x, dy = a.y - b.y;
+            var d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+            var rep = (k * k) / d;
+            var ux = dx / d, uy = dy / d;
+            a.dx += ux * rep; a.dy += uy * rep;
+            b.dx -= ux * rep; b.dy -= uy * rep;
+          }
+        }
+        edges.forEach(function (e) {
+          var a = byId[e.source], b = byId[e.target];
+          if (!a || !b) return;
+          var dx = a.x - b.x, dy = a.y - b.y;
+          var d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+          var strength = (typeof e.strength === "number") ? (0.5 + e.strength) : 1;
+          var att = (d * d) / k * strength * 0.9;
+          var ux = dx / d, uy = dy / d;
+          a.dx -= ux * att; a.dy -= uy * att;
+          b.dx += ux * att; b.dy += uy * att;
+        });
+        nodes.forEach(function (nd) {
+          nd.dx += (cx - nd.x) * 0.012;
+          nd.dy += (cy - nd.y) * 0.012;
+          var disp = Math.sqrt(nd.dx * nd.dx + nd.dy * nd.dy) || 0.01;
+          var cap = Math.min(disp, 24 * t + 2);
+          nd.x += (nd.dx / disp) * cap;
+          nd.y += (nd.dy / disp) * cap;
+          nd.x = Math.max(34, Math.min(W - 34, nd.x));
+          nd.y = Math.max(34, Math.min(H - 34, nd.y));
+        });
+      }
+    }
+
+    function radiusFor(nd) { return nd.id === state.selfId ? 15 : 9; }
+
+    function render() {
+      // clear previous svg
+      var old = canvas.querySelector("svg");
+      if (old) old.remove();
+
+      if (!state.nodes.length) {
+        emptyEl.style.display = "block";
+        return;
+      }
+      emptyEl.style.display = "none";
+
+      var W = canvas.clientWidth || 900;
+      var H = Math.max(520, canvas.clientHeight || 520);
+      state.W = W; state.H = H;
+      layout(state.nodes, state.edges, W, H, state.seed);
+
+      var byId = {};
+      state.nodes.forEach(function (nd) { byId[nd.id] = nd; });
+
+      var svg = document.createElementNS(SVGNS, "svg");
+      svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      state.svg = svg;
+
+      var gEdges = document.createElementNS(SVGNS, "g");
+      var gNodes = document.createElementNS(SVGNS, "g");
+
+      state.edges.forEach(function (e, idx) {
+        var a = byId[e.source], b = byId[e.target];
+        if (!a || !b) return;
+        var st = edgeStyle(e.type);
+        var line = document.createElementNS(SVGNS, "line");
+        line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+        line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+        line.setAttribute("stroke", st.color);
+        line.setAttribute("stroke-width", 1 + (e.strength || 0.5) * 2.2);
+        if (st.dash) line.setAttribute("stroke-dasharray", st.dash);
+        line.setAttribute("stroke-linecap", "round");
+        line.setAttribute("opacity", "0.72");
+        line.setAttribute("class", "tg-edge");
+        line.dataset.src = e.source; line.dataset.tgt = e.target;
+        gEdges.appendChild(line);
+      });
+
+      state.nodes.forEach(function (nd) {
+        var g = document.createElementNS(SVGNS, "g");
+        g.setAttribute("class", "tg-node" + (nd.id === state.selfId ? " self" : ""));
+        g.setAttribute("transform", "translate(" + nd.x + "," + nd.y + ")");
+        g.dataset.id = nd.id;
+
+        if (nd.id === state.selfId) {
+          var ring = document.createElementNS(SVGNS, "circle");
+          ring.setAttribute("r", radiusFor(nd) + 4);
+          ring.setAttribute("fill", "none");
+          ring.setAttribute("stroke", nodeColor("self"));
+          ring.setAttribute("stroke-width", "1.5");
+          ring.setAttribute("opacity", "0.55");
+          g.appendChild(ring);
+        }
+        var c = document.createElementNS(SVGNS, "circle");
+        c.setAttribute("r", radiusFor(nd));
+        c.setAttribute("fill", nodeColor(nd.id === state.selfId ? "self" : nd.type));
+        c.setAttribute("stroke", "rgba(0,0,0,.22)");
+        c.setAttribute("stroke-width", "1.5");
+        g.appendChild(c);
+
+        var label = document.createElementNS(SVGNS, "text");
+        label.setAttribute("x", 0);
+        label.setAttribute("y", radiusFor(nd) + 13);
+        label.setAttribute("text-anchor", "middle");
+        label.textContent = nd.label || nd.id;
+        g.appendChild(label);
+
+        g.addEventListener("mouseenter", function (ev) { onHover(nd, ev); });
+        g.addEventListener("mousemove", function (ev) { moveTip(ev); });
+        g.addEventListener("mouseleave", function () { onLeave(); });
+        g.addEventListener("click", function () { select(nd); });
+        gNodes.appendChild(g);
+      });
+
+      svg.appendChild(gEdges);
+      svg.appendChild(gNodes);
+      canvas.appendChild(svg);
+    }
+
+    function neighbors(id) {
+      var set = {};
+      set[id] = true;
+      state.edges.forEach(function (e) {
+        if (e.source === id) set[e.target] = true;
+        if (e.target === id) set[e.source] = true;
+      });
+      return set;
+    }
+
+    function highlight(id) {
+      var keep = id ? neighbors(id) : null;
+      var svg = state.svg;
+      if (!svg) return;
+      svg.querySelectorAll(".tg-node").forEach(function (g) {
+        g.classList.toggle("dim", !!(keep && !keep[g.dataset.id]));
+      });
+      svg.querySelectorAll(".tg-edge").forEach(function (l) {
+        var on = !id || l.dataset.src === id || l.dataset.tgt === id;
+        l.classList.toggle("dim", !on);
+      });
+    }
+
+    function onHover(nd, ev) {
+      highlight(nd.id);
+      tooltip.innerHTML = "<b>" + esc(nd.label || nd.id) + "</b><br>" +
+        "kind: " + esc(nd.type || "agent");
+      tooltip.style.opacity = "1";
+      moveTip(ev);
+    }
+    function moveTip(ev) {
+      var r = canvas.getBoundingClientRect();
+      tooltip.style.left = (ev.clientX - r.left + 12) + "px";
+      tooltip.style.top = (ev.clientY - r.top + 12) + "px";
+    }
+    function onLeave() {
+      tooltip.style.opacity = "0";
+      highlight(null);
+    }
+
+    function edgesFor(id) {
+      return state.edges.filter(function (e) {
+        return e.source === id || e.target === id;
+      });
+    }
+
+    function select(nd) {
+      highlight(nd.id);
+      var edges = edgesFor(nd.id);
+      var rows = "";
+      rows += row("id", nd.id);
+      rows += row("kind", NODE_LABELS[nd.id === state.selfId ? "self" : nd.type] || nd.type || "agent");
+      if (nd.fingerprint) rows += row("fingerprint", nd.fingerprint);
+      var scoreParts = edges.map(function (e) {
+        var other = e.source === nd.id ? e.target : e.source;
+        return esc(e.type) + " -> " + esc(other) +
+          (typeof e.strength === "number" ? " (" + e.strength.toFixed(2) + ")" : "");
+      });
+      rows += "<dt>trust edges (" + edges.length + ")</dt><dd>" +
+        (scoreParts.length ? scoreParts.join("<br>") : "none") + "</dd>";
+      detailEl.innerHTML = rows;
+    }
+    function row(k, v) {
+      return "<dt>" + esc(k) + "</dt><dd>" + esc(v) + "</dd>";
+    }
+
+    function renderLegend() {
+      var kinds = ["self", "agent", "peer", "service", "operator", "human"];
+      var present = {};
+      state.nodes.forEach(function (nd) {
+        present[nd.id === state.selfId ? "self" : nd.type] = true;
+      });
+      var nEl = document.getElementById("tg-legend-nodes");
+      nEl.innerHTML = kinds.filter(function (k) { return present[k]; }).map(function (k) {
+        return '<div class="tg-legend-row"><span class="tg-swatch" style="background:' +
+          nodeColor(k) + '"></span>' + esc(NODE_LABELS[k] || k) + "</div>";
+      }).join("") || '<div class="tg-legend-row" style="color:var(--ink3)">none</div>';
+
+      var edgeTypes = {};
+      state.edges.forEach(function (e) { edgeTypes[e.type] = true; });
+      var order = ["operator", "token", "feb", "sync", "coord"];
+      var eEl = document.getElementById("tg-legend-edges");
+      eEl.innerHTML = order.filter(function (t) { return edgeTypes[t]; }).map(function (t) {
+        var st = edgeStyle(t);
+        var style = "border-top-color:" + st.color + ";" +
+          (st.dash ? "border-top-style:dashed;" : "border-top-style:solid;");
+        return '<div class="tg-legend-row"><span class="tg-edgekey" style="' + style +
+          '"></span>' + esc(st.label) + "</div>";
+      }).join("") || '<div class="tg-legend-row" style="color:var(--ink3)">none</div>';
+    }
+
+    function renderStats(data) {
+      var st = data.stats || {};
+      var byType = st.by_type || {};
+      var el = document.getElementById("tg-stats");
+      var html = "";
+      html += '<div class="tg-stat"><span>Agent</span><b>' + esc(data.agent || "unknown") + "</b></div>";
+      html += '<div class="tg-stat"><span>Nodes</span><b>' + (st.nodes != null ? st.nodes : state.nodes.length) + "</b></div>";
+      html += '<div class="tg-stat"><span>Edges</span><b>' + (st.edges != null ? st.edges : state.edges.length) + "</b></div>";
+      Object.keys(byType).forEach(function (k) {
+        html += '<div class="tg-stat"><span>' + esc(k) + " edges</span><b>" + byType[k] + "</b></div>";
+      });
+      el.innerHTML = html;
+      var note = document.getElementById("tg-note");
+      if (data.note) { note.style.display = "block"; note.textContent = data.note; }
+      else { note.style.display = "none"; }
+    }
+
+    function load() {
+      fetch("/api/trust/graph").then(function (r) { return r.json(); }).then(function (data) {
+        state.nodes = (data.nodes || []).map(function (n) { return Object.assign({}, n); });
+        state.edges = data.edges || [];
+        state.selfId = data.agent && byIdHas(state.nodes, data.agent) ? data.agent : guessSelf(state.nodes, state.edges);
+        state.seed = 1;
+        renderStats(data);
+        renderLegend();
+        render();
+      }).catch(function (err) {
+        document.getElementById("tg-stats").innerHTML =
+          '<div class="tg-stat" style="color:var(--crit)">Failed to load: ' + esc(err) + "</div>";
+        state.nodes = []; render();
+      });
+    }
+
+    function byIdHas(nodes, id) {
+      return nodes.some(function (n) { return n.id === id; });
+    }
+    // The self node is the one that sources the most edges (agent-centric graph).
+    function guessSelf(nodes, edges) {
+      var out = {};
+      edges.forEach(function (e) { out[e.source] = (out[e.source] || 0) + 1; });
+      var best = null, bestN = -1;
+      nodes.forEach(function (n) {
+        var c = out[n.id] || 0;
+        if (c > bestN) { bestN = c; best = n.id; }
+      });
+      return best;
+    }
+
+    document.getElementById("tg-relayout").addEventListener("click", function () {
+      state.seed = (state.seed || 1) + 1;
+      render();
+    });
+    window.addEventListener("resize", function () { render(); });
+
+    load();
+  })();
+  </script>
+</body>
+</html>
