@@ -433,7 +433,7 @@ loadAll();setInterval(loadAll,15000);
 def _trust_graph_dict(home: Path) -> dict:
     """Build the trust graph as a plain dict for the ``/api/trust/graph`` endpoint.
 
-    Delegates to :func:`skcapstone.trust_graph.build_trust_graph` and reuses its
+    Delegates to :func:`capauth.trust.graph.build_trust_graph` and reuses its
     ``format_json`` renderer so the wire shape stays in one place. Any failure
     (missing sources, unreadable home) degrades to an empty graph rather than a
     500, so the dashboard panel always renders.
@@ -444,7 +444,7 @@ def _trust_graph_dict(home: Path) -> dict:
     Returns:
         A dict with ``nodes``, ``edges``, ``stats`` and (on failure) a ``note``.
     """
-    from skcapstone import trust_graph as tg
+    from capauth.trust import graph as tg
 
     try:
         graph = tg.build_trust_graph(home)
