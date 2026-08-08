@@ -552,7 +552,29 @@ def register_status_commands(main: click.Group) -> None:
             "CONTENT against its released artifact on PyPI."
         ),
     )
-    def doctor(home: str, json_out: bool, auto_fix: bool, verbose: bool, deep: bool):
+    @click.option(
+        "--category",
+        multiple=True,
+        help="Only report checks in this category (repeatable), e.g. --category source.",
+    )
+    @click.option(
+        "--strict",
+        is_flag=True,
+        help=(
+            "Exit non-zero if any reported check FAILED, so a scheduled job or CI "
+            "step can gate on it. Unknown checks do NOT trip it: an unanswerable "
+            "check is not evidence of a problem."
+        ),
+    )
+    def doctor(
+        home: str,
+        json_out: bool,
+        auto_fix: bool,
+        verbose: bool,
+        deep: bool,
+        category: tuple,
+        strict: bool,
+    ):
         """Diagnose sovereign stack health.
 
         With --fix, automatically remediate fixable failures: create missing
@@ -562,11 +584,20 @@ def register_status_commands(main: click.Group) -> None:
 
         With --verbose, every check is printed in full - including passing
         ones - with its check name, category, detail, and any available fix.
+
+        With --strict, exit non-zero when any reported check FAILED, so a
+        scheduled job or CI step can gate on it. Combine with --category to
+        keep that gate narrow; a gate that trips on unrelated pre-existing
+        failures is one people learn to ignore.
         """
         from ..doctor import run_diagnostics, run_fixes
 
         home_path = Path(home).expanduser()
         report = run_diagnostics(home_path, deep=deep)
+
+        if category:
+            wanted = set(category)
+            report.checks = [c for c in report.checks if c.category in wanted]
 
         # ── Auto-fix pass ─────────────────────────────────────────────────
         fix_results = []
@@ -588,6 +619,8 @@ def register_status_commands(main: click.Group) -> None:
                     for r in fix_results
                 ]
             click.echo(json.dumps(data, indent=2))
+            if strict and report.failed_count:
+                raise SystemExit(1)
             return
 
         # ── Print fix summary ─────────────────────────────────────────────
@@ -708,6 +741,12 @@ def register_status_commands(main: click.Group) -> None:
             )
 
         console.print()
+
+        # Unknowns deliberately do NOT trip --strict. An unanswerable check is
+        # not evidence of a problem, and alerting on one would page someone
+        # every time a node is offline.
+        if strict and report.failed_count:
+            raise SystemExit(1)
 
     @main.command()
     @click.option("--home", default=AGENT_HOME, help="Agent home directory.", type=click.Path())

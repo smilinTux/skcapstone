@@ -155,7 +155,7 @@ class TestContentComparisonNotVersionStrings:
     def test_a_missing_tree_is_unknown_not_a_match(self, tmp_path):
         assert _digest_py_files(tmp_path / "nope") is None
 
-    def test_two_EMPTY_trees_must_not_hash_equal(self, tmp_path):
+    def test_two_empty_trees_must_not_hash_equal(self, tmp_path):
         """The nastiest false pass available here. rglob over an empty dir
         yields nothing and hashes to the digest of the empty string, so two
         failed wheel extractions would hash identically and the check would
@@ -298,3 +298,79 @@ class TestScope:
         getting this wrong makes the check compare against the wrong project."""
         assert _distribution_name("skchat") == "skchat-sovereign"
         assert _distribution_name("capauth") == "capauth"
+
+
+# ── the CLI gate: --category and --strict ──────────────────────────────────
+
+
+class TestStrictAndCategory:
+    """`doctor` always exited 0, so nothing could gate on it. These two flags
+    are what lets a scheduled job alert on drift, and the narrowness matters as
+    much as the exit code: a gate that trips on unrelated pre-existing failures
+    is one people learn to ignore."""
+
+    @staticmethod
+    def _invoke(monkeypatch, checks, *args):
+        import json as _json
+
+        from click.testing import CliRunner
+
+        from skcapstone.cli import main
+        from skcapstone.doctor import DiagnosticReport
+
+        monkeypatch.setattr(
+            "skcapstone.doctor.run_diagnostics",
+            lambda home, deep=False: DiagnosticReport(checks=list(checks)),
+        )
+        result = CliRunner().invoke(main, ["doctor", *args])
+        return result, _json
+
+    def test_category_narrows_the_report(self, monkeypatch):
+        checks = [
+            Check(name="source:a", description="a", passed=False, category="source"),
+            Check(name="pkg:b", description="b", passed=False, category="packages"),
+        ]
+        result, js = self._invoke(monkeypatch, checks, "--category", "source", "--json-out")
+        data = js.loads(result.output)
+        assert [c["name"] for c in data["checks"]] == ["source:a"]
+
+    def test_strict_exits_nonzero_on_a_failure(self, monkeypatch):
+        checks = [Check(name="source:a", description="a", passed=False, category="source")]
+        result, _ = self._invoke(monkeypatch, checks, "--category", "source", "--strict")
+        assert result.exit_code == 1
+
+    def test_strict_exits_zero_when_everything_passes(self, monkeypatch):
+        checks = [Check(name="source:a", description="a", passed=True, category="source")]
+        result, _ = self._invoke(monkeypatch, checks, "--category", "source", "--strict")
+        assert result.exit_code == 0
+
+    def test_an_unknown_alone_does_not_trip_strict(self, monkeypatch):
+        """The whole point of the tri-state. An offline node cannot answer the
+        unpublished question, and paging someone for that would train them to
+        mute the alert - which costs us the real drift signal too."""
+        checks = [
+            Check(
+                name="source:a",
+                description="a",
+                passed=False,
+                unknown=True,
+                category="source",
+            )
+        ]
+        result, _ = self._invoke(monkeypatch, checks, "--category", "source", "--strict")
+        assert result.exit_code == 0
+
+    def test_strict_ignores_failures_outside_the_chosen_category(self, monkeypatch):
+        """A drift alarm must not fire because some unrelated check is red."""
+        checks = [
+            Check(name="source:a", description="a", passed=True, category="source"),
+            Check(name="pkg:b", description="b", passed=False, category="packages"),
+        ]
+        result, _ = self._invoke(monkeypatch, checks, "--category", "source", "--strict")
+        assert result.exit_code == 0
+
+    def test_without_strict_a_failure_still_exits_zero(self, monkeypatch):
+        """Unchanged default: doctor is a report, not a gate, unless asked."""
+        checks = [Check(name="source:a", description="a", passed=False, category="source")]
+        result, _ = self._invoke(monkeypatch, checks, "--category", "source")
+        assert result.exit_code == 0
