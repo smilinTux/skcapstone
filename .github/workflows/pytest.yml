@@ -57,8 +57,8 @@ jobs:
       - name: Install extracted siblings from source
         run: |
           pip install --force-reinstall --no-deps --no-cache-dir \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
-            "skdashboard @ git+https://github.com/smilinTux/skdashboard@master"
+            "skcoord @ git+https://github.com/smilinTux/skcoord@main" \
+            "skdashboard @ git+https://github.com/smilinTux/skdashboard@main"
 
       - name: Run unit tests (exclude integration + e2e via markers)
         run: |
