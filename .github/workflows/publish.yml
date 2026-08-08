@@ -1,4 +1,4 @@
-name: Publish to PyPI and npm
+name: Publish to PyPI
 
 on:
   push:
@@ -132,38 +132,3 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
-
-  publish-npm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # setuptools-scm derives the version from the git tag, so a
-          # shallow checkout would yield a placeholder like 0.1.dev1 and
-          # break dependency resolution against pinned siblings.
-          fetch-depth: 0
-          fetch-tags: true
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-      - name: Sync version from pyproject.toml to package.json
-        run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          npm version "$TAG_VERSION" --no-git-tag-version --allow-same-version
-          echo "npm version set to $TAG_VERSION"
-      - name: Install dependencies
-        run: npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts
-      - name: Build TypeScript
-        run: npm run build 2>/dev/null || true
-      - name: Publish to npm
-        run: |
-          OUTPUT=$(npm publish --access public 2>&1) && exit 0
-          if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
-            echo "::warning::Version already exists on npm — skipping"
-          else
-            echo "$OUTPUT"
-            exit 1
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
