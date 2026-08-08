@@ -16,14 +16,16 @@ from pathlib import Path
 def _resolve_version() -> str:
     """Resolve the package version from a single source of truth.
 
-    The canonical version is declared exactly once in ``pyproject.toml``
-    (``[project].version``). When skcapstone is installed (including
-    ``pip install -e``), that value is exposed through installed package
-    metadata and read here, so ``__version__``, the CLI ``--version`` string,
-    and the ``version`` command can never drift from the declaration.
+    The canonical version is the git tag. ``pyproject.toml`` declares the
+    version ``dynamic`` and setuptools-scm derives it from that tag at build
+    time, so a release cannot carry a version that no tag corresponds to. When
+    skcapstone is installed (including ``pip install -e``) the derived value is
+    exposed through installed package metadata and read here, so
+    ``__version__``, the CLI ``--version`` string, and the ``version`` command
+    can never drift from each other.
 
-    Fallback: in a bare source checkout with no installed metadata, parse
-    ``pyproject.toml`` directly so the value still matches the one declaration.
+    Fallback: in a bare source checkout with no installed metadata, ask
+    setuptools-scm directly, which reads the same git tag.
     """
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version as _pkg_version
@@ -33,21 +35,31 @@ def _resolve_version() -> str:
     except PackageNotFoundError:
         pass
 
-    # Uninstalled dev tree: read the canonical value straight from pyproject.
+    # Uninstalled dev tree: derive from the git tag, the same single source the
+    # build uses. pyproject no longer carries [project].version -- it is
+    # `dynamic` via setuptools-scm -- so parsing it here would always miss.
     try:
-        import tomllib  # Python 3.11+
-    except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-        tomllib = None
-    if tomllib is not None:
-        pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
-        if pyproject.is_file():
-            try:
-                with pyproject.open("rb") as fh:
-                    declared = tomllib.load(fh).get("project", {}).get("version")
-                if declared:
-                    return declared
-            except Exception:  # pragma: no cover - defensive
-                pass
+        from setuptools_scm import get_version
+
+        # The describe-command must be repeated here: get_version() does not
+        # apply [tool.setuptools_scm].git_describe_command from pyproject, so
+        # without it this picks the newest tag of ANY shape and derives a
+        # nonsense version off release-unrelated tags like memory-index-fix-*.
+        # Keep in lockstep with pyproject and .github/workflows/publish.yml.
+        return get_version(
+            root=str(Path(__file__).resolve().parents[2]),
+            git_describe_command=[
+                "git",
+                "describe",
+                "--dirty",
+                "--tags",
+                "--long",
+                "--match",
+                "v[0-9]*",
+            ],
+        )
+    except Exception:  # pragma: no cover - no scm, no tags, or scm not installed
+        pass
 
     return "0.0.0+unknown"
 

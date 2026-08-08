@@ -1,9 +1,11 @@
 """Single-source-of-truth guarantees for the package version.
 
-The version is declared exactly once, in ``pyproject.toml`` (``[project].version``).
-Everything else (``skcapstone.__version__``, the CLI ``--version`` string, the
-``version`` command) derives from that one declaration via installed package
-metadata, so the values can never drift apart.
+The version is declared exactly once, by the **git tag**. ``pyproject.toml``
+marks the version ``dynamic`` and setuptools-scm derives it from that tag, so a
+release cannot carry a version no tag corresponds to. Everything else
+(``skcapstone.__version__``, the CLI ``--version`` string, the ``version``
+command) derives from that one source via installed package metadata, so the
+values can never drift apart.
 
 Regression: previously ``__version__`` was a second hardcoded literal in
 ``src/skcapstone/__init__.py`` (``0.13.0``) that had already drifted from the
@@ -38,14 +40,20 @@ def test_version_matches_installed_metadata():
 
 
 @pytest.mark.skipif(tomllib is None, reason="tomllib requires Python 3.11+")
-def test_version_matches_pyproject_declaration():
-    """The single declaration in pyproject.toml is what ends up on __version__."""
+def test_pyproject_declares_the_version_dynamic():
+    """pyproject must NOT carry a static version that could drift from the tag.
+
+    The old contract was a literal ``[project].version``. That is exactly what
+    made publish-on-main impossible: the tag job cuts vX.Y.Z+1 while the build
+    kept rebuilding the pinned string, which PyPI rejects as already existing.
+    """
     pyproject = _pyproject_path()
     if not pyproject.is_file():
         pytest.skip("pyproject.toml not present in installed layout")
     with pyproject.open("rb") as fh:
-        declared = tomllib.load(fh)["project"]["version"]
-    assert skcapstone.__version__ == declared
+        project = tomllib.load(fh)["project"]
+    assert "version" not in project, "a static version reintroduces tag/build drift"
+    assert "version" in project.get("dynamic", []), "version must be dynamic (setuptools-scm)"
 
 
 def test_cli_version_matches_dunder():
@@ -69,18 +77,17 @@ def test_no_hardcoded_version_literal_in_init():
     """__init__ must not reassign __version__ to a bare string literal."""
     init_src = Path(skcapstone.__file__).read_text()
     # A literal assignment like ``__version__ = "1.2.3"`` reintroduces drift.
-    assert not re.search(
-        r'__version__\s*=\s*["\']', init_src
-    ), "__version__ must derive from metadata/pyproject, not a string literal"
+    assert not re.search(r'__version__\s*=\s*["\']', init_src), (
+        "__version__ must derive from metadata/pyproject, not a string literal"
+    )
 
 
-@pytest.mark.skipif(tomllib is None, reason="tomllib requires Python 3.11+")
-def test_resolve_version_fallback_reads_pyproject(monkeypatch):
-    """With no installed metadata, resolution falls back to pyproject (still single-source)."""
-    pyproject = _pyproject_path()
-    if not pyproject.is_file():
-        pytest.skip("pyproject.toml not present in installed layout")
+def test_resolve_version_fallback_uses_the_git_tag(monkeypatch):
+    """With no installed metadata, resolution falls back to setuptools-scm.
 
+    Still single-source: setuptools-scm reads the same git tag the build does,
+    so the fallback cannot disagree with a real release.
+    """
     import importlib.metadata as md
     from importlib.metadata import PackageNotFoundError
 
@@ -89,6 +96,9 @@ def test_resolve_version_fallback_reads_pyproject(monkeypatch):
 
     monkeypatch.setattr(md, "version", _not_found)
 
-    with pyproject.open("rb") as fh:
-        declared = tomllib.load(fh)["project"]["version"]
-    assert skcapstone._resolve_version() == declared
+    pytest.importorskip("setuptools_scm", reason="scm fallback needs setuptools-scm")
+    resolved = skcapstone._resolve_version()
+    assert resolved and resolved != "0.0.0+unknown", (
+        "fallback must derive a real version from the git tag"
+    )
+    assert re.match(r"^\d+\.\d+", resolved), f"not a version-looking string: {resolved}"
