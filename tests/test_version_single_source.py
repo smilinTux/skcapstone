@@ -77,9 +77,9 @@ def test_no_hardcoded_version_literal_in_init():
     """__init__ must not reassign __version__ to a bare string literal."""
     init_src = Path(skcapstone.__file__).read_text()
     # A literal assignment like ``__version__ = "1.2.3"`` reintroduces drift.
-    assert not re.search(r'__version__\s*=\s*["\']', init_src), (
-        "__version__ must derive from metadata/pyproject, not a string literal"
-    )
+    assert not re.search(
+        r'__version__\s*=\s*["\']', init_src
+    ), "__version__ must derive from metadata/pyproject, not a string literal"
 
 
 def test_resolve_version_fallback_uses_the_git_tag(monkeypatch):
@@ -98,7 +98,7 @@ def test_resolve_version_fallback_uses_the_git_tag(monkeypatch):
 
     pytest.importorskip("setuptools_scm", reason="scm fallback needs setuptools-scm")
     resolved = skcapstone._resolve_version()
-    assert resolved and resolved != "0.0.0+unknown", (
-        "fallback must derive a real version from the git tag"
-    )
+    assert (
+        resolved and resolved != "0.0.0+unknown"
+    ), "fallback must derive a real version from the git tag"
     assert re.match(r"^\d+\.\d+", resolved), f"not a version-looking string: {resolved}"
