@@ -85,12 +85,19 @@ class TestPublishGating:
             "is gated on `build`/`twine check`, not the full suite"
         )
 
-    def test_npm_version_sync_preserved(self, publish):
-        steps = publish["jobs"]["publish-npm"]["steps"]
-        runs = "\n".join(s.get("run", "") or "" for s in steps)
-        assert (
-            "GITHUB_REF#refs/tags/v" in runs
-        ), "publish-npm must keep the tag -> package.json version sync"
+    def test_npm_publish_job_is_retired(self, publish):
+        """The npm publish job was dropped; skcapstone is Python-first.
+
+        This test used to assert publish-npm kept a tag -> package.json version
+        sync. That job was removed in "fix(ci): drop the broken npm publish job",
+        so the old assertion failed with KeyError on main. Pin the retirement
+        instead, so re-adding npm publishing is a deliberate act that updates
+        this test rather than a silent resurrection.
+        """
+        assert "publish-npm" not in publish["jobs"], (
+            "publish-npm was retired; if it is coming back, restore the "
+            "tag -> package.json version sync assertion with it"
+        )
 
 
 class TestCiHonesty:
