@@ -234,6 +234,42 @@ def prune_seeds(outbox_dir: Path, keep_per_agent: int = DEFAULT_SEEDS_KEEP_PER_A
     return deleted
 
 
+def _seed_outbox_dirs(skcapstone_home: Path) -> list[Path]:
+    """Return every seed-outbox root that exists under *skcapstone_home*.
+
+    Two layouts are swept:
+    - ``<home>/sync/outbox`` - the shared/single-agent path.
+    - ``<home>/agents/<agent>/sync/outbox`` - the per-agent path the daemon
+      actually writes to in the multi-agent layout.
+
+    Only sweeping the shared path let the per-agent outboxes grow without
+    bound: a seed is pushed every 5 minutes per peer and nothing pruned them,
+    reaching 240k files / 12 GB per node on a six-node cluster.
+
+    Args:
+        skcapstone_home: Path to ~/.skcapstone.
+
+    Returns:
+        List of existing seed-outbox directories (may be empty).
+    """
+    roots: list[Path] = []
+
+    shared = skcapstone_home / "sync" / "outbox"
+    if shared.is_dir():
+        roots.append(shared)
+
+    agents_dir = skcapstone_home / "agents"
+    if agents_dir.is_dir():
+        for agent_dir in sorted(agents_dir.iterdir()):
+            if not agent_dir.is_dir():
+                continue
+            per_agent = agent_dir / "sync" / "outbox"
+            if per_agent.is_dir():
+                roots.append(per_agent)
+
+    return roots
+
+
 def _legacy_outbox_dirs(skcapstone_home: Path) -> list[Path]:
     """Return all legacy v1 comms-outbox roots that exist under *skcapstone_home*.
 
@@ -708,8 +744,9 @@ def run_housekeeping(
         results["comms_outbox"]["would_delete"] = _count_stale_comms(
             targets["comms_outbox"], DEFAULT_COMMS_MAX_AGE_HOURS
         )
-        results["seed_outbox"]["would_delete"] = _count_excess_seeds(
-            targets["seed_outbox"], DEFAULT_SEEDS_KEEP_PER_AGENT
+        results["seed_outbox"]["would_delete"] = sum(
+            _count_excess_seeds(seed_dir, DEFAULT_SEEDS_KEEP_PER_AGENT)
+            for seed_dir in _seed_outbox_dirs(skcapstone_home)
         )
         results["legacy_comms"]["would_delete"] = _count_stale_legacy_comms(
             skcapstone_home, DEFAULT_LEGACY_COMMS_MAX_AGE_HOURS
@@ -736,7 +773,9 @@ def run_housekeeping(
     # Actually prune
     results["acks"]["deleted"] = prune_acks(skcomms_home)
     results["comms_outbox"]["deleted"] = prune_comms_outbox(skcapstone_home / "sync")
-    results["seed_outbox"]["deleted"] = prune_seeds(targets["seed_outbox"])
+    results["seed_outbox"]["deleted"] = sum(
+        prune_seeds(seed_dir) for seed_dir in _seed_outbox_dirs(skcapstone_home)
+    )
     results["legacy_comms"]["deleted"] = prune_legacy_comms(skcapstone_home)
     results["inbox"]["deleted"] = prune_inbox(skcapstone_home)
     results["deadletter"]["deleted"] = prune_deadletter(skcapstone_home)
