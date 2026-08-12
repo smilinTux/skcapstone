@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SKDashboard — Models</title>
+  <title>SKDashboard Models</title>
   <link rel="stylesheet" href="/static/css/board.css">
   <link rel="stylesheet" href="/static/css/cockpit.css">
   <style>
@@ -27,6 +27,35 @@
     .sw input:checked + span { background: #7c5cff; }
     .sw input:checked + span:before { transform: translateX(18px); }
     .dirty-note { color: #ffb454; font-size: 12px; margin-left: 8px; }
+    /* View toggle (Manage / Cards) */
+    .view-toggle { display: inline-flex; border: 1px solid var(--border, #2a3140); border-radius: 8px; overflow: hidden; }
+    .view-toggle button { background: transparent; border: 0; color: var(--muted, #9aa4b2); padding: 6px 12px; cursor: pointer; font: inherit; }
+    .view-toggle button.on { background: #7c5cff; color: #fff; }
+    /* Model dex cards */
+    .dex-group { margin: 18px 0 6px; display: flex; align-items: baseline; gap: 10px; }
+    .dex-group .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dex-group .t { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: 12px; }
+    .dex-group .d { color: var(--muted, #9aa4b2); font-size: 12px; }
+    .dot.local { background: #34d399; } .dot.free { background: #38bdf8; } .dot.cloud { background: #c084fc; }
+    .dex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+    .dex-card { background: var(--surface, #10151f); border: 1px solid var(--border, #2a3140); border-radius: 12px;
+      padding: 13px 14px; position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 10px; }
+    .dex-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--border, #2a3140); }
+    .dex-card.local::before { background: #34d399; } .dex-card.free::before { background: #38bdf8; } .dex-card.cloud::before { background: #c084fc; }
+    .dex-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+    .dex-name { font-weight: 700; }
+    .dex-org { color: var(--muted, #9aa4b2); font-size: 12px; margin-top: 2px; }
+    .dex-badge { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
+    .dex-badge.local { color: #34d399; border: 1px solid #34d399; } .dex-badge.free { color: #38bdf8; border: 1px solid #38bdf8; } .dex-badge.cloud { color: #c084fc; border: 1px solid #c084fc; }
+    .dex-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .dex-chip { font-size: 11px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border, #2a3140); color: var(--muted, #9aa4b2); }
+    .dex-chip.on { color: #7cf; border-color: #46618a; }
+    .dex-summary { font-size: 12.5px; color: #c3ccd8; margin: 0; }
+    .dex-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 12px; font-size: 12px; }
+    .dex-stats .k { color: var(--muted, #9aa4b2); }
+    .dex-stats .v { font-variant-numeric: tabular-nums; }
+    .dex-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .dex-tag { font-size: 11px; color: var(--muted, #9aa4b2); border: 1px solid var(--border, #2a3140); border-radius: 20px; padding: 1px 9px; }
   </style>
 </head>
 <body>
@@ -43,6 +72,10 @@
         <a class="tab active" href="/models">Models</a>
       </div>
       <div class="spacer"></div>
+      <div class="view-toggle" id="view-toggle">
+        <button data-mode="manage" class="on" type="button">Manage</button>
+        <button data-mode="cards" type="button">Cards</button>
+      </div>
       <span id="dirty" class="dirty-note"></span>
       <button class="btn" id="btn-save">Save</button>
     </div>
@@ -70,6 +103,21 @@
     let query = '';
     let freeOnly = false;
     let dirty = false;
+    let mode = 'manage';          // 'manage' (enable/disable) | 'cards' (dex)
+
+    const TIERS = [
+      { key: 'local', label: 'Sovereign', desc: 'Self-hosted on our own GPUs. Cloud-free.' },
+      { key: 'free-remote', label: 'Free remote', desc: 'Free-tier hosted models.' },
+      { key: 'paid-cloud', label: 'Paid cloud', desc: 'Metered API. Used deliberately.' },
+    ];
+    const TIER_CLS = { 'local': 'local', 'free-remote': 'free', 'paid-cloud': 'cloud' };
+
+    function fmtTok(n) {
+      if (typeof n !== 'number') return 'n/a';
+      if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M';
+      if (n >= 1e3) return Math.round(n / 1e3) + 'K';
+      return String(n);
+    }
 
     function showToast(msg) {
       toast.textContent = msg; toast.classList.add('show');
@@ -102,7 +150,64 @@
       });
     }
 
+    function renderCards() {
+      saveBtn.style.display = 'none';
+      const vis = visible().filter(m => m.card);   // only carded models in the dex
+      const counts = { 'local': 0, 'free-remote': 0, 'paid-cloud': 0 };
+      for (const m of vis) { const t = m.card.tier; if (t in counts) counts[t]++; }
+      kpi.innerHTML =
+        `<div class="kpi"><div class="k">${vis.length}</div><div class="l">carded</div></div>` +
+        `<div class="kpi"><div class="k">${counts['local']}</div><div class="l">sovereign</div></div>` +
+        `<div class="kpi"><div class="k">${counts['free-remote']}</div><div class="l">free</div></div>` +
+        `<div class="kpi"><div class="k">${counts['paid-cloud']}</div><div class="l">cloud</div></div>`;
+
+      let html = `<div class="models-toolbar">
+        <input type="search" id="q" placeholder="Search models, orgs, capabilities" value="${escapeAttr(query)}"></div>`;
+      for (const t of TIERS) {
+        const group = vis.filter(m => (m.card.tier || 'free-remote') === t.key);
+        if (!group.length) continue;
+        const cls = TIER_CLS[t.key];
+        html += `<div class="dex-group"><span class="dot ${cls}"></span><span class="t">${t.label} &middot; ${group.length}</span><span class="d">${t.desc}</span></div>`;
+        html += `<div class="dex-grid">` + group.map(cardHTML).join('') + `</div>`;
+      }
+      body.innerHTML = html || '<div class="emptymsg">No carded models match.</div>';
+      document.getElementById('q').addEventListener('input', e => { query = e.target.value; render(); });
+    }
+
+    function cardHTML(m) {
+      const c = m.card || {};
+      const cls = TIER_CLS[c.tier] || 'free';
+      const sp = Array.isArray(c.supported_parameters) ? c.supported_parameters : [];
+      const tools = sp.includes('tools');
+      const vision = typeof c.modality === 'string' && c.modality.includes('image');
+      const chip = (label, on) => `<span class="dex-chip${on ? ' on' : ''}">${on ? '✓ ' : '✕ '}${label}</span>`;
+      const stat = (k, v) => `<div><span class="k">${k}:</span> <span class="v">${escapeHtml(String(v))}</span></div>`;
+      const params = c.params || c.size || 'n/a';
+      const stats =
+        stat('context', fmtTok(c.context_length)) +
+        stat('max out', fmtTok(c.max_output_tokens)) +
+        stat('params', params) +
+        stat('quant', c.quant || 'n/a') +
+        (c.speed ? stat('speed', c.speed) : '') +
+        (c.license ? stat('license', c.license) : '');
+      const tags = (c.good_at || []).map(g => `<span class="dex-tag">${escapeHtml(g)}</span>`).join('');
+      const label = (c.tier === 'local' ? 'Sovereign' : c.tier === 'paid-cloud' ? 'Paid cloud' : 'Free remote');
+      return `<div class="dex-card ${cls}">
+        <div class="dex-top">
+          <div><div class="dex-name">${escapeHtml(c.display_name || m.id)}</div>
+            <div class="dex-org">${escapeHtml(c.org || m.provider || '')} &middot; ${escapeHtml(m.id)}</div></div>
+          <span class="dex-badge ${cls}">${label}</span>
+        </div>
+        <div class="dex-chips">${chip('tools', tools)}${chip('vision', vision)}</div>
+        ${c.summary ? `<p class="dex-summary">${escapeHtml(c.summary)}</p>` : ''}
+        <div class="dex-stats">${stats}</div>
+        ${tags ? `<div class="dex-tags">${tags}</div>` : ''}
+      </div>`;
+    }
+
     function render() {
+      if (mode === 'cards') return renderCards();
+      saveBtn.style.display = '';
       const vis = visible();
       kpi.innerHTML =
         `<div class="kpi"><div class="k">${models.length}</div><div class="l">discovered</div></div>` +
@@ -164,6 +269,13 @@
     function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 
     saveBtn.addEventListener('click', save);
+    document.getElementById('view-toggle').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-mode]');
+      if (!b || b.dataset.mode === mode) return;
+      mode = b.dataset.mode;
+      document.querySelectorAll('#view-toggle button').forEach(x => x.classList.toggle('on', x.dataset.mode === mode));
+      render();
+    });
     load();
   </script>
 </body>
