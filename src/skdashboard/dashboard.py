@@ -530,6 +530,45 @@ def create_app(home: Path):
     async def api_kanban(_request):
         return _json(dk.get_kanban(home))
 
+    # GTD list view: next-actions (default), inbox, waiting-for, etc. Each item
+    # carries a card_id (gtd-<id>) so the client can drive the existing
+    # /api/card/{id}/ai-suggestions + queue-ai routes with no new backend.
+    _GTD_LIST_FILES = {
+        "inbox": "inbox.json",
+        "next-actions": "next-actions.json",
+        "projects": "projects.json",
+        "waiting-for": "waiting-for.json",
+        "someday-maybe": "someday-maybe.json",
+    }
+
+    async def api_gtd_list(request):
+        import json as _json_mod
+
+        which = request.query_params.get("list", "next-actions")
+        fname = _GTD_LIST_FILES.get(which, "next-actions.json")
+        path = home / "coordination" / "gtd" / fname
+        try:
+            items = _json_mod.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError, OSError):
+            items = []
+        out = []
+        for it in items if isinstance(items, list) else []:
+            if not isinstance(it, dict) or not it.get("id"):
+                continue
+            out.append(
+                {
+                    "id": it["id"],
+                    "card_id": f"gtd-{it['id']}",
+                    "text": it.get("text", ""),
+                    "context": it.get("context"),
+                    "priority": it.get("priority"),
+                    "status": it.get("status"),
+                    "source": it.get("source"),
+                    "created_at": it.get("created_at"),
+                }
+            )
+        return _json({"list": which, "items": out})
+
     async def api_card(request):
         return _json(dk.get_card(home, request.path_params["card_id"]))
 
@@ -715,6 +754,7 @@ def create_app(home: Path):
         Route("/api/memory", _get_route(_get_memory_stats)),
         Route("/api/daemon", _get_route(_get_daemon_json)),
         Route("/api/kanban", api_kanban),
+        Route("/api/gtd", api_gtd_list),
         Route("/api/card/{card_id}", api_card),
         Route("/api/card/{card_id}/ai-suggestions", api_ai_suggestions),
         Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
