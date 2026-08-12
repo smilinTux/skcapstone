@@ -2,6 +2,7 @@ name: Publish to PyPI
 
 on:
   push:
+    branches: ["main"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -11,16 +12,133 @@ permissions:
 # Trusted Publishing (OIDC) — configure a PyPI pending publisher for this project:
 #   owner=smilinTux  workflow=publish.yml  environment=pypi
 # No PyPI token is used. A tagged release only needs to build + pass twine check.
+concurrency:
+  # Never let two releases race: a second push to main waits rather than
+  # computing the same "next" tag from a stale view of the tag list.
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # ---------------------------------------------------------------------- #
+  # Cut the release tag. Only on a push to main; skipped on a tag push.
+  # ---------------------------------------------------------------------- #
+  tag:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tagged: ${{ steps.bump.outputs.tagged }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + tags, or `git describe` cannot see the latest tag and
+          # every run would compute v0.0.1.
+          fetch-depth: 0
+          fetch-tags: true
+      - id: bump
+        name: Cut the next patch tag if HEAD is not already tagged
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Use the HIGHEST v-tag in the repo, not `git describe`.
+          #
+          # describe only sees tags that are ANCESTORS of HEAD, so an unpushed,
+          # orphaned or rename-stranded tag makes it report "previous: none" and
+          # restart the sequence from zero. That published skcoord/skdashboard
+          # 0.0.1 and then 0.0.2, both BELOW the existing 0.1.0. A release must
+          # never be able to go backwards, so rank all tags by version instead.
+          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)"
+          head_sha="$(git rev-parse HEAD)"
+
+          # Any release tag AT HEAD means nothing new to ship, even if it is
+          # not the highest one (ranking means the highest may sit elsewhere).
+          if [ -n "$(git tag --points-at HEAD -l 'v[0-9]*.[0-9]*.[0-9]*')" ]; then
+            echo "HEAD is already tagged; nothing to release."
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base="${latest:-v0.0.0}"
+          ver="${base#v}"
+          IFS='.' read -r major minor patch <<< "$ver"
+          major="${major:-0}"; minor="${minor:-0}"; patch="${patch:-0}"
+          next="v${major}.${minor}.$((patch + 1))"
+          while git rev-parse -q --verify "refs/tags/$next" >/dev/null 2>&1; do
+            patch=$((patch + 1))
+            next="v${major}.${minor}.$((patch + 1))"
+          done
+
+          echo "Cutting $next at ${head_sha:0:8} (previous: ${latest:-none})"
+          git tag -a "$next" -m "release: $next from main"
+          git push origin "$next"
+          echo "tagged=true" >> "$GITHUB_OUTPUT"
+          echo "version=${next#v}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: [tag]
+    # `always()` is required because `needs` on a SKIPPED job would otherwise
+    # skip this one on the tag-push path.
+    if: >-
+      always() && !cancelled() &&
+      (needs.tag.result == 'skipped' || needs.tag.outputs.tagged == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the tag, so the tag the job
+          # above just pushed must be visible here or the build would produce a
+          # dev version with a local segment (+g<sha>), which PyPI rejects.
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Refuse to publish a tag that is not on main
+        # The local pre-push hook is a symlink into each clone's working tree, so
+        # a clone that has not pulled the main-only fix keeps cutting tags at
+        # feature-branch tips and pushing them. This is the server-side backstop:
+        # it holds no matter what any developer's clone does.
+        #
+        # Override with the ALLOW_OFF_MAIN_RELEASE repository variable if a
+        # release ever legitimately needs to come off a maintenance branch.
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          if [ "${{ vars.ALLOW_OFF_MAIN_RELEASE }}" = "1" ]; then
+            echo "ALLOW_OFF_MAIN_RELEASE=1 is set; skipping the on-main check."
+            exit 0
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "OK: ${GITHUB_REF_NAME} (${GITHUB_SHA:0:8}) is on main."
+            exit 0
+          fi
+          echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA:0:8}, which is NOT on main. Refusing to publish."
+          echo "::error::A tag cut off a feature branch must not become a release. Delete the tag, merge to main, and let the main push cut the release."
+          exit 1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Assert the version to publish is a real release
+        # A dev/local version (.devN, +g<sha>, 0.0.0) is rejected by PyPI with a
+        # 400, and by then the tag has already been cut. Fail here instead.
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade setuptools_scm >/dev/null
+          v="$(python -m setuptools_scm 2>/dev/null || echo unknown)"
+          echo "version to publish: $v"
+          case "$v" in
+            *+*|*dev*|unknown|0.0.0*)
+              echo "::error::refusing to publish a non-release version: $v"
+              exit 1 ;;
+          esac
       - run: python -m pip install --upgrade build twine
       - run: python -m build
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}
       - run: python -m twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
