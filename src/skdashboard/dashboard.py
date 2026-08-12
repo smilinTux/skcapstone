@@ -498,6 +498,8 @@ def create_app(home: Path):
 
     from . import dashboard_itil as di
     from . import dashboard_kanban as dk
+    from . import queue_authz
+    from .surface_registry import resolve_card_id
 
     def _cmdb():
         from . import dashboard_cmdb as dc
@@ -598,53 +600,99 @@ def create_app(home: Path):
             dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor})
         return _json(result)
 
-    def _ai_capability_ok(request):
-        """Gate the privileged 'queue AI to execute' action.
+    def _queue_gate(request, *, resource, mode, actor):
+        """Staged authz for the privileged 'queue AI' action.
 
-        Requires a capability token (X-SK-Capability header == SKAI_QUEUE_TOKEN).
-        When no token is configured this is loopback-open (dev); this is the
-        upgrade point for a full capauth-signed grant + tailscale-serve exposure.
+        Preserves today's dev behavior (loopback-open) ONLY while neither
+        ``SKAI_AUTHZ`` nor ``SKAI_QUEUE_TOKEN`` is configured, so a live seat that
+        never set a secret does not suddenly break. The moment either is set, the
+        decision routes through ``queue_authz.authorize_queue`` (token / capauth
+        PDP / both). Returns a dict {ok, reason, via}.
         """
-        import hmac
         import os
 
-        token = os.environ.get("SKAI_QUEUE_TOKEN")
-        if not token:
-            return True, "loopback-open (no SKAI_QUEUE_TOKEN set)"
-        provided = request.headers.get("x-sk-capability", "")
-        if hmac.compare_digest(provided, token):
-            return True, "capability ok"
-        return False, "missing or invalid capability token"
+        if not os.environ.get("SKAI_AUTHZ") and not os.environ.get("SKAI_QUEUE_TOKEN"):
+            return {
+                "ok": True,
+                "reason": "loopback-open (no SKAI_AUTHZ/SKAI_QUEUE_TOKEN set)",
+                "via": "none",
+            }
+        return queue_authz.authorize_queue(
+            token=request.headers.get("x-sk-capability"),
+            resource=resource,
+            mode=mode,
+            actor=actor,
+        )
 
-    async def api_queue_ai(request):
+    def _ai_capability_ok(request):
+        """Coarse boolean form of the queue gate (used by the assistant surface)."""
+        d = _queue_gate(request, resource="assistant", mode="propose", actor=None)
+        return d["ok"], d["reason"]
+
+    async def _queue_run(request, card_id):
+        """Shared queue-a-run body used by the card and surface routes."""
         from skcapstone import agent_run as ar
         from starlette.responses import Response
 
-        card_id = request.path_params["card_id"]
-        ok, reason = _ai_capability_ok(request)
-        if not ok:
-            return Response(
-                json.dumps({"error": "unauthorized: " + reason}),
-                status_code=403,
-                media_type="application/json",
-            )
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
             body = {}
         requester = request.headers.get("x-sk-actor") or body.get("requester") or "operator"
+        mode = body.get("mode", "propose")
+        decision = _queue_gate(request, resource=card_id, mode=mode, actor=requester)
+        if not decision["ok"]:
+            return Response(
+                json.dumps({"error": "unauthorized: " + decision["reason"]}),
+                status_code=403,
+                media_type="application/json",
+            )
         result = ar.request_run(
             home,
             card_id,
             body.get("instruction", ""),
             agent=body.get("agent", "lumina"),
-            mode=body.get("mode", "propose"),
+            mode=mode,
             requester=requester,
         )
-        result["capability"] = reason
+        result["capability"] = decision["reason"]
+        result["authz_via"] = decision["via"]
         if result.get("ok"):
             dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": requester})
         return _json(result)
+
+    async def api_queue_ai(request):
+        return await _queue_run(request, request.path_params["card_id"])
+
+    async def api_surface_suggest(request):
+        """Generalized suggestions for ANY fleet surface: resolve (surface, id)
+        to a shadow card, then reuse the card suggestion engine. Read; gated at
+        the proxy layer like /api/card/*/ai-suggestions."""
+        from skcapstone import agent_run as ar
+
+        surface = request.path_params["surface"]
+        item_id = request.path_params["id"]
+        card_id = resolve_card_id(surface, item_id)
+        if card_id is None:
+            return _json({"error": f"unknown surface/id: {surface}/{item_id}", "suggestions": []})
+        use_llm = request.query_params.get("llm", "1") != "0"
+        timeout = 35.0 if use_llm else 1.0
+        return _json(ar.suggest_next_steps(home, card_id, use_llm=use_llm, timeout=timeout))
+
+    async def api_surface_queue(request):
+        """Generalized 'queue AI to work an item' for ANY fleet surface."""
+        from starlette.responses import Response
+
+        surface = request.path_params["surface"]
+        item_id = request.path_params["id"]
+        card_id = resolve_card_id(surface, item_id)
+        if card_id is None:
+            return Response(
+                json.dumps({"error": f"unknown surface/id: {surface}/{item_id}"}),
+                status_code=404,
+                media_type="application/json",
+            )
+        return await _queue_run(request, card_id)
 
     async def api_assistant(request):
         from . import dashboard_assistant as da
@@ -758,6 +806,8 @@ def create_app(home: Path):
         Route("/api/card/{card_id}", api_card),
         Route("/api/card/{card_id}/ai-suggestions", api_ai_suggestions),
         Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
+        Route("/api/suggest/{surface}/{id}", api_surface_suggest),
+        Route("/api/queue/{surface}/{id}", api_surface_queue, methods=["POST"]),
         Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),
         Route("/api/events", api_events),
         Route("/api/assistant", api_assistant, methods=["POST"]),
