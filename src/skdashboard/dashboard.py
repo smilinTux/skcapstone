@@ -169,6 +169,59 @@ def _summarize_checks(checks: list[dict]) -> str:
     return f"{passed}/{len(checks)} checks passed"
 
 
+def _pir_draft(chg) -> str:
+    """Assemble a deterministic PIR (post-implementation review) draft note
+    from a folded ``skcoord.itil.Change`` record (CM P3.3, design doc
+    docs/specs/2026-08-13-change-management-cab-ai-arch.md section 3:
+    "deployed -> verified: post-implementation review (smoke checks + PIR
+    note)").
+
+    Pure text assembly from ``chg.prepared_pr`` / ``chg.validation`` / the
+    ``->deployed`` timeline entry / ``chg.rollback_plan`` - the required
+    floor for "the AI drafts the PIR" (no inference call needed to prefill
+    the Verify box; a client is free to further edit or replace this text
+    before submitting it as the actual PIR note).
+
+    Args:
+        chg: A folded ``Change`` record (``skcoord.itil.ITILManager``'s
+            ``_fold_record`` output).
+
+    Returns:
+        str: A multi-line, deterministic draft (same record in, same string
+        out - no randomness, no clock read beyond what is already on the
+        record).
+    """
+    lines = [f"PIR draft for {chg.id}: {chg.title}"]
+
+    pr = chg.prepared_pr or {}
+    if pr.get("url"):
+        lines.append(f"Prepared PR: {pr['url']} (branch {pr.get('branch') or 'unknown'})")
+
+    validation = chg.validation or {}
+    if validation:
+        verdict = "PASSED" if validation.get("passed") else "FAILED"
+        lines.append(
+            f"Pre-deploy validation: {verdict} ({validation.get('summary') or 'no summary'})"
+        )
+
+    deployed_rows = [
+        row
+        for row in chg.timeline
+        if row.get("action", "").endswith("->deployed") and not row.get("conflicted")
+    ]
+    if deployed_rows:
+        row = deployed_rows[-1]
+        lines.append(
+            f"Deployed by {row.get('agent') or 'unknown'} at {row.get('ts') or 'unknown'}"
+        )
+        if row.get("note"):
+            lines.append(f"Deploy note: {row['note']}")
+
+    lines.append("Smoke checks: TODO, fill in before verifying.")
+    lines.append("Rollback plan on file: " + (chg.rollback_plan or "none recorded"))
+    return "\n".join(lines)
+
+
 def _cm_asap_window() -> tuple[str, str]:
     """(window_start, window_end) for an ASAP schedule: now + a grace window."""
     from datetime import timedelta
@@ -1092,6 +1145,137 @@ def create_app(home: Path):
         dk.BUS.publish({"type": "card_changed", "id": rid, "actor": actor})
         return _json({"armed": True, "id": rid, "agent": actor, "path": str(path)})
 
+    async def api_change_verify(request):
+        """POST /api/change/{id}/verify - PEP change.validate (attested).
+
+        The PIR (post-implementation review) lifecycle route (CM P3.3,
+        design doc docs/specs/2026-08-13-change-management-cab-ai-arch.md
+        section 3: "deployed -> verified: post-implementation review (smoke
+        checks + PIR note)"). Body ``{note}``: the PIR / smoke-check
+        summary.
+
+        Fail-closed at two layers:
+          - This PEP refuses (409) when the change is not currently
+            ``deployed`` - nothing to verify - and refuses (400) when the
+            note is empty, before ever touching the event log.
+          - skcoord's fold guard independently refuses the SAME edge
+            (``_fold_change``: deployed -> verified without a note folds as
+            a conflict entry, never a silent pass), so a change that raced
+            out of ``deployed`` between our precondition read and the
+            append still cannot slip a bare pass through; the post-append
+            re-fold check below surfaces that race as a 409 too.
+
+        Mirrors ``api_change_validate``'s staged authz + PEP shape exactly,
+        reusing ``change.validate`` (the design doc lists ``verify / close``
+        under the same ``change.propose`` tier as PIR-adjacent operator
+        actions; this route reuses the already-seeded write-class
+        ``change.validate`` capability rather than inventing a new
+        ``change.verify`` capability row, matching the "mirror the existing
+        route's authz helper exactly" instruction for this card).
+        """
+        from skcoord.itil import Change, ITILManager
+
+        change_id = request.path_params["id"]
+        actor = _change_actor(request)
+        decision = _change_gate(
+            request, resource=change_id, capability="change.validate", actor=actor
+        )
+        if not decision["ok"]:
+            return _change_deny(decision["reason"])
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+
+        mgr = ITILManager(home)
+        rid, err = _resolve_change_or_404(mgr, change_id)
+        if err is not None:
+            return err
+
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+        if chg is None or chg.status.value != "deployed":
+            from starlette.responses import Response
+
+            return Response(
+                json.dumps(
+                    {
+                        "error": "change is not deployed; nothing to verify",
+                        "status": chg.status.value if chg is not None else None,
+                    }
+                ),
+                status_code=409,
+                media_type="application/json",
+            )
+
+        note = (body.get("note") or "").strip()
+        if not note:
+            from starlette.responses import Response
+
+            return Response(
+                json.dumps({"error": "a PIR note is required to verify a deployed change"}),
+                status_code=400,
+                media_type="application/json",
+            )
+
+        mgr._append_event(mgr.changes_dir, rid, actor, "status", to="verified", note=note)
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+        if chg.status.value != "verified":
+            from starlette.responses import Response
+
+            return Response(
+                json.dumps(
+                    {
+                        "verified": False,
+                        "id": chg.id,
+                        "status": chg.status.value,
+                        "reason": (
+                            "verify is only valid on a deployed change with a non-empty "
+                            "PIR note (fold refused the transition)"
+                        ),
+                    }
+                ),
+                status_code=409,
+                media_type="application/json",
+            )
+        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor})
+        return _json(
+            {
+                "verified": True,
+                "id": chg.id,
+                "status": chg.status.value,
+                "pir_note": note,
+            }
+        )
+
+    async def api_change_pir_draft(request):
+        """GET /api/change/{id}/pir-draft - PEP change.validate (attested).
+
+        The "AI drafts the PIR" helper: returns ``{draft}``, a deterministic
+        text assembly (see ``_pir_draft``) from the folded change record, so
+        a client can prefill the Verify box before an operator edits and
+        submits it. Read-only, so it carries no status precondition of its
+        own (the mutating ``/verify`` route above is what enforces
+        ``deployed`` + non-empty note).
+        """
+        from skcoord.itil import Change, ITILManager
+
+        change_id = request.path_params["id"]
+        actor = _change_actor(request)
+        decision = _change_gate(
+            request, resource=change_id, capability="change.validate", actor=actor
+        )
+        if not decision["ok"]:
+            return _change_deny(decision["reason"])
+
+        mgr = ITILManager(home)
+        rid, err = _resolve_change_or_404(mgr, change_id)
+        if err is not None:
+            return err
+
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+        return _json({"id": chg.id, "status": chg.status.value, "draft": _pir_draft(chg)})
+
     async def api_surface_suggest(request):
         """Generalized suggestions for ANY fleet surface: resolve (surface, id)
         to a shadow card, then reuse the card suggestion engine. Read; gated at
@@ -1243,6 +1427,8 @@ def create_app(home: Path):
         Route("/api/change/{id}/validate", api_change_validate, methods=["POST"]),
         Route("/api/change/{id}/schedule", api_change_schedule, methods=["POST"]),
         Route("/api/change/{id}/arm", api_change_arm, methods=["POST"]),
+        Route("/api/change/{id}/verify", api_change_verify, methods=["POST"]),
+        Route("/api/change/{id}/pir-draft", api_change_pir_draft, methods=["GET"]),
         Route("/api/suggest/{surface}/{id}", api_surface_suggest),
         Route("/api/queue/{surface}/{id}", api_surface_queue, methods=["POST"]),
         Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),

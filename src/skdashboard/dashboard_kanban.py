@@ -137,12 +137,49 @@ def _window_chip(window: dict | None, window_missed: bool) -> dict:
     return {"label": "none", "asap": False}
 
 
+def _pir_chip(change_id: str, home: Path | None) -> dict | None:
+    """PIR (post-implementation review) chip: ``{note, agent, ts}`` once the
+    change has completed ``deployed -> verified`` (CM P3.3, design doc
+    section 3), or ``None`` before that.
+
+    Unlike the other three chips, the PIR note is not part of the card's
+    meta projection (``card_from_change`` carries ``itil_status`` but not
+    the timeline) - it lives on the folded ``Change`` record's timeline
+    entry for the gated ``status:deployed->verified`` transition
+    (``skcoord.itil._fold_change``). This re-folds the full record via
+    ``home``, the same extra read the CAB tally chip already performs for
+    its own vote data.
+    """
+    if home is None:
+        return None
+    try:
+        from skcoord.itil import Change, ITILManager
+
+        mgr = ITILManager(home)
+        rid = mgr._resolve_id(mgr.changes_dir, change_id)
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+    except Exception:  # noqa: BLE001 - chip rendering must never break the board
+        return None
+    if chg is None or chg.status.value not in ("verified", "closed"):
+        return None
+    verified_rows = [
+        row
+        for row in chg.timeline
+        if row.get("action") == "status:deployed->verified" and not row.get("conflicted")
+    ]
+    if not verified_rows:
+        return None
+    row = verified_rows[-1]
+    return {"note": row.get("note", ""), "agent": row.get("agent", ""), "ts": row.get("ts", "")}
+
+
 def _change_chips(c, home: Path | None) -> dict:
-    """The three change-card chips: CAB tally / validation verdict / window."""
+    """The four change-card chips: CAB tally / validation verdict / window / PIR."""
     return {
         "cab": _cab_chip(c.id, home),
         "validation": _validation_chip(c.meta.get("validation"), c.meta.get("prepared_pr")),
         "window": _window_chip(c.meta.get("scheduled_window"), bool(c.meta.get("window_missed"))),
+        "pir": _pir_chip(c.id, home),
     }
 
 
