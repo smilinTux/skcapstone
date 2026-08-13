@@ -1,0 +1,25 @@
+/* Economy view (reuses board.css + cockpit.css). */
+.eco-err{color:var(--high);font-size:12px;margin-right:8px;}
+.kpi .n.mono{font-family:ui-monospace,"SF Mono","JetBrains Mono",monospace;}
+.capbar{height:5px;background:var(--hair2);border-radius:3px;overflow:hidden;margin-top:6px;}
+.capfill{height:100%;background:var(--accent);transition:width .3s;}
+.capfill.warn{background:var(--high);}
+.capfill.crit{background:var(--crit);}
+.cap-label{font-size:10.5px;color:var(--ink3);margin-top:3px;}
+
+/* cost-over-time bar chart */
+.eco-chart-wrap{padding:10px 14px 4px;}
+.eco-chart-svg{width:100%;height:170px;display:block;}
+.eco-bar{fill:var(--accent);}
+.eco-bar:hover{fill:var(--ai);}
+.eco-axis{stroke:var(--hair2);stroke-width:1;}
+.eco-chart-legend{display:flex;justify-content:space-between;font-size:10px;color:var(--ink3);padding:2px 14px 10px;font-family:ui-monospace,monospace;}
+
+table.eco{width:100%;border-collapse:collapse;font-size:12px;}
+table.eco th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);padding:8px 10px;border-bottom:1px solid var(--hair);font-weight:600;}
+table.eco td{padding:8px 10px;border-bottom:1px solid var(--hair2);}
+table.eco td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;}
+table.eco tbody tr:last-child td{border-bottom:none;}
+.net-pos{color:var(--done);}
+.net-neg{color:var(--crit);}
+.lvl-badge{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:5px;background:var(--panel2);color:var(--ink2);border:1px solid var(--hair2);}

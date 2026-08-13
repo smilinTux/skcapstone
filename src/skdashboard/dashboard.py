@@ -787,6 +787,12 @@ def create_app(home: Path):
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
 
+    # ── Economy: fleet-wide cost (autopilot cost ledger) + joule wealth ──
+    async def api_economy(_request):
+        from . import dashboard_economy as deco
+
+        return _json(deco.get_economy(home))
+
     routes = [
         Route("/", index),
         Route("/index.html", index),
@@ -832,6 +838,8 @@ def create_app(home: Path):
         Route("/api/cmdb/seed", lambda r: _json(_cmdb().seed(home)), methods=["POST"]),
         Route("/trust", _page("trust.html")),
         Route("/api/trust/graph", lambda r: _json(_trust_graph_dict(home))),
+        Route("/economy", _page("economy.html")),
+        Route("/api/economy", api_economy),
     ]
     if static_dir.exists():
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))
