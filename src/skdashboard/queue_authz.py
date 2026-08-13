@@ -133,7 +133,6 @@ def _check_pdp(
     capability: str,
     resource: str,
     actor: Optional[str],
-    mode: str,
 ) -> tuple[bool, str]:
     """Ask ``decide_fn`` whether ``actor`` may exercise ``capability``.
 
@@ -148,8 +147,6 @@ def _check_pdp(
         capability: The capability string requested.
         resource: The resource identifier being acted on.
         actor: The already-authenticated subject/actor identity, or ``None``.
-        mode: The original queue-request mode (``"execute"`` etc.), used only
-            to enrich the deny reason.
 
     Returns:
         tuple[bool, str]: ``(ok, reason)``.
@@ -162,9 +159,86 @@ def _check_pdp(
     if allow:
         return True, "pdp ok"
     reason = "pdp denied: capability not granted"
-    if mode == "execute":
+    if capability == "agentrun.execute":
         reason += " (execute requires a 'verified' enrollment; the PDP enforces this)"
     return False, reason
+
+
+def authorize_capability(
+    *,
+    token: Optional[str],
+    resource: str,
+    capability: str,
+    actor: Optional[str] = None,
+    decide_fn: Optional[DecideFn] = None,
+) -> dict:
+    """Authorize an arbitrary capability via the staged token/pdp/both gate.
+
+    The general primitive behind :func:`authorize_queue`: everything except
+    the capability string is shared (the ``SKAI_AUTHZ`` staging, the
+    fail-closed token check, the PDP call), so every privileged dashboard
+    route - the original queue-AI action (``agentrun.*``) and the change.*
+    PEPs (validate/schedule/deploy, design doc
+    docs/specs/2026-08-13-change-management-cab-ai-arch.md section 7) - can
+    share one authorization path instead of re-deriving it. ``authorize_queue``
+    is a thin wrapper that derives its capability from a run ``mode`` via
+    :func:`capability_for` and delegates here.
+
+    Args:
+        token: The ``X-SK-Capability`` header value presented by the caller,
+            or ``None``.
+        resource: The resource identifier being acted on (e.g. a card or
+            change id).
+        capability: The capauth capability string being requested (e.g.
+            ``"agentrun.execute"``, ``"change.validate"``).
+        actor: The already-authenticated subject/actor identity presented to
+            the PDP, or ``None``.
+        decide_fn: Injectable PDP caller for tests (or an alternate PDP
+            client). Accepts keyword args ``capability``, ``resource``,
+            ``actor`` and returns a truthy/dict allow result or a falsy deny
+            result. When ``None``, a default wrapping the real
+            ``capauth.authz.decide`` is built lazily.
+
+    Returns:
+        dict: ``{"ok": bool, "reason": str, "via": str}`` where ``via`` is
+        ``"token"``, ``"pdp"``, or ``"both"`` matching the active
+        ``SKAI_AUTHZ`` mode.
+    """
+    authz_mode = _authz_mode()
+    effective_decide_fn = decide_fn if decide_fn is not None else _default_decide_fn
+
+    if authz_mode == "token":
+        ok, reason = _check_token(token)
+        return {"ok": ok, "reason": reason, "via": "token"}
+
+    if authz_mode == "pdp":
+        ok, reason = _check_pdp(
+            decide_fn=effective_decide_fn,
+            capability=capability,
+            resource=resource,
+            actor=actor,
+        )
+        return {"ok": ok, "reason": reason, "via": "pdp"}
+
+    # authz_mode == "both": require token AND pdp.
+    token_ok, token_reason = _check_token(token)
+    pdp_ok, pdp_reason = _check_pdp(
+        decide_fn=effective_decide_fn,
+        capability=capability,
+        resource=resource,
+        actor=actor,
+    )
+    ok = token_ok and pdp_ok
+    if ok:
+        reason = "token ok; pdp ok"
+    else:
+        parts = []
+        if not token_ok:
+            parts.append(token_reason)
+        if not pdp_ok:
+            parts.append(pdp_reason)
+        reason = "; ".join(parts)
+    return {"ok": ok, "reason": reason, "via": "both"}
 
 
 def authorize_queue(
@@ -181,7 +255,8 @@ def authorize_queue(
     ``"both"``, default ``"token"``) so the gate can move from the legacy
     shared-secret header check to a capauth PDP decision without a flag-day
     cutover. Every branch fails closed: an unset secret, a PDP exception, or
-    an unrecognized mode all deny rather than allow.
+    an unrecognized mode all deny rather than allow. A thin wrapper over
+    :func:`authorize_capability` that derives the capability from ``mode``.
 
     Args:
         token: The ``X-SK-Capability`` header value presented by the caller,
@@ -203,47 +278,17 @@ def authorize_queue(
         ``"token"``, ``"pdp"``, or ``"both"`` matching the active
         ``SKAI_AUTHZ`` mode.
     """
-    authz_mode = _authz_mode()
-    capability = capability_for(mode)
-    effective_decide_fn = decide_fn if decide_fn is not None else _default_decide_fn
-
-    if authz_mode == "token":
-        ok, reason = _check_token(token)
-        return {"ok": ok, "reason": reason, "via": "token"}
-
-    if authz_mode == "pdp":
-        ok, reason = _check_pdp(
-            decide_fn=effective_decide_fn,
-            capability=capability,
-            resource=resource,
-            actor=actor,
-            mode=mode,
-        )
-        return {"ok": ok, "reason": reason, "via": "pdp"}
-
-    # authz_mode == "both": require token AND pdp.
-    token_ok, token_reason = _check_token(token)
-    pdp_ok, pdp_reason = _check_pdp(
-        decide_fn=effective_decide_fn,
-        capability=capability,
+    return authorize_capability(
+        token=token,
         resource=resource,
+        capability=capability_for(mode),
         actor=actor,
-        mode=mode,
+        decide_fn=decide_fn,
     )
-    ok = token_ok and pdp_ok
-    if ok:
-        reason = "token ok; pdp ok"
-    else:
-        parts = []
-        if not token_ok:
-            parts.append(token_reason)
-        if not pdp_ok:
-            parts.append(pdp_reason)
-        reason = "; ".join(parts)
-    return {"ok": ok, "reason": reason, "via": "both"}
 
 
 __all__ = [
+    "authorize_capability",
     "authorize_queue",
     "capability_for",
 ]

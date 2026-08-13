@@ -89,8 +89,9 @@ def spy_request_run(monkeypatch):
     """
     calls = []
 
-    def _fake_request_run(home, card_id, instruction, agent="lumina", mode="propose",
-                           requester="operator"):
+    def _fake_request_run(
+        home, card_id, instruction, agent="lumina", mode="propose", requester="operator"
+    ):
         calls.append(
             {
                 "home": home,
@@ -400,7 +401,7 @@ def test_no_unguarded_request_run_callers_in_skdashboard():
                 hits.append(f"{path.relative_to(src_dir)}:{lineno}")
 
     assert hits == [
-        "dashboard.py:650",
+        "dashboard.py:789",
         "dashboard_assistant.py:193",
     ], (
         "unexpected set of agent_run.request_run call sites in skdashboard - "

@@ -30,10 +30,21 @@ _MUTATIONS = {"move", "assign", "unassign", "add_label", "remove_label", "priori
 # ---------------------------------------------------------------------------
 
 
-def _card_brief(c) -> dict:
-    """A compact card dict for the board face."""
+def _card_brief(c, home: Path | None = None) -> dict:
+    """A compact card dict for the board face.
+
+    Change-mgmt P2.4: change cards (``c.kind.value == "change"``) additionally
+    carry the raw P1.1 fold fields (``itil_status``, ``prepared_pr``,
+    ``prepared_by``, ``validation``, ``scheduled_window``) plus three derived
+    chip payloads (``chips.cab``/``chips.validation``/``chips.window``) so any
+    client renders the card face without a second fetch of the raw ITIL
+    record. ``home`` is required to compute the CAB tally chip (CAB votes are
+    a separate per-agent file set, not part of the folded ``Change``); it is
+    optional only so existing non-kanban callers of this function keep
+    working, in which case the CAB chip degrades to an all-zero tally.
+    """
     run = c.meta.get("agent_run") or {}
-    return {
+    brief = {
         "id": c.id,
         "kind": c.kind.value,
         "title": c.title,
@@ -46,6 +57,93 @@ def _card_brief(c) -> dict:
         "severity": c.meta.get("severity"),
         "ai": run.get("state"),
     }
+    if c.kind.value == "change":
+        brief["itil_status"] = c.meta.get("itil_status")
+        brief["prepared_pr"] = c.meta.get("prepared_pr")
+        brief["prepared_by"] = c.meta.get("prepared_by")
+        brief["validation"] = c.meta.get("validation")
+        brief["scheduled_window"] = c.meta.get("scheduled_window")
+        brief["chips"] = _change_chips(c, home)
+    return brief
+
+
+def _cab_chip(change_id: str, home: Path | None) -> dict:
+    """CAB tally chip: ``{approved, rejected, abstain, human_decision}``.
+
+    ``human_decision`` is the "human" identity's own vote decision
+    (``"approved"``/``"rejected"``/``"abstain"``), or ``None`` when the human
+    seat has not voted yet - a more specific marker than a bare boolean,
+    matching how ``_fold_change``'s CAB derivation itself treats the
+    ``human`` voter as the deciding identity (skcoord.itil).
+    """
+    tally = {"approved": 0, "rejected": 0, "abstain": 0, "human_decision": None}
+    if home is None:
+        return tally
+    try:
+        from skcoord.itil import ITILManager
+
+        votes = ITILManager(home).get_cab_votes(change_id)
+    except Exception:  # noqa: BLE001 - chip rendering must never break the board
+        return tally
+    for v in votes:
+        tally[v.decision.value] = tally.get(v.decision.value, 0) + 1
+        if v.agent == "human":
+            tally["human_decision"] = v.decision.value
+    return tally
+
+
+def _validation_chip(validation: dict | None, prepared_pr: dict | None) -> dict | None:
+    """Validation verdict chip: ``{passed, check_count, stale}`` or ``None``
+    when the change has never been validated.
+
+    ``stale`` compares the verdict's ``head_sha`` against the change's
+    current known PR head (``prepared_pr["head_sha"]``, the best proxy this
+    read-only projection has without a live `gh` call) - the same freshness
+    check the (later) deploy executor performs before merging (design doc
+    section 5.2 step 4).
+    """
+    if not validation:
+        return None
+    checks = validation.get("checks") or []
+    current_sha = (prepared_pr or {}).get("head_sha")
+    verdict_sha = validation.get("head_sha")
+    stale = bool(current_sha and verdict_sha and current_sha != verdict_sha)
+    return {
+        "passed": bool(validation.get("passed")),
+        "check_count": len(checks),
+        "stale": stale,
+    }
+
+
+def _window_chip(window: dict | None, window_missed: bool) -> dict:
+    """Window chip: ``{label, asap}`` where ``label`` is ``"ASAP"``, a
+    formatted window start (``"Fri 02:00Z"``), ``"MISSED"``, or ``"none"``.
+    """
+    if window:
+        if window.get("asap"):
+            return {"label": "ASAP", "asap": True}
+        start = window.get("window_start")
+        if start:
+            try:
+                from datetime import datetime
+
+                dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+                return {"label": dt.strftime("%a %H:%MZ"), "asap": False}
+            except ValueError:
+                return {"label": str(start), "asap": False}
+        return {"label": "none", "asap": False}
+    if window_missed:
+        return {"label": "MISSED", "asap": False}
+    return {"label": "none", "asap": False}
+
+
+def _change_chips(c, home: Path | None) -> dict:
+    """The three change-card chips: CAB tally / validation verdict / window."""
+    return {
+        "cab": _cab_chip(c.id, home),
+        "validation": _validation_chip(c.meta.get("validation"), c.meta.get("prepared_pr")),
+        "window": _window_chip(c.meta.get("scheduled_window"), bool(c.meta.get("window_missed"))),
+    }
 
 
 def get_kanban(home: Path) -> dict:
@@ -56,7 +154,7 @@ def get_kanban(home: Path) -> dict:
     grid = kb.grid()
     lanes = []
     for lane in LANE_ORDER:
-        cols = {col: [_card_brief(c) for c in grid[lane][col]] for col in COLUMN_ORDER}
+        cols = {col: [_card_brief(c, home) for c in grid[lane][col]] for col in COLUMN_ORDER}
         if sum(len(v) for v in cols.values()) == 0:
             continue
         lanes.append({"key": lane, "columns": cols})

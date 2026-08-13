@@ -38,6 +38,145 @@ DEFAULT_DASHBOARD_PORT = 7778
 _DOCTOR_CACHE_TTL = 30.0
 _doctor_cache: dict = {"ts": 0.0, "home": None, "report": None}
 
+# ---------------------------------------------------------------------------
+# Change management (CM P2.3): the Validate button's `gh` helpers.
+#
+# Bare module-level functions (not closures inside create_app) so tests can
+# monkeypatch them directly instead of shelling out to a real `gh` binary /
+# network - the same isolation principle queue_authz's injectable `decide_fn`
+# uses for the PDP call.
+# ---------------------------------------------------------------------------
+
+#: Default CI workflow file name used to nudge a draft PR that has no checks
+#: yet. Overridable per-repo since SKWorld repos do not all name their
+#: default workflow the same thing.
+_CM_DEFAULT_WORKFLOW = "ci.yml"
+
+#: ASAP schedule grace window (design doc section 4.3: "ASAP is not a special
+#: case: it is window_start = now, window_end = now + a default grace").
+#: Mirrors skcapstone's itil_change_schedule MCP tool (CM P1.2).
+_CM_SCHEDULE_GRACE_HOURS = 4
+
+
+def _gh_pr_checks(pr_url: str) -> dict:
+    """Run ``gh pr checks <pr_url> --json ...`` and normalize the verdict.
+
+    Args:
+        pr_url: The draft PR's URL (``Change.prepared_pr["url"]``).
+
+    Returns:
+        dict: ``{"started": bool, "passed": bool, "checks": [...], "error":
+        str|None}``. ``started`` is False when `gh` reports no checks yet (a
+        draft PR whose CI has not fired); ``passed`` is only meaningful when
+        ``started`` is True. Never raises: a `gh` failure (missing binary,
+        no network, no checks) folds into a `started: False` result so the
+        caller can fall through to :func:`_gh_trigger_checks`.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "checks", pr_url, "--json", "name,state,bucket,link"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"started": False, "passed": False, "checks": [], "error": str(exc)}
+
+    try:
+        checks = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        checks = []
+    if not isinstance(checks, list):
+        checks = []
+    started = bool(checks)
+    passed = started and all(c.get("bucket") == "pass" for c in checks)
+    error = None if started else ((proc.stderr or "").strip() or None)
+    return {"started": started, "passed": passed, "checks": checks, "error": error}
+
+
+def _gh_trigger_checks(pr_url: str, branch: str | None) -> bool:
+    """Best-effort nudge for a draft PR whose checks have not started yet.
+
+    `gh pr checks` reports nothing until CI actually runs; re-requesting the
+    default workflow is the standard trigger. The workflow file name is
+    configurable (``SKDASHBOARD_CM_WORKFLOW``, default ``ci.yml``).
+
+    Args:
+        pr_url: The draft PR's URL (used only for error messages; `gh
+            workflow run` itself is keyed by repo + ref, resolved from the
+            current working directory / ``--repo`` the way every other `gh`
+            call in this codebase already assumes).
+        branch: The PR's branch (``Change.prepared_pr["branch"]``).
+
+    Returns:
+        bool: Whether the trigger command exited zero. The caller always
+        re-polls :func:`_gh_pr_checks` afterward regardless, so a repo with
+        no matching workflow simply keeps surfacing ``started: False``
+        rather than hanging.
+    """
+    import os
+    import subprocess
+
+    if not branch:
+        return False
+    workflow = os.environ.get("SKDASHBOARD_CM_WORKFLOW", _CM_DEFAULT_WORKFLOW)
+    try:
+        proc = subprocess.run(
+            ["gh", "workflow", "run", workflow, "--ref", branch],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def _gh_pr_head_sha(pr_url: str) -> str | None:
+    """Fetch the PR's CURRENT head SHA (``gh pr view --json headRefOid``).
+
+    Recorded on the validation event so the (later, Phase 3) deploy
+    executor's freshness check can refuse a stale verdict whose ``head_sha``
+    no longer matches the PR's actual head (design doc section 5.2 step 4).
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", pr_url, "--json", "headRefOid"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data.get("headRefOid")
+
+
+def _summarize_checks(checks: list[dict]) -> str:
+    """One-line per-check summary for the validation event ('N/M passed')."""
+    if not checks:
+        return "no checks reported"
+    passed = sum(1 for c in checks if c.get("bucket") == "pass")
+    return f"{passed}/{len(checks)} checks passed"
+
+
+def _cm_asap_window() -> tuple[str, str]:
+    """(window_start, window_end) for an ASAP schedule: now + a grace window."""
+    from datetime import timedelta
+
+    start = datetime.now(timezone.utc)
+    end = start + timedelta(hours=_CM_SCHEDULE_GRACE_HOURS)
+    return start.isoformat(), end.isoformat()
+
 
 def _get_agent_status(home: Path) -> dict:
     """Load agent manifest and pillar status.
@@ -664,6 +803,295 @@ def create_app(home: Path):
     async def api_queue_ai(request):
         return await _queue_run(request, request.path_params["card_id"])
 
+    # ── Change management (CM P2.3): validate / schedule / arm PEPs ──
+    #
+    # Mirrors _queue_gate exactly (same dev-loopback-open carve-out, same
+    # fail-closed staged token/pdp/both decision) but for an explicit
+    # change.* capability instead of one derived from an agentrun mode - see
+    # queue_authz.authorize_capability, the generalization this and
+    # _queue_gate both now share.
+
+    def _change_gate(request, *, resource, capability, actor):
+        """Staged authz for a change.* PEP (validate/schedule/deploy).
+
+        Design doc docs/specs/2026-08-13-change-management-cab-ai-arch.md
+        section 7. Returns a dict {ok, reason, via}, same shape as
+        ``_queue_gate``.
+        """
+        import os
+
+        if not os.environ.get("SKAI_AUTHZ") and not os.environ.get("SKAI_QUEUE_TOKEN"):
+            return {
+                "ok": True,
+                "reason": "loopback-open (no SKAI_AUTHZ/SKAI_QUEUE_TOKEN set)",
+                "via": "none",
+            }
+        return queue_authz.authorize_capability(
+            token=request.headers.get("x-sk-capability"),
+            resource=resource,
+            capability=capability,
+            actor=actor,
+        )
+
+    def _change_actor(request) -> str:
+        """Resolve the authenticated actor for a change.* PEP.
+
+        Same source of truth ``_queue_run`` uses for ``requester`` (the
+        ``X-SK-Actor`` header set by the authenticating layer in front of
+        this dashboard) - but, unlike ``_queue_run``, never falls back to a
+        client-supplied JSON body field. The change.* routes are act-class
+        (schedule/deploy) or write-class (validate) PEPs recording who
+        validated/scheduled/armed a fleet change on the record itself; that
+        identity must come only from the authenticated request context, not
+        something the POST body claims.
+        """
+        return request.headers.get("x-sk-actor") or "operator"
+
+    def _change_deny(reason: str, status_code: int = 403):
+        from starlette.responses import Response
+
+        return Response(
+            json.dumps({"error": "unauthorized: " + reason}),
+            status_code=status_code,
+            media_type="application/json",
+        )
+
+    def _resolve_change_or_404(mgr, change_id: str):
+        """Resolve a change id (following redirect stubs); 404 Response if unknown.
+
+        Returns:
+            tuple: ``(resolved_id, None)`` on success, or ``(None, Response)``
+            when the change does not exist.
+        """
+        from starlette.responses import Response
+
+        rid = mgr._resolve_id(mgr.changes_dir, change_id)
+        if mgr._load_core(mgr.changes_dir, rid) is None:
+            return None, Response(
+                json.dumps({"error": f"change {change_id} not found"}),
+                status_code=404,
+                media_type="application/json",
+            )
+        return rid, None
+
+    async def api_change_validate(request):
+        """POST /api/change/{id}/validate - PEP change.validate (attested).
+
+        Refuses (409) when the change has no ``prepared_pr`` (nothing to
+        validate). Runs ``gh pr checks`` on the draft PR head, triggering the
+        workflow first when checks have not started; appends the
+        `validation` event with the verdict, a per-check summary, and the
+        PR's current head SHA. A PASS while the change is still `proposed`
+        needs no extra event: ``_fold_change`` (skcoord.itil) already
+        auto-advances proposed -> reviewing the moment it replays a passing
+        `validation` event, so appending a second, redundant `status` event
+        here would itself fold as a conflicted transition (reviewing ->
+        reviewing is not a legal edge). Reuses skcoord's folding rather than
+        reimplementing it, mirroring skcapstone's itil_change_validate MCP
+        tool (CM P1.2).
+        """
+        from skcoord.itil import Change, ITILManager
+
+        change_id = request.path_params["id"]
+        actor = _change_actor(request)
+        decision = _change_gate(
+            request, resource=change_id, capability="change.validate", actor=actor
+        )
+        if not decision["ok"]:
+            return _change_deny(decision["reason"])
+
+        mgr = ITILManager(home)
+        rid, err = _resolve_change_or_404(mgr, change_id)
+        if err is not None:
+            return err
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+        if chg is None or not (chg.prepared_pr and chg.prepared_pr.get("url")):
+            from starlette.responses import Response
+
+            return Response(
+                json.dumps({"error": "change has no prepared_pr; nothing to validate"}),
+                status_code=409,
+                media_type="application/json",
+            )
+
+        pr_url = chg.prepared_pr["url"]
+        branch = chg.prepared_pr.get("branch")
+        result = _gh_pr_checks(pr_url)
+        if not result["started"]:
+            _gh_trigger_checks(pr_url, branch)
+            result = _gh_pr_checks(pr_url)
+        head_sha = _gh_pr_head_sha(pr_url) or chg.prepared_pr.get("head_sha")
+
+        mgr._append_event(
+            mgr.changes_dir,
+            rid,
+            actor,
+            "validation",
+            passed=bool(result["passed"]),
+            head_sha=head_sha,
+            url=pr_url,
+            summary=_summarize_checks(result["checks"]),
+            checks=result["checks"],
+        )
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor})
+        return _json(
+            {
+                "validated": True,
+                "id": chg.id,
+                "status": chg.status.value,
+                "validation": chg.validation,
+            }
+        )
+
+    async def api_change_schedule(request):
+        """POST /api/change/{id}/schedule - PEP change.schedule (verified).
+
+        Body ``{window_start, window_end, asap, deploy_mode, note}`` appends
+        a `schedule` event (fold-enforced: only valid while `approved`); body
+        ``{unschedule: true}`` appends `unschedule` instead. ``deploy_mode``
+        is locked to `confirm` for now (design doc section 9, Phase 3a) - any
+        other value is rejected outright rather than silently coerced.
+        """
+        from skcoord.itil import Change, ITILManager
+
+        change_id = request.path_params["id"]
+        actor = _change_actor(request)
+        decision = _change_gate(
+            request, resource=change_id, capability="change.schedule", actor=actor
+        )
+        if not decision["ok"]:
+            return _change_deny(decision["reason"])
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+
+        mgr = ITILManager(home)
+        rid, err = _resolve_change_or_404(mgr, change_id)
+        if err is not None:
+            return err
+
+        if body.get("unschedule"):
+            was_scheduled = (
+                mgr._fold_record(mgr.changes_dir, rid, Change).status.value == "scheduled"
+            )
+            mgr._append_event(mgr.changes_dir, rid, actor, "unschedule", note=body.get("note", ""))
+            chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+            dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor})
+            return _json({"unscheduled": was_scheduled, "id": chg.id, "status": chg.status.value})
+
+        deploy_mode = body.get("deploy_mode") or "confirm"
+        if deploy_mode != "confirm":
+            from starlette.responses import Response
+
+            return Response(
+                json.dumps({"error": "deploy_mode is locked to 'confirm' for now"}),
+                status_code=400,
+                media_type="application/json",
+            )
+
+        asap = bool(body.get("asap", False))
+        window_start = body.get("window_start")
+        window_end = body.get("window_end")
+        if asap:
+            window_start, window_end = _cm_asap_window()
+        elif not (window_start and window_end):
+            from starlette.responses import Response
+
+            return Response(
+                json.dumps(
+                    {"error": "window_start and window_end are required unless asap is true"}
+                ),
+                status_code=400,
+                media_type="application/json",
+            )
+
+        mgr._append_event(
+            mgr.changes_dir,
+            rid,
+            actor,
+            "schedule",
+            window_start=window_start,
+            window_end=window_end,
+            asap=asap,
+            deploy_mode=deploy_mode,
+            note=body.get("note", ""),
+        )
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+        if chg.status.value != "scheduled":
+            from starlette.responses import Response
+
+            return Response(
+                json.dumps(
+                    {
+                        "scheduled": False,
+                        "id": chg.id,
+                        "status": chg.status.value,
+                        "reason": (
+                            "schedule is only valid while the change is 'approved' "
+                            "(fold refused the transition)"
+                        ),
+                    }
+                ),
+                status_code=409,
+                media_type="application/json",
+            )
+        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor})
+        return _json(
+            {
+                "scheduled": True,
+                "id": chg.id,
+                "status": chg.status.value,
+                "scheduled_window": chg.scheduled_window,
+            }
+        )
+
+    async def api_change_arm(request):
+        """POST /api/change/{id}/arm - PEP change.deploy (verified).
+
+        Writes the per-agent arm file ``cab-decisions/<chg>-<agent>.arm.json``
+        (mirrors ``ITILManager.submit_cab_vote``'s own per-agent-file
+        pattern: conflict-free, disjoint write sets). Consumed by the (later,
+        Phase 3) deploy runner as the human-arm precondition for
+        ``deploy_mode == "confirm"``; harmless standalone until that runner
+        exists.
+        """
+        from skcoord.atomic_io import atomic_write_text
+        from skcoord.itil import ITILManager
+
+        change_id = request.path_params["id"]
+        actor = _change_actor(request)
+        decision = _change_gate(
+            request, resource=change_id, capability="change.deploy", actor=actor
+        )
+        if not decision["ok"]:
+            return _change_deny(decision["reason"])
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+
+        mgr = ITILManager(home)
+        rid, err = _resolve_change_or_404(mgr, change_id)
+        if err is not None:
+            return err
+
+        mgr.ensure_dirs()
+        arm = {
+            "change_id": rid,
+            "agent": actor,
+            "armed": True,
+            "armed_at": datetime.now(timezone.utc).isoformat(),
+            "note": body.get("note", ""),
+        }
+        path = mgr.cab_dir / f"{rid}-{actor}.arm.json"
+        atomic_write_text(path, json.dumps(arm, indent=2) + "\n")
+        dk.BUS.publish({"type": "card_changed", "id": rid, "actor": actor})
+        return _json({"armed": True, "id": rid, "agent": actor, "path": str(path)})
+
     async def api_surface_suggest(request):
         """Generalized suggestions for ANY fleet surface: resolve (surface, id)
         to a shadow card, then reuse the card suggestion engine. Read; gated at
@@ -812,6 +1240,9 @@ def create_app(home: Path):
         Route("/api/card/{card_id}", api_card),
         Route("/api/card/{card_id}/ai-suggestions", api_ai_suggestions),
         Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
+        Route("/api/change/{id}/validate", api_change_validate, methods=["POST"]),
+        Route("/api/change/{id}/schedule", api_change_schedule, methods=["POST"]),
+        Route("/api/change/{id}/arm", api_change_arm, methods=["POST"]),
         Route("/api/suggest/{surface}/{id}", api_surface_suggest),
         Route("/api/queue/{surface}/{id}", api_surface_queue, methods=["POST"]),
         Route("/api/card/{card_id}/{action}", api_card_mutate, methods=["POST"]),
