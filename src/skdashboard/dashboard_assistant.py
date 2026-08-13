@@ -173,6 +173,21 @@ def _run_action(home: Path, action: dict, actor: str, capability_ok: bool) -> di
         }
     try:
         if tool == "queue-ai":
+            requested_mode = action.get("mode", "propose")
+            if requested_mode == "execute":
+                # `capability_ok` above only proves queue-tier authorization
+                # (checked once per request at mode="propose" ->
+                # "agentrun.queue"). The ``mode`` here comes verbatim from the
+                # model's ACTION line, which is influenced by item text the
+                # operator did not author (prompt-injection surface). Never
+                # let that text pick a higher-privilege capability
+                # ("agentrun.execute") than what was actually verified.
+                return {
+                    "tool": tool,
+                    "card_id": card_id,
+                    "ok": False,
+                    "error": "execute-tier queue-ai is not authorized via the assistant surface",
+                }
             from skcapstone import agent_run as ar
 
             r = ar.request_run(
@@ -180,7 +195,7 @@ def _run_action(home: Path, action: dict, actor: str, capability_ok: bool) -> di
                 card_id,
                 action.get("instruction", ""),
                 agent=action.get("agent", "lumina"),
-                mode=action.get("mode", "propose"),
+                mode=requested_mode,
                 requester=who,
             )
             return {"tool": tool, "card_id": card_id, **r}
