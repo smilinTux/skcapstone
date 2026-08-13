@@ -2,18 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _json_response, _shared_root
-
-# Default grace window for an ASAP schedule (CM P1.2 / design doc section 4.3:
-# "ASAP is not a special case: it is window_start = now, window_end = now + a
-# default grace (e.g. 4h), asap: true"). Also used as the grace after an
-# explicit `--at` window start, so every schedule carries a real window_end
-# for the (later) deploy runner's "window arrived" check.
-_SCHEDULE_GRACE_HOURS = 4
 
 # ═══════════════════════════════════════════════════════════
 # Tool Definitions
@@ -263,132 +254,15 @@ TOOLS: list[Tool] = [
         },
     ),
     Tool(
-        name="itil_change_validate",
-        description=(
-            "Attach a CI validation verdict to a change's draft PR. Appends a `validation` "
-            "event (event-sourced, fold-derived, latest wins). A passing verdict while the "
-            "change is still 'proposed' auto-advances it to 'reviewing' (ready for CAB); a "
-            "failing verdict leaves status unchanged. Advisory input to CAB, never a "
-            "substitute for it - the card popout shows the verdict chip next to the vote "
-            "tally. NOTE: capability `change.validate` (attested tier) is the intended PDP "
-            "gate for this transition (design doc section 7); this MCP layer does not yet "
-            "call capauth.decide() itself - no existing itil_* tool does - so enforcement "
-            "for now lives at the (later) dashboard route card."
-        ),
-        inputSchema={
-            "properties": {
-                "change_id": {"description": "Change ID (e.g. chg-i1j2k3l4)", "type": "string"},
-                "agent": {
-                    "description": "Agent/system attaching the verdict (default: ci)",
-                    "type": "string",
-                },
-                "passed": {"description": "Whether the checks passed", "type": "boolean"},
-                "head_sha": {
-                    "description": (
-                        "Git SHA the checks ran against - the deploy executor later refuses "
-                        "a stale verdict whose head_sha does not match the PR's current HEAD"
-                    ),
-                    "type": "string",
-                },
-                "url": {"description": "URL to the CI run / PR checks", "type": "string"},
-                "summary": {"description": "Free-text summary of the verdict", "type": "string"},
-                "checks": {
-                    "description": "Per-check breakdown (name/status pairs)",
-                    "items": {"type": "object"},
-                    "type": "array",
-                },
-            },
-            "required": ["change_id", "passed"],
-            "type": "object",
-        },
-    ),
-    Tool(
-        name="itil_change_schedule",
-        description=(
-            "Schedule an APPROVED change for deployment: ASAP (now + a "
-            f"{_SCHEDULE_GRACE_HOURS}h grace window) or a specific window start (`at`, ISO "
-            "8601), plus a deploy_mode. Appends a `schedule` event; valid ONLY while the "
-            "change is 'approved' (fold-enforced, same fail-closed treatment as an invalid "
-            "status transition) - scheduling a change that is not approved is refused and "
-            "returned as `scheduled: false` with no state change. Re-schedule is unschedule "
-            "+ schedule again. NOTE: capability `change.schedule` (verified tier) is the "
-            "intended PDP gate (design doc section 7); not yet enforced at this MCP layer - "
-            "see itil_change_validate's note."
-        ),
-        inputSchema={
-            "properties": {
-                "change_id": {"description": "Change ID (e.g. chg-i1j2k3l4)", "type": "string"},
-                "agent": {
-                    "description": "Agent/operator scheduling the change (default: human)",
-                    "type": "string",
-                },
-                "asap": {
-                    "description": (
-                        f"Schedule ASAP (now + {_SCHEDULE_GRACE_HOURS}h grace window). "
-                        "Mutually exclusive with `at`."
-                    ),
-                    "type": "boolean",
-                },
-                "at": {
-                    "description": "ISO 8601 window start. Mutually exclusive with `asap`.",
-                    "type": "string",
-                },
-                "deploy_mode": {
-                    "description": "Deploy mode (default: confirm - requires a human arm)",
-                    "enum": ["confirm", "auto"],
-                    "type": "string",
-                },
-                "note": {"description": "Timeline note", "type": "string"},
-            },
-            "required": ["change_id"],
-            "type": "object",
-        },
-    ),
-    Tool(
-        name="itil_change_unschedule",
-        description=(
-            "Unschedule a change: scheduled -> approved, clears the scheduled window. Valid "
-            "only while the change is 'scheduled' (fold-enforced); a no-op (returned as "
-            "`unscheduled: false`) on any other status. NOTE: capability `change.schedule` "
-            "(verified tier) is the intended PDP gate; not yet enforced at this MCP layer - "
-            "see itil_change_validate's note."
-        ),
-        inputSchema={
-            "properties": {
-                "change_id": {"description": "Change ID (e.g. chg-i1j2k3l4)", "type": "string"},
-                "agent": {
-                    "description": "Agent/operator unscheduling the change (default: human)",
-                    "type": "string",
-                },
-                "note": {"description": "Timeline note", "type": "string"},
-            },
-            "required": ["change_id"],
-            "type": "object",
-        },
-    ),
-    Tool(
         name="itil_cab_vote",
         description=(
             "Submit a CAB (Change Advisory Board) vote for a proposed change. Each agent "
             "writes its own vote file (conflict-free). A human rejection blocks the change; "
-            "a human approval unblocks it. CR change-mgmt P1.4: the voter of record is the "
-            "caller's capauth-resolved authenticated identity when one can be resolved, NOT "
-            "the free-text `agent` argument - this closes the anonymous-voting hole where "
-            "any caller could write agent='human' and unblock a change. `agent` is kept for "
-            "back-compat display / legacy callers and is used as the voter only when no "
-            "authenticated identity is resolvable. NOTE: capability `change.cab_vote` "
-            "(verified tier) is the intended PDP gate (design doc section 7); not yet "
-            "enforced at this MCP layer - see itil_change_validate's note."
+            "a human approval unblocks it."
         ),
         inputSchema={
             "properties": {
-                "agent": {
-                    "description": (
-                        "Free-text voter label. Used as the voter identity only when the "
-                        "caller's authenticated identity cannot be resolved."
-                    ),
-                    "type": "string",
-                },
+                "agent": {"description": "Voting agent name", "type": "string"},
                 "change_id": {"description": "Change ID to vote on", "type": "string"},
                 "conditions": {"description": "Conditions for approval", "type": "string"},
                 "decision": {
@@ -432,63 +306,6 @@ TOOLS: list[Tool] = [
 # ═══════════════════════════════════════════════════════════
 # Handlers
 # ═══════════════════════════════════════════════════════════
-
-
-def _resolve_authenticated_subject() -> str | None:
-    """Resolve the calling process's capauth-authenticated identity.
-
-    CR change-mgmt P1.4 (the anonymous-voting fix): the CAB voter of record
-    must be a real authenticated identity, not a free-text argument the
-    caller supplies. Delegates to the one canonical resolver
-    (``capauth.resolve_agent_identity``) instead of reimplementing identity
-    logic, mirroring the same try/except-and-fall-back-to-None shape already
-    used by ``skcapstone.fleet.store.writer_identity`` and
-    ``cli/identity_cmd.py``. Returns the short agent name (``.agent``, e.g.
-    ``"lumina"``) - the identity shape every existing CAB vote / `prepared_by`
-    / `writer` field in skcoord.itil already uses - never raises, so a
-    dev/legacy environment without capauth installed falls back to
-    ``submit_cab_vote``'s pre-existing free-text behavior (``subject=None``).
-    """
-    try:
-        from capauth import resolve_agent_identity
-
-        ident = resolve_agent_identity()
-        return ident.agent or None
-    except Exception:  # noqa: BLE001 - resolver failure must never crash a vote
-        return None
-
-
-def _resolve_change_or_raise(mgr, change_id: str) -> str:
-    """Resolve a change id (following redirect stubs) and raise if unknown.
-
-    Mirrors the existence check ``update_change`` already does internally;
-    the new validate/schedule/unschedule transitions have no dedicated
-    public ``ITILManager`` method (they append events directly, exactly as
-    skcoord's own ``test_change_management.py`` does), so this helper keeps
-    that same "raise ValueError for an unknown change" contract instead of
-    silently creating an orphan events directory for a bad id.
-    """
-    rid = mgr._resolve_id(mgr.changes_dir, change_id)
-    if mgr._load_core(mgr.changes_dir, rid) is None:
-        raise ValueError(f"Change {change_id} not found")
-    return rid
-
-
-def _schedule_window(asap: bool, at: str | None) -> tuple[str, str]:
-    """Compute (window_start, window_end) for a schedule event.
-
-    Per the design doc (section 4.3): "ASAP is not a special case: it is
-    window_start = now, window_end = now + a default grace (e.g. 4h), asap:
-    true." The same grace is applied after an explicit `at` start so every
-    schedule carries a real window_end for the (later) deploy runner's
-    "window arrived" check.
-    """
-    if at:
-        start = datetime.fromisoformat(at.replace("Z", "+00:00"))
-    else:
-        start = datetime.now(timezone.utc)
-    end = start + timedelta(hours=_SCHEDULE_GRACE_HOURS)
-    return start.isoformat(), end.isoformat()
 
 
 async def _handle_itil_incident_create(args: dict) -> list[TextContent]:
@@ -712,128 +529,6 @@ async def _handle_itil_change_update(args: dict) -> list[TextContent]:
         return _error_response(str(exc))
 
 
-async def _handle_itil_change_validate(args: dict) -> list[TextContent]:
-    """Attach a CI validation verdict to a change's draft PR."""
-    from ..itil import Change, ITILManager
-
-    change_id = args.get("change_id", "").strip()
-    if not change_id:
-        return _error_response("change_id is required")
-    if args.get("passed") is None:
-        return _error_response("passed is required")
-    agent = args.get("agent", "").strip() or "ci"
-
-    mgr = ITILManager(_shared_root())
-    try:
-        rid = _resolve_change_or_raise(mgr, change_id)
-    except ValueError as exc:
-        return _error_response(str(exc))
-
-    mgr._append_event(
-        mgr.changes_dir,
-        rid,
-        agent,
-        "validation",
-        passed=bool(args.get("passed")),
-        head_sha=args.get("head_sha"),
-        url=args.get("url"),
-        summary=args.get("summary"),
-        checks=args.get("checks"),
-    )
-    chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-    return _json_response(
-        {
-            "validated": True,
-            "id": chg.id,
-            "status": chg.status.value,
-            "validation": chg.validation,
-        }
-    )
-
-
-async def _handle_itil_change_schedule(args: dict) -> list[TextContent]:
-    """Schedule an approved change for deployment (ASAP or a window start)."""
-    from ..itil import Change, ITILManager
-
-    change_id = args.get("change_id", "").strip()
-    if not change_id:
-        return _error_response("change_id is required")
-    asap = bool(args.get("asap", False))
-    at = args.get("at")
-    if asap and at:
-        return _error_response("asap and at are mutually exclusive")
-    agent = args.get("agent", "").strip() or "human"
-
-    mgr = ITILManager(_shared_root())
-    try:
-        rid = _resolve_change_or_raise(mgr, change_id)
-    except ValueError as exc:
-        return _error_response(str(exc))
-
-    window_start, window_end = _schedule_window(asap, at)
-    mgr._append_event(
-        mgr.changes_dir,
-        rid,
-        agent,
-        "schedule",
-        window_start=window_start,
-        window_end=window_end,
-        asap=asap,
-        deploy_mode=args.get("deploy_mode") or "confirm",
-        note=args.get("note", ""),
-    )
-    chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-    if chg.status.value != "scheduled":
-        # Fold refused the transition (fail-closed): the change was not
-        # 'approved' at the time the event was appended.
-        return _json_response(
-            {
-                "scheduled": False,
-                "id": chg.id,
-                "status": chg.status.value,
-                "reason": (
-                    "schedule is only valid while the change is 'approved' "
-                    "(fold refused the transition)"
-                ),
-            }
-        )
-    return _json_response(
-        {
-            "scheduled": True,
-            "id": chg.id,
-            "status": chg.status.value,
-            "scheduled_window": chg.scheduled_window,
-        }
-    )
-
-
-async def _handle_itil_change_unschedule(args: dict) -> list[TextContent]:
-    """Unschedule a change: scheduled -> approved, clears the window."""
-    from ..itil import Change, ITILManager
-
-    change_id = args.get("change_id", "").strip()
-    if not change_id:
-        return _error_response("change_id is required")
-    agent = args.get("agent", "").strip() or "human"
-
-    mgr = ITILManager(_shared_root())
-    try:
-        rid = _resolve_change_or_raise(mgr, change_id)
-    except ValueError as exc:
-        return _error_response(str(exc))
-
-    was_scheduled = mgr._fold_record(mgr.changes_dir, rid, Change).status.value == "scheduled"
-    mgr._append_event(mgr.changes_dir, rid, agent, "unschedule", note=args.get("note", ""))
-    chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-    return _json_response(
-        {
-            "unscheduled": was_scheduled,
-            "id": chg.id,
-            "status": chg.status.value,
-        }
-    )
-
-
 async def _handle_itil_cab_vote(args: dict) -> list[TextContent]:
     """Submit a CAB vote."""
     from ..itil import ITILManager
@@ -843,19 +538,12 @@ async def _handle_itil_cab_vote(args: dict) -> list[TextContent]:
     if not change_id or not agent:
         return _error_response("change_id and agent are required")
 
-    # CR change-mgmt P1.4: bind the vote to the caller's authenticated
-    # identity, never the free-text `agent` arg above - `agent` only becomes
-    # the voter of record when no authenticated subject is resolvable
-    # (submit_cab_vote's own back-compat contract for `subject=None`).
-    subject = _resolve_authenticated_subject()
-
     mgr = ITILManager(_shared_root())
     vote = mgr.submit_cab_vote(
         change_id=change_id,
         agent=agent,
         decision=args.get("decision", "abstain"),
         conditions=args.get("conditions", ""),
-        subject=subject,
     )
 
     # Return current vote tally
@@ -925,9 +613,6 @@ HANDLERS: dict = {
     "itil_problem_update": _handle_itil_problem_update,
     "itil_change_propose": _handle_itil_change_propose,
     "itil_change_update": _handle_itil_change_update,
-    "itil_change_validate": _handle_itil_change_validate,
-    "itil_change_schedule": _handle_itil_change_schedule,
-    "itil_change_unschedule": _handle_itil_change_unschedule,
     "itil_cab_vote": _handle_itil_cab_vote,
     "itil_status": _handle_itil_status,
     "itil_kedb_search": _handle_itil_kedb_search,

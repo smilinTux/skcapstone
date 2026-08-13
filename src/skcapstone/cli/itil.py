@@ -2,48 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import click
 
 from ._common import SHARED_ROOT, console
-
-# Default grace window for an ASAP schedule (CM P1.2 / design doc section
-# 4.3), mirrored from mcp_tools/itil_tools.py so the CLI and MCP surfaces
-# compute the identical window for the identical input.
-_SCHEDULE_GRACE_HOURS = 4
-
-
-def _resolve_cab_vote_subject() -> str | None:
-    """Resolve the caller's capauth-authenticated identity for CAB voting.
-
-    CR change-mgmt P1.4: the CLI twin of
-    ``mcp_tools/itil_tools.py::_resolve_authenticated_subject`` - same
-    canonical resolver, same fall-back-to-None shape (never raises), so a
-    dev/legacy environment without capauth installed keeps
-    ``submit_cab_vote``'s pre-existing free-text behavior.
-    """
-    try:
-        from capauth import resolve_agent_identity
-
-        ident = resolve_agent_identity()
-        return ident.agent or None
-    except Exception:  # noqa: BLE001 - resolver failure must never crash a vote
-        return None
-
-
-def _schedule_window(asap: bool, at: str | None) -> tuple[str, str]:
-    """Compute (window_start, window_end) for a schedule event.
-
-    CLI twin of ``mcp_tools/itil_tools.py::_schedule_window``.
-    """
-    if at:
-        start = datetime.fromisoformat(at.replace("Z", "+00:00"))
-    else:
-        start = datetime.now(timezone.utc)
-    end = start + timedelta(hours=_SCHEDULE_GRACE_HOURS)
-    return start.isoformat(), end.isoformat()
 
 
 def register_itil_commands(main: click.Group) -> None:
@@ -412,7 +375,8 @@ def register_itil_commands(main: click.Group) -> None:
         console.print(f"\n[bold]Changes ({len(changes)}):[/bold]")
         for c in changes:
             console.print(
-                f"  [{c.id}] {c.title} ({c.status.value}, {c.change_type.value}) @{c.managed_by}"
+                f"  [{c.id}] {c.title} ({c.status.value}, "
+                f"{c.change_type.value}) @{c.managed_by}"
             )
         console.print()
 
@@ -453,130 +417,6 @@ def register_itil_commands(main: click.Group) -> None:
         except ValueError as exc:
             console.print(f"\n  [red]Error:[/red] {exc}\n")
 
-    @change.command("validate")
-    @click.argument("change_id")
-    @click.option("--agent", default="ci", help="Agent/system attaching the verdict")
-    @click.option(
-        "--passed/--failed",
-        "passed",
-        default=None,
-        required=True,
-        help="Whether the checks passed",
-    )
-    @click.option("--head-sha", default=None, help="Git SHA the checks ran against")
-    @click.option("--url", default=None, help="URL to the CI run / PR checks")
-    @click.option("--summary", default=None, help="Free-text summary of the verdict")
-    def change_validate(change_id, agent, passed, head_sha, url, summary):
-        """Attach a CI validation verdict to a change's draft PR.
-
-        A passing verdict while the change is still 'proposed' auto-advances
-        it to 'reviewing' (ready for CAB); a failing verdict leaves status
-        unchanged.
-        """
-        from ..itil import Change, ITILManager
-
-        mgr = ITILManager(Path(SHARED_ROOT).expanduser())
-        rid = mgr._resolve_id(mgr.changes_dir, change_id)
-        if mgr._load_core(mgr.changes_dir, rid) is None:
-            console.print(f"\n  [red]Error:[/red] Change {change_id} not found\n")
-            return
-
-        mgr._append_event(
-            mgr.changes_dir,
-            rid,
-            agent,
-            "validation",
-            passed=passed,
-            head_sha=head_sha,
-            url=url,
-            summary=summary,
-        )
-        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-        verdict = "[green]PASS[/green]" if passed else "[red]FAIL[/red]"
-        console.print(f"\n  {verdict} attached to {chg.id} -> status: {chg.status.value}\n")
-
-    @change.command("schedule")
-    @click.argument("change_id")
-    @click.option("--agent", default="human", help="Agent/operator scheduling the change")
-    @click.option("--asap", is_flag=True, help="Schedule ASAP (now + grace window)")
-    @click.option("--at", default=None, help="ISO 8601 window start (mutually excl. w/ --asap)")
-    @click.option(
-        "--deploy-mode",
-        default="confirm",
-        type=click.Choice(["confirm", "auto"]),
-        help="Deploy mode (default: confirm - requires a human arm)",
-    )
-    @click.option("--note", default="", help="Timeline note")
-    def change_schedule(change_id, agent, asap, at, deploy_mode, note):
-        """Schedule an APPROVED change for deployment: ASAP or a window start.
-
-        Valid only while the change is 'approved' (fold-enforced); scheduling
-        a change that is not approved is refused with no state change.
-        """
-        from ..itil import Change, ITILManager
-
-        if asap and at:
-            console.print("\n  [red]Error:[/red] --asap and --at are mutually exclusive\n")
-            return
-        if not asap and not at:
-            console.print("\n  [red]Error:[/red] one of --asap or --at is required\n")
-            return
-
-        mgr = ITILManager(Path(SHARED_ROOT).expanduser())
-        rid = mgr._resolve_id(mgr.changes_dir, change_id)
-        if mgr._load_core(mgr.changes_dir, rid) is None:
-            console.print(f"\n  [red]Error:[/red] Change {change_id} not found\n")
-            return
-
-        window_start, window_end = _schedule_window(asap, at)
-        mgr._append_event(
-            mgr.changes_dir,
-            rid,
-            agent,
-            "schedule",
-            window_start=window_start,
-            window_end=window_end,
-            asap=asap,
-            deploy_mode=deploy_mode,
-            note=note,
-        )
-        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-        if chg.status.value != "scheduled":
-            console.print(
-                f"\n  [yellow]Refused:[/yellow] {chg.id} is still [bold]{chg.status.value}[/bold] "
-                "- schedule is only valid while the change is 'approved'.\n"
-            )
-            return
-        console.print(
-            f"\n  [green]Scheduled:[/green] {chg.id} -> {window_start} .. {window_end} "
-            f"(deploy_mode={deploy_mode})\n"
-        )
-
-    @change.command("unschedule")
-    @click.argument("change_id")
-    @click.option("--agent", default="human", help="Agent/operator unscheduling the change")
-    @click.option("--note", default="", help="Timeline note")
-    def change_unschedule(change_id, agent, note):
-        """Unschedule a change: scheduled -> approved, clears the window."""
-        from ..itil import Change, ITILManager
-
-        mgr = ITILManager(Path(SHARED_ROOT).expanduser())
-        rid = mgr._resolve_id(mgr.changes_dir, change_id)
-        if mgr._load_core(mgr.changes_dir, rid) is None:
-            console.print(f"\n  [red]Error:[/red] Change {change_id} not found\n")
-            return
-
-        was_scheduled = mgr._fold_record(mgr.changes_dir, rid, Change).status.value == "scheduled"
-        mgr._append_event(mgr.changes_dir, rid, agent, "unschedule", note=note)
-        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-        if not was_scheduled:
-            console.print(
-                f"\n  [yellow]No change:[/yellow] {chg.id} was not scheduled "
-                f"(status: {chg.status.value}).\n"
-            )
-            return
-        console.print(f"\n  [green]Unscheduled:[/green] {chg.id} -> {chg.status.value}\n")
-
     # ── itil cab ──────────────────────────────────────────────────────
 
     @itil.group()
@@ -585,14 +425,7 @@ def register_itil_commands(main: click.Group) -> None:
 
     @cab.command("vote")
     @click.argument("change_id")
-    @click.option(
-        "--agent",
-        default="human",
-        help=(
-            "Free-text voter label. Used as the voter identity only when the "
-            "caller's authenticated identity cannot be resolved (CR change-mgmt P1.4)."
-        ),
-    )
+    @click.option("--agent", default="human", help="Voting agent")
     @click.option(
         "--decision",
         default="approved",
@@ -601,23 +434,15 @@ def register_itil_commands(main: click.Group) -> None:
     )
     @click.option("--conditions", default="", help="Approval conditions")
     def cab_vote(change_id, agent, decision, conditions):
-        """Submit a CAB vote for a change.
-
-        CR change-mgmt P1.4: the recorded voter is the caller's
-        capauth-resolved authenticated identity when one is resolvable, never
-        the free-text --agent label - closing the anonymous-voting hole where
-        any caller could pass --agent human and unblock a change.
-        """
+        """Submit a CAB vote for a change."""
         from ..itil import ITILManager
 
         mgr = ITILManager(Path(SHARED_ROOT).expanduser())
-        subject = _resolve_cab_vote_subject()
         vote = mgr.submit_cab_vote(
             change_id=change_id,
             agent=agent,
             decision=decision,
             conditions=conditions,
-            subject=subject,
         )
         console.print(
             f"\n  [green]Voted:[/green] {vote.agent} -> {vote.decision.value} "
