@@ -4,6 +4,7 @@
 **Date:** 2026-08-13
 **Author:** Lumina (with Fable ground-truth + coherence audits, external practice research)
 **Supersedes nothing. Extends:** `2026-08-12-fleet-suggestion-engine-arch.md`, `2026-08-13-change-management-cab-ai-arch.md`
+**Extended by:** `2026-08-14-signed-provenance-envelope-arch.md` (SPE, epic `373a33ca`). See section 2.3.
 
 ---
 
@@ -47,6 +48,39 @@ Every claim below was verified in code or at runtime on 2026-08-13, not inferred
 1. **Four different answers to "who is the human"**: a device-bound revocable session (skchat), a self-asserted header (dashboard), an env var (`SKAGENT`, where CAB voter "human" is claimable by any shell), and a Telegram ID list. The strongest is used by none of the consent surfaces.
 2. **No system can see another's consent.** The PDP emits an audit obligation that every PEP discards. Hermes approvals leave nothing attributable. There is no place to ask "did a human consent to X, and when."
 3. **Consent-for-X-authorizes-Y is a live pattern.** The R3 priv-esc (capability checked at propose tier, model-supplied `execute` passed through) had two unfixed siblings found in this audit, both now closed (rows 4 and 6).
+
+### 2.3 Relationship to SPE (added 2026-08-14)
+
+SPE was written the day after this document and declares itself an extension of
+it. The two are complementary, and the split is worth stating precisely because
+it is easy to assume one supersedes the other.
+
+- **SPE answers "who made this mutation, and can it be undone."** Attribution and
+  reversibility. One signed envelope adopted by every store. Its P1 (GTD
+  reversibility) and P2 (capauth actor block, permissive signing, `gtd verify`)
+  are merged and live.
+- **This document answers "did a human consent to this action, and can that be
+  proven at the door."** Authentication and authorization, upstream of the write.
+
+SPE's own policy call is the same one this document reaches from the other
+direction: **an unresolved identity is not signed, because a signature with no
+identity claim behind it asserts nothing.** That is precisely why a hardcoded
+`requester="operator"` was a defect and not merely untidy. Anything degrading an
+identity claim MUST use `"unattributed"` (the convention in
+`operator_seat/fleet_adapter.py`), never a synthesized value such as
+`"mcp:<agent>"`, which asserts something capauth could not back.
+
+**The authentication gap remains fully open after SPE.** Re-verified 2026-08-14
+against `origin/main` with all SPE work merged:
+
+- no client sends `x-sk-capability` (zero hits across js/dart/html)
+- the live :7778 dashboard still has neither `SKAI_AUTHZ` nor `SKAI_QUEUE_TOKEN`
+- `decide("capauth:lumina@skworld.io", "agentrun.queue")` still denies with
+  "no token grants capability", i.e. no capability token has ever been minted
+
+So SPE can attribute a write to an identity, while the front door still accepts a
+self-asserted `X-SK-Actor: "operator"` header from any local process. Phase 1
+below is unchanged and is still the gate on conversational consent.
 
 ## 3. The model
 

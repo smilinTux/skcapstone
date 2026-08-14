@@ -169,12 +169,17 @@ async def _handle_queue_item(args: dict) -> list[TextContent]:
     # "operator". The requester is written into the append-only
     # `agent_run_request` event, so a hardcoded value made every MCP-originated
     # run indistinguishable from a human operator action in the audit trail.
+    # Degrades to "unattributed", matching the SPE convention in
+    # operator_seat/fleet_adapter.py. Deliberately NOT a synthesized value like
+    # "mcp:<agent>": an identity claim capauth could not resolve asserts
+    # something it cannot back, which is the same defect as the hardcoded
+    # "operator" this replaces. Never raises; attribution is best-effort.
     try:
         from capauth import resolve_agent_identity
 
-        requester = resolve_agent_identity().capauth_uri
-    except Exception:  # noqa: BLE001 - identity is best-effort, never fatal
-        requester = f"mcp:{agent}"
+        requester = resolve_agent_identity().capauth_uri or "unattributed"
+    except Exception:  # noqa: BLE001
+        requester = "unattributed"
 
     result = agent_run.request_run(
         _shared_root(),
