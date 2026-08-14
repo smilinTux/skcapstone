@@ -20,12 +20,35 @@ from typing import Callable
 
 MODES = frozenset({"off", "permissive", "enforce"})
 
+
+def _default_suite_id() -> str:
+    """The signature suite id, from the ONE registry that owns suite names.
+
+    PROVENANCE_AND_MUTATION_STANDARD section 1 requires `sig.suite_id` to come
+    from the `skcomms.crypto_suites` registry; an invented id is the
+    "hardcoded primitive" anti-pattern (CRYPTO_AGILITY section 4) and is
+    non-compliant, however descriptive it looks. capauth's PGP backend signs
+    with the identity key, and both the operator and agent identities here are
+    EdDSA/Ed25519, so the registry's signature default is the right name.
+
+    skcomms is not a declared dependency, so this soft-imports and falls back
+    to the same literal the registry holds. The fallback is a copy of a
+    registered id, never a new one.
+    """
+    try:
+        from skcomms.crypto_suites import DEFAULT_SIG_SUITE
+
+        return DEFAULT_SIG_SUITE
+    except Exception:  # noqa: BLE001
+        return "ed25519-v1"
+
+
 #: Names the crypto suite a signature was produced with, so a future algorithm
 #: change is DETECTABLE rather than silent. Without it, a verifier that later
 #: learns a second suite cannot tell which one an old signature used, and an
 #: unverifiable-because-unknown signature is indistinguishable from a forged
 #: one. Carried inside the writer block, so it is covered by the signature.
-SUITE_ID = "capauth-pgp-ed25519-v1"
+SUITE_ID = _default_suite_id()
 SIGNING_ENV = "SKFLEET_SIGNING"
 
 

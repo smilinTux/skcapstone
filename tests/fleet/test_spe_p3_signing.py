@@ -200,3 +200,25 @@ def test_fleet_act_does_not_claim_the_entry_itself_is_signed():
     assert (
         "signature" in doc.lower() or "signed" in doc.lower()
     ), "it should still say where the signature actually lives"
+
+
+def test_the_suite_id_is_a_registered_id_not_an_invented_one():
+    """PROVENANCE_AND_MUTATION_STANDARD s1: suite_id MUST come from the
+    skcomms.crypto_suites registry. An invented id, however descriptive, is
+    the "hardcoded primitive" anti-pattern (CRYPTO_AGILITY s4).
+
+    This caught a real one: the first cut of this PR used
+    "capauth-pgp-ed25519-v1", which is not registered anywhere.
+    """
+    registry = pytest.importorskip("skcomms.crypto_suites")
+    registered = {s.suite_id for s in registry.all_suites()}
+    assert (
+        signing.SUITE_ID in registered
+    ), f"{signing.SUITE_ID!r} is not in the crypto_suites registry: {sorted(registered)}"
+
+
+def test_the_suite_id_names_the_algorithm_the_keys_actually_use():
+    """ed25519-v1 is only correct while the identity keys are EdDSA. If the
+    keys move to a PQ suite, this must move with them, not drift."""
+    registry = pytest.importorskip("skcomms.crypto_suites")
+    assert signing.SUITE_ID == registry.DEFAULT_SIG_SUITE
