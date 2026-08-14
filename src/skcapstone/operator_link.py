@@ -120,6 +120,26 @@ def create_operator_attestation(
         logger.warning("operator_link.py: %s", e)
         return None
 
+    # The operator's two halves must be ONE key, or this attestation is signed
+    # by something other than the identity it names. Unlike GTD/fleet signing
+    # (which #115 repoints at the acting agent's home) this signer cannot move:
+    # an operator attestation is the human-authorizes-agent link, so the
+    # operator's key is the correct signer by definition. Found on noroc2027,
+    # where the operator home held a stray `test-agent` private key beside the
+    # real operator public key: any attestation minted there would have been
+    # well-formed, signed by a test key, and unverifiable against the published
+    # operator key. Refuse rather than mint an authorization grant nobody can
+    # check. See capauth's keypair_match doctor check.
+    if not _keypair_matches(private_key_path, public_key_path):
+        logger.error(
+            "operator_link.py: refusing to sign an attestation: the operator's "
+            "private key (%s) and public key (%s) at %s are different keys",
+            _fingerprint_of(private_key_path) or "unreadable",
+            _fingerprint_of(public_key_path) or "unreadable",
+            base / "identity",
+        )
+        return None
+
     entity_type = str(profile.entity.entity_type).lower()
     if entity_type not in {"human", "entitytype.human"}:
         return None
@@ -157,6 +177,35 @@ def create_operator_attestation(
         encoding="utf-8",
     )
     return attestation
+
+
+def _fingerprint_of(path: Path) -> str | None:
+    """The fingerprint of a PGP key file, or None when unreadable.
+
+    Only the fingerprint (public material, derived from the primary key packet)
+    is read; the key is never unlocked and no secret bytes are surfaced.
+    """
+    try:
+        import pgpy  # type: ignore[import-untyped]
+
+        key, _ = pgpy.PGPKey.from_file(str(path))
+        return str(key.fingerprint).replace(" ", "")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _keypair_matches(private_key_path: Path, public_key_path: Path) -> bool:
+    """True when the two files are halves of the SAME key.
+
+    Unknown (PGPy unavailable, or either file unreadable) counts as a match:
+    this guard exists to refuse a demonstrably wrong pair, not to block signing
+    wherever the check cannot run.
+    """
+    priv = _fingerprint_of(private_key_path)
+    pub = _fingerprint_of(public_key_path)
+    if priv is None or pub is None:
+        return True
+    return priv == pub
 
 
 def _resolve_operator_home() -> Path:
