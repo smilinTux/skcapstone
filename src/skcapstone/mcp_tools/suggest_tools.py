@@ -97,8 +97,13 @@ TOOLS: list[Tool] = [
                     "type": "string",
                 },
                 "mode": {
-                    "description": "Execution mode (default: propose)",
-                    "enum": ["propose", "dry-run", "execute"],
+                    "description": (
+                        "Execution mode (default: propose). Execute-tier is "
+                        "deliberately absent: this surface cannot verify the "
+                        "agentrun.execute capability, so it is refused at the "
+                        "handler too."
+                    ),
+                    "enum": ["propose", "dry-run"],
                     "type": "string",
                 },
                 "agent": {
@@ -145,13 +150,39 @@ async def _handle_queue_item(args: dict) -> list[TextContent]:
     mode = args.get("mode") or "propose"
     agent = args.get("agent") or "lumina"
 
+    # SECURITY: this MCP tool performs NO per-request capability verification --
+    # there is no request context here to carry an X-SK-Capability token, so
+    # nothing proves the caller holds "agentrun.execute" (VERIFIED tier). The
+    # `mode` argument arrives verbatim from a model tool-call, which is shaped
+    # by item text the operator did not author (prompt-injection surface).
+    # Same reasoning as the assistant-surface fix in dashboard_assistant.py:
+    # never let untrusted text select a higher-privilege capability than was
+    # actually verified. Execute-tier runs must use the gated HTTP route
+    # (/api/queue/... -> _queue_gate -> queue_authz.authorize_queue).
+    if mode == "execute":
+        return _error_response(
+            "execute-tier queueing is not authorized via the MCP surface; "
+            "use the gated queue route"
+        )
+
+    # Attribute consent to the real calling agent rather than a blanket
+    # "operator". The requester is written into the append-only
+    # `agent_run_request` event, so a hardcoded value made every MCP-originated
+    # run indistinguishable from a human operator action in the audit trail.
+    try:
+        from capauth import resolve_agent_identity
+
+        requester = resolve_agent_identity().capauth_uri
+    except Exception:  # noqa: BLE001 - identity is best-effort, never fatal
+        requester = f"mcp:{agent}"
+
     result = agent_run.request_run(
         _shared_root(),
         card_id,
         instruction,
         agent=agent,
         mode=mode,
-        requester="operator",
+        requester=requester,
     )
     return _json_response(result)
 

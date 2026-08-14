@@ -165,7 +165,10 @@ async def test_queue_item_passes_through_and_returns_result(tmp_path, monkeypatc
     assert call["instruction"] == "investigate root cause"
     assert call["mode"] == "dry-run"
     assert call["agent"] == "opus"
-    assert call["requester"] == "operator"
+    # requester is the resolved calling identity, never a hardcoded "operator":
+    # it is written into the append-only agent_run_request consent event.
+    assert call["requester"] != "operator"
+    assert call["requester"]
 
 
 @pytest.mark.asyncio
@@ -240,3 +243,64 @@ async def test_queue_item_blank_instruction_errors(tmp_path, monkeypatch):
     )
     data = _parse(result)
     assert "error" in data
+
+
+@pytest.mark.asyncio
+async def test_queue_item_refuses_execute_mode(tmp_path, monkeypatch):
+    """Execute-tier queueing must never pass through the ungated MCP surface.
+
+    Regression pin for the priv-esc sibling of the assistant-surface fix: this
+    handler verifies no capability at all, so a model-supplied mode="execute"
+    would have reached request_run at VERIFIED tier on a caller proven at
+    nothing.
+    """
+    monkeypatch.setattr(suggest_tools, "_shared_root", lambda: tmp_path)
+
+    def fake_request_run(*args, **kwargs):
+        raise AssertionError("execute must never reach request_run from MCP")
+
+    monkeypatch.setattr(agent_run, "request_run", fake_request_run)
+
+    result = await suggest_tools._handle_queue_item(
+        {
+            "surface": "coord",
+            "id": "task-1",
+            "instruction": "ship it",
+            "mode": "execute",
+        }
+    )
+    data = _parse(result)
+    assert "error" in data
+    assert "execute" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_queue_item_schema_does_not_advertise_execute():
+    """The tool schema must not offer a mode the handler refuses."""
+    queue_tool = next(t for t in suggest_tools.TOOLS if t.name == "queue_item")
+    modes = queue_tool.inputSchema["properties"]["mode"]["enum"]
+    assert "execute" not in modes
+    assert "propose" in modes
+
+
+@pytest.mark.asyncio
+async def test_queue_item_does_not_hardcode_operator_requester(tmp_path, monkeypatch):
+    """Consent is attributed to the calling agent, never a blanket 'operator'.
+
+    requester lands in the append-only agent_run_request event, so hardcoding
+    it made every MCP-originated run indistinguishable from a human action.
+    """
+    monkeypatch.setattr(suggest_tools, "_shared_root", lambda: tmp_path)
+    seen = {}
+
+    def fake_request_run(*args, **kwargs):
+        seen.update(kwargs)
+        return {"ok": True, "run_id": "r1", "card_id": "task-1"}
+
+    monkeypatch.setattr(agent_run, "request_run", fake_request_run)
+
+    result = await suggest_tools._handle_queue_item(
+        {"surface": "coord", "id": "task-1", "instruction": "look into it"}
+    )
+    _parse(result)
+    assert seen["requester"] != "operator"
