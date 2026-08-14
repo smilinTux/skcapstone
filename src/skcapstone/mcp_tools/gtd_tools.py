@@ -697,26 +697,23 @@ async def _handle_gtd_move(args: dict) -> list[TextContent]:
         if source_list is None or item is None:
             return _error_response(f"Item '{item_id}' not found in any GTD list")
 
-        # Remove from source
-        _remove_item_from_list(source_list, item_id)
-
         # Update status
         item["status"] = _STATUS_FROM_DEST[destination]
         item["moved_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Add to destination
+        # P1.3: destination first, source second. A crash in the window between
+        # the two saves must leave a recoverable duplicate, never a hole.
         if destination == "done":
             item["completed_at"] = datetime.now(timezone.utc).isoformat()
-            archive = _load_archive()
-            archive.append(item)
-            _save_archive(archive)
-            dest_name = "archive"
+            dest_name = GTD_ARCHIVE
         else:
-            dest_key = _DESTINATION_MAP[destination]
-            dest_list = _load_list(dest_key)
-            dest_list.append(item)
-            _save_list(dest_key, dest_list)
-            dest_name = dest_key
+            dest_name = _DESTINATION_MAP[destination]
+        dest_list = _load_list(dest_name)
+        dest_list.append(item)
+        _save_list(dest_name, dest_list)
+
+        # Remove from source
+        _remove_item_from_list(source_list, item_id)
 
     return _json_response(
         {
@@ -748,16 +745,17 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
             # an already-archived item into a duplicate.
             return _error_response(f"Item '{item_id}' is already archived")
 
-        # Remove from source
-        _remove_item_from_list(source_list, item_id)
-
-        # Mark done and archive
+        # Mark done and archive. P1.3: archive first, THEN drop the source, so a
+        # crash between the two saves duplicates the item instead of losing it.
         item["status"] = "done"
         item["completed_at"] = datetime.now(timezone.utc).isoformat()
 
-        archive = _load_archive()
+        archive = _load_list(GTD_ARCHIVE)
         archive.append(item)
-        _save_archive(archive)
+        _save_list(GTD_ARCHIVE, archive)
+
+        # Remove from source
+        _remove_item_from_list(source_list, item_id)
 
     return _json_response(
         {
