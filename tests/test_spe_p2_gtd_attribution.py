@@ -62,13 +62,44 @@ def test_every_mutation_records_a_resolved_actor():
     assert "resolved" in actor
 
 
-def test_the_actor_is_resolved_not_just_the_env_var(monkeypatch):
-    """The env name is what P1 already had; P2 must add the identity behind it."""
+def test_the_actor_block_carries_the_resolvers_answer_not_the_env_var(monkeypatch):
+    """The env name is what P1 already had; P2 must record the identity behind it.
+
+    The resolver is injected rather than read off the host: fqid comes from
+    cluster.json, which a dev box has and a CI runner does not, so asserting on
+    the ambient identity would make this pass or fail by machine.
+    """
     from skcapstone import gtd_journal
 
+    class _Ident:
+        agent = "resolved-not-env"
+        capauth_uri = "capauth:resolved-not-env@skworld.io"
+        fqid = "resolved-not-env@chef.skworld.io"
+        fingerprint = "DEADBEEF"
+
+    monkeypatch.setattr(gtd_journal, "_resolve_identity", _Ident)
     ev = gtd_journal.append("capture", "i1", {"id": "i1"}, to="inbox")
+
+    actor = ev["actor"]
+    assert actor["resolved"] is True
+    assert actor["agent"] == "resolved-not-env"  # NOT the SKAGENT env value
+    assert ev["writer"] == "lumina"  # which is still recorded separately
+    assert actor["capauth_uri"] == "capauth:resolved-not-env@skworld.io"
+    assert actor["fqid"] == "resolved-not-env@chef.skworld.io"
+    assert actor["fingerprint"] == "DEADBEEF"
+
+
+def test_a_resolver_that_yields_no_fqid_still_counts_as_resolved():
+    """A node with no cluster.json has an identity, just not a sovereign FQID.
+
+    That is the CI runner's shape, and it must not read as a degradation.
+    """
+    from skcapstone import gtd_journal
+
+    ev = gtd_journal.append("capture", "i2", {"id": "i2"}, to="inbox")
     assert ev["actor"]["resolved"] is True
-    assert ev["actor"]["fqid"], "a resolved identity carries its sovereign FQID"
+    assert ev["actor"]["agent"]
+    assert "fqid" in ev["actor"]  # present, possibly None
 
 
 def test_a_resolver_failure_degrades_to_an_unsigned_envelope(monkeypatch):
