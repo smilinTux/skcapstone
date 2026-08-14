@@ -12,6 +12,7 @@ so neither test touches the live ~/.skcapstone/autopilot-cost/ or
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import tempfile
 from pathlib import Path
@@ -19,6 +20,18 @@ from pathlib import Path
 import pytest
 
 from skdashboard.dashboard import create_app
+
+# Both tests here assume skharness is importable: one calls
+# skharness.autocode.autopilot_cost.record_run directly, and the other asserts
+# `errors == []` and a full 30-point cost series, which only hold when the cost
+# ledger backend is present. skharness is a private sibling monorepo package
+# that is NOT on PyPI, so CI cannot install it. Skip loudly rather than assert
+# against a degraded shape: a skipped test says "not covered here", a relaxed
+# assertion would say "covered" while checking nothing.
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("skharness") is None,
+    reason="optional private sibling skharness is not installed (not published to PyPI)",
+)
 
 
 class _FakeHeaders(dict):

@@ -22,7 +22,16 @@ from skcoord.card_store import CardStore
 logger = logging.getLogger("skcapstone.dashboard.kanban")
 
 _VALID_COLUMNS = {c.value for c in Column}
-_MUTATIONS = {"move", "assign", "unassign", "add_label", "remove_label", "priority", "note"}
+_MUTATIONS = {
+    "move",
+    "assign",
+    "unassign",
+    "add_label",
+    "remove_label",
+    "priority",
+    "note",
+    "describe",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +272,14 @@ def apply_mutation(home: Path, card_id: str, action: str, actor: str, **fields) 
         if not (fields.get("text") or "").strip():
             return {"error": "note text required"}
         store.append_event(card_id, "note", actor, text=fields["text"])
+    elif action == "describe":
+        # SPE P3.1: title/description are folded, not frozen. Only the fields
+        # actually supplied are written, so editing one never blanks the other,
+        # and an empty string stays a deliberate clear. core.json is untouched.
+        payload = {k: fields[k] for k in ("title", "description") if fields.get(k) is not None}
+        if not payload:
+            return {"error": "title or description required"}
+        store.append_event(card_id, "describe", actor, **payload)
 
     return {"ok": True, "card": store.fold(card_id).model_dump()}
 

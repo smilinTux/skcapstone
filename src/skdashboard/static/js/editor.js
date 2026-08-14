@@ -79,7 +79,12 @@ function renderPanel(panel, data) {
       <div class="addbox"><input id="e-newlabel" placeholder="add label…" autocomplete="off"><button class="btn" id="e-addlabel">Add</button></div>
     </div>
 
-    ${c.description ? `<div class="psec"><div class="st">Description</div><div class="notes">${esc(c.description)}</div></div>` : ""}
+    <div class="psec">
+      <div class="st">Title &amp; description</div>
+      <input id="e-title" value="${esc(c.title || "")}" autocomplete="off">
+      <textarea class="notebox" id="e-desc" placeholder="Describe this card…">${esc(c.description || "")}</textarea>
+      <div style="margin-top:8px;text-align:right"><button class="btn" id="e-describe">Save wording</button></div>
+    </div>
 
     <div class="psec">
       <div class="st">Add note</div>
@@ -108,6 +113,18 @@ function renderPanel(panel, data) {
   };
   panel.querySelector("#e-addlabel").addEventListener("click", addLabel);
   panel.querySelector("#e-newlabel").addEventListener("keydown", (e) => { if (e.key === "Enter") addLabel(); });
+  panel.querySelector("#e-describe").addEventListener("click", () => {
+    // Send only what actually changed, so saving a reworded description never
+    // rewrites the title with an identical value (and vice versa). An empty
+    // string IS a change: it clears the field on purpose.
+    const title = panel.querySelector("#e-title").value;
+    const description = panel.querySelector("#e-desc").value;
+    const body = {};
+    if (title !== (c.title || "")) body.title = title;
+    if (description !== (c.description || "")) body.description = description;
+    if (!Object.keys(body).length) return toast("nothing changed");
+    act(c.id, "describe", body);
+  });
   panel.querySelector("#e-addnote").addEventListener("click", () => {
     const v = panel.querySelector("#e-note").value.trim();
     if (v) act(c.id, "note", { text: v });
@@ -152,6 +169,11 @@ function activityText(e) {
     case "add_label": return `${w} +label <b>${esc(e.label || "")}</b>`;
     case "remove_label": return `${w} -label <b>${esc(e.label || "")}</b>`;
     case "note": return `${w}: ${esc(e.text || "")}`;
+    case "describe": {
+      const f = [e.title !== undefined ? "title" : null, e.description !== undefined ? "description" : null]
+        .filter(Boolean).join(" + ");
+      return `${w} reworded <b>${esc(f || "wording")}</b>`;
+    }
     case "link": return `${w} linked ${esc(e.link_key || "")} = ${esc(e.link_value || "")}`;
     case "archive": return `${w} archived`;
     case "reopen": return `${w} reopened`;

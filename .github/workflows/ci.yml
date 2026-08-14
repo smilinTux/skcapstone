@@ -44,8 +44,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install skdashboard (--no-deps; the import smoke avoids the heavy skcapstone runtime)
-        run: pip install --no-deps -e . && pip install pytest
+      # This installed with --no-deps to stay a light import smoke. The suite
+      # outgrew that: dashboard_kanban imports skcoord at module scope and the
+      # queue tests import skcapstone, so pytest errored at COLLECTION and the
+      # job has been red on main since 2026-08-13. The kanban, ITIL and queue
+      # tests were therefore never actually running.
+      #
+      # Install the real declared dependencies. Siblings come from PyPI FIRST,
+      # then --no-deps -e . puts this checkout on top of whatever skdashboard
+      # version they may have pulled in.
+      - name: Install dependencies (siblings from PyPI)
+        run: pip install skcapstone starlette pytest
+      - name: Install skdashboard from the checkout, on top
+        run: pip install --no-deps -e .
       - name: Smoke test (package imports, static assets + modules intact)
         run: python -m pytest tests/ -q
 
