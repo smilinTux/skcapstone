@@ -520,6 +520,45 @@ def register_coord_commands(main: click.Group) -> None:
         verb = "Removed" if remove else "Added"
         console.print(f"\n  [green]{verb} label '{label}' on {task_id}.[/]\n")
 
+    @coord.command("describe")
+    @click.argument("task_id")
+    @click.option("--title", default=None, help="New card title.")
+    @click.option("--description", default=None, help="New card description.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_describe(task_id, title, description, home, agent):
+        """Edit a card's title/description (folded, never rewrites core.json).
+
+        Birth facts stay write-once: the edit is one appended event, so it is
+        attributed to its writer and reversed by describing again. Only the
+        options you pass are changed; pass an empty string to clear a field.
+        """
+        from ..card import CardEvent, CardEventLog
+
+        if title is None and description is None:
+            raise click.UsageError("Pass --title and/or --description.")
+
+        home_path = Path(home).expanduser()
+        CardEventLog(home_path).append(
+            CardEvent(
+                card_id=task_id,
+                action="describe",
+                title=title,
+                description=description,
+                writer=agent or "",
+            )
+        )
+        from ..card_store import card_store_write_enabled, mirror_coord_describe
+
+        if card_store_write_enabled():
+            mirror_coord_describe(
+                home_path, task_id, agent or "", title=title, description=description
+            )
+        changed = ", ".join(
+            k for k, v in (("title", title), ("description", description)) if v is not None
+        )
+        console.print(f"\n  [green]Described {task_id} ({changed}).[/]\n")
+
     @coord.command("link")
     @click.argument("task_id")
     @click.argument("key")
