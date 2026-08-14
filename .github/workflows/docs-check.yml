@@ -1,0 +1,15 @@
+name: docs-check
+
+# DOCS_FRESHNESS_STANDARD gate. Tiers 1 and 2 to start (presence + changelog), so
+# the gate is green from day one. SOP.md already carries a docs-evidence block, so
+# moving to tiers "1,2,3" is a follow-up once this has run clean.
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@main
+    with:
+      tiers: "1,2"
