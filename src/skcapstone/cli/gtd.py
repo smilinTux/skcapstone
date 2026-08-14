@@ -328,6 +328,47 @@ def register_gtd_commands(main: click.Group) -> None:
         )
         console.print()
 
+    @gtd.command("reopen")
+    @click.argument("item_id")
+    @click.option(
+        "--to",
+        "destination",
+        default=None,
+        type=click.Choice(["next", "project", "waiting", "someday", "reference"]),
+        help="Where to restore it. Defaults to the list it was archived from.",
+    )
+    def gtd_reopen(item_id, destination):
+        """Reopen an archived item under its ORIGINAL id.
+
+        The undo for `gtd done`. Restores the item to the list it came from
+        (per the journal) and records the reversal as one more event, so the
+        item's history stays intact instead of being recaptured under a new id.
+
+        Example: skcapstone gtd reopen abc123
+        """
+        from ..mcp_tools.gtd_tools import _handle_gtd_reopen
+
+        data = json.loads(
+            asyncio.run(
+                _handle_gtd_reopen({"item_id": item_id, "destination": destination or ""})
+            )[0].text
+        )
+
+        if "error" in data:
+            raise click.ClickException(data["error"])
+
+        console.print()
+        console.print(
+            Panel(
+                f"[bold green]Reopened![/] ID: [cyan]{data['id']}[/]\n"
+                f"[dim]{data['text']}[/]\n"
+                f"Restored to: {data['to']}  Status: {data['status']}",
+                title="GTD Reopen",
+                border_style="green",
+            )
+        )
+        console.print()
+
     @gtd.command("done")
     @click.argument("item_id")
     def gtd_done(item_id):

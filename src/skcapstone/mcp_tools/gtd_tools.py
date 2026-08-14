@@ -393,6 +393,28 @@ TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="gtd_reopen",
+        description=(
+            "Reopen an archived GTD item, restoring it to the list it came from under its "
+            "ORIGINAL id. The undo for gtd_done: recorded as a reversing event, never an "
+            "edit of history."
+        ),
+        inputSchema={
+            "properties": {
+                "item_id": {"description": "ID of the archived item to reopen", "type": "string"},
+                "destination": {
+                    "description": (
+                        "Where to restore it. Defaults to the list it was archived from."
+                    ),
+                    "enum": ["next", "project", "waiting", "someday", "reference"],
+                    "type": "string",
+                },
+            },
+            "required": ["item_id"],
+            "type": "object",
+        },
+    ),
+    Tool(
         name="gtd_review",
         description=(
             "Generate a GTD weekly review summary. Shows counts per list, oldest items, "
@@ -792,6 +814,113 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
     )
 
 
+async def _handle_gtd_reopen(args: dict) -> list[TextContent]:
+    """Restore an archived item to its prior list, under its original id.
+
+    SPE P1.2 (card 0ef48ec9). ``done`` used to be a one-way door: recovery meant
+    hand-reading archive.json and recapturing under a NEW id, orphaning every
+    reference to the old one. This is the reversal, and it reverses the SPE way:
+    one more appended event, no stored event edited, no history deleted.
+
+    The destination is the list the item came from per the journal (P1.1). If
+    the journal has no record (the item predates it), the item's own status is
+    used, and failing that the inbox. An explicit ``destination`` overrides.
+    """
+    item_id = args.get("item_id", "").strip()
+    if not item_id:
+        return _error_response("item_id is required")
+
+    destination = (args.get("destination") or "").strip()
+    if destination and destination not in _DESTINATION_MAP:
+        return _error_response(
+            f"Invalid destination '{destination}'. "
+            f"Valid: {', '.join(sorted(k for k in _DESTINATION_MAP if k != 'done'))}"
+        )
+    if destination == "done":
+        return _error_response("Cannot reopen an item to 'done'")
+
+    with _store_lock():
+        source_list, item, _ = _find_item_across_lists(item_id)
+        if source_list is None or item is None:
+            return _error_response(f"Item '{item_id}' not found in the GTD store")
+        if source_list != GTD_ARCHIVE:
+            return _error_response(f"Item '{item_id}' is not archived (it is in {source_list})")
+
+        dest_name = _DESTINATION_MAP[destination] if destination else _prior_list_for(item)
+
+        item["status"] = _STATUS_FROM_DEST.get(destination) or _status_for_list(dest_name)
+        item.pop("completed_at", None)
+        item["reopened_at"] = datetime.now(timezone.utc).isoformat()
+
+        # Destination first, archive second (P1.3): a crash duplicates.
+        dest_list = _load_list(dest_name)
+        dest_list.append(item)
+        _save_list(dest_name, dest_list)
+        _remove_item_from_list(GTD_ARCHIVE, item_id)
+        _journal("reopen", item_id, item, to=dest_name, src=GTD_ARCHIVE)
+
+    return _json_response(
+        {
+            "reopened": True,
+            "id": item["id"],
+            "text": item.get("text") or item.get("title") or "",
+            "to": dest_name,
+            "status": item["status"],
+            "reopened_at": item["reopened_at"],
+        }
+    )
+
+
+# Which list a status belongs in, for restoring an item whose journal entry is
+# missing. The inverse of _STATUS_FROM_DEST via _DESTINATION_MAP.
+_LIST_FOR_STATUS = {
+    "inbox": "inbox",
+    "next": "next-actions",
+    "project": "projects",
+    "waiting": "waiting-for",
+    "someday": "someday-maybe",
+    "reference": "someday-maybe",
+}
+_STATUS_FOR_LIST = {
+    "inbox": "inbox",
+    "next-actions": "next",
+    "projects": "project",
+    "waiting-for": "waiting",
+    "someday-maybe": "someday",
+}
+
+
+def _status_for_list(list_name: str) -> str:
+    """The item status that belongs with a list."""
+    return _STATUS_FOR_LIST.get(list_name, "inbox")
+
+
+def _prior_list_for(item: dict) -> str:
+    """Where an archived item should go back to.
+
+    The journal is authoritative: the event that archived it recorded which
+    list it left. Items archived before the journal existed fall back to the
+    status they carried, and finally to the inbox.
+    """
+    item_id = item.get("id", "")
+    try:
+        from ..gtd_journal import read_all
+
+        for e in reversed(read_all()):
+            if e.get("item_id") != item_id:
+                continue
+            src = e.get("from")
+            if e.get("action") in ("done", "move") and src in _GTD_LISTS:
+                return src
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GTD journal unreadable while reopening %s: %s", item_id, exc)
+
+    prior_status = item.get("prior_status") or item.get("status")
+    if prior_status in _LIST_FOR_STATUS and prior_status != "done":
+        return _LIST_FOR_STATUS[prior_status]
+    return "inbox"
+
+
 async def _handle_gtd_review(_args: dict) -> list[TextContent]:
     """Generate a GTD weekly review summary."""
     now = datetime.now(timezone.utc)
@@ -1036,6 +1165,7 @@ HANDLERS: dict = {
     "gtd_clarify": _handle_gtd_clarify,
     "gtd_move": _handle_gtd_move,
     "gtd_done": _handle_gtd_done,
+    "gtd_reopen": _handle_gtd_reopen,
     "gtd_review": _handle_gtd_review,
     "gtd_next": _handle_gtd_next,
     "gtd_projects": _handle_gtd_projects,
