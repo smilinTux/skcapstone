@@ -43,35 +43,61 @@ def register_gtd_commands(main: click.Group) -> None:
     @click.option(
         "--context", "-c", default=None, help="GTD context tag, e.g. @computer, @phone, @home."
     )
-    def gtd_capture(text, source, privacy, context):
+    @click.option(
+        "--source-ref",
+        default=None,
+        help="Stable de-duplication key for this source, e.g. a mail thread id.",
+    )
+    def gtd_capture(text, source, privacy, context, source_ref):
         """Capture an item to the GTD inbox.
 
         Example: skcapstone gtd capture "Buy milk" --context @errands
-        """
-        from ..mcp_tools.gtd_tools import _load_list, _make_item, _save_list
 
-        item = _make_item(
-            text=text,
-            source=source,
-            privacy=privacy,
-            context=context,
+        SPE P1.5 (card 4082d990): this used to inline its own
+        load-append-save, taking no store lock and doing no dedupe, so two
+        concurrent captures could lose one. It now goes through the same
+        handler the MCP tool uses, which is the locked, atomic, deduped sink.
+        """
+        from ..mcp_tools.gtd_tools import _handle_gtd_capture
+
+        payload = json.loads(
+            asyncio.run(
+                _handle_gtd_capture(
+                    {
+                        "text": text,
+                        "source": source,
+                        "privacy": privacy,
+                        "context": context,
+                        "source_ref": source_ref or "",
+                    }
+                )
+            )[0].text
         )
-        inbox = _load_list("inbox")
-        inbox.append(item)
-        _save_list("inbox", inbox)
+
+        if payload.get("error"):
+            raise click.ClickException(payload["error"])
+
+        if payload.get("duplicate"):
+            console.print()
+            console.print(
+                f"  [yellow]Duplicate[/] - ({payload.get('source')}, "
+                f"{payload.get('source_ref')}) is already in the store. Nothing captured."
+            )
+            console.print(f"  Inbox has [bold]{payload.get('inbox_count', 0)}[/] item(s).\n")
+            return
 
         console.print()
         console.print(
             Panel(
-                f"[bold green]Captured![/] ID: [cyan]{item['id']}[/]\n"
-                f"[dim]{item['text']}[/]\n"
-                f"Source: {item['source']}  Privacy: {item['privacy']}"
-                + (f"  Context: {item['context']}" if item["context"] else ""),
+                f"[bold green]Captured![/] ID: [cyan]{payload['id']}[/]\n"
+                f"[dim]{payload['text']}[/]\n"
+                f"Source: {payload['source']}  Privacy: {payload['privacy']}"
+                + (f"  Context: {payload['context']}" if payload.get("context") else ""),
                 title="GTD Inbox",
                 border_style="green",
             )
         )
-        console.print(f"  Inbox now has [bold]{len(inbox)}[/] item(s).\n")
+        console.print(f"  Inbox now has [bold]{payload.get('inbox_count', 0)}[/] item(s).\n")
 
     @gtd.command("inbox")
     @click.option(
