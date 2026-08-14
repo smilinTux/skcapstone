@@ -301,7 +301,7 @@ def _step_trust(home_path: Path) -> str:
         try:
             trust_state = rehydrate(home_path)
         except Exception as exc:
-            logger.warning("Trust rehydration failed, using initialized state: %s", exc)  # use initialized state
+            logger.warning("Trust rehydration failed, using initialized state: %s", exc)
 
         febs = list_febs(home_path)
         s.stop()
