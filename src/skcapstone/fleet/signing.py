@@ -56,21 +56,87 @@ def verify_payload(payload: dict, verifier: Callable[[bytes, str], bool]) -> tup
     return ("invalid", "signature does not match any trusted key")
 
 
-def _capauth_home() -> Path | None:
-    """Resolve the local capauth home: the real resolver, env fallback.
+def _acting_agent() -> str:
+    """The acting agent, per the standard SKAGENT precedence."""
+    for var in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT"):
+        value = (os.environ.get(var) or "").strip()
+        if value:
+            return value
+    return ""
 
-    capauth.resolve_capauth_home() is the canonical source; the
-    CAPAUTH_HOME env var is the fallback used when capauth is not
-    installed, so the roster and key ceremony stay testable without it.
+
+def _agent_capauth_home() -> Path | None:
+    """The acting agent's OWN capauth home, when it has one."""
+    agent = _acting_agent()
+    if not agent:
+        return None
+    try:
+        from ..mcp_tools._helpers import _shared_root
+
+        root = _shared_root()
+    except Exception:  # noqa: BLE001
+        return None
+    home = Path(root) / "agents" / agent / "capauth"
+    return home if (home / "identity" / "private.asc").exists() else None
+
+
+def _capauth_home() -> Path | None:
+    """Resolve the capauth home to sign and verify with.
+
+    Precedence: explicit CAPAUTH_HOME, then the ACTING AGENT's own home, then
+    the shared/operator home.
+
+    The agent step is not a nicety. ``capauth.resolve_agent_identity()`` is
+    agent-aware while ``capauth.resolve_capauth_home()`` is agent-BLIND and
+    always answers the operator home, so without this the envelope claims one
+    identity (``lumina``) while a completely different key signs it. On
+    noroc2027 that meant signing with a stray ``test-agent`` key that happened
+    to sit in the operator home, next to the operator's real public key, so
+    every signature verified as invalid, while the agent's own healthy keypair
+    sat one directory away, unused.
     """
+    env = os.environ.get("CAPAUTH_HOME")
+    if env:
+        return Path(env)
+
+    agent_home = _agent_capauth_home()
+    if agent_home is not None:
+        return agent_home
+
     try:
         from capauth import resolve_capauth_home
 
         return resolve_capauth_home()
     except Exception:
-        pass
-    env = os.environ.get("CAPAUTH_HOME")
-    return Path(env) if env else None
+        return None
+
+
+def _fingerprint_of(path: Path) -> str | None:
+    """The fingerprint of a key file, or None when unreadable."""
+    try:
+        import pgpy
+
+        key, _ = pgpy.PGPKey.from_file(str(path))
+        return str(key.fingerprint).replace(" ", "")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _keypair_matches(home: Path) -> bool:
+    """True when private.asc and public.asc in a home are the SAME key.
+
+    Unknown (PGPy missing, or no public half to compare against) counts as a
+    match: this guard exists to catch a demonstrably wrong pair, not to block
+    signing wherever the check cannot run.
+    """
+    public = home / "identity" / "public.asc"
+    if not public.exists():
+        return True
+    priv_fpr = _fingerprint_of(home / "identity" / "private.asc")
+    pub_fpr = _fingerprint_of(public)
+    if priv_fpr is None or pub_fpr is None:
+        return True
+    return priv_fpr == pub_fpr
 
 
 def capauth_signer() -> Callable[[bytes], str] | None:
@@ -86,6 +152,13 @@ def capauth_signer() -> Callable[[bytes], str] | None:
         return None
     key_path = home / "identity" / "private.asc"
     if not key_path.exists():
+        return None
+    if not _keypair_matches(home):
+        # Degrade to unsigned rather than emit a signature nobody can verify.
+        # An unverifiable signature is worse than none: it manufactures
+        # assurance, and the failure surfaces at someone else's verify
+        # boundary, later, as a crypto error rather than the custody problem
+        # it actually is. See capauth's keypair_match doctor check.
         return None
     try:
         from capauth.crypto import get_backend
