@@ -25,6 +25,17 @@ _GTD_LISTS = {
     "someday-maybe": "someday-maybe.json",
 }
 
+# SPE P1.4 (card 3df69da1): ONE file-set constant for the whole store.
+# archive.json is not a list you file into, but it IS part of the store: it is
+# in the dedupe universe, so it must be in the lookup universe too, or an
+# archived item with a source_ref is un-findable AND un-recapturable at once.
+# Everything that walks the store (here, agent_run, skos adapters) reads these
+# names; no module defines its own copy.
+GTD_ARCHIVE = "archive"
+GTD_ARCHIVE_FILE = "archive.json"
+GTD_FILES = {**_GTD_LISTS, GTD_ARCHIVE: GTD_ARCHIVE_FILE}
+GTD_STORE_FILES = tuple(GTD_FILES.values())
+
 _VALID_SOURCES = {"manual", "telegram", "email", "voice", "itil"}
 _VALID_PRIVACY = {"private", "team", "community", "public"}
 _VALID_STATUSES = {"inbox", "next", "project", "waiting", "someday", "reference", "done"}
@@ -53,14 +64,10 @@ def _gtd_dir() -> Path:
     """Return the GTD directory, creating it and seed files if needed."""
     d = _shared_root() / "coordination" / "gtd"
     d.mkdir(parents=True, exist_ok=True)
-    for fname in _GTD_LISTS.values():
+    for fname in GTD_STORE_FILES:
         p = d / fname
         if not p.exists():
             p.write_text("[]", encoding="utf-8")
-    # Ensure archive.json exists too
-    archive = d / "archive.json"
-    if not archive.exists():
-        archive.write_text("[]", encoding="utf-8")
     return d
 
 
@@ -143,7 +150,7 @@ def _atomic_write_json(path: Path, items: list[dict]) -> None:
         os.close(dfd)
 
 
-_ALL_STORE_FILES = list(_GTD_LISTS.values()) + ["archive.json"]
+_ALL_STORE_FILES = list(GTD_STORE_FILES)
 
 
 def _seen_refs() -> set[tuple[str | None, str]]:
@@ -182,8 +189,14 @@ def _save_archive(items: list[dict]) -> None:
 
 
 def _find_item_across_lists(item_id: str) -> tuple[str | None, dict | None, int | None]:
-    """Find an item by ID across all GTD lists. Returns (list_name, item, index)."""
-    for list_name in _GTD_LISTS:
+    """Find an item by ID anywhere in the store. Returns (list_name, item, index).
+
+    The archive is searched last, so a live item always shadows a same-id
+    archived one. Searching it at all is the P1.4 fix: the archive was already
+    in the dedupe universe, so leaving it out of lookup made an archived item
+    with a source_ref both invisible and un-recapturable.
+    """
+    for list_name in GTD_FILES:
         items = _load_list(list_name)
         for idx, item in enumerate(items):
             if item.get("id") == item_id:
@@ -203,8 +216,8 @@ def _remove_item_from_list(list_name: str, item_id: str) -> dict | None:
 
 
 def _load_list(name: str) -> list[dict]:
-    """Load a GTD list by key name."""
-    path = _gtd_dir() / _GTD_LISTS[name]
+    """Load a GTD store file by key name (``archive`` included)."""
+    path = _gtd_dir() / GTD_FILES[name]
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, FileNotFoundError):
@@ -212,9 +225,9 @@ def _load_list(name: str) -> list[dict]:
 
 
 def _save_list(name: str, items: list[dict]) -> None:
-    """Persist a GTD list atomically (crash-safe; see _atomic_write_json).
+    """Persist a GTD store file atomically (crash-safe; see _atomic_write_json).
     Callers must hold _store_lock() around the load-modify-save cycle."""
-    _atomic_write_json(_gtd_dir() / _GTD_LISTS[name], items)
+    _atomic_write_json(_gtd_dir() / GTD_FILES[name], items)
 
 
 def _make_item(
@@ -730,6 +743,10 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
         source_list, item, _ = _find_item_across_lists(item_id)
         if source_list is None or item is None:
             return _error_response(f"Item '{item_id}' not found in any GTD list")
+        if source_list == GTD_ARCHIVE:
+            # P1.4 made the archive visible to lookup; done must not re-archive
+            # an already-archived item into a duplicate.
+            return _error_response(f"Item '{item_id}' is already archived")
 
         # Remove from source
         _remove_item_from_list(source_list, item_id)
