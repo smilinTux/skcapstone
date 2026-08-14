@@ -8,6 +8,8 @@ act verb is wired in the fleet adapter CLI card; observe here writes nothing.
 
 from __future__ import annotations
 
+import logging
+
 from ..fleet import (
     agent_controller,
     config_controller,
@@ -18,6 +20,8 @@ from ..fleet import (
     store,
 )
 from ..fleet.paths import self_node_name
+
+logger = logging.getLogger(__name__)
 
 #: Reversible ops the operator may apply through the fleet act verb, mapped to
 #: the object kind they annotate. Irreversible or major actions never reach the
@@ -165,11 +169,57 @@ def fleet_target_known(paths, proposal: dict) -> bool:
     return store.read_spec(paths, kind, proposal.get("object")) is not None
 
 
+def _acting_identity() -> str:
+    """The capauth identity of the seat performing this action.
+
+    Split out so the failure policy lives at the call site: attribution must
+    never be the reason the fleet cannot act.
+    """
+    from capauth import resolve_agent_identity
+
+    ident = resolve_agent_identity()
+    return getattr(ident, "capauth_uri", "") or getattr(ident, "agent", "") or ""
+
+
+def _operator_action_entry(
+    *, action: str, now_iso: str, classification: dict, proposal: dict
+) -> dict:
+    """One operatorActions record, attributed to the RESOLVED acting identity.
+
+    `by` was the literal string "atlas". An audit line naming a constant
+    attributes nothing: every seat, on every node, forever, claims to be the
+    same actor, so the field cannot answer the only question an audit entry
+    exists to answer. It now carries the capauth identity.
+
+    A resolver failure degrades to "unattributed" rather than raising: an entry
+    that says it does not know who acted is honest and still records that
+    something acted. Refusing to act because attribution failed would trade a
+    provenance gap for an availability outage, which is the wrong trade for an
+    ops channel (permissive posture, spec section 7).
+    """
+    try:
+        by = _acting_identity() or "unattributed"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fleet_adapter: identity resolve failed, entry unattributed: %s", exc)
+        by = "unattributed"
+    return {
+        "action": action,
+        "ts": now_iso,
+        "by": by,
+        "changeClass": classification.get("change_class"),
+        "rationale": proposal.get("rationale", ""),
+    }
+
+
 def fleet_act(paths, proposal: dict, classification: dict, *, now_iso: str, writer=None) -> dict:
     """Apply an operator proposal to the fleet: the act verb (ops channel).
 
-    Records the action as a SIGNED entry on the target object's spec
+    Records the action as an attributed entry on the target object's spec
     (`operatorActions`), so every operator touch is auditable and reversible.
+    The ENTRY itself is not signed; the spec WRITE carries the signature, in
+    the writer block (`writer.signature`, suite named by `writer.suite_id`),
+    which covers the whole payload including this entry. Saying the entry is
+    signed would invite trust it has not earned.
     Refuses when the fleet is frozen (belt-and-suspenders: the loop already
     checks freeze first). Only reversible ops are mapped; anything else raises,
     since majors and irreversible actions escalate and never reach the act verb.
@@ -188,13 +238,9 @@ def fleet_act(paths, proposal: dict, classification: dict, *, now_iso: str, writ
         raise ValueError(f"unknown {kind} object {name!r}")
     spec = dict(existing.get("spec", {}))
     log = list(spec.get("operatorActions", []))
-    entry = {
-        "action": action,
-        "ts": now_iso,
-        "by": "atlas",
-        "changeClass": classification.get("change_class"),
-        "rationale": proposal.get("rationale", ""),
-    }
+    entry = _operator_action_entry(
+        action=action, now_iso=now_iso, classification=classification, proposal=proposal
+    )
     # A standing condition (an app that is down reads stale, so the brief is
     # never quiet) re-proposes the same fix every pass. Escalations already
     # dedupe on a content-based decision id so a standing issue is ONE decision

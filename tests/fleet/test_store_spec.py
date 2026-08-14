@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from skcapstone.fleet import store
+from skcapstone.fleet import signing, store
 
 
 def test_write_spec_bumps_generation(paths, operator) -> None:
@@ -20,7 +20,10 @@ def test_write_spec_bumps_generation(paths, operator) -> None:
 
 def test_spec_carries_writer_identity_block(paths, operator) -> None:
     payload = store.write_spec(paths, "node", "node-41", {}, writer=operator)
+    # suite_id names the crypto suite INSIDE the signed block (SPE P3), so a
+    # future algorithm change is detectable rather than silent.
     assert payload["writer"] == {
+        "suite_id": signing.SUITE_ID,
         "role": "operator",
         "node": "node-158",
         "identity": "capauth:chef@skworld.io",

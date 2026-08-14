@@ -55,7 +55,10 @@ def test_fleet_observe_writes_nothing(tmp_path, monkeypatch):
     assert before == after
 
 
-def test_fleet_act_records_signed_annotation(tmp_path, monkeypatch):
+def test_fleet_act_records_an_attributed_annotation(tmp_path, monkeypatch):
+    """Renamed from ..._signed_annotation: the ENTRY is not signed. The spec
+    WRITE carries the signature in the writer block; describing the entry as
+    signed invited trust it had not earned (SPE P3, card 3c7134ab)."""
     paths, operator = _enroll(tmp_path, monkeypatch)
     store.write_spec(
         paths, "cronjob", "nightly", {"schedule": "@daily", "command": "echo hi"}, writer=operator
@@ -65,8 +68,14 @@ def test_fleet_act_records_signed_annotation(tmp_path, monkeypatch):
         paths, prop, {"change_class": "normal"}, now_iso="2026-07-29T00:00:00Z"
     )
     spec = store.read_spec(paths, "cronjob", "nightly")["spec"]
-    assert spec["operatorActions"][-1]["action"] == "rerun_cronjob"
-    assert spec["operatorActions"][-1]["by"] == "atlas"
+    entry = spec["operatorActions"][-1]
+    assert entry["action"] == "rerun_cronjob"
+    # `by` was the literal "atlas": a constant attributes nothing, because
+    # every seat on every node forever claimed to be the same actor. It now
+    # carries the resolved capauth identity, or "unattributed" when the
+    # resolver is unavailable, which is honest rather than a false name.
+    assert entry["by"] != "atlas"
+    assert entry["by"], "an entry must always say something about who acted"
 
 
 def test_fleet_act_refuses_when_frozen(tmp_path, monkeypatch):

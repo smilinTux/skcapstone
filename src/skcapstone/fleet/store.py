@@ -70,10 +70,20 @@ def _dump(path: Path, payload: dict) -> None:
 
 
 def _writer_block(writer: Writer) -> dict:
+    """The SPE envelope carried on every spec write.
+
+    ``suite_id`` sits INSIDE the block so it is covered by the signature: a
+    suite id an attacker could rewrite would be decoration, not provenance.
+    ``signature`` is the only field canonical_bytes blanks, so everything else
+    here, suite included, is signed over.
+    """
+    from .signing import SUITE_ID
+
     return {
         "role": writer.role,
         "node": writer.node,
         "identity": writer.identity,
+        "suite_id": SUITE_ID,
         "signature": None,
     }
 

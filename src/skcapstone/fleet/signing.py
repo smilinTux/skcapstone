@@ -19,6 +19,13 @@ from pathlib import Path
 from typing import Callable
 
 MODES = frozenset({"off", "permissive", "enforce"})
+
+#: Names the crypto suite a signature was produced with, so a future algorithm
+#: change is DETECTABLE rather than silent. Without it, a verifier that later
+#: learns a second suite cannot tell which one an old signature used, and an
+#: unverifiable-because-unknown signature is indistinguishable from a forged
+#: one. Carried inside the writer block, so it is covered by the signature.
+SUITE_ID = "capauth-pgp-ed25519-v1"
 SIGNING_ENV = "SKFLEET_SIGNING"
 
 
