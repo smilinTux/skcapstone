@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import tempfile
 import uuid
@@ -14,6 +15,8 @@ from pathlib import Path
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _json_response, _shared_root
+
+logger = logging.getLogger(__name__)
 
 # ── GTD directory under coordination ──────────────────────────────────
 
@@ -228,6 +231,21 @@ def _save_list(name: str, items: list[dict]) -> None:
     """Persist a GTD store file atomically (crash-safe; see _atomic_write_json).
     Callers must hold _store_lock() around the load-modify-save cycle."""
     _atomic_write_json(_gtd_dir() / GTD_FILES[name], items)
+
+
+def _journal(action: str, item_id: str, item: dict, to: str, src: str | None = None) -> None:
+    """Record one mutation in the append-only journal (SPE P1.1).
+
+    Best-effort by design: the store write has already succeeded by the time
+    this runs, so a journal failure must not turn a landed mutation into an
+    error. It is logged, never swallowed silently.
+    """
+    try:
+        from ..gtd_journal import append as _append
+
+        _append(action, item_id, item, to=to, src=src)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GTD journal append failed for %s (%s): %s", item_id, action, exc)
 
 
 def _make_item(
@@ -503,6 +521,7 @@ async def _handle_gtd_capture(args: dict) -> list[TextContent]:
                 }
             )
         item = next((it for it in inbox if it.get("id") == new_id), {})
+        _journal("capture", new_id, item, to="inbox")
         return _json_response(
             {
                 "captured": True,
@@ -535,6 +554,7 @@ async def _handle_gtd_capture(args: dict) -> list[TextContent]:
         inbox = _load_list("inbox")
         inbox.append(item)
         _save_list("inbox", inbox)
+        _journal("capture", item["id"], item, to="inbox")
 
     return _json_response(
         {
@@ -660,6 +680,7 @@ async def _handle_gtd_clarify(args: dict) -> list[TextContent]:
 
         # Save updated inbox (item removed)
         _save_list("inbox", inbox)
+        _journal("clarify", item_id, item, to=dest_name, src="inbox")
 
     return _json_response(
         {
@@ -714,6 +735,7 @@ async def _handle_gtd_move(args: dict) -> list[TextContent]:
 
         # Remove from source
         _remove_item_from_list(source_list, item_id)
+        _journal("move", item_id, item, to=dest_name, src=source_list)
 
     return _json_response(
         {
@@ -756,6 +778,7 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
 
         # Remove from source
         _remove_item_from_list(source_list, item_id)
+        _journal("done", item_id, item, to=GTD_ARCHIVE, src=source_list)
 
     return _json_response(
         {
