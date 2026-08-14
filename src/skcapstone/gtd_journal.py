@@ -119,12 +119,179 @@ def append(
                 "to": to,
                 "item": item,
             }
+            # SPE P2: attribute, then sign. Both are permissive; see _envelope.
+            try:
+                _envelope(event, writer)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Envelope construction failed, writing bare event: %s", exc)
             fh.seek(0, os.SEEK_END)
             fh.write(json.dumps(event, default=str) + "\n")
             fh.flush()
         finally:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
     return event
+
+
+# ── SPE P2: attribution + permissive signing ─────────────────────────────
+#
+# The posture is PERMISSIVE and that is the design, not a shortcut. Provenance
+# exists to make self-correction possible, so a capture must never fail because
+# a key is missing, a keyring is locked, or capauth is not installed. Every
+# degradation is RECORDED (actor.resolved / actor.degraded, absent sig) so
+# `gtd verify` can report it, rather than swallowed.
+
+SUITE_ID = "capauth-pgp-v1"
+
+
+def _resolve_identity():
+    """The capauth-resolved identity for this seat. Raises on failure.
+
+    Split out so tests can force the failure path, and so the caller owns the
+    permissive policy rather than burying it here.
+    """
+    from capauth import resolve_agent_identity
+
+    return resolve_agent_identity()
+
+
+def _signer():
+    """A callable signing bytes for this seat, or None when unavailable."""
+    from .fleet.signing import capauth_signer
+
+    return capauth_signer()
+
+
+def _verifier():
+    """A callable verifying (bytes, signature) against the local roster, or None."""
+    from .fleet.signing import capauth_verifier
+
+    return capauth_verifier()
+
+
+def canonical_event_bytes(event: dict) -> bytes:
+    """Deterministic bytes an event's signature covers.
+
+    The ``sig`` slot is excluded from its own input (otherwise nothing could
+    ever verify), and everything else is included, so altering any field
+    invalidates the signature. Same rule as ``fleet.signing.canonical_bytes``,
+    which blanks the slot rather than dropping it; here the slot is top-level.
+    """
+    body = {k: v for k, v in event.items() if k != "sig"}
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+
+
+def _actor_block(writer: str | None) -> dict:
+    """Attribution for the acting seat, degrading rather than raising."""
+    name = writer or writer_name()
+    try:
+        ident = _resolve_identity()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("capauth identity resolve failed, attributing unsigned: %s", exc)
+        return {
+            "agent": name,
+            "capauth_uri": None,
+            "fqid": None,
+            "fingerprint": None,
+            "node": _HOSTNAME,
+            "resolved": False,
+            "degraded": f"{type(exc).__name__}: {exc}",
+        }
+    return {
+        "agent": getattr(ident, "agent", name) or name,
+        "capauth_uri": getattr(ident, "capauth_uri", None),
+        "fqid": getattr(ident, "fqid", None),
+        "fingerprint": getattr(ident, "fingerprint", None),
+        "node": _HOSTNAME,
+        "resolved": True,
+    }
+
+
+def _envelope(event: dict, writer: str | None = None) -> dict:
+    """Attach the SPE envelope to an event in place: actor, then signature.
+
+    Signing is attempted always and is allowed to fail: no signer configured,
+    a locked key, or a backend error all leave the event attributed but
+    unsigned. Enforcement is P4's job, at a boundary, never at capture time.
+    """
+    event["actor"] = _actor_block(writer)
+    if not event["actor"].get("resolved"):
+        # A signature asserts "this seat, whose identity is X, signed this". If
+        # the identity never resolved there is no X to assert, so the honest
+        # envelope is attributed-but-unsigned rather than a signature floating
+        # free of a claim. The key alone is not the claim.
+        return event
+    try:
+        sign = _signer()
+        if sign is None:
+            return event
+        event["sig"] = {
+            "suite_id": SUITE_ID,
+            "signature": sign(canonical_event_bytes(event)),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GTD event signing failed, leaving it unsigned: %s", exc)
+        event.pop("sig", None)
+    return event
+
+
+# Verification states. `unverifiable` is deliberately NOT `invalid`: no local
+# trust roster means we cannot judge, and reporting that as a bad signature
+# would cry wolf on every node that has not run the key ceremony.
+VERIFY_STATES = ("verified", "unsigned", "invalid", "unverifiable", "pre-spe")
+
+
+def verify() -> dict:
+    """Classify every journal event and count the states.
+
+    Returns:
+        dict: ``{"total", "counts": {state: n}, "verifier_available": bool,
+        "problems": [...]}``. ``problems`` lists the invalid events only, so
+        the common case stays small.
+    """
+    verifier = None
+    try:
+        verifier = _verifier()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Verifier unavailable: %s", exc)
+
+    counts = {state: 0 for state in VERIFY_STATES}
+    problems: list[dict] = []
+    events = read_all()
+    for e in events:
+        if not e.get("actor"):
+            counts["pre-spe"] += 1
+            continue
+        sig = (e.get("sig") or {}).get("signature")
+        if not sig:
+            counts["unsigned"] += 1
+            continue
+        if verifier is None:
+            counts["unverifiable"] += 1
+            continue
+        try:
+            ok = verifier(canonical_event_bytes(e), sig)
+        except Exception as exc:  # noqa: BLE001
+            ok = False
+            logger.warning("Verifier error on %s: %s", e.get("event_id"), exc)
+        if ok:
+            counts["verified"] += 1
+        else:
+            counts["invalid"] += 1
+            problems.append(
+                {
+                    "event_id": e.get("event_id"),
+                    "ts": e.get("ts"),
+                    "writer": e.get("writer"),
+                    "action": e.get("action"),
+                    "item_id": e.get("item_id"),
+                }
+            )
+    return {
+        "total": len(events),
+        "counts": counts,
+        "verifier_available": verifier is not None,
+        "problems": problems,
+    }
 
 
 def read_all() -> list[dict]:

@@ -149,6 +149,47 @@ def register_gtd_commands(main: click.Group) -> None:
         console.print(table)
         console.print()
 
+    @gtd.command("verify")
+    @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+    def gtd_verify(as_json: bool):
+        """Report provenance coverage over the GTD journal.
+
+        Counts what actually landed, per state, so a degradation is visible
+        instead of silent: verified, unsigned, invalid, unverifiable (no local
+        trust roster, which is NOT the same as a bad signature), and pre-spe
+        (events written before attribution existed).
+        """
+        from ..gtd_journal import verify
+
+        report = verify()
+        if as_json:
+            click.echo(json.dumps(report, indent=2))
+            return
+
+        counts = report["counts"]
+        console.print()
+        console.print(f"  [bold]GTD journal provenance[/] · {report['total']} event(s)")
+        styles = {
+            "verified": "green",
+            "unsigned": "yellow",
+            "invalid": "bold red",
+            "unverifiable": "cyan",
+            "pre-spe": "dim",
+        }
+        for state, n in counts.items():
+            console.print(f"    [{styles.get(state, 'white')}]{state:<13}[/] {n}")
+        if not report["verifier_available"]:
+            console.print(
+                "\n  [dim]No local trust roster, so signatures could not be judged."
+                " Nothing here is a failure.[/]"
+            )
+        for p in report["problems"][:10]:
+            console.print(
+                f"  [red]invalid[/] {p['event_id'][:8]} {p['action']} {p['item_id']} "
+                f"by {p['writer']} at {p['ts']}"
+            )
+        console.print()
+
     @gtd.command("status")
     @click.option("--brief", is_flag=True, help="One-line summary (for hooks / session start).")
     def gtd_status(brief: bool):
