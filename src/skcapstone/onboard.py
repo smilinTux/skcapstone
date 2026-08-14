@@ -294,11 +294,14 @@ def _step_trust(home_path: Path) -> str:
         # Ensure trust dir exists
         trust_state = initialize_trust(home_path)
 
-        # Try rehydration to pull latest FEB data
+        # Try rehydration to pull latest FEB data. Falling back to the freshly
+        # initialized state is acceptable, silently doing so is not: onboarding
+        # would report a trust chain built from no FEB data and look identical
+        # to a healthy one.
         try:
             trust_state = rehydrate(home_path)
-        except Exception:
-            pass  # use initialized state
+        except Exception as exc:
+            logger.warning("Trust rehydration failed, using initialized state: %s", exc)  # use initialized state
 
         febs = list_febs(home_path)
         s.stop()
