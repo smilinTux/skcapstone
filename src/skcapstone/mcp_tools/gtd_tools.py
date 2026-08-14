@@ -100,6 +100,27 @@ except Exception:  # skos not installed: standalone skcapstone
 
 
 @contextmanager
+def _store_lock_at(gtd_dir: Path):
+    """Advisory flock over one GTD store directory's ``.gtd.lock``.
+
+    Same mutual exclusion as :func:`_store_lock` (flock is per FILE, so locking
+    the same path from any code path serializes with every other holder), but
+    parameterized for writers that carry their own ``home`` and so cannot go
+    through the shared-root resolver. Not reentrant."""
+    lock_path = Path(gtd_dir) / ".gtd.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+@contextmanager
 def _store_lock():
     """Advisory flock over the whole GTD store, held across each
     load-modify-save cycle so concurrent writers (this MCP path, the skos sink,
@@ -126,9 +147,13 @@ def _atomic_write_json(path: Path, items: list[dict]) -> None:
     """Crash-safe save: write a temp file in the same dir, fsync, os.replace
     over the target, fsync the dir. The target is never truncated in place, so
     a crash leaves either the whole old file or the whole new file, never a
-    partial one. Uses skos.gtd_ingest._save directly when available (every
-    target lives in _gtd_dir()); otherwise mirrors it exactly."""
-    if _skos_atomic_save is not None:
+    partial one. Uses skos.gtd_ingest._save when available AND the target really
+    lives in _gtd_dir(); otherwise mirrors it exactly.
+
+    The directory check matters: the skos sink resolves a target by NAME under
+    its own store dir, so delegating a path from anywhere else would silently
+    redirect the write into the store."""
+    if _skos_atomic_save is not None and path.parent == _gtd_dir():
         _skos_atomic_save(path.name, items)
         return
     d = path.parent
