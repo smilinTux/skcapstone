@@ -15,6 +15,30 @@ skcapstone coord briefing
 This prints the complete protocol, JSON schemas, rules, and a live snapshot
 of current tasks and agent assignments. It works in any terminal.
 
+## Worktrees (read before you edit anything)
+
+`~/clawd/skcapstone-repos/<repo>` is **one shared working tree per repo**. Chef
+runs concurrent Claude sessions and his own terminals against it, so every
+session sees the same HEAD. Running `git checkout -b` there moves the tree under
+whoever else is working in it, and their edited files silently revert.
+
+**Never branch or edit in the shared checkout. Work in a worktree:**
+
+```bash
+git worktree add ~/skworld-worktrees/<purpose>-<repo> -b <branch>
+```
+
+`~/skworld-worktrees/` is the established root (`mt-skcapstone`, `pv-skcoord`,
+`rollout-skharness`, `voice-hangup-stop`). Subagents get `.claude/worktrees/agent-*`.
+
+- A branch can be checked out in only ONE worktree. If the shared checkout is
+  already on your branch, `git checkout main` there first, then add the worktree.
+- Leave shared checkouts on `main` when you finish.
+- Commit early, even mid-task. In a shared checkout, committing is the only thing
+  that makes your work survive another session's branch switch.
+- Never leave files untracked in a shared tree; they are one `git clean` from gone.
+- When told another session is live, ask which repos it owns before touching them.
+
 ## Agent Switching
 
 `SKAGENT` is the primary env var for selecting the active agent across all SK*
