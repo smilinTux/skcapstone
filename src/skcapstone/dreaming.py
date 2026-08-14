@@ -1428,18 +1428,11 @@ class DreamingEngine:
         """
         import uuid as _uuid
 
-        gtd_someday_path = self._home / "coordination" / "gtd" / "someday-maybe.json"
-        gtd_someday_path.parent.mkdir(parents=True, exist_ok=True)
+        from .mcp_tools.gtd_tools import _atomic_write_json, _store_lock_at
 
-        try:
-            if gtd_someday_path.exists():
-                someday = json.loads(gtd_someday_path.read_text(encoding="utf-8"))
-                if not isinstance(someday, list):
-                    someday = []
-            else:
-                someday = []
-        except (json.JSONDecodeError, OSError):
-            someday = []
+        gtd_dir = self._home / "coordination" / "gtd"
+        gtd_someday = gtd_dir / "someday-maybe.json"
+        gtd_dir.mkdir(parents=True, exist_ok=True)
 
         now_iso = result.dreamed_at.isoformat()
         items: list[dict[str, Any]] = []
@@ -1465,11 +1458,22 @@ class DreamingEngine:
         if not items:
             return
 
-        someday.extend(items)
+        # SPE P1 sprint (83482526): this was a bare write_text, so it was the
+        # third unlocked, non-atomic GTD writer. The whole read-modify-write now
+        # runs under the store lock, and the save is the shared atomic one, so a
+        # concurrent capture cannot be clobbered and a crash cannot truncate the
+        # list. Locked on this engine's own store dir, which in production IS
+        # the shared root, so it is the same lock file everyone else takes.
         try:
-            gtd_someday_path.write_text(
-                json.dumps(someday, indent=2, default=str), encoding="utf-8"
-            )
+            with _store_lock_at(gtd_dir):
+                try:
+                    someday = json.loads(gtd_someday.read_text(encoding="utf-8"))
+                    if not isinstance(someday, list):
+                        someday = []
+                except (json.JSONDecodeError, OSError):
+                    someday = []
+                someday.extend(items)
+                _atomic_write_json(gtd_someday, someday)
             logger.info("Added %d dream items to GTD someday-maybe", len(items))
         except OSError as exc:
             logger.error("Failed to write GTD someday-maybe: %s", exc)

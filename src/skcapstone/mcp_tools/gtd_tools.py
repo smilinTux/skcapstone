@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import tempfile
 import uuid
@@ -15,6 +16,8 @@ from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _json_response, _shared_root
 
+logger = logging.getLogger(__name__)
+
 # ── GTD directory under coordination ──────────────────────────────────
 
 _GTD_LISTS = {
@@ -24,6 +27,17 @@ _GTD_LISTS = {
     "waiting-for": "waiting-for.json",
     "someday-maybe": "someday-maybe.json",
 }
+
+# SPE P1.4 (card 3df69da1): ONE file-set constant for the whole store.
+# archive.json is not a list you file into, but it IS part of the store: it is
+# in the dedupe universe, so it must be in the lookup universe too, or an
+# archived item with a source_ref is un-findable AND un-recapturable at once.
+# Everything that walks the store (here, agent_run, skos adapters) reads these
+# names; no module defines its own copy.
+GTD_ARCHIVE = "archive"
+GTD_ARCHIVE_FILE = "archive.json"
+GTD_FILES = {**_GTD_LISTS, GTD_ARCHIVE: GTD_ARCHIVE_FILE}
+GTD_STORE_FILES = tuple(GTD_FILES.values())
 
 _VALID_SOURCES = {"manual", "telegram", "email", "voice", "itil"}
 _VALID_PRIVACY = {"private", "team", "community", "public"}
@@ -53,14 +67,10 @@ def _gtd_dir() -> Path:
     """Return the GTD directory, creating it and seed files if needed."""
     d = _shared_root() / "coordination" / "gtd"
     d.mkdir(parents=True, exist_ok=True)
-    for fname in _GTD_LISTS.values():
+    for fname in GTD_STORE_FILES:
         p = d / fname
         if not p.exists():
             p.write_text("[]", encoding="utf-8")
-    # Ensure archive.json exists too
-    archive = d / "archive.json"
-    if not archive.exists():
-        archive.write_text("[]", encoding="utf-8")
     return d
 
 
@@ -90,6 +100,27 @@ except Exception:  # skos not installed: standalone skcapstone
 
 
 @contextmanager
+def _store_lock_at(gtd_dir: Path):
+    """Advisory flock over one GTD store directory's ``.gtd.lock``.
+
+    Same mutual exclusion as :func:`_store_lock` (flock is per FILE, so locking
+    the same path from any code path serializes with every other holder), but
+    parameterized for writers that carry their own ``home`` and so cannot go
+    through the shared-root resolver. Not reentrant."""
+    lock_path = Path(gtd_dir) / ".gtd.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+@contextmanager
 def _store_lock():
     """Advisory flock over the whole GTD store, held across each
     load-modify-save cycle so concurrent writers (this MCP path, the skos sink,
@@ -116,9 +147,13 @@ def _atomic_write_json(path: Path, items: list[dict]) -> None:
     """Crash-safe save: write a temp file in the same dir, fsync, os.replace
     over the target, fsync the dir. The target is never truncated in place, so
     a crash leaves either the whole old file or the whole new file, never a
-    partial one. Uses skos.gtd_ingest._save directly when available (every
-    target lives in _gtd_dir()); otherwise mirrors it exactly."""
-    if _skos_atomic_save is not None:
+    partial one. Uses skos.gtd_ingest._save when available AND the target really
+    lives in _gtd_dir(); otherwise mirrors it exactly.
+
+    The directory check matters: the skos sink resolves a target by NAME under
+    its own store dir, so delegating a path from anywhere else would silently
+    redirect the write into the store."""
+    if _skos_atomic_save is not None and path.parent == _gtd_dir():
         _skos_atomic_save(path.name, items)
         return
     d = path.parent
@@ -143,7 +178,7 @@ def _atomic_write_json(path: Path, items: list[dict]) -> None:
         os.close(dfd)
 
 
-_ALL_STORE_FILES = list(_GTD_LISTS.values()) + ["archive.json"]
+_ALL_STORE_FILES = list(GTD_STORE_FILES)
 
 
 def _seen_refs() -> set[tuple[str | None, str]]:
@@ -182,8 +217,14 @@ def _save_archive(items: list[dict]) -> None:
 
 
 def _find_item_across_lists(item_id: str) -> tuple[str | None, dict | None, int | None]:
-    """Find an item by ID across all GTD lists. Returns (list_name, item, index)."""
-    for list_name in _GTD_LISTS:
+    """Find an item by ID anywhere in the store. Returns (list_name, item, index).
+
+    The archive is searched last, so a live item always shadows a same-id
+    archived one. Searching it at all is the P1.4 fix: the archive was already
+    in the dedupe universe, so leaving it out of lookup made an archived item
+    with a source_ref both invisible and un-recapturable.
+    """
+    for list_name in GTD_FILES:
         items = _load_list(list_name)
         for idx, item in enumerate(items):
             if item.get("id") == item_id:
@@ -203,8 +244,8 @@ def _remove_item_from_list(list_name: str, item_id: str) -> dict | None:
 
 
 def _load_list(name: str) -> list[dict]:
-    """Load a GTD list by key name."""
-    path = _gtd_dir() / _GTD_LISTS[name]
+    """Load a GTD store file by key name (``archive`` included)."""
+    path = _gtd_dir() / GTD_FILES[name]
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, FileNotFoundError):
@@ -212,9 +253,24 @@ def _load_list(name: str) -> list[dict]:
 
 
 def _save_list(name: str, items: list[dict]) -> None:
-    """Persist a GTD list atomically (crash-safe; see _atomic_write_json).
+    """Persist a GTD store file atomically (crash-safe; see _atomic_write_json).
     Callers must hold _store_lock() around the load-modify-save cycle."""
-    _atomic_write_json(_gtd_dir() / _GTD_LISTS[name], items)
+    _atomic_write_json(_gtd_dir() / GTD_FILES[name], items)
+
+
+def _journal(action: str, item_id: str, item: dict, to: str, src: str | None = None) -> None:
+    """Record one mutation in the append-only journal (SPE P1.1).
+
+    Best-effort by design: the store write has already succeeded by the time
+    this runs, so a journal failure must not turn a landed mutation into an
+    error. It is logged, never swallowed silently.
+    """
+    try:
+        from ..gtd_journal import append as _append
+
+        _append(action, item_id, item, to=to, src=src)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GTD journal append failed for %s (%s): %s", item_id, action, exc)
 
 
 def _make_item(
@@ -362,6 +418,28 @@ TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="gtd_reopen",
+        description=(
+            "Reopen an archived GTD item, restoring it to the list it came from under its "
+            "ORIGINAL id. The undo for gtd_done: recorded as a reversing event, never an "
+            "edit of history."
+        ),
+        inputSchema={
+            "properties": {
+                "item_id": {"description": "ID of the archived item to reopen", "type": "string"},
+                "destination": {
+                    "description": (
+                        "Where to restore it. Defaults to the list it was archived from."
+                    ),
+                    "enum": ["next", "project", "waiting", "someday", "reference"],
+                    "type": "string",
+                },
+            },
+            "required": ["item_id"],
+            "type": "object",
+        },
+    ),
+    Tool(
         name="gtd_review",
         description=(
             "Generate a GTD weekly review summary. Shows counts per list, oldest items, "
@@ -490,6 +568,7 @@ async def _handle_gtd_capture(args: dict) -> list[TextContent]:
                 }
             )
         item = next((it for it in inbox if it.get("id") == new_id), {})
+        _journal("capture", new_id, item, to="inbox")
         return _json_response(
             {
                 "captured": True,
@@ -522,6 +601,7 @@ async def _handle_gtd_capture(args: dict) -> list[TextContent]:
         inbox = _load_list("inbox")
         inbox.append(item)
         _save_list("inbox", inbox)
+        _journal("capture", item["id"], item, to="inbox")
 
     return _json_response(
         {
@@ -647,6 +727,7 @@ async def _handle_gtd_clarify(args: dict) -> list[TextContent]:
 
         # Save updated inbox (item removed)
         _save_list("inbox", inbox)
+        _journal("clarify", item_id, item, to=dest_name, src="inbox")
 
     return _json_response(
         {
@@ -684,26 +765,24 @@ async def _handle_gtd_move(args: dict) -> list[TextContent]:
         if source_list is None or item is None:
             return _error_response(f"Item '{item_id}' not found in any GTD list")
 
-        # Remove from source
-        _remove_item_from_list(source_list, item_id)
-
         # Update status
         item["status"] = _STATUS_FROM_DEST[destination]
         item["moved_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Add to destination
+        # P1.3: destination first, source second. A crash in the window between
+        # the two saves must leave a recoverable duplicate, never a hole.
         if destination == "done":
             item["completed_at"] = datetime.now(timezone.utc).isoformat()
-            archive = _load_archive()
-            archive.append(item)
-            _save_archive(archive)
-            dest_name = "archive"
+            dest_name = GTD_ARCHIVE
         else:
-            dest_key = _DESTINATION_MAP[destination]
-            dest_list = _load_list(dest_key)
-            dest_list.append(item)
-            _save_list(dest_key, dest_list)
-            dest_name = dest_key
+            dest_name = _DESTINATION_MAP[destination]
+        dest_list = _load_list(dest_name)
+        dest_list.append(item)
+        _save_list(dest_name, dest_list)
+
+        # Remove from source
+        _remove_item_from_list(source_list, item_id)
+        _journal("move", item_id, item, to=dest_name, src=source_list)
 
     return _json_response(
         {
@@ -730,17 +809,23 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
         source_list, item, _ = _find_item_across_lists(item_id)
         if source_list is None or item is None:
             return _error_response(f"Item '{item_id}' not found in any GTD list")
+        if source_list == GTD_ARCHIVE:
+            # P1.4 made the archive visible to lookup; done must not re-archive
+            # an already-archived item into a duplicate.
+            return _error_response(f"Item '{item_id}' is already archived")
 
-        # Remove from source
-        _remove_item_from_list(source_list, item_id)
-
-        # Mark done and archive
+        # Mark done and archive. P1.3: archive first, THEN drop the source, so a
+        # crash between the two saves duplicates the item instead of losing it.
         item["status"] = "done"
         item["completed_at"] = datetime.now(timezone.utc).isoformat()
 
-        archive = _load_archive()
+        archive = _load_list(GTD_ARCHIVE)
         archive.append(item)
-        _save_archive(archive)
+        _save_list(GTD_ARCHIVE, archive)
+
+        # Remove from source
+        _remove_item_from_list(source_list, item_id)
+        _journal("done", item_id, item, to=GTD_ARCHIVE, src=source_list)
 
     return _json_response(
         {
@@ -752,6 +837,113 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
             "archive_count": len(archive),
         }
     )
+
+
+async def _handle_gtd_reopen(args: dict) -> list[TextContent]:
+    """Restore an archived item to its prior list, under its original id.
+
+    SPE P1.2 (card 0ef48ec9). ``done`` used to be a one-way door: recovery meant
+    hand-reading archive.json and recapturing under a NEW id, orphaning every
+    reference to the old one. This is the reversal, and it reverses the SPE way:
+    one more appended event, no stored event edited, no history deleted.
+
+    The destination is the list the item came from per the journal (P1.1). If
+    the journal has no record (the item predates it), the item's own status is
+    used, and failing that the inbox. An explicit ``destination`` overrides.
+    """
+    item_id = args.get("item_id", "").strip()
+    if not item_id:
+        return _error_response("item_id is required")
+
+    destination = (args.get("destination") or "").strip()
+    if destination and destination not in _DESTINATION_MAP:
+        return _error_response(
+            f"Invalid destination '{destination}'. "
+            f"Valid: {', '.join(sorted(k for k in _DESTINATION_MAP if k != 'done'))}"
+        )
+    if destination == "done":
+        return _error_response("Cannot reopen an item to 'done'")
+
+    with _store_lock():
+        source_list, item, _ = _find_item_across_lists(item_id)
+        if source_list is None or item is None:
+            return _error_response(f"Item '{item_id}' not found in the GTD store")
+        if source_list != GTD_ARCHIVE:
+            return _error_response(f"Item '{item_id}' is not archived (it is in {source_list})")
+
+        dest_name = _DESTINATION_MAP[destination] if destination else _prior_list_for(item)
+
+        item["status"] = _STATUS_FROM_DEST.get(destination) or _status_for_list(dest_name)
+        item.pop("completed_at", None)
+        item["reopened_at"] = datetime.now(timezone.utc).isoformat()
+
+        # Destination first, archive second (P1.3): a crash duplicates.
+        dest_list = _load_list(dest_name)
+        dest_list.append(item)
+        _save_list(dest_name, dest_list)
+        _remove_item_from_list(GTD_ARCHIVE, item_id)
+        _journal("reopen", item_id, item, to=dest_name, src=GTD_ARCHIVE)
+
+    return _json_response(
+        {
+            "reopened": True,
+            "id": item["id"],
+            "text": item.get("text") or item.get("title") or "",
+            "to": dest_name,
+            "status": item["status"],
+            "reopened_at": item["reopened_at"],
+        }
+    )
+
+
+# Which list a status belongs in, for restoring an item whose journal entry is
+# missing. The inverse of _STATUS_FROM_DEST via _DESTINATION_MAP.
+_LIST_FOR_STATUS = {
+    "inbox": "inbox",
+    "next": "next-actions",
+    "project": "projects",
+    "waiting": "waiting-for",
+    "someday": "someday-maybe",
+    "reference": "someday-maybe",
+}
+_STATUS_FOR_LIST = {
+    "inbox": "inbox",
+    "next-actions": "next",
+    "projects": "project",
+    "waiting-for": "waiting",
+    "someday-maybe": "someday",
+}
+
+
+def _status_for_list(list_name: str) -> str:
+    """The item status that belongs with a list."""
+    return _STATUS_FOR_LIST.get(list_name, "inbox")
+
+
+def _prior_list_for(item: dict) -> str:
+    """Where an archived item should go back to.
+
+    The journal is authoritative: the event that archived it recorded which
+    list it left. Items archived before the journal existed fall back to the
+    status they carried, and finally to the inbox.
+    """
+    item_id = item.get("id", "")
+    try:
+        from ..gtd_journal import read_all
+
+        for e in reversed(read_all()):
+            if e.get("item_id") != item_id:
+                continue
+            src = e.get("from")
+            if e.get("action") in ("done", "move") and src in _GTD_LISTS:
+                return src
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GTD journal unreadable while reopening %s: %s", item_id, exc)
+
+    prior_status = item.get("prior_status") or item.get("status")
+    if prior_status in _LIST_FOR_STATUS and prior_status != "done":
+        return _LIST_FOR_STATUS[prior_status]
+    return "inbox"
 
 
 async def _handle_gtd_review(_args: dict) -> list[TextContent]:
@@ -998,6 +1190,7 @@ HANDLERS: dict = {
     "gtd_clarify": _handle_gtd_clarify,
     "gtd_move": _handle_gtd_move,
     "gtd_done": _handle_gtd_done,
+    "gtd_reopen": _handle_gtd_reopen,
     "gtd_review": _handle_gtd_review,
     "gtd_next": _handle_gtd_next,
     "gtd_projects": _handle_gtd_projects,

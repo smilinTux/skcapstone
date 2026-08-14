@@ -58,16 +58,11 @@ def _iso(dt: datetime) -> str:
 # ---------------------------------------------------------------------------
 
 
-# GTD store layout (mirrors mcp_tools.gtd_tools._GTD_LISTS; kept local so
-# ensure_card reads the store under its own ``home`` param, not a global root).
-_GTD_LIST_FILES = {
-    "inbox": "inbox.json",
-    "next-actions": "next-actions.json",
-    "projects": "projects.json",
-    "waiting-for": "waiting-for.json",
-    "someday-maybe": "someday-maybe.json",
-    "archive": "archive.json",
-}
+# GTD store layout. SPE P1.4 (card 3df69da1): this used to be a local copy, and
+# the three copies had drifted on whether the archive counts. There is now one
+# constant; only the ROOT differs here (ensure_card reads the store under its
+# own ``home`` param, not the global shared root).
+from .mcp_tools.gtd_tools import GTD_FILES as _GTD_LIST_FILES  # noqa: E402
 
 
 def _find_gtd_item(home: Path, item_id: str) -> tuple[Optional[str], Optional[dict]]:
