@@ -12,6 +12,10 @@ tag, and `.github/workflows/publish.yml` cuts the next patch tag on every push t
 > shipped in each tag**, not a contemporaneous author's notes. Anything that was not
 > visible in the history is absent rather than guessed. `git log v0.1.7..v0.1.8` remains
 > the authoritative diff for any release.
+All notable changes to SKDashboard are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
@@ -134,3 +138,31 @@ tag, and `.github/workflows/publish.yml` cuts the next patch tag on every push t
 ### Changed
 
 - `trust_graph` is imported from `capauth.trust` directly (CR-3.6 shim retirement).
+- **Unified Consent Plane, Phase 2: `consent.granted` events (coord card `90d23f56`).**
+  capauth's PDP has always emitted an AUDIT obligation on every `decide()` call, and
+  every PEP discarded it - there was nowhere in the fleet to ask "did a human consent
+  to this action, and when." `queue_authz._default_decide_fn` now returns the PDP's
+  `Decision.obligations` alongside `allow` instead of collapsing to a bare bool, and
+  `authorize_capability`/`authorize_queue` surface it as an `"obligations"` key on
+  their result dict.
+- New `skdashboard.consent` module: builds a `consent.granted` Signed Provenance
+  Envelope (`spe1`, per `PROVENANCE_AND_MUTATION_STANDARD.md`) and persists it into
+  the object's OWN append-only event store - no new store. The dashboard queue-AI PEP
+  (`_queue_run`) writes into the CardStore (`skcapstone.card_store.CardStore.append_event`);
+  the change-management validate/schedule/arm PEPs write into the ITIL changes store
+  (`skcoord.itil.ITILManager._append_event`). The consenting subject prefers a
+  capauth-verified operator session (`x-operator-token`, `capauth.pairing.
+  verify_operator_session`) over the self-asserted `X-SK-Actor` header, which keeps
+  working unchanged for every other actor-facing field; an unresolved identity is
+  recorded as the literal `"unattributed"`, never a synthesized placeholder. Signing
+  is permissive (sign when a capauth key is present, `sig.value` null when not),
+  matching the SPE P2 posture.
+- New `GET /api/card/{card_id}/consent` and `GET /api/change/{id}/consent` routes:
+  answer "who consented to this action, and when" straight from the object's own
+  event log.
+
+### Fixed
+
+- Nothing in the fleet persisted the PDP's audit obligation before this change; every
+  gate decision was allow/deny with no durable trace of which authenticated subject
+  consented.

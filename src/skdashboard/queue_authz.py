@@ -66,8 +66,29 @@ def capability_for(mode: str) -> str:
     return "agentrun.queue"
 
 
-def _default_decide_fn(*, capability: str, resource: str, actor: Optional[str]) -> bool:
-    """Call the real capauth PDP and normalize its result to a bool.
+def _serialize_obligations(obligations: Any) -> list[dict]:
+    """Normalize a capauth ``Decision.obligations`` list to plain dicts.
+
+    ``capauth.authz.decide`` returns pydantic ``Obligation`` (``kind``,
+    ``data``) instances; this store-and-forward path needs plain JSON-able
+    dicts (consent events are appended as JSONL). Anything already dict-shaped
+    or unrecognized passes through unchanged rather than raising, since a
+    serialization hiccup here must never turn an authz decision into an
+    exception.
+    """
+    out: list[dict] = []
+    for o in obligations or []:
+        if hasattr(o, "model_dump"):
+            out.append(o.model_dump())
+        elif isinstance(o, dict):
+            out.append(o)
+        else:
+            out.append({"kind": getattr(o, "kind", "unknown"), "data": getattr(o, "data", {})})
+    return out
+
+
+def _default_decide_fn(*, capability: str, resource: str, actor: Optional[str]) -> dict:
+    """Call the real capauth PDP and return its allow decision AND obligations.
 
     Imports :func:`capauth.authz.decide` lazily so importing this module
     never requires capauth's dependency chain (pydantic, the pairing/tokens
@@ -76,10 +97,16 @@ def _default_decide_fn(*, capability: str, resource: str, actor: Optional[str]) 
     import time.
 
     ``capauth.authz.decide(subject, capability, resource=None, context=None,
-    *, base_dir=None, rules=None) -> Decision`` (``Decision.allow: bool``) is
-    the real signature; ``actor`` here maps to its ``subject`` and our
-    string ``resource`` is wrapped in a dict since ``decide`` expects
-    ``Optional[dict]``.
+    *, base_dir=None, rules=None) -> Decision`` (``Decision.allow: bool``,
+    ``Decision.obligations: list[Obligation]``) is the real signature;
+    ``actor`` here maps to its ``subject`` and our string ``resource`` is
+    wrapped in a dict since ``decide`` expects ``Optional[dict]``.
+
+    capauth's PDP emits an AUDIT obligation on every decision (allow or deny)
+    that no PEP used to keep (Unified Consent Plane, section 2.1 row 1: "AUDIT
+    obligation emitted, persisted by no PEP"). Returning it here instead of
+    collapsing to a bare bool is what lets a caller persist a ``consent.granted``
+    event carrying the PDP's own audit record rather than reconstructing one.
 
     Args:
         capability: The capability string to request (see :func:`capability_for`).
@@ -87,21 +114,25 @@ def _default_decide_fn(*, capability: str, resource: str, actor: Optional[str]) 
         actor: The already-authenticated subject/actor identity, or ``None``.
 
     Returns:
-        bool: ``True`` only when capauth's ``Decision.allow`` is ``True``.
-        Any import error, call error, or unexpected shape denies.
+        dict: ``{"allow": bool, "obligations": list[dict]}``. ``allow`` is
+        ``True`` only when capauth's ``Decision.allow`` is ``True``. Any
+        import error, call error, or unexpected shape denies with an empty
+        obligations list.
     """
     try:
         from capauth.authz import decide
     except Exception:  # noqa: BLE001
-        return False
+        return {"allow": False, "obligations": []}
     try:
         result = decide(actor or "", capability, resource={"id": resource})
     except Exception:  # noqa: BLE001
-        return False
+        return {"allow": False, "obligations": []}
     allow = getattr(result, "allow", None)
+    obligations = getattr(result, "obligations", None)
     if allow is None and isinstance(result, dict):
         allow = result.get("allow")
-    return bool(allow)
+        obligations = result.get("obligations", obligations)
+    return {"allow": bool(allow), "obligations": _serialize_obligations(obligations)}
 
 
 def _check_token(token: Optional[str]) -> tuple[bool, str]:
@@ -133,7 +164,7 @@ def _check_pdp(
     capability: str,
     resource: str,
     actor: Optional[str],
-) -> tuple[bool, str]:
+) -> tuple[bool, str, list[dict]]:
     """Ask ``decide_fn`` whether ``actor`` may exercise ``capability``.
 
     Any exception raised by ``decide_fn`` is caught and treated as a deny
@@ -143,25 +174,33 @@ def _check_pdp(
     Args:
         decide_fn: Callable accepting keyword args ``capability``,
             ``resource``, ``actor`` and returning a truthy/dict allow result
-            or a falsy deny result.
+            (optionally carrying an ``"obligations"`` list) or a falsy deny
+            result.
         capability: The capability string requested.
         resource: The resource identifier being acted on.
         actor: The already-authenticated subject/actor identity, or ``None``.
 
     Returns:
-        tuple[bool, str]: ``(ok, reason)``.
+        tuple[bool, str, list[dict]]: ``(ok, reason, obligations)``.
+        ``obligations`` is ``[]`` when ``decide_fn`` returned a bare bool (the
+        test-injection shape) rather than the dict shape the real PDP uses.
     """
     try:
         result = decide_fn(capability=capability, resource=resource, actor=actor)
     except Exception as exc:  # noqa: BLE001
-        return False, f"pdp denied: decide_fn raised {exc!r}"
-    allow = result.get("allow") if isinstance(result, dict) else result
+        return False, f"pdp denied: decide_fn raised {exc!r}", []
+    if isinstance(result, dict):
+        allow = result.get("allow")
+        obligations = result.get("obligations") or []
+    else:
+        allow = result
+        obligations = []
     if allow:
-        return True, "pdp ok"
+        return True, "pdp ok", obligations
     reason = "pdp denied: capability not granted"
     if capability == "agentrun.execute":
         reason += " (execute requires a 'verified' enrollment; the PDP enforces this)"
-    return False, reason
+    return False, reason, obligations
 
 
 def authorize_capability(
@@ -200,29 +239,33 @@ def authorize_capability(
             ``capauth.authz.decide`` is built lazily.
 
     Returns:
-        dict: ``{"ok": bool, "reason": str, "via": str}`` where ``via`` is
-        ``"token"``, ``"pdp"``, or ``"both"`` matching the active
-        ``SKAI_AUTHZ`` mode.
+        dict: ``{"ok": bool, "reason": str, "via": str, "obligations": list[dict]}``
+        where ``via`` is ``"token"``, ``"pdp"``, or ``"both"`` matching the
+        active ``SKAI_AUTHZ`` mode, and ``obligations`` carries the PDP's
+        AUDIT obligation (empty in ``"token"`` mode, since no PDP call is
+        made there) - see :func:`_default_decide_fn`. A caller that wants to
+        persist a ``consent.granted`` event reads this key rather than
+        re-deriving an audit record of its own.
     """
     authz_mode = _authz_mode()
     effective_decide_fn = decide_fn if decide_fn is not None else _default_decide_fn
 
     if authz_mode == "token":
         ok, reason = _check_token(token)
-        return {"ok": ok, "reason": reason, "via": "token"}
+        return {"ok": ok, "reason": reason, "via": "token", "obligations": []}
 
     if authz_mode == "pdp":
-        ok, reason = _check_pdp(
+        ok, reason, obligations = _check_pdp(
             decide_fn=effective_decide_fn,
             capability=capability,
             resource=resource,
             actor=actor,
         )
-        return {"ok": ok, "reason": reason, "via": "pdp"}
+        return {"ok": ok, "reason": reason, "via": "pdp", "obligations": obligations}
 
     # authz_mode == "both": require token AND pdp.
     token_ok, token_reason = _check_token(token)
-    pdp_ok, pdp_reason = _check_pdp(
+    pdp_ok, pdp_reason, obligations = _check_pdp(
         decide_fn=effective_decide_fn,
         capability=capability,
         resource=resource,
@@ -238,7 +281,7 @@ def authorize_capability(
         if not pdp_ok:
             parts.append(pdp_reason)
         reason = "; ".join(parts)
-    return {"ok": ok, "reason": reason, "via": "both"}
+    return {"ok": ok, "reason": reason, "via": "both", "obligations": obligations}
 
 
 def authorize_queue(
@@ -274,9 +317,10 @@ def authorize_queue(
             ``capauth.authz.decide`` is built lazily.
 
     Returns:
-        dict: ``{"ok": bool, "reason": str, "via": str}`` where ``via`` is
-        ``"token"``, ``"pdp"``, or ``"both"`` matching the active
-        ``SKAI_AUTHZ`` mode.
+        dict: ``{"ok": bool, "reason": str, "via": str, "obligations": list[dict]}``
+        where ``via`` is ``"token"``, ``"pdp"``, or ``"both"`` matching the
+        active ``SKAI_AUTHZ`` mode. See :func:`authorize_capability` for what
+        ``obligations`` carries.
     """
     return authorize_capability(
         token=token,

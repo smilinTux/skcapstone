@@ -98,7 +98,7 @@ def test_pdp_mode_allows_when_decide_fn_allows(monkeypatch):
     result = authorize_queue(
         token=None, resource="card-1", mode="propose", actor="lumina", decide_fn=allow_fn
     )
-    assert result == {"ok": True, "reason": "pdp ok", "via": "pdp"}
+    assert result == {"ok": True, "reason": "pdp ok", "via": "pdp", "obligations": []}
 
 
 def test_pdp_mode_allows_with_dict_result(monkeypatch):
@@ -112,6 +112,32 @@ def test_pdp_mode_allows_with_dict_result(monkeypatch):
     )
     assert result["ok"] is True
     assert result["via"] == "pdp"
+
+
+def test_pdp_mode_surfaces_obligations_from_dict_result(monkeypatch):
+    """The PDP AUDIT obligation must survive the authz gate instead of being
+    discarded (Unified Consent Plane Phase 2, card 90d23f56): a consumer that
+    wants to persist a consent.granted event reads this key."""
+    monkeypatch.setenv("SKAI_AUTHZ", "pdp")
+    audit = {"kind": "audit", "data": {"event": "authz.decide", "decision": "allow"}}
+
+    def allow_fn(*, capability, resource, actor):
+        return {"allow": True, "obligations": [audit]}
+
+    result = authorize_queue(
+        token=None, resource="card-1", mode="propose", actor="lumina", decide_fn=allow_fn
+    )
+    assert result["ok"] is True
+    assert result["obligations"] == [audit]
+
+
+def test_token_mode_obligations_empty_no_pdp_call(monkeypatch):
+    """Token-only mode never calls the PDP, so there is no audit obligation
+    to surface - the key is present but empty, never missing."""
+    monkeypatch.setenv("SKAI_AUTHZ", "token")
+    monkeypatch.setenv("SKAI_QUEUE_TOKEN", "sekrit")
+    result = authorize_queue(token="sekrit", resource="card-1", mode="propose")
+    assert result["obligations"] == []
 
 
 def test_pdp_mode_denies_when_decide_fn_denies(monkeypatch):

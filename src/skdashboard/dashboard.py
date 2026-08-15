@@ -688,6 +688,7 @@ def create_app(home: Path):
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
 
+    from . import consent as consent_plane
     from . import dashboard_itil as di
     from . import dashboard_kanban as dk
     from . import queue_authz
@@ -766,6 +767,17 @@ def create_app(home: Path):
     async def api_card(request):
         return _json(dk.get_card(home, request.path_params["card_id"]))
 
+    async def api_card_consent(request):
+        """GET /api/card/{card_id}/consent - who consented to what, and when.
+
+        Answers straight from the card's own event log (Unified Consent Plane
+        Phase 2, acceptance criterion: "a query answers who consented to this
+        action and when from the object's own event log").
+        """
+        card_id = request.path_params["card_id"]
+        events = consent_plane.consent_history_for_card(home, card_id)
+        return _json({"id": card_id, "events": events})
+
     async def api_ai_suggestions(request):
         from skcapstone import agent_run as ar
 
@@ -821,6 +833,22 @@ def create_app(home: Path):
         d = _queue_gate(request, resource="assistant", mode="propose", actor=None)
         return d["ok"], d["reason"]
 
+    def _persist_card_consent(request, *, card_id, capability, decision):
+        """Best-effort ``consent.granted`` write for the queue-AI PEP.
+
+        Provenance must never be the reason a gated write fails: any error
+        persisting the event is logged and swallowed, exactly like
+        ``fleet_adapter.py``'s attribution-must-not-block-availability
+        posture (Unified Consent Plane Phase 2 / SPE section 7).
+        """
+        try:
+            actor = consent_plane.resolve_consent_actor(request)
+            consent_plane.record_card_consent(
+                home, card_id, actor=actor, capability=capability, decision=decision
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("consent.granted write failed for card %s: %s", card_id, exc)
+
     async def _queue_run(request, card_id):
         """Shared queue-a-run body used by the card and surface routes."""
         from skcapstone import agent_run as ar
@@ -839,6 +867,12 @@ def create_app(home: Path):
                 status_code=403,
                 media_type="application/json",
             )
+        _persist_card_consent(
+            request,
+            card_id=card_id,
+            capability=queue_authz.capability_for(mode),
+            decision=decision,
+        )
         result = ar.request_run(
             home,
             card_id,
@@ -909,6 +943,23 @@ def create_app(home: Path):
             media_type="application/json",
         )
 
+    def _persist_change_consent(request, mgr, *, rid, capability, decision):
+        """Best-effort ``consent.granted`` write for a change.* PEP.
+
+        Called AFTER the change id has been resolved (``_resolve_change_or_404``),
+        so ``target.id`` in the envelope is the real record id, never a
+        redirect stub - the same target-validation-before-mutation ordering
+        PROVENANCE_AND_MUTATION_STANDARD.md section 4 requires. Never blocks
+        the underlying PEP: any error is logged and swallowed.
+        """
+        try:
+            actor = consent_plane.resolve_consent_actor(request)
+            consent_plane.record_change_consent(
+                mgr, rid, actor=actor, capability=capability, decision=decision
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("consent.granted write failed for change %s: %s", rid, exc)
+
     def _resolve_change_or_404(mgr, change_id: str):
         """Resolve a change id (following redirect stubs); 404 Response if unknown.
 
@@ -926,6 +977,22 @@ def create_app(home: Path):
                 media_type="application/json",
             )
         return rid, None
+
+    async def api_change_consent(request):
+        """GET /api/change/{id}/consent - who consented to what, and when.
+
+        Answers straight from the change's own event log, mirroring
+        ``api_card_consent`` for the ITILManager-backed store.
+        """
+        from skcoord.itil import ITILManager
+
+        change_id = request.path_params["id"]
+        mgr = ITILManager(home)
+        rid, err = _resolve_change_or_404(mgr, change_id)
+        if err is not None:
+            return err
+        events = consent_plane.consent_history_for_change(mgr, rid)
+        return _json({"id": rid, "events": events})
 
     async def api_change_validate(request):
         """POST /api/change/{id}/validate - PEP change.validate (attested).
@@ -957,6 +1024,9 @@ def create_app(home: Path):
         rid, err = _resolve_change_or_404(mgr, change_id)
         if err is not None:
             return err
+        _persist_change_consent(
+            request, mgr, rid=rid, capability="change.validate", decision=decision
+        )
         chg = mgr._fold_record(mgr.changes_dir, rid, Change)
         if chg is None or not (chg.prepared_pr and chg.prepared_pr.get("url")):
             from starlette.responses import Response
@@ -1025,6 +1095,9 @@ def create_app(home: Path):
         rid, err = _resolve_change_or_404(mgr, change_id)
         if err is not None:
             return err
+        _persist_change_consent(
+            request, mgr, rid=rid, capability="change.schedule", decision=decision
+        )
 
         if body.get("unschedule"):
             was_scheduled = (
@@ -1131,6 +1204,9 @@ def create_app(home: Path):
         rid, err = _resolve_change_or_404(mgr, change_id)
         if err is not None:
             return err
+        _persist_change_consent(
+            request, mgr, rid=rid, capability="change.deploy", decision=decision
+        )
 
         mgr.ensure_dirs()
         arm = {
@@ -1424,6 +1500,8 @@ def create_app(home: Path):
         Route("/api/card/{card_id}", api_card),
         Route("/api/card/{card_id}/ai-suggestions", api_ai_suggestions),
         Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
+        Route("/api/card/{card_id}/consent", api_card_consent),
+        Route("/api/change/{id}/consent", api_change_consent),
         Route("/api/change/{id}/validate", api_change_validate, methods=["POST"]),
         Route("/api/change/{id}/schedule", api_change_schedule, methods=["POST"]),
         Route("/api/change/{id}/arm", api_change_arm, methods=["POST"]),
