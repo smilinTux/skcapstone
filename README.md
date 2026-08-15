@@ -1,22 +1,33 @@
 # skdashboard
 
 The SKWorld operator dashboard (coord board + ITIL + kanban + CMDB), extracted
-from `skcapstone` (CR-4.3). Serves the `:7778` web UI + JSON API.
+from `skcapstone` (CR-4.3). Serves the `:7778` web UI + JSON API, bound to
+`127.0.0.1` only. **Maturity tier: `T0 - N/A (no key material)`**, a non-crypto
+repo; the authorization decision belongs to capauth, see
+[`SECURITY.md`](SECURITY.md).
+
+Docs: [`SOP.md`](SOP.md) (run it, deploy it, debug it) ·
+[`SECURITY.md`](SECURITY.md) (what is actually enforced) ·
+[`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CHANGELOG.md`](CHANGELOG.md) ·
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 
 ## Dependency direction
 
 Coordination access goes through **skcoord** directly (`skcoord.card`,
-`skcoord.card_store`, `skcoord.coordination`, `skcoord.itil`, `skcoord.cmdb`) —
-there are no `skcapstone.coordination` / `skcapstone.card_store` imports (CI grep
+`skcoord.card_store`, `skcoord.coordination`, `skcoord.itil`, `skcoord.cmdb`).
+There are no `skcapstone.coordination` / `skcapstone.card_store` imports (CI grep
 gate). The richer agent / runtime / doctor / trust / model panels reach back into
 `skcapstone` at runtime via lazy imports, so `skdashboard` depends on both but has
 no import-time cycle (the dashboard is launched on demand, after skcapstone is up).
 
 ## Launch
 
-The deployed `:7778` unit launches via `skcapstone dashboard --port 7778`; that
-CLI resolves `skcapstone.dashboard` -> this package through a transparent alias
-shim, so routes are byte-identical to the pre-split dashboard.
+This package has **no console script and no unit of its own**. The deployed unit
+is `skcapstone-dashboard.service`, whose ExecStart is
+`~/.skenv/bin/skcapstone dashboard --port 7778`; that CLI resolves
+`skcapstone.dashboard` to this package through a transparent alias shim (which
+lives in `skcapstone`), so routes are byte-identical to the pre-split dashboard.
+Full deploy and rollback: [`SOP.md`](SOP.md) section 5.
 
 ## Test
 
