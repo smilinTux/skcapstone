@@ -112,9 +112,15 @@ def _run(runner: Callable, cmd: list[str], *, dry_run: bool) -> tuple[str, str]:
     the only safe way to honor dry_run is to skip the subprocess call
     entirely rather than trust the target script to no-op.
 
+    stdin is always wired to DEVNULL for the real (non-dry-run) call: no
+    per-repo installer this dispatches to may block this process on a TTY
+    prompt, and several (e.g. skcapstone/scripts/install.sh without
+    --non-interactive) read from stdin interactively and default to "yes"
+    on EOF, which must never happen unattended.
+
     Args:
-        runner: Callable compatible with subprocess.run(cmd, capture_output=True,
-            text=True).
+        runner: Callable compatible with
+            subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL).
         cmd: The command argv that would be (or is) executed.
         dry_run: If True, report "would-write" without calling runner at all.
 
@@ -123,7 +129,7 @@ def _run(runner: Callable, cmd: list[str], *, dry_run: bool) -> tuple[str, str]:
     """
     if dry_run:
         return "would-write", " ".join(str(c) for c in cmd)
-    result = runner(cmd, capture_output=True, text=True)
+    result = runner(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if getattr(result, "returncode", 0) != 0:
         return "failed", str(getattr(result, "stderr", "") or "")[-500:]
     return "ok", ""
@@ -156,9 +162,14 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
         return status, detail
 
     def packages(names: list[str], *, dry_run: bool, enable: bool, start: bool) -> tuple[str, str]:
-        # install.sh only recognizes --dev/--force; it has no units of its own
-        # to enable, so enable/start are no-ops here.
-        cmd = ["bash", str(repos / "skcapstone" / "scripts" / "install.sh")]
+        # install.sh recognizes --dev/--force/--non-interactive; it has no
+        # units of its own to enable, so enable/start are no-ops here.
+        # --non-interactive is mandatory: without it the script's Linux
+        # systemd section blocks on a TTY read (hangs) or, on EOF under a
+        # non-interactive subprocess, defaults every prompt to "Y" and
+        # installs+enables+starts systemd units. This backend's contract is
+        # copy-only (venv + pip install), never activate.
+        cmd = ["bash", str(repos / "skcapstone" / "scripts" / "install.sh"), "--non-interactive"]
         return _run(runner, cmd, dry_run=dry_run)
 
     def skchat(names: list[str], *, dry_run: bool, enable: bool, start: bool) -> tuple[str, str]:
@@ -182,9 +193,12 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
         return status, detail
 
     def core(names: list[str], *, dry_run: bool, enable: bool, start: bool) -> tuple[str, str]:
-        # Same underlying installer as "packages"; core additionally enables
-        # its units via systemctl (the installer itself takes no --enable flag).
-        cmd = ["bash", str(repos / "skcapstone" / "scripts" / "install.sh")]
+        # Same underlying installer as "packages", run the same way
+        # (--non-interactive: never prompt, never let install.sh touch
+        # systemd itself). "core" is what actually enables/starts units,
+        # and it does so explicitly via systemctl below (the installer
+        # itself takes no --enable flag).
+        cmd = ["bash", str(repos / "skcapstone" / "scripts" / "install.sh"), "--non-interactive"]
         status, detail = _run(runner, cmd, dry_run=dry_run)
         if status == "ok" and enable:
             status, detail = _enable_units(names)

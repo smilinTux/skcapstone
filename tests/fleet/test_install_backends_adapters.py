@@ -72,15 +72,18 @@ def test_successful_run_is_ok_with_no_detail():
     assert detail == ""
 
 
-def test_packages_backend_passes_no_extra_flags():
-    # skcapstone/scripts/install.sh only recognizes --dev/--force; it has no
-    # units of its own, so no --dry-run/--enable/--start belongs on this argv.
+def test_packages_backend_passes_non_interactive_flag_and_no_other_flags():
+    # skcapstone/scripts/install.sh recognizes --dev/--force/--non-interactive;
+    # packages always passes --non-interactive (copy-vs-activate: venv + pip
+    # install only, never systemd), and no --dry-run/--enable/--start belongs
+    # on this argv.
     runner = _FakeRunner()
     b = default_backends(runner=runner)
     b["packages"](["capauth"], dry_run=False, enable=True, start=True)
     cmd = runner.calls[0]
-    assert cmd[-1].endswith("install.sh")
-    assert not any(a.startswith("--") for a in cmd if a != cmd[-1])
+    assert cmd[-2].endswith("install.sh")
+    assert cmd[-1] == "--non-interactive"
+    assert not any(a.startswith("--") and a != "--non-interactive" for a in cmd)
 
 
 def test_agent_backend_dispatches_skwhisper_units_to_skwhisper_cli():

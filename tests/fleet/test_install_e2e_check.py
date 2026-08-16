@@ -43,6 +43,7 @@ def test_run_install_check_reports_missing_required_units_end_to_end(
     summary = run_install(
         paths,
         "control",
+        node="node-e2e",
         mode="check",
         dry_run=False,
         enable=False,

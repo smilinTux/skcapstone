@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .profile_doctor import DriftReport
-from . import install_backends, nodeinventory, profile_doctor, store
+from . import converge, install_backends, nodeinventory, profile_doctor, store
 
 
 @dataclass(frozen=True)
@@ -186,10 +186,12 @@ class Frozen(RuntimeError):
 
 
 class ActuationNotAllowed(RuntimeError):
-    """Raised by run_install when `apply` is attempted without opt-in
-    (store.actuation_allowed is False). Distinct from Frozen so a caller can
-    tell "the fleet-wide switch is off" apart from any other reason actuation
-    is not currently permitted."""
+    """Raised by run_install when `apply` is attempted without this node's
+    opt-in (converge.actuation_enabled(paths, node) is False, i.e.
+    spec.actuate is not set on the node object, per spec R4 section 6).
+    Every node is born report-only. Distinct from Frozen so a caller can
+    tell "the fleet-wide switch is off" apart from "this node specifically
+    has not opted in"."""
 
 
 def _result_dict(result: InstallResult) -> dict:
@@ -239,6 +241,7 @@ def run_install(
     paths,
     role: str,
     *,
+    node: str,
     mode: str,
     dry_run: bool,
     enable: bool,
@@ -252,17 +255,22 @@ def run_install(
     and is always allowed to run, freeze included, because a report is not
     actuation and freeze must never blind an operator to drift.
 
-    `apply` first checks store.is_frozen (raises Frozen) and then
-    store.actuation_allowed (raises ActuationNotAllowed) before touching
-    anything. Once past both gates it builds the InstallPlan from the
-    missing_required items and executes it through `apply()`. Only when
-    every step landed (ok/would-write) and this was not a dry run does it
-    republish this node's inventory, so the synced node object reflects
-    the install without waiting for sknoded's own cycle.
+    `apply` first checks store.is_frozen (raises Frozen) and then this
+    node's own opt-in via converge.actuation_enabled(paths, node) (raises
+    ActuationNotAllowed) before touching anything. Once past both gates it
+    builds the InstallPlan from the missing_required items and executes it
+    through `apply()`. Only when every step landed (ok/would-write) and this
+    was not a dry run does it republish this node's inventory, so the
+    synced node object reflects the install without waiting for sknoded's
+    own cycle.
 
     Args:
         paths: FleetPaths for the synced fleet tree.
         role: The profile name (Node spec's `role` field) to install for.
+        node: The node name to install on; used only to evaluate this
+            node's actuate opt-in (converge.actuation_enabled) in apply
+            mode. Required in both modes for a uniform call signature, but
+            unused in "check" (a report never actuates, so it never gates).
         mode: "check" (report only) or "apply" (actuate).
         dry_run: Passed through to `apply()`; also suppresses the
             post-apply inventory refresh (nothing was actually installed).
@@ -282,8 +290,8 @@ def run_install(
     Raises:
         ValueError: `mode` is neither "check" nor "apply".
         Frozen: `apply` was requested while the fleet is frozen.
-        ActuationNotAllowed: `apply` was requested while actuation is not
-            opted in (and the fleet is not frozen).
+        ActuationNotAllowed: `apply` was requested while this node has not
+            opted in to actuation (and the fleet is not frozen).
     """
     if mode not in ("check", "apply"):
         raise ValueError(f"mode must be 'check' or 'apply', got {mode!r}")
@@ -297,13 +305,14 @@ def run_install(
         ok = not (drift.missing_required_units or drift.missing_required_packages)
         return {"role": role, "mode": "check", "results": results, "ok": ok}
 
-    # mode == "apply": gate BEFORE computing drift. is_frozen/actuation_allowed
+    # mode == "apply": gate BEFORE computing drift. is_frozen/actuation_enabled
     # must short-circuit without ever touching the store's profile/inventory
     # reads, so a frozen or non-opted-in refusal never depends on `paths`
-    # supporting anything beyond the freeze file (spec's own contract).
+    # supporting anything beyond the freeze file / this node's spec (spec's
+    # own contract).
     if store.is_frozen(paths):
         raise Frozen(role)
-    if not store.actuation_allowed(paths):
+    if not converge.actuation_enabled(paths, node):
         raise ActuationNotAllowed(role)
 
     drift = load_drift(paths, role)

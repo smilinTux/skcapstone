@@ -5,9 +5,11 @@
 # This keeps the system Python clean and avoids --break-system-packages.
 #
 # Usage:
-#   bash scripts/install.sh           # Standard install
-#   bash scripts/install.sh --dev     # Include dev/test tools
-#   bash scripts/install.sh --force   # Recreate venv from scratch
+#   bash scripts/install.sh                  # Standard install
+#   bash scripts/install.sh --dev             # Include dev/test tools
+#   bash scripts/install.sh --force           # Recreate venv from scratch
+#   bash scripts/install.sh --non-interactive # venv + pip install only; never
+#                                              # prompt, never touch systemd
 #
 # After install, add to your shell profile:
 #   export PATH="$HOME/.skenv/bin:$PATH"
@@ -19,11 +21,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 DEV_MODE=false
 FORCE=false
+NON_INTERACTIVE=false
 
 for arg in "$@"; do
     case "$arg" in
         --dev)  DEV_MODE=true ;;
         --force) FORCE=true ;;
+        --non-interactive) NON_INTERACTIVE=true ;;
     esac
 done
 
@@ -257,8 +261,18 @@ echo "To activate:       source $SKENV/bin/activate"
 
 # ---------------------------------------------------------------------------
 # Linux: Install systemd user services for all SK* pillars
+#
+# Skipped entirely (no prompts, no systemd touched) under --non-interactive:
+# copy-vs-activate callers (e.g. skfleet install's "packages"/"core"
+# backends) only want the venv + pip install half of this script and must
+# never block on a TTY read or silently enable/start units on EOF-defaults-Y.
 # ---------------------------------------------------------------------------
-if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
+if [[ "$NON_INTERACTIVE" == "true" ]]; then
+    echo ""
+    echo "=== Linux Systemd Services ==="
+    echo ""
+    echo "Skipping (--non-interactive): no systemd units installed, enabled, or started."
+elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
     echo ""
     echo "=== Linux Systemd Services ==="
     echo ""

@@ -480,6 +480,7 @@ def install_cmd(
         summary = installer.run_install(
             paths_,
             resolved_role,
+            node=self_node_name(),
             mode=mode,
             dry_run=dry_run,
             enable=enable,
