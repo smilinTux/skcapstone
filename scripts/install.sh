@@ -295,18 +295,6 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             fi
         done
 
-        # skchat services (sibling repo)
-        _SKCHAT_DIR="$(dirname "$REPO_ROOT")/skchat/systemd"
-        for _unit in skchat-daemon.service skchat-lumina-bridge.service \
-                     skchat-opus-bridge.service skchat-bridges.target; do
-            _src="$_SKCHAT_DIR/$_unit"
-            if [[ -f "$_src" ]]; then
-                sed "s/=lumina/=$_AGENT_NAME/g; s/=opus/=$_AGENT_NAME/g" "$_src" > "$_UNIT_DIR/$_unit"
-                echo "  [OK] $_unit"
-                (( _installed++ ))
-            fi
-        done
-
         # skcomms services (sibling repo)
         _SKCOMMS_DIR="$(dirname "$REPO_ROOT")/skcomms/systemd"
         for _unit in skcomms.service skcomms-daemon.service; do
@@ -328,8 +316,6 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
         _START_NOW="${_START_NOW:-Y}"
         if [[ "$_START_NOW" =~ ^[Yy] ]]; then
             systemctl --user enable --now skcapstone.service 2>/dev/null && echo "  [STARTED] skcapstone" || true
-            systemctl --user enable --now skchat-daemon.service 2>/dev/null && echo "  [STARTED] skchat-daemon" || true
-            systemctl --user enable --now skchat-bridges.target 2>/dev/null && echo "  [STARTED] skchat-bridges" || true
             systemctl --user enable skcapstone-context.timer 2>/dev/null && echo "  [ENABLED] skcapstone-context.timer" || true
             systemctl --user enable skcomms-heartbeat.timer 2>/dev/null && echo "  [ENABLED] skcomms-heartbeat.timer" || true
         else
