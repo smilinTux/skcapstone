@@ -54,7 +54,13 @@ jobs:
       # then --no-deps -e . puts this checkout on top of whatever skdashboard
       # version they may have pulled in.
       - name: Install dependencies (siblings from PyPI)
-        run: pip install skcapstone starlette pytest
+        # capauth is REQUIRED here, not optional: the consent-event tests
+        # (card 90d23f56) import capauth.authz and capauth.pairing, and the
+        # PEPs they cover call a real capauth PDP. Without it the whole
+        # module errors at COLLECTION, which reads as a broken gate rather
+        # than a failing test. skcoord is pulled in for the ITIL consent
+        # store for the same reason.
+        run: pip install skcapstone skcoord capauth starlette pytest
       - name: Install skdashboard from the checkout, on top
         run: pip install --no-deps -e .
       - name: Smoke test (package imports, static assets + modules intact)
