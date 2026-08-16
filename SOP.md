@@ -396,8 +396,8 @@ checks:
     run: ! grep -q 'Route("/api/cmdb/seed", lambda' src/skdashboard/dashboard.py
   - name: models advertise is gated on the documented skgateway.admin capability
     run: grep -q '_CAP_MODELS_ADVERTISE = "skgateway.admin"' src/skdashboard/dashboard.py
-  - name: the one gate body still short-circuits on BOTH authz vars (loopback-open)
-    run: grep -q 'def _capability_gate' src/skdashboard/dashboard.py
+  - name: exactly ONE gate body, short-circuiting only when BOTH authz vars are unset
+    run: test "$(grep -c 'if not os.environ.get("SKAI_AUTHZ") and not os.environ.get("SKAI_QUEUE_TOKEN"):' src/skdashboard/dashboard.py)" = "1"
   - name: documented port 7778 still the module default
     run: grep -q 'DEFAULT_DASHBOARD_PORT = 7778' src/skdashboard/dashboard.py
   - name: bind is still loopback-only (section 5 Exposure)
