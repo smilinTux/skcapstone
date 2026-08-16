@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SKDashboard — Economy</title>
+  <title>SKDashboard: Fleet Drift</title>
   <link rel="stylesheet" href="/static/css/board.css">
   <link rel="stylesheet" href="/static/css/cockpit.css">
-  <link rel="stylesheet" href="/static/css/economy.css">
+  <link rel="stylesheet" href="/static/css/fleet.css">
 </head>
 <body>
   <div class="wrap">
@@ -20,40 +20,29 @@
         <a class="tab" data-nav="assistant" href="/assistant">Assistant</a>
         <a class="tab" data-nav="trust" href="/trust">Trust</a>
         <a class="tab" data-nav="models" href="/models">Models</a>
-        <a class="tab active" data-nav="economy" href="/economy">Economy</a>
-        <a class="tab" data-nav="fleet" href="/fleet">Fleet Drift</a>
+        <a class="tab" data-nav="economy" href="/economy">Economy</a>
+        <a class="tab active" data-nav="fleet" href="/fleet">Fleet Drift</a>
       </div>
       <div class="spacer"></div>
-      <span id="eco-errors" class="eco-err" hidden></span>
+      <span id="fl-errors" class="fl-err" hidden></span>
       <button class="btn" id="btn-refresh">Refresh</button>
     </div>
 
-    <div class="kpirow" id="eco-kpi"></div>
+    <div class="kpirow" id="fl-kpi"></div>
 
     <div class="card" style="margin-top:14px">
-      <h2>Cost over time <span class="badge">joules / day, last 30 days</span></h2>
-      <div class="cbody" id="eco-chart"><div class="spinner"></div></div>
-    </div>
-
-    <div class="ov-grid" style="margin-top:14px">
-      <div class="card">
-        <h2>By repo <span class="badge">all-time, sorted by joules</span></h2>
-        <div class="cbody" id="eco-by-repo"><div class="spinner"></div></div>
-      </div>
-      <div class="card">
-        <h2>Agent wallets <span class="badge">fleet joule wealth</span></h2>
-        <div class="cbody" id="eco-wallets"><div class="spinner"></div></div>
-      </div>
+      <h2>Graded nodes <span class="badge">observed inventory vs install profile</span></h2>
+      <div class="cbody" id="fl-nodes"><div class="spinner"></div></div>
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2>Recent settlements <span class="badge">last 20</span></h2>
-      <div class="cbody" id="eco-settlements"><div class="spinner"></div></div>
+      <h2>Not graded <span class="badge">no verdict is possible, and that is not a clean bill</span></h2>
+      <div class="cbody" id="fl-skipped"><div class="spinner"></div></div>
     </div>
   </div>
 
   <div class="toast" id="toast"></div>
 
-  <script type="module" src="/static/js/economy.js"></script>
+  <script type="module" src="/static/js/fleet.js"></script>
 </body>
 </html>
