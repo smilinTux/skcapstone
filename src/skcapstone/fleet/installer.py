@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .profile_doctor import DriftReport
+from . import install_backends
+
 
 @dataclass(frozen=True)
 class InstallStep:
@@ -46,3 +49,32 @@ class InstallResult:
     step: InstallStep
     status: str  # ok|wrote|would-write|warn|failed|skipped|needs_manual
     detail: str = ""
+
+
+def plan(drift: DriftReport, *, only: list[str] | None = None) -> InstallPlan:
+    """Ordered install steps for the missing_required items only.
+
+    Builds an ordered InstallPlan from a DriftReport by resolving each
+    missing_required package and unit to its backend, determining its tier,
+    and sorting by (tier, name). Forbidden and unexpected items are ignored.
+
+    Args:
+        drift: A DriftReport with missing and forbidden items.
+        only: Optional list of item names to include. If provided, only
+            items in this set will be included in the plan.
+
+    Returns:
+        An InstallPlan with steps sorted by (tier, name).
+    """
+    wanted = set(only) if only is not None else None
+    steps: list[InstallStep] = []
+    for pkg in drift.missing_required_packages:
+        if wanted is None or pkg in wanted:
+            bid = install_backends.resolve(pkg, "package")
+            steps.append(InstallStep(pkg, "package", install_backends.tier_of(bid), bid))
+    for unit in drift.missing_required_units:
+        if wanted is None or unit in wanted:
+            bid = install_backends.resolve(unit, "unit")
+            steps.append(InstallStep(unit, "unit", install_backends.tier_of(bid), bid))
+    steps.sort(key=lambda s: (s.tier, s.name))
+    return InstallPlan(steps=steps)
