@@ -80,7 +80,7 @@ def plan(drift: DriftReport, *, only: list[str] | None = None) -> InstallPlan:
     return InstallPlan(steps=steps)
 
 
-def apply(plan_obj: InstallPlan, backends: dict, *, dry_run=False, enable=False, start=False) -> list[InstallResult]:
+def apply(plan: InstallPlan, backends: dict, *, dry_run=False, enable=False, start=False) -> list[InstallResult]:
     """Execute each step through its backend; isolate failures per backend.
 
     Executes an InstallPlan by calling the appropriate backend function for
@@ -90,7 +90,7 @@ def apply(plan_obj: InstallPlan, backends: dict, *, dry_run=False, enable=False,
     'needs_manual' status without calling any backend.
 
     Args:
-        plan_obj: The InstallPlan to execute.
+        plan: The InstallPlan to execute.
         backends: Dict mapping backend_id to callable. Each callable takes
             (names: list[str], *, dry_run, enable, start) and returns
             (status: str, detail: str).
@@ -104,7 +104,7 @@ def apply(plan_obj: InstallPlan, backends: dict, *, dry_run=False, enable=False,
     results: list[InstallResult] = []
     failed_backends: set[str] = set()
 
-    for step in plan_obj.steps:
+    for step in plan.steps:
         if step.backend_id == install_backends.UNSUPPORTED:
             results.append(InstallResult(step, "needs_manual", "no backend for this unit"))
             continue
