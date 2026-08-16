@@ -19,8 +19,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Three write routes no longer bypass the authorization gate** (coord card
+  `9d37d53d`). `POST /api/card/{id}/{action}` (every board mutation),
+  `POST /api/cmdb/seed`, and `POST /api/models/advertise` reached the coordination
+  store, the CMDB, and skgateway's advertise allowlist without ever consulting
+  `queue_authz`. Their only control was the `127.0.0.1` bind. All three now go through
+  the same staged token/pdp/both path as the queue and `change.*` routes.
+  - Capabilities: `agentrun.queue` (interim) for the two coordination-store writes,
+    `skgateway.admin` for the gateway allowlist write. See `SECURITY.md` for why the
+    first two are a deliberate reuse of an already-seeded capauth row rather than a new
+    ungranted one.
+  - **No behavior change on the deployed seat.** The dashboard runs with neither
+    `SKAI_AUTHZ` nor `SKAI_QUEUE_TOKEN` set, so the gate is still loopback-open and
+    these routes still answer exactly as before. What changed is that setting either
+    variable now arms them too.
+  - This does **not** fix `X-SK-Actor` being self-asserted rather than authenticated.
+    That belongs to the Unified Consent Plane epic; `SECURITY.md` says so plainly.
+
+### Fixed
+
+- `docs-check` (tier 3) has been **red on `main` since the consent PR** merged: `SOP.md`
+  claimed skdashboard has no `skcapstone.card_store` imports, and `consent.py`
+  introduced one. The SOP now documents `consent.py` as the single sanctioned exception
+  and the evidence check pins it to exactly that file, so a second importer still fails
+  the gate. The gate was working; nobody read it.
+
 ### Added
 
+- `tests/test_write_route_gates.py`: the three routes above prove
+  deny-without-capability, allow-with-capability, and unchanged loopback-open behavior,
+  plus a sweep of the real route table asserting **every** registered `POST` endpoint
+  calls a gate. A future ungated write route fails the build instead of shipping.
 - The seven documents `SK_REPO_DOC_STANDARD` requires: `SOP.md`, `SECURITY.md`,
   `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and this file. `README.md` and `LICENSE`
   already existed and were not relicensed or rewritten.
@@ -30,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- One gate body, three names. `_capability_gate` now holds the staged authz decision
+  (the loopback-open carve-out plus the `queue_authz.authorize_capability` call);
+  `_queue_gate` (mode-derived `agentrun.*`) and `_change_gate` (explicit `change.*`) are
+  thin wrappers over it, and `_change_deny` is an alias of the shared `_gate_deny`.
+  Behavior is identical; there is now one place to read instead of two copies to keep in
+  sync.
 - `README.md` now states the maturity tier and links the rest of the document set, as
   the doc standard requires of the first lines.
 
