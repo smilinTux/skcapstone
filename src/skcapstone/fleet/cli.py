@@ -16,6 +16,8 @@ from . import (
     alerts,
     config_controller,
     cron_controller,
+    install_backends,
+    installer,
     modelserver_controller,
     node_controller,
     service_controller,
@@ -410,6 +412,107 @@ def set_role_cmd(name: str, role: str) -> None:
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"{name} role={role} (generation {spec['generation']})")
+
+
+def _resolve_role(paths_, role: str | None) -> str:
+    """The role to install for: --role verbatim, or this node's spec.role.
+
+    Mirrors the resolution `_doctor_one` uses for `skfleet node doctor`
+    (card 76dad234): a node with no node object, or no bound role, cannot
+    be installed for and must say so plainly rather than pass a role of
+    None through to `installer.run_install`.
+    """
+    if role:
+        return role
+    target = self_node_name()
+    views = {v.name: v for v in node_controller.node_views(paths_)}
+    view = views.get(target)
+    if view is None:
+        raise click.ClickException(f"{target}: no such node object")
+    if not view.role:
+        raise click.ClickException(
+            f"{target}: no spec.role set (skfleet set-role {target} <profile>)"
+        )
+    return view.role
+
+
+@fleet.command("install")
+@click.option(
+    "--role", "role", default=None, help="Install profile role (default: this node's spec.role)."
+)
+@click.option("--check", "check_flag", is_flag=True, help="Report drift only (default mode).")
+@click.option(
+    "--apply", "apply_flag", is_flag=True, help="Actuate: install missing_required items."
+)
+@click.option(
+    "--dry-run", "dry_run", is_flag=True, help="Apply mode: report what would run, run nothing."
+)
+@click.option("--enable", is_flag=True, help="Enable installed units.")
+@click.option("--start", is_flag=True, help="Start installed units.")
+@click.option("--only", "only", multiple=True, help="Limit to this item name (repeatable).")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def install_cmd(
+    role: str | None,
+    check_flag: bool,
+    apply_flag: bool,
+    dry_run: bool,
+    enable: bool,
+    start: bool,
+    only: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    """Diff (--check, default) or actuate (--apply) this node's install profile.
+
+    Resolves --role from the node's bound spec.role when omitted. `check`
+    always just reports (never gated); `apply` is gated by the fleet-wide
+    freeze and this node's actuation opt-in (see `skfleet freeze` /
+    `skfleet actuation`), and is refused cleanly rather than actuating
+    partway.
+    """
+    if check_flag and apply_flag:
+        raise click.ClickException("--check and --apply are mutually exclusive")
+    mode = "apply" if apply_flag else "check"
+
+    paths_ = default_paths()
+    resolved_role = _resolve_role(paths_, role)
+
+    try:
+        summary = installer.run_install(
+            paths_,
+            resolved_role,
+            mode=mode,
+            dry_run=dry_run,
+            enable=enable,
+            start=start,
+            only=list(only) or None,
+            backends=install_backends.default_backends(),
+        )
+    except installer.ProfileNotApplied as exc:
+        raise click.ClickException(
+            f"no applied profile named {exc}: `skfleet apply -f <profile.json>` first"
+        ) from exc
+    except installer.Frozen as exc:
+        raise click.ClickException(
+            "fleet is FROZEN: actuation halted (skfleet unfreeze to resume)"
+        ) from exc
+    except installer.ActuationNotAllowed as exc:
+        raise click.ClickException(
+            f"actuation not enabled for {exc}: `skfleet actuation <name> --enable` first"
+        ) from exc
+
+    if as_json:
+        click.echo(jsonlib.dumps(summary, indent=2, sort_keys=True))
+    else:
+        click.echo(f"role={summary['role']}\tmode={summary['mode']}")
+        for r in summary["results"]:
+            if mode == "check":
+                click.echo(f"  {r['grade']:5} {r['category']:28} {r['name']}")
+            else:
+                click.echo(f"  {r['status']:12} {r['kind']:8} {r['name']}\t{r['detail']}")
+        click.echo(f"ok={summary['ok']}")
+
+    if not summary["ok"]:
+        raise SystemExit(1)
 
 
 @fleet.group("node")
