@@ -177,3 +177,142 @@ def load_drift(paths, role: str, *, inventory: dict | None = None) -> DriftRepor
     if inventory is None:
         inventory = nodeinventory.collect()
     return profile_doctor.diff(inventory, profile_spec)
+
+
+class Frozen(RuntimeError):
+    """Raised by run_install when `apply` is attempted while the fleet-wide
+    kill-switch (store.is_frozen) is on. `check` is never affected: a report
+    is not actuation and freeze must never blind an operator to drift."""
+
+
+class ActuationNotAllowed(RuntimeError):
+    """Raised by run_install when `apply` is attempted without opt-in
+    (store.actuation_allowed is False). Distinct from Frozen so a caller can
+    tell "the fleet-wide switch is off" apart from any other reason actuation
+    is not currently permitted."""
+
+
+def _result_dict(result: InstallResult) -> dict:
+    """Flatten one InstallResult (and its nested InstallStep) into a plain
+    JSON-able dict. Dataclasses are not JSON-serializable by default, and
+    run_install's return value has to survive `json.dumps` for the CLI and
+    any caller that logs or transmits it."""
+    return {
+        "name": result.step.name,
+        "kind": result.step.kind,
+        "tier": result.step.tier,
+        "backend_id": result.step.backend_id,
+        "status": result.status,
+        "detail": result.detail,
+    }
+
+
+#: Step statuses that count as a successful outcome for run_install's overall
+#: `ok`. Anything else (failed, needs_manual, skipped, warn, or a future
+#: status) means the apply did not fully land, so `ok` must go False rather
+#: than silently treat a partial install as clean.
+_OK_STEP_STATUSES = frozenset({"ok", "would-write"})
+
+
+def _refresh_inventory(paths) -> None:
+    """Re-observe this node and republish node.json (best-effort).
+
+    Called once after a successful, non-dry-run apply so the synced node
+    object reflects what was just installed instead of waiting for
+    sknoded's own 15-minute inventory re-observe window
+    (sknoded.INVENTORY_INTERVAL_S). This is purely a freshness optimization
+    on top of sknoded's own report loop, never the install's source of
+    truth, so a failure here (no sknoded set up yet, unwritable fleet tree,
+    ...) must never fail the install itself: the steps already ran.
+    """
+    try:
+        from . import sknoded
+        from .paths import self_node_name
+
+        sknoded.reset_inventory_cache()
+        sknoded.run_once(paths, self_node_name())
+    except Exception:
+        pass
+
+
+def run_install(
+    paths,
+    role: str,
+    *,
+    mode: str,
+    dry_run: bool,
+    enable: bool,
+    start: bool,
+    only: list[str] | None,
+    backends: dict,
+) -> dict:
+    """Top-level entry point: diff, gate, and (in apply mode) actuate.
+
+    `check` only ever reads: it builds the drift report and summarizes it,
+    and is always allowed to run, freeze included, because a report is not
+    actuation and freeze must never blind an operator to drift.
+
+    `apply` first checks store.is_frozen (raises Frozen) and then
+    store.actuation_allowed (raises ActuationNotAllowed) before touching
+    anything. Once past both gates it builds the InstallPlan from the
+    missing_required items and executes it through `apply()`. Only when
+    every step landed (ok/would-write) and this was not a dry run does it
+    republish this node's inventory, so the synced node object reflects
+    the install without waiting for sknoded's own cycle.
+
+    Args:
+        paths: FleetPaths for the synced fleet tree.
+        role: The profile name (Node spec's `role` field) to install for.
+        mode: "check" (report only) or "apply" (actuate).
+        dry_run: Passed through to `apply()`; also suppresses the
+            post-apply inventory refresh (nothing was actually installed).
+        enable: Passed through to `apply()`.
+        start: Passed through to `apply()`.
+        only: Optional subset of item names to install; passed to `plan()`.
+        backends: Backend registry passed through to `apply()`.
+
+    Returns:
+        A JSON-able summary: ``{"role", "mode", "results": [...], "ok"}``.
+        In "check" mode, each result is one drift finding
+        ``{"grade", "category", "name"}``; `ok` is True only when nothing is
+        missing_required. In "apply" mode, each result is one flattened
+        InstallResult; `ok` is True only when every step's status is
+        "ok" or "would-write".
+
+    Raises:
+        ValueError: `mode` is neither "check" nor "apply".
+        Frozen: `apply` was requested while the fleet is frozen.
+        ActuationNotAllowed: `apply` was requested while actuation is not
+            opted in (and the fleet is not frozen).
+    """
+    if mode not in ("check", "apply"):
+        raise ValueError(f"mode must be 'check' or 'apply', got {mode!r}")
+
+    if mode == "check":
+        drift = load_drift(paths, role)
+        results = [
+            {"grade": grade, "category": category, "name": name}
+            for grade, category, name in drift.findings()
+        ]
+        ok = not (drift.missing_required_units or drift.missing_required_packages)
+        return {"role": role, "mode": "check", "results": results, "ok": ok}
+
+    # mode == "apply": gate BEFORE computing drift. is_frozen/actuation_allowed
+    # must short-circuit without ever touching the store's profile/inventory
+    # reads, so a frozen or non-opted-in refusal never depends on `paths`
+    # supporting anything beyond the freeze file (spec's own contract).
+    if store.is_frozen(paths):
+        raise Frozen(role)
+    if not store.actuation_allowed(paths):
+        raise ActuationNotAllowed(role)
+
+    drift = load_drift(paths, role)
+    install_plan = plan(drift, only=only)
+    install_results = apply(install_plan, backends, dry_run=dry_run, enable=enable, start=start)
+    results = [_result_dict(r) for r in install_results]
+    ok = all(r["status"] in _OK_STEP_STATUSES for r in results)
+
+    if ok and not dry_run:
+        _refresh_inventory(paths)
+
+    return {"role": role, "mode": "apply", "results": results, "ok": ok}
