@@ -20,6 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Fleet install-profile drift panel and alert** (`/fleet`, skcapstone epic `3bbf39ea`,
+  card `d1c6d605`). Shows, per node, which units and packages disagree with the install
+  profile the node is bound to.
+  - The grading is NOT reimplemented here. `collect_drift()` calls the fleet CLI's own
+    grader, so the panel and `skfleet node doctor --all` cannot disagree about who gets
+    graded or how.
+  - Severity stays split three ways all the way to the pixels. `forbidden` is the only
+    error grade, because it is the only one meaning a node is doing something it was
+    told not to; `missing_required` is warn (a node mid-install) and `unexpected` is
+    info (usually a manifest lagging reality). Flattening those into one badge is how a
+    signal becomes wallpaper.
+  - A node with no role, no profile, or no published inventory renders as an explicit
+    SKIPPED card carrying its reason, and holds no severity key at all, so it can never
+    be summed as clean. An absent inventory previously read as "everything is missing"
+    and graded healthy nodes as drifted.
+  - The alert fires on error-grade findings only, edge-triggered on a fingerprint with a
+    300s floor, and persists its state so a dashboard restart is not an alert. A failed
+    send retries once per cooldown rather than every poll, and a cleared condition
+    records silently so a recurrence still fires.
+### Added
 
 - The seven documents `SK_REPO_DOC_STANDARD` requires: `SOP.md`, `SECURITY.md`,
   `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and this file. `README.md` and `LICENSE`
