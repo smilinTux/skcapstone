@@ -6,7 +6,8 @@ ITIL records, CMDB) and can queue AI runs against fleet items.
 
 Read the posture below before relying on it or reporting an issue. The short version:
 **the loopback bind is the access control today, and the authorization gate ships
-open.**
+open.** Every write route now passes through that gate, but the gate itself is still
+staged off by default, and the actor identity it records is still self-asserted.
 
 ## Posture
 
@@ -32,7 +33,7 @@ This section is the honest one. Do not assume a POST route is protected.
 
 ### The bind is the control
 
-`uvicorn.Config(app, host="127.0.0.1", port=port, ...)` at `dashboard.py:1495`. The
+`uvicorn.Config(app, host="127.0.0.1", port=port, ...)` in `_UvicornServer.__init__`. The
 `--port` flag moves the port; **nothing in this package moves the interface**. There is
 no TLS, no public `:443` route, and no Funnel exposure. Any remote access is an SSH
 tunnel or tailnet decision made outside this repo, and it removes the only control that
@@ -40,7 +41,8 @@ is unconditionally in force.
 
 ### The authz gate is staged, and stages open
 
-`_queue_gate` and `_change_gate` (`dashboard.py:795` and `:867`) both short-circuit:
+`_capability_gate` (`dashboard.py`, the single gate body that `_queue_gate` and
+`_change_gate` now both wrap) short-circuits:
 
 ```
 if neither SKAI_AUTHZ nor SKAI_QUEUE_TOKEN is set:
@@ -55,28 +57,52 @@ to `token` rather than to open.
 
 **Operational warning.** Flipping `SKAI_AUTHZ` on a live seat is not a no-op. The browser
 UI sends no `X-SK-Capability` header, so every gated button starts denying the moment the
-gate goes live. Mint and deliver capabilities first.
+gate goes live. Mint and deliver capabilities first. As of card `9d37d53d` that blast
+radius includes the board itself (card note/move/assign), the CMDB reseed button, and the
+model-enablement panel, which were previously ungated and would have kept working.
 
 ### Gated vs ungated routes
+
+Every registered `POST` route passes through the gate. `tests/test_write_route_gates.py`
+sweeps the real route table and fails if a `POST` endpoint carries no gate marker, so
+this table cannot silently drift back.
 
 | Routes | Gate |
 |---|---|
 | `POST /api/card/{id}/queue-ai`, `POST /api/queue/{surface}/{id}` | `_queue_gate` (capability `agentrun.execute` for `mode=execute`, otherwise `agentrun.queue`) |
-| `POST /api/change/{id}/{validate,schedule,arm,verify}` | `_change_gate` (explicit `change.*` capability) |
+| `POST /api/change/{id}/{validate,schedule,arm,verify}`, `GET /api/change/{id}/pir-draft` | `_change_gate` (explicit `change.*` capability) |
 | `POST /api/assistant` mutations | `_ai_capability_ok`, the coarse boolean form of `_queue_gate` |
-| `POST /api/card/{id}/{action}` (note, move, assign, and the rest of the board mutations) | **none of the above.** Guarded only by the loopback bind. |
-| `POST /api/cmdb/seed`, `POST /api/models/advertise` | **none of the above.** |
-| every `GET` | **none.** All reads are open on the bound interface. |
+| `POST /api/card/{id}/{action}` (note, move, assign, and the rest of the board mutations) | `_capability_gate`, **interim** capability `agentrun.queue` |
+| `POST /api/cmdb/seed` | `_capability_gate`, **interim** capability `agentrun.queue` |
+| `POST /api/models/advertise` | `_capability_gate`, capability `skgateway.admin` |
+| every other `GET` | **none.** All reads are open on the bound interface. |
+
+**"Interim" means the capability is borrowed, not purpose-built.** capauth seeds no
+`skboard.*` or `cmdb.*` rule, so those two routes reuse the already-seeded, already-granted
+write-class row `agentrun.queue` rather than ship an ungranted capability that would deny
+every caller the moment the gate goes live. This mirrors skchat's `dataplane_auth.py`,
+which maps the same `POST /api/card/{id}/{action}` route to an interim capability with a
+note that it migrates to `skboard.write` (SKWorld Authorization Model L1.8). The
+consequence to be aware of: **a subject holding `agentrun.queue` can also mutate the board
+and reseed the CMDB.** Narrowing that needs a capauth rule, not a change here.
 
 ### `X-SK-Actor` is asserted, not authenticated
 
-Both `_change_actor` and the card-mutation path take the actor from the `X-SK-Actor`
-request header, which this package does **not** verify. It is trusted because it is
-expected to be set by an authenticating layer in front of the dashboard, and no such
-layer is deployed today. Actor strings that land on ITIL and card records are therefore
-**attribution, not proof of identity**. `_change_actor` at least refuses a
-client-supplied JSON body fallback (the card-mutation path does accept one, defaulting to
-`"dashboard"`).
+**This is the sharper of the two problems, and it is still open.** Both `_change_actor`
+and the card-mutation path take the actor from the `X-SK-Actor` request header, which
+this package does **not** verify. It is trusted because it is expected to be set by an
+authenticating layer in front of the dashboard, and no such layer is deployed today.
+Actor strings that land on ITIL and card records are therefore **attribution, not proof
+of identity**. `_change_actor` at least refuses a client-supplied JSON body fallback (the
+card-mutation path does accept one, defaulting to `"dashboard"`).
+
+Gating the write routes does not close this. Any caller that can reach the loopback port
+can still name itself anything in `X-SK-Actor`, and while the gate is loopback-open it
+does not have to present a capability either. Authenticating the human at the door is the
+Unified Consent Plane epic's job (capauth-minted capabilities carried in
+`x-sk-capability`), not this repo's, and a partial capability check invented here would be
+worse than the honest gap. Treat every actor string in this system's records accordingly
+until that epic lands.
 
 ### Other notes
 
@@ -171,8 +197,9 @@ unless you ask otherwise.
 
 - A `queue_authz` decision that allows where the PDP denied, or that treats an error as
   an allow.
-- A privileged route that reaches the coordination store without passing through
-  `_queue_gate` or `_change_gate` when a gate is configured.
+- A privileged route that reaches the coordination store, the CMDB, or skgateway's admin
+  surface without passing through `_capability_gate` (or one of its named wrappers
+  `_queue_gate` / `_change_gate`) when a gate is configured.
 - Any path parameter that escapes its intended directory.
 - An `/api/assistant` prompt that induces an unintended `ACTION` mutation.
 - A change that binds the server to anything other than `127.0.0.1`.
