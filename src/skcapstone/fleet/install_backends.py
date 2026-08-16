@@ -9,15 +9,16 @@ UNSUPPORTED = "unsupported"
 _UNIT_RULES: list[tuple[str, str]] = [
     ("capauth-authz*", "capauth-authz"),
     ("skcomms*", "skcomms"),
-    ("skmemory-*@*", "agent"),
-    ("skwhisper@*", "agent"),
-    ("cloud9-daemon@*", "agent"),
-    ("skchat*", "skchat"),
-    ("livekit-server*", "skchat"),
-    ("jarvis-heartbeat*", "skchat"),
     ("skcapstone*", "core"),
     ("sknoded*", "core"),
     ("skgateway*", "core"),
+    ("skchat*", "skchat"),
+    ("livekit-server*", "skchat"),
+    ("jarvis-heartbeat*", "skchat"),
+    ("skchat-coturn*", "skchat"),
+    ("skmemory-*@*", "agent"),
+    ("skwhisper@*", "agent"),
+    ("cloud9-daemon@*", "agent"),
 ]
 
 _TIER: dict[str, int] = {
