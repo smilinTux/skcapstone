@@ -78,3 +78,54 @@ def plan(drift: DriftReport, *, only: list[str] | None = None) -> InstallPlan:
             steps.append(InstallStep(unit, "unit", install_backends.tier_of(bid), bid))
     steps.sort(key=lambda s: (s.tier, s.name))
     return InstallPlan(steps=steps)
+
+
+def apply(plan_obj: InstallPlan, backends: dict, *, dry_run=False, enable=False, start=False) -> list[InstallResult]:
+    """Execute each step through its backend; isolate failures per backend.
+
+    Executes an InstallPlan by calling the appropriate backend function for
+    each step. A backend that raises or returns 'failed' isolates: that step
+    is marked 'failed' and later steps sharing its backend_id are skipped.
+    Independent steps still run. UNSUPPORTED backend_id results in
+    'needs_manual' status without calling any backend.
+
+    Args:
+        plan_obj: The InstallPlan to execute.
+        backends: Dict mapping backend_id to callable. Each callable takes
+            (names: list[str], *, dry_run, enable, start) and returns
+            (status: str, detail: str).
+        dry_run: If True, backends will run in dry-run mode.
+        enable: If True, backends will enable units.
+        start: If True, backends will start units.
+
+    Returns:
+        List of InstallResult, one per step in the plan.
+    """
+    results: list[InstallResult] = []
+    failed_backends: set[str] = set()
+
+    for step in plan_obj.steps:
+        if step.backend_id == install_backends.UNSUPPORTED:
+            results.append(InstallResult(step, "needs_manual", "no backend for this unit"))
+            continue
+
+        if step.backend_id in failed_backends:
+            results.append(InstallResult(step, "skipped", "a prior step in this backend failed"))
+            continue
+
+        fn = backends.get(step.backend_id)
+        if fn is None:
+            results.append(InstallResult(step, "needs_manual", f"backend {step.backend_id} unregistered"))
+            continue
+
+        try:
+            status, detail = fn([step.name], dry_run=dry_run, enable=enable, start=start)
+        except Exception as exc:
+            status, detail = "failed", str(exc)
+
+        if status == "failed":
+            failed_backends.add(step.backend_id)
+
+        results.append(InstallResult(step, status, detail))
+
+    return results
