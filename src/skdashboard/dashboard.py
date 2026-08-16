@@ -1596,6 +1596,16 @@ def create_app(home: Path):
 
         return _json(deco.get_economy(home))
 
+    # ── Fleet drift: install-profile drift per node (epic 3bbf39ea, card d1c6d605) ──
+    # Reads published inventories out of the fleet tree, so this is the same
+    # answer `skfleet node doctor --all` gives and costs no ssh. The alert gate
+    # runs here rather than on a timer because this handler IS the poll loop;
+    # dashboard_fleet.maybe_alert is what keeps the poll rate off Chef's phone.
+    async def api_fleet_drift(_request):
+        from . import dashboard_fleet as dfleet
+
+        return _json(dfleet.get_drift(home))
+
     routes = [
         Route("/", index),
         Route("/index.html", index),
@@ -1650,6 +1660,8 @@ def create_app(home: Path):
         Route("/api/trust/graph", lambda r: _json(_trust_graph_dict(home))),
         Route("/economy", _page("economy.html")),
         Route("/api/economy", api_economy),
+        Route("/fleet", _page("fleet.html")),
+        Route("/api/fleet/drift", api_fleet_drift),
     ]
     if static_dir.exists():
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))
