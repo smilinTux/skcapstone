@@ -34,8 +34,11 @@ service is launched through the `skcapstone dashboard` CLI and binds `127.0.0.1:
 - It does not own the coordination data. Cards, ITIL records, and the CMDB live in the
   skcoord/skcapstone coordination store; this repo reads and mutates them through
   `skcoord` (`skcoord.card`, `skcoord.card_store`, `skcoord.coordination`,
-  `skcoord.itil`, `skcoord.cmdb`). There are no `skcapstone.coordination` /
-  `skcapstone.card_store` imports, and CI greps for that.
+  `skcoord.itil`, `skcoord.cmdb`). There is exactly **one** exception, and CI greps to
+  keep it at one: `consent.py` imports `skcapstone.card_store.CardStore` to append
+  `consent.granted` events onto a card's own event log, reusing the store's existing
+  append path rather than writing a parallel log. No other module may import
+  `skcapstone.coordination` or `skcapstone.card_store`.
 - It does not generate, sign, or store key material. `queue_authz.py` is a policy
   **enforcement point**; the decision comes from capauth's PDP. See `SECURITY.md`.
 - It does not run inference. The assistant and model panels proxy skgateway
@@ -83,18 +86,20 @@ flowchart TB
 
 ### Start here
 
-1. **`src/skdashboard/dashboard.py`** (1526 lines). The whole service.
-   `DEFAULT_DASHBOARD_PORT = 7778` (line 32), `create_app(home)` builds the route list
-   (line 671, table at line 1408), `_UvicornServer` binds `127.0.0.1` (line 1495), and
-   `start_dashboard(home, port)` (line 1513) returns the server the caller drives with
-   `serve_forever()`.
+1. **`src/skdashboard/dashboard.py`**. The whole service.
+   `DEFAULT_DASHBOARD_PORT = 7778`, `create_app(home)` builds the route list and every
+   handler as a closure, `_capability_gate` is the one authorization body all write
+   routes call, `_UvicornServer` binds `127.0.0.1`, and `start_dashboard(home, port)`
+   returns the server the caller drives with `serve_forever()`. Line numbers are
+   deliberately not quoted here: they drift on every edit. Grep the symbol.
 2. **`src/skdashboard/dashboard_kanban.py`**. Board state, card mutations
    (`apply_mutation`), the in-process event `BUS`, and `poll_event_store()`, which the
    Starlette lifespan runs as a background task feeding `/api/events` (SSE).
 3. **`src/skdashboard/queue_authz.py`**. `authorize_capability()` and
-   `authorize_queue()`: the fail-closed gate every privileged route calls. Read this
-   before changing anything under `/api/queue/*`, `/api/card/*/queue-ai`, or
-   `/api/change/*`.
+   `authorize_queue()`: the fail-closed gate every privileged route calls, through the
+   single `_capability_gate` helper in `dashboard.py`. Read this before changing
+   anything that mutates state: every `POST` route in the service goes through it, and
+   `tests/test_write_route_gates.py` fails the build if one stops.
 4. **`src/skdashboard/surface_registry.py`**. Standard-library only, no skcapstone or
    skdashboard imports. `KNOWN_SURFACES`, `resolve_card_id()`, `parse_card_id()`.
 5. **`src/skdashboard/skdashboard_manifest.py`**. The SKWorld module manifest (UI facet
@@ -149,9 +154,10 @@ gitleaks **binary** (not the licensed action) over the full history with
 `--exit-code 1`; this repo's history scanned clean on 2026-08-14, so a red scan means a
 secret was **added**, and the fix is to rotate and purge it, never to weaken the gate.
 
-There are 8 test modules (2077 lines). The heaviest are
-`test_cm_p2_change_routes.py` (the change.* PEPs), `test_queue_gate_enforcement.py` and
-`test_queue_authz.py` (the authz gate, including its fail-closed paths), and
+There are 10 test modules. The heaviest are
+`test_cm_p2_change_routes.py` (the change.* PEPs), `test_queue_gate_enforcement.py`,
+`test_write_route_gates.py` (every `POST` route is gated, swept off the real route
+table) and `test_queue_authz.py` (the authz gate, including its fail-closed paths), and
 `test_surface_registry.py`. `test_smoke.py` deliberately does **not** import
 `skdashboard.dashboard`; it asserts the package imports, is versioned, and ships its
 modules and static assets.
@@ -247,16 +253,17 @@ and exposes it as `--home`; the unit selects the agent with `SKAGENT` /
 |---|---|---|---|
 | `SKAI_AUTHZ` | `queue_authz.py` | `token` | Migration mode: `token`, `pdp`, or `both`. An unrecognized value silently falls back to `token` so a typo never widens or narrows access. |
 | `SKAI_QUEUE_TOKEN` | `queue_authz.py` | unset | Shared secret compared with `hmac.compare_digest` in `token` mode. Unset in token mode = **deny**. |
-| `SKGATEWAY_URL` | `dashboard.py:1366` | `http://localhost:18780` | skgateway admin origin for the `/api/models*` panel. |
+| `SKGATEWAY_URL` | `dashboard.py` (`_gateway_admin`) | `http://localhost:18780` | skgateway admin origin for the `/api/models*` panel. |
 | `SKDASHBOARD_CM_WORKFLOW` | `dashboard.py` | `ci.yml` | Workflow filename the change Validate button nudges, since fleet repos do not all name it the same. |
 | `SKCOORD_CARD_STORE` | skcoord (set by the unit drop-in) | unset | Event-sourced CardStore dual-write. Set to `1` in production by `cardstore.conf`. |
 | `OLLAMA_HOST`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`, `XAI_API_KEY`, `MOONSHOT_API_KEY` | model panel | unset | Presence probes only, for the model availability panel. |
 
 **Important default:** while **neither** `SKAI_AUTHZ` nor `SKAI_QUEUE_TOKEN` is set,
-the privileged gates return `{"ok": true, "reason": "loopback-open"}` (see
-`_queue_gate` / `_change_gate`, `dashboard.py:795` and `:867`). That is the deployed
-state. The gate is a staging mechanism, not an active control, until one of those two
-variables is set.
+the privileged gate returns `{"ok": true, "reason": "loopback-open"}` (see
+`_capability_gate` in `dashboard.py`, which `_queue_gate` and `_change_gate` both
+wrap). That is the deployed state. The gate is a staging mechanism, not an active
+control, until one of those two variables is set. Setting either one arms it for
+**every** `POST` route at once, including the board mutations.
 
 Usage:
 
@@ -269,8 +276,8 @@ skcapstone dashboard --json             # print the daemon JSON snapshot and exi
 
 ## 7. API / Reference
 
-Everything below is served on `127.0.0.1:7778`. Source of truth: the route list at
-`src/skdashboard/dashboard.py:1408`.
+Everything below is served on `127.0.0.1:7778`. Source of truth: the `routes = [`
+list near the end of `create_app` in `src/skdashboard/dashboard.py`.
 
 **Pages (HTML):** `/` and `/index.html` (overview), `/board`, `/cockpit`, `/models`,
 `/assistant`, `/cmdb`, `/trust`, `/economy`. Static assets are mounted at `/static`
@@ -296,10 +303,15 @@ Everything below is served on `127.0.0.1:7778`. Source of truth: the route list 
 `/api/queue/{surface}/{id}`, `/api/change/{id}/{validate,schedule,arm,verify}`,
 `/api/cmdb/seed`, `/api/models/advertise`, `/api/assistant`.
 
+Every one of those POST routes passes through `_capability_gate`; the route-to-capability
+map is the table in `SECURITY.md`, and `tests/test_write_route_gates.py` fails the build
+if a POST route stops calling a gate.
+
 **Headers the server reads:** `X-SK-Actor` (the actor identity, expected to be set by an
-authenticating layer in front of the dashboard) and `X-SK-Capability` (the capability
-token the gate checks). Which routes actually check them, and which do not, is in
-`SECURITY.md`; read it before assuming a POST route is gated.
+authenticating layer in front of the dashboard, and **not verified here**) and
+`X-SK-Capability` (the capability token the gate checks). Read `SECURITY.md` before
+relying on either: the gate is loopback-open by default, and the actor header is
+self-asserted.
 
 **Surface prefixes** (`surface_registry.py`): `gtd-`, `thr-` (chat), `sec-` (security);
 `coord` and `itil` use the raw item id, because an ITIL id already carries its own
@@ -376,8 +388,16 @@ behavior.
    Fixing the docstring is a follow-up, deliberately not bundled into a docs-only PR.
 
 <!-- docs-evidence
-verified: 2026-08-14
+verified: 2026-08-16
 checks:
+  - name: card-mutate route is gated (section 7, SECURITY.md route table)
+    run: grep -q 'capability=_CAP_CARD_MUTATE' src/skdashboard/dashboard.py
+  - name: cmdb seed is a named gated handler, not the old ungated lambda
+    run: ! grep -q 'Route("/api/cmdb/seed", lambda' src/skdashboard/dashboard.py
+  - name: models advertise is gated on the documented skgateway.admin capability
+    run: grep -q '_CAP_MODELS_ADVERTISE = "skgateway.admin"' src/skdashboard/dashboard.py
+  - name: the one gate body still short-circuits on BOTH authz vars (loopback-open)
+    run: grep -q 'def _capability_gate' src/skdashboard/dashboard.py
   - name: documented port 7778 still the module default
     run: grep -q 'DEFAULT_DASHBOARD_PORT = 7778' src/skdashboard/dashboard.py
   - name: bind is still loopback-only (section 5 Exposure)
@@ -392,6 +412,6 @@ checks:
     run: grep -q '^def start_dashboard' src/skdashboard/dashboard.py
   - name: setuptools_scm still restricted to v-semver tags
     run: grep -q 'tag_regex = "\^v' pyproject.toml
-  - name: dependency direction holds (no skcapstone.coordination/card_store imports)
-    run: ! grep -rqE 'skcapstone\.(coordination|card_store)' src/skdashboard/
+  - name: dependency direction holds (consent.py is the ONLY skcapstone.card_store importer)
+    run: test "$(grep -rlE --include='*.py' 'skcapstone\.(coordination|card_store)' src/skdashboard/ | sort | tr '\n' ' ')" = "src/skdashboard/consent.py "
 -->

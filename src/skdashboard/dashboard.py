@@ -39,6 +39,47 @@ _DOCTOR_CACHE_TTL = 30.0
 _doctor_cache: dict = {"ts": 0.0, "home": None, "report": None}
 
 # ---------------------------------------------------------------------------
+# Capability names for the write routes that are NOT queue-a-run and NOT a
+# change.* PEP (card 9d37d53d).
+#
+# These three routes used to reach the coordination store, the CMDB, and the
+# gateway allowlist without passing through the gate at all, so the loopback
+# bind was their only control. They now go through the same staged
+# token/pdp/both path (`_capability_gate` -> `queue_authz.authorize_capability`)
+# as every other write route in this module.
+#
+# Capability CHOICE follows the precedent already set twice in the fleet:
+# reuse an ALREADY-SEEDED capauth row rather than ship an ungranted new one
+# that would deny every caller the moment the gate goes live.
+#   * `api_change_verify` in this file reuses `change.validate` rather than
+#     inventing `change.verify`.
+#   * skchat's `dataplane_auth.py` maps this exact `POST /api/card/{id}/{action}`
+#     route to an interim already-granted capability, with a note that it
+#     migrates to `skboard.write` with the rest of the board family (L1.8).
+#
+# `agentrun.queue` is capauth's seeded ATTESTED write-class row (authz.py
+# `_AGENTRUN_RULES`) and is the capability a dashboard operator already holds;
+# it is the interim carrier for the two coordination-store writes until a
+# `skboard.write` / `cmdb.*` row exists in capauth. `skgateway.admin` is NOT
+# interim: capauth seeds it (VERIFIED) with the description "Mutate the gateway
+# model catalog / advertise allowlist / routing", which is exactly and only what
+# `/api/models/advertise` does.
+
+#: Interim capability for board-card mutations (`POST /api/card/{id}/{action}`).
+#: Migrates to `skboard.write` when capauth seeds that row (L1.8).
+_CAP_CARD_MUTATE = "agentrun.queue"
+
+#: Interim capability for the CMDB reseed (`POST /api/cmdb/seed`). Rebuilds the
+#: CI inventory under the agent home; write-class. Migrates to a dedicated
+#: `cmdb.*` row when capauth seeds one.
+_CAP_CMDB_SEED = "agentrun.queue"
+
+#: Capability for the gateway advertise-allowlist write
+#: (`POST /api/models/advertise`). Not interim: this is capauth's own
+#: `skgateway.admin` row, whose seeded description is this action.
+_CAP_MODELS_ADVERTISE = "skgateway.admin"
+
+# ---------------------------------------------------------------------------
 # Change management (CM P2.3): the Validate button's `gh` helpers.
 #
 # Bare module-level functions (not closures inside create_app) so tests can
@@ -791,27 +832,23 @@ def create_app(home: Path):
             )
         )
 
-    async def api_card_mutate(request):
-        card_id = request.path_params["card_id"]
-        action = request.path_params["action"]
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            body = {}
-        actor = request.headers.get("x-sk-actor") or body.pop("actor", None) or "dashboard"
-        result = dk.apply_mutation(home, card_id, action, actor, **body)
-        if result.get("ok"):
-            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor})
-        return _json(result)
-
-    def _queue_gate(request, *, resource, mode, actor):
-        """Staged authz for the privileged 'queue AI' action.
+    def _capability_gate(request, *, resource, capability, actor):
+        """Staged authz for ONE privileged capability. The single gate body.
 
         Preserves today's dev behavior (loopback-open) ONLY while neither
         ``SKAI_AUTHZ`` nor ``SKAI_QUEUE_TOKEN`` is configured, so a live seat that
         never set a secret does not suddenly break. The moment either is set, the
-        decision routes through ``queue_authz.authorize_queue`` (token / capauth
-        PDP / both). Returns a dict {ok, reason, via}.
+        decision routes through ``queue_authz.authorize_capability`` (token /
+        capauth PDP / both), which is fail-closed on every branch.
+
+        Every write route in this module funnels through here, so "is this route
+        gated?" is answered by one grep for ``_capability_gate`` rather than by
+        reading each handler. ``_queue_gate`` (mode-derived ``agentrun.*``) and
+        ``_change_gate`` (explicit ``change.*``) are thin wrappers that differ
+        only in how they name the capability.
+
+        Returns:
+            dict: ``{ok, reason, via, obligations}``.
         """
         import os
 
@@ -821,10 +858,69 @@ def create_app(home: Path):
                 "reason": "loopback-open (no SKAI_AUTHZ/SKAI_QUEUE_TOKEN set)",
                 "via": "none",
             }
-        return queue_authz.authorize_queue(
+        return queue_authz.authorize_capability(
             token=request.headers.get("x-sk-capability"),
             resource=resource,
-            mode=mode,
+            capability=capability,
+            actor=actor,
+        )
+
+    def _gate_deny(reason: str, status_code: int = 403):
+        """The 403 body every gated route returns when its gate says no."""
+        from starlette.responses import Response
+
+        return Response(
+            json.dumps({"error": "unauthorized: " + reason}),
+            status_code=status_code,
+            media_type="application/json",
+        )
+
+    async def api_card_mutate(request):
+        """POST /api/card/{card_id}/{action} - board mutation, gated.
+
+        note / move / assign / priority / label all write the shared skcoord
+        card store, so this is a write-class route and goes through the same
+        staged gate as the queue and change.* routes (card 9d37d53d: before
+        that card it was reachable by anything that could open the loopback
+        port). Capability ``_CAP_CARD_MUTATE`` - see that constant for why it
+        is an interim reuse rather than a new capauth row.
+
+        ``actor`` is still resolved BEFORE the gate so the PDP sees the same
+        subject that will land on the card record. That subject comes from the
+        unauthenticated ``X-SK-Actor`` header (or a body fallback); this gate
+        does not change that, and cannot. Authenticating the actor is the
+        Unified Consent Plane's job (capauth ``x-sk-capability`` epic
+        a150c9c0), not this route's.
+        """
+        card_id = request.path_params["card_id"]
+        action = request.path_params["action"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        actor = request.headers.get("x-sk-actor") or body.pop("actor", None) or "dashboard"
+        decision = _capability_gate(
+            request, resource=card_id, capability=_CAP_CARD_MUTATE, actor=actor
+        )
+        if not decision["ok"]:
+            return _gate_deny(decision["reason"])
+        result = dk.apply_mutation(home, card_id, action, actor, **body)
+        if result.get("ok"):
+            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor})
+        return _json(result)
+
+    def _queue_gate(request, *, resource, mode, actor):
+        """Staged authz for the privileged 'queue AI' action.
+
+        Thin wrapper over :func:`_capability_gate` that derives the capability
+        from the run ``mode`` exactly as ``queue_authz.authorize_queue`` does
+        (``capability_for``: ``agentrun.execute`` for ``mode="execute"``,
+        otherwise ``agentrun.queue``). Returns a dict {ok, reason, via}.
+        """
+        return _capability_gate(
+            request,
+            resource=resource,
+            capability=queue_authz.capability_for(mode),
             actor=actor,
         )
 
@@ -902,22 +998,11 @@ def create_app(home: Path):
         """Staged authz for a change.* PEP (validate/schedule/deploy).
 
         Design doc docs/specs/2026-08-13-change-management-cab-ai-arch.md
-        section 7. Returns a dict {ok, reason, via}, same shape as
-        ``_queue_gate``.
+        section 7. A named alias for :func:`_capability_gate` (same body, same
+        return shape) kept so the change routes read as change.* PEPs.
         """
-        import os
-
-        if not os.environ.get("SKAI_AUTHZ") and not os.environ.get("SKAI_QUEUE_TOKEN"):
-            return {
-                "ok": True,
-                "reason": "loopback-open (no SKAI_AUTHZ/SKAI_QUEUE_TOKEN set)",
-                "via": "none",
-            }
-        return queue_authz.authorize_capability(
-            token=request.headers.get("x-sk-capability"),
-            resource=resource,
-            capability=capability,
-            actor=actor,
+        return _capability_gate(
+            request, resource=resource, capability=capability, actor=actor
         )
 
     def _change_actor(request) -> str:
@@ -935,13 +1020,8 @@ def create_app(home: Path):
         return request.headers.get("x-sk-actor") or "operator"
 
     def _change_deny(reason: str, status_code: int = 403):
-        from starlette.responses import Response
-
-        return Response(
-            json.dumps({"error": "unauthorized: " + reason}),
-            status_code=status_code,
-            media_type="application/json",
-        )
+        """Named alias for :func:`_gate_deny`, kept for the change.* call sites."""
+        return _gate_deny(reason, status_code)
 
     def _persist_change_consent(request, mgr, *, rid, capability, decision):
         """Best-effort ``consent.granted`` write for a change.* PEP.
@@ -1452,8 +1532,24 @@ def create_app(home: Path):
             return _json({"object": "list", "data": [], "error": str(exc)})
 
     async def api_models_advertise(request):
-        """Persist the enabled set to the gateway allowlist (PUT /admin/models/advertise)."""
+        """Persist the enabled set to the gateway allowlist (PUT /admin/models/advertise).
+
+        Gated on ``skgateway.admin`` (card 9d37d53d). This route is a write
+        proxy onto skgateway's OWN admin surface: it changes which models the
+        whole fleet is offered. capauth seeds ``skgateway.admin`` at the
+        VERIFIED floor for exactly that action, so this dashboard must not be
+        the door around it. Before this card the route had no gate at all.
+        """
         import urllib.request
+
+        decision = _capability_gate(
+            request,
+            resource="models/advertise",
+            capability=_CAP_MODELS_ADVERTISE,
+            actor=request.headers.get("x-sk-actor") or "operator",
+        )
+        if not decision["ok"]:
+            return _gate_deny(decision["reason"])
 
         raw = await request.body()
         try:
@@ -1474,6 +1570,25 @@ def create_app(home: Path):
                 return _json(json.loads(r.read().decode("utf-8")))
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
+
+    async def api_cmdb_seed(request):
+        """POST /api/cmdb/seed - rebuild the CI inventory, gated.
+
+        A write: it (re)creates configuration-item records under the agent
+        home. Capability ``_CAP_CMDB_SEED``. Before card 9d37d53d this was a
+        bare ``lambda`` in the route table with no gate at all, which is also
+        why it is a named handler now: a lambda in the route list is exactly
+        the shape that hides an ungated write.
+        """
+        decision = _capability_gate(
+            request,
+            resource="cmdb",
+            capability=_CAP_CMDB_SEED,
+            actor=request.headers.get("x-sk-actor") or "operator",
+        )
+        if not decision["ok"]:
+            return _gate_deny(decision["reason"])
+        return _json(_cmdb().seed(home))
 
     # ── Economy: fleet-wide cost (autopilot cost ledger) + joule wealth ──
     async def api_economy(_request):
@@ -1530,7 +1645,7 @@ def create_app(home: Path):
         Route(
             "/api/cmdb/ci/{ci_id}", lambda r: _json(_cmdb().get_ci(home, r.path_params["ci_id"]))
         ),
-        Route("/api/cmdb/seed", lambda r: _json(_cmdb().seed(home)), methods=["POST"]),
+        Route("/api/cmdb/seed", api_cmdb_seed, methods=["POST"]),
         Route("/trust", _page("trust.html")),
         Route("/api/trust/graph", lambda r: _json(_trust_graph_dict(home))),
         Route("/economy", _page("economy.html")),
