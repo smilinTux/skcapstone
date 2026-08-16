@@ -131,16 +131,41 @@ Every backend and the orchestrator honour these, so a second run is a near no-op
 - **Idempotent + resumable:** a re-run after a partial failure only closes what is
   still missing.
 
+## Where it lives (binary vs cluster state)
+
+- The `skfleet` **binary** is a console script in the `~/.skenv` venv
+  (`~/.skenv/bin/skfleet`, entry `skcapstone.fleet.cli:main`), like every SK*
+  CLI. `~/.skcapstone` holds *state*, not binaries; the binary stays in the venv.
+- The **cluster state** it reads and writes lives under `~/.skcapstone/fleet/`
+  and is Syncthing-synced fleet-wide (`objects/profile/*.json`, node objects,
+  freeze, status). That store, not the repo, is the source of truth this verb
+  reads, which is what makes it cluster-aware.
+
 ## Data flow
 
+The installer reads the **live synced fleet store**, never the repo. The repo's
+`deploy/fleet-objects/profile/*.json` is only the SOURCE that an operator
+`skfleet apply`s into `~/.skcapstone/fleet/objects/profile/`; reading the repo
+would be checkout-aware, not cluster-aware.
+
 ```
-bound role -> load profile manifest (deploy/fleet-objects/profile/<role>.json)
-           -> node live inventory (fleet/nodeinventory.py)
-           -> profile_doctor.diff() -> DriftReport
-           -> installer.plan(drift, registry) -> InstallPlan (ordered steps)
+bound role (from this node's synced node object, fleet/store.read_spec)
+  -> load the APPLIED profile: ~/.skcapstone/fleet/objects/profile/<role>.json
+     (fleet/store, Syncthing-synced; NOT deploy/fleet-objects/)
+  -> node live inventory (fleet/nodeinventory.py)
+  -> profile_doctor.diff() -> DriftReport
+  -> installer.plan(drift, registry) -> InstallPlan (ordered steps)
   --check:  print report, exit code from missing_required count
-  --apply:  installer.apply(plan) -> per-step InstallResult -> print/JSON report
+  --apply:  installer.apply(plan) -> per-step InstallResult
+            -> refresh nodeinventory so the new installed-set publishes into this
+               node's synced object (cluster-visible without waiting for the
+               15-min sknoded cadence) -> print/JSON report
 ```
+
+If the applied profile is absent from the store (a node whose role manifest was
+never `skfleet apply`'d), `--check`/`--apply` fail with a clear message telling
+the operator to apply the profile first (or pass `--role` to read that role's
+applied manifest explicitly). The installer never falls back to the repo copy.
 
 ## Ordering
 
