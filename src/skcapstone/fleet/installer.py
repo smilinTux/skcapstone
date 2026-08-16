@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .profile_doctor import DriftReport
-from . import install_backends
+from . import install_backends, nodeinventory, profile_doctor, store
 
 
 @dataclass(frozen=True)
@@ -129,3 +129,51 @@ def apply(plan: InstallPlan, backends: dict, *, dry_run=False, enable=False, sta
         results.append(InstallResult(step, status, detail))
 
     return results
+
+
+class ProfileNotApplied(RuntimeError):
+    """Raised by load_drift when a role has no applied profile in the store.
+
+    The applied profile lives in the synced fleet tree
+    (``objects/profile/<role>.json``), written by the operator seat via
+    ``skfleet apply``. There is deliberately no fallback to the repo's
+    shipped ``deploy/fleet-objects/`` manifests here: those are defaults a
+    checkout carries, not what this fleet actually agreed to run, and a
+    drift report built against a default nobody applied would tell an
+    operator to converge a node toward the wrong thing. A role with no
+    applied profile is not degraded input, it is an operator error (bind
+    the role, or apply its profile) and must surface as one.
+    """
+
+
+def load_drift(paths, role: str, *, inventory: dict | None = None) -> DriftReport:
+    """Diff one role's live inventory against its APPLIED profile.
+
+    Reads the profile the fleet actually applied for ``role`` out of the
+    synced store (never the repo's shipped manifests) and compares it
+    against the node's live inventory, cluster-aware: a caller observing a
+    remote node injects that node's inventory, while a node checking itself
+    lets this collect its own.
+
+    Args:
+        paths: FleetPaths for the synced fleet tree.
+        role: The profile name (Node spec's `role` field) to load and check.
+        inventory: Observed inventory dict (nodeinventory.collect() shape).
+            Injected by callers checking a node other than the local one
+            (and by tests); when None, this collects the local node's own
+            inventory via nodeinventory.collect().
+
+    Returns:
+        A DriftReport comparing `inventory` against the applied profile.
+
+    Raises:
+        ProfileNotApplied: No profile named `role` has been applied to the
+            store (`store.read_spec` returned None).
+    """
+    payload = store.read_spec(paths, "profile", role)
+    if payload is None:
+        raise ProfileNotApplied(role)
+    profile_spec = payload.get("spec") or {}
+    if inventory is None:
+        inventory = nodeinventory.collect()
+    return profile_doctor.diff(inventory, profile_spec)
