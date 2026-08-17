@@ -57,7 +57,5 @@ def test_run_install_check_reports_missing_required_units_end_to_end(
     assert summary["role"] == "control"
     assert summary["mode"] == "check"
     assert summary["ok"] is False
-    missing = [
-        r["name"] for r in summary["results"] if r["category"] == "missing_required_units"
-    ]
+    missing = [r["name"] for r in summary["results"] if r["category"] == "missing_required_units"]
     assert "sknoded.service" in missing

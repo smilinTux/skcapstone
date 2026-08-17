@@ -1,4 +1,5 @@
 """Tests for installer.plan() function."""
+
 from skcapstone.fleet.installer import plan
 from skcapstone.fleet.profile_doctor import DriftReport
 
@@ -11,8 +12,8 @@ def test_plan_orders_by_tier_then_name_and_ignores_forbidden():
     drift = _drift(
         missing_required_packages=["capauth"],
         missing_required_units=["skgateway.service", "skchat-webui@lumina.service"],
-        forbidden_units=["comfyui.service"],       # must NOT produce a step
-        unexpected_units=["random.service"],       # must NOT produce a step
+        forbidden_units=["comfyui.service"],  # must NOT produce a step
+        unexpected_units=["random.service"],  # must NOT produce a step
     )
     p = plan(drift)
     names = [(s.tier, s.name) for s in p.steps]

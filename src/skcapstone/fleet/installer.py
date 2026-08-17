@@ -1,11 +1,12 @@
 """Profile-aware stack installer (orchestrator). See
 docs/superpowers/specs/2026-08-16-skfleet-install-orchestrator-design.md."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .profile_doctor import DriftReport
 from . import converge, install_backends, nodeinventory, profile_doctor, store
+from .profile_doctor import DriftReport
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,9 @@ def plan(drift: DriftReport, *, only: list[str] | None = None) -> InstallPlan:
     return InstallPlan(steps=steps)
 
 
-def apply(plan: InstallPlan, backends: dict, *, dry_run=False, enable=False, start=False) -> list[InstallResult]:
+def apply(
+    plan: InstallPlan, backends: dict, *, dry_run=False, enable=False, start=False
+) -> list[InstallResult]:
     """Execute each step through its backend; isolate failures per backend.
 
     Executes an InstallPlan by calling the appropriate backend function for
@@ -115,7 +118,9 @@ def apply(plan: InstallPlan, backends: dict, *, dry_run=False, enable=False, sta
 
         fn = backends.get(step.backend_id)
         if fn is None:
-            results.append(InstallResult(step, "needs_manual", f"backend {step.backend_id} unregistered"))
+            results.append(
+                InstallResult(step, "needs_manual", f"backend {step.backend_id} unregistered")
+            )
             continue
 
         try:
@@ -131,7 +136,7 @@ def apply(plan: InstallPlan, backends: dict, *, dry_run=False, enable=False, sta
     return results
 
 
-class ProfileNotApplied(RuntimeError):
+class ProfileNotApplied(RuntimeError):  # noqa: N818 - deliberate spec name
     """Raised by load_drift when a role has no applied profile in the store.
 
     The applied profile lives in the synced fleet tree
@@ -179,13 +184,13 @@ def load_drift(paths, role: str, *, inventory: dict | None = None) -> DriftRepor
     return profile_doctor.diff(inventory, profile_spec)
 
 
-class Frozen(RuntimeError):
+class Frozen(RuntimeError):  # noqa: N818 - deliberate spec name
     """Raised by run_install when `apply` is attempted while the fleet-wide
     kill-switch (store.is_frozen) is on. `check` is never affected: a report
     is not actuation and freeze must never blind an operator to drift."""
 
 
-class ActuationNotAllowed(RuntimeError):
+class ActuationNotAllowed(RuntimeError):  # noqa: N818 - deliberate spec name
     """Raised by run_install when `apply` is attempted without this node's
     opt-in (converge.actuation_enabled(paths, node) is False, i.e.
     spec.actuate is not set on the node object, per spec R4 section 6).

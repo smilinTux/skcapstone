@@ -1,4 +1,5 @@
 """Tests for backend registry resolution."""
+
 from skcapstone.fleet.install_backends import UNSUPPORTED, resolve, tier_of
 
 

@@ -1,4 +1,5 @@
 """Maps a required package/unit to the repo installer that provides it."""
+
 from __future__ import annotations
 
 import fnmatch

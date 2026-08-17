@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`skfleet install`: profile-aware stack installer (the actuation half of the
+  node-roles-install-profiles epic `3bbf39ea`).** Reads the applied profile from the
+  synced fleet store, reports drift (`--check`), and closes `missing_required`
+  packages/units (`--apply`) by driving the per-repo installers as backends. Freeze +
+  per-node actuation-opt-in gated; only ever adds `missing_required`, never removes;
+  `--json` is the contract the AI/GUI install wizard wraps. `fleet/installer.py` +
+  `fleet/install_backends.py` + the `skfleet install` verb.
 - **Fleet install profiles: a node can now say what it is, and be checked against
   it** (epic `3bbf39ea`, waves 1 and 2). The fleet could already schedule work onto
   nodes; nothing said what a node of a given role was *supposed to have installed*.
