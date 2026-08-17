@@ -8,6 +8,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`skfleet seat-audit`: two-seat detection by provenance, not by collision**
+  (card `4c32df6f`, gap G2). The only existing detector was the Syncthing conflict
+  file, and the drill measured what it actually catches: two seats writing inside
+  one sync interval produce 1 conflict file, but the same two seats with a sync
+  between the writes produce 10 writes and **zero** conflict files. The interleaved
+  case is the likely one (a 368K folder converges in seconds against a 15-minute
+  timer), and the promotion runbook's own advice to wait one full timer cycle names
+  precisely the interval that guarantees no collision is raised. So a quiet conflict
+  directory was being read as evidence of a single writer when it is nothing of the
+  kind. The audit groups every spec by the `writer` block it already carries.
+  Verified against the live store: one operator seat, 39 objects. A discarded
+  conflict copy cannot inflate the count, and objects with no writer block are
+  reported separately rather than counted as clean.
+  Its limit is documented in the module and repeated in `--help`, because it decides
+  how much a clean result is worth: this is CURRENT-STATE only. `write_spec` emits no
+  event, so a second seat that wrote and was later overwritten leaves no trace at all.
+  Closing that needs an event on `write_spec` (card `27aa2d4d`), not a better reader.
+
 - **`skfleet label`, because there was no safe way to change a label.** Labels are
   what the scheduler actually filters on: `scheduler.feasible` reads them and never
   reads `spec.role`, so a node's labels decide whether anything can be placed on it.

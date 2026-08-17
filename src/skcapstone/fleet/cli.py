@@ -18,6 +18,7 @@ from . import (
     cron_controller,
     modelserver_controller,
     node_controller,
+    seat_audit,
     service_controller,
     store,
 )
@@ -649,6 +650,36 @@ def taint_cmd(name: str, taint: str) -> None:
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"{name} tainted {key}={value}:{effect} (generation {spec['generation']})")
+
+
+@fleet.command("seat-audit")
+@click.option("--strict", is_flag=True, help="Exit 1 when more than one operator seat is found.")
+def seat_audit_cmd(strict: bool) -> None:
+    """Report how many operator seats have written to this store.
+
+    Catches the two-seat case the Syncthing conflict detector misses. Measured
+    in the promotion drill: two seats writing with a sync between them produced
+    10 writes and ZERO conflict files, so a quiet conflict directory is not
+    evidence of a single writer.
+
+    CURRENT-STATE ONLY. write_spec emits no event, so a second seat that wrote
+    and was later overwritten leaves no trace anywhere. A clean result means
+    "no second seat is represented in the objects as they stand", not "no
+    second seat has been writing".
+    """
+    audit = seat_audit.audit_seats(default_paths())
+    click.echo(audit.summary())
+    for node in audit.seats:
+        refs = audit.by_node[node]
+        click.echo(f"  {node}: {len(refs)} object(s)")
+        for ref in refs[:10]:
+            click.echo(f"    {ref}")
+        if len(refs) > 10:
+            click.echo(f"    ... and {len(refs) - 10} more")
+    if audit.unattributed:
+        click.echo(f"  unattributed (no writer block): {len(audit.unattributed)}")
+    if strict and not audit.ok:
+        raise SystemExit(1)
 
 
 @fleet.command("label")
