@@ -297,6 +297,7 @@ list near the end of `create_app` in `src/skdashboard/dashboard.py`.
 | `/api/trust/graph`, `/api/economy`, `/api/models` | trust graph, cost/joule ledger, model roster |
 | `/api/suggest/{surface}/{id}` | suggestions for any fleet surface (`coord`, `gtd`, `itil`, `chat`, `security`) |
 | `/api/change/{id}/pir-draft` | post-implementation-review draft |
+| `/api/auth/capability` | hands the caller the `x-sk-actor` / `x-sk-capability` values to attach on mutating calls (`SKAI_OPERATOR_ACTOR` / `SKAI_QUEUE_TOKEN` verbatim). **Unauthenticated, loopback-trust only** - it does not verify who is asking, see `SECURITY.md`. |
 | `/.well-known/skworld-module.json` | the SKWorld module manifest, unauthenticated public discovery metadata, no secrets |
 
 **Mutating APIs (POST):** `/api/card/{card_id}/{action}`, `/api/card/{card_id}/queue-ai`,
@@ -313,6 +314,12 @@ authenticating layer in front of the dashboard, and **not verified here**) and
 relying on either: the gate is loopback-open by default, and the actor header is
 self-asserted.
 
+Every shipped client (`api.js`, `assistant.js`, `ai_compose.js`, `cmdb.js`,
+`models.html`) sources both headers from `GET /api/auth/capability` (coord card
+`a638b490`) instead of hardcoding an actor. That route does not authenticate the
+handout; see the new `SECURITY.md` section for exactly what trust boundary it does
+and does not provide.
+
 **Surface prefixes** (`surface_registry.py`): `gtd-`, `thr-` (chat), `sec-` (security);
 `coord` and `itil` use the raw item id, because an ITIL id already carries its own
 `inc-`/`prb-`/`chg-` prefix. `resolve_card_id()` is idempotent.
@@ -327,7 +334,7 @@ self-asserted.
 | Import error mentioning `skcapstone.dashboard` | The alias shim is missing from the installed `skcapstone` (it lives there, not here). Reinstall/upgrade `skcapstone`. |
 | Code change deployed but the UI is unchanged | The process is long-lived. `systemctl --user restart skcapstone-dashboard.service`. An editable install alone changes nothing already imported. |
 | Board is empty, or cards do not move | This repo only renders skcoord's store. Check the coordination store and `SKCOORD_CARD_STORE`; card status truth lives in `card_events/*.jsonl`, not `tasks/*.json`. |
-| Queue-AI / change buttons return 403 | Someone set `SKAI_AUTHZ` or `SKAI_QUEUE_TOKEN`. The moment either is set the gate goes live and the browser sends no `X-SK-Capability`, so every privileged button denies. Unset both to return to loopback-open, or mint and pass real capabilities. |
+| Queue-AI / change buttons return 403 | Someone set `SKAI_AUTHZ` or `SKAI_QUEUE_TOKEN`. The moment either is set the gate goes live: the browser now presents whatever `SKAI_QUEUE_TOKEN` / `SKAI_OPERATOR_ACTOR` this process is configured with (via `GET /api/auth/capability`), so a 403 usually means one of those two is unset, wrong, or `SKAI_OPERATOR_ACTOR` names a subject the PDP has no granted token for (`agentrun.queue`/`agentrun.execute`/`change.*`/`skgateway.admin` are separate grants - a subject can hold some and not others). Unset both authz vars to return to loopback-open, or configure a real, enrolled actor. |
 | `/api/doctor` is stale | 30-second cache by design (`_DOCTOR_CACHE_TTL`). Wait it out. |
 | `/api/models` returns 502 | skgateway is down or `SKGATEWAY_URL` is wrong (default `http://localhost:18780`, 3-second timeout). |
 | Assistant or economy panel is empty but the page loads | Both lazy-import optional siblings (`skharness`, `skcapstone.skjoule`) and return a well-formed empty payload plus an `errors` note rather than a 500. Read the `errors` field. |

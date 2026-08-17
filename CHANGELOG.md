@@ -38,6 +38,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - This does **not** fix `X-SK-Actor` being self-asserted rather than authenticated.
     That belongs to the Unified Consent Plane epic; `SECURITY.md` says so plainly.
 
+- **Clients now send `x-sk-capability`** (Unified Consent Plane P1.3, coord card
+  `a638b490`). `api.js`, `assistant.js`, `ai_compose.js`, `cmdb.js`, and
+  `models.html` all attach it, via a new shared `authHeaders()` helper sourced from
+  a new `GET /api/auth/capability` route. Before this, `SKAI_AUTHZ` could not be
+  flipped without breaking every button: the token path denied on a missing header
+  and the PDP path denied because no client ever authenticated the caller.
+  - **What actually authenticates the handout: nothing yet.** `/api/auth/capability`
+    is loopback-trust only, exactly like every other route on this dashboard - it
+    hands back `SKAI_QUEUE_TOKEN` and `SKAI_OPERATOR_ACTOR` verbatim to anyone who
+    can reach the port. It is the seam a verified operator session
+    (`x-operator-token` / `capauth.pairing.verify_operator_session`) will gate once
+    that is wired end to end here; that wiring is a separate, later card.
+  - The hardcoded `X-SK-Actor: "operator"` literal is gone from every client.
+    `"operator"` is not an enrolled capauth subject and would have failed every PDP
+    check; the new default on an unconfigured seat is the fleet's `"unattributed"`
+    convention for an identity that cannot be backed.
+
 ### Fixed
 
 - `docs-check` (tier 3) has been **red on `main` since the consent PR** merged: `SOP.md`

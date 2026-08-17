@@ -100,6 +100,25 @@
     // through the reverse proxy instead of escaping the prefix).
     const API = location.pathname.replace(/\/models\/?$/, '');
 
+    // The operator identity + capability token this page presents on the
+    // gated save below (Unified Consent Plane P1.3, coord card a638b490).
+    // Fetched once from GET /api/auth/capability, which today hands the
+    // value back on loopback trust alone - see its docstring in
+    // dashboard.py. Degrades to {actor: 'unattributed', capability: null}
+    // on any failure, never the hardcoded 'operator' this card retires.
+    let capPromise = null;
+    async function authHeaders(extra) {
+      if (!capPromise) {
+        capPromise = fetch(API + '/api/auth/capability', { headers: { Accept: 'application/json' } })
+          .then((r) => (r.ok ? r.json() : {}))
+          .catch(() => ({}));
+      }
+      const cap = await capPromise;
+      const headers = { 'X-SK-Actor': cap.actor || 'unattributed', ...(extra || {}) };
+      if (cap.capability) headers['X-SK-Capability'] = cap.capability;
+      return headers;
+    }
+
     let models = [];              // [{id, provider, free, advertised}]
     const enabled = new Set();    // ids currently enabled (mutable, local)
     let query = '';
@@ -253,7 +272,7 @@
       saveBtn.disabled = true;
       try {
         const r = await fetch(API + '/api/models/advertise', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: await authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ enabled: payload }),
         });
         if (!r.ok) throw new Error('save failed');

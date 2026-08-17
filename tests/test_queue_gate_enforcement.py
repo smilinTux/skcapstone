@@ -401,7 +401,7 @@ def test_no_unguarded_request_run_callers_in_skdashboard():
                 hits.append(f"{path.relative_to(src_dir)}:{lineno}")
 
     assert hits == [
-        "dashboard.py:972",
+        "dashboard.py:1014",
         "dashboard_assistant.py:193",
     ], (
         "unexpected set of agent_run.request_run call sites in skdashboard - "

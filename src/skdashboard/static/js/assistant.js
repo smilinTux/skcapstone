@@ -1,6 +1,6 @@
 // Assistant console: POST a prompt, stream the answer over SSE (read from the
 // fetch body), render tokens live, and show any gated action result.
-import { esc, toast } from "./api.js";
+import { esc, toast, authHeaders } from "./api.js";
 
 const chat = document.getElementById("chat");
 const form = document.getElementById("ask-form");
@@ -30,7 +30,7 @@ async function ask(prompt) {
   try {
     const resp = await fetch("/api/assistant", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-SK-Actor": "operator" },
+      headers: await authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ prompt }),
     });
     if (!resp.ok || !resp.body) throw new Error("assistant unavailable");

@@ -104,6 +104,22 @@ Unified Consent Plane epic's job (capauth-minted capabilities carried in
 worse than the honest gap. Treat every actor string in this system's records accordingly
 until that epic lands.
 
+### `GET /api/auth/capability` hands out the header, it does not authenticate anyone
+
+Coord card `a638b490` made every dashboard client attach `x-sk-actor` /
+`x-sk-capability` on its mutating calls instead of a hardcoded `"operator"`, sourcing
+both from this new route. **This route closes zero of the gap above.** It is exactly as
+loopback-trusted as every other route in this file: it echoes `SKAI_QUEUE_TOKEN` and
+`SKAI_OPERATOR_ACTOR` (both server-side process config, not per-request proof) to
+whoever asks, with no session, cookie, or device binding involved. What it buys is
+narrower and real: the token/pdp/both gate can now be **flipped** without breaking
+every button, because a client finally presents *something* consistent instead of
+nothing. It does not buy proof of who is sitting at the keyboard. That is the seam the
+device-bound, revocable operator session (`x-operator-token` /
+`capauth.pairing.verify_operator_session`, already the actor `consent.py`'s
+`resolve_consent_actor` prefers for the record side) will close when it is wired into
+this handout end to end, which is a separate, later card.
+
 ### Other notes
 
 - `/.well-known/skworld-module.json` is served unauthenticated by design. It is public

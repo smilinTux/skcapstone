@@ -875,6 +875,48 @@ def create_app(home: Path):
             media_type="application/json",
         )
 
+    async def api_auth_capability(_request):
+        """GET /api/auth/capability - hand this page its x-sk-capability + actor.
+
+        Unified Consent Plane P1.3 (coord card a638b490): every gated route in
+        this module reads ``x-sk-capability`` off the request (see
+        ``_capability_gate``), but before this route existed no client ever
+        sent one, so flipping ``SKAI_AUTHZ`` would have denied every button at
+        once. This is the seam that lets a client obtain the value instead of
+        hardcoding one.
+
+        **What authenticates this handout: nothing yet.** :7778 has no auth
+        middleware in front of it at all (Unified Consent Plane design doc,
+        section 2.1 row 2), so this route is exactly as loopback-trusted as
+        every other route on this dashboard, no more and no less - it does
+        not verify who is asking, it hands back whatever this process is
+        configured with to anyone who can reach the port. It is the seam a
+        verified operator session will gate once one is wired end to end
+        here (``x-operator-token`` / ``capauth.pairing.verify_operator_session``,
+        the same primitive ``consent.py::resolve_consent_actor`` already
+        prefers for the *record* side); that wiring is deliberately NOT part
+        of this card, which only makes the header flow at all.
+
+        Returns:
+            dict: ``{"capability": str | None, "actor": str}``.
+            ``capability`` is ``SKAI_QUEUE_TOKEN`` verbatim (the same value
+            ``_capability_gate``'s token check compares against) or ``None``
+            when that env var is unset, so a client never presents a token
+            that its own gate would reject anyway. ``actor`` is
+            ``SKAI_OPERATOR_ACTOR`` when configured, else the literal
+            ``"unattributed"`` - never the hardcoded ``"operator"`` this card
+            retires, which is not an enrolled subject and would fail every
+            PDP check.
+        """
+        import os
+
+        return _json(
+            {
+                "capability": os.environ.get("SKAI_QUEUE_TOKEN") or None,
+                "actor": os.environ.get("SKAI_OPERATOR_ACTOR", "").strip() or "unattributed",
+            }
+        )
+
     async def api_card_mutate(request):
         """POST /api/card/{card_id}/{action} - board mutation, gated.
 
@@ -1620,6 +1662,7 @@ def create_app(home: Path):
         Route("/api/board", _get_route(_get_board_state)),
         Route("/api/memory", _get_route(_get_memory_stats)),
         Route("/api/daemon", _get_route(_get_daemon_json)),
+        Route("/api/auth/capability", api_auth_capability),
         Route("/api/kanban", api_kanban),
         Route("/api/gtd", api_gtd_list),
         Route("/api/card/{card_id}", api_card),

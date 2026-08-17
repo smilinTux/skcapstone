@@ -1,7 +1,7 @@
 // Shared AI next-steps composer: recommended options + instruction + mode +
 // agent picker + capauth-gated queue. Used by the board card panel and the
 // cockpit ITIL record panel alike.
-import { esc, getJSON, toast } from "./api.js";
+import { esc, getJSON, toast, authHeaders } from "./api.js";
 
 const AGENTS = ["lumina", "opus", "jarvis"];
 
@@ -53,7 +53,7 @@ export function wireAIComposer(panel, cardId, onQueued) {
     try {
       const r = await fetch(`/api/card/${encodeURIComponent(cardId)}/queue-ai`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-SK-Actor": "operator" },
+        headers: await authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ instruction, agent, mode }),
       });
       const d = await r.json();

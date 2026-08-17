@@ -1,5 +1,5 @@
 // CMDB view: CIs by type + health, CI detail panel with relationships + impact.
-import { esc, getJSON, toast } from "./api.js";
+import { esc, getJSON, toast, authHeaders } from "./api.js";
 
 const TYPE_IC = { service: "⚙️", host: "🖥️", agent: "🤖", credential: "🔑", port: "🔌", datastore: "🗄️", network: "🌐" };
 
@@ -89,7 +89,7 @@ document.getElementById("overlay").addEventListener("click", closePanel);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
 document.getElementById("btn-seed").addEventListener("click", async () => {
   try {
-    const r = await fetch("/api/cmdb/seed", { method: "POST" });
+    const r = await fetch("/api/cmdb/seed", { method: "POST", headers: await authHeaders() });
     const d = await r.json();
     toast(`seeded · ${d.cis} CIs`);
     load();
