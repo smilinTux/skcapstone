@@ -45,6 +45,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `control-plane`-selecting workload, and labelling is what makes it schedulable.
 
 ### Fixed
+- **The operator seat rewrote 7 unchanged specs every 15 minutes, forever.**
+  `skoperator.timer` refreshes all operatorapp objects on a 15-minute cycle, and
+  `_write_preserving_ratifications` called `write_spec` unconditionally.
+  `write_spec` has no no-op short-circuit of its own, so every refresh bumped the
+  generation and rewrote the file. Measured on the live control node: those objects
+  had reached generation **1674**, and watching one across a tick caught the write
+  directly, generation 1674 to 1675 with a **byte-identical body** (sha
+  `3abb1b3523529136` on both sides). That is roughly **672 no-op writes a day** into
+  `~/.skcapstone`, a Syncthing folder shared to four machines, which is the same
+  shape as the outbox floods.
+  The helper now compares before writing. The guard is deliberately in this caller
+  rather than in `write_spec`: fourteen call sites rely on that primitive bumping
+  the generation, and `set_role`, `set_taint` and `set_labels` each have a test
+  asserting a bump of exactly one, so making the primitive conditional would change
+  all of them to fix one caller. `write_placement` already returns
+  `(existing, False)` on unchanged content, so the store's own precedent for this is
+  per-writer rather than global.
+  Four tests, negative-controlled (two fail against the old code). One covers the
+  subtle case: the helper injects prior ratifications into the spec it compares, so
+  a ratified object has to settle too, rather than differing from the incoming spec
+  on every pass and rewriting forever.
+  Downstream impact was checked rather than assumed and is currently nil:
+  `store.py` flags a status stale when `observedGeneration < generation` and
+  `service_controller` acts on that, but only three live statuses carry
+  `observedGeneration` and all three are `node.json`. Nothing observes operatorapp
+  objects, so the bumps marked nothing stale. That changes the moment anything does.
+
 - **The drill's containment guard could be relocated by the caller** (card `4c32df6f`,
   gap G0). `drill.sovereign_home()` expanded `~` through `os.path.expanduser`, which
   prefers the `HOME` environment variable, so the definition of "production" moved
