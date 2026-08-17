@@ -389,6 +389,19 @@ def register_coord_commands(main: click.Group) -> None:
             console.print(f"    [yellow]{m['id']}[/]: {m['diff']}")
         if par["missing"][:show]:
             console.print(f"    [yellow]missing[/]: {par['missing'][:show]}")
+        # Informational diffs (priority/swimlane) are reported but never gate.
+        # The dashboard writes those store-only, so legacy is the stale side by
+        # design and `reconcile` deliberately will not converge them. Counting
+        # them as failures made the gate unsatisfiable, which is how a gate
+        # stops being read. Shown so drift stays visible, dimmed so it is
+        # obviously not the thing that failed.
+        info = par.get("informational") or []
+        if info:
+            console.print(
+                f"    [dim]informational (store-authoritative, not gating): " f"{len(info)}[/]"
+            )
+            for m in info[:show]:
+                console.print(f"      [dim]{m['id']}: {m['diff']}[/]")
         console.print()
         if check and not ok:
             sys.exit(1)
@@ -424,12 +437,19 @@ def register_coord_commands(main: click.Group) -> None:
     @coord.command("export-legacy")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
+        "--apply",
+        "apply_",
+        is_flag=True,
+        default=False,
+        help="Write the legacy projection (default is a dry-run report).",
+    )
+    @click.option(
         "--dry-run",
         is_flag=True,
         default=False,
-        help="Report what would be written without touching the board.",
+        help="Deprecated no-op: dry-run is now the default. Use --apply to write.",
     )
-    def coord_export_legacy(home, dry_run):
+    def coord_export_legacy(home, apply_, dry_run):
         """Rebuild a current legacy board (tasks/ + agents/) from the CardStore.
 
         The Phase 4e-retire rollback safety net (inverse of 'coord migrate').
@@ -438,16 +458,36 @@ def register_coord_commands(main: click.Group) -> None:
         set SKCOORD_CARD_STORE=0, run this, restart -- legacy is authoritative
         again. Existing (immutable) task files are preserved; only the agent
         status layer is recomputed.
+
+        DRY-RUN BY DEFAULT; pass --apply to write. This changed on 2026-08-16
+        after it wrote a live board unprompted: the operator read the sibling
+        'reconcile' command's --apply convention and reasonably assumed this one
+        matched. It did not, and it is the more dangerous of the two.
+
+        Two reasons this is not merely tidier. This command is the ROLLBACK
+        SAFETY NET for the irreversible Phase 4e-retire step, and a safety net
+        that writes by default is backwards. And "nobody runs it by accident" is
+        not a safety property on this fleet, because skoperator honor mode
+        actuates without a human, so the realistic trigger is automated rather
+        than careless.
+
+        The write is not destructive in the card sense (no card or status is
+        lost, and it improved parity when it fired), but it DOES recompute the
+        agent status layer, which collapsed per-agent completion attribution
+        into a synthetic 'legacy-export' agent for entries that predate
+        dual-write and therefore have no per-event owner anywhere.
         """
         from ..card_store import export_to_legacy
 
         home_path = Path(home).expanduser()
-        res = export_to_legacy(home_path, dry_run=dry_run)
-        verb = "Would write" if dry_run else "Wrote"
+        res = export_to_legacy(home_path, dry_run=not apply_)
+        verb = "Wrote" if apply_ else "Would write"
+        colour = "green" if apply_ else "yellow"
+        suffix = "" if apply_ else " Re-run with --apply to write."
         console.print(
-            f"\n  [green]{verb} {res['tasks_written']} new task file(s) + "
+            f"\n  [{colour}]{verb} {res['tasks_written']} new task file(s) + "
             f"{res['agents_written']} agent file(s) from {res['cards']} "
-            f"store card(s).[/]\n"
+            f"store card(s).[/]{suffix}\n"
         )
 
     @coord.command("maintain")
