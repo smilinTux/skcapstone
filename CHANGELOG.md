@@ -7,6 +7,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **`skfleet label`, because there was no safe way to change a label.** Labels are
+  what the scheduler actually filters on: `scheduler.feasible` reads them and never
+  reads `spec.role`, so a node's labels decide whether anything can be placed on it.
+  The only tool for changing one was `skfleet apply`, which replaces the whole spec
+  from the document handed to it. During the promotion drill (card `4c32df6f`) a
+  label-only apply silently dropped `taints`, `cordoned` and `address`, un-cordoning
+  the node, and exited 0, so the documented way to fix a label corrupted the spec it
+  was fixing. `skfleet label NODE key=value ... [--remove key]` merges instead:
+  every other spec field survives and the generation bumps by exactly one. Removing
+  an absent key is a silent no-op, so a revert is safe to run twice and safe to run
+  when you do not know how far a promotion got. Setting and unsetting the same key
+  in one call is refused rather than resolved, since either resolution would make
+  the outcome depend on argument order.
+  The promotion runbook's Step 2.2b is now one line instead of a copy-the-whole-
+  document dance. A test asserts the end-to-end property the card is really about:
+  `set-role node-41 control` alone leaves the seat INFEASIBLE for a
+  `control-plane`-selecting workload, and labelling is what makes it schedulable.
+
 ### Fixed
 - **A Syncthing conflict copy silently overrode the real fleet object.**
   `store.list_specs` and `store.list_placements` globbed `*.json`, which also matches

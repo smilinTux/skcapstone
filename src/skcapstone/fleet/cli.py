@@ -651,6 +651,46 @@ def taint_cmd(name: str, taint: str) -> None:
     click.echo(f"{name} tainted {key}={value}:{effect} (generation {spec['generation']})")
 
 
+@fleet.command("label")
+@click.argument("name")
+@click.argument("labels", nargs=-1)
+@click.option("--remove", "remove", multiple=True, help="Label KEY to drop (repeatable).")
+def label_cmd(name: str, labels: tuple[str, ...], remove: tuple[str, ...]) -> None:
+    """Add, change or drop labels on a node: KEY=VALUE ... [--remove KEY].
+
+    Merges. Every other field of the spec is preserved, which `skfleet apply`
+    does NOT do: apply replaces the whole spec from the document you hand it,
+    so a label-only apply drops taints, cordoned and address and exits 0.
+
+    Labels decide placement. `scheduler.feasible` filters on them and never
+    reads `spec.role`, so changing a role does not change what can be
+    scheduled on a node; changing its labels does.
+    """
+    if not labels and not remove:
+        raise click.ClickException("nothing to do: pass KEY=VALUE and/or --remove KEY")
+    add: dict[str, str] = {}
+    for item in labels:
+        if "=" not in item:
+            raise click.ClickException(f"malformed label {item!r}: want KEY=VALUE, e.g. gpu=true")
+        key, _, value = item.partition("=")
+        add[key] = value
+    paths_ = default_paths()
+    before = store.read_spec(paths_, "node", name)
+    try:
+        spec = node_controller.set_labels(
+            paths_, name, add=add, remove=tuple(remove), writer=_operator()
+        )
+    except LookupError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if before is not None and spec["labels"] == before.get("labels", {}):
+        click.echo(f"{name} labels already as requested (nothing to do)")
+        return
+    shown = ",".join(f"{k}={v}" for k, v in sorted(spec["labels"].items())) or "(none)"
+    click.echo(f"{name} labels [{shown}] (generation {spec['generation']})")
+
+
 @fleet.command("untaint")
 @click.argument("name")
 @click.argument("key")

@@ -577,36 +577,32 @@ node-drill-standby role=control (generation 6)
 
 `skfleet nodes` prints `role=control` throughout and looks completely correct.
 
-**There is no `skfleet label` verb.** The only path is `skfleet apply`, and
-`apply` **replaces the entire spec**, so a minimal document silently drops
+**Use `skfleet label`. It merges.**
+
+```
+skfleet label node-41 control-plane=true always-on=true
+```
+
+That is the whole step. Every other field of the spec (`taints`, `cordoned`,
+`address`, `identity`, `role`) is preserved, and the generation bumps by one.
+
+**Do NOT use `skfleet apply` for this.** `apply` replaces the entire spec from
+the document you hand it, so a minimal label-only document silently drops
 `taints`, `cordoned` and `address`. Drilled: a label-only apply on a cordoned,
-tainted node dropped both and exited 0 with no warning, un-cordoning it.
+tainted node dropped both and **exited 0 with no warning, un-cordoning it**.
+That is what this verb exists to prevent, and it is why the step above is one
+line instead of the copy-the-whole-document dance this runbook used to
+prescribe.
 
-**So write the whole document.** Read the current spec first and re-state every
-field:
-
-```
-skfleet describe node node-41 | jq '.spec'      # copy labels AND spec verbatim
-```
+**Revert:**
 
 ```
-cat > /tmp/node-41-promote.json <<'EOF'
-{"kind": "node", "name": "node-41",
- "labels": {"heavy-build": "true", "pi-harness": "true", "skcode-harness": "pi",
-            "control-plane": "true", "always-on": "true"},
- "spec": {"role": "control",
-          "cordoned": false,
-          "address": "<copy from describe, do not retype from memory>",
-          "identity": "<copy from describe>"}}
-EOF
-skfleet apply -f /tmp/node-41-promote.json
+skfleet label node-41 --remove control-plane --remove always-on
+skfleet set-role node-41 builder-standby
 ```
 
-Add any `taints` array the node already carried. If `describe` shows a field
-you do not understand, copy it anyway.
-
-**Revert:** re-apply the same document with the original labels and
-`"role": "builder-standby"`, again stating the full spec.
+Removing a label that is not set is a silent no-op, so the revert is safe to
+run twice, and safe to run when you are unsure how far the promotion got.
 
 **Verify, and this is the check that actually proves the promotion landed:**
 
@@ -624,9 +620,28 @@ costs a second spec write during the incident and the node is `Dead`, so the
 phase filter already excludes it. Do it during fail-back, or leave it. In Case B
 leave it alone, `.158` is alive and may take the seat back.
 
-Better than any of this would be for `set-role` to move role-implied labels
-itself, or for a `skfleet label` verb to exist. Both are follow-up cards from
-the drill.
+**How urgent is this today?** The label gap is real but currently LATENT for
+cronjobs, and it is worth knowing which half is which so nobody relaxes about
+the wrong one.
+
+`cron_controller` does not place anything. Its module docstring says so
+outright: "skscheduler wiring for CronJob placement is a [later card]", and it
+reads "whatever placement record (if any) already exists". Measured on the live
+tree: 22 placement records exist and **all 22 are `job` kind**, none are
+`cronjob` or `service`. So `skcapstone-backup-gfs` is not being placed by the
+scheduler at all right now, and its `control-plane` selector is not currently
+gating anything.
+
+That makes this a latent bug, not a live outage, with one important
+consequence: the failure arrives on the day cron placement gets wired, not on
+the day of the promotion, so it will not look related to either change. Move
+the labels anyway. The step is one line and the cost of skipping it is a
+control seat that silently schedules nothing.
+
+Better still would be for `set-role` to move role-implied labels itself, so
+the two can never drift apart. That is card `1859466e`, and it is a design
+decision (labels are per-node facts, roles are shared manifests) rather than
+a missing line of code.
 
 ### Step 2.3. The gateway is an address handoff, not a systemd handoff
 
