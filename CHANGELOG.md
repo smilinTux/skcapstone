@@ -27,6 +27,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `control-plane`-selecting workload, and labelling is what makes it schedulable.
 
 ### Fixed
+- **The drill's containment guard could be relocated by the caller** (card `4c32df6f`,
+  gap G0). `drill.sovereign_home()` expanded `~` through `os.path.expanduser`, which
+  prefers the `HOME` environment variable, so the definition of "production" moved
+  whenever `HOME` moved. Drilled: under a rewritten `HOME` the guard computed a
+  different forbidden prefix and ACCEPTED the real production tree as a drill root.
+  No write was performed, but the refusal that is the entire point of the guard did
+  not fire, and 10 of the other 11 refusal probes had passed, so the suite looked
+  healthy. The leading `~` is now expanded against the password database, which the
+  protected process cannot set. Negative-controlled: the new tests fail against the
+  old code and pass against the fix, with a positive control asserting a legitimate
+  scratch root is still accepted, since a guard that refused everything would satisfy
+  the other assertions while being useless.
+
 - **A Syncthing conflict copy silently overrode the real fleet object.**
   `store.list_specs` and `store.list_placements` globbed `*.json`, which also matches
   `<stem>.sync-conflict-<timestamp>-<device>.json`, and both readers key on the `name`
