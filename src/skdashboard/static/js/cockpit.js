@@ -6,6 +6,31 @@ import { renderAIComposer, wireAIComposer } from "./ai_compose.js";
 const SEV_VAR = { sev1: "sev1", sev2: "sev2", sev3: "sev3", sev4: "sev4" };
 const CHANGE_STEPS = ["proposed", "reviewing", "approved", "implementing", "deployed", "verified"];
 
+function age(value) {
+  if (value == null) return "unknown";
+  if (value < 60) return `${Math.round(value)}s`;
+  if (value < 3600) return `${Math.round(value / 60)}m`;
+  return `${(value / 3600).toFixed(1)}h`;
+}
+
+async function loadOperator() {
+  const el = document.getElementById("operator");
+  try {
+    const d = await getJSON("/api/operator/overview");
+    document.getElementById("operator-generated").textContent = timeShort(d.generated_at);
+    const conditions = (d.conditions || []).map((c) => `<tr><td>${esc(c.type)}</td><td><span class="pill ${c.status === true ? "verified" : c.status === false ? "failed" : "reviewing"}">${esc(String(c.status ?? "unknown"))}</span></td><td>${esc(c.subject || "-")}</td><td class="mono">${age(c.age_seconds)}</td><td>${esc(c.provenance || "-")}</td></tr>`).join("");
+    const actions = (d.actions || []).slice(0, 10).map((a) => `<tr><td class="mono">${esc(a.intent_id)}</td><td>${esc(a.application || "-")} · ${esc(a.action || "-")}</td><td>${esc(a.target_id || "-")}</td><td><span class="pill ${esc(a.state)}">${esc(a.state)}</span></td><td>${esc(a.change_id || "-")}</td><td>${a.verification && Object.keys(a.verification).length ? "defined" : "missing"}</td></tr>`).join("");
+    const controls = (d.execution_controls || []).map((c) => `<span class="svc"><span class="d" style="background:var(--${c.circuit_open ? "sev1" : "good"})"></span>${esc(c.fingerprint.slice(0, 10))} ${c.circuit_open ? "circuit open" : c.last_attempt ? "cooldown/armed" : "armed"}</span>`).join("");
+    const source = (name, value, detail = "") => `<div class="ops-source"><b>${name}</b><span>${value.available ? `freshness ${age(value.age_seconds)}` : `unknown · ${esc(value.error || "missing evidence")}`}</span>${detail ? `<span>${esc(detail)}</span>` : ""}</div>`;
+    const cmdbDetail = d.cmdb.available ? `scope ${(d.cmdb.scope_fingerprint || "unknown").slice(0, 12)} · ${d.cmdb.complete === true ? "complete" : "incomplete/unknown"} · audit ${d.cmdb.audit_clean === true ? "clean" : "unknown"}` : "";
+    const brainDetail = d.skbrain.available ? `${d.skbrain.status || "unknown"} · ${(d.skbrain.citations || []).length} citation(s)` : "";
+    el.innerHTML = `<div class="ops-head"><div class="kpi ${d.freeze.status === "frozen" ? "alert" : ""}"><div class="l">Actuation</div><div class="n">${esc(d.freeze.status)}</div><div class="s">${esc(d.freeze.reason || "kill switch readable")}</div></div>${source("Watchdog", d.watchdog)}${source("CMDB", d.cmdb, cmdbDetail)}${source("skbrain", d.skbrain, brainDetail)}</div>
+      <h3>Conditions and evidence age</h3><table class="itil"><thead><tr><th>Condition</th><th>Status</th><th>Subject</th><th>Age</th><th>Evidence</th></tr></thead><tbody>${conditions || '<tr><td colspan="5">No typed brief artifact; state is unknown.</td></tr>'}</tbody></table>
+      <h3>Action lifecycle and verification</h3><table class="itil"><thead><tr><th>Intent</th><th>Action</th><th>Target</th><th>State</th><th>Change</th><th>Verify</th></tr></thead><tbody>${actions || '<tr><td colspan="6">No action intents recorded.</td></tr>'}</tbody></table>
+      <h3>Cooldowns and circuits</h3><div class="svcstrip">${controls || '<span class="emptymsg">No execution-control entries.</span>'}</div>`;
+  } catch (e) { el.innerHTML = `<div class="emptymsg">Operator projection unavailable: ${esc(e.message)}</div>`; }
+}
+
 // ---- overview ----
 async function loadOverview() {
   let d;
@@ -227,13 +252,13 @@ function connectSSE() {
   const dot = document.getElementById("live-dot"), text = document.getElementById("live-text");
   let deb = null;
   const es = new EventSource("/api/events");
-  const refresh = () => { clearTimeout(deb); deb = setTimeout(() => { loadOverview(); Object.keys(discLoaded).forEach((k) => discLoaders[k]()); }, 400); };
+  const refresh = () => { clearTimeout(deb); deb = setTimeout(() => { loadOperator(); loadOverview(); Object.keys(discLoaded).forEach((k) => discLoaders[k]()); }, 400); };
   es.addEventListener("open", () => { dot.classList.add("on"); text.textContent = "live"; });
   es.addEventListener("board_changed", refresh);
   es.addEventListener("itil_changed", refresh);
   es.addEventListener("error", () => { dot.classList.remove("on"); text.textContent = "reconnecting"; });
 }
 
-loadOverview();
+loadOperator(); loadOverview();
 loadIncidents(); discLoaded.incidents = true;
 connectSSE();

@@ -91,3 +91,8 @@ table.itil tbody tr:hover{background:var(--panel2);}
 .larrow{color:var(--ink3);padding:0 8px;font-size:15px;}
 .emptymsg{padding:34px;text-align:center;color:var(--ink3);}
 @media(max-width:1000px){.kpirow{grid-template-columns:repeat(2,1fr);}.cols2{grid-template-columns:1fr;}}
+.operator-card h3{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin:16px 0 7px}
+.ops-head{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:stretch}
+.ops-source{border:1px solid var(--hair2);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:7px;font-size:12px}
+.ops-source span{color:var(--ink3);overflow-wrap:anywhere}
+@media(max-width:900px){.ops-head{grid-template-columns:1fr 1fr}}

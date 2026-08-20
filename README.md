@@ -34,3 +34,17 @@ Full deploy and rollback: [`SOP.md`](SOP.md) section 5.
 ```bash
 ~/.skenv/bin/python -m pytest tests/ -q
 ```
+
+## ATLAS operator cockpit
+
+`/cockpit` includes a read-only operator plane backed by
+`GET /api/operator/overview`. It projects typed conditions and evidence age,
+the fleet freeze, action lifecycle and verification definitions, execution
+cooldowns/circuits, watchdog freshness, CMDB scope/completeness, and skbrain
+health/citation counts. Missing or malformed evidence is shown as unknown; an
+unreadable freeze source is shown as frozen. Rendering never invokes ATLAS.
+
+Inputs default below `~/.skcapstone/fleet/atlas`. Staged deployments may use
+`SKFLEET_ROOT`, `SKATLAS_ROOT`, `SKATLAS_BRIEF_JSON`,
+`SKATLAS_ACTION_LEDGER`, `SKATLAS_CMDB_STATUS`, `SK_WATCHDOG_DIR`, and
+`SKBRAIN_OPERATOR_HEALTH` to select immutable projection artifacts.

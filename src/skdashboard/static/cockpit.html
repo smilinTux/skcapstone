@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SKDashboard — ITIL Cockpit</title>
+  <title>SKDashboard — Operator Cockpit</title>
   <link rel="stylesheet" href="/static/css/board.css">
   <link rel="stylesheet" href="/static/css/cockpit.css">
 </head>
@@ -13,7 +13,7 @@
       <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
       <div class="tabs">
         <a class="tab" data-nav="home" href="/">Status</a>
-        <a class="tab active" data-nav="cockpit" href="/cockpit">ITIL Cockpit</a>
+        <a class="tab active" data-nav="cockpit" href="/cockpit">Operator Cockpit</a>
         <a class="tab" data-nav="cmdb" href="/cmdb">Assets (CMDB)</a>
         <a class="tab" data-nav="board" href="/board">Kanban Board</a>
         <a class="tab" data-nav="assistant" href="/assistant">Assistant</a>
@@ -24,6 +24,11 @@
       </div>
       <div class="spacer"></div>
       <span class="live"><span class="dot" id="live-dot"></span><span id="live-text">connecting</span></span>
+    </div>
+
+    <div class="card operator-card" style="margin-bottom:14px;">
+      <h2>ATLAS operator plane <span class="badge" id="operator-generated">loading</span></h2>
+      <div class="cbody" id="operator"><div class="emptymsg">Loading operator evidence…</div></div>
     </div>
 
     <div class="kpirow" id="kpis"></div>

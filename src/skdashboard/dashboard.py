@@ -732,6 +732,7 @@ def create_app(home: Path):
     from . import consent as consent_plane
     from . import dashboard_itil as di
     from . import dashboard_kanban as dk
+    from . import dashboard_operator as dop
     from . import queue_authz
     from .surface_registry import resolve_card_id
 
@@ -1683,6 +1684,7 @@ def create_app(home: Path):
         Route("/assistant", _page("assistant.html")),
         Route("/cockpit", cockpit_page),
         Route("/api/itil/overview", lambda r: _json(di.get_overview(home))),
+        Route("/api/operator/overview", lambda r: _json(dop.get_operator_cockpit(home))),
         Route("/api/itil/incidents", lambda r: _json(di.get_incidents(home))),
         Route("/api/itil/problems", lambda r: _json(di.get_problems(home))),
         Route("/api/itil/changes", lambda r: _json(di.get_changes(home))),
