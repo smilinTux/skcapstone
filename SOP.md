@@ -52,13 +52,13 @@ flowchart TB
     OP["operator browser<br/>loopback only"]
 
     subgraph UNIT["systemd user unit: skcapstone-dashboard.service"]
-      CLI["skcapstone dashboard --port 7778<br/>(skcapstone CLI, cli/status.py)"]
+      CLI["skcapstone dashboard --host 127.0.0.1 --port 7778<br/>(skcapstone CLI, cli/status.py)"]
       SHIM["skcapstone.dashboard<br/>alias shim, lives in skcapstone"]
       CLI --> SHIM
     end
 
     subgraph PKG["skdashboard (this repo)"]
-      APP["dashboard.py<br/>create_app + start_dashboard<br/>uvicorn 127.0.0.1:7778"]
+      APP["dashboard.py<br/>create_app + start_dashboard<br/>uvicorn configurable host:7778"]
       PANELS["dashboard_kanban / _itil / _cmdb<br/>_overview / _economy / _assistant"]
       REG["surface_registry.py<br/>ItemRef to shadow-card id"]
       AUTHZ["queue_authz.py<br/>PEP: token / pdp / both"]
@@ -89,7 +89,8 @@ flowchart TB
 1. **`src/skdashboard/dashboard.py`**. The whole service.
    `DEFAULT_DASHBOARD_PORT = 7778`, `create_app(home)` builds the route list and every
    handler as a closure, `_capability_gate` is the one authorization body all write
-   routes call, `_UvicornServer` binds `127.0.0.1`, and `start_dashboard(home, port)`
+   routes call, `_UvicornServer` binds the requested address, and
+   `start_dashboard(home, host, port)`
    returns the server the caller drives with `serve_forever()`. Line numbers are
    deliberately not quoted here: they drift on every edit. Grep the symbol.
 2. **`src/skdashboard/dashboard_kanban.py`**. Board state, card mutations
@@ -230,20 +231,30 @@ systemctl --user restart skcapstone-dashboard.service
 | Property | Value |
 |---|---|
 | Tier | Internal operator surface. Not public, not Funnel-exposed. |
-| Bind address | **`127.0.0.1:7778`**, hardcoded. `uvicorn.Config(app, host="127.0.0.1", port=port, ...)` at `dashboard.py:1495`. The `--port` flag moves the port; **nothing moves the interface.** |
+| Bind address | **`127.0.0.1:7778` by default.** `skcapstone dashboard --host ADDRESS --port 7778` deliberately selects another interface. |
 | Public `:443` routes | **None.** There is no Cloudflare/Funnel/reverse-proxy route to this service. |
 | Confirmed live | `ss -ltnp` shows `LISTEN 127.0.0.1:7778` owned by the process named `skcapstone`. |
 | Health / self-report | `GET /api/doctor` (a JSON diagnostic report). There is **no `/health` route.** The module manifest advertises `GET /api/status` as its health URL. |
 
-Reaching it from another machine is an operator decision made outside this repo (an SSH
-tunnel or the tailnet). Do not "fix" the loopback bind to widen access: the authz gate
-is loopback-open by default (section 6), so the bind **is** the access control today.
+Reaching it from another machine remains an explicit operator decision. Prefer an SSH
+tunnel or a tailnet address. `--host 0.0.0.0` exposes every interface and must only be
+used with host firewall/tailnet controls and an armed authorization mode (section 6).
+The safe default remains loopback because the bind is part of the access-control posture.
 
 ## 6. Configuration / Usage
 
 **There is no skdashboard config file.** No YAML, TOML, JSON, or dotenv is read by this
 package. Configuration is exactly two things: the `home` path passed to
-`create_app(home)` / `start_dashboard(home, ...)`, and environment variables.
+`create_app(home)` / `start_dashboard(home, host, port)`, CLI bind options, and
+environment variables.
+
+```bash
+# Safe default: local browser only.
+skcapstone dashboard --port 7778
+
+# Deliberate fleet exposure; prefer the node's tailnet address to all interfaces.
+skcapstone dashboard --host 100.x.y.z --port 7778 --no-open
+```
 
 `home` is the skcapstone agent home. The CLI defaults it to skcapstone's `AGENT_HOME`
 and exposes it as `--home`; the unit selects the agent with `SKAGENT` /
@@ -395,7 +406,7 @@ behavior.
    Fixing the docstring is a follow-up, deliberately not bundled into a docs-only PR.
 
 <!-- docs-evidence
-verified: 2026-08-16
+verified: 2026-08-20
 checks:
   - name: card-mutate route is gated (section 7, SECURITY.md route table)
     run: grep -q 'capability=_CAP_CARD_MUTATE' src/skdashboard/dashboard.py
@@ -407,8 +418,8 @@ checks:
     run: test "$(grep -c 'if not os.environ.get("SKAI_AUTHZ") and not os.environ.get("SKAI_QUEUE_TOKEN"):' src/skdashboard/dashboard.py)" = "1"
   - name: documented port 7778 still the module default
     run: grep -q 'DEFAULT_DASHBOARD_PORT = 7778' src/skdashboard/dashboard.py
-  - name: bind is still loopback-only (section 5 Exposure)
-    run: grep -q 'host="127.0.0.1", port=port' src/skdashboard/dashboard.py
+  - name: bind remains loopback by default but accepts an explicit host
+    run: grep -q 'home: Path, host: str = "127.0.0.1", port:' src/skdashboard/dashboard.py && grep -q 'uvicorn.Config(app, host=host, port=port' src/skdashboard/dashboard.py
   - name: /api/doctor is still a registered route
     run: grep -q 'Route("/api/doctor"' src/skdashboard/dashboard.py
   - name: still no /health route (SOP says there is none)

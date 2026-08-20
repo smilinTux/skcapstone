@@ -1736,12 +1736,10 @@ class _UvicornServer:
     Signal handlers are disabled so it can run inside a worker thread.
     """
 
-    def __init__(self, app, port: int) -> None:
+    def __init__(self, app, host: str, port: int) -> None:
         import uvicorn
 
-        config = uvicorn.Config(
-            app, host="127.0.0.1", port=port, log_level="warning", access_log=False
-        )
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False)
         self._server = uvicorn.Server(config)
 
     def serve_forever(self) -> None:
@@ -1758,11 +1756,14 @@ class _UvicornServer:
         self._server.should_exit = True
 
 
-def start_dashboard(home: Path, port: int = DEFAULT_DASHBOARD_PORT) -> "_UvicornServer":
+def start_dashboard(
+    home: Path, host: str = "127.0.0.1", port: int = DEFAULT_DASHBOARD_PORT
+) -> "_UvicornServer":
     """Start the dashboard server (Starlette + uvicorn).
 
     Args:
         home: Agent home directory.
+        host: Address or interface to bind. Defaults to loopback.
         port: Port to listen on.
 
     Returns:
@@ -1770,5 +1771,5 @@ def start_dashboard(home: Path, port: int = DEFAULT_DASHBOARD_PORT) -> "_Uvicorn
         stop with ``shutdown()``.
     """
     app = create_app(home)
-    logger.info("Dashboard running at http://127.0.0.1:%d", port)
-    return _UvicornServer(app, port)
+    logger.info("Dashboard running at http://%s:%d", host, port)
+    return _UvicornServer(app, host, port)

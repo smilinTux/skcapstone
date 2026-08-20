@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `start_dashboard()` now accepts an explicit bind address for the SKCapstone
+  dashboard CLI's `--host` option. Loopback remains the secure default.
+
 ### Security
 
 - **Three write routes no longer bypass the authorization gate** (coord card
