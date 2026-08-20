@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import hashlib
 import time
+from datetime import datetime
 from typing import Any, Callable
 
 from ..fleet import store
 from ..fleet.paths import default_paths
 from . import (
+    action_ledger,
     brain,
     brief,
     cmdb_adapter,
@@ -154,6 +156,9 @@ def _run_once(
     target_known: Callable[[dict], bool] | None = None,
     execution_state: safety.ExecutionState | None = None,
     require_verified_actions: bool = False,
+    lifecycle_ledger: action_ledger.ActionLedger | None = None,
+    catalog_generation: str = "operatorapp-current",
+    ledger_actor: str = "atlas",
     deadline: float | None = None,
 ) -> dict:
     """Run one operator pass.
@@ -214,6 +219,44 @@ def _run_once(
     outcomes: list[dict] = []
     for i, pl in enumerate(planned):
         prop, disp = pl["proposal"], pl["disposition"]
+        intent_id: str | None = None
+        if lifecycle_ledger is not None:
+            created_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+            intent = action_ledger.ActionIntent(
+                condition_fingerprint=safety.action_fingerprint(prop),
+                application=str(prop.get("app") or "unknown"),
+                target_kind=str(prop.get("target_kind") or "CI"),
+                target_id=str(prop.get("object") or "unknown"),
+                action=str(prop.get("action") or "unknown"),
+                catalog_generation=str(prop.get("catalog_generation") or catalog_generation),
+                created_at=created_at,
+                itil_change_id=prop.get("change_id") or prop.get("itil_change_id"),
+                cmdb_ci_id=prop.get("ci_id") or prop.get("cmdb_ci_id"),
+                verification=dict(prop.get("verification") or {}),
+                rollback=dict(prop.get("rollback") or {}),
+            )
+            lifecycle_ledger.create(
+                intent,
+                actor=ledger_actor,
+                evidence_ref=prop.get("evidence_ref"),
+            )
+            intent_id = intent.intent_id
+            current = lifecycle_ledger.current_state(intent_id)
+            if current is action_ledger.ActionState.OBSERVED:
+                lifecycle_ledger.append(
+                    intent_id,
+                    action_ledger.ActionState.DIAGNOSED,
+                    occurred_at=created_at,
+                    actor=ledger_actor,
+                )
+                current = action_ledger.ActionState.DIAGNOSED
+            if current is action_ledger.ActionState.DIAGNOSED:
+                lifecycle_ledger.append(
+                    intent_id,
+                    action_ledger.ActionState.PROPOSED,
+                    occurred_at=created_at,
+                    actor=ledger_actor,
+                )
         if disp == "auto" and execute and apply_fn is not None:
             # Per-proposal isolation, mirroring the fail-safe observe side: one bad
             # proposal must not abort the pass. Without this a single raise skipped
@@ -230,6 +273,21 @@ def _run_once(
                     eligible, reason = execution_state.eligibility(fingerprint, time.time())
                     if not eligible:
                         raise RuntimeError(f"execution suppressed: {reason}")
+                if intent_id is not None:
+                    event_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                    lifecycle_ledger.append(
+                        intent_id,
+                        action_ledger.ActionState.AUTHORIZED,
+                        occurred_at=event_at,
+                        actor=ledger_actor,
+                        detail={"disposition": disp},
+                    )
+                    lifecycle_ledger.append(
+                        intent_id,
+                        action_ledger.ActionState.EXECUTING,
+                        occurred_at=event_at,
+                        actor=ledger_actor,
+                    )
                 attempt_started = True
                 result = apply_fn(prop, pl["classification"])
                 # All actuation contracts return either a direct ``performed``
@@ -239,9 +297,10 @@ def _run_once(
                     performed = (result.get("actuation") or {}).get("performed")
                 if performed is False:
                     raise RuntimeError("actuator reported performed=False")
-                if require_verified_actions and performed is not True:
+                proof_required = require_verified_actions or lifecycle_ledger is not None
+                if proof_required and performed is not True:
                     raise RuntimeError("actuator omitted performed=True proof")
-                if require_verified_actions:
+                if require_verified_actions or lifecycle_ledger is not None:
                     verified, reason = _verify_postcondition(
                         adapters, prop, paths, now_iso, ptypes
                     )
@@ -249,6 +308,13 @@ def _run_once(
                         raise RuntimeError(reason)
                 if execution_state is not None:
                     execution_state.record(fingerprint, time.time(), success=True)
+                if intent_id is not None:
+                    lifecycle_ledger.append(
+                        intent_id,
+                        action_ledger.ActionState.VERIFIED,
+                        occurred_at=datetime.fromisoformat(now_iso.replace("Z", "+00:00")),
+                        actor=ledger_actor,
+                    )
                 outcome = "verified" if require_verified_actions else "applied"
             except Exception as exc:
                 if execution_state is not None and attempt_started:
@@ -265,6 +331,26 @@ def _run_once(
                         decision_id=_decision_id(prop, now_iso, i),
                         created_iso=now_iso,
                     )
+                if (
+                    intent_id is not None
+                    and lifecycle_ledger.current_state(intent_id)
+                    is action_ledger.ActionState.EXECUTING
+                ):
+                    event_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                    lifecycle_ledger.append(
+                        intent_id,
+                        action_ledger.ActionState.FAILED,
+                        occurred_at=event_at,
+                        actor=ledger_actor,
+                        detail={"reason": str(exc)},
+                    )
+                    lifecycle_ledger.append(
+                        intent_id,
+                        action_ledger.ActionState.ESCALATED,
+                        occurred_at=event_at,
+                        actor=ledger_actor,
+                        detail={"decision_parked": decisions_dir is not None},
+                    )
                 outcome = f"failed: {exc}"
         elif disp == "auto":
             outcome = "auto-ready (execution off)"
@@ -278,7 +364,14 @@ def _run_once(
             outcome = "escalated (parked for approval)"
         else:
             outcome = "escalate (no decision store)"
-        outcomes.append({"action": prop.get("action"), "disposition": disp, "outcome": outcome})
+        outcomes.append(
+            {
+                "action": prop.get("action"),
+                "disposition": disp,
+                "outcome": outcome,
+                "intent_id": intent_id,
+            }
+        )
 
     report = brain.format_report(the_brief, proposals)
     if outcomes:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from skcapstone.fleet import sknoded, store
 from skcapstone.fleet.paths import FleetPaths
-from skcapstone.operator_seat import loop
+from skcapstone.operator_seat import action_ledger, loop
 
 
 def _enroll(tmp_path, monkeypatch):
@@ -320,6 +320,7 @@ def test_verified_execution_reobserves_and_requires_condition_clear(tmp_path, mo
 
     monkeypatch.setattr(loop, "ADAPTERS", {"demo": observe})
     prop = {"app": "demo", "condition": "Ready", "action": "restart", "object": "svc"}
+    ledger = action_ledger.ActionLedger(tmp_path / "action-ledger")
     res = loop.run_once(
         paths,
         now_iso="2026-08-20T00:00:00Z",
@@ -329,10 +330,22 @@ def test_verified_execution_reobserves_and_requires_condition_clear(tmp_path, mo
         execute=True,
         require_verified_actions=True,
         execution_state=loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=0),
+        lifecycle_ledger=ledger,
         emit=lambda _s: None,
     )
     assert calls == {"observe": 2, "apply": 1}
     assert res["outcomes"][0]["outcome"] == "verified"
+    intent_id = res["outcomes"][0]["intent_id"]
+    assert intent_id is not None
+    assert ledger.current_state(intent_id) is action_ledger.ActionState.VERIFIED
+    assert [event.state.value for event in ledger.events(intent_id)] == [
+        "observed",
+        "diagnosed",
+        "proposed",
+        "authorized",
+        "executing",
+        "verified",
+    ]
 
 
 def test_performed_false_is_a_failure(tmp_path, monkeypatch):
