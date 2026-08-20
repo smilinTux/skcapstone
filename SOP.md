@@ -171,6 +171,15 @@ reintroduce a dependency-free install here.
 
 ## 5. Release / Deploy
 
+### 2026-08-20 rollout record
+
+The verified-human CAB change shipped through PR `#16`. The reviewed head passed
+201 pytest cases, Ruff, JavaScript syntax checks, and GitGuardian before merge.
+The rollout adds `POST /api/change/{id}/cab-vote`, operator-session verification,
+schedule-window controls, and a separate deployment-arm action. Deploy from GitHub
+with the editable install/restart procedure below; do not copy individual files to a
+live checkout.
+
 This repo has **two release surfaces, and only one of them is complete.**
 
 ### Library release (complete)
