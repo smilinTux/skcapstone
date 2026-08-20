@@ -864,7 +864,7 @@ The runtime is large; the modules that matter most for understanding the data fl
 | `sync/` | `vault.py` (collect/push/pull GPG seeds) + `engine.py` + `backends.py` (Syncthing / Git / Local) |
 | `coordination.py` + `coord_federation.py` | the Syncthing-synced multi-agent task board + cross-cluster federation |
 | `scheduler_jobs.py` + `scheduler_runner.py` + `scheduler_state.py` | **skscheduler** — the fleet job scheduler (`JobSpec`, node affinity, jitter, sk-alert hooks) |
-| `itil.py` + `cli/itil.py` + `mcp_tools/itil_tools.py` | the ITIL ops primitives (incident/problem/change/CAB/KEDB) that **skops** reuses |
+| `itil.py` + `cli/itil.py` + `mcp_tools/itil_tools.py` | the ITIL ops primitives (incident/problem/change/CAB/KEDB) governed by **ATLAS** |
 | `cli/` | the `skcapstone` Click command tree (one `register_*_commands` module per command group) |
 | `mcp_tools/` | the `skcapstone-mcp` server tools — 80+ tools (memory, coord, did, soul, comm, itil, …) proxying every subsystem to MCP clients |
 | `connectors/` | platform bridges (VSCode · Cursor · terminal) into the same runtime |
@@ -904,7 +904,7 @@ flowchart TD
       COORD["coord board"]
       SCHED["skscheduler"]
       ALERT["sk-alert"]
-      ITILP["ITIL tools<br/>(reused by skops)"]
+      ITILP["ITIL tools<br/>(governed by ATLAS)"]
     end
 
     subgraph COMMS["comms"]
@@ -934,9 +934,11 @@ flowchart TD
     style SKCAP fill:#2d6a4f,color:#fff,stroke:#1b4332
 ```
 
-skops sits *on top of* this layer: it consumes skcapstone's ITIL tools, coord store,
-`sk-alert` bus, and `skscheduler` rather than reimplementing them — see
-[skops/docs/ARCHITECTURE.md](https://github.com/smilinTux/skops/blob/main/docs/ARCHITECTURE.md).
+ATLAS sits on top of this layer as the cognitive operations controller. It uses
+skcapstone's ITIL tools, coordination store, `sk-alert` bus, and scheduler through
+typed, governed action lifecycles. The former `skops` repository is retained only
+as archive history and must not be restored to deployment manifests, catalogs, or
+dashboard routes.
 
 ---
 

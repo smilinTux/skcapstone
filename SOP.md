@@ -33,7 +33,7 @@ sync — behind one CLI and one MCP server.
   request shaping).
 - The shared **platform primitives** it hosts for the fleet: the Syncthing-synced
   **coord board**, the **skscheduler** job scheduler, the **sk-alert** bus, and the
-  **ITIL** ops tools (reused by [skops](https://github.com/smilinTux/skops)).
+  **ITIL** ops tools governed by ATLAS. The former `skops` consumer is archive-only.
 - The **pillar initializers** (`pillars/identity|memory|trust|security|sync`) that wire
   the sibling `sk*` packages into a single `~/.skcapstone/` home.
 - The `skcapstone` CLI command tree and the `skcapstone-mcp` server (130+ tools; §7
