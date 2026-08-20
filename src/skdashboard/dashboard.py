@@ -1117,6 +1117,99 @@ def create_app(home: Path):
         events = consent_plane.consent_history_for_change(mgr, rid)
         return _json({"id": rid, "events": events})
 
+    async def api_change_cab_vote(request):
+        """POST /api/change/{id}/cab-vote - verified human CAB decision.
+
+        This route is intentionally stricter than the other change PEPs. A
+        capability token authorizes the action, but only a CapAuth operator
+        session proves a human is at the keyboard. The self-asserted
+        ``X-SK-Actor`` header can never satisfy this route.
+
+        SKCoord currently recognizes the reserved voter ``human`` as the
+        CAB-major approval. The verified device subject is therefore kept in
+        the consent event and vote conditions while ``subject="human"`` binds
+        the fold-visible vote. This bridge can be removed when SKCoord carries
+        voter role separately from voter identity.
+        """
+        from skcoord.itil import Change, ITILManager
+        from starlette.responses import Response
+
+        change_id = request.path_params["id"]
+        verified_actor = consent_plane.resolve_consent_actor(request)
+        if not verified_actor.get("verified"):
+            return Response(
+                json.dumps({"error": "a verified CapAuth operator session is required"}),
+                status_code=401,
+                media_type="application/json",
+            )
+
+        actor_id = verified_actor["id"]
+        gate = _change_gate(
+            request, resource=change_id, capability="change.cab_vote", actor=actor_id
+        )
+        if not gate["ok"]:
+            return _change_deny(gate["reason"])
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        cab_decision = str(body.get("decision") or "").strip().lower()
+        if cab_decision not in {"approved", "rejected", "abstain"}:
+            return Response(
+                json.dumps({"error": "decision must be approved, rejected, or abstain"}),
+                status_code=400,
+                media_type="application/json",
+            )
+
+        mgr = ITILManager(home)
+        rid, err = _resolve_change_or_404(mgr, change_id)
+        if err is not None:
+            return err
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+        if chg.status.value not in {"proposed", "reviewing"}:
+            return Response(
+                json.dumps(
+                    {
+                        "error": "CAB voting is only valid while a change is proposed or reviewing",
+                        "status": chg.status.value,
+                    }
+                ),
+                status_code=409,
+                media_type="application/json",
+            )
+
+        supplied_conditions = str(body.get("conditions") or "").strip()
+        audit_prefix = f"verified operator {actor_id}; session {verified_actor['session']}"
+        conditions = (
+            f"{audit_prefix}; conditions: {supplied_conditions}"
+            if supplied_conditions
+            else audit_prefix
+        )
+        _persist_change_consent(
+            request, mgr, rid=rid, capability="change.cab_vote", decision=gate
+        )
+        vote = mgr.submit_cab_vote(
+            rid,
+            agent=actor_id,
+            decision=cab_decision,
+            conditions=conditions,
+            subject="human",
+        )
+        chg = mgr._fold_record(mgr.changes_dir, rid, Change)
+        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor_id})
+        return _json(
+            {
+                "submitted": True,
+                "id": chg.id,
+                "status": chg.status.value,
+                "decision": vote.decision.value,
+                "operator": actor_id,
+                "verified": True,
+                "conditions": supplied_conditions,
+            }
+        )
+
     async def api_change_validate(request):
         """POST /api/change/{id}/validate - PEP change.validate (attested).
 
@@ -1671,6 +1764,7 @@ def create_app(home: Path):
         Route("/api/card/{card_id}/queue-ai", api_queue_ai, methods=["POST"]),
         Route("/api/card/{card_id}/consent", api_card_consent),
         Route("/api/change/{id}/consent", api_change_consent),
+        Route("/api/change/{id}/cab-vote", api_change_cab_vote, methods=["POST"]),
         Route("/api/change/{id}/validate", api_change_validate, methods=["POST"]),
         Route("/api/change/{id}/schedule", api_change_schedule, methods=["POST"]),
         Route("/api/change/{id}/arm", api_change_arm, methods=["POST"]),

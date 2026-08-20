@@ -6,7 +6,7 @@ import { esc, getJSON, toast, authHeaders } from "./api.js";
 const AGENTS = ["lumina", "opus", "jarvis"];
 
 // Render the composer HTML. `run` is the card's current meta.agent_run (or null).
-export function renderAIComposer(run) {
+export function renderAIComposer(run, context = "card") {
   let status = "";
   if (run) {
     const acts = (run.activity || []).slice(-6).map((a) =>
@@ -18,20 +18,21 @@ export function renderAIComposer(run) {
       ${run.links && run.links.pr ? `· ${esc(run.links.pr)}` : ""}</div><div class="act">${acts}</div>`;
   }
   const agentOpts = AGENTS.map((a) => `<option value="${a}">${a}</option>`).join("");
+  const isChange = context === "change";
   return `<div class="psec ai-sec">
-    <div class="st">🤖 AI next steps</div>
+    <div class="st">${isChange ? "AI draft preparation" : "🤖 AI next steps"}</div>
     ${status}
     <div class="ai-suggest" id="e-suggest"><span class="fl" style="color:var(--ink3);font-size:11px">loading recommendations…</span></div>
     <textarea class="notebox" id="e-instruction" placeholder="Describe the next steps, or pick a recommendation above…"></textarea>
     <div style="display:flex;gap:7px;align-items:center;margin-top:8px;flex-wrap:wrap">
       <div class="seg" id="e-mode">
-        <span class="on" data-mode="propose">propose</span><span data-mode="dry-run">dry-run</span><span data-mode="execute">execute</span>
+        <span class="on" data-mode="propose">propose</span><span data-mode="dry-run">dry-run</span>${isChange ? "" : '<span data-mode="execute">execute</span>'}
       </div>
       <select class="picker" id="e-agent">${agentOpts}</select>
       <span style="flex:1"></span>
-      <button class="btn ai" id="e-queue">🔒 Queue for AI</button>
+      <button class="btn ai" id="e-queue">${isChange ? "Queue draft work" : "🔒 Queue for AI"}</button>
     </div>
-    <div class="locknote">🔒 capauth-gated · execute on a change ticket needs a CAB vote first</div>
+    <div class="locknote">${isChange ? "AI work here prepares a draft only. Human CAB approval, scheduling, and deployment confirmation use the controls above." : "🔒 capauth-gated"}</div>
   </div>`;
 }
 

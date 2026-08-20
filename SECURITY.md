@@ -70,6 +70,7 @@ this table cannot silently drift back.
 | Routes | Gate |
 |---|---|
 | `POST /api/card/{id}/queue-ai`, `POST /api/queue/{surface}/{id}` | `_queue_gate` (capability `agentrun.execute` for `mode=execute`, otherwise `agentrun.queue`) |
+| `POST /api/change/{id}/cab-vote` | `_change_gate` with `change.cab_vote`, plus a verified `x-operator-token`; the asserted actor header cannot satisfy this route |
 | `POST /api/change/{id}/{validate,schedule,arm,verify}`, `GET /api/change/{id}/pir-draft` | `_change_gate` (explicit `change.*` capability) |
 | `POST /api/assistant` mutations | `_ai_capability_ok`, the coarse boolean form of `_queue_gate` |
 | `POST /api/card/{id}/{action}` (note, move, assign, and the rest of the board mutations) | `_capability_gate`, **interim** capability `agentrun.queue` |
@@ -88,7 +89,7 @@ and reseed the CMDB.** Narrowing that needs a capauth rule, not a change here.
 
 ### `X-SK-Actor` is asserted, not authenticated
 
-**This is the sharper of the two problems, and it is still open.** Both `_change_actor`
+**This remains open for most routes.** Both `_change_actor`
 and the card-mutation path take the actor from the `X-SK-Actor` request header, which
 this package does **not** verify. It is trusted because it is expected to be set by an
 authenticating layer in front of the dashboard, and no such layer is deployed today.
@@ -102,7 +103,11 @@ does not have to present a capability either. Authenticating the human at the do
 Unified Consent Plane epic's job (capauth-minted capabilities carried in
 `x-sk-capability`), not this repo's, and a partial capability check invented here would be
 worse than the honest gap. Treat every actor string in this system's records accordingly
-until that epic lands.
+until that epic lands. The human CAB route is the narrow exception: it ignores
+`X-SK-Actor` for identity, requires `capauth.pairing.verify_operator_session` to accept
+`x-operator-token`, and records the verified device subject and operator session in the
+consent event. The operator token is submitted from a password input and is not stored
+in browser local or session storage.
 
 ### `GET /api/auth/capability` hands out the header, it does not authenticate anyone
 
