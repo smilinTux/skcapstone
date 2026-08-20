@@ -102,6 +102,19 @@ def test_impact_reports_dependents(seeded: Path) -> None:
     assert payload["dependents"] == []
 
 
+def test_transitive_impact_and_audit_are_exposed(seeded: Path) -> None:
+    mgr = CMDBManager(seeded)
+    host = mgr.create_ci("testnode", "host")
+    mgr.add_relationship("ci-service-skgateway", "test", "runs_on", host.id)
+
+    impact = run("impact", host.id, "--transitive", "--max-depth", "2", "--json")
+    assert impact.exit_code == 0
+    assert [item["id"] for item in json.loads(impact.output)["dependents"]] == [
+        "ci-service-skgateway"
+    ]
+    assert json.loads(run("audit", "--json").output) == []
+
+
 # ── the two ways this could mislead ───────────────────────────────────────
 
 
@@ -258,3 +271,139 @@ def test_no_local_and_no_host_means_no_runners() -> None:
     from skcapstone.cli.cmdb import _build_runners
 
     assert _build_runners((), local=False) == []
+
+
+# ── bounded network orchestration ────────────────────────────────────────
+
+
+class _Target:
+    host = "nor"
+
+
+class _Discovered:
+    ci_id = "ci-host-nor"
+
+
+class _Scan:
+    def __init__(self, complete: bool) -> None:
+        self.complete = complete
+        self.discovered = [_Discovered()]
+
+    def scope_fingerprint(self) -> str:
+        return "scope-v1"
+
+
+class _Orchestration:
+    def __init__(self, home: Path, complete: bool) -> None:
+        self.home = home
+        self.complete = complete
+        self.lifecycle_calls = []
+
+    def resolve_targets(self, _home):
+        return [_Target()]
+
+    def scan_network(self, _home, _targets, runner_factory):
+        runner_factory("nor")
+        return _Scan(self.complete)
+
+    def apply_retirement_lifecycle(self, *args, **kwargs):
+        self.lifecycle_calls.append((args, kwargs))
+        return []
+
+    def run_reconcile(self, _mgr, _scan, **kwargs):
+        return {
+            "scan_id": "run-1",
+            "reconcile": {
+                "created": [], "updated": {}, "unchanged": [], "orphans": [],
+                "counts": {"created": 0, "updated": 0, "unchanged": 0, "orphans": 0,
+                           "retired": 0},
+            },
+        }, []
+
+    def write_run_artifact(self, home, artifact):
+        directory = Path(home) / "cmdb" / "reconcile-runs"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{artifact['scan_id']}.json"
+        path.write_text(json.dumps(artifact))
+        path.with_suffix(".sha256").write_text("abc  run-1.json\n")
+        return path, "abc"
+
+
+class _Resolver:
+    def resolve_ssh(self, _reference):
+        return {
+            "username": "ops",
+            "identity_file": "/unused/id",
+            "known_hosts_file": "/unused/known_hosts",
+        }
+
+
+@pytest.fixture
+def secure_runner(monkeypatch: pytest.MonkeyPatch):
+    built = []
+
+    def factory(targets, values):
+        assert [target.host for target in targets] == ["nor"]
+        assert values == ("nor=skvault://cmdb/nor",)
+        return lambda host: built.append(host) or object()
+
+    monkeypatch.setattr("skcapstone.cli.cmdb._secure_runner_factory", factory)
+    return built
+
+
+def test_network_apply_rejects_incomplete_scan(
+    home: Path, monkeypatch: pytest.MonkeyPatch, secure_runner
+) -> None:
+    orchestration = _Orchestration(home, complete=False)
+    monkeypatch.setattr("skcapstone.cli.cmdb._orchestration", lambda: orchestration)
+
+    result = run(
+        "reconcile", "--network", "--credential", "nor=skvault://cmdb/nor", "--apply"
+    )
+
+    assert result.exit_code != 0
+    assert "network scan is incomplete" in result.output
+    assert orchestration.lifecycle_calls == []
+    assert not (home / "cmdb" / "reconcile-runs").exists()
+
+
+def test_network_apply_runs_scoped_lifecycle_and_persists_artifact(
+    home: Path, monkeypatch: pytest.MonkeyPatch, secure_runner
+) -> None:
+    orchestration = _Orchestration(home, complete=True)
+    monkeypatch.setattr("skcapstone.cli.cmdb._orchestration", lambda: orchestration)
+    mgr = CMDBManager(home)
+    mgr.create_ci(
+        "old",
+        "host",
+        attributes={"source_authority": "network:ssh", "lifecycle_scope": "scope-v1"},
+        tags=["discovered"],
+    )
+
+    result = run(
+        "reconcile", "--network", "--credential", "nor=skvault://cmdb/nor",
+        "--apply", "--json",
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["artifact"]["sha256"] == "abc"
+    assert (home / "cmdb" / "reconcile-runs" / "run-1.json").is_file()
+    assert (home / "cmdb" / "reconcile-runs" / "run-1.sha256").is_file()
+    args, kwargs = orchestration.lifecycle_calls[0]
+    assert args[1:6] == (
+        "network:fleet", "scope-v1", ["ci-host-nor"], ["ci-host-old"], True
+    )
+    assert kwargs["apply"] is True
+
+
+def test_network_requires_explicit_in_scope_credentials(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    orchestration = _Orchestration(home, complete=True)
+    monkeypatch.setattr("skcapstone.cli.cmdb._orchestration", lambda: orchestration)
+
+    result = run("reconcile", "--network")
+
+    assert result.exit_code != 0
+    assert "missing --credential mapping" in result.output

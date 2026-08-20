@@ -60,6 +60,64 @@ def _orchestration():
     return mod
 
 
+def _vault_transport():
+    """Return the installed skvault SSH metadata adapter.
+
+    Kept as a small seam so distributions can provide the adapter without the
+    CLI ever accepting key paths or secret material directly.
+    """
+    try:
+        from skvault import resolve_ssh
+    except (ImportError, AttributeError) as exc:  # pragma: no cover - install dependent
+        raise click.ClickException(
+            "skvault does not expose resolve_ssh; install the CMDB SSH adapter"
+        ) from exc
+
+    class Transport:
+        def resolve_ssh(self, reference):
+            return resolve_ssh(reference)
+
+    return Transport()
+
+
+def _credential_references(values: tuple[str, ...]) -> dict[str, str]:
+    """Parse explicit HOST=skvault://... mappings without resolving secrets."""
+    references = {}
+    for value in values:
+        host, separator, reference = value.partition("=")
+        if not separator or not host.strip() or not reference.startswith("skvault://"):
+            raise click.ClickException(
+                "--credential must be HOST=skvault://REFERENCE (repeat per target)"
+            )
+        if host.strip() in references:
+            raise click.ClickException(f"duplicate --credential mapping for {host.strip()}")
+        references[host.strip()] = reference
+    return references
+
+
+def _secure_runner_factory(targets, values: tuple[str, ...]):
+    """Build a target runner factory backed only by explicit skvault refs."""
+    references = _credential_references(values)
+    missing = sorted(target.host for target in targets if target.host not in references)
+    extra = sorted(set(references) - {target.host for target in targets})
+    if missing:
+        raise click.ClickException(
+            "missing --credential mapping for network target(s): " + ", ".join(missing)
+        )
+    if extra:
+        raise click.ClickException(
+            "credential mapping is outside fleet scope: " + ", ".join(extra)
+        )
+    from skcoord.infrastructure_discovery import (
+        SecureSSHRunner,
+        SKVaultCredentialResolver,
+    )
+
+    resolver = SKVaultCredentialResolver(_vault_transport())
+    credentials = {host: resolver.resolve(reference) for host, reference in references.items()}
+    return lambda host: SecureSSHRunner(host, credentials[host])
+
+
 def _build_runners(hosts: tuple[str, ...], local: bool):
     """Turn --host/--local into runners. No host means no observation."""
     if not local and not hosts:
@@ -208,10 +266,17 @@ def register_cmdb_commands(main: click.Group) -> None:
         is_flag=True,
         help="Scan the authoritative fleet target set with bounded concurrency.",
     )
+    @click.option(
+        "--credential",
+        "credentials",
+        multiple=True,
+        metavar="HOST=SKVAULT_REF",
+        help="Explicit skvault SSH credential reference. Repeat for every network target.",
+    )
     @click.option("--apply", is_flag=True, help="Write the changes. Off by default.")
     @click.option("--agent", default="cmdb-discovery", help="Writer name for the event log.")
     @click.option("--json", "as_json", is_flag=True, help="Emit the report as JSON.")
-    def cmdb_reconcile(host, local, network, apply, agent, as_json):
+    def cmdb_reconcile(host, local, network, credentials, apply, agent, as_json):
         """Converge the CMDB on discovered state. Additive: never deletes."""
         disc = _discovery()
         run_scan, run_reconcile = disc.scan, disc.reconcile
@@ -226,14 +291,48 @@ def register_cmdb_commands(main: click.Group) -> None:
             targets = orch.resolve_targets(home)
             if not targets:
                 raise click.ClickException("--network resolved no authoritative fleet targets")
+            runner_factory = _secure_runner_factory(targets, credentials)
             scan_result = orch.scan_network(
                 home,
                 targets,
-                lambda target: disc.SSHRunner(host=target, target=target),
+                runner_factory,
+            )
+            if apply and not scan_result.complete:
+                raise click.ClickException(
+                    "refusing --apply: network scan is incomplete; inspect collector health"
+                )
+            scope_fingerprint = scan_result.scope_fingerprint()
+            discovered_ids = [item.ci_id for item in scan_result.discovered]
+            owned_ids = [
+                ci.id
+                for ci in mgr.list_cis()
+                if "discovered" in (ci.tags or [])
+                and str(ci.attributes.get("source_authority", "")).startswith("network:")
+                and ci.attributes.get("lifecycle_scope") == scope_fingerprint
+            ]
+            lifecycle_actions = orch.apply_retirement_lifecycle(
+                mgr,
+                "network:fleet",
+                scope_fingerprint,
+                discovered_ids,
+                owned_ids,
+                scan_result.complete,
+                apply=apply,
+                agent=agent,
             )
             artifact, _events = orch.run_reconcile(
-                mgr, scan_result, apply=apply, code_version="skcapstone"
+                mgr,
+                scan_result,
+                apply=apply,
+                code_version="skcapstone",
+                lifecycle_actions=lifecycle_actions,
             )
+            if apply:
+                artifact_path, checksum = orch.write_run_artifact(home, artifact)
+                artifact["artifact"] = {
+                    "path": str(artifact_path),
+                    "sha256": checksum,
+                }
             report_data = artifact["reconcile"]
         else:
             found = run_scan(home, runners=_build_runners(host, local))
