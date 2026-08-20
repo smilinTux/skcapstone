@@ -21,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Human CAB controls in the Operator Cockpit now provide dedicated Approve,
+  Reject, and Abstain actions. `POST /api/change/{id}/cab-vote` requires both
+  the `change.cab_vote` capability and a verified CapAuth operator session;
+  `X-SK-Actor` alone cannot cast a human vote. The verified device identity is
+  retained in the append-only consent record and vote audit conditions.
+- Approved changes now expose scheduling controls with ASAP, tonight 10 PM to
+  2 AM, tomorrow 10 PM to 2 AM, and editable local-time windows. Scheduled
+  changes expose a separate deployment arm action. The AI panel on a change is
+  labeled as draft preparation and no longer offers execute mode.
+- Regression coverage for missing and invalid operator sessions, capability
+  denial, approve/reject/abstain folding, lifecycle conflicts, unknown changes,
+  consent attribution, and the human no-self-approval guard (incident
+  `inc-6cf27bda`, coordination card `adab5895`).
+
 - `start_dashboard()` now accepts an explicit bind address for the SKCapstone
   dashboard CLI's `--host` option. Loopback remains the secure default.
 

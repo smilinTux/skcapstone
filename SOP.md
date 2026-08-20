@@ -312,7 +312,7 @@ list near the end of `create_app` in `src/skdashboard/dashboard.py`.
 | `/.well-known/skworld-module.json` | the SKWorld module manifest, unauthenticated public discovery metadata, no secrets |
 
 **Mutating APIs (POST):** `/api/card/{card_id}/{action}`, `/api/card/{card_id}/queue-ai`,
-`/api/queue/{surface}/{id}`, `/api/change/{id}/{validate,schedule,arm,verify}`,
+`/api/queue/{surface}/{id}`, `/api/change/{id}/{cab-vote,validate,schedule,arm,verify}`,
 `/api/cmdb/seed`, `/api/models/advertise`, `/api/assistant`.
 
 Every one of those POST routes passes through `_capability_gate`; the route-to-capability
@@ -323,7 +323,16 @@ if a POST route stops calling a gate.
 authenticating layer in front of the dashboard, and **not verified here**) and
 `X-SK-Capability` (the capability token the gate checks). Read `SECURITY.md` before
 relying on either: the gate is loopback-open by default, and the actor header is
-self-asserted.
+self-asserted. `POST /api/change/{id}/cab-vote` additionally requires
+`X-Operator-Token`; it is the only route here that currently rejects an unverified
+human identity even while the general capability gate is loopback-open.
+
+**Operator Cockpit change controls:** proposed or reviewing changes show verified CAB
+Approve, Reject, and Abstain controls. Approved changes show ASAP, tonight 10 PM to
+2 AM, tomorrow 10 PM to 2 AM, and editable local-time schedule options. Browser-local
+times are converted to ISO timestamps before submission. Scheduled changes show a
+separate arm action. The operator session token remains only in the password field and
+is cleared after a successful vote; it is never written to browser storage.
 
 Every shipped client (`api.js`, `assistant.js`, `ai_compose.js`, `cmdb.js`,
 `models.html`) sources both headers from `GET /api/auth/capability` (coord card
@@ -346,6 +355,7 @@ and does not provide.
 | Code change deployed but the UI is unchanged | The process is long-lived. `systemctl --user restart skcapstone-dashboard.service`. An editable install alone changes nothing already imported. |
 | Board is empty, or cards do not move | This repo only renders skcoord's store. Check the coordination store and `SKCOORD_CARD_STORE`; card status truth lives in `card_events/*.jsonl`, not `tasks/*.json`. |
 | Queue-AI / change buttons return 403 | Someone set `SKAI_AUTHZ` or `SKAI_QUEUE_TOKEN`. The moment either is set the gate goes live: the browser now presents whatever `SKAI_QUEUE_TOKEN` / `SKAI_OPERATOR_ACTOR` this process is configured with (via `GET /api/auth/capability`), so a 403 usually means one of those two is unset, wrong, or `SKAI_OPERATOR_ACTOR` names a subject the PDP has no granted token for (`agentrun.queue`/`agentrun.execute`/`change.*`/`skgateway.admin` are separate grants - a subject can hold some and not others). Unset both authz vars to return to loopback-open, or configure a real, enrolled actor. |
+| Human CAB action returns 401 | The CapAuth operator session token is missing, expired, revoked, or invalid. Mint or renew an approved device session and paste it into the CAB token field. `X-SK-Actor` cannot satisfy this route. |
 | `/api/doctor` is stale | 30-second cache by design (`_DOCTOR_CACHE_TTL`). Wait it out. |
 | `/api/models` returns 502 | skgateway is down or `SKGATEWAY_URL` is wrong (default `http://localhost:18780`, 3-second timeout). |
 | Assistant or economy panel is empty but the page loads | Both lazy-import optional siblings (`skharness`, `skcapstone.skjoule`) and return a well-formed empty payload plus an `errors` note rather than a 500. Read the `errors` field. |
@@ -414,6 +424,8 @@ checks:
     run: ! grep -q 'Route("/api/cmdb/seed", lambda' src/skdashboard/dashboard.py
   - name: models advertise is gated on the documented skgateway.admin capability
     run: grep -q '_CAP_MODELS_ADVERTISE = "skgateway.admin"' src/skdashboard/dashboard.py
+  - name: human CAB route requires the dedicated capability and verified operator
+    run: grep -q 'capability="change.cab_vote"' src/skdashboard/dashboard.py && grep -q 'if not verified_actor.get("verified")' src/skdashboard/dashboard.py
   - name: exactly ONE gate body, short-circuiting only when BOTH authz vars are unset
     run: test "$(grep -c 'if not os.environ.get("SKAI_AUTHZ") and not os.environ.get("SKAI_QUEUE_TOKEN"):' src/skdashboard/dashboard.py)" = "1"
   - name: documented port 7778 still the module default

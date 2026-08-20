@@ -90,6 +90,16 @@ table.itil tbody tr:hover{background:var(--panel2);}
 .lnode.chg{border-left:3px solid var(--change);}
 .larrow{color:var(--ink3);padding:0 8px;font-size:15px;}
 .emptymsg{padding:34px;text-align:center;color:var(--ink3);}
+.cab-controls{background:color-mix(in srgb,var(--change) 6%,var(--panel));border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);}
+.control-note{font-size:11px;color:var(--ink3);line-height:1.45;margin-bottom:10px;}
+.control-label{display:flex;flex-direction:column;gap:5px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-top:8px;}
+.control-input{width:100%;box-sizing:border-box;font-size:12px;padding:8px 10px;border:1px solid var(--hair);border-radius:8px;background:var(--panel);color:var(--ink);}
+.control-input:focus,.cab-controls .notebox:focus{outline:2px solid color-mix(in srgb,var(--accent) 32%,transparent);border-color:var(--accent);}
+.control-actions,.schedule-presets{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;}
+.schedule-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.cab-approve{background:var(--done);color:#fff;border-color:transparent;}
+.cab-reject{background:var(--crit);color:#fff;border-color:transparent;}
+@media(max-width:620px){.schedule-fields{grid-template-columns:1fr;}}
 @media(max-width:1000px){.kpirow{grid-template-columns:repeat(2,1fr);}.cols2{grid-template-columns:1fr;}}
 .operator-card h3{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin:16px 0 7px}
 .ops-head{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:stretch}

@@ -1,10 +1,10 @@
 // ITIL cockpit: overview KPIs, breach-risk, CAB queue, discipline tables, and
 // record detail (stepper + lineage + timeline). Live-refreshes over SSE.
-import { esc, getJSON, toast, timeShort } from "./api.js";
+import { authHeaders, esc, getJSON, toast, timeShort } from "./api.js";
 import { renderAIComposer, wireAIComposer } from "./ai_compose.js";
 
 const SEV_VAR = { sev1: "sev1", sev2: "sev2", sev3: "sev3", sev4: "sev4" };
-const CHANGE_STEPS = ["proposed", "reviewing", "approved", "implementing", "deployed", "verified"];
+const CHANGE_STEPS = ["proposed", "reviewing", "approved", "scheduled", "implementing", "deployed", "verified"];
 
 function age(value) {
   if (value == null) return "unknown";
@@ -220,12 +220,147 @@ function renderRecord(panel, d) {
       ${d.kind === "problem" ? `<div class="notes">status <b>${esc(r.status)}</b>${r.root_cause ? "<br>root cause: " + esc(r.root_cause) : ""}${r.workaround ? "<br>workaround: " + esc(r.workaround) : ""}</div>` : ""}
       ${d.kind === "change" ? `<div class="notes">type <b>${esc(r.change_type)}</b> · risk <b>${esc(r.risk)}</b>${r.rollback_plan ? "<br>rollback: " + esc(r.rollback_plan) : ""}</div>` : ""}
     </div>
+    ${d.kind === "change" ? renderChangeControls(r) : ""}
     ${lineage}
     <div class="psec"><div class="st">Timeline · ${(d.timeline||[]).length} entries</div><div class="act">${tl || '<span style="color:var(--ink3);font-size:11px">no entries</span>'}</div></div>
-    ${renderAIComposer((r.meta && r.meta.agent_run) || null)}`;
+    ${renderAIComposer((r.meta && r.meta.agent_run) || null, d.kind === "change" ? "change" : "record")}`;
   panel.querySelector(".pclose").addEventListener("click", closePanel);
   panel.querySelectorAll(".lnode[data-rec]").forEach((n) => n.addEventListener("click", () => { const [k, id] = n.dataset.rec.split(":"); openRecord(k, id); }));
+  if (d.kind === "change") wireChangeControls(panel, r);
   wireAIComposer(panel, r.id, () => openRecord(d.kind, r.id));
+}
+
+function localInputValue(date) {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function maintenanceWindow(daysAhead) {
+  const start = new Date();
+  start.setDate(start.getDate() + daysAhead);
+  start.setHours(22, 0, 0, 0);
+  if (daysAhead === 0 && start <= new Date()) start.setDate(start.getDate() + 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  end.setHours(2, 0, 0, 0);
+  return { start: localInputValue(start), end: localInputValue(end) };
+}
+
+function renderChangeControls(change) {
+  const status = change.status;
+  if (["proposed", "reviewing"].includes(status)) {
+    return `<div class="psec cab-controls">
+      <div class="st">Human CAB decision</div>
+      <div class="control-note">A verified CapAuth operator session is required. The token stays in this form and is not saved by the browser.</div>
+      <label class="control-label" for="cab-token">Operator session token</label>
+      <input class="control-input mono" id="cab-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste CapAuth operator session token">
+      <label class="control-label" for="cab-conditions">Conditions or decision note</label>
+      <textarea class="notebox" id="cab-conditions" placeholder="Optional approval conditions or rejection reason"></textarea>
+      <div class="control-actions">
+        <button class="btn cab-approve" data-cab-decision="approved">Approve</button>
+        <button class="btn cab-reject" data-cab-decision="rejected">Reject</button>
+        <button class="btn" data-cab-decision="abstain">Abstain</button>
+      </div>
+    </div>`;
+  }
+  if (status === "approved") {
+    const tonight = maintenanceWindow(0);
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
+    return `<div class="psec cab-controls">
+      <div class="st">Schedule approved change</div>
+      <div class="control-note">Choose ASAP or an out-of-hours window. Times below use ${esc(timezone)} and are stored as ISO timestamps.</div>
+      <div class="schedule-presets">
+        <button class="btn" data-schedule-preset="asap">Schedule ASAP, 4 hours</button>
+        <button class="btn" data-schedule-preset="tonight">Use tonight, 10 PM to 2 AM</button>
+        <button class="btn" data-schedule-preset="tomorrow">Use tomorrow, 10 PM to 2 AM</button>
+      </div>
+      <div class="schedule-fields">
+        <label class="control-label">Start<input class="control-input" id="schedule-start" type="datetime-local" value="${tonight.start}"></label>
+        <label class="control-label">End<input class="control-input" id="schedule-end" type="datetime-local" value="${tonight.end}"></label>
+      </div>
+      <textarea class="notebox" id="schedule-note" placeholder="Optional scheduling note"></textarea>
+      <div class="control-actions"><button class="btn cab-approve" id="schedule-custom">Schedule selected window</button></div>
+    </div>`;
+  }
+  if (status === "scheduled") {
+    return `<div class="psec cab-controls">
+      <div class="st">Deployment confirmation</div>
+      <div class="control-note">Scheduling does not deploy. Arm this change only when the operator is ready for the deployment runner to proceed.</div>
+      <textarea class="notebox" id="arm-note" placeholder="Optional arm note"></textarea>
+      <div class="control-actions"><button class="btn cab-approve" id="arm-change">Arm deployment</button></div>
+    </div>`;
+  }
+  return "";
+}
+
+async function postChange(changeId, action, body, operatorToken) {
+  const headers = await authHeaders({ "Content-Type": "application/json" });
+  if (operatorToken) headers["X-Operator-Token"] = operatorToken;
+  const response = await fetch(`/api/change/${encodeURIComponent(changeId)}/${action}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body || {}),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.error) throw new Error(data.error || `${action} failed`);
+  return data;
+}
+
+function wireChangeControls(panel, change) {
+  panel.querySelectorAll("[data-cab-decision]").forEach((button) => button.addEventListener("click", async () => {
+    const token = panel.querySelector("#cab-token").value.trim();
+    if (!token) { toast("operator session token required", true); return; }
+    const conditions = panel.querySelector("#cab-conditions").value.trim();
+    try {
+      const result = await postChange(change.id, "cab-vote", { decision: button.dataset.cabDecision, conditions }, token);
+      panel.querySelector("#cab-token").value = "";
+      toast(`${result.decision} by verified operator`);
+      loadOverview(); loadChanges(); openRecord("change", change.id);
+    } catch (e) { toast(e.message, true); }
+  }));
+
+  const setWindow = (window) => {
+    panel.querySelector("#schedule-start").value = window.start;
+    panel.querySelector("#schedule-end").value = window.end;
+  };
+  panel.querySelectorAll("[data-schedule-preset]").forEach((button) => button.addEventListener("click", async () => {
+    const preset = button.dataset.schedulePreset;
+    if (preset === "asap") {
+      try {
+        await postChange(change.id, "schedule", { asap: true, deploy_mode: "confirm", note: "ASAP four hour window selected in operator cockpit" });
+        toast("change scheduled ASAP");
+        loadOverview(); loadChanges(); openRecord("change", change.id);
+      } catch (e) { toast(e.message, true); }
+      return;
+    }
+    setWindow(maintenanceWindow(preset === "tomorrow" ? 1 : 0));
+  }));
+
+  const scheduleButton = panel.querySelector("#schedule-custom");
+  if (scheduleButton) scheduleButton.addEventListener("click", async () => {
+    const start = panel.querySelector("#schedule-start").value;
+    const end = panel.querySelector("#schedule-end").value;
+    if (!start || !end || new Date(end) <= new Date(start)) { toast("choose a valid schedule window", true); return; }
+    try {
+      await postChange(change.id, "schedule", {
+        window_start: new Date(start).toISOString(),
+        window_end: new Date(end).toISOString(),
+        deploy_mode: "confirm",
+        note: panel.querySelector("#schedule-note").value.trim(),
+      });
+      toast("change window scheduled");
+      loadOverview(); loadChanges(); openRecord("change", change.id);
+    } catch (e) { toast(e.message, true); }
+  });
+
+  const armButton = panel.querySelector("#arm-change");
+  if (armButton) armButton.addEventListener("click", async () => {
+    try {
+      await postChange(change.id, "arm", { note: panel.querySelector("#arm-note").value.trim() });
+      toast("deployment armed");
+      openRecord("change", change.id);
+    } catch (e) { toast(e.message, true); }
+  });
 }
 
 function closePanel() {
