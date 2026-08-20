@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Recorded the tested PR #16 CAB rollout and GitHub-first deployment procedure in
   the SOP so the live service is updated from a traceable repository commit.
 
+### Fixed
+
+- Restored the missing `main` push trigger in `publish.yml`; without it, the
+  documented automatic patch-tag job was unreachable except by manual dispatch.
+
 ### Added
 
 - Human CAB controls in the Operator Cockpit now provide dedicated Approve,
