@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -81,6 +81,7 @@ class ActionIntent(BaseModel):
     cmdb_ci_id: str | None = Field(default=None, max_length=256)
     verification: dict[str, Any] = Field(default_factory=dict)
     rollback: dict[str, Any] = Field(default_factory=dict)
+    authorization_ref: str | None = Field(default=None, min_length=1, max_length=1024)
 
     @field_validator("schema_id")
     @classmethod
@@ -100,6 +101,7 @@ class ActionIntent(BaseModel):
             "catalog_generation": self.catalog_generation,
             "itil_change_id": self.itil_change_id,
             "cmdb_ci_id": self.cmdb_ci_id,
+            "authorization_ref": self.authorization_ref,
         }
 
     @model_validator(mode="after")
@@ -126,17 +128,31 @@ class ActionEvent(BaseModel):
     evidence_ref: str | None = Field(default=None, max_length=1024)
     detail: dict[str, Any] = Field(default_factory=dict)
     previous_hash: str | None = None
+    signature_suite: str | None = None
+    signature: str | None = None
     event_hash: str
 
 
 class ActionLedger:
     """Filesystem-backed intent cores and append-only lifecycle event streams."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        signer: Callable[[bytes], str] | None = None,
+        verifier: Callable[[bytes, str], bool] | None = None,
+        require_signatures: bool = False,
+    ) -> None:
         self.root = Path(root)
         self.intents_dir = self.root / "intents"
         self.events_dir = self.root / "events"
         self.lock_path = self.root / ".lock"
+        self.signer = signer
+        self.verifier = verifier
+        self.require_signatures = require_signatures
+        if require_signatures and (signer is None or verifier is None):
+            raise ValueError("signed action ledger requires signer and verifier")
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
@@ -163,6 +179,16 @@ class ActionLedger:
     def _event_hash(event: ActionEvent) -> str:
         material = event.model_dump(mode="json", exclude={"event_hash"})
         return hashlib.sha256(_canonical(material)).hexdigest()
+
+    @staticmethod
+    def _signature_material(payload: dict[str, Any]) -> bytes:
+        """Return the event bytes bound to the actor and authorization reference."""
+        normalized = ActionEvent.model_validate(
+            {**payload, "event_hash": payload.get("event_hash") or "pending"}
+        ).model_dump(mode="json")
+        return _canonical(
+            {k: v for k, v in normalized.items() if k not in {"event_hash", "signature"}}
+        )
 
     def create(
         self,
@@ -245,7 +271,11 @@ class ActionLedger:
             "evidence_ref": evidence_ref,
             "detail": detail,
             "previous_hash": events[-1].event_hash if events else None,
+            "signature_suite": "capauth-pgp-v1" if self.signer is not None else None,
+            "signature": None,
         }
+        if self.signer is not None:
+            payload["signature"] = self.signer(self._signature_material(payload))
         payload["event_hash"] = "pending"
         provisional = ActionEvent.model_validate(payload)
         payload["event_hash"] = self._event_hash(provisional)
@@ -289,6 +319,14 @@ class ActionLedger:
                 or event.event_hash != self._event_hash(event)
             ):
                 raise ValueError(f"broken action event hash chain at line {line_number}")
+            if event.signature is None:
+                if self.require_signatures:
+                    raise ValueError(f"unsigned action event at line {line_number}")
+            elif self.verifier is None:
+                if self.require_signatures:
+                    raise ValueError(f"action event verifier unavailable at line {line_number}")
+            elif not self.verifier(self._signature_material(raw), event.signature):
+                raise ValueError(f"invalid action event signature at line {line_number}")
             events.append(event)
         return events
 

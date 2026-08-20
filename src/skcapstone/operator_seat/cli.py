@@ -20,11 +20,12 @@ from datetime import datetime, timezone
 
 import click
 
-from ..fleet import store
+from ..fleet import signing, store
 from ..fleet.operatorapp_controller import operatorapp_rows
 from ..fleet.paths import default_paths
 from . import (
     act_dispatch,
+    action_ledger,
     bootstrap,
     brief_publish,
     decisions,
@@ -164,6 +165,7 @@ def run_cmd(
         return proposer.propose(brief, explain, chat=chat)
 
     apply_fn = None
+    rollback_fn = None
     if execute and honor:
         # CR-9.1: physically actuate auto STANDARD-catalog fixes (fleet + skchat),
         # each recorded as an ITIL change first. Freeze is enforced by the act verbs.
@@ -173,6 +175,7 @@ def run_cmd(
         apply_fn = act_dispatch.build_apply_fn(
             paths, now, itil=ITILManager(SHARED_ROOT), emit=click.echo
         )
+        rollback_fn = act_dispatch.build_rollback_fn(paths)
     elif execute:
 
         def apply_fn(prop, cls):  # noqa: E731 - annotation-only act verb (no --honor)
@@ -183,6 +186,21 @@ def run_cmd(
     # Each observe closure receives now_iso from the loop when it is called.
     extra_observers = discovery.discover_observers()
 
+    ledger = None
+    if honor:
+        signer = signing.capauth_signer()
+        verifier = signing.capauth_verifier()
+        if signer is None or verifier is None:
+            raise click.ClickException(
+                "HONOR requires a usable CapAuth signer and trusted verifier; failing closed"
+            )
+        ledger = action_ledger.ActionLedger(
+            paths.root / "atlas" / "action-ledger",
+            signer=signer,
+            verifier=verifier,
+            require_signatures=True,
+        )
+
     res = loop.run_once(
         paths,
         now_iso=now,
@@ -190,6 +208,7 @@ def run_cmd(
         explain=explain,
         decisions_dir=_decisions_dir(paths),
         apply_fn=apply_fn,
+        rollback_fn=rollback_fn,
         execute=execute,
         emit=click.echo,
         extra_observers=extra_observers,
@@ -202,6 +221,8 @@ def run_cmd(
         # Physical execution is allowed only for a proposal bound to its owning
         # app + condition, human-ratified there, and verified by re-observation.
         require_verified_actions=honor,
+        require_signed_catalog=honor,
+        lifecycle_ledger=ledger,
     )
     if honor:
         click.echo("honor: ON (CR-9.1 step-1 physical actuation: fleet + skchat)")

@@ -359,3 +359,45 @@ def test_performed_false_is_a_failure(tmp_path, monkeypatch):
         emit=lambda _s: None,
     )
     assert res["outcomes"][0]["outcome"].startswith("failed:")
+
+
+def test_failed_verification_executes_typed_rollback(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    human = store.Writer(role="operator", node="node-158", identity="chef")
+    store.write_spec(
+        paths,
+        "operatorapp",
+        "demo",
+        {
+            "name": "demo",
+            "conditions": ["Ready"],
+            "proposedStandardActions": ["restart"],
+            "ratifiedStandardActions": ["restart"],
+        },
+        writer=human,
+    )
+    observer = lambda _p, _n: {  # noqa: E731
+        "conditions": [{"type": "Ready", "status": "False", "object": "svc"}]
+    }
+    monkeypatch.setattr(loop, "ADAPTERS", {"demo": observer})
+    ledger = action_ledger.ActionLedger(tmp_path / "ledger")
+    rollbacks = []
+    result = loop.run_once(
+        paths,
+        now_iso="2026-08-20T00:00:00Z",
+        propose=lambda _b, _r: [{
+            "app": "demo", "condition": "Ready", "action": "restart",
+            "object": "svc", "rollback": {"action": "restart"},
+        }],
+        explain={"actions": [{"name": "restart", "standard": True, "reversible": True}]},
+        apply_fn=lambda _p, _c: {"performed": True},
+        rollback_fn=lambda p, c, r: rollbacks.append((p, c, r)) or {"performed": True},
+        execute=True,
+        require_verified_actions=True,
+        lifecycle_ledger=ledger,
+        emit=lambda _s: None,
+    )
+
+    intent_id = result["outcomes"][0]["intent_id"]
+    assert len(rollbacks) == 1
+    assert ledger.current_state(intent_id) is action_ledger.ActionState.ROLLED_BACK

@@ -132,3 +132,28 @@ def test_rejects_path_like_ids_and_unknown_intents(tmp_path) -> None:
 def test_rejects_forged_stable_id() -> None:
     with pytest.raises(ValueError, match="does not match"):
         _intent(intent_id="ai-" + "0" * 24)
+
+
+def test_signed_events_are_bound_to_authorization_and_verified(tmp_path) -> None:
+    secret = b"test-ledger-key"
+
+    def signer(data: bytes) -> str:
+        import hashlib
+
+        return hashlib.sha256(secret + data).hexdigest()
+
+    ledger = ActionLedger(
+        tmp_path, signer=signer, verifier=lambda data, sig: signer(data) == sig,
+        require_signatures=True,
+    )
+    intent = _intent(authorization_ref="capauth://grant/grant-123")
+    event = ledger.create(intent, actor="atlas")
+
+    assert event.signature
+    assert ledger.read_intent(intent.intent_id).authorization_ref.endswith("grant-123")
+    assert ledger.events(intent.intent_id)[0].signature == event.signature
+
+
+def test_signed_ledger_fails_closed_without_crypto(tmp_path) -> None:
+    with pytest.raises(ValueError, match="requires signer and verifier"):
+        ActionLedger(tmp_path, require_signatures=True)

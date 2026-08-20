@@ -15,7 +15,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
-from ..fleet import store
+from ..fleet import signing, store
 from ..fleet.paths import default_paths
 from . import (
     action_ledger,
@@ -99,7 +99,7 @@ def _decision_id(proposal: dict, now_iso: str, index: int) -> str:
     return hashlib.sha1(seed.encode()).hexdigest()[:12]
 
 
-def _operatorapp_allows(paths, proposal: dict) -> bool:
+def _operatorapp_allows(paths, proposal: dict, *, require_signature: bool = False) -> bool:
     """Require an app-scoped, declared condition and human-ratified action."""
     app = proposal.get("app")
     condition = proposal.get("condition")
@@ -107,10 +107,38 @@ def _operatorapp_allows(paths, proposal: dict) -> bool:
     if not all(isinstance(value, str) and value for value in (app, condition, action)):
         return False
     record = store.read_spec(paths, "operatorapp", app)
+    if require_signature:
+        verifier = signing.capauth_verifier()
+        if verifier is None or record is None:
+            return False
+        verdict, _ = signing.verify_payload(record, verifier)
+        if verdict != "verified":
+            return False
+        expected_generation = str(record.get("generation") or "")
+        supplied_generation = proposal.get("catalog_generation")
+        if not supplied_generation or str(supplied_generation) != expected_generation:
+            return False
     spec = (record or {}).get("spec") or {}
     return condition in spec.get("conditions", []) and action in spec.get(
         "ratifiedStandardActions", []
     )
+
+
+def _bind_signed_catalog_generation(paths, proposal: dict) -> dict:
+    """Bind a proposal to the verified OperatorApp generation, never a fallback."""
+    app = proposal.get("app")
+    if not isinstance(app, str) or not app:
+        return dict(proposal)
+    record = store.read_spec(paths, "operatorapp", app)
+    verifier = signing.capauth_verifier()
+    if record is None or verifier is None:
+        return dict(proposal)
+    verdict, _ = signing.verify_payload(record, verifier)
+    if verdict != "verified" or not record.get("generation"):
+        return dict(proposal)
+    bound = dict(proposal)
+    bound["catalog_generation"] = str(record["generation"])
+    return bound
 
 
 def _condition_firing(condition: dict, problem_types: set[str]) -> bool:
@@ -164,12 +192,14 @@ def _run_once(
     explain: dict | None = None,
     decisions_dir=None,
     apply_fn: Callable[[dict, dict], Any] | None = None,
+    rollback_fn: Callable[[dict, dict, Any], Any] | None = None,
     execute: bool = False,
     emit: Callable[[str], Any] = print,
     extra_observers: dict[str, Callable[..., dict]] | None = None,
     target_known: Callable[[dict], bool] | None = None,
     execution_state: safety.ExecutionState | None = None,
     require_verified_actions: bool = False,
+    require_signed_catalog: bool = False,
     lifecycle_ledger: action_ledger.ActionLedger | None = None,
     catalog_generation: str = "operatorapp-current",
     ledger_actor: str = "atlas",
@@ -238,13 +268,19 @@ def _run_once(
     the_brief = brief.build_brief(observations, ptypes)
     route = brain.route_brain(the_brief)
     proposals = list(propose(the_brief, route))
+    if require_signed_catalog:
+        proposals = [_bind_signed_catalog_generation(paths, item) for item in proposals]
 
     explain = explain if explain is not None else fleet_adapter.fleet_explain()
     planned = plan.plan_actions(
         proposals,
         explain,
         target_known=target_known,
-        action_allowed=(lambda proposal: _operatorapp_allows(paths, proposal))
+        action_allowed=(
+            lambda proposal: _operatorapp_allows(
+                paths, proposal, require_signature=require_signed_catalog
+            )
+        )
         if require_verified_actions
         else None,
     )
@@ -267,6 +303,7 @@ def _run_once(
                 cmdb_ci_id=prop.get("ci_id") or prop.get("cmdb_ci_id"),
                 verification=dict(prop.get("verification") or {}),
                 rollback=dict(prop.get("rollback") or {}),
+                authorization_ref=prop.get("authorization_ref"),
             )
             lifecycle_ledger.create(
                 intent,
@@ -298,6 +335,7 @@ def _run_once(
             # emitted at all. Broad by intent: any actuation failure is contained,
             # recorded on the outcome, and reported.
             attempt_started = False
+            result: Any = None
             try:
                 if deadline is not None:
                     safety.assert_before_deadline(deadline)
@@ -370,6 +408,20 @@ def _run_once(
                         decision_id=_decision_id(prop, now_iso, i),
                         created_iso=now_iso,
                     )
+                rollback_result: Any = None
+                rollback_error: Exception | None = None
+                if attempt_started and rollback_fn is not None and prop.get("rollback"):
+                    try:
+                        rollback_result = rollback_fn(prop, pl["classification"], result)
+                        rollback_performed = (
+                            rollback_result.get("performed")
+                            if isinstance(rollback_result, dict)
+                            else None
+                        )
+                        if rollback_performed is not True:
+                            raise RuntimeError("rollback omitted performed=True proof")
+                    except Exception as rb_exc:  # noqa: BLE001 - contain rollback failure
+                        rollback_error = rb_exc
                 if (
                     intent_id is not None
                     and lifecycle_ledger.current_state(intent_id)
@@ -383,14 +435,30 @@ def _run_once(
                         actor=ledger_actor,
                         detail={"reason": str(exc)},
                     )
-                    lifecycle_ledger.append(
-                        intent_id,
-                        action_ledger.ActionState.ESCALATED,
-                        occurred_at=event_at,
-                        actor=ledger_actor,
-                        detail={"decision_parked": decisions_dir is not None},
-                    )
-                outcome = f"failed: {exc}"
+                    if rollback_result is not None and rollback_error is None:
+                        lifecycle_ledger.append(
+                            intent_id,
+                            action_ledger.ActionState.ROLLED_BACK,
+                            occurred_at=event_at,
+                            actor=ledger_actor,
+                            detail={"result": rollback_result},
+                        )
+                    else:
+                        lifecycle_ledger.append(
+                            intent_id,
+                            action_ledger.ActionState.ESCALATED,
+                            occurred_at=event_at,
+                            actor=ledger_actor,
+                            detail={
+                                "decision_parked": decisions_dir is not None,
+                                "rollback_error": str(rollback_error) if rollback_error else None,
+                            },
+                        )
+                outcome = (
+                    f"failed then rolled back: {exc}"
+                    if rollback_result is not None and rollback_error is None
+                    else f"failed: {exc}"
+                )
         elif disp == "auto":
             outcome = "auto-ready (execution off)"
         elif decisions_dir is not None:
