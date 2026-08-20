@@ -463,6 +463,19 @@ skcapstone mcp           # run the MCP server (skcapstone-mcp)
 | `doctor` / `preflight` / `metrics` / `logs` | health + observability |
 | `agents` / `agent` | team blueprints + per-agent capability manifest |
 
+**Dashboard listener (`:7778`).** The dashboard remains loopback-only by default.
+Use the supported bind option when a governed fleet deployment needs another
+interface:
+
+```bash
+skcapstone dashboard --host 127.0.0.1 --port 7778
+skcapstone dashboard --host 100.x.y.z --port 7778 --no-open  # tailnet example
+```
+
+`--host 0.0.0.0` deliberately exposes every interface. Pair it with host firewall or
+tailnet controls and dashboard authorization; do not widen the bind accidentally in a
+unit file. The CLI passes the address to `skdashboard.start_dashboard()`.
+
 **Daemon HTTP endpoints** (bind `127.0.0.1:<port>`, per agent; **9383 for `lumina`**,
 not 7777; see §5; JSON unless noted):
 

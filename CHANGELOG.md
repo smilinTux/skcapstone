@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `skcapstone dashboard --host ADDRESS` and propagated the selected bind
+  address to SKDashboard. The default remains `127.0.0.1`; the SOP documents
+  deliberate tailnet or all-interface exposure.
+
 ## [0.15.17] - 2026-08-20
 
 ### Added
