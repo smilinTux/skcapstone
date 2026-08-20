@@ -260,6 +260,35 @@ def status_cmd() -> None:
     click.echo("FROZEN (Atlas stands down)" if frozen else "active (freeze off)")
 
 
+@operator.command("schedule-doctor")
+def schedule_doctor_cmd() -> None:
+    """Read-only comparison of ATLAS units with effective user-systemd config."""
+    from pathlib import Path
+
+    from skcapstone import systemd_drift
+
+    source = Path(__file__).resolve().parents[3] / "data" / "systemd"
+    results = systemd_drift.audit(
+        source, ("skoperator.service", "skoperator.timer")
+    )
+    dirty = False
+    for result in results:
+        if result.clean:
+            click.echo(f"clean: {result.unit}")
+            continue
+        dirty = True
+        if result.unavailable:
+            click.echo(f"unavailable: {result.unit}: {result.unavailable}")
+        for field in result.missing:
+            click.echo(f"missing: {result.unit} {field}")
+        for field in result.changed:
+            click.echo(f"changed: {result.unit} {field}")
+        for field in result.extra:
+            click.echo(f"extra: {result.unit} {field}")
+    if dirty:
+        raise click.ClickException("effective systemd configuration has drift")
+
+
 @operator.command("freeze")
 @click.option("--reason", default="", help="Why the fleet is being frozen.")
 def freeze_cmd(reason: str) -> None:
