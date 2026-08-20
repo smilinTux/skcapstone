@@ -61,6 +61,47 @@ def run(*args):
     return CliRunner().invoke(main, ["cmdb", *args])
 
 
+def _legacy_cmdb(home: Path) -> Path:
+    record = home / "cmdb" / "ci-host-legacy"
+    record.mkdir(parents=True)
+    core = record / "core.json"
+    core.write_text(json.dumps({"id": "ci-host-legacy", "ci_type": "host", "name": "legacy"}))
+    return core
+
+
+def test_migrate_schema_defaults_to_dry_run(home: Path) -> None:
+    core = _legacy_cmdb(home)
+    original = core.read_bytes()
+
+    result = run("migrate-schema", "--json")
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["applied"] is False
+    assert report["cores"] == 1
+    assert core.read_bytes() == original
+    assert list(home.glob("cmdb.backup-*")) == []
+
+
+def test_migrate_schema_apply_retains_backup(home: Path) -> None:
+    core = _legacy_cmdb(home)
+
+    result = run("migrate-schema", "--apply", "--json")
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["applied"] is True
+    assert Path(report["backup"]).is_dir()
+    assert json.loads(core.read_text())["schema_version"] == 2
+
+
+def test_migrate_schema_rejects_backup_path_during_dry_run(home: Path) -> None:
+    result = run("migrate-schema", "--backup-path", str(home / "backup"))
+
+    assert result.exit_code != 0
+    assert "only meaningful with --apply" in result.output
+
+
 # ── list / show ───────────────────────────────────────────────────────────
 
 

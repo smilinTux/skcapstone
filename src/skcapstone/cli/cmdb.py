@@ -195,6 +195,45 @@ def register_cmdb_commands(main: click.Group) -> None:
         for rel in ci.relationships:
             console.print(f"  [cyan]{rel.rel_type}[/cyan] -> {rel.target}")
 
+    # ── cmdb migrate-schema ──────────────────────────────────────────
+
+    @cmdb.command("migrate-schema")
+    @click.option("--apply", is_flag=True, help="Perform the atomic cutover. Off by default.")
+    @click.option(
+        "--backup-path",
+        type=click.Path(path_type=Path),
+        help="Retained backup path beside cmdb/ (apply only).",
+    )
+    @click.option("--json", "as_json", is_flag=True, help="Emit the migration report as JSON.")
+    def cmdb_migrate_schema(apply, backup_path, as_json):
+        """Plan or apply the physical CMDB v1-to-v2 migration.
+
+        The default is a write-free dry run. Applying stages and validates a
+        complete copy before an atomic directory cutover, retaining the old
+        store as a rollback backup.
+        """
+        if backup_path is not None and not apply:
+            raise click.ClickException("--backup-path is only meaningful with --apply")
+        try:
+            result = _manager().migrate_schema(apply=apply, backup_path=backup_path)
+        except (ValueError, OSError) as exc:
+            raise click.ClickException(f"schema migration refused: {exc}") from exc
+
+        if as_json:
+            click.echo(_json.dumps(result, indent=2, default=str))
+            return
+        mode = "[green]applied[/green]" if result["applied"] else "[yellow]dry run[/yellow]"
+        console.print(f"\n[bold]CMDB schema migration[/bold] ({mode})")
+        console.print(f"  records: {result['records']}")
+        console.print(f"  v1 cores: {result['cores']}")
+        console.print(f"  v1 events: {result['events']}")
+        if result.get("backup"):
+            console.print(f"  backup: {result['backup']}")
+        elif result["records_to_migrate"] == 0:
+            console.print("[green]Already at schema v2; nothing to do.[/green]")
+        elif not apply:
+            console.print("\n[dim]Nothing was written. Re-run with --apply after review.[/dim]")
+
     # ── cmdb scan ─────────────────────────────────────────────────────
 
     @cmdb.command("scan")
