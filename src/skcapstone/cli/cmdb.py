@@ -118,6 +118,19 @@ def _secure_runner_factory(targets, values: tuple[str, ...]):
     return lambda host: SecureSSHRunner(host, credentials[host])
 
 
+def _enroll_network_scope(mgr, discovered_ids, scope_fingerprint: str, agent: str) -> None:
+    """Enroll successfully reconciled network CIs in this exact lifecycle scope."""
+    for ci_id in sorted(set(discovered_ids)):
+        ci = mgr.get_ci(ci_id)
+        if (
+            ci is not None
+            and "discovered" in (ci.tags or [])
+            and str(ci.attributes.get("source_authority", "")).startswith("network:")
+            and ci.attributes.get("lifecycle_scope") != scope_fingerprint
+        ):
+            mgr.set_attribute(ci_id, agent, "lifecycle_scope", scope_fingerprint)
+
+
 def _build_runners(hosts: tuple[str, ...], local: bool):
     """Turn --host/--local into runners. No host means no observation."""
     if not local and not hosts:
@@ -328,6 +341,9 @@ def register_cmdb_commands(main: click.Group) -> None:
                 lifecycle_actions=lifecycle_actions,
             )
             if apply:
+                # Reconcile establishes source ownership for new/legacy CIs;
+                # only then may a later comparable pass count their absence.
+                _enroll_network_scope(mgr, discovered_ids, scope_fingerprint, agent)
                 artifact_path, checksum = orch.write_run_artifact(home, artifact)
                 artifact["artifact"] = {
                     "path": str(artifact_path),
