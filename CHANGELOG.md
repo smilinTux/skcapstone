@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Recorded the tested PR #16 CAB rollout and GitHub-first deployment procedure in
+  the SOP so the live service is updated from a traceable repository commit.
+
 ### Added
 
 - Human CAB controls in the Operator Cockpit now provide dedicated Approve,
