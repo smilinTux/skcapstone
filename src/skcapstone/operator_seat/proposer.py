@@ -17,8 +17,9 @@ _PROMPT = (
     "You are the autonomous operator of a fleet. These conditions are FIRING (they "
     "need attention):\n{firing}\n\nThe ONLY actions you may propose are from this "
     "catalog (use the exact action name):\n{actions}\n\nPropose the minimal set of "
-    "fixes as a JSON array. Each element is an object with keys: action (from the "
-    "catalog), object (the affected object name), change_class (standard, normal, or "
+    "fixes as a JSON array. Each element is an object with keys: app and condition "
+    "(copied exactly from one firing condition), action (from the catalog), object "
+    "(the affected object name), change_class (standard, normal, or "
     "major), and rationale (one short sentence, no dashes). Propose nothing you are "
     "not confident about. If no action is warranted, return an empty array []. Reply "
     "with ONLY the JSON array."
@@ -76,6 +77,9 @@ def propose(
     if brief.get("quiet"):
         return []
     catalog = {a["name"] for a in explain.get("actions", [])}
+    firing_identities = {
+        (c.get("app"), c.get("type"), c.get("object")) for c in brief.get("firing", [])
+    }
     firing = (
         "\n".join(
             f"- {c.get('app')}: {c.get('object')} {c.get('type')}={c.get('status')}"
@@ -90,9 +94,20 @@ def propose(
     reply = chat(_PROMPT.format(firing=firing, actions=actions))
     out: list[dict] = []
     for item in _extract_json_array(reply):
-        if isinstance(item, dict) and item.get("action") in catalog:
+        identity = (
+            (item.get("app"), item.get("condition"), item.get("object"))
+            if isinstance(item, dict)
+            else None
+        )
+        if (
+            isinstance(item, dict)
+            and item.get("action") in catalog
+            and identity in firing_identities
+        ):
             out.append(
                 {
+                    "app": item["app"],
+                    "condition": item["condition"],
                     "action": item["action"],
                     "object": item.get("object", ""),
                     "change_class": item.get("change_class", "normal"),

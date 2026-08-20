@@ -11,6 +11,7 @@ reasons, plans, parks escalations, and reports what it would do.
 from __future__ import annotations
 
 import hashlib
+import time
 from typing import Any, Callable
 
 from ..fleet import store
@@ -22,6 +23,7 @@ from . import (
     decisions,
     fleet_adapter,
     plan,
+    safety,
     skchat_adapter,
     skcode_adapter,
     skcomms_adapter,
@@ -79,11 +81,65 @@ def _decision_id(proposal: dict, now_iso: str, index: int) -> str:
     # Content-based (action + object), NOT time-based: the same persistent firing
     # maps to the same id every pass, so with park's create-or-skip a standing
     # issue is one decision the human resolves once, not a new one each run.
-    seed = f"{proposal.get('action')}|{proposal.get('object')}"
+    seed = "|".join(
+        str(proposal.get(field) or "")
+        for field in ("app", "condition", "object", "action")
+    )
     return hashlib.sha1(seed.encode()).hexdigest()[:12]
 
 
-def run_once(
+def _operatorapp_allows(paths, proposal: dict) -> bool:
+    """Require an app-scoped, declared condition and human-ratified action."""
+    app = proposal.get("app")
+    condition = proposal.get("condition")
+    action = proposal.get("action")
+    if not all(isinstance(value, str) and value for value in (app, condition, action)):
+        return False
+    record = store.read_spec(paths, "operatorapp", app)
+    spec = (record or {}).get("spec") or {}
+    return condition in spec.get("conditions", []) and action in spec.get(
+        "ratifiedStandardActions", []
+    )
+
+
+def _condition_firing(condition: dict, problem_types: set[str]) -> bool:
+    """Return whether one observed condition is firing under its polarity."""
+    status = condition.get("status")
+    if status == "Unknown":
+        return True
+    problem_when_true = condition.get("type") in problem_types
+    return (problem_when_true and status == "True") or (
+        not problem_when_true and status == "False"
+    )
+
+
+def _verify_postcondition(
+    observers: dict[str, Callable[..., dict]],
+    proposal: dict,
+    paths,
+    now_iso: str,
+    problem_types: set[str],
+) -> tuple[bool, str]:
+    """Re-observe the owning app and require the bound condition to clear."""
+    app = proposal.get("app")
+    observer = observers.get(app)
+    if observer is None:
+        return False, "owning observer unavailable"
+    conditions = observer(paths, now_iso).get("conditions", [])
+    matches = [
+        item
+        for item in conditions
+        if item.get("type") == proposal.get("condition")
+        and (proposal.get("object") is None or item.get("object") == proposal.get("object"))
+    ]
+    if not matches:
+        return False, "bound condition missing after action"
+    if any(_condition_firing(item, problem_types) for item in matches):
+        return False, "bound condition still firing after action"
+    return True, "postcondition verified"
+
+
+def _run_once(
     paths=None,
     *,
     now_iso: str,
@@ -96,6 +152,9 @@ def run_once(
     emit: Callable[[str], Any] = print,
     extra_observers: dict[str, Callable[..., dict]] | None = None,
     target_known: Callable[[dict], bool] | None = None,
+    execution_state: safety.ExecutionState | None = None,
+    require_verified_actions: bool = False,
+    deadline: float | None = None,
 ) -> dict:
     """Run one operator pass.
 
@@ -136,12 +195,21 @@ def run_once(
     observations = {
         name: fn(paths, now_iso).get("conditions", []) for name, fn in adapters.items()
     }
+    if deadline is not None:
+        safety.assert_before_deadline(deadline)
     the_brief = brief.build_brief(observations, ptypes)
     route = brain.route_brain(the_brief)
     proposals = list(propose(the_brief, route))
 
     explain = explain if explain is not None else fleet_adapter.fleet_explain()
-    planned = plan.plan_actions(proposals, explain, target_known=target_known)
+    planned = plan.plan_actions(
+        proposals,
+        explain,
+        target_known=target_known,
+        action_allowed=(lambda proposal: _operatorapp_allows(paths, proposal))
+        if require_verified_actions
+        else None,
+    )
 
     outcomes: list[dict] = []
     for i, pl in enumerate(planned):
@@ -153,10 +221,56 @@ def run_once(
             # was supposed to rule on were silently never written, and no report was
             # emitted at all. Broad by intent: any actuation failure is contained,
             # recorded on the outcome, and reported.
+            attempt_started = False
             try:
-                apply_fn(prop, pl["classification"])
-                outcome = "applied"
+                if deadline is not None:
+                    safety.assert_before_deadline(deadline)
+                fingerprint = safety.action_fingerprint(prop)
+                if execution_state is not None:
+                    eligible, reason = execution_state.eligibility(fingerprint, time.time())
+                    if not eligible:
+                        raise RuntimeError(f"execution suppressed: {reason}")
+                attempt_started = True
+                result = apply_fn(prop, pl["classification"])
+                # All actuation contracts return either a direct ``performed``
+                # flag or an honor envelope containing ``actuation``.
+                performed = result.get("performed") if isinstance(result, dict) else None
+                if isinstance(result, dict) and "actuation" in result:
+                    performed = (result.get("actuation") or {}).get("performed")
+                if performed is False:
+                    raise RuntimeError("actuator reported performed=False")
+                if require_verified_actions and performed is not True:
+                    raise RuntimeError("actuator omitted performed=True proof")
+                if require_verified_actions:
+                    verified, reason = _verify_postcondition(
+                        adapters, prop, paths, now_iso, ptypes
+                    )
+                    if not verified:
+                        raise RuntimeError(reason)
+                if execution_state is not None:
+                    execution_state.record(fingerprint, time.time(), success=True)
+                outcome = "verified" if require_verified_actions else "applied"
             except Exception as exc:
+                if execution_state is not None and attempt_started:
+                    try:
+                        execution_state.record(
+                            safety.action_fingerprint(prop),
+                            time.time(),
+                            success=False,
+                            reason=str(exc),
+                        )
+                    except Exception as state_exc:
+                        # Persistence is a safety control, so its failure keeps
+                        # the action failed, but must not hide later proposals
+                        # or prevent the human escalation from being parked.
+                        exc = RuntimeError(f"{exc}; state persistence failed: {state_exc}")
+                if decisions_dir is not None:
+                    decisions.park(
+                        decisions_dir,
+                        [prop],
+                        decision_id=_decision_id(prop, now_iso, i),
+                        created_iso=now_iso,
+                    )
                 outcome = f"failed: {exc}"
         elif disp == "auto":
             outcome = "auto-ready (execution off)"
@@ -185,3 +299,18 @@ def run_once(
         "outcomes": outcomes,
         "report": report,
     }
+
+
+def run_once(
+    paths=None,
+    *,
+    max_runtime_seconds: float = 300.0,
+    execution_state: safety.ExecutionState | None = None,
+    **kwargs,
+) -> dict:
+    """Run one bounded pass, with a nonblocking single-flight lock when state is supplied."""
+    deadline = safety.monotonic_deadline(max_runtime_seconds)
+    if execution_state is None:
+        return _run_once(paths, execution_state=None, deadline=deadline, **kwargs)
+    with execution_state.single_flight():
+        return _run_once(paths, execution_state=execution_state, deadline=deadline, **kwargs)

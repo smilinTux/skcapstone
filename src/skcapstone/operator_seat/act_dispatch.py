@@ -128,6 +128,13 @@ def build_apply_fn(
                 unit,
                 runner=runner,
             )
+        if not isinstance(actuation, dict) or actuation.get("performed") is not True:
+            reason = (
+                actuation.get("reason", "actuator did not perform action")
+                if isinstance(actuation, dict)
+                else "invalid actuator response"
+            )
+            raise RuntimeError(f"actuation failed: {reason}")
         emit(f"honor: {adapter_name} {action!r} -> {actuation}")
         return {
             "adapter": adapter_name,

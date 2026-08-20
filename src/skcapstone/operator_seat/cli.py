@@ -198,6 +198,10 @@ def run_cmd(
         # so it can name an app ('skgateway') where the real objects are
         # 'upstreams' and 'connection-pool'. Unresolvable targets escalate.
         target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
+        execution_state=loop.safety.ExecutionState(paths.root / "atlas" / "state"),
+        # Physical execution is allowed only for a proposal bound to its owning
+        # app + condition, human-ratified there, and verified by re-observation.
+        require_verified_actions=honor,
     )
     if honor:
         click.echo("honor: ON (CR-9.1 step-1 physical actuation: fleet + skchat)")
