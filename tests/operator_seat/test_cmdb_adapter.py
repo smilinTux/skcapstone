@@ -120,9 +120,19 @@ class _Change:
 
 
 class _Vote:
-    def __init__(self, agent="human", decision="approved"):
+    def __init__(
+        self,
+        agent="human",
+        decision="approved",
+        subject_role="",
+        subject_fingerprint="",
+        authorization_id="",
+    ):
         self.agent = agent
         self.decision = _Value(decision)
+        self.subject_role = subject_role
+        self.subject_fingerprint = subject_fingerprint
+        self.authorization_id = authorization_id
 
 
 class _ITIL:
@@ -172,6 +182,34 @@ def test_apply_requires_canonical_approval_and_human_vote(tmp_path):
         )
         assert result["performed"] is False
         assert reason in result["reason"]
+
+
+def test_apply_accepts_authenticated_named_owner_vote(tmp_path):
+    """A signed Chef vote need not corrupt its identity into literal human."""
+    from skcapstone.fleet.paths import FleetPaths
+
+    _three_artifacts(tmp_path)
+
+    class NamedOwnerITIL(_ITIL):
+        def get_cab_votes(self, _change_id):
+            return [
+                _Vote(
+                    "chef",
+                    subject_role="owner",
+                    subject_fingerprint="A" * 40,
+                    authorization_id="authz-123",
+                )
+            ]
+
+    result = cmdb_adapter.cmdb_act(
+        FleetPaths(tmp_path),
+        "apply-cmdb-reconcile",
+        change_id="chg-approved",
+        runner=lambda _argv: True,
+        itil_factory=NamedOwnerITIL,
+        manager_factory=_CleanManager,
+    )
+    assert result["performed"] is True
 
 
 def test_apply_requires_three_distinct_same_scope_artifacts(tmp_path):

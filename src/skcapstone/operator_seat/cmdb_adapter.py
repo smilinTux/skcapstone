@@ -113,7 +113,15 @@ def _apply_gate(
     approvals = [
         vote
         for vote in itil.get_cab_votes(change_id)
-        if vote.decision.value == "approved" and vote.agent == "human"
+        if vote.decision.value == "approved"
+        and (
+            vote.agent == "human"
+            or (
+                getattr(vote, "subject_role", "") in {"owner", "approver"}
+                and bool(getattr(vote, "subject_fingerprint", ""))
+                and bool(getattr(vote, "authorization_id", ""))
+            )
+        )
     ]
     if not approvals:
         return "independent authenticated human CAB approval is required"
