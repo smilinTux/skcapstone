@@ -62,8 +62,8 @@ def _get_json(url: str, timeout: float = 5.0):
 
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return json.loads(r.read())
-    except Exception:
-        return None
+    except Exception as exc:
+        return {"_probe_error": type(exc).__name__}
 
 
 def _default_probe() -> dict:
@@ -81,11 +81,13 @@ def _default_probe() -> dict:
     status = _get_json(status_url)
     board = _get_json(board_url)
 
-    # Unreachable (None) fails safe to ready. A returned body with an "error" key
-    # is a real failure and reads as down.
-    dashboard_ready = status is None or not (isinstance(status, dict) and status.get("error"))
-    board_readable = board is None or not (isinstance(board, dict) and board.get("error"))
-    return {"dashboard_ready": dashboard_ready, "board_readable": board_readable}
+    return {
+        "dashboard_ready": not (isinstance(status, dict) and status.get("error")),
+        "board_readable": not (isinstance(board, dict) and board.get("error")),
+        "_probe_error": bool(
+            isinstance(status, dict) and status.get("_probe_error")
+        ) or bool(isinstance(board, dict) and board.get("_probe_error")),
+    }
 
 
 # --- contract verbs ----------------------------------------------------------
@@ -103,16 +105,17 @@ def skdashboard_explain() -> dict:
 def skdashboard_observe(probe=None) -> dict:
     """Read-only skdashboard health snapshot in the adapter-contract shape."""
     st = (probe or _default_probe)()
+    unknown = bool(st.get("_probe_error"))
     return {
         "conditions": [
             {
                 "type": "DashboardReady",
-                "status": _b(bool(st.get("dashboard_ready", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("dashboard_ready", True))),
                 "object": "skcapstone-dashboard",
             },
             {
                 "type": "BoardReadable",
-                "status": _b(bool(st.get("board_readable", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("board_readable", True))),
                 "object": "coordination-board",
             },
         ]

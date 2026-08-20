@@ -7,11 +7,14 @@ no CLI wiring; callers own reading the adapter output and any wiring.
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Mapping
 
 BLAST_RADII = frozenset({"low", "medium", "delete", "drain_always_on", "fleet_restart"})
 
 OBSERVE_STATUSES = frozenset({"True", "False", "Unknown"})
+OBSERVATION_SCHEMA = "skoperator.observation/v1"
+POLARITIES = frozenset({"problem_when_true", "problem_when_false"})
 
 _ACTION_REQUIRED_KEYS = (
     "name",
@@ -21,6 +24,13 @@ _ACTION_REQUIRED_KEYS = (
     "runbook",
     "kedb_refs",
 )
+
+
+def action_contract_id(app: str, action: str) -> str:
+    """Return the canonical globally unambiguous action contract identifier."""
+    if not app or not action or "." in app:
+        raise ValueError("action contract requires an unqualified app and non-empty action")
+    return f"{app}.{action}"
 
 
 def validate_explain(payload: dict[str, Any]) -> list[str]:
@@ -120,6 +130,82 @@ def validate_observe(payload: dict[str, Any]) -> list[str]:
         violations.extend(_validate_observed_condition(index, condition))
 
     return violations
+
+
+def condition_schema(
+    names: list[str] | tuple[str, ...],
+    *,
+    problem_when_true: set[str] | frozenset[str] = frozenset(),
+    ttl_seconds: int = 300,
+) -> dict[str, dict[str, Any]]:
+    """Build the authoritative condition schema owned by an adapter.
+
+    Polarity belongs to this schema, never to a consumer-maintained lookup.
+    """
+    if ttl_seconds <= 0:
+        raise ValueError("ttl_seconds must be positive")
+    return {
+        name: {
+            "polarity": (
+                "problem_when_true" if name in problem_when_true else "problem_when_false"
+            ),
+            "ttl_seconds": ttl_seconds,
+        }
+        for name in names
+    }
+
+
+def normalize_observe(
+    app: str,
+    payload: Mapping[str, Any] | None,
+    schema: Mapping[str, Mapping[str, Any]],
+    *,
+    observed_at: str | None = None,
+    provenance: str | None = None,
+    scope: str = "local",
+) -> dict[str, Any]:
+    """Return a versioned observation envelope, failing missing evidence Unknown.
+
+    Every declared condition is emitted exactly once. Malformed, absent, or
+    undeclared evidence cannot silently become healthy.
+    """
+    now = observed_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    raw = payload if isinstance(payload, Mapping) else {}
+    items = raw.get("conditions")
+    by_type = {
+        item.get("type"): item
+        for item in items
+        if isinstance(items, list) and isinstance(item, Mapping) and item.get("type") in schema
+    } if isinstance(items, list) else {}
+    conditions: list[dict[str, Any]] = []
+    for name, definition in schema.items():
+        polarity = definition.get("polarity")
+        ttl = definition.get("ttl_seconds")
+        if polarity not in POLARITIES:
+            raise ValueError(f"invalid polarity for {name!r}: {polarity!r}")
+        if not isinstance(ttl, int) or ttl <= 0:
+            raise ValueError(f"invalid ttl_seconds for {name!r}: {ttl!r}")
+        candidate = by_type.get(name)
+        valid = isinstance(candidate, Mapping) and candidate.get("status") in OBSERVE_STATUSES
+        item = dict(candidate) if valid else {
+            "type": name,
+            "status": "Unknown",
+            "reason": "ProbeUnavailable",
+            "message": "adapter did not provide valid evidence",
+        }
+        item.update(
+            {
+                "type": name,
+                "app": app,
+                "observed_at": item.get("observed_at", now),
+                "ttl_seconds": ttl,
+                "provenance": item.get("provenance", provenance or f"builtin:{app}"),
+                "scope": item.get("scope", scope),
+                "polarity": polarity,
+            }
+        )
+        conditions.append(item)
+    return {"schema": OBSERVATION_SCHEMA, "app": app, "conditions": conditions}
 
 
 def _validate_observed_condition(index: int, condition: Any) -> list[str]:

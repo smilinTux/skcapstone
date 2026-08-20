@@ -128,13 +128,8 @@ def _probe_hostd() -> dict:
             "registry_consistent": _registry_consistent(registry_ids, live_ids),
             "auth_enforced": True if auth is None else bool(auth),
         }
-    except Exception:
-        return {
-            "hostd_ready": True,
-            "sessions_healthy": True,
-            "registry_consistent": True,
-            "auth_enforced": True,
-        }
+    except Exception as exc:
+        return {"_probe_error": type(exc).__name__}
 
 
 # --- contract verbs ----------------------------------------------------------
@@ -152,26 +147,27 @@ def skcode_explain() -> dict:
 def skcode_observe(probe: Callable[[], dict] | None = None) -> dict:
     """Read-only skcode-hostd health snapshot in the adapter-contract shape."""
     st = (probe or _probe_hostd)()
+    unknown = bool(st.get("_probe_error"))
     return {
         "conditions": [
             {
                 "type": "HostdReady",
-                "status": _b(bool(st.get("hostd_ready", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("hostd_ready", True))),
                 "object": "skcode-hostd",
             },
             {
                 "type": "SessionsHealthy",
-                "status": _b(bool(st.get("sessions_healthy", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("sessions_healthy", True))),
                 "object": "sessions",
             },
             {
                 "type": "RegistryConsistent",
-                "status": _b(bool(st.get("registry_consistent", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("registry_consistent", True))),
                 "object": "registry",
             },
             {
                 "type": "AuthEnforced",
-                "status": _b(bool(st.get("auth_enforced", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("auth_enforced", True))),
                 "object": "verifier",
             },
         ]

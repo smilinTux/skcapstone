@@ -265,11 +265,11 @@ def _default_probe() -> dict:
         )
         alive = r.returncode == 0
     except Exception:
-        alive = True
+        alive = None
     digest = _read_digest()
     return {
         "scheduler_alive": alive,
-        "gtd_draining": True,
+        "gtd_draining": None,
         "digest_fresh": _digest_fresh(_digest_age_s(digest)),
         "grading_backlog": _grading_backlog(digest),
     }
@@ -291,12 +291,12 @@ def skos_observe(probe: Callable[[], dict] | None = None) -> dict:
         "conditions": [
             {
                 "type": "SchedulerAlive",
-                "status": _b(bool(st.get("scheduler_alive"))),
+                "status": _tri(st.get("scheduler_alive")),
                 "object": "skscheduler",
             },
             {
                 "type": "GtdSinkDraining",
-                "status": _b(bool(st.get("gtd_draining"))),
+                "status": _tri(st.get("gtd_draining")),
                 "object": "gtd-sink",
             },
             {

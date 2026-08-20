@@ -17,6 +17,7 @@ from typing import Any, Callable
 from ..fleet import store
 from ..fleet.paths import default_paths
 from . import (
+    adapter,
     brain,
     brief,
     cmdb_adapter,
@@ -71,6 +72,14 @@ PROBLEM_WHEN_TRUE = frozenset().union(
     *(getattr(module, "PROBLEM_WHEN_TRUE", frozenset()) for module in _ADAPTER_MODULES)
 )
 
+CONDITION_SCHEMAS = {
+    name: adapter.condition_schema(
+        list(getattr(module, "CONDITIONS", ())),
+        problem_when_true=set(getattr(module, "PROBLEM_WHEN_TRUE", frozenset())),
+    )
+    for name, module in zip(ADAPTERS, _ADAPTER_MODULES)
+}
+
 
 def _no_proposals(brief_dict: dict, route: str) -> list[dict]:
     """Default agent: propose nothing (keeps run_once safe and model-free)."""
@@ -107,7 +116,12 @@ def _condition_firing(condition: dict, problem_types: set[str]) -> bool:
     status = condition.get("status")
     if status == "Unknown":
         return True
-    problem_when_true = condition.get("type") in problem_types
+    polarity = condition.get("polarity")
+    problem_when_true = (
+        polarity == "problem_when_true"
+        if polarity in adapter.POLARITIES
+        else condition.get("type") in problem_types
+    )
     return (problem_when_true and status == "True") or (
         not problem_when_true and status == "False"
     )
@@ -192,9 +206,28 @@ def _run_once(
     # Discovered observers merge UNDER the built-ins: ADAPTERS spreads last so a
     # built-in always wins a name clash. Each observe fails safe on its own.
     adapters = {**(extra_observers or {}), **ADAPTERS}
-    observations = {
-        name: fn(paths, now_iso).get("conditions", []) for name, fn in adapters.items()
-    }
+    observations = {}
+    for name, fn in adapters.items():
+        try:
+            payload = fn(paths, now_iso)
+        except Exception:  # noqa: BLE001 - a probe failure is Unknown, never healthy/crash
+            payload = None
+        schema = CONDITION_SCHEMAS.get(name)
+        if schema is None:
+            declared = [
+                item.get("type")
+                for item in (payload or {}).get("conditions", [])
+                if isinstance(item, dict) and isinstance(item.get("type"), str)
+            ]
+            schema = adapter.condition_schema(declared)
+        envelope = adapter.normalize_observe(
+            name,
+            payload,
+            schema,
+            observed_at=now_iso,
+            provenance=f"operator-adapter:{name}",
+        )
+        observations[name] = envelope["conditions"]
     if deadline is not None:
         safety.assert_before_deadline(deadline)
     the_brief = brief.build_brief(observations, ptypes)

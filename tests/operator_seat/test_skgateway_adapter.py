@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from skcapstone.operator_seat import adapter, skgateway_adapter as ad
+from skcapstone.operator_seat import adapter
+from skcapstone.operator_seat import skgateway_adapter as ad
 
 
 def test_skgateway_explain_is_contract_conformant():
@@ -24,11 +25,15 @@ def test_skgateway_healthy_all_true():
     assert all(c["status"] == "True" for c in obs["conditions"])
 
 
-def test_skgateway_default_probe_fails_safe(monkeypatch):
+def test_skgateway_default_probe_failure_is_unknown(monkeypatch):
     def _boom(*a, **k):
         raise OSError("down")
 
     monkeypatch.setattr("subprocess.run", _boom, raising=False)
     monkeypatch.setattr("urllib.request.urlopen", _boom, raising=False)
     st = ad._default_probe()
-    assert all(v is True for v in st.values())  # fail safe
+    assert st["_probe_error"] == "OSError"
+    assert all(
+        item["status"] == "Unknown"
+        for item in ad.skgateway_observe(lambda: st)["conditions"]
+    )

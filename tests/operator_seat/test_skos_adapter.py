@@ -106,16 +106,16 @@ def test_skos_healthy_all_true():
     assert by_type["GradingBacklog"] == "False"
 
 
-def test_skos_default_probe_fails_safe(monkeypatch):
+def test_skos_default_probe_failure_is_unknown(monkeypatch):
     def _boom(*a, **k):
         raise OSError("down")
 
     monkeypatch.setattr("subprocess.run", _boom, raising=False)
     monkeypatch.setattr("urllib.request.urlopen", _boom, raising=False)
     st = ad._default_probe()
-    # The skos-reachability halves fail SAFE (healthy)...
-    assert st["scheduler_alive"] is True
-    assert st["gtd_draining"] is True
+    # Missing reachability evidence is Unknown, never fabricated healthy.
+    assert st["scheduler_alive"] is None
+    assert st["gtd_draining"] is None
     # ...the watchdog halves fail to UNKNOWN, never to healthy: with no digest
     # published there is nothing to call fresh.
     assert st["digest_fresh"] is None

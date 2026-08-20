@@ -94,18 +94,17 @@ def test_registry_consistent_detects_orphans():
     assert skcode_adapter._registry_consistent([], []) is True
 
 
-def test_default_probe_fails_safe(monkeypatch):
+def test_default_probe_failure_is_unknown(monkeypatch):
     def _boom(*a, **k):
         raise OSError("hostd down")
 
     monkeypatch.setattr("urllib.request.urlopen", _boom)
     st = skcode_adapter._probe_hostd()
-    assert st == {
-        "hostd_ready": True,
-        "sessions_healthy": True,
-        "registry_consistent": True,
-        "auth_enforced": True,
-    }
+    assert st == {"_probe_error": "OSError"}
+    assert all(
+        item["status"] == "Unknown"
+        for item in skcode_adapter.skcode_observe(lambda: st)["conditions"]
+    )
 
 
 # --- act verb ----------------------------------------------------------------

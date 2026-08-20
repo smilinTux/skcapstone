@@ -18,6 +18,7 @@ from typing import Callable
 
 from ..fleet import operatorapp, store
 from . import (
+    adapter,
     cmdb_adapter,
     skchat_adapter,
     skcode_adapter,
@@ -73,6 +74,42 @@ APP_REGISTRY: dict[str, dict] = {
         "repos": ["skos"],
     },
 }
+
+
+def adapter_catalog(
+    *, registry: dict[str, dict] | None = None, discovered: list[dict] | None = None
+) -> dict[str, dict]:
+    """Return one collision-safe catalog for built-in and manifest adapters.
+
+    Built-ins and signed-manifest specs pass through the same normalized entry
+    shape. Built-ins retain precedence, and action contracts gain canonical
+    ``<app>.<action>`` identifiers without changing existing local action names.
+    """
+    source = registry if registry is not None else APP_REGISTRY
+    catalog: dict[str, dict] = {}
+    for name, meta in source.items():
+        explain = meta["explain"]()
+        catalog[name] = {
+            "name": name,
+            "source": "builtin",
+            "spec": derive_operatorapp_spec(
+                name, explain, cli=meta.get("cli"), repos=meta.get("repos")
+            ),
+            "actions": [
+                {**item, "id": adapter.action_contract_id(name, item["name"])}
+                for item in explain.get("actions", [])
+            ],
+        }
+    for spec in discovered or []:
+        name = spec.get("name")
+        if isinstance(name, str) and name and name not in catalog:
+            catalog[name] = {
+                "name": name,
+                "source": "signed-manifest",
+                "spec": dict(spec),
+                "actions": [],
+            }
+    return catalog
 
 
 def derive_operatorapp_spec(
@@ -203,6 +240,7 @@ def ratify(paths, app: str, action: str, *, writer: store.Writer) -> dict:
 
 __all__ = [
     "APP_REGISTRY",
+    "adapter_catalog",
     "derive_operatorapp_spec",
     "register_all",
     "ratify",

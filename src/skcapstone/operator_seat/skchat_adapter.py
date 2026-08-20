@@ -147,7 +147,7 @@ def _calling_ready(webrtc_signaling) -> bool:
 # --- real signal readers (each fails safe = healthy) -------------------------
 
 
-def _probe_daemon_health() -> tuple[bool, bool | None, bool]:
+def _probe_daemon_health() -> tuple[bool | None, bool | None, bool | None]:
     """Read the daemon health endpoint. Returns (daemon_ready, auth_enforced,
     calling_ready).
 
@@ -168,7 +168,7 @@ def _probe_daemon_health() -> tuple[bool, bool | None, bool]:
         calling = _calling_ready(body.get("webrtc_signaling")) if isinstance(body, dict) else True
         return ready, (bool(auth) if auth is not None else None), calling
     except Exception:
-        return True, None, True
+        return None, None, None
 
 
 def _probe_bridge_poll_age() -> float | None:
@@ -213,12 +213,11 @@ def _default_probe() -> dict:
         auth = _probe_auth_enforced()
     return {
         "daemon_ready": daemon_ready,
-        "bridge_alive": _bridge_alive(poll_age, daemon_ready),
+        "bridge_alive": None if daemon_ready is None else _bridge_alive(poll_age, daemon_ready),
         "outbox_depth": _unified_outbox_depth(),
         "outbox_limit": _OUTBOX_LIMIT,
         # Unknown auth fails safe to enforced (True): never cry a false 'auth off'.
-        "auth_enforced": True if auth is None else bool(auth),
-        # Unknown calling health fails safe to ready (True).
+        "auth_enforced": auth,
         "calling_ready": calling_ready,
     }
 
@@ -240,27 +239,30 @@ def skchat_observe(probe: Callable[[], dict] | None = None) -> dict:
     st = (probe or _default_probe)()
     depth = int(st.get("outbox_depth", 0))
     limit = int(st.get("outbox_limit", _OUTBOX_LIMIT))
+    def status(key: str) -> str:
+        value = st.get(key)
+        return "Unknown" if value is None else _b(bool(value))
     return {
         "conditions": [
             {
                 "type": "DaemonReady",
-                "status": _b(bool(st.get("daemon_ready", True))),
+                "status": status("daemon_ready"),
                 "object": "skchat-daemon",
             },
             {
                 "type": "BridgeAlive",
-                "status": _b(bool(st.get("bridge_alive", True))),
+                "status": status("bridge_alive"),
                 "object": "telegram-bridge",
             },
             {"type": "OutboxBounded", "status": _b(depth <= limit), "object": "outbox"},
             {
                 "type": "AuthEnforced",
-                "status": _b(bool(st.get("auth_enforced", True))),
+                "status": status("auth_enforced"),
                 "object": "dataplane-auth",
             },
             {
                 "type": "CallingReady",
-                "status": _b(bool(st.get("calling_ready", True))),
+                "status": status("calling_ready"),
                 "object": "calling",
             },
         ]
