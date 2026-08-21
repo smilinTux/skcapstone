@@ -33,6 +33,100 @@ _MUTATIONS = {
     "describe",
 }
 
+_TERMINAL_ITIL_STATUSES = {
+    "incident": {"closed"},
+    "problem": {"resolved"},
+    "change": {"verified", "closed", "rejected"},
+}
+
+
+def _authoritative_itil_cards(home: Path) -> dict[str, object]:
+    """Project the current ITIL folds into cards keyed by record id.
+
+    CardStore entries for ITIL records are intentionally only shadow cards;
+    their immutable core captures the state at first materialization.  This
+    helper keeps the dashboard projection anchored to the event-sourced ITIL
+    record rather than treating that birth snapshot as current truth.
+    """
+    from skcoord.card import card_from_change, card_from_incident, card_from_problem
+    from skcoord.itil import ITILManager
+
+    mgr = ITILManager(Path(home).expanduser())
+    out = {inc.id: card_from_incident(inc) for inc in mgr.list_incidents()}
+    out.update({problem.id: card_from_problem(problem) for problem in mgr.list_problems()})
+    for change in mgr.list_changes():
+        try:
+            events = mgr._read_events(mgr.changes_dir, change.id)
+        except Exception:  # noqa: BLE001 - status projection remains useful without chips
+            events = None
+        out[change.id] = card_from_change(change, events=events)
+    return out
+
+
+def _overlay_authoritative_itil(card, authoritative):
+    """Overlay mutable ITIL fields while preserving dashboard-only metadata."""
+    card.title = authoritative.title
+    card.description = authoritative.description
+    card.status = authoritative.status
+    card.swimlane = authoritative.swimlane
+    card.priority = authoritative.priority
+    card.source = "itil"
+    card.meta.update(authoritative.meta)
+    return card
+
+
+def _sync_itil_shadow_cards(home: Path, authoritative: dict[str, object] | None = None) -> dict:
+    """Reconcile existing ITIL shadows with authoritative ITIL lifecycle state.
+
+    Reconciliation is append-only.  A lifecycle mismatch emits one ``move``
+    event.  If the ITIL record is terminal, any queued/running AgentRun is
+    canceled before a newly enabled runner can execute work for a closed
+    record.  Dynamic ITIL metadata is overlaid by read functions because
+    CardStore core metadata is immutable by design.
+    """
+    records = authoritative if authoritative is not None else _authoritative_itil_cards(home)
+    store = CardStore(home)
+    for card_id, source_card in records.items():
+        shadow = store.fold(card_id)
+        if shadow is None:
+            continue
+        if shadow.status != source_card.status:
+            store.append_event(
+                card_id,
+                "move",
+                "dashboard-itil-sync",
+                column=source_card.status.value,
+                order=shadow.order,
+            )
+            shadow = store.fold(card_id) or shadow
+        status = source_card.meta.get("itil_status")
+        terminal = status in _TERMINAL_ITIL_STATUSES.get(source_card.kind.value, set())
+        run = shadow.meta.get("agent_run") or {}
+        if terminal and run.get("state") in {"queued", "running"} and run.get("run_id"):
+            store.append_event(
+                card_id,
+                "agent_run_state",
+                "dashboard-itil-sync",
+                run_id=run["run_id"],
+                state="canceled",
+                last_error=f"Authoritative ITIL record is {status}; run canceled",
+            )
+    return records
+
+
+def itil_card_runnable(home: Path, card_id: str) -> tuple[bool, str | None]:
+    """Reject new dashboard runs for authoritative terminal ITIL records."""
+    if not card_id.startswith(("inc-", "prb-", "chg-")):
+        return True, None
+    source_card = _authoritative_itil_cards(home).get(card_id)
+    if source_card is None:
+        return False, "authoritative ITIL record not found"
+    status = source_card.meta.get("itil_status")
+    terminal = status in _TERMINAL_ITIL_STATUSES.get(source_card.kind.value, set())
+    if terminal:
+        return False, f"authoritative ITIL record is {status}; AI run not queued"
+    return True, None
+
 
 # ---------------------------------------------------------------------------
 # Read
@@ -196,11 +290,23 @@ def get_kanban(home: Path) -> dict:
     """The full board grouped by lane and column, with WIP status."""
     from skcoord.card import KanbanBoard
 
+    authoritative = _sync_itil_shadow_cards(home)
     kb = KanbanBoard(home)
     grid = kb.grid()
     lanes = []
     for lane in LANE_ORDER:
-        cols = {col: [_card_brief(c, home) for c in grid[lane][col]] for col in COLUMN_ORDER}
+        cols = {
+            col: [
+                _card_brief(
+                    _overlay_authoritative_itil(c, authoritative[c.id])
+                    if c.id in authoritative
+                    else c,
+                    home,
+                )
+                for c in grid[lane][col]
+            ]
+            for col in COLUMN_ORDER
+        }
         if sum(len(v) for v in cols.values()) == 0:
             continue
         lanes.append({"key": lane, "columns": cols})
@@ -219,10 +325,13 @@ def get_card(home: Path, card_id: str) -> dict:
         agent_run.ensure_card(home, card_id)
     except Exception:  # noqa: BLE001
         pass
+    authoritative = _sync_itil_shadow_cards(home)
     store = CardStore(home)
     card = store.fold(card_id)
     if card is None:
         return {"error": "card not found", "id": card_id}
+    if card_id in authoritative:
+        card = _overlay_authoritative_itil(card, authoritative[card_id])
     events = store._read_events(card_id)
     return {"card": card.model_dump(), "activity": events}
 
