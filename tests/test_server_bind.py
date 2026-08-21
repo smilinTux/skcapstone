@@ -29,3 +29,14 @@ def test_start_dashboard_bounds_graceful_shutdown(tmp_path: Path) -> None:
         server = start_dashboard(tmp_path)
 
     assert server._server.config.timeout_graceful_shutdown == 10
+
+
+def test_systemd_shutdown_policy_uses_uvicorn_signal() -> None:
+    """The deployed unit must request Uvicorn's supported shutdown path."""
+    policy = (
+        Path(__file__).parents[1]
+        / "deploy/systemd/skcapstone-dashboard.service.d/shutdown.conf"
+    ).read_text(encoding="utf-8")
+
+    assert "KillSignal=SIGINT" in policy
+    assert "TimeoutStopSec=15s" in policy

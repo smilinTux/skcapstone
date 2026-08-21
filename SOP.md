@@ -230,11 +230,11 @@ not in this repo. Consequence: **deploying a change to this package requires res
 
 The repo owns the shutdown-policy drop-in at
 `deploy/systemd/skcapstone-dashboard.service.d/shutdown.conf`. Uvicorn receives
-at most 10 seconds to drain active browser/streaming connections and systemd
-enforces `TimeoutStopSec=15s`; without both bounds, live restarts have remained
-in `stop-sigterm` until the prior 90-second default killed the process. Install
-the drop-in before restarting and verify the journal reports a clean stop rather
-than `State 'stop-sigterm' timed out` or `SIGKILL`.
+`SIGINT`, its supported CLI shutdown signal, and at most 10 seconds to drain
+active browser/streaming connections; systemd enforces `TimeoutStopSec=15s`.
+Without all three controls, live restarts have remained in `stop-sigterm` until
+systemd killed the process. Install the drop-in before restarting and verify the
+journal reports a clean stop rather than a stop timeout or `SIGKILL`.
 
 ```bash
 # deploy a change (fleet venv, editable checkout)
