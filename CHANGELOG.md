@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Documented the deployed read-only ATLAS Operator Cockpit contract and its
+  fail-closed treatment of missing freeze and malformed operational evidence.
+
 ### Documentation
 
 - Recorded the tested PR #16 CAB rollout and GitHub-first deployment procedure in

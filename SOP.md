@@ -180,6 +180,13 @@ schedule-window controls, and a separate deployment-arm action. Deploy from GitH
 with the editable install/restart procedure below; do not copy individual files to a
 live checkout.
 
+The same release line includes the read-only ATLAS Operator Cockpit at
+`/api/operator/overview` and the cockpit page. It projects typed condition age,
+freeze, the signed action lifecycle/change chain, cooldown/circuit state,
+watchdog freshness, CMDB scope/completeness/audit, and SKBrain health/citations.
+Missing or malformed evidence is `unknown`; an unreadable freeze record renders
+frozen. The dashboard never authorizes or actuates from these projections.
+
 This repo has **two release surfaces, and only one of them is complete.**
 
 ### Library release (complete)
@@ -314,6 +321,7 @@ list near the end of `create_app` in `src/skdashboard/dashboard.py`.
 | `/api/events` | SSE stream fed by the `poll_event_store` lifespan task |
 | `/api/itil/{overview,incidents,problems,changes}`, `/api/itil/kedb?q=`, `/api/itil/record/{kind}/{rid}` | ITIL |
 | `/api/cmdb/overview`, `/api/cmdb/ci/{ci_id}` | CMDB |
+| `/api/operator/overview` | Read-only ATLAS evidence, lifecycle, freeze, CMDB and SKBrain projection |
 | `/api/trust/graph`, `/api/economy`, `/api/models` | trust graph, cost/joule ledger, model roster |
 | `/api/suggest/{surface}/{id}` | suggestions for any fleet surface (`coord`, `gtd`, `itil`, `chat`, `security`) |
 | `/api/change/{id}/pir-draft` | post-implementation-review draft |
