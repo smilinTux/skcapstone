@@ -1792,6 +1792,16 @@ def create_app(home: Path):
         Route("/cmdb", _page("cmdb.html")),
         Route("/api/cmdb/overview", lambda r: _json(_cmdb().get_overview(home))),
         Route(
+            "/api/cmdb/search",
+            lambda r: _json(
+                _cmdb().search(
+                    home,
+                    r.query_params.get("q", ""),
+                    r.query_params.get("limit", 50),
+                )
+            ),
+        ),
+        Route(
             "/api/cmdb/ci/{ci_id}", lambda r: _json(_cmdb().get_ci(home, r.path_params["ci_id"]))
         ),
         Route("/api/cmdb/seed", api_cmdb_seed, methods=["POST"]),

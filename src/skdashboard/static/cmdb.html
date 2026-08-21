@@ -28,6 +28,15 @@
     </div>
 
     <div class="kpirow" id="cmdb-health"></div>
+    <form class="cmdb-search" id="cmdb-search" role="search">
+      <label for="cmdb-query">Search configuration items</label>
+      <div class="cmdb-search-row">
+        <input id="cmdb-query" name="q" type="search" maxlength="200"
+          placeholder="Name, ID, type, node, tag, or attribute" autocomplete="off">
+        <button class="btn" type="submit">Search</button>
+        <button class="btn" id="cmdb-clear" type="button">Clear</button>
+      </div>
+    </form>
     <div id="cmdb-body"><div class="emptymsg">Loading CMDB…</div></div>
   </div>
 

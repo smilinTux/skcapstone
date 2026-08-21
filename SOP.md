@@ -187,6 +187,15 @@ watchdog freshness, CMDB scope/completeness/audit, and SKBrain health/citations.
 Missing or malformed evidence is `unknown`; an unreadable freeze record renders
 frozen. The dashboard never authorizes or actuates from these projections.
 
+### 2026-08-21 CMDB source and search validation
+
+Card `3799733b` validated the three CMDB repositories against GitHub `main`, then
+added the missing read-only search surface. The release gate is the complete
+repository suite plus Ruff, build/twine, docs-check, and JavaScript syntax checks.
+Deployment must use a GitHub pull followed by the editable install and
+`skcapstone-dashboard.service` restart documented below; copying individual files
+between nodes is not an accepted deployment path.
+
 This repo has **two release surfaces, and only one of them is complete.**
 
 ### Library release (complete)
@@ -328,7 +337,8 @@ list near the end of `create_app` in `src/skdashboard/dashboard.py`.
 | `/api/card/{card_id}`, `/api/card/{card_id}/ai-suggestions` | one card, and its suggestions |
 | `/api/events` | SSE stream fed by the `poll_event_store` lifespan task |
 | `/api/itil/{overview,incidents,problems,changes}`, `/api/itil/kedb?q=`, `/api/itil/record/{kind}/{rid}` | ITIL |
-| `/api/cmdb/overview`, `/api/cmdb/ci/{ci_id}` | CMDB |
+| `/api/cmdb/overview`, `/api/cmdb/ci/{ci_id}` | CMDB overview and exact CI detail |
+| `/api/cmdb/search?q=QUERY&limit=50` | Bounded read-only CMDB search; limit is clamped to 1-100 |
 | `/api/operator/overview` | Read-only ATLAS evidence, lifecycle, freeze, CMDB and SKBrain projection |
 | `/api/trust/graph`, `/api/economy`, `/api/models` | trust graph, cost/joule ledger, model roster |
 | `/api/suggest/{surface}/{id}` | suggestions for any fleet surface (`coord`, `gtd`, `itil`, `chat`, `security`) |
@@ -441,8 +451,10 @@ behavior.
    Fixing the docstring is a follow-up, deliberately not bundled into a docs-only PR.
 
 <!-- docs-evidence
-verified: 2026-08-20
+verified: 2026-08-21
 checks:
+  - name: CMDB search route and bounded implementation are present
+    run: grep -q '"/api/cmdb/search"' src/skdashboard/dashboard.py && grep -q 'min(int(limit), 100)' src/skdashboard/dashboard_cmdb.py
   - name: card-mutate route is gated (section 7, SECURITY.md route table)
     run: grep -q 'capability=_CAP_CARD_MUTATE' src/skdashboard/dashboard.py
   - name: cmdb seed is a named gated handler, not the old ungated lambda

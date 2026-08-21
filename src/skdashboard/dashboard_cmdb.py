@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 
 def _mgr(home: Path):
@@ -61,6 +62,50 @@ def get_ci(home: Path, ci_id: str) -> dict:
         "relationships": rels,
         "dependents": impact["dependents"],
         "open_incidents": impact["open_incidents"],
+    }
+
+
+def search(home: Path, query: str, limit: int = 50) -> dict[str, Any]:
+    """Search the canonical CMDB fold without creating a second write path."""
+    needle = query.strip().casefold()[:200]
+    try:
+        bounded_limit = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        bounded_limit = 50
+    if not needle:
+        return {"query": "", "total": 0, "items": []}
+
+    matches = []
+    for ci in _mgr(home).list_cis():
+        document = " ".join(
+            (
+                ci.id,
+                ci.name,
+                ci.ci_type,
+                ci.status,
+                ci.description,
+                ci.owner,
+                ci.node,
+                " ".join(ci.tags),
+                " ".join(f"{key} {value}" for key, value in ci.attributes.items()),
+            )
+        ).casefold()
+        if needle in document:
+            matches.append(
+                {
+                    "id": ci.id,
+                    "name": ci.name,
+                    "type": ci.ci_type,
+                    "status": ci.status,
+                    "node": ci.node,
+                    "description": ci.description,
+                }
+            )
+    matches.sort(key=lambda item: (item["name"].casefold(), item["id"]))
+    return {
+        "query": query.strip()[:200],
+        "total": len(matches),
+        "items": matches[:bounded_limit],
     }
 
 

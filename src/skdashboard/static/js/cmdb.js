@@ -26,6 +26,27 @@ async function load() {
   body.querySelectorAll(".ci").forEach((el) => el.addEventListener("click", () => openCI(el.dataset.ci)));
 }
 
+async function searchCMDB(query) {
+  const body = document.getElementById("cmdb-body");
+  if (!query.trim()) { await load(); return; }
+  body.innerHTML = `<div class="emptymsg">Searching CMDB…</div>`;
+  try {
+    const d = await getJSON(`/api/cmdb/search?q=${encodeURIComponent(query)}&limit=100`);
+    if (!d.total) {
+      body.innerHTML = `<div class="emptymsg">No configuration items match “${esc(d.query)}”.</div>`;
+      return;
+    }
+    body.innerHTML = `<div class="ci-group"><h2>Search results <span class="ct">${d.total}</span></h2>
+      <div class="ci-grid">${d.items.map((c) => `
+        <div class="ci s-${esc(c.status)}" data-ci="${esc(c.id)}">
+          <div class="cn">${esc(c.name)}</div>
+          <div class="cm"><span class="cstat ${esc(c.status)}">${esc(c.status)}</span>
+            <span>${esc(c.type)}</span>${c.node ? `<span>on ${esc(c.node)}</span>` : ""}</div>
+        </div>`).join("")}</div></div>`;
+    body.querySelectorAll(".ci").forEach((el) => el.addEventListener("click", () => openCI(el.dataset.ci)));
+  } catch (e) { body.innerHTML = `<div class="emptymsg">${esc(e.message)}</div>`; }
+}
+
 function renderHealth(d) {
   const h = d.health || {};
   const el = document.getElementById("cmdb-health");
@@ -86,6 +107,14 @@ function closePanel() {
 }
 
 document.getElementById("overlay").addEventListener("click", closePanel);
+document.getElementById("cmdb-search").addEventListener("submit", (e) => {
+  e.preventDefault();
+  searchCMDB(document.getElementById("cmdb-query").value);
+});
+document.getElementById("cmdb-clear").addEventListener("click", () => {
+  document.getElementById("cmdb-query").value = "";
+  load();
+});
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
 document.getElementById("btn-seed").addEventListener("click", async () => {
   try {
