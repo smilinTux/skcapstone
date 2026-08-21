@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added bounded, read-only `GET /api/cmdb/search?q=...&limit=...` and an
+  accessible CMDB search form. Search covers CI identity, type, state, node,
+  ownership, description, tags, and attributes; result details continue to use
+  the canonical exact-CI endpoint.
+
 - Bounded dashboard shutdown with Uvicorn's supported `SIGINT` path,
   10-second graceful-drain limit, and a repo-owned 15-second systemd
   `TimeoutStopSec` drop-in, preventing active browser streams from turning
