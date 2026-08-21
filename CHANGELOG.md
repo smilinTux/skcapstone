@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Honor `SKDASHBOARD_HOST`, `SKCAPSTONE_DAEMON_URL`, and
+  `SKGATEWAY_ADMIN_URL` in long-running dashboard deployments, while retaining
+  loopback defaults and stripping the inference-only `/v1` suffix from the
+  fallback gateway management origin.
+
+- Reconcile dashboard ITIL shadow cards with authoritative lifecycle state,
+  cancel queued work when a record becomes terminal, and reject new runs for
+  closed or otherwise terminal records.
+
 - Added bounded, read-only `GET /api/cmdb/search?q=...&limit=...` and an
   accessible CMDB search form. Search covers CI identity, type, state, node,
   ownership, description, tags, and attributes; result details continue to use

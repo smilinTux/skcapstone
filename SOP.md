@@ -264,7 +264,7 @@ systemctl --user restart skcapstone-dashboard.service
 | Property | Value |
 |---|---|
 | Tier | Internal operator surface. Not public, not Funnel-exposed. |
-| Bind address | **`127.0.0.1:7778` by default.** `skcapstone dashboard --host ADDRESS --port 7778` deliberately selects another interface. |
+| Bind address | **`127.0.0.1:7778` by default.** `skcapstone dashboard --host ADDRESS --port 7778` or `SKDASHBOARD_HOST=ADDRESS` deliberately selects another interface. |
 | Public `:443` routes | **None.** There is no Cloudflare/Funnel/reverse-proxy route to this service. |
 | Confirmed live | `ss -ltnp` shows `LISTEN 127.0.0.1:7778` owned by the process named `skcapstone`. |
 | Health / self-report | `GET /api/doctor` (a JSON diagnostic report). There is **no `/health` route.** The module manifest advertises `GET /api/status` as its health URL. |
@@ -295,9 +295,13 @@ and exposes it as `--home`; the unit selects the agent with `SKAGENT` /
 
 | Variable | Read by | Default | Effect |
 |---|---|---|---|
+| `SKDASHBOARD_HOST` | `dashboard.py` (`start_dashboard`) | `127.0.0.1` | Server bind address when the caller does not pass an explicit `host`; an explicit argument wins. |
+| `SKCAPSTONE_DAEMON_URL` | `dashboard.py` (`_daemon_base_url`) | unset | Full daemon HTTP origin used by server routes. An explicit CLI `daemon_port` wins; otherwise `SKCAPSTONE_DAEMON_PORT` and then port `7777` are fallbacks. |
+| `SKCAPSTONE_DAEMON_PORT` | `dashboard.py` (`_daemon_base_url`) | `7777` | Loopback daemon port fallback when no full daemon URL or explicit argument is supplied. |
 | `SKAI_AUTHZ` | `queue_authz.py` | `token` | Migration mode: `token`, `pdp`, or `both`. An unrecognized value silently falls back to `token` so a typo never widens or narrows access. |
 | `SKAI_QUEUE_TOKEN` | `queue_authz.py` | unset | Shared secret compared with `hmac.compare_digest` in `token` mode. Unset in token mode = **deny**. |
-| `SKGATEWAY_URL` | `dashboard.py` (`_gateway_admin`) | `http://localhost:18780` | skgateway admin origin for the `/api/models*` panel. |
+| `SKGATEWAY_ADMIN_URL` | `dashboard.py` (`_gateway_admin_base_url`) | unset | Explicit skgateway management API origin for the `/api/models*` panel. |
+| `SKGATEWAY_URL` | `dashboard.py` (`_gateway_admin_base_url`) | `http://localhost:18780/v1` | Inference origin used as the management fallback after removing only a trailing `/v1`. |
 | `SKDASHBOARD_CM_WORKFLOW` | `dashboard.py` | `ci.yml` | Workflow filename the change Validate button nudges, since fleet repos do not all name it the same. |
 | `SKCOORD_CARD_STORE` | skcoord (set by the unit drop-in) | unset | Event-sourced CardStore dual-write. Set to `1` in production by `cardstore.conf`. |
 | `OLLAMA_HOST`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`, `XAI_API_KEY`, `MOONSHOT_API_KEY` | model panel | unset | Presence probes only, for the model availability panel. |
@@ -468,7 +472,7 @@ checks:
   - name: documented port 7778 still the module default
     run: grep -q 'DEFAULT_DASHBOARD_PORT = 7778' src/skdashboard/dashboard.py
   - name: bind remains loopback by default but accepts an explicit host
-    run: grep -q 'home: Path, host: str = "127.0.0.1", port:' src/skdashboard/dashboard.py && grep -q 'host=host' src/skdashboard/dashboard.py && grep -q 'port=port' src/skdashboard/dashboard.py
+    run: grep -q 'DEFAULT_DASHBOARD_HOST = "127.0.0.1"' src/skdashboard/dashboard.py && grep -q 'bind_host = host or os.environ.get("SKDASHBOARD_HOST"' src/skdashboard/dashboard.py && grep -q '_UvicornServer(app, bind_host, port)' src/skdashboard/dashboard.py
   - name: /api/doctor is still a registered route
     run: grep -q 'Route("/api/doctor"' src/skdashboard/dashboard.py
   - name: still no /health route (SOP says there is none)
