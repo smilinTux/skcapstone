@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ from pathlib import Path
 logger = logging.getLogger("skcapstone.dashboard")
 
 DEFAULT_DASHBOARD_PORT = 7778
+DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 
 #: Cache window for the doctor report. ``run_diagnostics`` walks the entire
 #: agent home (a whole-tree rglob for Syncthing conflict files); recomputing it
@@ -272,6 +274,29 @@ def _cm_asap_window() -> tuple[str, str]:
     return start.isoformat(), end.isoformat()
 
 
+def _gateway_admin_base_url() -> str:
+    """Resolve the gateway's management API base independently of ``/v1``.
+
+    ``SKGATEWAY_URL`` is the OpenAI-compatible inference base and normally
+    ends in ``/v1``.  Gateway management endpoints live at the server root,
+    so appending ``/admin`` to that inference URL produces the invalid
+    ``/v1/admin`` path.  An explicit ``SKGATEWAY_ADMIN_URL`` wins; otherwise
+    only a trailing ``/v1`` path component is removed.
+    """
+    import os
+    from urllib.parse import urlsplit, urlunsplit
+
+    explicit = os.environ.get("SKGATEWAY_ADMIN_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    inference = os.environ.get("SKGATEWAY_URL", "http://localhost:18780/v1").rstrip("/")
+    parts = urlsplit(inference)
+    path = parts.path.rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3]
+    return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/")
+
+
 def _get_agent_status(home: Path) -> dict:
     """Load agent manifest and pillar status.
 
@@ -430,7 +455,34 @@ def _get_memory_stats(home: Path) -> dict:
         return {"error": str(exc)}
 
 
-def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
+def _daemon_base_url(daemon_port: int | None = None) -> str:
+    """Return the daemon HTTP base URL used by dashboard server routes.
+
+    An explicit ``daemon_port`` keeps the CLI ``dashboard --json
+    --daemon-port`` contract intact.  Long-running dashboard servers do not
+    receive that CLI-only option, so they use ``SKCAPSTONE_DAEMON_URL`` (the
+    same setting as service-health), then ``SKCAPSTONE_DAEMON_PORT``, and
+    finally the historical port 7777.
+    """
+    import os
+
+    if daemon_port is not None:
+        return f"http://127.0.0.1:{daemon_port}"
+    configured = os.environ.get("SKCAPSTONE_DAEMON_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    configured_port = os.environ.get("SKCAPSTONE_DAEMON_PORT", "7777").strip()
+    try:
+        port = int(configured_port)
+    except ValueError:
+        logger.warning(
+            "Invalid SKCAPSTONE_DAEMON_PORT=%r; falling back to 7777", configured_port
+        )
+        port = 7777
+    return f"http://127.0.0.1:{port}"
+
+
+def _get_daemon_json(home: Path, daemon_port: int | None = None) -> dict:
     """Collect full daemon status for Flutter app consumption.
 
     Queries the running daemon's HTTP API (``/status`` and
@@ -443,7 +495,9 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
 
     Args:
         home: Agent home directory.
-        daemon_port: Port for the daemon HTTP API (default: 7777).
+        daemon_port: Optional explicit daemon HTTP API port.  When omitted,
+            ``SKCAPSTONE_DAEMON_URL`` / ``SKCAPSTONE_DAEMON_PORT`` configure
+            the server route and the historical default is port 7777.
 
     Returns:
         dict: Snapshot with keys ``daemon``, ``consciousness``,
@@ -454,6 +508,7 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
     import urllib.request
 
     now = datetime.now(timezone.utc).isoformat()
+    daemon_base = _daemon_base_url(daemon_port)
 
     # ── Daemon /status ────────────────────────────────────────────────────────
     daemon_info: dict = {
@@ -469,7 +524,7 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
         "inflight_count": 0,
     }
     try:
-        url = f"http://127.0.0.1:{daemon_port}/status"
+        url = f"{daemon_base}/status"
         with urllib.request.urlopen(url, timeout=3) as resp:
             snap = json.loads(resp.read())
         uptime_s = int(snap.get("uptime_seconds", 0))
@@ -500,7 +555,7 @@ def _get_daemon_json(home: Path, daemon_port: int = 7777) -> dict:
     # ── Daemon /consciousness ─────────────────────────────────────────────────
     consciousness_info: dict = {"enabled": False}
     try:
-        url = f"http://127.0.0.1:{daemon_port}/consciousness"
+        url = f"{daemon_base}/consciousness"
         with urllib.request.urlopen(url, timeout=3) as resp:
             consciousness_info = json.loads(resp.read())
     except Exception as exc:
@@ -1012,6 +1067,13 @@ def create_app(home: Path):
             capability=queue_authz.capability_for(mode),
             decision=decision,
         )
+        runnable, reason = dk.itil_card_runnable(home, card_id)
+        if not runnable:
+            return Response(
+                json.dumps({"error": reason, "card_id": card_id}),
+                status_code=409,
+                media_type="application/json",
+            )
         result = ar.request_run(
             home,
             card_id,
@@ -1653,9 +1715,7 @@ def create_app(home: Path):
     # The SKDashboard surface of the model-enablement picker. Proxies the
     # gateway's loopback advertise allowlist (same source of truth the skchat
     # app "Manage models" screen writes), so both surfaces stay in sync.
-    import os as _os
-
-    _gateway_admin = _os.environ.get("SKGATEWAY_URL", "http://localhost:18780").rstrip("/")
+    _gateway_admin = _gateway_admin_base_url()
 
     async def api_models_get(_request):
         """Full discovered catalog + `advertised` flags (gateway /admin/models)."""
@@ -1873,19 +1933,24 @@ class _UvicornServer:
 
 
 def start_dashboard(
-    home: Path, host: str = "127.0.0.1", port: int = DEFAULT_DASHBOARD_PORT
+    home: Path,
+    host: str | None = None,
+    port: int = DEFAULT_DASHBOARD_PORT,
 ) -> "_UvicornServer":
     """Start the dashboard server (Starlette + uvicorn).
 
     Args:
         home: Agent home directory.
-        host: Address or interface to bind. Defaults to loopback.
+        host: Address to bind. Defaults to ``SKDASHBOARD_HOST`` when set, or
+            loopback otherwise.
         port: Port to listen on.
 
     Returns:
         _UvicornServer: call ``serve_forever()`` (blocking) or run in a thread;
         stop with ``shutdown()``.
     """
+    bind_host = host or os.environ.get("SKDASHBOARD_HOST", "").strip()
+    bind_host = bind_host or DEFAULT_DASHBOARD_HOST
     app = create_app(home)
-    logger.info("Dashboard running at http://%s:%d", host, port)
-    return _UvicornServer(app, host, port)
+    logger.info("Dashboard running at http://%s:%d", bind_host, port)
+    return _UvicornServer(app, bind_host, port)
