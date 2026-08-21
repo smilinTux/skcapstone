@@ -1835,7 +1835,17 @@ class _UvicornServer:
     def __init__(self, app, host: str, port: int) -> None:
         import uvicorn
 
-        config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False)
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level="warning",
+            access_log=False,
+            # A streaming/browser client must not hold a systemd restart in
+            # stop-sigterm indefinitely. Uvicorn closes gracefully first, then
+            # bounds the drain so the service can honor the unit's 15s wall.
+            timeout_graceful_shutdown=10,
+        )
         self._server = uvicorn.Server(config)
 
     def serve_forever(self) -> None:

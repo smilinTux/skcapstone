@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Bounded dashboard shutdown with Uvicorn's 10-second graceful-drain limit and
+  a repo-owned 15-second systemd `TimeoutStopSec` drop-in, preventing active
+  browser streams from turning every deployment restart into a 90-second
+  SIGKILL.
 - Documented the deployed read-only ATLAS Operator Cockpit contract and its
   fail-closed treatment of missing freeze and malformed operational evidence.
 

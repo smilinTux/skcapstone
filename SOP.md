@@ -228,6 +228,14 @@ package through a transparent alias shim, and that shim lives in **skcapstone**
 not in this repo. Consequence: **deploying a change to this package requires restarting
 `skcapstone-dashboard.service`, and a `skcapstone` version that carries the shim.**
 
+The repo owns the shutdown-policy drop-in at
+`deploy/systemd/skcapstone-dashboard.service.d/shutdown.conf`. Uvicorn receives
+at most 10 seconds to drain active browser/streaming connections and systemd
+enforces `TimeoutStopSec=15s`; without both bounds, live restarts have remained
+in `stop-sigterm` until the prior 90-second default killed the process. Install
+the drop-in before restarting and verify the journal reports a clean stop rather
+than `State 'stop-sigterm' timed out` or `SIGKILL`.
+
 ```bash
 # deploy a change (fleet venv, editable checkout)
 ~/.skenv/bin/pip install -e .          # or: pip install -U skdashboard
@@ -448,7 +456,7 @@ checks:
   - name: documented port 7778 still the module default
     run: grep -q 'DEFAULT_DASHBOARD_PORT = 7778' src/skdashboard/dashboard.py
   - name: bind remains loopback by default but accepts an explicit host
-    run: grep -q 'home: Path, host: str = "127.0.0.1", port:' src/skdashboard/dashboard.py && grep -q 'uvicorn.Config(app, host=host, port=port' src/skdashboard/dashboard.py
+    run: grep -q 'home: Path, host: str = "127.0.0.1", port:' src/skdashboard/dashboard.py && grep -q 'host=host' src/skdashboard/dashboard.py && grep -q 'port=port' src/skdashboard/dashboard.py
   - name: /api/doctor is still a registered route
     run: grep -q 'Route("/api/doctor"' src/skdashboard/dashboard.py
   - name: still no /health route (SOP says there is none)

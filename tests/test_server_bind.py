@@ -21,3 +21,11 @@ def test_start_dashboard_accepts_explicit_host(tmp_path: Path) -> None:
 
     assert server._server.config.host == "0.0.0.0"
     assert server._server.config.port == 7778
+
+
+def test_start_dashboard_bounds_graceful_shutdown(tmp_path: Path) -> None:
+    """Streaming clients cannot hold a systemd restart open indefinitely."""
+    with patch("skdashboard.dashboard.create_app", return_value=object()):
+        server = start_dashboard(tmp_path)
+
+    assert server._server.config.timeout_graceful_shutdown == 10
