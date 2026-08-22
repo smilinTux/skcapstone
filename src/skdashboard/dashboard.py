@@ -71,8 +71,8 @@ _doctor_cache: dict = {"ts": 0.0, "home": None, "report": None}
 #: Migrates to `skboard.write` when capauth seeds that row (L1.8).
 _CAP_CARD_MUTATE = "agentrun.queue"
 
-#: Interim capability for the CMDB reseed (`POST /api/cmdb/seed`). Rebuilds the
-#: CI inventory under the agent home; write-class. Migrates to a dedicated
+#: Interim capability for CMDB apply (`POST /api/cmdb/apply`, with
+#: `/api/cmdb/seed` retained as a compatibility alias). Migrates to a dedicated
 #: `cmdb.*` row when capauth seeds one.
 _CAP_CMDB_SEED = "agentrun.queue"
 
@@ -1767,15 +1767,20 @@ def create_app(home: Path):
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
 
-    async def api_cmdb_seed(request):
-        """POST /api/cmdb/seed - rebuild the CI inventory, gated.
+    async def api_cmdb_apply(request):
+        """POST /api/cmdb/apply - append a validated local discovery plan."""
+        decision = _capability_gate(
+            request,
+            resource="cmdb",
+            capability=_CAP_CMDB_SEED,
+            actor=request.headers.get("x-sk-actor") or "operator",
+        )
+        if not decision["ok"]:
+            return _gate_deny(decision["reason"])
+        return _json(_cmdb().apply(home))
 
-        A write: it (re)creates configuration-item records under the agent
-        home. Capability ``_CAP_CMDB_SEED``. Before card 9d37d53d this was a
-        bare ``lambda`` in the route table with no gate at all, which is also
-        why it is a named handler now: a lambda in the route list is exactly
-        the shape that hides an ungated write.
-        """
+    async def api_cmdb_seed(request):
+        """POST /api/cmdb/seed - versioned compatibility alias for apply."""
         decision = _capability_gate(
             request,
             resource="cmdb",
@@ -1851,6 +1856,9 @@ def create_app(home: Path):
         ),
         Route("/cmdb", _page("cmdb.html")),
         Route("/api/cmdb/overview", lambda r: _json(_cmdb().get_overview(home))),
+        Route("/api/cmdb/status", lambda r: _json(_cmdb().status(home))),
+        Route("/api/cmdb/plan", lambda r: _json(_cmdb().plan(home))),
+        Route("/api/cmdb/drift", lambda r: _json(_cmdb().drift(home))),
         Route(
             "/api/cmdb/search",
             lambda r: _json(
@@ -1864,6 +1872,7 @@ def create_app(home: Path):
         Route(
             "/api/cmdb/ci/{ci_id}", lambda r: _json(_cmdb().get_ci(home, r.path_params["ci_id"]))
         ),
+        Route("/api/cmdb/apply", api_cmdb_apply, methods=["POST"]),
         Route("/api/cmdb/seed", api_cmdb_seed, methods=["POST"]),
         Route("/trust", _page("trust.html")),
         Route("/api/trust/graph", lambda r: _json(_trust_graph_dict(home))),

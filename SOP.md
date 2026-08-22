@@ -196,6 +196,13 @@ Deployment must use a GitHub pull followed by the editable install and
 `skcapstone-dashboard.service` restart documented below; copying individual files
 between nodes is not an accepted deployment path.
 
+Card `e57ef91a` replaces the visible legacy seed action with explicit local
+discovery plan/apply operations. The plan is read-only; apply uses the canonical
+event-sourced reconciler and the existing capability gate. `/api/cmdb/seed`
+remains a versioned compatibility alias and must not be used for a fleet
+baseline. Whole-network apply continues through the governed SKCapstone/ATLAS
+oneshot, not through the dashboard's local scope.
+
 This repo has **two release surfaces, and only one of them is complete.**
 
 ### Library release (complete)
@@ -343,6 +350,7 @@ list near the end of `create_app` in `src/skdashboard/dashboard.py`.
 | `/api/itil/{overview,incidents,problems,changes}`, `/api/itil/kedb?q=`, `/api/itil/record/{kind}/{rid}` | ITIL |
 | `/api/cmdb/overview`, `/api/cmdb/ci/{ci_id}` | CMDB overview and exact CI detail |
 | `/api/cmdb/search?q=QUERY&limit=50` | Bounded read-only CMDB search; limit is clamped to 1-100 |
+| `/api/cmdb/status`, `/api/cmdb/plan`, `/api/cmdb/drift` | Checksum-verified reconcile state, write-free local plan, and local drift |
 | `/api/operator/overview` | Read-only ATLAS evidence, lifecycle, freeze, CMDB and SKBrain projection |
 | `/api/trust/graph`, `/api/economy`, `/api/models` | trust graph, cost/joule ledger, model roster |
 | `/api/suggest/{surface}/{id}` | suggestions for any fleet surface (`coord`, `gtd`, `itil`, `chat`, `security`) |
@@ -352,7 +360,8 @@ list near the end of `create_app` in `src/skdashboard/dashboard.py`.
 
 **Mutating APIs (POST):** `/api/card/{card_id}/{action}`, `/api/card/{card_id}/queue-ai`,
 `/api/queue/{surface}/{id}`, `/api/change/{id}/{cab-vote,validate,schedule,arm,verify}`,
-`/api/cmdb/seed`, `/api/models/advertise`, `/api/assistant`.
+`/api/cmdb/apply`, `/api/cmdb/seed` (compatibility), `/api/models/advertise`,
+`/api/assistant`.
 
 Every one of those POST routes passes through `_capability_gate`; the route-to-capability
 map is the table in `SECURITY.md`, and `tests/test_write_route_gates.py` fails the build

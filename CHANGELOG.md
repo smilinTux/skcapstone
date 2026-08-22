@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added CMDB status, plan, drift, and capability-gated apply APIs plus explicit
+  Plan/Apply controls in the CMDB view. The former seed operation remains only
+  as a versioned compatibility alias over the canonical reconciler.
+
 - Honor `SKDASHBOARD_HOST`, `SKCAPSTONE_DAEMON_URL`, and
   `SKGATEWAY_ADMIN_URL` in long-running dashboard deployments, while retaining
   loopback defaults and stripping the inference-only `/v1` suffix from the

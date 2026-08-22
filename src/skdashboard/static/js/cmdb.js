@@ -10,7 +10,7 @@ async function load() {
   renderHealth(d);
   const body = document.getElementById("cmdb-body");
   if (!d.total) {
-    body.innerHTML = `<div class="emptymsg">No configuration items yet.<br>Click <b>Seed from inventory</b> to populate CIs from the fleet + ITIL data.</div>`;
+    body.innerHTML = `<div class="emptymsg">No configuration items yet.<br>Plan discovery, review the result, then apply the validated local scope.</div>`;
     return;
   }
   body.innerHTML = d.types.map((g) => `
@@ -116,11 +116,19 @@ document.getElementById("cmdb-clear").addEventListener("click", () => {
   load();
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
-document.getElementById("btn-seed").addEventListener("click", async () => {
+document.getElementById("btn-plan").addEventListener("click", async () => {
   try {
-    const r = await fetch("/api/cmdb/seed", { method: "POST", headers: await authHeaders() });
+    const d = await getJSON("/api/cmdb/plan");
+    toast(`plan · ${d.counts.created} create · ${d.counts.updated} update · ${d.counts.validation_failures} invalid`);
+  } catch (e) { toast(e.message, true); }
+});
+document.getElementById("btn-apply").addEventListener("click", async () => {
+  if (!window.confirm("Apply the validated declared + local CMDB discovery plan?")) return;
+  try {
+    const r = await fetch("/api/cmdb/apply", { method: "POST", headers: await authHeaders() });
     const d = await r.json();
-    toast(`seeded · ${d.cis} CIs`);
+    if (!r.ok || !d.applied) throw new Error(d.error || "CMDB apply was refused");
+    toast(`applied · ${d.counts.created} create · ${d.counts.updated} update`);
     load();
   } catch (e) { toast(e.message, true); }
 });
