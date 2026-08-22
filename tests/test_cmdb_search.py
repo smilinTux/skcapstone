@@ -40,3 +40,35 @@ def test_search_caps_requested_limit(tmp_path):
 
     assert len(search(tmp_path, "ci-", limit=1000)["items"]) == 100
     assert len(search(tmp_path, "ci-", limit="invalid")["items"]) == 50
+
+
+def test_search_route_accepts_all_operator_filters(tmp_path):
+    mgr = CMDBManager(tmp_path)
+    mgr.create_ci(
+        "Filtered API",
+        "service",
+        owner="platform",
+        node="chiap04",
+        attributes={"source_authority": "declared"},
+        tags=["dashboard"],
+    )
+
+    from starlette.testclient import TestClient
+
+    from skdashboard.dashboard import create_app
+
+    response = TestClient(create_app(tmp_path)).get(
+        "/api/cmdb/search",
+        params={
+            "type": "service",
+            "node": "chiap04",
+            "status": "operational",
+            "owner": "platform",
+            "tag": "dashboard",
+            "staleness": "unknown",
+            "source": "declared",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["name"] == "Filtered API"

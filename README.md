@@ -15,6 +15,13 @@ Docs: [`SOP.md`](SOP.md) (run it, deploy it, debug it) ·
 
 Coordination access goes through **skcoord** directly (`skcoord.card`,
 `skcoord.card_store`, `skcoord.coordination`, `skcoord.itil`, `skcoord.cmdb`).
+
+The CMDB operator page at `/cmdb` reads the canonical event-sourced inventory
+and checksum-verified reconciliation artifacts. It shows fleet coverage,
+collector completeness, stale or unreachable evidence, reconciliation history,
+CI provenance and impact, linked ITIL records, and bounded search filters.
+Discovery is preview-first. The plan endpoint never writes, and apply remains
+behind the dashboard capability gate.
 There are no `skcapstone.coordination` / `skcapstone.card_store` imports (CI grep
 gate). The richer agent / runtime / doctor / trust / model panels reach back into
 `skcapstone` at runtime via lazy imports, so `skdashboard` depends on both but has

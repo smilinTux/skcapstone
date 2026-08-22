@@ -37,7 +37,18 @@
         <button class="btn" type="submit">Search</button>
         <button class="btn" id="cmdb-clear" type="button">Clear</button>
       </div>
+      <div class="cmdb-filters" aria-label="CMDB filters">
+        <select name="type" aria-label="CI type"><option value="">All types</option><option>service</option><option>host</option><option>agent</option><option>port</option><option>datastore</option><option>network</option><option>device</option></select>
+        <input name="node" maxlength="100" placeholder="Node" aria-label="Node">
+        <select name="status" aria-label="CI status"><option value="">All statuses</option><option>operational</option><option>degraded</option><option>down</option><option>retired</option></select>
+        <input name="owner" maxlength="100" placeholder="Owner" aria-label="Owner">
+        <input name="tag" maxlength="100" placeholder="Tag" aria-label="Tag">
+        <select name="staleness" aria-label="Evidence freshness"><option value="">Any freshness</option><option>fresh</option><option>stale</option><option>unknown</option></select>
+        <input name="source" maxlength="100" placeholder="Source" aria-label="Source">
+      </div>
     </form>
+    <section id="cmdb-coverage" class="cmdb-coverage" aria-label="Reconciliation coverage"></section>
+    <div id="cmdb-action-state" class="cmdb-action-state" aria-live="polite"></div>
     <div id="cmdb-body"><div class="emptymsg">Loading CMDB…</div></div>
   </div>
 

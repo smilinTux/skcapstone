@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added CMDB operator coverage by node and collector, verified reconciliation
+  history, evidence freshness, provenance, last-seen and health history, grouped
+  relationship impact, linked ITIL records, and filters for type, node, status,
+  owner, tag, staleness, and source. Discovery remains preview-first, and both
+  plan and apply responses now expose authorization and execution state.
+
 - Added CMDB status, plan, drift, and capability-gated apply APIs plus explicit
   Plan/Apply controls in the CMDB view. The former seed operation remains only
   as a versioned compatibility alias over the canonical reconciler.

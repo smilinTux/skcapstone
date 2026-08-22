@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
 ]
 dependencies = [
-    "skcoord>=0.1.0",
+    "skcoord>=0.1.28",
     "skcapstone>=0.15.0",
     "starlette>=0.40",
     "uvicorn>=0.30",

@@ -1777,7 +1777,29 @@ def create_app(home: Path):
         )
         if not decision["ok"]:
             return _gate_deny(decision["reason"])
-        return _json(_cmdb().apply(home))
+        authorization = {
+            "evaluated": True,
+            "authorized": True,
+            "reason": decision.get("reason", "authorized"),
+            "via": decision.get("via", "unknown"),
+        }
+        return _json(_cmdb().apply(home, authorization=authorization))
+
+    async def api_cmdb_plan(request):
+        """GET /api/cmdb/plan - preview discovery and report apply authorization."""
+        decision = _capability_gate(
+            request,
+            resource="cmdb",
+            capability=_CAP_CMDB_SEED,
+            actor=request.headers.get("x-sk-actor") or "operator",
+        )
+        authorization = {
+            "evaluated": True,
+            "authorized": bool(decision["ok"]),
+            "reason": decision.get("reason", "authorization unavailable"),
+            "via": decision.get("via", "unknown"),
+        }
+        return _json(_cmdb().plan(home, authorization=authorization))
 
     async def api_cmdb_seed(request):
         """POST /api/cmdb/seed - versioned compatibility alias for apply."""
@@ -1857,7 +1879,7 @@ def create_app(home: Path):
         Route("/cmdb", _page("cmdb.html")),
         Route("/api/cmdb/overview", lambda r: _json(_cmdb().get_overview(home))),
         Route("/api/cmdb/status", lambda r: _json(_cmdb().status(home))),
-        Route("/api/cmdb/plan", lambda r: _json(_cmdb().plan(home))),
+        Route("/api/cmdb/plan", api_cmdb_plan),
         Route("/api/cmdb/drift", lambda r: _json(_cmdb().drift(home))),
         Route(
             "/api/cmdb/search",
@@ -1866,6 +1888,13 @@ def create_app(home: Path):
                     home,
                     r.query_params.get("q", ""),
                     r.query_params.get("limit", 50),
+                    ci_type=r.query_params.get("type", ""),
+                    node=r.query_params.get("node", ""),
+                    status=r.query_params.get("status", ""),
+                    owner=r.query_params.get("owner", ""),
+                    tag=r.query_params.get("tag", ""),
+                    staleness=r.query_params.get("staleness", ""),
+                    source=r.query_params.get("source", ""),
                 )
             ),
         ),

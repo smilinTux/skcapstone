@@ -3,6 +3,16 @@
 .cmdb-search label{display:block;margin-bottom:7px;font-size:11px;font-weight:650;color:var(--ink2);}
 .cmdb-search-row{display:flex;gap:8px;}
 .cmdb-search input{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--hair);border-radius:7px;background:var(--bg);color:var(--ink);}
+.cmdb-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:8px;}
+.cmdb-filters input,.cmdb-filters select{width:100%;padding:7px 8px;border:1px solid var(--hair);border-radius:7px;background:var(--bg);color:var(--ink);font-size:11px;}
+.cmdb-coverage{margin:0 0 14px;background:var(--panel);border:1px solid var(--hair);border-radius:10px;}
+.cmdb-coverage details{padding:10px 12px;}.cmdb-coverage summary{cursor:pointer;font-size:12px;font-weight:650;}.cmdb-coverage summary span{float:right;color:var(--ink3);font-weight:500;}
+.coverage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px;}
+.coverage-node{padding:8px;border:1px solid var(--hair2);border-left:3px solid var(--done);border-radius:7px;font-size:11px;}.coverage-node.partial{border-left-color:var(--high);}.coverage-node>div:first-child{display:flex;justify-content:space-between;gap:8px;}.coverage-meta,.coverage-source,.coverage-empty{margin-top:4px;color:var(--ink3);font-size:10.5px;}
+.collector-list{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}.collector{padding:2px 5px;border-radius:5px;background:var(--accentsoft);color:var(--accent);font-size:9px}.collector.partial,.collector.unavailable{background:color-mix(in srgb,var(--high) 16%,transparent);color:var(--high)}
+.run-list{margin-top:10px}.run-row{display:grid;grid-template-columns:70px minmax(100px,1fr) minmax(145px,1fr) 60px 55px;gap:8px;padding:5px 0;border-top:1px solid var(--hair2);font-size:10.5px;align-items:center;}.run-state{font-weight:700;color:var(--high);}.run-state.ok{color:var(--done);}
+.cmdb-action-state:empty{display:none}.cmdb-action-state{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:9px 12px;border:1px solid var(--hair);border-radius:8px;background:var(--panel);font-size:10.5px}.cmdb-action-state span{color:var(--ink3)}
+.kpi .n.risk{color:var(--crit);}
 .ci-group{margin-bottom:14px;}
 .ci-group h2{font-size:12.5px;font-weight:640;margin:0 0 8px;text-transform:capitalize;display:flex;align-items:center;gap:8px;}
 .ci-group h2 .ct{margin-left:auto;font-size:11px;color:var(--ink3);font-weight:500;}
@@ -27,3 +37,4 @@
 .attr{display:flex;font-size:12px;padding:4px 0;gap:10px;}
 .attr .ak{color:var(--ink3);min-width:90px;}
 .impact-inc{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 0;border-bottom:1px solid var(--hair2);}
+@media(max-width:700px){.cmdb-search-row{flex-wrap:wrap}.run-row{grid-template-columns:65px 1fr}.cmdb-coverage summary span{display:block;float:none;margin-top:4px}}
