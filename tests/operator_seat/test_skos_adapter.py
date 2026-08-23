@@ -106,6 +106,19 @@ def test_skos_healthy_all_true():
     assert by_type["GradingBacklog"] == "False"
 
 
+# `skos` is an OPTIONAL sibling repo (see fleet_dispatch: "Soft dependency:
+# skcapstone is an optional sibling"). It is installed on a real node but not
+# in skcapstone's CI, so these two tests, which exercise the real delegation
+# into skos.operator_probe, skip rather than fail where it is absent. The
+# adapter's own fail-closed behaviour is covered by the tests above, which do
+# not need skos importable.
+_needs_skos = pytest.mark.skipif(
+    __import__("importlib.util", fromlist=["util"]).find_spec("skos") is None,
+    reason="optional sibling repo 'skos' is not installed in this environment",
+)
+
+
+@_needs_skos
 def test_skos_default_probe_failure_is_unknown(monkeypatch):
     def _boom(*a, **k):
         raise OSError("down")
@@ -124,6 +137,7 @@ def test_skos_default_probe_failure_is_unknown(monkeypatch):
     assert st["grading_backlog"] is None
 
 
+@_needs_skos
 def test_skos_default_probe_delegates_to_skos_operator_probe(monkeypatch):
     # Card 504d0046: scheduler_alive/gtd_draining must be ONE real signal with
     # two callers (this in-process seat, the out-of-process `skos operator
