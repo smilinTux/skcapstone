@@ -9,15 +9,13 @@ from __future__ import annotations
 import json
 import re
 from html.parser import HTMLParser
-from io import StringIO
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
 import click
 
-from ._common import AGENT_HOME, console
-
+from ._common import console
 
 # ---------------------------------------------------------------------------
 # SKSeed store-flow validation
@@ -51,6 +49,7 @@ class SeedValidationError(ValueError):
 # ---------------------------------------------------------------------------
 # Text extraction helpers
 # ---------------------------------------------------------------------------
+
 
 class _HTMLStripper(HTMLParser):
     """Minimal HTML tag stripper using stdlib html.parser."""
@@ -145,7 +144,7 @@ def _read_file(path: Path) -> tuple[str, str]:
 
 def _fetch_url(url: str) -> tuple[str, str]:
     """Fetch a URL and return (content, content_type)."""
-    from urllib.request import urlopen, Request
+    from urllib.request import Request, urlopen
 
     req = Request(url, headers={"User-Agent": "skcapstone-skseed/1.0"})
     with urlopen(req, timeout=30) as resp:
@@ -301,9 +300,7 @@ def _validate_timestamp(value: str, field_name: str, result: dict) -> None:
     try:
         datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (ValueError, TypeError):
-        result["errors"].append(
-            f"{field_name} is not a valid ISO 8601 timestamp: {value!r}"
-        )
+        result["errors"].append(f"{field_name} is not a valid ISO 8601 timestamp: {value!r}")
         result["valid"] = False
 
 
@@ -403,8 +400,7 @@ def validate_seed_data(data: dict) -> dict:
         else:
             result["valid"] = False
             result["errors"].append(
-                "Missing required field: seed_id "
-                "(checked seed_metadata.seed_id and top-level)"
+                "Missing required field: seed_id " "(checked seed_metadata.seed_id and top-level)"
             )
 
         # Required: version
@@ -433,12 +429,12 @@ def validate_seed_data(data: dict) -> dict:
             emo = exp.get("emotional_snapshot") or exp.get("emotional_signature")
             if emo:
                 _validate_emotional_signature(
-                    emo, "experience_summary.emotional_snapshot", result,
+                    emo,
+                    "experience_summary.emotional_snapshot",
+                    result,
                 )
         else:
-            result["warnings"].append(
-                "Missing recommended field: experience_summary"
-            )
+            result["warnings"].append("Missing recommended field: experience_summary")
 
         # Germination prompt
         gp = data.get("germination_prompt")
@@ -473,9 +469,7 @@ def validate_seed_data(data: dict) -> dict:
         creator = data.get("creator")
         if isinstance(creator, dict):
             if not creator.get("model") and not creator.get("instance"):
-                result["warnings"].append(
-                    "creator should have at least 'model' or 'instance'"
-                )
+                result["warnings"].append("creator should have at least 'model' or 'instance'")
 
         # Experience validation
         exp = data.get("experience", {})
@@ -488,7 +482,9 @@ def validate_seed_data(data: dict) -> dict:
             emo = exp.get("emotional_signature")
             if emo:
                 _validate_emotional_signature(
-                    emo, "experience.emotional_signature", result,
+                    emo,
+                    "experience.emotional_signature",
+                    result,
                 )
 
             key_claims = exp.get("key_claims")
@@ -526,8 +522,7 @@ def validate_seed_data(data: dict) -> dict:
             for i, entry in enumerate(lineage):
                 if not isinstance(entry, (str, dict)):
                     result["errors"].append(
-                        f"lineage[{i}] must be a string or object, "
-                        f"got {type(entry).__name__}"
+                        f"lineage[{i}] must be a string or object, " f"got {type(entry).__name__}"
                     )
                     result["valid"] = False
 
@@ -651,12 +646,13 @@ def validate_seed_file(path: str) -> dict:
 # CLI command group
 # ---------------------------------------------------------------------------
 
+
 def register_skseed_commands(main: click.Group) -> None:
     """Register the skseed command group."""
 
     @main.group()
     def skseed():
-        """SKSeed — document ingestion and seed management.
+        """SKSeed - document ingestion and seed management.
 
         Turn documents into memories. Validate seed files.
         """
@@ -664,11 +660,11 @@ def register_skseed_commands(main: click.Group) -> None:
     @skseed.command("ingest")
     @click.argument("source")
     @click.option("--title", "-t", default=None, help="Override document title.")
+    @click.option("--tag", "-g", multiple=True, help="Tags to attach to the memory.")
     @click.option(
-        "--tag", "-g", multiple=True, help="Tags to attach to the memory."
-    )
-    @click.option(
-        "--output-seed", "-o", default=None,
+        "--output-seed",
+        "-o",
+        default=None,
         help="Path to write seed.json output.",
     )
     def ingest_cmd(source, title, tag, output_seed):

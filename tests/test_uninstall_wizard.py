@@ -1,14 +1,24 @@
-"""Tests for the uninstall wizard — inventory, teardown, safety checks."""
+"""Tests for the uninstall wizard - inventory, teardown, safety checks."""
 
 from __future__ import annotations
 
-import json
+import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from skcapstone.uninstall_wizard import (
+# The vault-registry and tailscale helpers live in the optional external
+# ``skref`` package, which is not part of the base skcapstone install. Skip the
+# classes that exercise it when it is unavailable, rather than erroring at
+# import/patch time.
+_HAS_SKREF = importlib.util.find_spec("skref") is not None
+_requires_skref = pytest.mark.skipif(
+    not _HAS_SKREF,
+    reason="optional 'skref' package (vault registry + tailscale helpers) not installed",
+)
+
+from skcapstone.uninstall_wizard import (  # noqa: E402
     _build_inventory,
     _delete_local_data,
     _dir_size,
@@ -117,6 +127,7 @@ class TestDeleteLocalData:
         _delete_local_data(fake)
 
 
+@_requires_skref
 class TestRegistryDeregister:
     """Tests for skref registry deregister function."""
 
@@ -162,27 +173,32 @@ class TestRegistryDeregister:
         assert result["vaults_removed"] == 0
 
 
+@_requires_skref
 class TestTailscaleLogout:
     """Tests for tailscale logout."""
 
     @patch("skref.tailscale._tailscale_bin", return_value=None)
     def test_returns_false_no_binary(self, mock_bin: MagicMock) -> None:
         from skref.tailscale import logout
+
         assert logout() is False
 
     @patch("skref.tailscale._tailscale_bin", return_value="tailscale")
     @patch("skref.tailscale.subprocess.run")
     def test_logout_calls_tailscale(self, mock_run: MagicMock, mock_bin: MagicMock) -> None:
         from skref.tailscale import logout
+
         mock_run.return_value = MagicMock(returncode=0)
         assert logout() is True
 
 
+@_requires_skref
 class TestRemoveAuthKey:
     """Tests for tailscale auth key removal."""
 
     def test_removes_existing_key(self, tmp_path: Path) -> None:
-        from skref.tailscale import remove_auth_key, AUTH_KEY_FILENAME
+        from skref.tailscale import AUTH_KEY_FILENAME, remove_auth_key
+
         key_file = tmp_path / AUTH_KEY_FILENAME
         key_file.write_bytes(b"encrypted")
         assert remove_auth_key(sync_dir=tmp_path) is True
@@ -190,4 +206,5 @@ class TestRemoveAuthKey:
 
     def test_missing_key_returns_false(self, tmp_path: Path) -> None:
         from skref.tailscale import remove_auth_key
+
         assert remove_auth_key(sync_dir=tmp_path) is False

@@ -6,9 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from skcapstone.trust_calibration import (
-    DEFAULT_THRESHOLDS,
+from capauth.trust.calibration import (
     TrustThresholds,
     apply_setting,
     load_calibration,
@@ -110,7 +108,15 @@ class TestRecommendThresholds:
         assert rec["changes"] == []
 
     def test_with_febs(self, tmp_agent_home: Path):
-        """With FEB data, provides analysis and may suggest changes."""
+        """With FEB data (via the list_febs provider), provides analysis.
+
+        recommend_thresholds now takes the FEB summaries via feb_provider
+        (the dependency was inverted out of capauth). The skcapstone side
+        passes skcapstone.pillars.trust.list_febs, exactly like every real
+        caller does.
+        """
+        from skcapstone.pillars.trust import list_febs
+
         febs_dir = tmp_agent_home / "trust" / "febs"
         febs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -132,9 +138,53 @@ class TestRecommendThresholds:
         (febs_dir / "FEB_test1.feb").write_text(json.dumps(feb))
         (febs_dir / "FEB_test2.feb").write_text(json.dumps(feb))
 
-        rec = recommend_thresholds(tmp_agent_home)
+        rec = recommend_thresholds(tmp_agent_home, feb_provider=list_febs)
         assert rec["feb_count"] == 2
         assert rec["feb_stats"]["max_intensity"] == 9
+
+    def test_no_provider_ignores_febs(self, tmp_agent_home: Path):
+        """Without a provider the shim reports zero FEBs (capauth-only path)."""
+        febs_dir = tmp_agent_home / "trust" / "febs"
+        febs_dir.mkdir(parents=True, exist_ok=True)
+        (febs_dir / "FEB_x.feb").write_text(
+            json.dumps({"emotional_payload": {"cooked_state": {"intensity": 9}}})
+        )
+
+        rec = recommend_thresholds(tmp_agent_home)
+        assert rec["feb_count"] == 0
+
+
+class TestCallerWiring:
+    """The skcapstone CLI caller must wire list_febs so real FEBs drive it."""
+
+    def test_cli_recommend_reads_real_febs(self, tmp_agent_home: Path):
+        """`trust calibrate --recommend` passes the provider end to end."""
+        import click
+        from click.testing import CliRunner
+
+        from skcapstone.cli.trust import register_trust_commands
+
+        febs_dir = tmp_agent_home / "trust" / "febs"
+        febs_dir.mkdir(parents=True, exist_ok=True)
+        feb = {
+            "emotional_payload": {"cooked_state": {"primary_emotion": "love", "intensity": 9}},
+            "relationship_state": {"depth_level": 8, "trust_level": 9},
+            "metadata": {"oof_triggered": True},
+        }
+        (febs_dir / "FEB_1.feb").write_text(json.dumps(feb))
+        (febs_dir / "FEB_2.feb").write_text(json.dumps(feb))
+
+        @click.group()
+        def cli():
+            pass
+
+        register_trust_commands(cli)
+        result = CliRunner().invoke(
+            cli, ["trust", "calibrate", "--home", str(tmp_agent_home), "--recommend"]
+        )
+        assert result.exit_code == 0, result.output
+        # Real FEBs were read through the wired provider: 2 files analyzed.
+        assert "2 files" in result.output
 
     def test_returns_structured_data(self, tmp_agent_home: Path):
         """Recommendation has the expected structure."""
@@ -197,8 +247,8 @@ class TestDeriveTrustWithCalibration:
         }
         (febs_dir / "FEB_ent.feb").write_text(json.dumps(feb))
 
-        save_calibration(tmp_agent_home, TrustThresholds(
-            entanglement_depth=7.0, entanglement_trust=0.8
-        ))
+        save_calibration(
+            tmp_agent_home, TrustThresholds(entanglement_depth=7.0, entanglement_trust=0.8)
+        )
         state = _derive_trust_from_febs(tmp_agent_home, list(febs_dir.glob("*.feb")))
         assert state.entangled is True

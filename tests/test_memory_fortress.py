@@ -1,20 +1,19 @@
-"""Tests for Memory Fortress — integrity sealing, encryption, tamper alerts."""
+"""Tests for Memory Fortress - integrity sealing, encryption, tamper alerts."""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from skcapstone.memory_fortress import (
-    MemoryFortress,
-    FortressConfig,
-    SealResult,
+    _ENCRYPTED_FIELD,
     _SEAL_FIELD,
     _SEALED_AT_FIELD,
-    _ENCRYPTED_FIELD,
+    FortressConfig,
+    MemoryFortress,
+    SealResult,
 )
 from skcapstone.models import MemoryEntry, MemoryLayer
 
@@ -107,7 +106,9 @@ class TestSealing:
     """Tests for integrity seal operations."""
 
     def test_seal_entry_adds_seal_field(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
     ) -> None:
         """Sealing adds the __fortress_seal field."""
         data = fortress.seal_entry(sample_entry)
@@ -115,7 +116,9 @@ class TestSealing:
         assert _SEALED_AT_FIELD in data
 
     def test_seal_is_deterministic(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
     ) -> None:
         """Same entry produces same seal (excluding timestamp)."""
         data1 = fortress.seal_entry(sample_entry)
@@ -125,7 +128,9 @@ class TestSealing:
         assert data1[_SEAL_FIELD] == data2[_SEAL_FIELD]
 
     def test_seal_changes_with_content(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
     ) -> None:
         """Different content produces different seal."""
         data1 = fortress.seal_entry(sample_entry)
@@ -134,7 +139,9 @@ class TestSealing:
         assert data1[_SEAL_FIELD] != data2[_SEAL_FIELD]
 
     def test_seal_is_hex_string(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
     ) -> None:
         """Seal is a 64-char hex string (SHA-256)."""
         data = fortress.seal_entry(sample_entry)
@@ -152,7 +159,10 @@ class TestVerifyAndLoad:
     """Tests for integrity verification on load."""
 
     def test_verify_sealed_entry(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry, home: Path,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
+        home: Path,
     ) -> None:
         """Sealed entry passes verification."""
         path = fortress.save_sealed(home, sample_entry)
@@ -163,7 +173,10 @@ class TestVerifyAndLoad:
         assert entry.content == sample_entry.content
 
     def test_detect_tampering(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry, home: Path,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
+        home: Path,
     ) -> None:
         """Modified content is detected as tampering."""
         path = fortress.save_sealed(home, sample_entry)
@@ -180,7 +193,10 @@ class TestVerifyAndLoad:
         assert "tampering" in result.error.lower()
 
     def test_detect_tag_tampering(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry, home: Path,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
+        home: Path,
     ) -> None:
         """Modified tags are detected as tampering."""
         path = fortress.save_sealed(home, sample_entry)
@@ -193,7 +209,10 @@ class TestVerifyAndLoad:
         assert result.tampered is True
 
     def test_detect_importance_tampering(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry, home: Path,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
+        home: Path,
     ) -> None:
         """Modified importance score is detected."""
         path = fortress.save_sealed(home, sample_entry)
@@ -242,14 +261,20 @@ class TestSaveSealed:
     """Tests for atomic sealed writes."""
 
     def test_save_creates_file(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry, home: Path,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
+        home: Path,
     ) -> None:
         """Save creates the sealed JSON file."""
         path = fortress.save_sealed(home, sample_entry)
         assert path.exists()
 
     def test_saved_file_contains_seal(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry, home: Path,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
+        home: Path,
     ) -> None:
         """Saved file contains the fortress seal."""
         path = fortress.save_sealed(home, sample_entry)
@@ -258,7 +283,10 @@ class TestSaveSealed:
         assert _SEALED_AT_FIELD in data
 
     def test_roundtrip_save_load(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry, home: Path,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
+        home: Path,
     ) -> None:
         """Save then load returns identical entry."""
         path = fortress.save_sealed(home, sample_entry)
@@ -269,7 +297,10 @@ class TestSaveSealed:
         assert loaded.tags == sample_entry.tags
 
     def test_no_tmp_file_left(
-        self, fortress: MemoryFortress, sample_entry: MemoryEntry, home: Path,
+        self,
+        fortress: MemoryFortress,
+        sample_entry: MemoryEntry,
+        home: Path,
     ) -> None:
         """Atomic write leaves no .tmp file."""
         path = fortress.save_sealed(home, sample_entry)
@@ -291,7 +322,9 @@ class TestVerifyAll:
         assert results == []
 
     def test_verify_all_sealed(
-        self, fortress: MemoryFortress, home: Path,
+        self,
+        fortress: MemoryFortress,
+        home: Path,
     ) -> None:
         """Verify all with sealed memories passes."""
         for i in range(3):
@@ -309,7 +342,9 @@ class TestVerifyAll:
         assert all(r.verified is True for r in results)
 
     def test_verify_all_detects_tampering(
-        self, fortress: MemoryFortress, home: Path,
+        self,
+        fortress: MemoryFortress,
+        home: Path,
     ) -> None:
         """Verify all detects tampered memories in batch."""
         for i in range(3):
@@ -344,7 +379,9 @@ class TestSealExisting:
     """Tests for migrating legacy memories."""
 
     def test_seal_existing_memories(
-        self, fortress: MemoryFortress, home: Path,
+        self,
+        fortress: MemoryFortress,
+        home: Path,
     ) -> None:
         """Seal existing unsealed memories."""
         for i in range(3):
@@ -366,7 +403,9 @@ class TestSealExisting:
         assert all(r.verified is True for r in results)
 
     def test_seal_existing_skips_already_sealed(
-        self, fortress: MemoryFortress, home: Path,
+        self,
+        fortress: MemoryFortress,
+        home: Path,
     ) -> None:
         """Already-sealed memories are not re-sealed."""
         entry = MemoryEntry(
@@ -382,7 +421,9 @@ class TestSealExisting:
         assert sealed_count == 0
 
     def test_seal_existing_empty(
-        self, fortress: MemoryFortress, home: Path,
+        self,
+        fortress: MemoryFortress,
+        home: Path,
     ) -> None:
         """No memories to seal returns 0."""
         assert fortress.seal_existing(home) == 0
@@ -444,7 +485,9 @@ class TestSealKeys:
     """Tests for seal key behavior."""
 
     def test_different_keys_different_seals(
-        self, home: Path, sample_entry: MemoryEntry,
+        self,
+        home: Path,
+        sample_entry: MemoryEntry,
     ) -> None:
         """Different seal keys produce different seals."""
         f1 = MemoryFortress(home, seal_key=b"key-one-32-bytes-padded-here!!!!")
@@ -457,7 +500,9 @@ class TestSealKeys:
         assert data1[_SEAL_FIELD] != data2[_SEAL_FIELD]
 
     def test_wrong_key_detects_tampering(
-        self, home: Path, sample_entry: MemoryEntry,
+        self,
+        home: Path,
+        sample_entry: MemoryEntry,
     ) -> None:
         """Loading with wrong seal key triggers tamper alert."""
         f1 = MemoryFortress(home, seal_key=b"original-key-32-bytes-padded!!!")
@@ -502,7 +547,9 @@ class TestAuditTrail:
     """Tests for security audit integration."""
 
     def test_init_writes_audit(
-        self, home: Path, seal_key: bytes,
+        self,
+        home: Path,
+        seal_key: bytes,
     ) -> None:
         """Initialization writes an audit event."""
         f = MemoryFortress(home, seal_key=seal_key)
@@ -514,7 +561,9 @@ class TestAuditTrail:
         assert "FORTRESS_INIT" in content
 
     def test_tamper_writes_audit(
-        self, fortress: MemoryFortress, home: Path,
+        self,
+        fortress: MemoryFortress,
+        home: Path,
     ) -> None:
         """Tamper detection writes audit event."""
         entry = MemoryEntry(
@@ -538,7 +587,9 @@ class TestAuditTrail:
         assert "MEMORY_TAMPER_ALERT" in content
 
     def test_scan_writes_audit(
-        self, fortress: MemoryFortress, home: Path,
+        self,
+        fortress: MemoryFortress,
+        home: Path,
     ) -> None:
         """Full scan writes audit event."""
         fortress.verify_all(home)

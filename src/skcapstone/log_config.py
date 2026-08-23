@@ -8,7 +8,7 @@ import logging.handlers
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Attributes present on every LogRecord — excluded from JSON extra-field pass-through.
+# Attributes present on every LogRecord - excluded from JSON extra-field pass-through.
 _LOG_RECORD_BUILTIN_ATTRS: frozenset[str] = frozenset(
     {
         "args",
@@ -45,15 +45,15 @@ class JsonFormatter(logging.Formatter):
 
     Mandatory fields in every record:
 
-    - ``ts``     — ISO-8601 UTC timestamp
-    - ``level``  — log level name (e.g. ``"INFO"``)
-    - ``logger`` — logger name
-    - ``msg``    — rendered log message
+    - ``ts``     - ISO-8601 UTC timestamp
+    - ``level``  - log level name (e.g. ``"INFO"``)
+    - ``logger`` - logger name
+    - ``msg``    - rendered log message
 
     Optional fields appended when present:
 
-    - ``exc``    — formatted exception traceback
-    - ``stack``  — formatted stack info
+    - ``exc``    - formatted exception traceback
+    - ``stack``  - formatted stack info
     - any ``extra=`` keys passed to the logger call
     """
 
@@ -87,9 +87,9 @@ def configure_logging(
 
     Sets up two handlers on the root logger:
 
-    - **RotatingFileHandler** — writes JSON lines to *log_file*
+    - **RotatingFileHandler** - writes JSON lines to *log_file*
       (rotates at *max_bytes*, keeps *backup_count* backups).
-    - **StreamHandler** — writes human-readable lines to stderr
+    - **StreamHandler** - writes human-readable lines to stderr
       at *console_level* (default ``INFO``).
 
     This function is idempotent: subsequent calls are no-ops.

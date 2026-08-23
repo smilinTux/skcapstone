@@ -1,11 +1,11 @@
-"""Agent Mood Tracker — infers emotional state from interaction patterns.
+"""Agent Mood Tracker - infers emotional state from interaction patterns.
 
 Tracks three orthogonal mood dimensions derived from the consciousness
 loop's runtime metrics:
 
-  success_mood   — response success rate  (happy / content / neutral / frustrated)
-  social_mood    — message frequency      (social / active / quiet / isolated)
-  stress_mood    — error rate             (calm / relaxed / tense / stressed)
+  success_mood   - response success rate  (happy / content / neutral / frustrated)
+  social_mood    - message frequency      (social / active / quiet / isolated)
+  stress_mood    - error rate             (calm / relaxed / tense / stressed)
 
 Persists to ``{home}/mood.json`` after every update so the state survives
 daemon restarts and can be read by the CLI without touching the live daemon.
@@ -47,8 +47,8 @@ class MoodSnapshot(BaseModel):
         messages_processed: Total messages seen in the tracking window.
         responses_sent: Total successful responses in the window.
         errors: Total errors in the window.
-        success_rate: Fraction of messages responded to (0–1).
-        error_rate: Fraction of messages that produced errors (0–1).
+        success_rate: Fraction of messages responded to (0-1).
+        error_rate: Fraction of messages that produced errors (0-1).
         messages_per_hour: Rolling message rate used for social classification.
         success_mood: Mood along the success axis.
         social_mood: Mood along the social-engagement axis.
@@ -68,9 +68,9 @@ class MoodSnapshot(BaseModel):
     messages_per_hour: float = 0.0
 
     # Classified states
-    success_mood: str = "neutral"   # happy / content / neutral / frustrated
-    social_mood: str = "quiet"      # social / active / quiet / isolated
-    stress_mood: str = "calm"       # calm / relaxed / tense / stressed
+    success_mood: str = "neutral"  # happy / content / neutral / frustrated
+    social_mood: str = "quiet"  # social / active / quiet / isolated
+    stress_mood: str = "calm"  # calm / relaxed / tense / stressed
 
     # Dominant label
     summary: str = "neutral"
@@ -88,7 +88,7 @@ def _classify_success(success_rate: float) -> str:
     """Map a success rate to a mood label.
 
     Args:
-        success_rate: Fraction of messages that received a response (0.0–1.0).
+        success_rate: Fraction of messages that received a response (0.0-1.0).
 
     Returns:
         One of ``"happy"``, ``"content"``, ``"neutral"``, ``"frustrated"``.
@@ -124,7 +124,7 @@ def _classify_stress(error_rate: float) -> str:
     """Map an error rate to a stress level.
 
     Args:
-        error_rate: Fraction of messages that produced errors (0.0–1.0).
+        error_rate: Fraction of messages that produced errors (0.0-1.0).
 
     Returns:
         One of ``"calm"``, ``"relaxed"``, ``"tense"``, ``"stressed"``.

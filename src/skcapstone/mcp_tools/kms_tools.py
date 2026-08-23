@@ -82,18 +82,20 @@ async def _handle_kms_list_keys(args: dict) -> list[TextContent]:
     key_type = args.get("key_type")
     include_inactive = args.get("include_revoked", False)
     keys = store.list_keys(key_type=key_type, include_inactive=include_inactive)
-    return _json_response([
-        {
-            "key_id": k.key_id,
-            "key_type": k.key_type,
-            "status": k.status,
-            "label": k.label,
-            "created_at": str(k.created_at),
-            "version": k.version,
-            "algorithm": k.algorithm,
-        }
-        for k in keys
-    ])
+    return _json_response(
+        [
+            {
+                "key_id": k.key_id,
+                "key_type": k.key_type,
+                "status": k.status,
+                "label": k.label,
+                "created_at": str(k.created_at),
+                "version": k.version,
+                "algorithm": k.algorithm,
+            }
+            for k in keys
+        ]
+    )
 
 
 async def _handle_kms_rotate(args: dict) -> list[TextContent]:
@@ -108,12 +110,14 @@ async def _handle_kms_rotate(args: dict) -> list[TextContent]:
         key_id=args["key_id"],
         reason=args.get("reason", "scheduled"),
     )
-    return _json_response({
-        "key_id": new_key.key_id,
-        "version": new_key.version,
-        "status": new_key.status,
-        "message": f"Key rotated to version {new_key.version}",
-    })
+    return _json_response(
+        {
+            "key_id": new_key.key_id,
+            "version": new_key.version,
+            "status": new_key.status,
+            "message": f"Key rotated to version {new_key.version}",
+        }
+    )
 
 
 HANDLERS: dict = {

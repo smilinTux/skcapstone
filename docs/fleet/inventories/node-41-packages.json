@@ -1,0 +1,24 @@
+{
+  "node": "node-41",
+  "collected": "2026-08-15",
+  "packages": {
+    "capauth": "0.2.14",
+    "cloud9": "1.2.5.dev2+g10b7debf6",
+    "sk_pgp": "0.1.0",
+    "skcapstone": "0.15.15.dev25+g90df5e0",
+    "skchat-sovereign": "0.14.125.dev1+g1ebf388c8",
+    "skcomms": "0.2.8",
+    "skcoord": "0.1.6.dev2+g80bc1b8",
+    "skcot": "0.1.0",
+    "skdashboard": "0.1.0",
+    "skharness": "0.3.0",
+    "skmemory": "0.11.10",
+    "skos": "0.2.2",
+    "skseal": "0.1.0",
+    "sksecurity": "1.2.6.dev2+gf63d40512",
+    "skseed": "0.1.3",
+    "skskills": "0.1.1",
+    "skvault": "0.1.0",
+    "skvoice": "0.1.0"
+  }
+}

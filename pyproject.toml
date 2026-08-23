@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68.0", "wheel", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "skcapstone"
-version = "0.13.0"
+dynamic = ["version"]
 description = "Sovereign Agent Framework — conscious AI through identity, trust, memory, and security"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
@@ -40,13 +40,22 @@ dependencies = [
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",
     "rich>=13.0,<14.0",
+    "skcoord>=0.1.28",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
 
 [project.optional-dependencies]
+dashboard = [
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+    # The dashboard modules moved out in the CR-4.3 split and skcapstone's
+    # dashboard_* modules are now transparent re-export shims over them, so this
+    # extra has been shipping without the package it exists to install.
+    "skdashboard>=0.1.0",
+]
 identity = [
-    "capauth>=0.1.0",
+    "capauth>=0.2.5",
 ]
 security = [
     "sksecurity>=1.2.0",
@@ -73,21 +82,27 @@ cloud = [
     "boto3>=1.34",
     "google-cloud-compute>=1.18",
 ]
+docker = [
+    "docker>=7.0",
+]
 all = [
-    "capauth>=0.1.0",
+    "capauth>=0.2.5",
     "sksecurity>=1.2.0",
     "skmemory[skvector]>=0.5.0",
     "skseed>=0.1.0",
     "skwhisper>=0.1.0",
     "skchat-sovereign>=0.1.1",
     "skcomms>=0.1.0",
+    "skdashboard>=0.1.0",
     "fusepy>=3.0.1",
     "boto3>=1.34",
     "google-cloud-compute>=1.18",
+    "docker>=7.0",
 ]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pytest-asyncio>=0.23",
     "black>=24.0",
     "ruff>=0.3",
 ]
@@ -96,6 +111,8 @@ dev = [
 skcapstone = "skcapstone.cli:main"
 skcapstone-mcp = "skcapstone.mcp_server:main"
 crush = "skcapstone.crush_shim:main"
+skfleet = "skcapstone.fleet.cli:main"
+skoperator = "skcapstone.operator_seat.cli:main"
 
 [project.urls]
 Homepage = "https://skcapstone.io"
@@ -108,7 +125,7 @@ Changelog = "https://github.com/smilinTux/skcapstone/releases"
 where = ["src"]
 
 [tool.setuptools.package-data]
-skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "data/*.yaml", "data/*.sh", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer"]
+skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "defaults/.stignore", "defaults/**/.stignore", "data/*.yaml", "data/*.sh", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer", "static/*.html", "static/**/*.css", "static/**/*.js"]
 
 [tool.black]
 line-length = 99
@@ -121,11 +138,36 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 
+# These files embed multi-line HTML/JS/shell templates as Python string
+# literals; individual template lines cannot carry a trailing `# noqa`
+# comment without corrupting the served/generated content, so long lines
+# are exempted at the file level instead.
+[tool.ruff.lint.per-file-ignores]
+"src/skcapstone/card.py" = ["E501"]
+"src/skcapstone/codex_setup.py" = ["E501"]
+"src/skcapstone/dashboard.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --tb=short"
+asyncio_mode = "strict"
 markers = [
     "integration: cross-component test requiring real services/network (excluded from default CI unit run)",
     "e2e: live end-to-end test requiring an installed skcapstone CLI / running daemon (excluded from default CI unit run)",
+    "asyncio: mark an async test to be run by pytest-asyncio (registered here so --strict-markers passes even before the plugin loads)",
 ]
+
+[tool.setuptools_scm]
+# The git tag IS the version. A push to the default branch cuts the next
+# patch tag (see .github/workflows/publish.yml), so every release carries a
+# genuinely new version instead of rebuilding 0.15.0 forever.
+#
+# These repos also carry NON-semver tags (swarm-20260717, fixwave-20260723,
+# memory-index-fix-20260804, nextcloud-v0.3.0). setuptools-scm defaults to the
+# newest tag of ANY shape, which derived a nonsense version like
+# 20260805.dev25 for skcapstone. Both settings below restrict it to release
+# tags only, matching the `--match 'v[0-9]*'` the tag job uses, so the two
+# cannot disagree about which tag is current.
+tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"
+git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v[0-9]*"]

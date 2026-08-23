@@ -20,8 +20,9 @@ SKCAPSTONE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # --- Locate the virtualenv ---
-# Priority: SKCAPSTONE_VENV env var > first venv with mcp installed
-# Candidates: skmemory/.venv (shared project venv) > skcapstone/.venv > repo .venv
+# Priority: SKCAPSTONE_VENV env var > standard SK suite venv > first project
+# venv with mcp installed. MCP clients such as Codex often start with a
+# restricted PATH, so do not rely on shell activation to discover ~/.skenv.
 find_venv() {
     if [[ -n "${SKCAPSTONE_VENV:-}" ]] && [[ -f "$SKCAPSTONE_VENV/bin/python" ]]; then
         echo "$SKCAPSTONE_VENV"
@@ -29,6 +30,7 @@ find_venv() {
     fi
 
     local candidates=(
+        "$HOME/.skenv"
         "$REPO_ROOT/skmemory/.venv"
         "$SKCAPSTONE_DIR/.venv"
         "$REPO_ROOT/.venv"
@@ -61,6 +63,11 @@ VENV_DIR="$(find_venv)" || {
 }
 
 PYTHON="$VENV_DIR/bin/python"
+
+# Make sibling SK* console scripts available to the MCP process even when the
+# client supplied a minimal PATH.
+export PATH="$VENV_DIR/bin${PATH:+:$PATH}"
+export SKCAPSTONE_HOME="${SKCAPSTONE_HOME:-$HOME/.skcapstone}"
 
 # --- Ensure skcapstone is importable ---
 export PYTHONPATH="${SKCAPSTONE_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"

@@ -24,8 +24,12 @@ def _write_base(tmp_path: Path, body: str) -> Path:
 
 def test_merges_base_and_dropins(tmp_path: Path):
     """Base jobs.yaml + a jobs.d fragment both load."""
-    cfg = _write_base(tmp_path, "jobs:\n  base_job:\n    every: 5m\n    type: shell\n    command: 'echo base'\n")
-    register_job({"name": "svc_job", "every": "15m", "type": "shell", "command": "echo svc"}, home=tmp_path)
+    cfg = _write_base(
+        tmp_path, "jobs:\n  base_job:\n    every: 5m\n    type: shell\n    command: 'echo base'\n"
+    )
+    register_job(
+        {"name": "svc_job", "every": "15m", "type": "shell", "command": "echo svc"}, home=tmp_path
+    )
 
     jobs = {j.name: j for j in load_jobs_with_dropins(cfg)}
     assert set(jobs) == {"base_job", "svc_job"}
@@ -35,8 +39,12 @@ def test_merges_base_and_dropins(tmp_path: Path):
 
 def test_dropin_overrides_base_with_warning(tmp_path: Path):
     """A drop-in defining the same name wins and warns."""
-    cfg = _write_base(tmp_path, "jobs:\n  dup:\n    every: 5m\n    type: shell\n    command: 'echo base'\n")
-    register_job({"name": "dup", "every": "1h", "type": "shell", "command": "echo override"}, home=tmp_path)
+    cfg = _write_base(
+        tmp_path, "jobs:\n  dup:\n    every: 5m\n    type: shell\n    command: 'echo base'\n"
+    )
+    register_job(
+        {"name": "dup", "every": "1h", "type": "shell", "command": "echo override"}, home=tmp_path
+    )
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -50,7 +58,10 @@ def test_dropin_overrides_base_with_warning(tmp_path: Path):
 def test_no_base_file_only_dropins(tmp_path: Path):
     """Drop-ins load even when jobs.yaml does not exist."""
     cfg = tmp_path / "config" / "jobs.yaml"  # never created
-    register_job({"name": "lonely", "schedule": "0 * * * *", "type": "shell", "command": "echo hi"}, home=tmp_path)
+    register_job(
+        {"name": "lonely", "schedule": "0 * * * *", "type": "shell", "command": "echo hi"},
+        home=tmp_path,
+    )
     jobs = load_jobs_with_dropins(cfg)
     assert [j.name for j in jobs] == ["lonely"]
     assert jobs[0].schedule == "0 * * * *"

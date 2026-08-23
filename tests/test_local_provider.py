@@ -1,4 +1,4 @@
-"""Tests for LocalProvider — local process-backed agent deployment.
+"""Tests for LocalProvider - local process-backed agent deployment.
 
 All subprocess and filesystem side effects are controlled via tmp_path
 and unittest.mock so no real crush/claude binary is required.
@@ -10,7 +10,6 @@ import json
 import os
 import signal
 from pathlib import Path
-from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,7 +31,6 @@ from skcapstone.providers.local import (
     _write_session_state,
 )
 from skcapstone.team_engine import AgentStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -190,7 +188,13 @@ class TestBuildSessionConfig:
 
 class TestBuildCrushConfig:
     def test_has_schema_key(self, tmp_path):
-        session_cfg = {"agent_name": "a", "soul_blueprint": None, "model": "fast", "role": "worker", "skills": []}
+        session_cfg = {
+            "agent_name": "a",
+            "soul_blueprint": None,
+            "model": "fast",
+            "role": "worker",
+            "skills": [],
+        }
         cfg = _build_crush_config("a", session_cfg, tmp_path)
         assert "$schema" in cfg
 
@@ -210,7 +214,13 @@ class TestBuildCrushConfig:
         assert cfg["session"]["model"] == "code"
 
     def test_none_soul_removed_from_context_paths(self, tmp_path):
-        session_cfg = {"agent_name": "a", "soul_blueprint": None, "model": "fast", "role": "worker", "skills": []}
+        session_cfg = {
+            "agent_name": "a",
+            "soul_blueprint": None,
+            "model": "fast",
+            "role": "worker",
+            "skills": [],
+        }
         cfg = _build_crush_config("a", session_cfg, tmp_path)
         assert None not in cfg["options"]["context_paths"]
 
@@ -254,7 +264,7 @@ class TestSessionStateHelpers:
 
 class TestPidIsAlive:
     def test_alive_process(self):
-        # Use os.getpid() — current process is always alive.
+        # Use os.getpid() - current process is always alive.
         assert _pid_is_alive(os.getpid()) is True
 
     def test_dead_process(self):
@@ -369,7 +379,7 @@ class TestLocalProviderConfigure:
 
 
 # ---------------------------------------------------------------------------
-# LocalProvider.start — stub path (no crush binary)
+# LocalProvider.start - stub path (no crush binary)
 # ---------------------------------------------------------------------------
 
 

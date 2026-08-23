@@ -16,7 +16,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -25,7 +24,6 @@ from click.testing import CliRunner
 
 from skcapstone.cli import main
 from skcapstone.cli.alerts import (
-    DEFAULT_TOPICS,
     _format_payload,
     _make_alert_panel,
     _resolve_home,
@@ -171,9 +169,7 @@ class TestAlertsCLI:
         assert "--topic" in result.output
 
     def test_once_no_messages_prints_no_alerts(self, agent_home):
-        result = runner.invoke(
-            main, ["alerts", "--home", str(agent_home), "--once"]
-        )
+        result = runner.invoke(main, ["alerts", "--home", str(agent_home), "--once"])
         assert result.exit_code == 0
         assert "No alerts found" in result.output
 
@@ -181,9 +177,7 @@ class TestAlertsCLI:
         bus = PubSub(agent_home, agent_name="test-agent")
         bus.publish("agent.critical", {"reason": "disk full"})
 
-        result = runner.invoke(
-            main, ["alerts", "--home", str(agent_home), "--once"]
-        )
+        result = runner.invoke(main, ["alerts", "--home", str(agent_home), "--once"])
         assert result.exit_code == 0
         assert "agent.critical" in result.output
         assert "disk full" in result.output
@@ -193,9 +187,7 @@ class TestAlertsCLI:
         bus.publish("coord.task_failed", {"task": "abc"})
         bus.publish("pillar.degraded", {"pillar": "memory"})
 
-        result = runner.invoke(
-            main, ["alerts", "--home", str(agent_home), "--once"]
-        )
+        result = runner.invoke(main, ["alerts", "--home", str(agent_home), "--once"])
         assert result.exit_code == 0
         assert "coord.task_failed" in result.output
         assert "pillar.degraded" in result.output
@@ -206,9 +198,7 @@ class TestAlertsCLI:
         # also publish a real alert so we know the command ran
         bus.publish("agent.critical", {"signal": True})
 
-        result = runner.invoke(
-            main, ["alerts", "--home", str(agent_home), "--once"]
-        )
+        result = runner.invoke(main, ["alerts", "--home", str(agent_home), "--once"])
         assert result.exit_code == 0
         assert "unrelated.topic" not in result.output
         assert "agent.critical" in result.output
@@ -276,16 +266,12 @@ class TestAlertsCLI:
             raise KeyboardInterrupt()
 
         with patch("skcapstone.cli.alerts.time.sleep", fake_sleep):
-            result = runner.invoke(
-                main, ["alerts", "--home", str(agent_home)]
-            )
+            result = runner.invoke(main, ["alerts", "--home", str(agent_home)])
 
         assert result.exit_code == 0
         assert "Stopped" in result.output
 
     def test_monitors_header_printed(self, agent_home):
-        result = runner.invoke(
-            main, ["alerts", "--home", str(agent_home), "--once"]
-        )
+        result = runner.invoke(main, ["alerts", "--home", str(agent_home), "--once"])
         assert result.exit_code == 0
         assert "Monitoring" in result.output

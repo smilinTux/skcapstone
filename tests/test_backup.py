@@ -32,7 +32,9 @@ def _setup_agent_home(tmp_path: Path) -> Path:
 
     (home / "identity").mkdir()
     (home / "identity" / "profile.json").write_text('{"name": "TestAgent"}')
-    (home / "identity" / "public.asc").write_text("-----BEGIN PGP PUBLIC KEY-----\ntest\n-----END PGP PUBLIC KEY-----\n")
+    (home / "identity" / "public.asc").write_text(
+        "-----BEGIN PGP PUBLIC KEY-----\ntest\n-----END PGP PUBLIC KEY-----\n"
+    )
 
     (home / "memory").mkdir()
     (home / "memory" / "mem1.json").write_text('{"id": "mem1", "title": "test memory"}')
@@ -42,12 +44,12 @@ def _setup_agent_home(tmp_path: Path) -> Path:
     (home / "trust" / "FEB_test.feb").write_text('{"emotional_payload": {}}')
 
     (home / "soul").mkdir()
-    (home / "soul" / "lumina.yaml").write_text('name: lumina\npersonality: warm\n')
+    (home / "soul" / "lumina.yaml").write_text("name: lumina\npersonality: warm\n")
 
     (home / "conversations").mkdir()
     (home / "conversations" / "conv1.json").write_text('{"id": "conv1", "messages": []}')
 
-    # Ephemeral dirs — must NOT be backed up
+    # Ephemeral dirs - must NOT be backed up
     (home / "sync").mkdir()
     (home / "sync" / "seed.json").write_text('{"ephemeral": true}')
 
@@ -134,6 +136,88 @@ class TestCreateBackup:
         """Backup raises FileNotFoundError for missing home."""
         with pytest.raises(FileNotFoundError):
             create_backup(home=tmp_path / "nonexistent")
+
+
+class TestBackupCreateCLI:
+    """CLI-level tests for `skcapstone backup create`.
+
+    These guard the regression where `backup create` defaulted --home to the
+    shared operator root (~/.skcapstone) instead of the per-agent home
+    (~/.skcapstone/agents/<name>/), silently skipping all flat memory tiers.
+    """
+
+    def _make_agent_home_with_tiers(self, tmp_path: Path) -> Path:
+        """Build a per-agent home whose memory flat tiers are populated."""
+        home = _setup_agent_home(tmp_path)
+        for tier in ("short-term", "mid-term", "long-term"):
+            d = home / "memory" / tier
+            d.mkdir(parents=True)
+            (d / f"{tier}-mem.json").write_text('{"id": "%s", "content": "flat file"}' % tier)
+        return home
+
+    def test_create_no_flags_targets_agent_home_with_tiers(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """With no --home/--agent, backup resolves the per-agent home and
+        captures the flat memory tiers."""
+        import click
+        from click.testing import CliRunner
+
+        import skcapstone
+        from skcapstone.cli.backup import register_backup_commands
+
+        agent_home_path = self._make_agent_home_with_tiers(tmp_path)
+        out_dir = tmp_path / "out"
+
+        # Simulate the active agent resolving to our temp per-agent home.
+        monkeypatch.setattr(skcapstone, "agent_home", lambda name=None: agent_home_path)
+        monkeypatch.setattr(skcapstone, "SKCAPSTONE_AGENT", "testagent")
+
+        main = click.Group()
+        register_backup_commands(main)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["backup", "create", "-o", str(out_dir)])
+        assert result.exit_code == 0, result.output
+
+        archives = list(out_dir.glob("backup-*.tar.gz"))
+        assert len(archives) == 1
+        with tarfile.open(archives[0], "r:gz") as tar:
+            names = tar.getnames()
+
+        for tier in ("short-term", "mid-term", "long-term"):
+            assert any(
+                f"memory/{tier}/{tier}-mem.json" in n for n in names
+            ), f"flat tier {tier} missing from backup: {names}"
+
+    def test_create_home_flag_overrides_agent(self, tmp_path: Path, monkeypatch) -> None:
+        """Explicit --home still wins over per-agent resolution."""
+        import click
+        from click.testing import CliRunner
+
+        import skcapstone
+        from skcapstone.cli.backup import register_backup_commands
+
+        explicit_home = self._make_agent_home_with_tiers(tmp_path / "explicit")
+        # agent_home would point somewhere else; --home must win.
+        monkeypatch.setattr(
+            skcapstone, "agent_home", lambda name=None: tmp_path / "somewhere-else"
+        )
+
+        main = click.Group()
+        register_backup_commands(main)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["backup", "create", "--home", str(explicit_home), "-o", str(tmp_path / "o2")],
+        )
+        assert result.exit_code == 0, result.output
+        archives = list((tmp_path / "o2").glob("backup-*.tar.gz"))
+        assert len(archives) == 1
+        with tarfile.open(archives[0], "r:gz") as tar:
+            names = tar.getnames()
+        assert any("memory/short-term/short-term-mem.json" in n for n in names)
 
 
 class TestRestoreBackup:
@@ -238,6 +322,7 @@ class TestBackupManifest:
         """Manifest has sensible defaults."""
         m = BackupManifest()
         import skcapstone
+
         assert m.version == skcapstone.__version__
         assert m.files == {}
         assert m.total_size == 0

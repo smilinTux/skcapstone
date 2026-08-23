@@ -7,10 +7,8 @@ health_check, and generate_compose (including SKComms/MCP wiring).
 
 from __future__ import annotations
 
-from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -25,12 +23,10 @@ from skcapstone.blueprints.schema import (
 )
 from skcapstone.providers.docker import (
     DockerProvider,
-    _DEFAULT_IMAGE,
     _nano_cpus,
     _parse_memory_bytes,
 )
 from skcapstone.team_engine import AgentStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -59,9 +55,7 @@ def _make_spec(
 
 def _make_blueprint(agent_count: int = 1) -> BlueprintManifest:
     """Build a minimal BlueprintManifest for testing."""
-    agents = {
-        f"agent{i}": _make_spec() for i in range(agent_count)
-    }
+    agents = {f"agent{i}": _make_spec() for i in range(agent_count)}
     return BlueprintManifest(
         name="Test Team",
         slug="test-team",
@@ -129,19 +123,19 @@ class TestParseMemoryBytes:
     """Tests for _parse_memory_bytes helper."""
 
     def test_gigabytes(self):
-        assert _parse_memory_bytes("2g") == 2 * 1024 ** 3
+        assert _parse_memory_bytes("2g") == 2 * 1024**3
 
     def test_megabytes(self):
-        assert _parse_memory_bytes("512m") == 512 * 1024 ** 2
+        assert _parse_memory_bytes("512m") == 512 * 1024**2
 
     def test_uppercase_suffix(self):
-        assert _parse_memory_bytes("1G") == 1 * 1024 ** 3
+        assert _parse_memory_bytes("1G") == 1 * 1024**3
 
     def test_numeric_only(self):
         assert _parse_memory_bytes("1073741824") == 1073741824
 
     def test_fractional_gigabytes(self):
-        assert _parse_memory_bytes("0.5g") == int(0.5 * 1024 ** 3)
+        assert _parse_memory_bytes("0.5g") == int(0.5 * 1024**3)
 
 
 class TestNanoCpus:
@@ -241,7 +235,7 @@ class TestProvision:
             provider.provision("agent-x", spec, "team-y")
 
         kwargs = mock_client.containers.create.call_args[1]
-        assert kwargs["mem_limit"] == 2 * 1024 ** 3
+        assert kwargs["mem_limit"] == 2 * 1024**3
 
     def test_cpu_limit_applied(self, provider, mock_docker_client):
         mock_client, mock_container = mock_docker_client
@@ -667,7 +661,7 @@ class TestGenerateCompose:
 
 
 # ---------------------------------------------------------------------------
-# provision() — team_name fix
+# provision() - team_name fix
 # ---------------------------------------------------------------------------
 
 
@@ -732,9 +726,7 @@ class TestSovereignWiring:
         env = kwargs["environment"]
         assert env.get("SKCAPSTONE_MCP_HOST") == "host-gateway:8765"
 
-    def test_skcomms_home_env_injected_when_dir_exists(
-        self, mock_docker_client, tmp_path
-    ):
+    def test_skcomms_home_env_injected_when_dir_exists(self, mock_docker_client, tmp_path):
         skcomms_dir = tmp_path / "skcomms"
         skcomms_dir.mkdir()
 
@@ -752,9 +744,7 @@ class TestSovereignWiring:
         env = kwargs["environment"]
         assert env.get("SKCOMMS_HOME") == "/skcomms"
 
-    def test_skcomms_volume_mounted_when_dir_exists(
-        self, mock_docker_client, tmp_path
-    ):
+    def test_skcomms_volume_mounted_when_dir_exists(self, mock_docker_client, tmp_path):
         skcomms_dir = tmp_path / "skcomms"
         skcomms_dir.mkdir()
 
@@ -894,7 +884,7 @@ class TestRotate:
 
 
 # ---------------------------------------------------------------------------
-# generate_compose() — MCP service + SKComms volume
+# generate_compose() - MCP service + SKComms volume
 # ---------------------------------------------------------------------------
 
 
@@ -913,9 +903,7 @@ class TestGenerateComposeSovereignExtensions:
         parsed = yaml.safe_load(output)
         agent_svcs = [k for k in parsed["services"] if k != "skcapstone-mcp"]
         for svc_name in agent_svcs:
-            assert "skcapstone-mcp" in parsed["services"][svc_name].get(
-                "depends_on", []
-            )
+            assert "skcapstone-mcp" in parsed["services"][svc_name].get("depends_on", [])
 
     def test_mcp_host_env_set_on_agents_when_mcp_service_included(self, provider):
         bp = _make_blueprint(agent_count=1)

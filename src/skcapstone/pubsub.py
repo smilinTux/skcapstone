@@ -1,5 +1,5 @@
 """
-Sovereign pub/sub — lightweight real-time messaging for agent meshes.
+Sovereign pub/sub - lightweight real-time messaging for agent meshes.
 
 Topic-based publish/subscribe built on the file transport layer.
 Designed for 100+ node scale without requiring a central broker.
@@ -35,7 +35,6 @@ import asyncio
 import fnmatch
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -49,6 +48,7 @@ logger = logging.getLogger("skcapstone.pubsub")
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+
 
 class TopicMessage(BaseModel):
     """A single published message on a topic."""
@@ -80,6 +80,7 @@ class Subscription(BaseModel):
 # ---------------------------------------------------------------------------
 # PubSub
 # ---------------------------------------------------------------------------
+
 
 class PubSub:
     """Sovereign publish/subscribe message bus.
@@ -299,7 +300,9 @@ class PubSub:
                         except Exception as exc:
                             logger.error(
                                 "Callback error for '%s' on '%s': %s",
-                                pattern, msg.topic, exc,
+                                pattern,
+                                msg.topic,
+                                exc,
                             )
 
         return dispatched
@@ -329,11 +332,13 @@ class PubSub:
                 except (json.JSONDecodeError, OSError):
                     pass
 
-            topics.append({
-                "topic": _unsanitize_topic(topic_dir.name),
-                "messages": len(msg_files),
-                "latest": latest,
-            })
+            topics.append(
+                {
+                    "topic": _unsanitize_topic(topic_dir.name),
+                    "messages": len(msg_files),
+                    "latest": latest,
+                }
+            )
 
         return topics
 
@@ -419,11 +424,13 @@ class PubSub:
             if live_timestamps:
                 oldest_age = (now - min(live_timestamps)).total_seconds()
 
-            stats.append({
-                "topic": _unsanitize_topic(topic_dir.name),
-                "message_count": len(live_timestamps),
-                "oldest_message_age_seconds": oldest_age,
-            })
+            stats.append(
+                {
+                    "topic": _unsanitize_topic(topic_dir.name),
+                    "message_count": len(live_timestamps),
+                    "oldest_message_age_seconds": oldest_age,
+                }
+            )
 
         return stats
 
@@ -478,11 +485,7 @@ class PubSub:
         if not self._topics_dir.is_dir():
             return []
 
-        all_topics = [
-            _unsanitize_topic(d.name)
-            for d in self._topics_dir.iterdir()
-            if d.is_dir()
-        ]
+        all_topics = [_unsanitize_topic(d.name) for d in self._topics_dir.iterdir() if d.is_dir()]
 
         matched: set[str] = set()
         for pattern in subs:
@@ -505,6 +508,7 @@ class PubSub:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _sanitize_topic(topic: str) -> str:
     """Convert topic name to filesystem-safe directory name."""

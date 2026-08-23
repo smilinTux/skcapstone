@@ -1,0 +1,13 @@
+{
+  "kind": "service",
+  "name": "skcomms",
+  "labels": {"tier": "core"},
+  "spec": {
+    "runtime": "systemd-user",
+    "unit": "skcomms.service",
+    "nodeSelector": {"always-on": "true"},
+    "healthCheck": {"port": 9384},
+    "restartPolicy": "on-failure",
+    "failover": "manual"
+  }
+}

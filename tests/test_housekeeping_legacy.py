@@ -4,8 +4,6 @@ import os
 import time
 from pathlib import Path
 
-import pytest
-
 from skcapstone.housekeeping import (
     DEFAULT_LEGACY_COMMS_MAX_AGE_HOURS,
     prune_legacy_comms,
@@ -61,7 +59,7 @@ class TestPruneLegacyComms:
     def test_broadcast_star_dir_removed_regardless_of_age(self, tmp_path):
         """A recipient subdir literally named ``*`` is removed wholesale."""
         star_dir = tmp_path / "comms" / "outbox" / "*"
-        # Fresh files (age 0) — must still be removed because the dir is "*".
+        # Fresh files (age 0) - must still be removed because the dir is "*".
         for i in range(4):
             _make_envelope(star_dir, f"bcast-{i}.skc.json", age_hours=0)
         # Even nested subdirs under "*" are swept.

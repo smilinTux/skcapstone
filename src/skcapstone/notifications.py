@@ -7,7 +7,10 @@ Sends desktop notifications for incoming messages via:
   - osascript (macOS)
 
 Gracefully no-ops if neither tool is available.
-Enforces a 5-second debounce so rapid messages don't flood the desktop.
+Enforces a 5-second debounce so rapid messages don't flood the desktop, plus a
+content-based deduplication cache so an identical notification (same
+title/body/urgency, or an explicit ``dedup_key``) is suppressed if it was
+already sent within a configurable TTL window.
 
 Click actions (Linux gi.Notify only):
   - open-dashboard: xdg-open the skcapstone dashboard URL (default localhost:7778)
@@ -18,6 +21,7 @@ Click actions (Linux gi.Notify only):
 from __future__ import annotations
 
 import datetime
+import hashlib
 import logging
 import os
 import platform
@@ -32,14 +36,39 @@ logger = logging.getLogger("skcapstone.notifications")
 # Values (case-insensitive) that disable desktop notifications.
 _DISABLED_VALUES = frozenset({"0", "false", "no", "off", "silent", "null", "none"})
 
+# Default deduplication window (seconds). Identical notifications sent within
+# this window are suppressed. Overridable per-manager and via the
+# ``SKCAPSTONE_NOTIFY_DEDUP_TTL`` environment variable.
+_DEFAULT_DEDUP_TTL = 120.0
+
+
+def _default_dedup_ttl() -> float:
+    """Return the default dedup TTL, honouring ``SKCAPSTONE_NOTIFY_DEDUP_TTL``.
+
+    Reads the ``SKCAPSTONE_NOTIFY_DEDUP_TTL`` environment variable (seconds).
+    A value of ``0`` (or negative) disables content deduplication. Any
+    unparseable value falls back to :data:`_DEFAULT_DEDUP_TTL`.
+
+    Returns:
+        The dedup TTL in seconds.
+    """
+    raw = os.environ.get("SKCAPSTONE_NOTIFY_DEDUP_TTL")
+    if raw is None:
+        return _DEFAULT_DEDUP_TTL
+    try:
+        return max(0.0, float(raw.strip()))
+    except (TypeError, ValueError):
+        return _DEFAULT_DEDUP_TTL
+
 
 def desktop_notifications_enabled() -> bool:
     """Return whether desktop notifications should be dispatched.
 
     Controlled by the ``SKCAPSTONE_DESKTOP_NOTIFY`` environment variable.
-    Defaults to enabled; set it to one of ``0``, ``false``, ``no``, ``off``,
-    ``silent``, ``null`` or ``none`` to suppress every desktop notification
-    path (``gi.repository.Notify``, ``notify-send`` and ``osascript``).
+    Defaults to DISABLED (opt-in): background agents must NOT flood the desktop
+    tray. Set it to ``1``/``true``/``yes``/``on`` to enable desktop popups
+    (``gi.repository.Notify``, ``notify-send`` and ``osascript``) on a machine
+    where you actually want them. Any disabled/unset value suppresses them.
 
     The test suite forces this off (see ``tests/conftest.py``) so running
     tests never floods the live desktop's notification tray.
@@ -47,7 +76,7 @@ def desktop_notifications_enabled() -> bool:
     Returns:
         True if notifications should be sent, False to suppress them.
     """
-    value = os.environ.get("SKCAPSTONE_DESKTOP_NOTIFY", "1").strip().lower()
+    value = os.environ.get("SKCAPSTONE_DESKTOP_NOTIFY", "0").strip().lower()
     return value not in _DISABLED_VALUES
 
 
@@ -75,6 +104,7 @@ def _store_notification_memory(title: str, body: str, urgency: str) -> None:
     try:
         import json as _json
         import uuid
+
         from . import AGENT_HOME
 
         home = Path(AGENT_HOME).expanduser()
@@ -107,6 +137,7 @@ def _store_click_event(action: str, detail: str) -> None:
     try:
         import json as _json
         import uuid
+
         from . import AGENT_HOME
 
         home = Path(AGENT_HOME).expanduser()
@@ -164,25 +195,82 @@ _NOTIFY_SEND_URGENCY = {
 
 
 class NotificationManager:
-    """Send desktop notifications with debounce protection.
+    """Send desktop notifications with debounce + deduplication protection.
+
+    Two independent suppression layers guard the desktop tray:
+
+    * **Debounce** (``debounce_seconds``) is a global rate limit: no more than
+      one notification of any content per interval.
+    * **Deduplication** (``dedup_ttl``) is content-specific: an identical
+      notification (same ``title``/``body``/``urgency``, or the same explicit
+      ``dedup_key``) is suppressed if it was already dispatched within the TTL
+      window. This catches duplicate events delivered repeatedly, retries, and
+      multi-path delivery of the same event.
 
     Args:
         debounce_seconds: Minimum seconds between notifications (default 5).
         dashboard_url:    URL opened by the "Open Dashboard" action button.
+        dedup_ttl:        Seconds an identical notification is remembered and
+            suppressed for. Defaults to the ``SKCAPSTONE_NOTIFY_DEDUP_TTL``
+            environment variable, else 120s. Pass ``0`` to disable dedup.
     """
 
     def __init__(
         self,
         debounce_seconds: float = 5.0,
         dashboard_url: str = _DEFAULT_DASHBOARD_URL,
+        dedup_ttl: Optional[float] = None,
     ) -> None:
         self._debounce_seconds = debounce_seconds
         self._dashboard_url = dashboard_url
+        self._dedup_ttl = _default_dedup_ttl() if dedup_ttl is None else max(0.0, dedup_ttl)
         self._last_sent: float = 0.0
+        # Maps a stable dedup key -> monotonic timestamp of last dispatch.
+        self._dedup_seen: dict[str, float] = {}
         self._system = platform.system()  # "Linux", "Darwin", "Windows"
         # GLib main-loop plumbing (created lazily, shared across notifications)
         self._glib_loop: object | None = None
         self._glib_thread: threading.Thread | None = None
+
+    # ------------------------------------------------------------------
+    # Deduplication helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_dedup_key(title: str, body: str, urgency: str) -> str:
+        """Compute a stable dedup key from a notification's content.
+
+        Args:
+            title: Notification title.
+            body: Notification body text.
+            urgency: Urgency level.
+
+        Returns:
+            A short hex digest uniquely identifying this notification content.
+        """
+        payload = "\x1f".join((title, body, urgency))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+    def _is_duplicate(self, key: str, now: float) -> bool:
+        """Return whether ``key`` was already seen within the dedup TTL.
+
+        Expired entries are pruned as a side effect so the cache stays small.
+
+        Args:
+            key: The dedup key to test.
+            now: Current monotonic timestamp.
+
+        Returns:
+            True if an identical notification is still within the TTL window.
+        """
+        if self._dedup_ttl <= 0:
+            return False
+        # Prune expired entries to bound memory growth.
+        expired = [k for k, ts in self._dedup_seen.items() if now - ts >= self._dedup_ttl]
+        for k in expired:
+            del self._dedup_seen[k]
+        last = self._dedup_seen.get(key)
+        return last is not None and (now - last) < self._dedup_ttl
 
     # ------------------------------------------------------------------
     # Public API
@@ -193,6 +281,7 @@ class NotificationManager:
         title: str,
         body: str,
         urgency: str = "normal",
+        dedup_key: Optional[str] = None,
     ) -> bool:
         """Send a desktop notification.
 
@@ -200,16 +289,30 @@ class NotificationManager:
             title: Notification title.
             body: Notification body text.
             urgency: "low", "normal", or "critical".
+            dedup_key: Optional explicit key identifying this notification for
+                deduplication. When omitted, a stable key is derived from
+                ``title``/``body``/``urgency``. An identical key seen within the
+                manager's ``dedup_ttl`` window is suppressed.
 
         Returns:
             True if the notification was dispatched, False if suppressed,
-            debounced, or no notification system is available.
+            debounced, deduplicated, or no notification system is available.
         """
         if not desktop_notifications_enabled():
             logger.debug("Desktop notifications disabled via SKCAPSTONE_DESKTOP_NOTIFY")
             return False
 
         now = time.monotonic()
+
+        # Content deduplication: suppress an identical notification already sent
+        # within the TTL window (duplicate events, retries, multi-path delivery).
+        key = dedup_key if dedup_key is not None else self._compute_dedup_key(title, body, urgency)
+        if self._is_duplicate(key, now):
+            logger.debug(
+                "Notification deduplicated (key=%s within %.0fs TTL)", key, self._dedup_ttl
+            )
+            return False
+
         if now - self._last_sent < self._debounce_seconds:
             logger.debug(
                 "Notification debounced (%.1fs since last send)",
@@ -229,7 +332,10 @@ class NotificationManager:
             return False
 
         if dispatched:
-            self._last_sent = time.monotonic()
+            sent_at = time.monotonic()
+            self._last_sent = sent_at
+            if self._dedup_ttl > 0:
+                self._dedup_seen[key] = sent_at
             _store_notification_memory(title, body, urgency)
         return dispatched
 
@@ -356,7 +462,7 @@ class NotificationManager:
             logger.debug("notify-send dispatched: %r / %r", title, body)
             return True
         except FileNotFoundError:
-            logger.debug("notify-send not found — desktop notifications unavailable")
+            logger.debug("notify-send not found - desktop notifications unavailable")
             return False
         except subprocess.CalledProcessError as exc:
             logger.debug("notify-send failed (rc=%d): %s", exc.returncode, exc.stderr)
@@ -384,7 +490,7 @@ class NotificationManager:
             logger.debug("osascript dispatched: %r / %r", title, body)
             return True
         except FileNotFoundError:
-            logger.debug("osascript not found — desktop notifications unavailable")
+            logger.debug("osascript not found - desktop notifications unavailable")
             return False
         except subprocess.CalledProcessError as exc:
             logger.debug("osascript failed (rc=%d): %s", exc.returncode, exc.stderr)
@@ -412,6 +518,11 @@ def get_manager() -> NotificationManager:
     return _manager
 
 
-def notify(title: str, body: str, urgency: str = "normal") -> bool:
-    """Convenience wrapper — send a notification via the singleton manager."""
-    return get_manager().notify(title, body, urgency)
+def notify(
+    title: str,
+    body: str,
+    urgency: str = "normal",
+    dedup_key: Optional[str] = None,
+) -> bool:
+    """Convenience wrapper: send a notification via the singleton manager."""
+    return get_manager().notify(title, body, urgency, dedup_key=dedup_key)

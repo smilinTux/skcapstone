@@ -126,23 +126,15 @@ async def _handle_memory_store(args: dict) -> list[TextContent]:
         source=args.get("source", "mcp"),
         importance=args.get("importance", 0.5),
     )
-    try:
-        from .. import activity
-        activity.push("memory.stored", {
+    return _json_response(
+        {
             "memory_id": entry.memory_id,
             "layer": entry.layer.value,
             "importance": entry.importance,
             "tags": entry.tags,
-        })
-    except Exception as exc:
-        logger.warning("Failed to push memory.stored activity for %s: %s", entry.memory_id, exc)
-    return _json_response({
-        "memory_id": entry.memory_id,
-        "layer": entry.layer.value,
-        "importance": entry.importance,
-        "tags": entry.tags,
-        "stored": True,
-    })
+            "stored": True,
+        }
+    )
 
 
 async def _handle_memory_search(args: dict) -> list[TextContent]:
@@ -159,17 +151,19 @@ async def _handle_memory_search(args: dict) -> list[TextContent]:
         tags=args.get("tags"),
         limit=args.get("limit", 10),
     )
-    return _json_response([
-        {
-            "memory_id": e.memory_id,
-            "layer": e.layer.value,
-            "content": e.content[:300],
-            "tags": e.tags,
-            "importance": e.importance,
-            "access_count": e.access_count,
-        }
-        for e in results
-    ])
+    return _json_response(
+        [
+            {
+                "memory_id": e.memory_id,
+                "layer": e.layer.value,
+                "content": e.content[:300],
+                "tags": e.tags,
+                "importance": e.importance,
+                "access_count": e.access_count,
+            }
+            for e in results
+        ]
+    )
 
 
 async def _handle_memory_recall(args: dict) -> list[TextContent]:
@@ -184,16 +178,18 @@ async def _handle_memory_recall(args: dict) -> list[TextContent]:
     if entry is None:
         return _error_response(f"Memory not found: {memory_id}")
 
-    return _json_response({
-        "memory_id": entry.memory_id,
-        "content": entry.content,
-        "layer": entry.layer.value,
-        "tags": entry.tags,
-        "importance": entry.importance,
-        "access_count": entry.access_count,
-        "source": entry.source,
-        "created_at": entry.created_at.isoformat() if entry.created_at else None,
-    })
+    return _json_response(
+        {
+            "memory_id": entry.memory_id,
+            "content": entry.content,
+            "layer": entry.layer.value,
+            "tags": entry.tags,
+            "importance": entry.importance,
+            "access_count": entry.access_count,
+            "source": entry.source,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        }
+    )
 
 
 async def _handle_memory_curate(args: dict) -> list[TextContent]:
@@ -208,14 +204,16 @@ async def _handle_memory_curate(args: dict) -> list[TextContent]:
 
     dry_run = args.get("dry_run", False)
     result = curator.curate(dry_run=dry_run)
-    return _json_response({
-        "dry_run": dry_run,
-        "scanned": result.total_scanned,
-        "tagged": len(result.tagged),
-        "promoted": len(result.promoted),
-        "deduped": len(result.deduped),
-        "by_layer": result.by_layer,
-    })
+    return _json_response(
+        {
+            "dry_run": dry_run,
+            "scanned": result.total_scanned,
+            "tagged": len(result.tagged),
+            "promoted": len(result.promoted),
+            "deduped": len(result.deduped),
+            "by_layer": result.by_layer,
+        }
+    )
 
 
 HANDLERS: dict = {

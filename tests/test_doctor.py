@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,21 +20,21 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from skcapstone.codex_setup import ensure_codex_setup
+from skcapstone.codex_setup import ensure_codex_setup, ensure_pi_setup
 from skcapstone.doctor import (
     Check,
     DiagnosticReport,
-    _check_codex,
     _check_agent_home,
+    _check_codex,
     _check_harness_env,
-    _check_yolo,
     _check_identity,
     _check_identity_consistency,
-    _provisioned_agents,
-    _scan_capauth_local,
     _check_memory,
     _check_packages,
-    run_fixes,
+    _check_yolo,
+    _provisioned_agents,
+    _scan_capauth_local,
+    _scan_pairing_subjects,
     run_diagnostics,
     run_fixes,
 )
@@ -43,26 +44,50 @@ from skcapstone.doctor import (
 def agent_home(tmp_path):
     """Create a fully populated agent home for testing."""
     home = tmp_path / ".skcapstone"
-    for d in ["identity", "memory", "trust", "security", "sync", "config",
-              "memory/short-term", "memory/mid-term", "memory/long-term",
-              "sync/outbox", "sync/inbox"]:
+    for d in [
+        "identity",
+        "memory",
+        "trust",
+        "security",
+        "sync",
+        "config",
+        "memory/short-term",
+        "memory/mid-term",
+        "memory/long-term",
+        "sync/outbox",
+        "sync/inbox",
+    ]:
         (home / d).mkdir(parents=True, exist_ok=True)
 
-    (home / "manifest.json").write_text(json.dumps({
-        "name": "TestAgent", "version": "0.1.0",
-    }))
-    (home / "identity" / "identity.json").write_text(json.dumps({
-        "name": "TestAgent",
-        "fingerprint": "AABBCCDD11223344",
-        "capauth_managed": True,
-    }))
+    (home / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "version": "0.1.0",
+            }
+        )
+    )
+    (home / "identity" / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "fingerprint": "AABBCCDD11223344",
+                "capauth_managed": True,
+            }
+        )
+    )
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "TestAgent"}))
     (home / "memory" / "index.json").write_text("{}")
 
     # Add a memory file
-    (home / "memory" / "short-term" / "mem1.json").write_text(json.dumps({
-        "memory_id": "mem1", "content": "test",
-    }))
+    (home / "memory" / "short-term" / "mem1.json").write_text(
+        json.dumps(
+            {
+                "memory_id": "mem1",
+                "content": "test",
+            }
+        )
+    )
 
     return home
 
@@ -94,11 +119,13 @@ class TestDiagnosticReport:
 
     def test_counts(self):
         """Report counts passed and failed correctly."""
-        report = DiagnosticReport(checks=[
-            Check(name="a", description="A", passed=True),
-            Check(name="b", description="B", passed=True),
-            Check(name="c", description="C", passed=False),
-        ])
+        report = DiagnosticReport(
+            checks=[
+                Check(name="a", description="A", passed=True),
+                Check(name="b", description="B", passed=True),
+                Check(name="c", description="C", passed=False),
+            ]
+        )
 
         assert report.passed_count == 2
         assert report.failed_count == 1
@@ -107,9 +134,11 @@ class TestDiagnosticReport:
 
     def test_all_passed(self):
         """all_passed is True when everything passes."""
-        report = DiagnosticReport(checks=[
-            Check(name="a", description="A", passed=True),
-        ])
+        report = DiagnosticReport(
+            checks=[
+                Check(name="a", description="A", passed=True),
+            ]
+        )
         assert report.all_passed
 
     def test_to_dict(self):
@@ -231,14 +260,16 @@ class TestCheckCodex:
         monkeypatch.setenv("CODEX_HOME", str(codex_home))
         monkeypatch.setenv("SKAGENT", "jarvis")
 
-        report = DiagnosticReport(checks=[
-            Check(
-                name="codex:agent_context",
-                description="Codex SK agent context bootstrap",
-                passed=False,
-                category="codex",
-            )
-        ])
+        report = DiagnosticReport(
+            checks=[
+                Check(
+                    name="codex:agent_context",
+                    description="Codex SK agent context bootstrap",
+                    passed=False,
+                    category="codex",
+                )
+            ]
+        )
 
         results = run_fixes(report, agent_home)
 
@@ -247,26 +278,72 @@ class TestCheckCodex:
         agents = codex_home / "AGENTS.md"
         assert loader.exists()
         assert loader.stat().st_mode & 0o100
+        loader_text = loader.read_text(encoding="utf-8")
+        assert 'export PATH="$HOME/.skenv/bin:$PATH"' in loader_text
+        assert 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' in loader_text
         agents_text = agents.read_text(encoding="utf-8")
         assert "SKCAPSTONE_CODEX_AGENT_CONTEXT_START" in agents_text
         assert "jarvis" in agents_text
-        assert str(loader) in agents_text
+        assert '"${CODEX_HOME:-$HOME/.codex}/bin/load-sk-agent-context.sh"' in agents_text
+        assert str(loader) not in agents_text
 
         checks = _check_codex()
         assert next(c for c in checks if c.name == "codex:agent_context").passed
 
-    def test_codex_fix_preserves_functional_custom_loader(self, tmp_path, monkeypatch):
-        """Existing working loader scripts are not overwritten."""
+    def test_codex_fix_repairs_loader_without_yolo_default(self, tmp_path, monkeypatch):
+        """Existing loaders are upgraded with the Codex YOLO default."""
         codex_home = tmp_path / ".codex"
         loader = codex_home / "bin" / "load-sk-agent-context.sh"
         loader.parent.mkdir(parents=True)
-        custom_loader = "#!/usr/bin/env bash\nSKAGENT=x SKCAPSTONE_AGENT=x SKMEMORY_AGENT=x skcapstone status; skmemory ritual; skwhisper status\n"
+        custom_loader = "#!/usr/bin/env bash\nSKAGENT=x SKCAPSTONE_AGENT=x SKMEMORY_AGENT=x skcapstone status; skmemory ritual; skwhisper status\n"  # noqa: E501
         loader.write_text(custom_loader, encoding="utf-8")
 
         monkeypatch.setenv("CODEX_HOME", str(codex_home))
         ensure_codex_setup()
 
-        assert loader.read_text(encoding="utf-8") == custom_loader
+        updated = loader.read_text(encoding="utf-8")
+        assert updated != custom_loader
+        assert 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' in updated
+
+    def test_pi_setup_creates_global_context_and_loader(self, tmp_path, monkeypatch):
+        pi_home = tmp_path / ".pi" / "agent"
+        monkeypatch.setenv("SKAGENT", "lumina")
+
+        actions = ensure_pi_setup(home=pi_home)
+
+        assert actions
+        loader = pi_home / "bin" / "load-sk-agent-context.sh"
+        agents = pi_home / "AGENTS.md"
+        assert loader.stat().st_mode & 0o100
+        assert 'export PATH="$HOME/.skenv/bin:$PATH"' in loader.read_text()
+        text = agents.read_text()
+        assert "SKCAPSTONE_PI_AGENT_CONTEXT_START" in text
+        assert "lumina" in text
+        assert '"${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/bin/load-sk-agent-context.sh"' in text
+        assert str(loader) not in text
+
+    def test_context_loader_refuses_to_guess_between_agents(self, tmp_path):
+        pi_home = tmp_path / ".pi" / "agent"
+        sk_home = tmp_path / ".skcapstone"
+        (sk_home / "agents" / "jarvis").mkdir(parents=True)
+        (sk_home / "agents" / "lumina").mkdir(parents=True)
+        ensure_pi_setup(home=pi_home, agent_name="")
+
+        env = {
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin",
+            "SKCAPSTONE_HOME": str(sk_home),
+        }
+        result = subprocess.run(
+            [str(pi_home / "bin" / "load-sk-agent-context.sh")],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode == 1
+        assert "without guessing" in result.stderr
 
 
 class TestRunDiagnostics:
@@ -326,8 +403,13 @@ class TestCLIDoctorCommand:
         assert "passed" in result.output or "checks" in result.output.lower()
 
 
-def _write_claude_config(home_root: Path, *, claude_json: dict, settings: dict | None = None,
-                         mcp_json: dict | None = None) -> Path:
+def _write_claude_config(
+    home_root: Path,
+    *,
+    claude_json: dict,
+    settings: dict | None = None,
+    mcp_json: dict | None = None,
+) -> Path:
     """Lay down a fake Claude Code config tree under *home_root*. Returns the
     .claude config dir."""
     (home_root / ".claude.json").write_text(json.dumps(claude_json))
@@ -357,9 +439,12 @@ class TestCheckHarnessEnv:
 
     def test_registered_mcp_servers_pass(self, tmp_path, monkeypatch):
         """Servers present in ~/.claude.json mcpServers pass."""
-        cc = _write_claude_config(tmp_path, claude_json={
-            "mcpServers": {"skmemory": {}, "skcapstone": {}, "skchat": {}},
-        })
+        cc = _write_claude_config(
+            tmp_path,
+            claude_json={
+                "mcpServers": {"skmemory": {}, "skcapstone": {}, "skchat": {}},
+            },
+        )
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
         by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
@@ -397,18 +482,34 @@ class TestCheckHarnessEnv:
         on PATH (the stale-install trap) is flagged."""
         live = tmp_path / "skenv" / "skcapstone"
         stale = tmp_path / "pyenv" / "skcapstone"
-        live.parent.mkdir(); stale.parent.mkdir()
-        live.write_text("#live"); stale.write_text("#stale")
+        live.parent.mkdir()
+        stale.parent.mkdir()
+        live.write_text("#live")
+        stale.write_text("#stale")
         cc = _write_claude_config(
             tmp_path,
             claude_json={"mcpServers": {"skmemory": {}, "skcapstone": {}, "skchat": {}}},
-            settings={"hooks": {"SessionStart": [{"hooks": [
-                {"type": "command", "command": f"{stale} context show --format claude-md"}]}]}},
+            settings={
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": f"{stale} context show --format claude-md",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
         )
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
-        monkeypatch.setattr("skcapstone.doctor.shutil.which",
-                            lambda name: str(live) if name == "skcapstone" else None)
+        monkeypatch.setattr(
+            "skcapstone.doctor.shutil.which",
+            lambda name: str(live) if name == "skcapstone" else None,
+        )
         by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
         c = by["harness:hook:sessionstart"]
         assert c.passed is False
@@ -417,17 +518,32 @@ class TestCheckHarnessEnv:
     def test_hook_on_live_binary_passes(self, tmp_path, monkeypatch):
         """A hook pointing at the live skcapstone passes."""
         live = tmp_path / "skenv" / "skcapstone"
-        live.parent.mkdir(); live.write_text("#live")
+        live.parent.mkdir()
+        live.write_text("#live")
         cc = _write_claude_config(
             tmp_path,
             claude_json={"mcpServers": {"skmemory": {}, "skcapstone": {}, "skchat": {}}},
-            settings={"hooks": {"SessionStart": [{"hooks": [
-                {"type": "command", "command": f"{live} context show --format claude-md"}]}]}},
+            settings={
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": f"{live} context show --format claude-md",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
         )
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
-        monkeypatch.setattr("skcapstone.doctor.shutil.which",
-                            lambda name: str(live) if name == "skcapstone" else None)
+        monkeypatch.setattr(
+            "skcapstone.doctor.shutil.which",
+            lambda name: str(live) if name == "skcapstone" else None,
+        )
         by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
         assert by["harness:hook:sessionstart"].passed is True
 
@@ -435,21 +551,28 @@ class TestCheckHarnessEnv:
         """A hook script whose PATH merely contains 'skcapstone' (e.g. one under
         skcapstone-repos/) must NOT be treated as a stale skcapstone binary."""
         live = tmp_path / "skenv" / "skcapstone"
-        live.parent.mkdir(); live.write_text("#live")
+        live.parent.mkdir()
+        live.write_text("#live")
         # A real-world false-positive: a skmemory hook living under a
-        # skcapstone-repos/ checkout — its basename is NOT 'skcapstone'.
+        # skcapstone-repos/ checkout - its basename is NOT 'skcapstone'.
         script = tmp_path / "skcapstone-repos" / "skmemory" / "hooks" / "sk-activity-inject.sh"
-        script.parent.mkdir(parents=True); script.write_text("#!/bin/sh\n")
+        script.parent.mkdir(parents=True)
+        script.write_text("#!/bin/sh\n")
         cc = _write_claude_config(
             tmp_path,
             claude_json={"mcpServers": {}},
-            settings={"hooks": {"SessionStart": [{"hooks": [
-                {"type": "command", "command": str(script)}]}]}},
+            settings={
+                "hooks": {
+                    "SessionStart": [{"hooks": [{"type": "command", "command": str(script)}]}]
+                }
+            },
         )
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
-        monkeypatch.setattr("skcapstone.doctor.shutil.which",
-                            lambda name: str(live) if name == "skcapstone" else None)
+        monkeypatch.setattr(
+            "skcapstone.doctor.shutil.which",
+            lambda name: str(live) if name == "skcapstone" else None,
+        )
         by = self._by_name(_check_harness_env(tmp_path / ".skcapstone"))
         # No skcapstone-binary hook present → the check emits no sessionstart result.
         assert "harness:hook:sessionstart" not in by
@@ -458,22 +581,32 @@ class TestCheckHarnessEnv:
         """run_fixes must not destructively rewrite a non-binary hook whose path
         merely contains 'skcapstone'."""
         live = tmp_path / "skenv" / "skcapstone"
-        live.parent.mkdir(); live.write_text("#live")
+        live.parent.mkdir()
+        live.write_text("#live")
         script = tmp_path / "skcapstone-repos" / "hooks" / "inject.sh"
-        script.parent.mkdir(parents=True); script.write_text("#!/bin/sh\n")
+        script.parent.mkdir(parents=True)
+        script.write_text("#!/bin/sh\n")
         cc = _write_claude_config(
             tmp_path,
             claude_json={"mcpServers": {}},
-            settings={"hooks": {"SessionStart": [{"hooks": [
-                {"type": "command", "command": str(script)}]}]}},
+            settings={
+                "hooks": {
+                    "SessionStart": [{"hooks": [{"type": "command", "command": str(script)}]}]
+                }
+            },
         )
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
-        monkeypatch.setattr("skcapstone.doctor.shutil.which",
-                            lambda name: str(live) if name == "skcapstone" else None)
+        monkeypatch.setattr(
+            "skcapstone.doctor.shutil.which",
+            lambda name: str(live) if name == "skcapstone" else None,
+        )
         report = DiagnosticReport()
-        report.checks.append(Check(name="harness:hook:sessionstart",
-                                   description="x", passed=False, category="harness"))
+        report.checks.append(
+            Check(
+                name="harness:hook:sessionstart", description="x", passed=False, category="harness"
+            )
+        )
         run_fixes(report, tmp_path / ".skcapstone")
         # The script path must be left untouched (not rewritten to the binary).
         updated = json.loads((cc / "settings.json").read_text())
@@ -482,20 +615,38 @@ class TestCheckHarnessEnv:
     def test_fix_repoints_stale_hook(self, tmp_path, monkeypatch):
         """run_fixes rewrites a stale SessionStart hook to the live binary."""
         live = tmp_path / "skenv" / "skcapstone"
-        live.parent.mkdir(); live.write_text("#live")
+        live.parent.mkdir()
+        live.write_text("#live")
         cc = _write_claude_config(
             tmp_path,
             claude_json={"mcpServers": {}},
-            settings={"hooks": {"SessionStart": [{"hooks": [
-                {"type": "command", "command": "/old/path/skcapstone context show --format claude-md"}]}]}},
+            settings={
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "/old/path/skcapstone context show --format claude-md",  # noqa: E501
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
         )
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
-        monkeypatch.setattr("skcapstone.doctor.shutil.which",
-                            lambda name: str(live) if name == "skcapstone" else None)
+        monkeypatch.setattr(
+            "skcapstone.doctor.shutil.which",
+            lambda name: str(live) if name == "skcapstone" else None,
+        )
         report = DiagnosticReport()
-        report.checks.append(Check(name="harness:hook:sessionstart",
-                                   description="x", passed=False, category="harness"))
+        report.checks.append(
+            Check(
+                name="harness:hook:sessionstart", description="x", passed=False, category="harness"
+            )
+        )
         results = run_fixes(report, tmp_path / ".skcapstone")
         assert any(r.success and r.check_name == "harness:hook:sessionstart" for r in results)
         updated = json.loads((cc / "settings.json").read_text())
@@ -574,10 +725,16 @@ def identity_home(tmp_path):
     """A home with a shared operator identity + two provisioned agents."""
     home = tmp_path / ".skcapstone"
     (home / "identity").mkdir(parents=True, exist_ok=True)
-    (home / "identity" / "identity.json").write_text(json.dumps({
-        "name": "Chef", "role": "operator", "capauth_managed": True,
-        "capauth_uri": "capauth:chef@skworld.io",
-    }))
+    (home / "identity" / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "Chef",
+                "role": "operator",
+                "capauth_managed": True,
+                "capauth_uri": "capauth:chef@skworld.io",
+            }
+        )
+    )
     _mk_agent(home, "lumina")
     _mk_agent(home, "opus")
     return home
@@ -590,7 +747,7 @@ class TestProvisionedAgents:
         assert _provisioned_agents(identity_home) == ["lumina", "opus"]
 
     def test_excludes_templates_and_scaffolds(self, identity_home):
-        _mk_agent(identity_home, "lumina-template")          # template → excluded
+        _mk_agent(identity_home, "lumina-template")  # template → excluded
         _mk_agent(identity_home, "scaffold", capauth=False)  # no capauth → excluded
         assert _provisioned_agents(identity_home) == ["lumina", "opus"]
 
@@ -605,11 +762,102 @@ class TestScanCapauthLocal:
         assert _scan_capauth_local(identity_home) == []
 
     def test_detects_placeholder(self, identity_home):
-        _mk_agent(identity_home, "stale", identity_payload={
-            "name": "Stale", "email": "stale@capauth.local",
-        })
+        _mk_agent(
+            identity_home,
+            "stale",
+            identity_payload={
+                "name": "Stale",
+                "email": "stale@capauth.local",
+            },
+        )
         hits = _scan_capauth_local(identity_home)
         assert any("stale" in h for h in hits)
+
+
+def _add_paired_device(home, subject, device_id):
+    """Enroll one approved device under ``subject`` in the pairing store at *home*.
+
+    Uses ``capauth.pairing.PairingStore`` directly (not the kernel functions)
+    so a test can plant an arbitrary, possibly non-canonical, subject string
+    without going through enrollment approval flow.
+    """
+    from capauth.pairing import DeviceRecord, EnrollmentMode, PairingStore
+
+    PairingStore(base_dir=home).upsert_device(
+        DeviceRecord(
+            device_id=device_id,
+            subject=subject,
+            pubkey="fake-test-pubkey",
+            mode=EnrollmentMode.VERIFIED,
+            approved_by="tester",
+        )
+    )
+
+
+class TestScanPairingSubjects:
+    """_scan_pairing_subjects: judges the capauth pairing store via canonical_subject()."""
+
+    def test_empty_store_is_clean(self, identity_home):
+        findings, err = _scan_pairing_subjects(identity_home)
+        assert err is None
+        assert findings == []
+
+    def test_canonical_subject_not_flagged(self, identity_home):
+        _add_paired_device(identity_home, "lumina@chef.skworld.io", "dev-canonical")
+        findings, err = _scan_pairing_subjects(identity_home)
+        assert err is None
+        assert findings == []
+
+    def test_operator_prefix_flagged_and_translated(self, identity_home):
+        """The store's dominant legacy shape: operator:<fp> -> device:<fp>."""
+        _add_paired_device(identity_home, "operator:0a1b2c3d4e5f6789", "dev-operator")
+        findings, err = _scan_pairing_subjects(identity_home)
+        assert err is None
+        assert len(findings) == 1
+        assert "operator:0a1b2c3d4e5f6789" in findings[0]
+        assert "device:0a1b2c3d4e5f6789" in findings[0]
+
+    def test_retired_skcapstone_local_tier_is_translated_not_rejected(self, identity_home):
+        """@skcapstone.local is a REAL retired sovereign tier (seven live swarm
+        agent keys carry it): canonical_subject() collapses it onto the
+        operator domain, it does not reject it like a placeholder."""
+        _add_paired_device(identity_home, "swarm-agent@skcapstone.local", "dev-swarm")
+        findings, err = _scan_pairing_subjects(identity_home)
+        assert err is None
+        assert len(findings) == 1
+        assert "skcapstone.local" in findings[0]
+        assert "chef.skworld.io" in findings[0]
+        assert "rejected" not in findings[0]
+
+    def test_capauth_local_placeholder_is_rejected_not_translated(self, identity_home):
+        """@capauth.local is the BANNED placeholder marker (separate concern
+        from identity:no-placeholder above, but this scan also catches it):
+        canonical_subject() has no alias for it, so it is rejected outright,
+        never conflated with the real @skcapstone.local tier."""
+        _add_paired_device(identity_home, "stale@capauth.local", "dev-stale")
+        findings, err = _scan_pairing_subjects(identity_home)
+        assert err is None
+        assert len(findings) == 1
+        assert "rejected" in findings[0]
+
+    def test_import_error_reports_unknown_not_crash(self, identity_home, monkeypatch):
+        """capauth not importable must surface as an (findings=None, error)
+        pair the caller turns into an `unknown` Check, never an exception
+        that blows up the whole doctor run."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "capauth" or name.startswith("capauth."):
+                raise ImportError("simulated: capauth not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        findings, err = _scan_pairing_subjects(identity_home)
+        assert findings is None
+        assert err is not None
+        assert "simulated" in err
 
 
 class TestIdentityConsistency:
@@ -628,17 +876,27 @@ class TestIdentityConsistency:
     def test_shared_not_operator_fails(self, tmp_path):
         home = tmp_path / ".skcapstone"
         (home / "identity").mkdir(parents=True)
-        (home / "identity" / "identity.json").write_text(json.dumps({
-            "name": "test-agent", "role": "agent",
-        }))
+        (home / "identity" / "identity.json").write_text(
+            json.dumps(
+                {
+                    "name": "test-agent",
+                    "role": "agent",
+                }
+            )
+        )
         by = self._by_name(_check_identity_consistency(home))
         assert by["identity:operator"].passed is False
         assert "expected 'operator'" in by["identity:operator"].detail
 
     def test_placeholder_fails(self, identity_home):
-        _mk_agent(identity_home, "stale", identity_payload={
-            "name": "Stale", "email": "stale@capauth.local",
-        })
+        _mk_agent(
+            identity_home,
+            "stale",
+            identity_payload={
+                "name": "Stale",
+                "email": "stale@capauth.local",
+            },
+        )
         by = self._by_name(_check_identity_consistency(identity_home))
         assert by["identity:no-placeholder"].passed is False
 
@@ -655,3 +913,74 @@ class TestIdentityConsistency:
         assert "identity:resolver" in by
         # capauth is a hard dependency of the suite; resolver must import.
         assert by["identity:resolver"].passed is True
+
+    def test_subject_canonical_passes_on_clean_store(self, identity_home):
+        by = self._by_name(_check_identity_consistency(identity_home))
+        assert by["identity:subject-canonical"].passed is True
+        assert "clean" in by["identity:subject-canonical"].detail
+
+    def test_subject_canonical_fails_on_non_canonical_pairing_subject(self, identity_home):
+        _add_paired_device(identity_home, "operator:0a1b2c3d4e5f6789", "dev-operator")
+        by = self._by_name(_check_identity_consistency(identity_home))
+        assert by["identity:subject-canonical"].passed is False
+        assert "operator:0a1b2c3d4e5f6789" in by["identity:subject-canonical"].detail
+        # An unrelated finding here must not perturb the placeholder ban.
+        assert by["identity:no-placeholder"].passed is True
+
+    def test_capauth_local_and_skcapstone_local_not_conflated(self, identity_home):
+        """@capauth.local (banned placeholder) and @skcapstone.local (real,
+        migrating tier) are judged by two different checks, for two
+        different reasons: the placeholder ban fires ONLY on the former, the
+        canonical-subject scan fires on both but the store here only carries
+        the latter, so its detail must never mention the placeholder."""
+        _mk_agent(
+            identity_home,
+            "stale",
+            identity_payload={"name": "Stale", "email": "stale@capauth.local"},
+        )
+        _add_paired_device(identity_home, "swarm-agent@skcapstone.local", "dev-swarm")
+
+        by = self._by_name(_check_identity_consistency(identity_home))
+        assert by["identity:no-placeholder"].passed is False
+        assert "stale" in by["identity:no-placeholder"].detail
+
+        assert by["identity:subject-canonical"].passed is False
+        assert "skcapstone.local" in by["identity:subject-canonical"].detail
+        assert "capauth.local" not in by["identity:subject-canonical"].detail
+
+
+class TestTransportCheckNoThreadLeak:
+    """_check_transport must not leak the SKComms outbox retry worker.
+
+    Regression: SKComms.from_config() starts a persistent ``skcomms-outbox-retry``
+    daemon thread. The transport check only reads router state, so it must stop
+    the engine. A polled dashboard once accumulated 400+ leaked workers, which
+    saturated CPU and starved its asyncio event loop.
+    """
+
+    @staticmethod
+    def _retry_thread_count() -> int:
+        import threading
+
+        return sum(1 for t in threading.enumerate() if "outbox-retry" in (t.name or ""))
+
+    def test_check_transport_stops_the_engine(self):
+        """_check_transport must call SKComms.stop() so the outbox-retry worker is
+        cleaned up (regression: a polled dashboard accumulated 400+ workers).
+
+        We assert skcapstone's contract directly - that stop() is always called,
+        even when reading router state - rather than counting real skcomms threads.
+        Whether that worker then terminates promptly is skcomms' responsibility;
+        its termination is gated on a network backoff that flakes in CI.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from skcapstone.doctor import _check_transport
+
+        fake = MagicMock()
+        fake.router.transports = ["t"]
+        fake.router.health_report.return_value = {"t": {"status": "available"}}
+        with patch("skcomms.core.SKComms.from_config", return_value=fake):
+            _check_transport()
+        # Cleanup must happen in the finally, regardless of what the check found.
+        fake.stop.assert_called_once()

@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from skcapstone.models import MemoryLayer, PillarStatus
 from skcapstone.pillars.memory import get_memory_stats, initialize_memory

@@ -14,7 +14,11 @@ class TestCreateAgentHome:
         """New agent homes persist the linked human operator in manifest.json."""
         with patch(
             "skcapstone.migrate_multi_agent.discover_human_operator",
-            return_value={"name": "Casey", "fingerprint": "FP123", "relationship": "human-operator"},
+            return_value={
+                "name": "Casey",
+                "fingerprint": "FP123",
+                "relationship": "human-operator",
+            },
         ):
             result = create_agent_home(tmp_path, "teddy")
 

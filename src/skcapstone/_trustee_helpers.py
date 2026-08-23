@@ -1,5 +1,5 @@
 """
-Private helpers for TrusteeOps — audit, snapshot, and log utilities.
+Private helpers for TrusteeOps - audit, snapshot, and log utilities.
 
 Not part of the public API; imported only by trustee_ops.py.
 """

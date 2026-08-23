@@ -1,0 +1,12 @@
+{
+  "kind": "service",
+  "name": "skchat-daemon",
+  "labels": {"tier": "core"},
+  "spec": {
+    "runtime": "systemd-user",
+    "unit": "skchat-daemon.service",
+    "nodeSelector": {"always-on": "true"},
+    "restartPolicy": "on-failure",
+    "failover": "manual"
+  }
+}

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import datetime, timezone
 
-import pytest
-
 from skcapstone.daemon import ComponentHealth, ComponentManager
-
 
 # ---------------------------------------------------------------------------
 # ComponentHealth unit tests
@@ -281,13 +279,13 @@ class TestComponentManagerAutoRestart:
         # Run the watchdog check once
         mgr._check_components()
 
-        # A new thread was launched — give it a moment to run
+        # A new thread was launched - give it a moment to run
         time.sleep(0.1)
         assert len(call_log) >= 1
         assert comp.restart_count == 1
 
     def test_max_restarts_not_exceeded(self):
-        """Components exceeding MAX_RESTARTS are not restarted again."""
+        """Components exceeding MAX_RESTARTS within the window are not restarted."""
         call_log: list[str] = []
 
         def loop():
@@ -300,8 +298,9 @@ class TestComponentManagerAutoRestart:
             comp = mgr._health["poll"]
         comp.mark_started()
 
-        # Exhaust restart budget
-        comp.restart_count = ComponentManager.MAX_RESTARTS
+        # Exhaust restart budget inside the window
+        for _ in range(ComponentManager.MAX_RESTARTS):
+            comp.mark_restarting()
         comp.mark_dead("too many times")
 
         before = len(call_log)
@@ -309,6 +308,119 @@ class TestComponentManagerAutoRestart:
         time.sleep(0.05)
 
         assert len(call_log) == before  # no new call
+        assert comp.gave_up is True
+        assert comp.status == "failed"
+
+    def test_old_restarts_outside_window_do_not_exhaust_budget(self):
+        """Restarts older than RESTART_WINDOW don't count against the budget.
+
+        This is the long-uptime bug: a lifetime counter meant a handful of
+        transient blips spread over weeks permanently abandoned a component.
+        """
+        from datetime import timedelta
+
+        call_log: list[str] = []
+
+        def loop():
+            call_log.append("called")
+
+        mgr = self._make_mgr()
+        mgr.register("poll", loop)
+
+        with mgr._lock:
+            comp = mgr._health["poll"]
+        comp.mark_started()
+
+        # MAX_RESTARTS blips, but each one is days old
+        stale = datetime.now(timezone.utc) - timedelta(
+            seconds=ComponentManager.RESTART_WINDOW + 86400
+        )
+        comp.restart_times = [stale] * ComponentManager.MAX_RESTARTS
+        comp.restart_count = ComponentManager.MAX_RESTARTS
+        comp.mark_dead("blip")
+
+        mgr._check_components()
+        time.sleep(0.1)
+
+        assert len(call_log) >= 1  # restarted anyway - budget aged out
+        assert comp.gave_up is False
+        assert comp.restart_times == [comp.last_restart_at]  # stale entries pruned
+
+    def test_give_up_logged_once_not_every_tick(self, caplog):
+        """The give-up error logs on transition only, not every watchdog tick."""
+        mgr = self._make_mgr()
+        mgr.register("poll", lambda: None)
+
+        with mgr._lock:
+            comp = mgr._health["poll"]
+        comp.mark_started()
+        for _ in range(ComponentManager.MAX_RESTARTS):
+            comp.mark_restarting()
+        comp.mark_dead("crash loop")
+
+        with caplog.at_level(logging.ERROR, logger="skcapstone.daemon"):
+            mgr._check_components()
+            mgr._check_components()
+            mgr._check_components()
+
+        assert sum("giving up" in r.getMessage() for r in caplog.records) == 1
+
+    def test_rearm_after_budget_recovers(self):
+        """A given-up component restarts again once its window clears."""
+        from datetime import timedelta
+
+        call_log: list[str] = []
+
+        mgr = self._make_mgr()
+        mgr.register("poll", lambda: call_log.append("called"))
+
+        with mgr._lock:
+            comp = mgr._health["poll"]
+        comp.mark_started()
+        for _ in range(ComponentManager.MAX_RESTARTS):
+            comp.mark_restarting()
+        comp.mark_dead("crash loop")
+
+        mgr._check_components()
+        assert comp.gave_up is True
+        assert call_log == []
+
+        # Age every restart out of the window
+        stale = datetime.now(timezone.utc) - timedelta(
+            seconds=ComponentManager.RESTART_WINDOW + 60
+        )
+        comp.restart_times = [stale] * ComponentManager.MAX_RESTARTS
+        comp.last_restart_at = stale
+        comp.mark_dead("still down")
+
+        mgr._check_components()
+        time.sleep(0.1)
+
+        assert comp.gave_up is False
+        assert len(call_log) >= 1
+
+    def test_backoff_blocks_immediate_second_restart(self):
+        """Two checks back-to-back don't burn two restarts - backoff gates it."""
+        call_log: list[str] = []
+
+        mgr = self._make_mgr()
+        mgr.register("poll", lambda: call_log.append("called"))
+
+        with mgr._lock:
+            comp = mgr._health["poll"]
+        comp.mark_started()
+        comp.mark_dead("crash")
+
+        mgr._check_components()
+        time.sleep(0.05)
+        first = len(call_log)
+
+        comp.mark_dead("crash again")
+        mgr._check_components()  # immediately - inside RESTART_BACKOFF
+        time.sleep(0.05)
+
+        assert len(call_log) == first
+        assert comp.restart_count == 1
 
     def test_disabled_component_not_restarted(self):
         """Disabled components are never restarted by the watchdog."""

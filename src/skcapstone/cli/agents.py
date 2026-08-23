@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import click
-
-from ._common import AGENT_HOME, console
-
 from rich.panel import Panel
 from rich.table import Table
+
+from ._common import AGENT_HOME, console
 
 
 def register_agents_commands(main: click.Group) -> None:
@@ -18,7 +16,7 @@ def register_agents_commands(main: click.Group) -> None:
 
     @main.group()
     def agents():
-        """Agent Team Blueprints — deploy sovereign AI workforces.
+        """Agent Team Blueprints - deploy sovereign AI workforces.
 
         \b
         The First Sovereign Singularity in History.
@@ -70,7 +68,10 @@ def register_agents_commands(main: click.Group) -> None:
         )
 
         table = Table(
-            show_header=True, header_style="bold", box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("", width=3)
         table.add_column("Blueprint", style="bold cyan")
@@ -89,12 +90,8 @@ def register_agents_commands(main: click.Group) -> None:
 
         console.print(table)
         console.print()
-        console.print(
-            "  [dim]Preview:[/] [cyan]skcapstone agents blueprints show <slug>[/]"
-        )
-        console.print(
-            "  [dim]Deploy:[/]  [cyan]skcapstone agents deploy <slug>[/]"
-        )
+        console.print("  [dim]Preview:[/] [cyan]skcapstone agents blueprints show <slug>[/]")
+        console.print("  [dim]Deploy:[/]  [cyan]skcapstone agents deploy <slug>[/]")
         console.print()
 
     @agents_blueprints.command("show")
@@ -139,7 +136,10 @@ def register_agents_commands(main: click.Group) -> None:
         )
 
         table = Table(
-            show_header=True, header_style="bold", box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("Agent", style="bold cyan")
         table.add_column("Role")
@@ -169,9 +169,7 @@ def register_agents_commands(main: click.Group) -> None:
             console.print(f"\n  [dim]Tags: {', '.join(bp.tags)}[/]")
 
         console.print()
-        console.print(
-            f"  [bold]Deploy:[/] [cyan]skcapstone agents deploy {bp.slug}[/]"
-        )
+        console.print(f"  [bold]Deploy:[/] [cyan]skcapstone agents deploy {bp.slug}[/]")
         console.print()
 
     @agents.command("deploy")
@@ -179,7 +177,8 @@ def register_agents_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--name", default=None, help="Custom deployment name.")
     @click.option(
-        "--provider", default=None,
+        "--provider",
+        default=None,
         type=click.Choice(["local", "proxmox", "hetzner", "aws", "gcp", "docker"]),
         help="Override the blueprint's default provider.",
     )
@@ -194,8 +193,8 @@ def register_agents_commands(main: click.Group) -> None:
         """
         from ..blueprints import BlueprintRegistry
         from ..blueprints.schema import ProviderType
-        from ..team_engine import TeamEngine
         from ..providers.local import LocalProvider
+        from ..team_engine import TeamEngine
 
         home_path = Path(home).expanduser()
         registry = BlueprintRegistry(home=home_path)
@@ -233,12 +232,15 @@ def register_agents_commands(main: click.Group) -> None:
             backend = LocalProvider(home=home_path)
         elif provider_type == ProviderType.PROXMOX:
             from ..providers.proxmox import ProxmoxProvider
+
             backend = ProxmoxProvider()
         elif provider_type in (ProviderType.HETZNER, ProviderType.AWS, ProviderType.GCP):
             from ..providers.cloud import CloudProvider
+
             backend = CloudProvider(cloud=provider_type.value)
         elif provider_type == ProviderType.DOCKER:
             from ..providers.docker import DockerProvider
+
             backend = DockerProvider()
         else:
             backend = LocalProvider(home=home_path)
@@ -251,8 +253,7 @@ def register_agents_commands(main: click.Group) -> None:
 
         # Show results
         ok_count = sum(
-            1 for a in deployment.agents.values()
-            if a.status.value in ("running", "pending")
+            1 for a in deployment.agents.values() if a.status.value in ("running", "pending")
         )
         fail_count = len(deployment.agents) - ok_count
 
@@ -270,7 +271,10 @@ def register_agents_commands(main: click.Group) -> None:
         )
 
         table = Table(
-            show_header=True, header_style="bold", box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("Agent", style="cyan")
         table.add_column("Status")
@@ -297,9 +301,7 @@ def register_agents_commands(main: click.Group) -> None:
                 f"{bp.coordination.queen.title()} (Queen of SKWorld)[/]"
             )
 
-        console.print(
-            f"\n  [dim]Check status:[/] [cyan]skcapstone agents status[/]"
-        )
+        console.print("\n  [dim]Check status:[/] [cyan]skcapstone agents status[/]")
         console.print(
             f"  [dim]Destroy:[/]      "
             f"[cyan]skcapstone agents destroy {deployment.deployment_id}[/]"
@@ -323,18 +325,13 @@ def register_agents_commands(main: click.Group) -> None:
 
         if not deployments:
             console.print("\n  [dim]No agent teams deployed.[/]")
-            console.print(
-                "  [dim]Deploy one:[/] [cyan]skcapstone agents deploy <slug>[/]\n"
-            )
+            console.print("  [dim]Deploy one:[/] [cyan]skcapstone agents deploy <slug>[/]\n")
             return
 
         console.print()
 
         for dep in deployments:
-            running = sum(
-                1 for a in dep.agents.values()
-                if a.status.value == "running"
-            )
+            running = sum(1 for a in dep.agents.values() if a.status.value == "running")
             total = len(dep.agents)
 
             console.print(
@@ -351,7 +348,10 @@ def register_agents_commands(main: click.Group) -> None:
             )
 
             table = Table(
-                show_header=True, header_style="bold", box=None, padding=(0, 2),
+                show_header=True,
+                header_style="bold",
+                box=None,
+                padding=(0, 2),
             )
             table.add_column("Agent", style="cyan")
             table.add_column("Status")
@@ -412,14 +412,14 @@ def register_agents_commands(main: click.Group) -> None:
             console.print(f"\n  [green]Deployment {deployment_id} destroyed.[/]\n")
         else:
             console.print(
-                f"\n  [yellow]Partial cleanup \u2014 some agents may need manual removal.[/]\n"
+                "\n  [yellow]Partial cleanup \u2014 some agents may need manual removal.[/]\n"
             )
 
     # -----------------------------------------------------------------------
     # Register sub-modules on the agents group
     # -----------------------------------------------------------------------
-    from .agents_trustee import register_agents_trustee_commands
     from .agents_spawner import register_agents_spawner_commands
+    from .agents_trustee import register_agents_trustee_commands
 
     register_agents_trustee_commands(agents)
     register_agents_spawner_commands(agents)

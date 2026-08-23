@@ -1,5 +1,5 @@
 """
-SKCapstone CLI — the sovereign agent command line.
+SKCapstone CLI - the sovereign agent command line.
 
 This package organizes the CLI into modular command groups.
 Each group lives in its own module for maintainability.
@@ -19,12 +19,14 @@ from .. import __version__
 @click.group()
 @click.version_option(version=__version__, prog_name="skcapstone")
 @click.option(
-    "--agent", envvar="SKAGENT", default="",
-    help="Agent name — resolves home to {root}/agents/{name}/",
+    "--agent",
+    envvar="SKAGENT",
+    default="",
+    help="Agent name - resolves home to {root}/agents/{name}/",
 )
 @click.pass_context
 def main(ctx, agent):
-    """SKCapstone — Sovereign Agent Framework.
+    """SKCapstone - Sovereign Agent Framework.
 
     Your agent. Everywhere. Secured. Remembering.
     """
@@ -32,6 +34,7 @@ def main(ctx, agent):
     ctx.obj["agent"] = agent
     if agent:
         from ._common import apply_agent_override
+
         apply_agent_override(agent)
 
 
@@ -39,63 +42,68 @@ def main(ctx, agent):
 # Register all command groups/commands from modular files
 # ---------------------------------------------------------------------------
 
-from .setup import register_setup_commands
-from .status import register_status_commands
-from .card import register_card_commands
-from .token import register_token_commands
-from .sync_cmd import register_sync_commands
-from .trust import register_trust_commands
-from .memory import register_memory_commands
-from .coord import register_coord_commands
-from .soul import register_soul_commands
-from .completions import register_completions_commands
-from .peer import register_peer_commands
-from .backup import register_backup_commands
-from .chat import register_chat_commands
-from .record_cmd import register_record_commands
-from .anchor import register_anchor_commands
-from .session import register_session_commands
-from .context_cmd import register_context_commands
-from .mcp_cmd import register_mcp_commands
-from .daemon import register_daemon_commands
-from .agents import register_agents_commands
-from .agent_profile_cmd import register_agent_profile_commands
-from .mount import register_mount_commands
-from .shell_cmd import register_shell_commands
-from .crush_cmd import register_crush_commands
-from .housekeeping import register_housekeeping_commands
-from .migrate import register_migrate_commands
-from .consciousness import register_consciousness_commands
-from .metrics_cmd import register_metrics_commands
-from .test_cmd import register_test_commands
-from .notify import register_notify_commands
-from .preflight_cmd import register_preflight_commands
-from .peers_dir import register_peers_dir_commands
-from .skills_cmd import register_skills_commands
-from .capabilities_cmd import register_capabilities_commands
-from .benchmark import register_benchmark_commands
-from .logs_cmd import register_logs_commands
-from .export_cmd import register_export_commands
-from .config_cmd import register_config_commands
-from .upgrade_cmd import register_upgrade_commands
-from .test_connection import register_test_connection_commands
-from .version_cmd import register_version_commands
-from .profile_cmd import register_profile_commands
-from .errors_cmd import register_errors_commands
-from .archive_cmd import register_archive_commands
-from .usage_cmd import register_usage_commands
-from .search_cmd import register_search_commands
-from .mood_cmd import register_mood_commands
-from .register_cmd import register_register_commands
-from .gtd import register_gtd_commands
-from .itil import register_itil_commands
-from .skseed import register_skseed_commands
-from .service_cmd import register_service_commands
-from .telegram import register_telegram_commands
-from .joule_cmd import register_joule_commands
-from .alerts import register_alerts_commands
-from .scheduler_cmd import register_scheduler_commands
-from .identity_cmd import register_identity_commands
+from ..fleet.cli import register_fleet_commands  # noqa: E402
+from .agent_profile_cmd import register_agent_profile_commands  # noqa: E402
+from .agents import register_agents_commands  # noqa: E402
+from .alerts import register_alerts_commands  # noqa: E402
+from .anchor import register_anchor_commands  # noqa: E402
+from .archive_cmd import register_archive_commands  # noqa: E402
+from .autopilot_cost_cmd import register_autopilot_cost_commands  # noqa: E402
+from .backup import register_backup_commands  # noqa: E402
+from .benchmark import register_benchmark_commands  # noqa: E402
+from .capabilities_cmd import register_capabilities_commands  # noqa: E402
+from .card import register_card_commands  # noqa: E402
+from .chat import register_chat_commands  # noqa: E402
+from .cmdb import register_cmdb_commands  # noqa: E402
+from .completions import register_completions_commands  # noqa: E402
+from .config_cmd import register_config_commands  # noqa: E402
+from .consciousness import register_consciousness_commands  # noqa: E402
+from .context_cmd import register_context_commands  # noqa: E402
+from .coord import register_coord_commands  # noqa: E402
+from .crush_cmd import register_crush_commands  # noqa: E402
+from .daemon import register_daemon_commands  # noqa: E402
+from .errors_cmd import register_errors_commands  # noqa: E402
+from .export_cmd import register_export_commands  # noqa: E402
+from .gtd import register_gtd_commands  # noqa: E402
+from .housekeeping import register_housekeeping_commands  # noqa: E402
+from .identity_cmd import register_identity_commands  # noqa: E402
+from .itil import register_itil_commands  # noqa: E402
+from .joule_cmd import register_joule_commands  # noqa: E402
+from .logs_cmd import register_logs_commands  # noqa: E402
+from .mcp_cmd import register_mcp_commands  # noqa: E402
+from .memory import register_memory_commands  # noqa: E402
+from .metrics_cmd import register_metrics_commands  # noqa: E402
+from .migrate import register_migrate_commands  # noqa: E402
+from .mood_cmd import register_mood_commands  # noqa: E402
+from .mount import register_mount_commands  # noqa: E402
+from .notify import register_notify_commands  # noqa: E402
+from .peer import register_peer_commands  # noqa: E402
+from .peers_dir import register_peers_dir_commands  # noqa: E402
+from .preflight_cmd import register_preflight_commands  # noqa: E402
+from .profile_cmd import register_profile_commands  # noqa: E402
+from .qualification import register_qualification_commands  # noqa: E402
+from .record_cmd import register_record_commands  # noqa: E402
+from .register_cmd import register_register_commands  # noqa: E402
+from .scheduler_cmd import register_scheduler_commands  # noqa: E402
+from .search_cmd import register_search_commands  # noqa: E402
+from .selftest_cmd import register_selftest_commands  # noqa: E402
+from .service_cmd import register_service_commands  # noqa: E402
+from .session import register_session_commands  # noqa: E402
+from .setup import register_setup_commands  # noqa: E402
+from .shell_cmd import register_shell_commands  # noqa: E402
+from .skills_cmd import register_skills_commands  # noqa: E402
+from .skseed import register_skseed_commands  # noqa: E402
+from .soul import register_soul_commands  # noqa: E402
+from .status import register_status_commands  # noqa: E402
+from .sync_cmd import register_sync_commands  # noqa: E402
+from .telegram import register_telegram_commands  # noqa: E402
+from .test_cmd import register_test_commands  # noqa: E402
+from .test_connection import register_test_connection_commands  # noqa: E402
+from .token import register_token_commands  # noqa: E402
+from .trust import register_trust_commands  # noqa: E402
+from .upgrade_cmd import register_upgrade_commands  # noqa: E402
+from .usage_cmd import register_usage_commands  # noqa: E402
+from .version_cmd import register_version_commands  # noqa: E402
 
 register_setup_commands(main)
 register_shell_commands(main)
@@ -139,14 +147,17 @@ register_upgrade_commands(main)
 register_test_connection_commands(main)
 register_version_commands(main)
 register_profile_commands(main)
+register_qualification_commands(main)
 register_errors_commands(main)
 register_archive_commands(main)
+register_autopilot_cost_commands(main)
 register_usage_commands(main)
 register_search_commands(main)
 register_mood_commands(main)
 register_register_commands(main)
 register_gtd_commands(main)
 register_itil_commands(main)
+register_cmdb_commands(main)
 register_skseed_commands(main)
 register_service_commands(main)
 register_telegram_commands(main)
@@ -154,3 +165,5 @@ register_joule_commands(main)
 register_alerts_commands(main)
 register_scheduler_commands(main)
 register_identity_commands(main)
+register_selftest_commands(main)
+register_fleet_commands(main)

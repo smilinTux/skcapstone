@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -20,7 +19,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 from click.testing import CliRunner
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture
@@ -32,22 +30,36 @@ def agent_home(tmp_path: Path) -> Path:
     """Fully initialised agent home with minimal required files."""
     home = tmp_path / ".skcapstone"
     for d in [
-        "identity", "memory", "trust", "security", "sync", "config",
-        "memory/short-term", "memory/mid-term", "memory/long-term",
+        "identity",
+        "memory",
+        "trust",
+        "security",
+        "sync",
+        "config",
+        "memory/short-term",
+        "memory/mid-term",
+        "memory/long-term",
     ]:
         (home / d).mkdir(parents=True, exist_ok=True)
 
-    (home / "manifest.json").write_text(json.dumps({
-        "name": "TestAgent", "version": "0.1.0",
-    }))
-    (home / "identity" / "identity.json").write_text(json.dumps({
-        "name": "TestAgent",
-        "fingerprint": "DEADBEEF12345678",
-        "capauth_managed": True,
-    }))
-    (home / "config" / "config.yaml").write_text(
-        yaml.dump({"agent_name": "TestAgent"})
+    (home / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "version": "0.1.0",
+            }
+        )
     )
+    (home / "identity" / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "fingerprint": "DEADBEEF12345678",
+                "capauth_managed": True,
+            }
+        )
+    )
+    (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "TestAgent"}))
     return home
 
 
@@ -127,8 +139,10 @@ class TestGetDaemonInfo:
         """Returns running=True with PID when daemon is alive."""
         from skcapstone.cli.status import _get_daemon_info
 
-        with patch("skcapstone.daemon.read_pid", return_value=12345), \
-             patch("skcapstone.daemon.get_daemon_status", return_value=None):
+        with (
+            patch("skcapstone.daemon.read_pid", return_value=12345),
+            patch("skcapstone.daemon.get_daemon_status", return_value=None),
+        ):
             result = _get_daemon_info(agent_home)
 
         assert result["running"] is True
@@ -138,18 +152,22 @@ class TestGetDaemonInfo:
         """Uptime < 60s shown as Xs."""
         from skcapstone.cli.status import _get_daemon_info
 
-        with patch("skcapstone.daemon.read_pid", return_value=1), \
-             patch("skcapstone.daemon.get_daemon_status", return_value={"uptime_seconds": 45}):
+        with (
+            patch("skcapstone.daemon.read_pid", return_value=1),
+            patch("skcapstone.daemon.get_daemon_status", return_value={"uptime_seconds": 45}),
+        ):
             result = _get_daemon_info(agent_home)
 
         assert result["uptime"] == "45s"
 
     def test_uptime_formatting_minutes(self, agent_home: Path):
-        """Uptime 60–3599s shown as Xm Ys."""
+        """Uptime 60-3599s shown as Xm Ys."""
         from skcapstone.cli.status import _get_daemon_info
 
-        with patch("skcapstone.daemon.read_pid", return_value=1), \
-             patch("skcapstone.daemon.get_daemon_status", return_value={"uptime_seconds": 125}):
+        with (
+            patch("skcapstone.daemon.read_pid", return_value=1),
+            patch("skcapstone.daemon.get_daemon_status", return_value={"uptime_seconds": 125}),
+        ):
             result = _get_daemon_info(agent_home)
 
         assert result["uptime"] == "2m 5s"
@@ -158,8 +176,10 @@ class TestGetDaemonInfo:
         """Uptime >= 3600s shown as Xh Ym."""
         from skcapstone.cli.status import _get_daemon_info
 
-        with patch("skcapstone.daemon.read_pid", return_value=1), \
-             patch("skcapstone.daemon.get_daemon_status", return_value={"uptime_seconds": 7320}):
+        with (
+            patch("skcapstone.daemon.read_pid", return_value=1),
+            patch("skcapstone.daemon.get_daemon_status", return_value={"uptime_seconds": 7320}),
+        ):
             result = _get_daemon_info(agent_home)
 
         assert result["uptime"] == "2h 2m"
@@ -168,10 +188,16 @@ class TestGetDaemonInfo:
         """messages key present when daemon reports > 0 messages."""
         from skcapstone.cli.status import _get_daemon_info
 
-        with patch("skcapstone.daemon.read_pid", return_value=1), \
-             patch("skcapstone.daemon.get_daemon_status", return_value={
-                 "uptime_seconds": 60, "messages_received": 7,
-             }):
+        with (
+            patch("skcapstone.daemon.read_pid", return_value=1),
+            patch(
+                "skcapstone.daemon.get_daemon_status",
+                return_value={
+                    "uptime_seconds": 60,
+                    "messages_received": 7,
+                },
+            ),
+        ):
             result = _get_daemon_info(agent_home)
 
         assert result["messages"] == 7
@@ -252,13 +278,21 @@ class TestStatusCLI:
         """'STOPPED' appears when daemon is not running."""
         from skcapstone.cli import main
 
-        with patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}), \
-             patch("skcapstone.cli.status._probe_llm_backends", return_value={
-                 "ollama": False, "anthropic": False, "grok": False,
-                 "kimi": False, "nvidia": False,
-             }), \
-             patch("skcapstone.cli.status._print_consciousness_metrics"), \
-             patch("skcapstone.cli.status._get_last_conversation", return_value=None):
+        with (
+            patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}),
+            patch(
+                "skcapstone.cli.status._probe_llm_backends",
+                return_value={
+                    "ollama": False,
+                    "anthropic": False,
+                    "grok": False,
+                    "kimi": False,
+                    "nvidia": False,
+                },
+            ),
+            patch("skcapstone.cli.status._print_consciousness_metrics"),
+            patch("skcapstone.cli.status._get_last_conversation", return_value=None),
+        ):
             result = CliRunner().invoke(main, ["status", "--home", str(agent_home)])
 
         assert result.exit_code == 0
@@ -268,15 +302,28 @@ class TestStatusCLI:
         """'RUNNING' appears with PID when daemon is alive."""
         from skcapstone.cli import main
 
-        with patch("skcapstone.cli.status._get_daemon_info", return_value={
-                 "running": True, "pid": 42, "uptime": "5m 3s",
-             }), \
-             patch("skcapstone.cli.status._probe_llm_backends", return_value={
-                 "ollama": True, "anthropic": False, "grok": False,
-                 "kimi": False, "nvidia": False,
-             }), \
-             patch("skcapstone.cli.status._print_consciousness_metrics"), \
-             patch("skcapstone.cli.status._get_last_conversation", return_value=None):
+        with (
+            patch(
+                "skcapstone.cli.status._get_daemon_info",
+                return_value={
+                    "running": True,
+                    "pid": 42,
+                    "uptime": "5m 3s",
+                },
+            ),
+            patch(
+                "skcapstone.cli.status._probe_llm_backends",
+                return_value={
+                    "ollama": True,
+                    "anthropic": False,
+                    "grok": False,
+                    "kimi": False,
+                    "nvidia": False,
+                },
+            ),
+            patch("skcapstone.cli.status._print_consciousness_metrics"),
+            patch("skcapstone.cli.status._get_last_conversation", return_value=None),
+        ):
             result = CliRunner().invoke(main, ["status", "--home", str(agent_home)])
 
         assert result.exit_code == 0
@@ -287,13 +334,21 @@ class TestStatusCLI:
         """'Backends:' line appears in status output."""
         from skcapstone.cli import main
 
-        with patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}), \
-             patch("skcapstone.cli.status._probe_llm_backends", return_value={
-                 "ollama": True, "anthropic": False, "grok": False,
-                 "kimi": False, "nvidia": False,
-             }), \
-             patch("skcapstone.cli.status._print_consciousness_metrics"), \
-             patch("skcapstone.cli.status._get_last_conversation", return_value=None):
+        with (
+            patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}),
+            patch(
+                "skcapstone.cli.status._probe_llm_backends",
+                return_value={
+                    "ollama": True,
+                    "anthropic": False,
+                    "grok": False,
+                    "kimi": False,
+                    "nvidia": False,
+                },
+            ),
+            patch("skcapstone.cli.status._print_consciousness_metrics"),
+            patch("skcapstone.cli.status._get_last_conversation", return_value=None),
+        ):
             result = CliRunner().invoke(main, ["status", "--home", str(agent_home)])
 
         assert result.exit_code == 0
@@ -303,15 +358,27 @@ class TestStatusCLI:
         """Last convo peer and time appear when conversation data exists."""
         from skcapstone.cli import main
 
-        with patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}), \
-             patch("skcapstone.cli.status._probe_llm_backends", return_value={
-                 "ollama": False, "anthropic": False, "grok": False,
-                 "kimi": False, "nvidia": False,
-             }), \
-             patch("skcapstone.cli.status._print_consciousness_metrics"), \
-             patch("skcapstone.cli.status._get_last_conversation", return_value={
-                 "peer": "alice", "when": "3m ago",
-             }):
+        with (
+            patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}),
+            patch(
+                "skcapstone.cli.status._probe_llm_backends",
+                return_value={
+                    "ollama": False,
+                    "anthropic": False,
+                    "grok": False,
+                    "kimi": False,
+                    "nvidia": False,
+                },
+            ),
+            patch("skcapstone.cli.status._print_consciousness_metrics"),
+            patch(
+                "skcapstone.cli.status._get_last_conversation",
+                return_value={
+                    "peer": "alice",
+                    "when": "3m ago",
+                },
+            ),
+        ):
             result = CliRunner().invoke(main, ["status", "--home", str(agent_home)])
 
         assert result.exit_code == 0
@@ -323,16 +390,24 @@ class TestStatusCLI:
         from skcapstone.cli import main
 
         low_usage = MagicMock()
-        low_usage.free = int(2.5 * 1024 ** 3)  # 2.5 GB
+        low_usage.free = int(2.5 * 1024**3)  # 2.5 GB
 
-        with patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}), \
-             patch("skcapstone.cli.status._probe_llm_backends", return_value={
-                 "ollama": False, "anthropic": False, "grok": False,
-                 "kimi": False, "nvidia": False,
-             }), \
-             patch("skcapstone.cli.status._print_consciousness_metrics"), \
-             patch("skcapstone.cli.status._get_last_conversation", return_value=None), \
-             patch("shutil.disk_usage", return_value=low_usage):
+        with (
+            patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}),
+            patch(
+                "skcapstone.cli.status._probe_llm_backends",
+                return_value={
+                    "ollama": False,
+                    "anthropic": False,
+                    "grok": False,
+                    "kimi": False,
+                    "nvidia": False,
+                },
+            ),
+            patch("skcapstone.cli.status._print_consciousness_metrics"),
+            patch("skcapstone.cli.status._get_last_conversation", return_value=None),
+            patch("shutil.disk_usage", return_value=low_usage),
+        ):
             result = CliRunner().invoke(main, ["status", "--home", str(agent_home)])
 
         assert result.exit_code == 0
@@ -344,16 +419,24 @@ class TestStatusCLI:
         from skcapstone.cli import main
 
         big_usage = MagicMock()
-        big_usage.free = int(50 * 1024 ** 3)  # 50 GB
+        big_usage.free = int(50 * 1024**3)  # 50 GB
 
-        with patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}), \
-             patch("skcapstone.cli.status._probe_llm_backends", return_value={
-                 "ollama": False, "anthropic": False, "grok": False,
-                 "kimi": False, "nvidia": False,
-             }), \
-             patch("skcapstone.cli.status._print_consciousness_metrics"), \
-             patch("skcapstone.cli.status._get_last_conversation", return_value=None), \
-             patch("shutil.disk_usage", return_value=big_usage):
+        with (
+            patch("skcapstone.cli.status._get_daemon_info", return_value={"running": False}),
+            patch(
+                "skcapstone.cli.status._probe_llm_backends",
+                return_value={
+                    "ollama": False,
+                    "anthropic": False,
+                    "grok": False,
+                    "kimi": False,
+                    "nvidia": False,
+                },
+            ),
+            patch("skcapstone.cli.status._print_consciousness_metrics"),
+            patch("skcapstone.cli.status._get_last_conversation", return_value=None),
+            patch("shutil.disk_usage", return_value=big_usage),
+        ):
             result = CliRunner().invoke(main, ["status", "--home", str(agent_home)])
 
         assert result.exit_code == 0
@@ -379,8 +462,7 @@ class TestDoctorCLI:
         assert result.exit_code == 0
         # At least one category must be rendered
         assert any(
-            kw in result.output
-            for kw in ["Python Packages", "Agent Home", "Identity", "Memory"]
+            kw in result.output for kw in ["Python Packages", "Agent Home", "Identity", "Memory"]
         )
 
     def test_doctor_json_output(self, agent_home: Path):

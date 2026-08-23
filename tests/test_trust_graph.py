@@ -5,17 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 import yaml
-
-from skcapstone.coordination import Board, Task
-from skcapstone.pillars.identity import generate_identity
-from skcapstone.pillars.memory import initialize_memory
-from skcapstone.pillars.security import initialize_security
-from skcapstone.pillars.sync import initialize_sync
-from skcapstone.pillars.trust import initialize_trust, record_trust_state
-from skcapstone.tokens import issue_token
-from skcapstone.trust_graph import (
+from capauth.tokens import issue_token
+from capauth.trust.graph import (
     FORMATTERS,
     TrustEdge,
     TrustGraph,
@@ -26,6 +18,13 @@ from skcapstone.trust_graph import (
     format_table,
 )
 
+from skcapstone.coordination import Board, Task
+from skcapstone.pillars.identity import generate_identity
+from skcapstone.pillars.memory import initialize_memory
+from skcapstone.pillars.security import initialize_security
+from skcapstone.pillars.sync import initialize_sync
+from skcapstone.pillars.trust import initialize_trust, record_trust_state
+
 
 def _init_agent(home: Path, name: str = "graph-test") -> None:
     """Set up a full agent for testing."""
@@ -34,7 +33,12 @@ def _init_agent(home: Path, name: str = "graph-test") -> None:
     initialize_trust(home)
     initialize_security(home)
     initialize_sync(home)
-    manifest = {"name": name, "version": "0.1.0", "created_at": "2026-01-01T00:00:00Z", "connectors": []}
+    manifest = {
+        "name": name,
+        "version": "0.1.0",
+        "created_at": "2026-01-01T00:00:00Z",
+        "connectors": [],
+    }
     (home / "manifest.json").write_text(json.dumps(manifest))
     (home / "config").mkdir(exist_ok=True)
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": name}))
@@ -51,9 +55,13 @@ class TestBuildGraph:
         assert graph.agent_name == "opus"
         assert any(n.id == "opus" for n in graph.nodes)
 
-    def test_token_creates_edge(self, tmp_agent_home: Path):
+    def test_token_creates_edge(self, tmp_agent_home: Path, signing_identity):
         """Issuing a token creates a trust edge to the subject."""
         _init_agent(tmp_agent_home, "issuer-agent")
+        # Reason: the subject under test is edge building, not signing, but a
+        # token only reaches the store when it is genuinely signed, so bind the
+        # issuer to the shared throwaway key.
+        signing_identity(tmp_agent_home)
         issue_token(
             tmp_agent_home,
             subject="peer-agent",
@@ -175,9 +183,11 @@ class TestFormatJson:
         assert "stats" in parsed
         assert parsed["agent"] == "json-test"
 
-    def test_stats_counts(self, tmp_agent_home: Path):
+    def test_stats_counts(self, tmp_agent_home: Path, signing_identity):
         """Stats section has correct counts."""
         _init_agent(tmp_agent_home)
+        # The token here exists only to give the graph an edge to count.
+        signing_identity(tmp_agent_home)
         issue_token(tmp_agent_home, subject="svc", capabilities=["*"])
         graph = build_trust_graph(tmp_agent_home)
         parsed = json.loads(format_json(graph))

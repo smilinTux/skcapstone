@@ -90,7 +90,7 @@ class TestPublish:
 
     def test_publish_writes_message_file(self, bus: PubSub, home: Path) -> None:
         """Publishing writes a JSON message file."""
-        msg = bus.publish("test.topic", {"key": "value"})
+        bus.publish("test.topic", {"key": "value"})
         topic_dir = home / "pubsub" / "topics" / "test.topic"
         files = list(topic_dir.glob("msg-*.json"))
         assert len(files) == 1
@@ -219,7 +219,7 @@ class TestPoll:
 
     def test_poll_skips_expired(self, bus: PubSub, home: Path) -> None:
         """Expired messages are not returned."""
-        msg = bus.publish("expiry", {"data": "old"}, ttl_seconds=1)
+        bus.publish("expiry", {"data": "old"}, ttl_seconds=1)
         # Manually backdate the message
         topic_dir = home / "pubsub" / "topics" / "expiry"
         msg_file = list(topic_dir.glob("msg-*.json"))[0]

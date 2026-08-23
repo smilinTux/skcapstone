@@ -1,0 +1,13 @@
+[Unit]
+Description=SKCapstone GFS Backup Monitor Timer - check backup freshness a few hours after the daily backup window
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Timer]
+# Runs mid-morning, after the daily backup window (backup timer fires at
+# midnight + up to 30m jitter), so a skipped/failed run is caught the same day.
+OnCalendar=*-*-* 10:00:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

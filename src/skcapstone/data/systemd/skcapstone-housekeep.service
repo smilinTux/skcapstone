@@ -1,0 +1,18 @@
+[Unit]
+Description=SKCapstone Housekeeping — prune stale inbox/outbox envelopes, derived junk, and legacy comms
+Documentation=https://github.com/smilinTux/skcapstone
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.skenv/bin/skcapstone housekeeping
+Nice=15
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone %h/.skcomms
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin

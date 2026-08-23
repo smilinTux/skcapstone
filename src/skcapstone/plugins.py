@@ -30,7 +30,7 @@ Plugins that add MCP tools call :func:`register_tool` inside ``register``::
             _handler,
         )
 
-The ``_registry`` singleton is process-local — the daemon and the MCP server
+The ``_registry`` singleton is process-local - the daemon and the MCP server
 each maintain independent state.  Hot-reload is triggered by sending SIGHUP to
 the daemon PID and causes a fresh scan of ``~/.skcapstone/plugins/``.
 
@@ -66,7 +66,7 @@ class PluginRegistry:
         self._loaded: dict[str, types.ModuleType] = {}
 
     # ------------------------------------------------------------------
-    # Registration — called by plugins via register_tool()
+    # Registration - called by plugins via register_tool()
     # ------------------------------------------------------------------
 
     def register_tool(
@@ -84,7 +84,7 @@ class PluginRegistry:
         logger.debug("Plugin registered tool: %s", tool.name)
 
     # ------------------------------------------------------------------
-    # Query — called by mcp_server.py at list/dispatch time
+    # Query - called by mcp_server.py at list/dispatch time
     # ------------------------------------------------------------------
 
     def get_tools(self) -> list:
@@ -118,9 +118,7 @@ class PluginRegistry:
             spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
             if not hasattr(mod, "register"):
-                logger.warning(
-                    "Plugin %s: no register() function — skipping", plugin_path.name
-                )
+                logger.warning("Plugin %s: no register() function - skipping", plugin_path.name)
                 sys.modules.pop(module_name, None)
                 return False
 
@@ -130,9 +128,7 @@ class PluginRegistry:
             return True
 
         except Exception as exc:
-            logger.error(
-                "Plugin %s failed to load: %s", plugin_path.name, exc, exc_info=True
-            )
+            logger.error("Plugin %s failed to load: %s", plugin_path.name, exc, exc_info=True)
             sys.modules.pop(module_name, None)
             return False
 
@@ -177,12 +173,12 @@ class PluginRegistry:
 
         Called on SIGHUP for hot-reload.  Returns the number of plugins loaded.
         """
-        logger.info("Plugin hot-reload — clearing %d plugin(s)", len(self._loaded))
+        logger.info("Plugin hot-reload - clearing %d plugin(s)", len(self._loaded))
         self.clear()
         return self.scan_and_load(plugin_dir, mcp_server, app)
 
 
-# Module-level singleton — each process (daemon / MCP server) has its own copy.
+# Module-level singleton - each process (daemon / MCP server) has its own copy.
 _registry = PluginRegistry()
 
 

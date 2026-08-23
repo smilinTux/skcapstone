@@ -103,7 +103,7 @@ def main() -> int:
         try:
             cdp.wait_event("Page.loadEventFired", timeout=30.0)
         except TimeoutError:
-            print("[probe] Page.loadEventFired timeout — proceeding anyway", flush=True)
+            print("[probe] Page.loadEventFired timeout - proceeding anyway", flush=True)
 
         # Give the Vue mount a chance to render the CSV view
         time.sleep(5.0)

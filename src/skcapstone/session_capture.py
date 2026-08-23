@@ -1,5 +1,5 @@
 """
-Session auto-capture — the agent never forgets a conversation.
+Session auto-capture - the agent never forgets a conversation.
 
 Extracts key moments from AI conversations, scores importance by
 topic novelty and information density, and stores each as a tagged
@@ -26,7 +26,6 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 

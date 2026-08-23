@@ -1,27 +1,24 @@
-"""Tests for TrusteeMonitor — autonomous agent monitoring."""
+"""Tests for TrusteeMonitor - autonomous agent monitoring."""
 
 from __future__ import annotations
 
-import json
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from skcapstone.team_engine import AgentStatus, DeployedAgent, TeamDeployment, TeamEngine
-from skcapstone.trustee_ops import TrusteeOps
 from skcapstone.trustee_monitor import (
     MonitorConfig,
     MonitorReport,
     TrusteeMonitor,
 )
-
+from skcapstone.trustee_ops import TrusteeOps
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tmp_home(tmp_path: Path) -> Path:
@@ -85,6 +82,7 @@ def _make_deployment(
 # MonitorConfig
 # ---------------------------------------------------------------------------
 
+
 class TestMonitorConfig:
     def test_defaults(self):
         cfg = MonitorConfig()
@@ -103,6 +101,7 @@ class TestMonitorConfig:
 # ---------------------------------------------------------------------------
 # Heartbeat detection
 # ---------------------------------------------------------------------------
+
 
 class TestHeartbeatDetection:
     def test_fresh_heartbeat_not_stale(self, ops, engine, tmp_home):
@@ -144,6 +143,7 @@ class TestHeartbeatDetection:
 # ---------------------------------------------------------------------------
 # check_deployment
 # ---------------------------------------------------------------------------
+
 
 class TestCheckDeployment:
     def test_all_healthy(self, ops, engine, tmp_home):
@@ -244,6 +244,7 @@ class TestCheckDeployment:
 # Escalation
 # ---------------------------------------------------------------------------
 
+
 class TestEscalation:
     def test_critical_degradation_escalates(self, ops, engine, tmp_home):
         deployment = _make_deployment(
@@ -302,6 +303,7 @@ class TestEscalation:
 # check_all
 # ---------------------------------------------------------------------------
 
+
 class TestCheckAll:
     def test_aggregates_multiple_deployments(self, ops, engine, tmp_home):
         _make_deployment(engine)
@@ -342,6 +344,7 @@ class TestCheckAll:
 # Recovery
 # ---------------------------------------------------------------------------
 
+
 class TestRecovery:
     def test_incident_clears_on_recovery(self, ops, engine, tmp_home):
         deployment = _make_deployment(engine)
@@ -365,6 +368,7 @@ class TestRecovery:
 # Run loop
 # ---------------------------------------------------------------------------
 
+
 class TestRunLoop:
     def test_run_with_max_iterations(self, ops, engine, tmp_home):
         _make_deployment(engine)
@@ -382,6 +386,7 @@ class TestRunLoop:
 # ---------------------------------------------------------------------------
 # MonitorReport
 # ---------------------------------------------------------------------------
+
 
 class TestMonitorReport:
     def test_defaults(self):

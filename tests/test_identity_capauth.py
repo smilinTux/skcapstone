@@ -9,19 +9,15 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from skcapstone.discovery import (
     _sync_identity_json,
-    _try_load_capauth_profile,
     discover_identity,
 )
 from skcapstone.models import IdentityState, PillarStatus
 from skcapstone.pillars.identity import (
     _generate_placeholder_fingerprint,
-    _try_init_capauth,
     generate_identity,
 )
 
@@ -76,7 +72,7 @@ class TestDiscoverWithCapAuth:
         identity_dir = tmp_agent_home / "identity"
         identity_dir.mkdir(parents=True, exist_ok=True)
 
-        fake = _fake_profile(fingerprint="C" * 40)
+        _fake_profile(fingerprint="C" * 40)
         with patch(
             "skcapstone.discovery._try_load_capauth_profile",
             return_value=IdentityState(
@@ -188,9 +184,7 @@ class TestGenerateIdentity:
 
     def test_placeholder_when_no_capauth(self, tmp_agent_home: Path):
         """Without CapAuth, generates a placeholder fingerprint."""
-        with patch(
-            "skcapstone.pillars.identity._try_init_capauth", return_value=None
-        ):
+        with patch("skcapstone.pillars.identity._try_init_capauth", return_value=None):
             state = generate_identity(tmp_agent_home, "test-agent")
 
         assert state.status == PillarStatus.DEGRADED
@@ -206,9 +200,7 @@ class TestGenerateIdentity:
             email="test@capauth.local",
             status=PillarStatus.ACTIVE,
         )
-        with patch(
-            "skcapstone.pillars.identity._try_init_capauth", return_value=fake_state
-        ):
+        with patch("skcapstone.pillars.identity._try_init_capauth", return_value=fake_state):
             state = generate_identity(tmp_agent_home, "test")
 
         assert state.fingerprint == "A" * 40
@@ -216,15 +208,11 @@ class TestGenerateIdentity:
 
     def test_identity_json_written(self, tmp_agent_home: Path):
         """identity.json is always written, even with placeholders."""
-        with patch(
-            "skcapstone.pillars.identity._try_init_capauth", return_value=None
-        ):
+        with patch("skcapstone.pillars.identity._try_init_capauth", return_value=None):
             generate_identity(tmp_agent_home, "writer-test")
 
         assert (tmp_agent_home / "identity" / "identity.json").exists()
-        data = json.loads(
-            (tmp_agent_home / "identity" / "identity.json").read_text()
-        )
+        data = json.loads((tmp_agent_home / "identity" / "identity.json").read_text())
         assert data["name"] == "writer-test"
         assert data["capauth_managed"] is False
 

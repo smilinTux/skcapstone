@@ -1,4 +1,4 @@
-"""Tests for the ModelRouter — automatic model selection layer.
+"""Tests for the ModelRouter - automatic model selection layer.
 
 Covers:
 - Routing by tag to each primary tier (CODE, NUANCE, FAST)
@@ -24,7 +24,6 @@ from skcapstone.model_router import (
     TagRule,
     TaskSignal,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -76,9 +75,7 @@ class TestTagRouting:
         decision = router.route(signal)
         assert decision.tier == ModelTier.FAST
 
-    def test_architecture_tag_routes_to_reason_tier(
-        self, router: ModelRouter
-    ) -> None:
+    def test_architecture_tag_routes_to_reason_tier(self, router: ModelRouter) -> None:
         """A task tagged 'architecture' should land on the REASON tier."""
         signal = TaskSignal(
             description="Design the data pipeline",
@@ -132,9 +129,7 @@ class TestPrivacyGates:
         assert decision.tier == ModelTier.LOCAL
         assert decision.preferred_node == "localhost"
 
-    def test_privacy_takes_precedence_over_localhost(
-        self, router: ModelRouter
-    ) -> None:
+    def test_privacy_takes_precedence_over_localhost(self, router: ModelRouter) -> None:
         """privacy_sensitive wins; preferred_node should not be set to localhost."""
         signal = TaskSignal(
             description="Private task on local machine",
@@ -175,9 +170,7 @@ class TestTokenFallback:
         decision = router.route(signal)
         assert decision.tier == ModelTier.FAST
 
-    def test_exactly_threshold_tokens_routes_to_fast(
-        self, router: ModelRouter
-    ) -> None:
+    def test_exactly_threshold_tokens_routes_to_fast(self, router: ModelRouter) -> None:
         """estimated_tokens == 16 000 (not strictly greater) should remain FAST."""
         signal = TaskSignal(
             description="Borderline task",
@@ -249,6 +242,78 @@ class TestTagRulePriority:
 
 
 # ---------------------------------------------------------------------------
+# Caller-alignment: real production callers' exact tags must actually match
+# a rule (regression coverage for the 2026-07-09 model-router audit - these
+# tags previously fell through to the token-count fallback because no rule
+# keyword overlapped them).
+# ---------------------------------------------------------------------------
+
+
+class TestRealCallerTagAlignment:
+    """Each real ModelRouter caller's exact tag list must hit a tag rule.
+
+    Evidence (verified 2026-07-09):
+    - emotion_tracker.py:333            tags=["classification", "fast"]
+    - context_window.py:307             tags=["summary", "context"]
+    - conversation_summarizer.py:142    tags=["summary", "conversation"]
+    - memory_compressor.py:357          tags=["compression", "memory", <dynamic tag>]
+    All four are cheap background/housekeeping tasks and should land on FAST.
+    """
+
+    # NOTE: estimated_tokens is deliberately set to 20_000 (> the router's
+    # 16_000 token-fallback threshold, model_router.py:_LARGE_TOKEN_THRESHOLD)
+    # in every test below. With a SMALL token estimate, the pre-fix router
+    # already "accidentally" lands on FAST via the token fallback (verified
+    # by direct execution 2026-07-09), which would make a small-token test
+    # pass before AND after the fix - proving nothing. A large token estimate
+    # makes the bug visible: pre-fix it wrongly falls through to REASON
+    # (token fallback), post-fix the tag rule correctly wins and returns FAST
+    # regardless of token count. This also mirrors real usage -
+    # memory_compressor.py estimates estimated_tokens=len(prompt)//4+512,
+    # which crosses 16_000 for any prompt over ~62 KB.
+
+    def test_emotion_tracker_sentiment_classification_tags(self, router: ModelRouter) -> None:
+        signal = TaskSignal(
+            description="1-token sentiment classification",
+            tags=["classification", "fast"],
+            estimated_tokens=20_000,
+        )
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+    def test_context_window_compression_tags(self, router: ModelRouter) -> None:
+        signal = TaskSignal(
+            description="Compress conversation context window",
+            tags=["summary", "context"],
+            estimated_tokens=20_000,
+        )
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+    def test_conversation_summarizer_tags(self, router: ModelRouter) -> None:
+        signal = TaskSignal(
+            description="Summarize peer conversation",
+            tags=["summary", "conversation"],
+            estimated_tokens=20_000,
+        )
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+    def test_memory_compressor_tags_with_dynamic_group_tag(self, router: ModelRouter) -> None:
+        # `tag` in memory_compressor.py is a dynamic per-group label (e.g. "gtd",
+        # "identity") that can't be enumerated - the static "compression"/"memory"
+        # keywords must be sufficient on their own (set-intersection semantics
+        # only need ONE overlapping keyword to fire).
+        signal = TaskSignal(
+            description="Compress 12 memories tagged 'gtd'",
+            tags=["compression", "memory", "gtd"],
+            estimated_tokens=20_000,
+        )
+        decision = router.route(signal)
+        assert decision.tier == ModelTier.FAST
+
+
+# ---------------------------------------------------------------------------
 # Config load from YAML
 # ---------------------------------------------------------------------------
 
@@ -258,8 +323,7 @@ class TestConfigFromYaml:
 
     def test_load_from_yaml(self, tmp_path: Path) -> None:
         """A minimal valid YAML config should load without errors."""
-        yaml_content = textwrap.dedent(
-            """\
+        yaml_content = textwrap.dedent("""\
             tier_models:
               fast: [my-fast-model]
               code: [my-code-model]
@@ -273,8 +337,7 @@ class TestConfigFromYaml:
               - keywords: [writing, email]
                 tier: nuance
                 priority: 10
-            """
-        )
+            """)
         config_file = tmp_path / "router_config.yaml"
         config_file.write_text(yaml_content)
 
@@ -287,8 +350,7 @@ class TestConfigFromYaml:
 
     def test_yaml_nuance_rule(self, tmp_path: Path) -> None:
         """YAML-loaded NUANCE rule fires correctly on matching tags."""
-        yaml_content = textwrap.dedent(
-            """\
+        yaml_content = textwrap.dedent("""\
             tier_models:
               nuance: [yaml-nuance-model]
               fast: [yaml-fast-model]
@@ -296,8 +358,7 @@ class TestConfigFromYaml:
               - keywords: [writing, email]
                 tier: nuance
                 priority: 10
-            """
-        )
+            """)
         config_file = tmp_path / "router.yaml"
         config_file.write_text(yaml_content)
 
@@ -343,30 +404,39 @@ class TestRouteDecisionContent:
 class TestModelNameResolution:
     """Verify the correct concrete model is selected per tier."""
 
+    # The default config unifies every tier on ``sk-default`` - the SKGateway
+    # auto-router role (SKC_LOCAL_OPENAI_URL -> :18780) that resolves to
+    # ornith-big/35B with 3-box failover, then cascades to gemma3:1b. So the
+    # preferred model each tag routes to is ``sk-default`` regardless of tier.
     def test_default_fast_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="quick task", tags=["simple"])
         decision = router.route(signal)
-        assert decision.model_name == "llama3.2"
+        assert decision.tier == ModelTier.FAST
+        assert decision.model_name == "sk-default"
 
     def test_default_code_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="implement feature", tags=["code"])
         decision = router.route(signal)
-        assert decision.model_name == "devstral"
+        assert decision.tier == ModelTier.CODE
+        assert decision.model_name == "sk-default"
 
     def test_default_reason_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="system design", tags=["architecture"])
         decision = router.route(signal)
-        assert decision.model_name == "deepseek-r1:8b"
+        assert decision.tier == ModelTier.REASON
+        assert decision.model_name == "sk-default"
 
     def test_default_nuance_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="write copy", tags=["marketing"])
         decision = router.route(signal)
-        assert decision.model_name == "moonshot-v1-128k"
+        assert decision.tier == ModelTier.NUANCE
+        assert decision.model_name == "sk-default"
 
     def test_default_local_model(self, router: ModelRouter) -> None:
         signal = TaskSignal(description="private task", privacy_sensitive=True)
         decision = router.route(signal)
-        assert decision.model_name == "llama3.2"
+        assert decision.tier == ModelTier.LOCAL
+        assert decision.model_name == "sk-default"
 
     def test_unknown_tier_sentinel(self) -> None:
         """Missing tier config produces an unknown-{tier} sentinel."""
@@ -388,8 +458,209 @@ class TestModelNameResolution:
 
 
 # ---------------------------------------------------------------------------
+# Default-config backend resolvability (regression for card b89794c8)
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultModelsAreReal:
+    """Every model in ``ModelRouterConfig.default()`` must actually exist.
+
+    Regression for card b89794c8 ("Fix model tier defaults - use real Ollama
+    model names"). The prior defaults referenced ``devstral``,
+    ``qwen3-coder``, ``deepseek-r1:8b`` and ``llama3.1`` for the CODE, REASON,
+    FAST and LOCAL tiers. Those names pattern-match the Ollama backend (see
+    ``_OLLAMA_MODEL_PATTERNS``) but were never pulled on any node, so every
+    request on those tiers 404'd.
+
+    A model name is considered real when
+    :func:`skcapstone.consciousness_loop._backend_from_model` resolves it to a
+    known backend AND - if that backend is Ollama - the model is one that is
+    actually pulled on the fleet.
+    """
+
+    # Ollama models actually served by the fleet daemons (localhost + .100),
+    # verified via `GET /api/tags` on 2026-07-24. Any Ollama-routed default
+    # MUST be in this set or the request will 404.
+    PULLED_OLLAMA_MODELS = {"qwen3.5:4b", "gemma3:1b", "gemma3:270m"}
+
+    # SKGateway role aliases. ``_backend_from_model`` buckets these under
+    # "ollama" because they resolve through the same OpenAI-compatible
+    # ``_local_callback`` (SKC_LOCAL_OPENAI_URL -> :18780), but they are served
+    # by SKGateway (auto-router -> ornith), NOT a native Ollama pull, so they
+    # legitimately are not in PULLED_OLLAMA_MODELS and cannot 404 that way.
+    GATEWAY_ROLE_ALIASES = {"sk-default"}
+
+    def _iter_default_models(self):
+        from skcapstone.blueprints.schema import ModelTier
+        from skcapstone.model_router import ModelRouterConfig
+
+        cfg = ModelRouterConfig.default()
+        for tier in (
+            ModelTier.FAST,
+            ModelTier.CODE,
+            ModelTier.REASON,
+            ModelTier.NUANCE,
+            ModelTier.LOCAL,
+        ):
+            for model_name in cfg.tier_models[tier.value]:
+                yield tier, model_name
+
+    def test_every_default_model_resolves_to_a_known_backend(self) -> None:
+        from skcapstone.consciousness_loop import _backend_from_model
+
+        for tier, model_name in self._iter_default_models():
+            backend = _backend_from_model(model_name, tier)
+            assert backend != "unknown", (
+                f"{tier.value} default {model_name!r} resolves to an unknown "
+                f"backend - it is not a real model on any configured provider."
+            )
+
+    def test_ollama_routed_defaults_are_actually_pulled(self) -> None:
+        from skcapstone.consciousness_loop import _backend_from_model
+
+        for tier, model_name in self._iter_default_models():
+            backend = _backend_from_model(model_name, tier)
+            if backend == "ollama" and model_name not in self.GATEWAY_ROLE_ALIASES:
+                assert model_name in self.PULLED_OLLAMA_MODELS, (
+                    f"{tier.value} default {model_name!r} routes to Ollama but "
+                    f"is not pulled on the fleet {self.PULLED_OLLAMA_MODELS}; "
+                    f"the request would 404."
+                )
+
+    def test_every_tier_preferred_model_is_real(self) -> None:
+        """The preferred (first) model of each tier is what ``route`` returns."""
+        from skcapstone.blueprints.schema import ModelTier
+        from skcapstone.consciousness_loop import _backend_from_model
+        from skcapstone.model_router import ModelRouterConfig
+
+        cfg = ModelRouterConfig.default()
+        for tier in (
+            ModelTier.FAST,
+            ModelTier.CODE,
+            ModelTier.REASON,
+            ModelTier.NUANCE,
+            ModelTier.LOCAL,
+        ):
+            preferred = cfg.tier_models[tier.value][0]
+            backend = _backend_from_model(preferred, tier)
+            assert backend != "unknown"
+            if backend == "ollama" and preferred not in self.GATEWAY_ROLE_ALIASES:
+                assert preferred in self.PULLED_OLLAMA_MODELS
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
+
+class TestRegistryRoleFold:
+    """CR-5.1: model_router folds tier -> concrete model onto skmodels registry
+    ROLES via a thin ``resolve_role`` resolver.
+
+    Carries the acceptance of the superseded cards:
+      - cf1c088c (model-routing-truth): every role the router emits is a REAL
+        registry role that resolves to a concrete backend (no dangling alias),
+        and the ``sk-auto`` marker safe-degrades for direct Python callers.
+      - 258fab9e (central model registry): the registry is the single source;
+        an unknown role / unreadable registry degrades safely, never crashes,
+        and the local fallback keeps every tier servable.
+    """
+
+    _REG = textwrap.dedent("""\
+        backends:
+          ornith-big:
+            url: http://192.168.0.100:8082/v1
+            model: ornith-1.0-35b
+            kind: chat
+          opus:
+            url: http://192.168.0.41:18780/v1
+            model: claude-opus-4-8
+            kind: chat
+        roles:
+          sk-default: ornith-big
+          sk-code: ornith-big
+          sk-heavy: opus
+          sk-auto: auto
+        defaults:
+          role: sk-default
+        """)
+
+    @pytest.fixture()
+    def registry(self, tmp_path, monkeypatch):
+        """Point skos.models at a host-independent fixture registry."""
+        skm = pytest.importorskip("skos.models")
+        reg = tmp_path / "registry.yaml"
+        reg.write_text(self._REG, encoding="utf-8")
+        monkeypatch.setenv("SKMODELS_REGISTRY", str(reg))
+        skm._invalidate()
+        yield skm
+        skm._invalidate()
+
+    def test_default_tier_roles_all_resolve_to_a_real_backend(self, registry):
+        # cf1c088c: alias validation. Every role emitted by default() resolves
+        # to a concrete registry backend model (not a dangling alias).
+        from skcapstone.model_router import ModelRouterConfig, resolve_role
+
+        cfg = ModelRouterConfig.default()
+        for tier in (
+            ModelTier.FAST,
+            ModelTier.CODE,
+            ModelTier.REASON,
+            ModelTier.NUANCE,
+            ModelTier.LOCAL,
+        ):
+            role = cfg.tier_models[tier.value][0]
+            model = resolve_role(role)
+            assert model, f"{tier.value} role {role!r} must resolve to a real backend"
+            assert model == "ornith-1.0-35b"
+
+    def test_resolve_role_reads_the_registry_context(self, registry):
+        # The same resolver the gateway uses resolves an agent:<name> context.
+        registry.set_context("agent:lumina", "sk-heavy")
+        from skcapstone.model_router import resolve_role
+
+        assert resolve_role(context="agent:lumina") == "claude-opus-4-8"
+
+    def test_sk_auto_safe_degrades_for_direct_callers(self, registry):
+        # cf1c088c: sk-auto is a gateway-only marker; a Python caller must never
+        # get the un-routable "auto"; it degrades to the default role's backend.
+        from skcapstone.model_router import resolve_role
+
+        assert resolve_role("sk-auto") == "ornith-1.0-35b"
+
+    def test_unknown_role_safe_degrades_not_raises(self, registry):
+        # 258fab9e safe defaults: an unknown role falls back to the default role.
+        from skcapstone.model_router import resolve_role
+
+        assert resolve_role("no-such-role") == "ornith-1.0-35b"
+
+    def test_missing_registry_returns_none_never_crashes(self, tmp_path, monkeypatch):
+        # 258fab9e: an unreadable/missing registry degrades to None (the caller
+        # then uses the tier's local fallback), never an exception.
+        skm = pytest.importorskip("skos.models")
+        monkeypatch.setenv("SKMODELS_REGISTRY", str(tmp_path / "does-not-exist.yaml"))
+        skm._invalidate()
+        from skcapstone.model_router import resolve_role
+
+        assert resolve_role("sk-default") is None
+        skm._invalidate()
+
+    def test_every_tier_has_a_local_fallback(self):
+        # 258fab9e: the safe default. Every tier keeps a genuinely-pulled local
+        # model as its last resort so a gateway outage cannot 404 the tier.
+        from skcapstone.model_router import _LOCAL_FALLBACK, ModelRouterConfig
+
+        cfg = ModelRouterConfig.default()
+        for tier in (
+            ModelTier.FAST,
+            ModelTier.CODE,
+            ModelTier.REASON,
+            ModelTier.NUANCE,
+            ModelTier.LOCAL,
+        ):
+            models = cfg.tier_models[tier.value]
+            assert len(models) >= 2
+            assert models[-1] == _LOCAL_FALLBACK
 
 
 class TestEdgeCases:
@@ -429,7 +700,12 @@ class TestEdgeCases:
             ModelTier.CODE: ["code", "refactor", "debug", "test", "implement"],
             ModelTier.REASON: ["architecture", "design", "analyze", "research", "plan"],
             ModelTier.NUANCE: [
-                "marketing", "creative", "email", "copy", "comms", "writing",
+                "marketing",
+                "creative",
+                "email",
+                "copy",
+                "comms",
+                "writing",
             ],
             ModelTier.FAST: ["format", "rename", "lint", "simple", "trivial"],
         }
@@ -437,9 +713,9 @@ class TestEdgeCases:
             for kw in keywords:
                 signal = TaskSignal(description=f"task-{kw}", tags=[kw])
                 decision = router.route(signal)
-                assert decision.tier == expected_tier, (
-                    f"keyword '{kw}' routed to {decision.tier}, expected {expected_tier}"
-                )
+                assert (
+                    decision.tier == expected_tier
+                ), f"keyword '{kw}' routed to {decision.tier}, expected {expected_tier}"
 
 
 # ---------------------------------------------------------------------------
@@ -471,10 +747,12 @@ class TestMCPModelRouteHandler:
     async def test_route_with_tags(self) -> None:
         import json
 
-        result = await self.handler({
-            "description": "refactor auth module",
-            "tags": ["code", "refactor"],
-        })
+        result = await self.handler(
+            {
+                "description": "refactor auth module",
+                "tags": ["code", "refactor"],
+            }
+        )
         data = json.loads(result[0].text)
         assert data["tier"] == "code"
 
@@ -482,10 +760,12 @@ class TestMCPModelRouteHandler:
     async def test_route_privacy_sensitive(self) -> None:
         import json
 
-        result = await self.handler({
-            "description": "process medical records",
-            "privacy_sensitive": True,
-        })
+        result = await self.handler(
+            {
+                "description": "process medical records",
+                "privacy_sensitive": True,
+            }
+        )
         data = json.loads(result[0].text)
         assert data["tier"] == "local"
 
@@ -493,10 +773,12 @@ class TestMCPModelRouteHandler:
     async def test_route_localhost(self) -> None:
         import json
 
-        result = await self.handler({
-            "description": "local benchmark",
-            "requires_localhost": True,
-        })
+        result = await self.handler(
+            {
+                "description": "local benchmark",
+                "requires_localhost": True,
+            }
+        )
         data = json.loads(result[0].text)
         assert data["tier"] == "local"
         assert data["preferred_node"] == "localhost"
@@ -505,10 +787,12 @@ class TestMCPModelRouteHandler:
     async def test_route_with_token_estimate(self) -> None:
         import json
 
-        result = await self.handler({
-            "description": "big analysis",
-            "estimated_tokens": 30_000,
-        })
+        result = await self.handler(
+            {
+                "description": "big analysis",
+                "estimated_tokens": 30_000,
+            }
+        )
         data = json.loads(result[0].text)
         assert data["tier"] == "reason"
 
@@ -534,13 +818,15 @@ class TestMCPModelRouteHandler:
         """Handler accepts all optional fields together."""
         import json
 
-        result = await self.handler({
-            "description": "sensitive local code review",
-            "tags": ["code"],
-            "requires_localhost": False,
-            "privacy_sensitive": True,
-            "estimated_tokens": 50_000,
-        })
+        result = await self.handler(
+            {
+                "description": "sensitive local code review",
+                "tags": ["code"],
+                "requires_localhost": False,
+                "privacy_sensitive": True,
+                "estimated_tokens": 50_000,
+            }
+        )
         data = json.loads(result[0].text)
         # privacy_sensitive takes precedence
         assert data["tier"] == "local"

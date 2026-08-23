@@ -44,12 +44,16 @@ def test_load_hammertime_briefing_parses_json(monkeypatch, tmp_path: Path) -> No
     assert load_hammertime_briefing(root=tmp_path) == payload
 
 
-def test_build_session_briefing_includes_skcapstone_and_hammertime(monkeypatch, tmp_path: Path) -> None:
+def test_build_session_briefing_includes_skcapstone_and_hammertime(
+    monkeypatch, tmp_path: Path
+) -> None:
     """It builds a combined payload for startup consumers."""
     ctx = {"agent": {"name": "Aster"}, "memories": []}
     briefing = {"summary": {"queue_size": 1}, "alert_count": 0}
 
-    monkeypatch.setattr("skcapstone.session_briefing.gather_context", lambda home, memory_limit=10: ctx)
+    monkeypatch.setattr(
+        "skcapstone.session_briefing.gather_context", lambda home, memory_limit=10: ctx
+    )
     monkeypatch.setattr(
         "skcapstone.session_briefing.load_hammertime_briefing",
         lambda python_bin=None: briefing,

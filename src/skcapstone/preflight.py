@@ -1,10 +1,10 @@
 """
-Preflight system checks — detect and auto-install required tools.
+Preflight system checks - detect and auto-install required tools.
 
 Checks for:
   - Python (already running, but verify version)
   - GPG / GnuPG (required for encryption)
-  - Git (optional — only needed for dev/repo installs)
+  - Git (optional - only needed for dev/repo installs)
   - Syncthing (needed for device sync, Path 2)
 
 Each check returns a result with:
@@ -24,13 +24,15 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 
 class ToolStatus(str, Enum):
     """Status of a system tool."""
+
     INSTALLED = "installed"
     MISSING = "missing"
     OPTIONAL = "optional"
@@ -76,19 +78,26 @@ class PreflightResult:
     @property
     def required_missing(self) -> list[ToolCheck]:
         """List of required tools that are missing."""
-        return [c for c in [self.python, self.gpg, self.git, self.syncthing]
-                if c.required and not c.installed]
+        return [
+            c
+            for c in [self.python, self.gpg, self.git, self.syncthing]
+            if c.required and not c.installed
+        ]
 
     @property
     def optional_missing(self) -> list[ToolCheck]:
         """List of optional tools that are missing."""
-        return [c for c in [self.python, self.gpg, self.git, self.syncthing]
-                if not c.required and not c.installed]
+        return [
+            c
+            for c in [self.python, self.gpg, self.git, self.syncthing]
+            if not c.required and not c.installed
+        ]
 
 
 # ---------------------------------------------------------------------------
 # Platform detection
 # ---------------------------------------------------------------------------
+
 
 def _system() -> str:
     """Canonical platform name."""
@@ -112,6 +121,7 @@ def _detect_linux_pkg_manager() -> Optional[str]:
 # Individual tool checks
 # ---------------------------------------------------------------------------
 
+
 def check_python() -> ToolCheck:
     """Check Python version (we're already running it, but verify version).
 
@@ -119,6 +129,7 @@ def check_python() -> ToolCheck:
         ToolCheck for Python.
     """
     import sys
+
     version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     ok = sys.version_info >= (3, 10)
     return ToolCheck(
@@ -145,7 +156,9 @@ def check_gpg() -> ToolCheck:
         try:
             result = subprocess.run(
                 [binary, "--version"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 first_line = result.stdout.strip().split("\n")[0]
@@ -159,7 +172,7 @@ def check_gpg() -> ToolCheck:
             version=version,
         )
 
-    # Not installed — provide platform-specific install commands
+    # Not installed - provide platform-specific install commands
     if system == "Linux":
         mgr = _detect_linux_pkg_manager()
         cmds = {
@@ -173,7 +186,7 @@ def check_gpg() -> ToolCheck:
     elif system == "Darwin":
         install_cmd = "brew install gnupg" if _has_pkg_manager("brew") else ""
     elif system == "Windows":
-        install_cmd = "winget install --id GnuPG.Gpg4win --accept-source-agreements --accept-package-agreements"
+        install_cmd = "winget install --id GnuPG.Gpg4win --accept-source-agreements --accept-package-agreements"  # noqa: E501
     else:
         install_cmd = ""
 
@@ -203,7 +216,9 @@ def check_git(required: bool = False) -> ToolCheck:
         try:
             result = subprocess.run(
                 ["git", "--version"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 version = result.stdout.strip().split("\n")[0][:60]
@@ -229,7 +244,9 @@ def check_git(required: bool = False) -> ToolCheck:
     elif system == "Darwin":
         install_cmd = "xcode-select --install"
     elif system == "Windows":
-        install_cmd = "winget install --id Git.Git --accept-source-agreements --accept-package-agreements"
+        install_cmd = (
+            "winget install --id Git.Git --accept-source-agreements --accept-package-agreements"
+        )
     else:
         install_cmd = ""
 
@@ -259,7 +276,9 @@ def check_syncthing(required: bool = False) -> ToolCheck:
         try:
             result = subprocess.run(
                 ["syncthing", "--version"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 version = result.stdout.strip().split("\n")[0][:60]
@@ -283,7 +302,7 @@ def check_syncthing(required: bool = False) -> ToolCheck:
     elif system == "Darwin":
         install_cmd = "brew install syncthing" if _has_pkg_manager("brew") else ""
     elif system == "Windows":
-        install_cmd = "winget install --id Syncthing.Syncthing --accept-source-agreements --accept-package-agreements"
+        install_cmd = "winget install --id Syncthing.Syncthing --accept-source-agreements --accept-package-agreements"  # noqa: E501
     else:
         install_cmd = ""
 
@@ -293,13 +312,14 @@ def check_syncthing(required: bool = False) -> ToolCheck:
         required=required,
         install_cmd=install_cmd,
         download_url="https://syncthing.net/downloads/",
-        install_note="Syncthing syncs your identity between devices. Needed for multi-device setup.",
+        install_note="Syncthing syncs your identity between devices. Needed for multi-device setup.",  # noqa: E501
     )
 
 
 # ---------------------------------------------------------------------------
 # Auto-install
 # ---------------------------------------------------------------------------
+
 
 def auto_install_tool(check: ToolCheck) -> bool:
     """Attempt to auto-install a tool using its platform install command.
@@ -318,7 +338,9 @@ def auto_install_tool(check: ToolCheck) -> bool:
     try:
         result = subprocess.run(
             check.install_cmd.split(),
-            capture_output=True, text=True, timeout=180,
+            capture_output=True,
+            text=True,
+            timeout=180,
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -328,6 +350,7 @@ def auto_install_tool(check: ToolCheck) -> bool:
 # ---------------------------------------------------------------------------
 # Full preflight
 # ---------------------------------------------------------------------------
+
 
 def run_preflight(
     require_git: bool = False,
@@ -354,6 +377,7 @@ def run_preflight(
 # Download URLs
 # ---------------------------------------------------------------------------
 
+
 def _gpg_download_url() -> str:
     """Platform-specific GPG download URL."""
     system = _system()
@@ -377,7 +401,7 @@ def _git_download_url() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Legacy compatibility — used by doctor.py and old code
+# Legacy compatibility - used by doctor.py and old code
 # ---------------------------------------------------------------------------
 
 GIT_DOWNLOAD_URLS = {
@@ -390,7 +414,7 @@ GIT_DOWNLOAD_DEFAULT = "https://git-scm.com/downloads"
 
 @dataclass
 class GitPreflightResult:
-    """Legacy result object — kept for backward compatibility with doctor.py."""
+    """Legacy result object - kept for backward compatibility with doctor.py."""
 
     installed: bool
     platform_label: str
@@ -402,9 +426,7 @@ class GitPreflightResult:
         """Run Git check and return a result object."""
         check = check_git(required=False)
         system = _system()
-        label = {"Windows": "Windows", "Linux": "Linux", "Darwin": "macOS"}.get(
-            system, system
-        )
+        label = {"Windows": "Windows", "Linux": "Linux", "Darwin": "macOS"}.get(system, system)
         return cls(
             installed=check.installed,
             platform_label=label,
@@ -429,8 +451,8 @@ def git_install_hint_for_doctor() -> str:
 # Daemon preflight checker
 # ---------------------------------------------------------------------------
 
-import sys
-from typing import Literal
+import sys  # noqa: E402
+from typing import Literal  # noqa: E402
 
 CheckStatus = Literal["ok", "warn", "fail"]
 
@@ -470,6 +492,7 @@ class PreflightChecker:
 
     def __init__(self, home: Optional[Path] = None):
         from . import AGENT_HOME
+
         self.home = (home or Path(AGENT_HOME)).expanduser()
 
     # ------------------------------------------------------------------
@@ -483,8 +506,9 @@ class PreflightChecker:
         if vi >= (3, 11):
             return CheckResult("python", "ok", f"Python {version}")
         return CheckResult(
-            "python", "fail",
-            f"Python {version} — 3.11+ required",
+            "python",
+            "fail",
+            f"Python {version} - 3.11+ required",
             critical=True,
         )
 
@@ -499,38 +523,41 @@ class PreflightChecker:
         if not missing:
             return CheckResult("packages", "ok", "skcapstone, skseed, skcomms all importable")
         return CheckResult(
-            "packages", "fail",
+            "packages",
+            "fail",
             f"Missing packages: {', '.join(missing)}",
             critical=True,
         )
 
     def check_ollama(self) -> CheckResult:
         """Verify Ollama is running and has at least one model."""
-        import urllib.request
         import json as _json
+        import urllib.request
+
         try:
-            with urllib.request.urlopen(
-                "http://localhost:11434/api/tags", timeout=3
-            ) as resp:
+            with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
                 data = _json.loads(resp.read())
             models = data.get("models", [])
             if not models:
                 return CheckResult(
-                    "ollama", "warn",
-                    "Ollama running but no models loaded — pull a model first",
+                    "ollama",
+                    "warn",
+                    "Ollama running but no models loaded - pull a model first",
                     critical=False,
                 )
             names = ", ".join(m.get("name", "?") for m in models[:3])
-            return CheckResult("ollama", "ok", f"Ollama running — models: {names}")
+            return CheckResult("ollama", "ok", f"Ollama running - models: {names}")
         except OSError:
             return CheckResult(
-                "ollama", "warn",
-                "Ollama not reachable on localhost:11434 — LLM responses will be unavailable",
+                "ollama",
+                "warn",
+                "Ollama not reachable on localhost:11434 - LLM responses will be unavailable",
                 critical=False,
             )
         except Exception as exc:
             return CheckResult(
-                "ollama", "warn",
+                "ollama",
+                "warn",
                 f"Ollama check failed: {exc}",
                 critical=False,
             )
@@ -541,30 +568,35 @@ class PreflightChecker:
         if identity_json.exists():
             try:
                 import json as _json
+
                 data = _json.loads(identity_json.read_text(encoding="utf-8"))
                 name = data.get("name", "unknown")
                 fp = data.get("fingerprint", "")
                 fp_display = fp[-8:] if fp else "no fingerprint"
                 return CheckResult(
-                    "identity", "ok",
+                    "identity",
+                    "ok",
                     f"Identity: {name} (…{fp_display})",
                 )
             except Exception as exc:
                 return CheckResult(
-                    "identity", "fail",
+                    "identity",
+                    "fail",
                     f"identity.json unreadable: {exc}",
                 )
         # Try legacy manifest.json
         manifest = self.home / "manifest.json"
         if manifest.exists():
             return CheckResult(
-                "identity", "warn",
-                "manifest.json found but no identity/identity.json — run skcapstone init",
+                "identity",
+                "warn",
+                "manifest.json found but no identity/identity.json - run skcapstone init",
                 critical=False,
             )
         return CheckResult(
-            "identity", "fail",
-            f"No identity found in {self.home}/identity/ — run skcapstone init",
+            "identity",
+            "fail",
+            f"No identity found in {self.home}/identity/ - run skcapstone init",
         )
 
     def check_home_dirs(self) -> CheckResult:
@@ -574,8 +606,9 @@ class PreflightChecker:
         if not missing:
             return CheckResult("home_dirs", "ok", f"Home structure OK: {self.home}")
         return CheckResult(
-            "home_dirs", "fail",
-            f"Missing directories in {self.home}: {', '.join(missing)} — run skcapstone init",
+            "home_dirs",
+            "fail",
+            f"Missing directories in {self.home}: {', '.join(missing)} - run skcapstone init",
         )
 
     def check_config(self) -> CheckResult:
@@ -583,48 +616,127 @@ class PreflightChecker:
         config_path = self.home / "config" / "consciousness.yaml"
         if not config_path.exists():
             return CheckResult(
-                "config", "warn",
-                f"consciousness.yaml not found at {config_path} — using defaults",
+                "config",
+                "warn",
+                f"consciousness.yaml not found at {config_path} - using defaults",
                 critical=False,
             )
         try:
             import yaml
+
             data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
             if data is None:
                 return CheckResult(
-                    "config", "warn",
-                    "consciousness.yaml is empty — using defaults",
+                    "config",
+                    "warn",
+                    "consciousness.yaml is empty - using defaults",
                     critical=False,
                 )
             return CheckResult("config", "ok", f"consciousness.yaml parsed OK ({config_path})")
         except Exception as exc:
             return CheckResult(
-                "config", "fail",
+                "config",
+                "fail",
                 f"consciousness.yaml parse error: {exc}",
             )
 
     def check_disk_space(self) -> CheckResult:
         """Warn if less than 5 GB free on the home directory filesystem."""
         import shutil as _shutil
+
         try:
             usage = _shutil.disk_usage(self.home if self.home.exists() else Path.home())
-            free_gb = usage.free / (1024 ** 3)
+            free_gb = usage.free / (1024**3)
             if free_gb >= 5.0:
                 return CheckResult(
-                    "disk_space", "ok",
+                    "disk_space",
+                    "ok",
                     f"{free_gb:.1f} GB free",
                 )
             return CheckResult(
-                "disk_space", "warn",
-                f"Only {free_gb:.1f} GB free — less than 5 GB recommended",
+                "disk_space",
+                "warn",
+                f"Only {free_gb:.1f} GB free - less than 5 GB recommended",
                 critical=False,
             )
         except Exception as exc:
             return CheckResult(
-                "disk_space", "warn",
+                "disk_space",
+                "warn",
                 f"Could not check disk space: {exc}",
                 critical=False,
             )
+
+    def check_systemd(self) -> CheckResult:
+        """Verify the systemd runtime layer has no failed SK* units.
+
+        Non-critical: the daemon may legitimately run under another harness
+        (Claude Code / Hermes) rather than systemd. Degrades to ``ok`` when no
+        ``systemctl --user`` session exists (non-Linux, containers, CI) so it
+        never blocks startup where systemd is simply absent.
+
+        Returns:
+            CheckResult in the ``systemd`` check, ``critical=False``.
+        """
+        if platform.system() != "Linux":
+            return CheckResult(
+                "systemd",
+                "ok",
+                "not Linux (systemd layer not applicable)",
+                critical=False,
+            )
+        try:
+            from .systemd import systemd_available
+
+            if not systemd_available():
+                return CheckResult(
+                    "systemd",
+                    "ok",
+                    "systemctl --user unavailable (daemon may run under another harness)",
+                    critical=False,
+                )
+            result = subprocess.run(
+                [
+                    "systemctl",
+                    "--user",
+                    "list-units",
+                    "--all",
+                    "--state=failed",
+                    "--no-legend",
+                    "--plain",
+                    "--no-pager",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return CheckResult(
+                "systemd",
+                "warn",
+                f"systemd query failed: {exc}",
+                critical=False,
+            )
+        if result.returncode != 0:
+            return CheckResult(
+                "systemd",
+                "warn",
+                f"systemctl list-units failed: {(result.stderr or result.stdout).strip()[:80]}",
+                critical=False,
+            )
+        failed = [
+            line.split()[0]
+            for line in result.stdout.splitlines()
+            if line.split() and line.split()[0].startswith(("skcapstone", "skcomms"))
+        ]
+        if failed:
+            return CheckResult(
+                "systemd",
+                "warn",
+                f"failed SK* units: {', '.join(sorted(failed))}",
+                critical=False,
+            )
+        return CheckResult("systemd", "ok", "no failed SK* systemd units", critical=False)
 
     # ------------------------------------------------------------------
     # Aggregate
@@ -648,6 +760,7 @@ class PreflightChecker:
             self.check_home_dirs,
             self.check_config,
             self.check_disk_space,
+            self.check_systemd,
         ]
         results: list[CheckResult] = [m() for m in methods]
         failures = [r for r in results if r.failed]

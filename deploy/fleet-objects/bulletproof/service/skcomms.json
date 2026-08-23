@@ -1,0 +1,36 @@
+{
+  "kind": "service",
+  "labels": {
+    "epic": "CR-7.3",
+    "tier": "core"
+  },
+  "name": "skcomms",
+  "spec": {
+    "conditions": [
+      "Ready",
+      "Progressing",
+      "CrashLooping",
+      "PathHealthy",
+      "QueueDrained",
+      "OutboxBounded"
+    ],
+    "failover": "manual",
+    "healthCheck": {
+      "port": 9384
+    },
+    "nodeSelector": {
+      "always-on": "true"
+    },
+    "note": "422 plain-send + unbounded-outbox/archive freeze risks; OutboxBounded/ArchiveBounded gate the freeze class. Watchdog Restart=always upstream, healthCheck /health port 9384.",
+    "resources": {
+      "cores": 1,
+      "ram_gb": 1.0
+    },
+    "restartPolicy": "on-failure",
+    "restoreBeforeStart": true,
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "runtime": "systemd-user",
+    "source": "skcomms/docs/deploy-plan/skcomms-bulletproof-deploy.md",
+    "unit": "skcomms-api.service"
+  }
+}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from skcapstone.models import PillarStatus
 from skcapstone.pillars.consciousness import initialize_consciousness
 from skcapstone.pillars.identity import generate_identity
 from skcapstone.pillars.security import (
@@ -14,7 +15,6 @@ from skcapstone.pillars.security import (
     read_audit_log,
 )
 from skcapstone.pillars.trust import initialize_trust, record_trust_state
-from skcapstone.models import PillarStatus
 
 
 class TestIdentityPillar:
@@ -22,7 +22,7 @@ class TestIdentityPillar:
 
     def test_generate_creates_identity_dir(self, tmp_agent_home: Path):
         """generate_identity should create the identity directory."""
-        state = generate_identity(tmp_agent_home, "test-agent")
+        generate_identity(tmp_agent_home, "test-agent")
         assert (tmp_agent_home / "identity").is_dir()
         assert (tmp_agent_home / "identity" / "identity.json").exists()
 
@@ -140,8 +140,8 @@ class TestSecurityPillar:
         security_dir.mkdir(parents=True, exist_ok=True)
         log = security_dir / "audit.log"
         log.write_text(
-            "[2026-02-22T12:00:00+00:00] INIT — old format\n"
-            "[2026-02-22T12:01:00+00:00] AUTH — legacy auth\n"
+            "[2026-02-22T12:00:00+00:00] INIT - old format\n"
+            "[2026-02-22T12:01:00+00:00] AUTH - legacy auth\n"
         )
 
         entries = read_audit_log(tmp_agent_home)
@@ -177,18 +177,21 @@ class TestConsciousnessPillar:
     def test_degraded_with_digested_sessions_no_daemon(self, tmp_agent_home: Path, monkeypatch):
         """DEGRADED when sessions have been digested but daemon is not running."""
         import os
+
         agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
         whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
         whisper_dir.mkdir(parents=True, exist_ok=True)
 
         # Write state.json with one digested session
         state_json = whisper_dir / "state.json"
-        state_json.write_text(json.dumps({
-            "last_digest": "2026-03-25T12:00:00+00:00",
-            "sessions": {
-                "abc123": {"digested_at": "2026-03-25T12:00:00+00:00"}
-            }
-        }))
+        state_json.write_text(
+            json.dumps(
+                {
+                    "last_digest": "2026-03-25T12:00:00+00:00",
+                    "sessions": {"abc123": {"digested_at": "2026-03-25T12:00:00+00:00"}},
+                }
+            )
+        )
 
         # Daemon not running (systemctl will fail in test env)
         state = initialize_consciousness(tmp_agent_home)
@@ -199,6 +202,7 @@ class TestConsciousnessPillar:
     def test_whisper_md_age_tracked(self, tmp_agent_home: Path):
         """whisper.md existence and age are captured correctly."""
         import os
+
         agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
         whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
         whisper_dir.mkdir(parents=True, exist_ok=True)
@@ -213,14 +217,15 @@ class TestConsciousnessPillar:
     def test_patterns_json_topic_count(self, tmp_agent_home: Path):
         """topics_tracked reflects the number of topics in patterns.json."""
         import os
+
         agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
         whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
         whisper_dir.mkdir(parents=True, exist_ok=True)
 
         patterns = whisper_dir / "patterns.json"
-        patterns.write_text(json.dumps({
-            "topics": {"sovereignty": {}, "memory": {}, "consciousness": {}}
-        }))
+        patterns.write_text(
+            json.dumps({"topics": {"sovereignty": {}, "memory": {}, "consciousness": {}}})
+        )
 
         state = initialize_consciousness(tmp_agent_home)
         assert state.topics_tracked == 3
@@ -234,9 +239,9 @@ class TestConsciousnessPillar:
         whisper_dir = tmp_agent_home / "agents" / agent_name / "skwhisper"
         whisper_dir.mkdir(parents=True, exist_ok=True)
         (whisper_dir / "whisper.md").write_text("# Whisper context\n")
-        (whisper_dir / "patterns.json").write_text(json.dumps({
-            "topics": {"sovereignty": {}, "memory": {}}
-        }))
+        (whisper_dir / "patterns.json").write_text(
+            json.dumps({"topics": {"sovereignty": {}, "memory": {}}})
+        )
 
         class Result:
             stdout = "active\n"
@@ -253,6 +258,7 @@ class TestConsciousnessPillar:
     def test_trip_sessions_counted(self, tmp_agent_home: Path):
         """trip_sessions counts .json files in the sktrip directory."""
         import os
+
         agent_name = os.environ.get("SKCAPSTONE_AGENT", "lumina")
         trip_dir = tmp_agent_home / "agents" / agent_name / "sktrip"
         trip_dir.mkdir(parents=True, exist_ok=True)

@@ -59,9 +59,7 @@ def load_consciousness_config(
                 config = ConsciousnessConfig.model_validate(raw)
                 logger.info("Loaded consciousness config from %s", yaml_path)
         except Exception as exc:
-            logger.warning(
-                "Failed to parse %s, using defaults: %s", yaml_path, exc
-            )
+            logger.warning("Failed to parse %s, using defaults: %s", yaml_path, exc)
 
     # Environment override
     env_enabled = os.environ.get("SKCAPSTONE_CONSCIOUSNESS_ENABLED", "").lower()

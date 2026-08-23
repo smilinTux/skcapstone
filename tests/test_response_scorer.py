@@ -15,7 +15,6 @@ from skcapstone.response_scorer import (
     score_response,
 )
 
-
 # ---------------------------------------------------------------------------
 # ResponseScore dataclass
 # ---------------------------------------------------------------------------
@@ -94,7 +93,7 @@ class TestScoreLength:
         assert score >= 0.3
 
     def test_single_word_question(self) -> None:
-        """Single-word question — lo=10; response of 15 words → 1.0."""
+        """Single-word question - lo=10; response of 15 words → 1.0."""
         score = _score_length("Hi", " ".join(["word"] * 15))
         assert score == 1.0
 
@@ -135,7 +134,7 @@ class TestScoreCoherence:
         question = "Compare Python and JavaScript performance"
         # Content words: compare, python, javascript, performance
         response = "Python is great for scripting."
-        # 'python' matches — 1/4 = 0.25
+        # 'python' matches - 1/4 = 0.25
         score = _score_coherence(question, response)
         assert 0.0 < score < 1.0
 
@@ -247,6 +246,7 @@ class TestConsciousnessMetricsQuality:
     def cm(self, tmp_path: Path):
         """ConsciousnessMetrics with no background thread."""
         from skcapstone.metrics import ConsciousnessMetrics
+
         return ConsciousnessMetrics(home=tmp_path, persist_interval=0)
 
     def test_initial_quality_avg_zeros(self, cm) -> None:

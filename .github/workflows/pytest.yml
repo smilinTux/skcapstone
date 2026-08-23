@@ -33,6 +33,12 @@ jobs:
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the git tag, so a
+          # shallow checkout would yield a placeholder like 0.1.dev1 and
+          # break dependency resolution against pinned siblings.
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-python@v5
         with:
@@ -47,6 +53,94 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[all,dev]"
+
+      # This check runs before any Git source reinstall so a sibling checkout
+      # cannot hide a stale registry artifact. SKCapstone release candidates
+      # require the published skcoord lifecycle and criteria-fold contract.
+      - name: Verify registry skcoord contract before source overlay
+        run: |
+          python -m pip install --force-reinstall --no-deps --no-cache-dir \
+            --only-binary=:all: "skcoord==0.1.28"
+          python -m pip show skcoord
+          python - <<'PY'
+          import os
+          import tempfile
+          from importlib.metadata import version
+          from pathlib import Path
+
+          from packaging.version import Version
+          from skcoord.card_store import CardCore, CardStore
+          from skcoord.cmdb_scheduler import ReconcileLease, ScheduledReconcileConfig
+          from skcoord.coordination import Board
+          from skcoord.lifecycle import audit_lifecycle, repair_lifecycle, transition_task
+
+          assert Version(version("skcoord")) == Version("0.1.28")
+          assert callable(audit_lifecycle)
+          assert callable(repair_lifecycle)
+          assert callable(transition_task)
+          assert ReconcileLease
+          assert not ScheduledReconcileConfig().enabled
+
+          os.environ["SKCOORD_CARD_STORE"] = "1"
+          with tempfile.TemporaryDirectory() as directory:
+              home = Path(directory)
+              store = CardStore(home)
+              store.create(
+                  CardCore(
+                      id="registry-contract",
+                      title="Registry contract",
+                      acceptance_criteria=["birth criterion"],
+                  )
+              )
+              store.append_event(
+                  "registry-contract",
+                  "amend_criteria",
+                  "ci",
+                  criteria=["amended criterion"],
+              )
+
+              card = store.fold("registry-contract")
+              assert card is not None
+              assert card.acceptance_criteria == ["amended criterion"]
+
+              view = next(
+                  item
+                  for item in Board(home).get_task_views()
+                  if item.task.id == "registry-contract"
+              )
+              assert view.task.acceptance_criteria == ["amended criterion"]
+          PY
+          python -m pytest -q \
+            tests/test_cli_kanban.py \
+            tests/test_coord_kanban_mcp.py \
+            tests/test_coord_amend.py
+
+      # The extracted siblings (CR-4.1/4.3) are declared deps, so the step above
+      # already pulls them from PyPI. Reinstall from git main so CI tests the
+      # code that ships TOGETHER: a published wheel can lag its repo, and
+      # skcapstone's dashboard_*/coordination modules are transparent re-export
+      # shims, so a stale sibling silently changes what the shims re-export.
+      # --no-deps keeps this from dragging anything over the checkout under test.
+      # No @ref on purpose: pip then clones whatever the DEFAULT branch is.
+      # Pinning @master broke this job the day those repos were renamed to
+      # main, and a CI step that breaks on someone else's rename is a step
+      # that will break again.
+      # No @ref on purpose: pip then clones whatever the DEFAULT branch is.
+      # Pinning @master broke skchat CI the day those repos were renamed to
+      # main, with no commit from us in between.
+      #
+      # skharness is here because tests/test_cli_autopilot_cost.py imports
+      # skharness.autocode.autopilot_cost. It was never declared, so CI hit
+      # ModuleNotFoundError and those tests reported failure rather than
+      # running, while dev boxes (which have it installed) stayed green. It
+      # briefly came from PyPI because the repo was private; it is public as of
+      # 2026-08-13, so it joins the others and stops being able to lag.
+      - name: Install extracted siblings from source
+        run: |
+          pip install --force-reinstall --no-deps --no-cache-dir \
+            "skcoord @ git+https://github.com/smilinTux/skcoord" \
+            "skdashboard @ git+https://github.com/smilinTux/skdashboard" \
+            "skharness @ git+https://github.com/smilinTux/skharness"
 
       - name: Run unit tests (exclude integration + e2e via markers)
         run: |

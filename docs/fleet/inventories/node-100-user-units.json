@@ -1,0 +1,25 @@
+{
+  "node": "node-100",
+  "scope": "user",
+  "collected": "2026-08-14",
+  "units": {
+    "comfyui.service": "enabled",
+    "dirmngr.socket": "enabled",
+    "f5-tts.service": "enabled",
+    "gpg-agent-browser.socket": "enabled",
+    "gpg-agent-extra.socket": "enabled",
+    "gpg-agent-ssh.socket": "enabled",
+    "gpg-agent.socket": "enabled",
+    "keyboxd.socket": "enabled",
+    "launchpadlib-cache-clean.timer": "enabled",
+    "pk-debconf-helper.socket": "enabled",
+    "qwen3-arc.service": "enabled",
+    "session-migration.service": "enabled",
+    "skai-beellama-restart.timer": "enabled",
+    "skai-beellama.service": "enabled",
+    "skvoice.service": "enabled",
+    "sovereign-orchestrator.service": "enabled",
+    "syncthing.service": "enabled",
+    "whisper-stt.service": "enabled"
+  }
+}

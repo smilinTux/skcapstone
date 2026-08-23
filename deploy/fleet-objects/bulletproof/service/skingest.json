@@ -1,0 +1,30 @@
+{
+  "kind": "service",
+  "labels": {
+    "epic": "CR-7.3",
+    "tier": "core"
+  },
+  "name": "skingest",
+  "spec": {
+    "conditions": [
+      "Ready",
+      "CrashLooping",
+      "SchemaApplied"
+    ],
+    "failover": "manual",
+    "nodeSelector": {
+      "always-on": "true"
+    },
+    "note": "no schema DDL in repo was a bulletproof gap; SchemaApplied blocks a start against an unmigrated store.",
+    "resources": {
+      "cores": 1,
+      "ram_gb": 1.0
+    },
+    "restartPolicy": "on-failure",
+    "restoreBeforeStart": true,
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "runtime": "systemd-user",
+    "source": "skingest/docs/deploy-plan/skingest-bulletproof-deploy.md",
+    "unit": "skingest.service"
+  }
+}

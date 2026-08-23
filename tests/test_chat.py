@@ -11,7 +11,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,6 +34,7 @@ def tmp_home(tmp_path):
     (home / "identity" / "identity.json").write_text(json.dumps(identity_data))
     (home / "manifest.json").write_text(json.dumps({"name": "TestAgent", "version": "0.1.0"}))
     import yaml
+
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "TestAgent"}))
     return home
 
@@ -162,15 +162,17 @@ class TestAgentChatReceive:
         """Incoming envelopes are parsed into message dicts."""
         agent = AgentChat(home=tmp_home, identity="opus")
 
-        payload = json.dumps({
-            "skchat_version": "1.0.0",
-            "message_id": "msg-1",
-            "sender": "lumina",
-            "recipient": "opus",
-            "content": "Hello from Lumina",
-            "thread_id": None,
-            "timestamp": "2026-02-24T05:00:00Z",
-        })
+        payload = json.dumps(
+            {
+                "skchat_version": "1.0.0",
+                "message_id": "msg-1",
+                "sender": "lumina",
+                "recipient": "opus",
+                "content": "Hello from Lumina",
+                "thread_id": None,
+                "timestamp": "2026-02-24T05:00:00Z",
+            }
+        )
 
         envelope = MagicMock()
         envelope.sender = "lumina"
@@ -346,11 +348,12 @@ class TestCLIChatCommands:
     def test_chat_forward_message_not_found(self, tmp_home):
         """chat forward exits non-zero when MSG_ID is not in inbox."""
         from skcapstone.cli import main
-        from skcapstone.cli._common import AGENT_HOME
 
         runner = CliRunner()
-        with patch("skcapstone.cli._common.get_runtime") as mock_rt, \
-             patch("skcapstone.chat.AgentChat.get_inbox", return_value=[]):
+        with (
+            patch("skcapstone.cli._common.get_runtime") as mock_rt,
+            patch("skcapstone.chat.AgentChat.get_inbox", return_value=[]),
+        ):
             mock_rt.return_value.manifest.name = "opus"
             result = runner.invoke(
                 main,
@@ -372,14 +375,20 @@ class TestCLIChatCommands:
         }
 
         runner = CliRunner()
-        with patch("skcapstone.cli._common.get_runtime") as mock_rt, \
-             patch("skcapstone.chat.AgentChat.get_inbox", return_value=[original]), \
-             patch("skcapstone.chat.AgentChat._ensure_comm", return_value=False), \
-             patch("skcapstone.chat.AgentChat._ensure_history", return_value=None):
+        with (
+            patch("skcapstone.cli._common.get_runtime") as mock_rt,
+            patch("skcapstone.chat.AgentChat.get_inbox", return_value=[original]),
+            patch("skcapstone.chat.AgentChat._ensure_comm", return_value=False),
+            patch("skcapstone.chat.AgentChat._ensure_history", return_value=None),
+        ):
             mock_rt.return_value.manifest.name = "opus"
             result = runner.invoke(
                 main,
                 ["chat", "forward", "lumina", "msg-fwd-001", "--home", str(tmp_home)],
             )
         # stored=False (no history) and delivered=False → "Failed" or graceful output
-        assert result.exit_code == 0 or "failed" in result.output.lower() or "stored" in result.output.lower()
+        assert (
+            result.exit_code == 0
+            or "failed" in result.output.lower()
+            or "stored" in result.output.lower()
+        )

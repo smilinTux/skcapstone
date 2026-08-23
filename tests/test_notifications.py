@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from skcapstone.notifications import (
     NotificationManager,
     desktop_notifications_enabled,
-    notify,
     get_manager,
+    notify,
 )
 
 
@@ -21,7 +21,7 @@ def _enable_desktop_notifications(monkeypatch):
 
     The session-wide conftest fixture disables notifications so test runs
     don't flood the live desktop.  Every test here mocks ``subprocess.run`` /
-    ``osascript``, so nothing real is dispatched — they just need the guard
+    ``osascript``, so nothing real is dispatched - they just need the guard
     on to exercise the dispatch logic.  Guard-specific tests override this.
     """
     monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "1")
@@ -263,7 +263,7 @@ class TestDebounce:
         ):
             mgr.notify("T", "B")  # fails → _last_sent stays 0
 
-        # Now try again immediately — should not be debounced
+        # Now try again immediately - should not be debounced
         with (
             patch("skcapstone.notifications.platform.system", return_value="Linux"),
             patch("skcapstone.notifications.subprocess.run") as mock_run2,
@@ -274,8 +274,12 @@ class TestDebounce:
         assert result is True
 
     def test_zero_debounce_allows_rapid_calls(self):
-        """debounce_seconds=0 means every call is dispatched."""
-        mgr = NotificationManager(debounce_seconds=0)
+        """debounce_seconds=0 means every call is dispatched.
+
+        Dedup is disabled (dedup_ttl=0) so this isolates the debounce layer:
+        identical rapid calls would otherwise be caught by the dedup cache.
+        """
+        mgr = NotificationManager(debounce_seconds=0, dedup_ttl=0)
         with (
             patch("skcapstone.notifications.platform.system", return_value="Linux"),
             patch("skcapstone.notifications.subprocess.run") as mock_run,
@@ -285,6 +289,137 @@ class TestDebounce:
                 mgr.notify("T", "B")
 
         assert mock_run.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Deduplication cache
+# ---------------------------------------------------------------------------
+
+
+class TestDedup:
+    """Content deduplication suppresses identical notifications within the TTL."""
+
+    def _linux_manager(self, dedup_ttl: float) -> NotificationManager:
+        """Return a fresh Linux manager with no debounce and the given dedup TTL."""
+        mgr = NotificationManager(debounce_seconds=0, dedup_ttl=dedup_ttl)
+        mgr._system = "Linux"
+        return mgr
+
+    def test_duplicate_within_ttl_is_suppressed(self):
+        """A second identical notify() within the dedup TTL returns False."""
+        mgr = self._linux_manager(dedup_ttl=300)
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            first = mgr.notify("Same", "Body", urgency="normal")
+            second = mgr.notify("Same", "Body", urgency="normal")
+
+        assert first is True
+        assert second is False
+        assert mock_run.call_count == 1
+
+    def test_distinct_notifications_pass_through(self):
+        """Notifications with different content are not deduplicated."""
+        mgr = self._linux_manager(dedup_ttl=300)
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            a = mgr.notify("Title A", "Body A")
+            b = mgr.notify("Title B", "Body B")
+            c = mgr.notify("Title A", "Body A", urgency="critical")  # urgency differs
+
+        assert a is True
+        assert b is True
+        assert c is True
+        assert mock_run.call_count == 3
+
+    def test_dedup_expires_after_ttl(self):
+        """After the TTL elapses, an identical notification is dispatched again."""
+        mgr = self._linux_manager(dedup_ttl=0.05)
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            first = mgr.notify("Same", "Body")
+            time.sleep(0.1)
+            second = mgr.notify("Same", "Body")
+
+        assert first is True
+        assert second is True
+        assert mock_run.call_count == 2
+
+    def test_explicit_dedup_key_suppresses_different_content(self):
+        """An explicit dedup_key groups notifications regardless of title/body."""
+        mgr = self._linux_manager(dedup_ttl=300)
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            first = mgr.notify("Title 1", "Body 1", dedup_key="event-42")
+            second = mgr.notify("Title 2", "Body 2", dedup_key="event-42")
+
+        assert first is True
+        assert second is False
+        assert mock_run.call_count == 1
+
+    def test_dedup_ttl_zero_disables_dedup(self):
+        """dedup_ttl=0 dispatches every identical notification."""
+        mgr = self._linux_manager(dedup_ttl=0)
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            for _ in range(3):
+                mgr.notify("Same", "Body")
+
+        assert mock_run.call_count == 3
+
+    def test_failed_dispatch_not_cached_for_dedup(self):
+        """A notification that failed to dispatch is not remembered for dedup."""
+        mgr = self._linux_manager(dedup_ttl=300)
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run", side_effect=FileNotFoundError),
+        ):
+            first = mgr.notify("Same", "Body")  # fails -> not cached
+
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run2,
+        ):
+            mock_run2.return_value = MagicMock(returncode=0)
+            second = mgr.notify("Same", "Body")
+
+        assert first is False
+        assert second is True
+
+    def test_env_var_sets_default_dedup_ttl(self, monkeypatch):
+        """SKCAPSTONE_NOTIFY_DEDUP_TTL sets the default when dedup_ttl is unset."""
+        monkeypatch.setenv("SKCAPSTONE_NOTIFY_DEDUP_TTL", "42")
+        mgr = NotificationManager(debounce_seconds=0)
+        assert mgr._dedup_ttl == 42.0
+
+    def test_env_var_zero_disables_dedup_by_default(self, monkeypatch):
+        """SKCAPSTONE_NOTIFY_DEDUP_TTL=0 disables dedup for a default manager."""
+        monkeypatch.setenv("SKCAPSTONE_NOTIFY_DEDUP_TTL", "0")
+        mgr = NotificationManager(debounce_seconds=0)
+        mgr._system = "Linux"
+        with (
+            patch("skcapstone.notifications.platform.system", return_value="Linux"),
+            patch("skcapstone.notifications.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            mgr.notify("Same", "Body")
+            mgr.notify("Same", "Body")
+
+        assert mock_run.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -329,10 +464,11 @@ class TestModuleLevelHelpers:
 class TestDesktopNotificationGuard:
     """SKCAPSTONE_DESKTOP_NOTIFY suppresses every dispatch path."""
 
-    def test_enabled_by_default(self, monkeypatch):
-        """Unset env var means notifications are enabled."""
+    def test_disabled_by_default(self, monkeypatch):
+        """Unset env var means notifications are DISABLED (opt-in): background
+        agents must not flood the desktop tray unless explicitly enabled."""
         monkeypatch.delenv("SKCAPSTONE_DESKTOP_NOTIFY", raising=False)
-        assert desktop_notifications_enabled() is True
+        assert desktop_notifications_enabled() is False
 
     @pytest.mark.parametrize("value", ["0", "false", "no", "off", "silent", "null", "none"])
     def test_disabled_values(self, monkeypatch, value):

@@ -1,0 +1,14 @@
+{
+  "node": "node-100",
+  "collected": "2026-08-15",
+  "packages": {
+    "capauth": "0.2.21.dev9+g178f692.d20260814",
+    "skcapstone": "0.15.15.dev25+g90df5e0",
+    "skchat": "0.1.0",
+    "skchat-sovereign": "0.1.1",
+    "skcomm": "0.1.1",
+    "skcoord": "0.1.6.dev2+g80bc1b8",
+    "skmemory": "0.11.10",
+    "skseed": "0.1.2"
+  }
+}

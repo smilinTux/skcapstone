@@ -1,25 +1,21 @@
-"""Tests for ConversationArchiver — conversation archival and compression."""
+"""Tests for ConversationArchiver - conversation archival and compression."""
 
 from __future__ import annotations
 
-import gzip
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from skcapstone.archiver import (
     ConversationArchiver,
-    ArchiveResult,
-    ArchiveSummary,
-    _parse_ts,
-    _load_messages,
-    _save_messages,
     _load_archive,
+    _load_messages,
+    _parse_ts,
     _save_archive,
+    _save_messages,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -281,17 +277,25 @@ class TestArchivePeer:
         conv_dir = home / "conversations"
 
         # First run
-        _write_conv(conv_dir, "dave", [
-            _make_msg("user", "very old", 120),
-            _make_msg("user", "latest", 2),
-        ])
+        _write_conv(
+            conv_dir,
+            "dave",
+            [
+                _make_msg("user", "very old", 120),
+                _make_msg("user", "latest", 2),
+            ],
+        )
         arch.archive_peer("dave")
 
         # Second run: add another old message
-        _write_conv(conv_dir, "dave", [
-            _make_msg("user", "also old", 90),
-            _make_msg("user", "newest", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "dave",
+            [
+                _make_msg("user", "also old", 90),
+                _make_msg("user", "newest", 1),
+            ],
+        )
         arch.archive_peer("dave")
 
         archive_path = home / "archive" / "dave.json.gz"
@@ -303,10 +307,14 @@ class TestArchivePeer:
     def test_archive_placed_in_archive_dir(self, home):
         arch = ConversationArchiver(home, age_days=30, keep_recent=1)
         conv_dir = home / "conversations"
-        _write_conv(conv_dir, "eve", [
-            _make_msg("user", "old", 60),
-            _make_msg("user", "new", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "eve",
+            [
+                _make_msg("user", "old", 60),
+                _make_msg("user", "new", 1),
+            ],
+        )
         result = arch.archive_peer("eve")
         assert result.archive_path == home / "archive" / "eve.json.gz"
 
@@ -326,10 +334,14 @@ class TestArchiveAll:
         arch = ConversationArchiver(home, age_days=30, keep_recent=1)
         conv_dir = home / "conversations"
         for peer in ("alice", "bob", "carol"):
-            _write_conv(conv_dir, peer, [
-                _make_msg("user", "old", 60),
-                _make_msg("user", "new", 1),
-            ])
+            _write_conv(
+                conv_dir,
+                peer,
+                [
+                    _make_msg("user", "old", 60),
+                    _make_msg("user", "new", 1),
+                ],
+            )
 
         summary = arch.archive_all()
         assert summary.peers_processed == 3
@@ -348,10 +360,14 @@ class TestArchiveAll:
     def test_summary_results_list_populated(self, home):
         arch = ConversationArchiver(home, age_days=30, keep_recent=1)
         conv_dir = home / "conversations"
-        _write_conv(conv_dir, "zara", [
-            _make_msg("user", "old", 60),
-            _make_msg("user", "new", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "zara",
+            [
+                _make_msg("user", "old", 60),
+                _make_msg("user", "new", 1),
+            ],
+        )
         summary = arch.archive_all()
         assert len(summary.results) == 1
         assert summary.results[0].peer == "zara"
@@ -369,10 +385,14 @@ class TestListArchives:
     def test_lists_existing_archives(self, home):
         arch = ConversationArchiver(home, age_days=30, keep_recent=1)
         conv_dir = home / "conversations"
-        _write_conv(conv_dir, "listme", [
-            _make_msg("user", "old", 60),
-            _make_msg("user", "new", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "listme",
+            [
+                _make_msg("user", "old", 60),
+                _make_msg("user", "new", 1),
+            ],
+        )
         arch.archive_peer("listme")
 
         archives = arch.list_archives()
@@ -384,10 +404,14 @@ class TestListArchives:
     def test_list_includes_path_key(self, home):
         arch = ConversationArchiver(home, age_days=30, keep_recent=1)
         conv_dir = home / "conversations"
-        _write_conv(conv_dir, "pathtest", [
-            _make_msg("user", "old", 60),
-            _make_msg("user", "new", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "pathtest",
+            [
+                _make_msg("user", "old", 60),
+                _make_msg("user", "new", 1),
+            ],
+        )
         arch.archive_peer("pathtest")
 
         archives = arch.list_archives()
@@ -408,10 +432,14 @@ class TestCustomArchiveDir:
         arch = ConversationArchiver(home, age_days=30, keep_recent=1, archive_dir=custom_dir)
 
         conv_dir = home / "conversations"
-        _write_conv(conv_dir, "custom", [
-            _make_msg("user", "old", 60),
-            _make_msg("user", "new", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "custom",
+            [
+                _make_msg("user", "old", 60),
+                _make_msg("user", "new", 1),
+            ],
+        )
         result = arch.archive_peer("custom")
 
         assert result.archive_path.parent == custom_dir
@@ -425,6 +453,7 @@ class TestCustomArchiveDir:
 class TestArchiveCLI:
     def test_archive_run_nothing_to_archive(self, home):
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         conv_dir = home / "conversations"
@@ -437,13 +466,18 @@ class TestArchiveCLI:
 
     def test_archive_run_with_archivable_messages(self, home):
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         conv_dir = home / "conversations"
-        _write_conv(conv_dir, "oldpeer", [
-            _make_msg("user", "old message", 60),
-            _make_msg("user", "new message", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "oldpeer",
+            [
+                _make_msg("user", "old message", 60),
+                _make_msg("user", "new message", 1),
+            ],
+        )
 
         runner = CliRunner()
         result = runner.invoke(
@@ -454,6 +488,7 @@ class TestArchiveCLI:
 
     def test_archive_list_no_archives(self, home):
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         runner = CliRunner()
@@ -463,13 +498,18 @@ class TestArchiveCLI:
 
     def test_archive_dry_run_shows_preview(self, home):
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         conv_dir = home / "conversations"
-        _write_conv(conv_dir, "drypeer", [
-            _make_msg("user", "old", 60),
-            _make_msg("user", "new", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "drypeer",
+            [
+                _make_msg("user", "old", 60),
+                _make_msg("user", "new", 1),
+            ],
+        )
 
         runner = CliRunner()
         result = runner.invoke(
@@ -483,13 +523,18 @@ class TestArchiveCLI:
 
     def test_archive_list_after_run(self, home):
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         conv_dir = home / "conversations"
-        _write_conv(conv_dir, "listpeer", [
-            _make_msg("user", "old", 60),
-            _make_msg("user", "new", 1),
-        ])
+        _write_conv(
+            conv_dir,
+            "listpeer",
+            [
+                _make_msg("user", "old", 60),
+                _make_msg("user", "new", 1),
+            ],
+        )
 
         runner = CliRunner()
         runner.invoke(main, ["archive", "run", "--home", str(home), "--keep-recent", "1"])

@@ -8,11 +8,10 @@ from pathlib import Path
 
 import click
 import yaml
-
-from ._common import AGENT_HOME, console
-
 from rich.panel import Panel
 from rich.table import Table
+
+from ._common import AGENT_HOME, console
 
 
 def _load_config_data(config_path: Path) -> dict:
@@ -38,6 +37,7 @@ def _current_capabilities(config_path: Path) -> list[str]:
     if isinstance(caps, list):
         return [str(c) for c in caps if c]
     from ..models import AgentConfig
+
     return list(AgentConfig().capabilities)
 
 
@@ -49,7 +49,7 @@ def register_capabilities_commands(main: click.Group) -> None:
     @click.option("--json", "json_out", is_flag=True, help="Output as JSON.")
     @click.pass_context
     def capabilities(ctx, sk_home, json_out):
-        """Agent capability advertisement — what this agent can do.
+        """Agent capability advertisement - what this agent can do.
 
         Capabilities are included in every heartbeat beacon so peers
         know what services this agent offers.
@@ -78,13 +78,18 @@ def register_capabilities_commands(main: click.Group) -> None:
             for i, name in enumerate(caps, 1):
                 table.add_row(str(i), name)
 
-            source = "[dim](from config)[/]" if (config_path.exists() and
-                _load_config_data(config_path).get("capabilities")) else "[dim](defaults)[/]"
-            console.print(Panel(
-                f"[bold]{len(caps)}[/] capability(s) advertised  {source}",
-                title="Agent Capabilities",
-                border_style="bright_blue",
-            ))
+            source = (
+                "[dim](from config)[/]"
+                if (config_path.exists() and _load_config_data(config_path).get("capabilities"))
+                else "[dim](defaults)[/]"
+            )
+            console.print(
+                Panel(
+                    f"[bold]{len(caps)}[/] capability(s) advertised  {source}",
+                    title="Agent Capabilities",
+                    border_style="bright_blue",
+                )
+            )
             console.print(table)
             console.print()
 
@@ -131,6 +136,7 @@ def register_capabilities_commands(main: click.Group) -> None:
         # Seed from defaults if no key yet
         if "capabilities" not in data:
             from ..models import AgentConfig
+
             data["capabilities"] = list(AgentConfig().capabilities)
 
         caps: list[str] = data["capabilities"]
@@ -158,6 +164,7 @@ def register_capabilities_commands(main: click.Group) -> None:
 
         if "capabilities" not in data:
             from ..models import AgentConfig
+
             data["capabilities"] = list(AgentConfig().capabilities)
 
         caps: list[str] = data["capabilities"]

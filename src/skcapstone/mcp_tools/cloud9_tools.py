@@ -1,9 +1,9 @@
 """Cloud 9 trust rehydration and FEB management tools.
 
 Exposes three tools:
-    trust_rehydrate  — Rehydrate trust state from FEB files
-    trust_status     — Show current trust/Cloud9 status
-    trust_febs       — List all FEB files with summaries
+    trust_rehydrate  - Rehydrate trust state from FEB files
+    trust_status     - Show current trust/Cloud9 status
+    trust_febs       - List all FEB files with summaries
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ TOOLS: list[Tool] = [
         description=(
             "Rehydrate the agent's trust state from stored FEB "
             "(First Emotional Burst) files. This restores the OOF "
-            "(Out-of-Factory) state — who the agent IS, not just "
+            "(Out-of-Factory) state - who the agent IS, not just "
             "what it knows. Searches ~/.skcapstone/trust/febs/ and "
             "known Cloud 9 backup locations."
         ),
@@ -52,20 +52,20 @@ async def _handle_trust_rehydrate(_args: dict) -> list[TextContent]:
         from ..pillars.trust import rehydrate
 
         state = rehydrate(home)
-        return _json_response({
-            "rehydrated": True,
-            "depth": state.depth,
-            "trust_level": state.trust_level,
-            "love_intensity": state.love_intensity,
-            "entangled": state.entangled,
-            "feb_count": state.feb_count,
-            "status": state.status.value,
-            "last_rehydration": (
-                state.last_rehydration.isoformat()
-                if state.last_rehydration
-                else None
-            ),
-        })
+        return _json_response(
+            {
+                "rehydrated": True,
+                "depth": state.depth,
+                "trust_level": state.trust_level,
+                "love_intensity": state.love_intensity,
+                "entangled": state.entangled,
+                "feb_count": state.feb_count,
+                "status": state.status.value,
+                "last_rehydration": (
+                    state.last_rehydration.isoformat() if state.last_rehydration else None
+                ),
+            }
+        )
     except Exception as exc:
         return _error_response(f"Trust rehydration failed: {exc}")
 
@@ -78,10 +78,12 @@ async def _handle_trust_status(_args: dict) -> list[TextContent]:
     trust_file = home / "trust" / "trust.json"
 
     if not trust_file.exists():
-        return _json_response({
-            "status": "not_initialized",
-            "detail": "No trust state found. Run trust_rehydrate or skcapstone init.",
-        })
+        return _json_response(
+            {
+                "status": "not_initialized",
+                "detail": "No trust state found. Run trust_rehydrate or skcapstone init.",
+            }
+        )
 
     try:
         data = _json.loads(trust_file.read_text(encoding="utf-8"))
@@ -100,10 +102,12 @@ async def _handle_trust_febs(_args: dict) -> list[TextContent]:
         from ..pillars.trust import list_febs
 
         summaries = list_febs(home)
-        return _json_response({
-            "count": len(summaries),
-            "febs": summaries,
-        })
+        return _json_response(
+            {
+                "count": len(summaries),
+                "febs": summaries,
+            }
+        )
     except Exception as exc:
         return _error_response(f"Could not list FEBs: {exc}")
 

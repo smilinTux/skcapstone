@@ -14,10 +14,9 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from skcapstone._cli_monolith import main
 from skcapstone.blueprints.schema import ProviderType
+from skcapstone.cli import main
 from skcapstone.team_engine import AgentStatus, DeployedAgent, TeamDeployment, TeamEngine
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -71,6 +70,19 @@ def _invoke(*args: str) -> Any:
     return runner.invoke(main, list(args))
 
 
+def _invoke_cli(*args: str) -> Any:
+    """Invoke the canonical modular CLI (skcapstone.cli:main) with given args.
+
+    The focused ``agents health --agent`` surface lives in the shipped
+    modular CLI (the ``[project.scripts]`` entrypoint), which is separate
+    from the legacy ``_cli_monolith`` used by ``_invoke``.
+    """
+    from skcapstone.cli import main as cli_main
+
+    runner = CliRunner()
+    return runner.invoke(cli_main, list(args))
+
+
 # ---------------------------------------------------------------------------
 # Restart
 # ---------------------------------------------------------------------------
@@ -100,9 +112,13 @@ class TestCLIRestart:
         engine._save_deployment(_make_deployment())
 
         result = _invoke(
-            "agents", "restart", "test-team-1000",
-            "--agent", "test-team-alpha",
-            "--home", str(tmp_home),
+            "agents",
+            "restart",
+            "test-team-1000",
+            "--agent",
+            "test-team-alpha",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "test-team-alpha" in result.output
@@ -113,9 +129,13 @@ class TestCLIRestart:
         engine._save_deployment(_make_deployment())
 
         result = _invoke(
-            "agents", "restart", "test-team-1000",
-            "--agent", "ghost",
-            "--home", str(tmp_home),
+            "agents",
+            "restart",
+            "test-team-1000",
+            "--agent",
+            "ghost",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "not in deployment" in result.output
@@ -135,9 +155,15 @@ class TestCLIScale:
         engine._save_deployment(_make_deployment())
 
         result = _invoke(
-            "agents", "scale", "test-team-1000",
-            "--agent", "alpha", "--count", "3",
-            "--home", str(tmp_home),
+            "agents",
+            "scale",
+            "test-team-1000",
+            "--agent",
+            "alpha",
+            "--count",
+            "3",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "alpha" in result.output
@@ -145,9 +171,15 @@ class TestCLIScale:
     def test_scale_unknown_deployment_shows_error(self, tmp_home: Path) -> None:
         """CLI scale shows error for unknown deployment."""
         result = _invoke(
-            "agents", "scale", "no-such-id",
-            "--agent", "alpha", "--count", "2",
-            "--home", str(tmp_home),
+            "agents",
+            "scale",
+            "no-such-id",
+            "--agent",
+            "alpha",
+            "--count",
+            "2",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "not found" in result.output
@@ -155,18 +187,26 @@ class TestCLIScale:
     def test_scale_requires_agent_option(self, tmp_home: Path) -> None:
         """--agent is required for scale command."""
         result = _invoke(
-            "agents", "scale", "test-team-1000",
-            "--count", "2",
-            "--home", str(tmp_home),
+            "agents",
+            "scale",
+            "test-team-1000",
+            "--count",
+            "2",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code != 0
 
     def test_scale_requires_count_option(self, tmp_home: Path) -> None:
         """--count is required for scale command."""
         result = _invoke(
-            "agents", "scale", "test-team-1000",
-            "--agent", "alpha",
-            "--home", str(tmp_home),
+            "agents",
+            "scale",
+            "test-team-1000",
+            "--agent",
+            "alpha",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code != 0
 
@@ -185,9 +225,13 @@ class TestCLIRotate:
         engine._save_deployment(_make_deployment())
 
         result = _invoke(
-            "agents", "rotate", "test-team-1000",
-            "--agent", "test-team-alpha",
-            "--home", str(tmp_home),
+            "agents",
+            "rotate",
+            "test-team-1000",
+            "--agent",
+            "test-team-alpha",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "snapshot" in result.output.lower() or "Snapshot" in result.output
@@ -198,9 +242,13 @@ class TestCLIRotate:
         engine._save_deployment(_make_deployment())
 
         result = _invoke(
-            "agents", "rotate", "test-team-1000",
-            "--agent", "ghost-agent",
-            "--home", str(tmp_home),
+            "agents",
+            "rotate",
+            "test-team-1000",
+            "--agent",
+            "ghost-agent",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "not in deployment" in result.output
@@ -208,9 +256,13 @@ class TestCLIRotate:
     def test_rotate_unknown_deployment_shows_error(self, tmp_home: Path) -> None:
         """CLI rotate shows error for unknown deployment."""
         result = _invoke(
-            "agents", "rotate", "no-deploy",
-            "--agent", "any-agent",
-            "--home", str(tmp_home),
+            "agents",
+            "rotate",
+            "no-deploy",
+            "--agent",
+            "any-agent",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "not found" in result.output
@@ -218,8 +270,11 @@ class TestCLIRotate:
     def test_rotate_requires_agent_option(self, tmp_home: Path) -> None:
         """--agent is required for rotate command."""
         result = _invoke(
-            "agents", "rotate", "test-team-1000",
-            "--home", str(tmp_home),
+            "agents",
+            "rotate",
+            "test-team-1000",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code != 0
 
@@ -255,6 +310,39 @@ class TestCLIHealth:
         result = _invoke("agents", "health", "test-team-1000", "--home", str(tmp_home))
         assert result.exit_code == 0
         assert "healthy" in result.output.lower()
+
+    def test_health_agent_focus_resolves_sentinel(self, tmp_home: Path) -> None:
+        """`--agent sentinel` resolves the Sentinel role across deployments."""
+        engine = TeamEngine(home=tmp_home)
+        engine._save_deployment(
+            _make_deployment(
+                agents={
+                    "test-team-sentinel": _make_agent(
+                        name="test-team-sentinel",
+                        spec_key="sentinel",
+                    ),
+                }
+            )
+        )
+
+        result = _invoke_cli("agents", "health", "--agent", "sentinel", "--home", str(tmp_home))
+        assert result.exit_code == 0
+        assert "test-team-sentinel" in result.output
+
+    def test_health_agent_focus_reports_absent(self, tmp_home: Path) -> None:
+        """`--agent sentinel` reports absent when no Sentinel is deployed."""
+        engine = TeamEngine(home=tmp_home)
+        engine._save_deployment(_make_deployment())  # only alpha, no sentinel
+
+        result = _invoke_cli("agents", "health", "--agent", "sentinel", "--home", str(tmp_home))
+        assert result.exit_code == 0
+        assert "absent" in result.output.lower()
+
+    def test_health_without_target_prompts(self, tmp_home: Path) -> None:
+        """`agents health` with neither id nor --agent shows guidance."""
+        result = _invoke_cli("agents", "health", "--home", str(tmp_home))
+        assert result.exit_code == 0
+        assert "--agent" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -300,9 +388,13 @@ class TestCLILogs:
         (log_dir / "agent.log").write_text("agent specific log\n")
 
         result = _invoke(
-            "agents", "logs", "test-team-1000",
-            "--agent", "test-team-alpha",
-            "--home", str(tmp_home),
+            "agents",
+            "logs",
+            "test-team-1000",
+            "--agent",
+            "test-team-alpha",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "agent specific log" in result.output
@@ -317,9 +409,13 @@ class TestCLILogs:
         (log_dir / "agent.log").write_text(lines)
 
         result = _invoke(
-            "agents", "logs", "test-team-1000",
-            "--tail", "3",
-            "--home", str(tmp_home),
+            "agents",
+            "logs",
+            "test-team-1000",
+            "--tail",
+            "3",
+            "--home",
+            str(tmp_home),
         )
         assert result.exit_code == 0
         assert "line19" in result.output

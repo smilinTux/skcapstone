@@ -42,7 +42,7 @@ TOOLS: list[Tool] = [
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Fully-qualified tool name, e.g. 'syncthing-setup.check_status'",
+                    "description": "Fully-qualified tool name, e.g. 'syncthing-setup.check_status'",  # noqa: E501
                 },
                 "args": {
                     "type": "object",
@@ -64,9 +64,7 @@ async def _handle_skskills_list_tools(args: dict) -> list[TextContent]:
     try:
         from skskills.aggregator import SkillAggregator
     except ImportError:
-        return _error_response(
-            "skskills is not installed. Run: pip install skskills"
-        )
+        return _error_response("skskills is not installed. Run: pip install skskills")
 
     agent = args.get("agent") or _get_agent_name(_home())
     agg = SkillAggregator(agent=agent)
@@ -75,19 +73,21 @@ async def _handle_skskills_list_tools(args: dict) -> list[TextContent]:
     tools = agg.loader.all_tools()
     skills = agg.get_loaded_skills()
 
-    return _json_response({
-        "agent": agent,
-        "skills_loaded": count,
-        "skills": skills,
-        "tools": [
-            {
-                "name": t["name"],
-                "description": t["description"],
-                "inputSchema": t["inputSchema"],
-            }
-            for t in tools
-        ],
-    })
+    return _json_response(
+        {
+            "agent": agent,
+            "skills_loaded": count,
+            "skills": skills,
+            "tools": [
+                {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "inputSchema": t["inputSchema"],
+                }
+                for t in tools
+            ],
+        }
+    )
 
 
 async def _handle_skskills_run_tool(args: dict) -> list[TextContent]:
@@ -95,9 +95,7 @@ async def _handle_skskills_run_tool(args: dict) -> list[TextContent]:
     try:
         from skskills.aggregator import SkillAggregator
     except ImportError:
-        return _error_response(
-            "skskills is not installed. Run: pip install skskills"
-        )
+        return _error_response("skskills is not installed. Run: pip install skskills")
 
     tool_name = args.get("tool", "")
     if not tool_name:

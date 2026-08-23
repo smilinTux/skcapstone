@@ -19,7 +19,7 @@ def register_consciousness_commands(main: click.Group) -> None:
 
     @main.group()
     def consciousness():
-        """Consciousness loop — autonomous message processing.
+        """Consciousness loop - autonomous message processing.
 
         Manages the LLM-powered consciousness loop that lets agents
         respond to messages autonomously, route to the right model,
@@ -31,8 +31,8 @@ def register_consciousness_commands(main: click.Group) -> None:
     @click.option("--json-out", is_flag=True, help="Output as JSON.")
     def consciousness_status(port: int, json_out: bool):
         """Show consciousness loop status from the running daemon."""
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         try:
             url = f"http://127.0.0.1:{port}/consciousness"
@@ -94,12 +94,14 @@ def register_consciousness_commands(main: click.Group) -> None:
 
         if do_init:
             from ..consciousness_config import write_default_config
+
             path = write_default_config(home_path)
             console.print(f"\n  [green]Config written to[/] {path}\n")
             return
 
         if do_show:
             from ..consciousness_config import load_consciousness_config
+
             config = load_consciousness_config(home_path)
             console.print()
             for key, value in config.model_dump().items():
@@ -123,7 +125,6 @@ def register_consciousness_commands(main: click.Group) -> None:
 
         from ..consciousness_config import load_consciousness_config
         from ..consciousness_loop import (
-            ConsciousnessConfig,
             LLMBridge,
             SystemPromptBuilder,
             _classify_message,
@@ -194,6 +195,7 @@ def register_consciousness_commands(main: click.Group) -> None:
 
         try:
             import watchdog  # noqa: F401
+
             inotify_line = "[green]inotify: active (watchdog installed)[/]"
         except ImportError:
             inotify_line = "[yellow]inotify: degraded (polling only, install watchdog)[/]"
@@ -210,14 +212,14 @@ def register_consciousness_commands(main: click.Group) -> None:
         Reads quality metrics from today's daily metrics file.
         Dimensions: length appropriateness, coherence, latency, overall.
         """
-        import urllib.request
         import urllib.error
+        import urllib.request
         from datetime import datetime, timezone
         from pathlib import Path
 
         quality: dict = {}
 
-        # Try live daemon first — it may have unsaved in-memory data
+        # Try live daemon first - it may have unsaved in-memory data
         try:
             url = f"http://127.0.0.1:{port}/consciousness"
             with urllib.request.urlopen(url, timeout=2) as resp:
@@ -225,7 +227,7 @@ def register_consciousness_commands(main: click.Group) -> None:
                 if "quality_avg" in data:
                     quality = data["quality_avg"]
         except Exception:
-            pass  # Daemon unreachable — fall through to file
+            pass  # Daemon unreachable - fall through to file
 
         # Fall back to daily metrics file
         if not quality:
@@ -261,7 +263,7 @@ def register_consciousness_commands(main: click.Group) -> None:
             filled = int(round(score * 10))
             return "█" * filled + "░" * (10 - filled)
 
-        table = Table(title=f"Response Quality — {count} response(s) today", show_header=True)
+        table = Table(title=f"Response Quality - {count} response(s) today", show_header=True)
         table.add_column("Dimension", style="bold")
         table.add_column("Score", justify="right")
         table.add_column("Bar")
@@ -269,7 +271,11 @@ def register_consciousness_commands(main: click.Group) -> None:
 
         dims = [
             ("Length", quality.get("length", 0.0), "Response is appropriate length for question"),
-            ("Coherence", quality.get("coherence", 0.0), "Keywords from question appear in response"),
+            (
+                "Coherence",
+                quality.get("coherence", 0.0),
+                "Keywords from question appear in response",
+            ),
             ("Latency", quality.get("latency", 0.0), "Response generated quickly"),
             ("Overall", overall, "Weighted average (coherence 40%, length 30%, latency 30%)"),
         ]
@@ -293,6 +299,77 @@ def register_consciousness_commands(main: click.Group) -> None:
         )
         console.print()
 
+    @consciousness.command("classification")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
+    @click.option("--json-out", is_flag=True, help="Output as JSON.")
+    @click.option("--port", default=7777, help="Daemon API port (tries live daemon first).")
+    def consciousness_classification(home: str, json_out: bool, port: int):
+        """Show how today's inbound messages were classified.
+
+        Displays the per-tag distribution of message classifications
+        (code / analyze / creative / simple / general) recorded by the
+        consciousness loop. Reads the live daemon first, then falls back
+        to today's daily metrics file.
+        """
+        import urllib.request
+        from datetime import datetime, timezone
+
+        usage: dict = {}
+
+        # Try live daemon first - it may hold unsaved in-memory counters.
+        try:
+            url = f"http://127.0.0.1:{port}/consciousness"
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                data = json.loads(resp.read())
+                if "classification_usage" in data:
+                    usage = data["classification_usage"]
+        except Exception:
+            pass  # Daemon unreachable - fall through to file
+
+        # Fall back to daily metrics file.
+        if not usage:
+            home_path = Path(home).expanduser()
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily = home_path / "metrics" / "daily" / f"{date_str}.json"
+            if daily.exists():
+                try:
+                    file_data = json.loads(daily.read_text(encoding="utf-8"))
+                    usage = file_data.get("classification_usage", {})
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to read daily classification metrics from %s: %s", daily, exc
+                    )
+
+        if not usage:
+            if json_out:
+                click.echo(json.dumps({"total": 0, "message": "No classification data for today"}))
+            else:
+                console.print("\n  [yellow]No message classifications recorded today.[/]\n")
+            return
+
+        if json_out:
+            click.echo(json.dumps(usage, indent=2))
+            return
+
+        from rich.table import Table
+
+        total = sum(usage.values())
+        table = Table(title=f"Message Classification - {total} tag hit(s) today", show_header=True)
+        table.add_column("Tag", style="bold")
+        table.add_column("Count", justify="right")
+        table.add_column("Share", justify="right")
+        table.add_column("Bar")
+
+        for tag, count in sorted(usage.items(), key=lambda kv: kv[1], reverse=True):
+            share = (count / total) if total else 0.0
+            filled = int(round(share * 20))
+            bar = "█" * filled + "░" * (20 - filled)
+            table.add_row(tag, str(count), f"{share * 100:.0f}%", f"[cyan]{bar}[/]")
+
+        console.print()
+        console.print(table)
+        console.print()
+
     @consciousness.command("profiles")
     @click.option("--show", "do_show", is_flag=True, help="List all profiles.")
     @click.option("--stale", "do_stale", is_flag=True, help="Show profiles older than 90 days.")
@@ -300,23 +377,27 @@ def register_consciousness_commands(main: click.Group) -> None:
     @click.option("--export", "do_export", is_flag=True, help="Export profiles as YAML.")
     def consciousness_profiles(do_show: bool, do_stale: bool, do_update: bool, do_export: bool):
         """Manage model prompt profiles."""
-        from ..prompt_adapter import PromptAdapter, _BUNDLED_PROFILES
+        from ..prompt_adapter import PromptAdapter
 
         adapter = PromptAdapter()
 
         if do_export:
             import yaml
+
             profiles_data = [p.model_dump() for p in adapter.profiles]
             click.echo(yaml.dump({"profiles": profiles_data}, default_flow_style=False))
             return
 
         if do_update:
             adapter.reload_profiles()
-            console.print(f"\n  [green]Reloaded {len(adapter.profiles)} profiles from bundled defaults.[/]\n")
+            console.print(
+                f"\n  [green]Reloaded {len(adapter.profiles)} profiles from bundled defaults.[/]\n"
+            )
             return
 
         if do_stale:
             from datetime import datetime, timezone
+
             now = datetime.now(timezone.utc)
             stale = []
             for p in adapter.profiles:
@@ -344,6 +425,7 @@ def register_consciousness_commands(main: click.Group) -> None:
 
         # Default: --show
         from rich.table import Table
+
         table = Table(title="Model Profiles")
         table.add_column("Family", style="bold")
         table.add_column("Pattern")
@@ -368,11 +450,13 @@ def register_consciousness_commands(main: click.Group) -> None:
         console.print()
 
     @consciousness.command("fallbacks")
-    @click.option("--limit", default=20, show_default=True, help="Number of recent events to show.")
+    @click.option(
+        "--limit", default=20, show_default=True, help="Number of recent events to show."
+    )
     @click.option("--json-out", is_flag=True, help="Output as JSON.")
     @click.option("--clear", "do_clear", is_flag=True, help="Clear all stored fallback events.")
     def consciousness_fallbacks(limit: int, json_out: bool, do_clear: bool):
-        """Show LLM fallback history — when and why the agent degraded.
+        """Show LLM fallback history - when and why the agent degraded.
 
         Each entry records the primary model that failed, the backend that
         was tried next, whether the fallback succeeded, and the reason.
@@ -390,9 +474,7 @@ def register_consciousness_commands(main: click.Group) -> None:
         events = tracker.load_events(limit=limit)
 
         if json_out:
-            click.echo(
-                json.dumps([e.model_dump() for e in events], indent=2)
-            )
+            click.echo(json.dumps([e.model_dump() for e in events], indent=2))
             return
 
         if not events:

@@ -6,7 +6,7 @@ Covers:
 - validate_model_profiles_yaml: valid, missing key, bad regex, enum error
 - validate_identity_json: valid, missing field, JSON parse error, bad fingerprint
 - validate_soul_blueprint_json: valid, missing required field, bad type
-- validate_all: integration — correct files collected, missing files are warnings
+- validate_all: integration - correct files collected, missing files are warnings
 - CLI smoke: skcapstone config validate --json-out
 """
 
@@ -16,20 +16,15 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 from click.testing import CliRunner
 
 from skcapstone.config_validator import (
-    ConfigValidationReport,
-    FileValidationResult,
-    ValidationIssue,
     validate_all,
     validate_consciousness_yaml,
     validate_identity_json,
     validate_model_profiles_yaml,
     validate_soul_blueprint_json,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -61,7 +56,9 @@ class TestConsciousnessYaml:
     def test_valid_config_passes(self, tmp_path: Path) -> None:
         """Happy path: well-formed consciousness.yaml produces no errors."""
         path = tmp_path / "consciousness.yaml"
-        _write(path, """
+        _write(
+            path,
+            """
 enabled: true
 use_inotify: true
 inotify_debounce_ms: 200
@@ -77,7 +74,8 @@ fallback_chain:
   - anthropic
   - passthrough
 desktop_notifications: true
-""")
+""",
+        )
         result = validate_consciousness_yaml(path)
         assert result.is_valid, f"Unexpected errors: {result.errors}"
         assert result.errors == []
@@ -159,7 +157,9 @@ class TestModelProfilesYaml:
     def test_valid_profiles_pass(self, tmp_path: Path) -> None:
         """Happy path: valid profiles list produces no errors."""
         path = tmp_path / "model_profiles.yaml"
-        _write(path, """
+        _write(
+            path,
+            """
 profiles:
   - model_pattern: "claude-.*"
     family: claude
@@ -168,7 +168,8 @@ profiles:
     thinking_enabled: true
     thinking_mode: budget
     tool_format: anthropic
-""")
+""",
+        )
         result = validate_model_profiles_yaml(path)
         assert result.is_valid, f"Unexpected errors: {result.errors}"
 
@@ -183,21 +184,27 @@ profiles:
     def test_missing_required_field_in_profile(self, tmp_path: Path) -> None:
         """A profile missing 'model_pattern' or 'family' reports an error."""
         path = tmp_path / "model_profiles.yaml"
-        _write(path, """
+        _write(
+            path,
+            """
 profiles:
   - family: openai
-""")
+""",
+        )
         result = validate_model_profiles_yaml(path)
         assert any("model_pattern" in (e.field or "") for e in result.errors)
 
     def test_invalid_regex_in_model_pattern(self, tmp_path: Path) -> None:
         """An invalid regex in model_pattern reports an error."""
         path = tmp_path / "model_profiles.yaml"
-        _write(path, """
+        _write(
+            path,
+            """
 profiles:
   - model_pattern: "[invalid("
     family: broken
-""")
+""",
+        )
         result = validate_model_profiles_yaml(path)
         assert any("model_pattern" in (e.field or "") for e in result.errors)
         assert any("regex" in e.message.lower() for e in result.errors)
@@ -205,23 +212,22 @@ profiles:
     def test_invalid_enum_value_is_error(self, tmp_path: Path) -> None:
         """An out-of-range enum value (e.g. structure_format) is an error."""
         path = tmp_path / "model_profiles.yaml"
-        _write(path, """
+        _write(
+            path,
+            """
 profiles:
   - model_pattern: ".*"
     family: generic
     structure_format: html
-""")
+""",
+        )
         result = validate_model_profiles_yaml(path)
         assert any("structure_format" in (e.field or "") for e in result.errors)
 
     def test_line_numbers_reported_for_profile_error(self, tmp_path: Path) -> None:
         """Error on a known profile field includes a non-None line number."""
         path = tmp_path / "model_profiles.yaml"
-        content = (
-            "profiles:\n"
-            "  - model_pattern: \"[bad(\"\n"
-            "    family: x\n"
-        )
+        content = "profiles:\n" '  - model_pattern: "[bad("\n' "    family: x\n"
         _write(path, content)
         result = validate_model_profiles_yaml(path)
         regex_errors = [e for e in result.errors if "model_pattern" in (e.field or "")]
@@ -255,12 +261,17 @@ class TestIdentityJson:
     def test_valid_identity_passes(self, tmp_path: Path) -> None:
         """Happy path: identity.json with all required fields passes."""
         path = tmp_path / "identity.json"
-        _write(path, json.dumps({
-            "name": "Opus",
-            "fingerprint": "A" * 40,
-            "email": "opus@skworld.io",
-            "capauth_managed": True,
-        }))
+        _write(
+            path,
+            json.dumps(
+                {
+                    "name": "Opus",
+                    "fingerprint": "A" * 40,
+                    "email": "opus@skworld.io",
+                    "capauth_managed": True,
+                }
+            ),
+        )
         result = validate_identity_json(path)
         assert result.is_valid, f"Unexpected errors: {result.errors}"
 
@@ -322,14 +333,19 @@ class TestSoulBlueprintJson:
     def test_valid_blueprint_passes(self, tmp_path: Path) -> None:
         """Happy path: blueprint with all required fields passes."""
         path = tmp_path / "lumina.json"
-        _write(path, json.dumps({
-            "name": "lumina",
-            "display_name": "Lumina",
-            "category": "sovereign",
-            "vibe": "warmth and clarity",
-            "core_traits": ["empathy", "precision"],
-            "emotional_topology": {"warmth": 0.9, "precision": 0.8},
-        }))
+        _write(
+            path,
+            json.dumps(
+                {
+                    "name": "lumina",
+                    "display_name": "Lumina",
+                    "category": "sovereign",
+                    "vibe": "warmth and clarity",
+                    "core_traits": ["empathy", "precision"],
+                    "emotional_topology": {"warmth": 0.9, "precision": 0.8},
+                }
+            ),
+        )
         result = validate_soul_blueprint_json(path)
         assert result.is_valid, f"Unexpected errors: {result.errors}"
 
@@ -350,20 +366,32 @@ class TestSoulBlueprintJson:
     def test_core_traits_wrong_type_is_error(self, tmp_path: Path) -> None:
         """core_traits must be a list."""
         path = tmp_path / "bad_traits.json"
-        _write(path, json.dumps({
-            "name": "lumina", "display_name": "Lumina",
-            "core_traits": "empathy, precision",
-        }))
+        _write(
+            path,
+            json.dumps(
+                {
+                    "name": "lumina",
+                    "display_name": "Lumina",
+                    "core_traits": "empathy, precision",
+                }
+            ),
+        )
         result = validate_soul_blueprint_json(path)
         assert any(e.field == "core_traits" for e in result.errors)
 
     def test_emotional_topology_non_numeric_is_error(self, tmp_path: Path) -> None:
         """emotional_topology values must be numeric."""
         path = tmp_path / "bad_topo.json"
-        _write(path, json.dumps({
-            "name": "lumina", "display_name": "Lumina",
-            "emotional_topology": {"warmth": "high"},
-        }))
+        _write(
+            path,
+            json.dumps(
+                {
+                    "name": "lumina",
+                    "display_name": "Lumina",
+                    "emotional_topology": {"warmth": "high"},
+                }
+            ),
+        )
         result = validate_soul_blueprint_json(path)
         assert any("emotional_topology" in (e.field or "") for e in result.errors)
 
@@ -396,30 +424,44 @@ class TestValidateAll:
     def test_valid_configs_produce_clean_report(self, agent_home: Path) -> None:
         """A home with all valid configs reports no errors or warnings (except soul)."""
         # consciousness.yaml
-        _write(agent_home / "config" / "consciousness.yaml",
-               "enabled: true\nfallback_chain:\n  - ollama\n")
+        _write(
+            agent_home / "config" / "consciousness.yaml",
+            "enabled: true\nfallback_chain:\n  - ollama\n",
+        )
         # identity.json
-        _write(agent_home / "identity" / "identity.json", json.dumps({
-            "name": "Opus",
-            "fingerprint": "A" * 40,
-        }))
+        _write(
+            agent_home / "identity" / "identity.json",
+            json.dumps(
+                {
+                    "name": "Opus",
+                    "fingerprint": "A" * 40,
+                }
+            ),
+        )
 
         report = validate_all(agent_home)
         assert report.total_errors == 0
 
     def test_identity_error_is_counted(self, agent_home: Path) -> None:
         """An error in identity.json is reflected in the report totals."""
-        _write(agent_home / "identity" / "identity.json",
-               json.dumps({"fingerprint": "A" * 40}))  # missing 'name'
+        _write(
+            agent_home / "identity" / "identity.json", json.dumps({"fingerprint": "A" * 40})
+        )  # missing 'name'
         report = validate_all(agent_home)
         assert report.total_errors >= 1
 
     def test_soul_installed_blueprints_are_validated(self, agent_home: Path) -> None:
         """Installed soul blueprints are included in validate_all."""
         soul_dir = agent_home / "soul" / "installed"
-        _write(soul_dir / "lumina.json", json.dumps({
-            "name": "lumina", "display_name": "Lumina",
-        }))
+        _write(
+            soul_dir / "lumina.json",
+            json.dumps(
+                {
+                    "name": "lumina",
+                    "display_name": "Lumina",
+                }
+            ),
+        )
         _write(soul_dir / "broken.json", '{"name": "x"}')  # missing display_name
 
         report = validate_all(agent_home)
@@ -432,8 +474,9 @@ class TestValidateAll:
 
     def test_report_is_valid_iff_no_errors(self, agent_home: Path) -> None:
         """ConfigValidationReport.is_valid is False when any result has errors."""
-        _write(agent_home / "identity" / "identity.json",
-               json.dumps({"fingerprint": "tooshort"}))  # missing 'name'
+        _write(
+            agent_home / "identity" / "identity.json", json.dumps({"fingerprint": "tooshort"})
+        )  # missing 'name'
         report = validate_all(agent_home)
         assert not report.is_valid
 
@@ -463,8 +506,7 @@ class TestConfigValidateCli:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["--agent", "", "config", "validate",
-             "--home", str(agent_home), "--json-out"],
+            ["--agent", "", "config", "validate", "--home", str(agent_home), "--json-out"],
         )
         assert result.exit_code in (0, 1), result.output
         data = json.loads(result.output)
@@ -479,13 +521,17 @@ class TestConfigValidateCli:
         from skcapstone.cli import main
 
         # Write a valid identity so the only issues are warnings (missing files)
-        _write(agent_home / "identity" / "identity.json", json.dumps({
-            "name": "TestAgent",
-            "fingerprint": "A" * 40,
-        }))
+        _write(
+            agent_home / "identity" / "identity.json",
+            json.dumps(
+                {
+                    "name": "TestAgent",
+                    "fingerprint": "A" * 40,
+                }
+            ),
+        )
         # A fully valid consciousness config
-        _write(agent_home / "config" / "consciousness.yaml",
-               "enabled: true\n")
+        _write(agent_home / "config" / "consciousness.yaml", "enabled: true\n")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -499,8 +545,10 @@ class TestConfigValidateCli:
         """CLI exits 1 when identity.json has a schema error."""
         from skcapstone.cli import main
 
-        _write(agent_home / "identity" / "identity.json",
-               json.dumps({"fingerprint": "BADFINGERPRINT"}))  # missing 'name'
+        _write(
+            agent_home / "identity" / "identity.json",
+            json.dumps({"fingerprint": "BADFINGERPRINT"}),
+        )  # missing 'name'
 
         runner = CliRunner()
         result = runner.invoke(
@@ -514,10 +562,15 @@ class TestConfigValidateCli:
         from skcapstone.cli import main
 
         # Valid identity but missing other configs → warnings
-        _write(agent_home / "identity" / "identity.json", json.dumps({
-            "name": "TestAgent",
-            "fingerprint": "A" * 40,
-        }))
+        _write(
+            agent_home / "identity" / "identity.json",
+            json.dumps(
+                {
+                    "name": "TestAgent",
+                    "fingerprint": "A" * 40,
+                }
+            ),
+        )
 
         runner = CliRunner()
         result = runner.invoke(

@@ -1,5 +1,5 @@
 """
-Cloud Provider — deploy agents on Hetzner, AWS, GCP, or any cloud.
+Cloud Provider - deploy agents on Hetzner, AWS, GCP, or any cloud.
 
 This is the abstraction layer that makes blueprints truly portable.
 Each cloud gets a thin adapter; the provider interface stays the same.
@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 from typing import Any, Dict, Optional
 
 from ..blueprints.schema import AgentSpec, ProviderType
@@ -40,15 +39,18 @@ def register_cloud_adapter(name: str):
     Args:
         name: Cloud provider name (e.g. 'hetzner', 'aws', 'gcp').
     """
+
     def wrapper(cls):
         _CLOUD_ADAPTERS[name] = cls
         return cls
+
     return wrapper
 
 
 # ---------------------------------------------------------------------------
 # Cloud Provider
 # ---------------------------------------------------------------------------
+
 
 class CloudProvider(ProviderBackend):
     """Generic cloud provider that delegates to cloud-specific adapters.
@@ -101,13 +103,19 @@ class CloudProvider(ProviderBackend):
             raise RuntimeError(f"Unknown cloud provider: {self._cloud}")
 
     def provision(
-        self, agent_name: str, spec: AgentSpec, team_name: str,
+        self,
+        agent_name: str,
+        spec: AgentSpec,
+        team_name: str,
     ) -> Dict[str, Any]:
         """Delegate to cloud adapter."""
         return self._adapter.provision(agent_name, spec, team_name)
 
     def configure(
-        self, agent_name: str, spec: AgentSpec, provision_result: Dict[str, Any],
+        self,
+        agent_name: str,
+        spec: AgentSpec,
+        provision_result: Dict[str, Any],
     ) -> bool:
         """Delegate to cloud adapter."""
         return self._adapter.configure(agent_name, spec, provision_result)
@@ -125,7 +133,9 @@ class CloudProvider(ProviderBackend):
         return self._adapter.destroy(agent_name, provision_result)
 
     def health_check(
-        self, agent_name: str, provision_result: Dict[str, Any],
+        self,
+        agent_name: str,
+        provision_result: Dict[str, Any],
     ) -> AgentStatus:
         """Delegate to cloud adapter."""
         return self._adapter.health_check(agent_name, provision_result)
@@ -134,6 +144,7 @@ class CloudProvider(ProviderBackend):
 # ---------------------------------------------------------------------------
 # Hetzner Adapter
 # ---------------------------------------------------------------------------
+
 
 def _memory_to_hetzner_type(memory_str: str, cores: int) -> str:
     """Map resource spec to closest Hetzner server type.
@@ -198,14 +209,10 @@ class HetznerAdapter:
         try:
             import requests
         except ImportError:
-            raise RuntimeError(
-                "Hetzner adapter requires 'requests': pip install requests"
-            )
+            raise RuntimeError("Hetzner adapter requires 'requests': pip install requests")
 
         if not self._token:
-            raise RuntimeError(
-                "Hetzner not configured. Set HETZNER_API_TOKEN."
-            )
+            raise RuntimeError("Hetzner not configured. Set HETZNER_API_TOKEN.")
 
         url = f"https://api.hetzner.cloud/v1{endpoint}"
         headers = {
@@ -214,19 +221,25 @@ class HetznerAdapter:
         }
 
         resp = requests.request(
-            method, url, headers=headers, json=data, timeout=30,
+            method,
+            url,
+            headers=headers,
+            json=data,
+            timeout=30,
         )
 
         if resp.status_code >= 400:
             raise RuntimeError(
-                f"Hetzner API {method} {endpoint}: "
-                f"{resp.status_code} {resp.text}"
+                f"Hetzner API {method} {endpoint}: " f"{resp.status_code} {resp.text}"
             )
 
         return resp.json()
 
     def provision(
-        self, agent_name: str, spec: AgentSpec, team_name: str,
+        self,
+        agent_name: str,
+        spec: AgentSpec,
+        team_name: str,
     ) -> Dict[str, Any]:
         """Create a Hetzner Cloud server.
 
@@ -239,7 +252,8 @@ class HetznerAdapter:
             Dict with server details.
         """
         server_type = _memory_to_hetzner_type(
-            spec.resources.memory, spec.resources.cores,
+            spec.resources.memory,
+            spec.resources.cores,
         )
 
         cloud_init = _build_cloud_init(agent_name, spec)
@@ -261,7 +275,8 @@ class HetznerAdapter:
 
         logger.info(
             "Creating Hetzner server %s (type=%s)",
-            agent_name, server_type,
+            agent_name,
+            server_type,
         )
 
         result = self._api_call("POST", "/servers", data=create_data)
@@ -274,7 +289,10 @@ class HetznerAdapter:
         }
 
     def configure(
-        self, agent_name: str, spec: AgentSpec, provision_result: Dict[str, Any],
+        self,
+        agent_name: str,
+        spec: AgentSpec,
+        provision_result: Dict[str, Any],
     ) -> bool:
         """Cloud-init handles configuration at boot."""
         return True
@@ -314,7 +332,9 @@ class HetznerAdapter:
             return False
 
     def health_check(
-        self, agent_name: str, provision_result: Dict[str, Any],
+        self,
+        agent_name: str,
+        provision_result: Dict[str, Any],
     ) -> AgentStatus:
         """Check server status via API."""
         server_id = provision_result.get("server_id")
@@ -336,6 +356,7 @@ class HetznerAdapter:
 # ---------------------------------------------------------------------------
 # Cloud-init template
 # ---------------------------------------------------------------------------
+
 
 def _build_cloud_init(
     agent_name: str,
@@ -387,6 +408,7 @@ runcmd:
 # ---------------------------------------------------------------------------
 # AWS EC2 Adapter
 # ---------------------------------------------------------------------------
+
 
 def _memory_to_ec2_instance_type(memory_str: str, cores: int) -> str:
     """Map resource spec to closest AWS EC2 instance type.
@@ -478,9 +500,7 @@ class AWSAdapter:
         try:
             import boto3
         except ImportError:
-            raise RuntimeError(
-                "AWS adapter requires boto3: pip install boto3"
-            )
+            raise RuntimeError("AWS adapter requires boto3: pip install boto3")
         return boto3.client("ec2", region_name=self._region)
 
     def _resolve_ami(self) -> str:
@@ -501,12 +521,14 @@ class AWSAdapter:
         if ami:
             return ami
         raise RuntimeError(
-            f"No default AMI for region {self._region}. "
-            "Pass ami_id= explicitly."
+            f"No default AMI for region {self._region}. " "Pass ami_id= explicitly."
         )
 
     def provision(
-        self, agent_name: str, spec: AgentSpec, team_name: str,
+        self,
+        agent_name: str,
+        spec: AgentSpec,
+        team_name: str,
     ) -> Dict[str, Any]:
         """Launch an EC2 instance.
 
@@ -520,7 +542,8 @@ class AWSAdapter:
         """
         ec2 = self._ec2_client()
         instance_type = _memory_to_ec2_instance_type(
-            spec.resources.memory, spec.resources.cores,
+            spec.resources.memory,
+            spec.resources.cores,
         )
         ami = self._resolve_ami()
         cloud_init = _build_cloud_init(agent_name, spec)
@@ -552,7 +575,10 @@ class AWSAdapter:
 
         logger.info(
             "Launching EC2 instance %s (type=%s ami=%s region=%s)",
-            agent_name, instance_type, ami, self._region,
+            agent_name,
+            instance_type,
+            ami,
+            self._region,
         )
 
         result = ec2.run_instances(**run_kwargs)
@@ -584,7 +610,10 @@ class AWSAdapter:
         }
 
     def configure(
-        self, agent_name: str, spec: AgentSpec, provision_result: Dict[str, Any],
+        self,
+        agent_name: str,
+        spec: AgentSpec,
+        provision_result: Dict[str, Any],
     ) -> bool:
         """Cloud-init handles configuration at boot."""
         return True
@@ -654,7 +683,9 @@ class AWSAdapter:
             return False
 
     def health_check(
-        self, agent_name: str, provision_result: Dict[str, Any],
+        self,
+        agent_name: str,
+        provision_result: Dict[str, Any],
     ) -> AgentStatus:
         """Check EC2 instance status.
 
@@ -690,6 +721,7 @@ class AWSAdapter:
 # ---------------------------------------------------------------------------
 # GCP Compute Adapter
 # ---------------------------------------------------------------------------
+
 
 def _memory_to_gcp_machine_type(memory_str: str, cores: int) -> str:
     """Map resource spec to closest GCP machine type.
@@ -782,8 +814,7 @@ class GCPAdapter:
             from google.cloud import compute_v1
         except ImportError:
             raise RuntimeError(
-                "GCP adapter requires google-cloud-compute: "
-                "pip install google-cloud-compute"
+                "GCP adapter requires google-cloud-compute: " "pip install google-cloud-compute"
             )
         return compute_v1.InstancesClient()
 
@@ -801,20 +832,21 @@ class GCPAdapter:
 
             images_client = compute_v1.ImagesClient()
             image = images_client.get_from_family(
-                project=self._IMAGE_PROJECT, family=self._IMAGE_FAMILY,
+                project=self._IMAGE_PROJECT,
+                family=self._IMAGE_FAMILY,
             )
             return image.self_link
         except ImportError:
             # Fallback to well-known URI pattern.
-            return (
-                f"projects/{self._IMAGE_PROJECT}/global/images/family/"
-                f"{self._IMAGE_FAMILY}"
-            )
+            return f"projects/{self._IMAGE_PROJECT}/global/images/family/" f"{self._IMAGE_FAMILY}"
         except Exception as exc:
             raise RuntimeError(f"Failed to resolve GCP image: {exc}")
 
     def provision(
-        self, agent_name: str, spec: AgentSpec, team_name: str,
+        self,
+        agent_name: str,
+        spec: AgentSpec,
+        team_name: str,
     ) -> Dict[str, Any]:
         """Create a GCP Compute Engine instance.
 
@@ -830,8 +862,7 @@ class GCPAdapter:
             from google.cloud import compute_v1
         except ImportError:
             raise RuntimeError(
-                "GCP adapter requires google-cloud-compute: "
-                "pip install google-cloud-compute"
+                "GCP adapter requires google-cloud-compute: " "pip install google-cloud-compute"
             )
 
         if not self._project:
@@ -841,7 +872,8 @@ class GCPAdapter:
             )
 
         machine_type = _memory_to_gcp_machine_type(
-            spec.resources.memory, spec.resources.cores,
+            spec.resources.memory,
+            spec.resources.cores,
         )
         instance_name = agent_name.replace("_", "-").lower()[:63]
         cloud_init = _build_cloud_init(agent_name, spec)
@@ -850,9 +882,7 @@ class GCPAdapter:
         # Build instance resource.
         instance = compute_v1.Instance()
         instance.name = instance_name
-        instance.machine_type = (
-            f"zones/{self._zone}/machineTypes/{machine_type}"
-        )
+        instance.machine_type = f"zones/{self._zone}/machineTypes/{machine_type}"
 
         # Boot disk.
         disk = compute_v1.AttachedDisk()
@@ -901,7 +931,10 @@ class GCPAdapter:
 
         logger.info(
             "Creating GCP instance %s (type=%s zone=%s project=%s)",
-            instance_name, machine_type, self._zone, self._project,
+            instance_name,
+            machine_type,
+            self._zone,
+            self._project,
         )
 
         client = self._compute_client()
@@ -942,7 +975,10 @@ class GCPAdapter:
         }
 
     def configure(
-        self, agent_name: str, spec: AgentSpec, provision_result: Dict[str, Any],
+        self,
+        agent_name: str,
+        spec: AgentSpec,
+        provision_result: Dict[str, Any],
     ) -> bool:
         """Startup script handles configuration at boot."""
         return True
@@ -1027,7 +1063,9 @@ class GCPAdapter:
             return False
 
     def health_check(
-        self, agent_name: str, provision_result: Dict[str, Any],
+        self,
+        agent_name: str,
+        provision_result: Dict[str, Any],
     ) -> AgentStatus:
         """Check GCP instance status.
 

@@ -58,11 +58,13 @@ async def _handle_sync_push(args: dict) -> list[TextContent]:
     result = push_seed(home, runtime.manifest.name, encrypt=encrypt)
 
     if result:
-        return _json_response({
-            "pushed": True,
-            "seed_file": result.name,
-            "encrypted": result.suffix == ".gpg",
-        })
+        return _json_response(
+            {
+                "pushed": True,
+                "seed_file": result.name,
+                "encrypted": result.suffix == ".gpg",
+            }
+        )
     return _error_response("Sync push failed")
 
 
@@ -74,16 +76,18 @@ async def _handle_sync_pull(args: dict) -> list[TextContent]:
     decrypt = args.get("decrypt", True)
     seeds = pull_seeds(home, decrypt=decrypt)
 
-    return _json_response({
-        "pulled": len(seeds),
-        "seeds": [
-            {
-                "agent": s.get("agent_name", "unknown"),
-                "host": s.get("source_host", "unknown"),
-            }
-            for s in seeds
-        ],
-    })
+    return _json_response(
+        {
+            "pulled": len(seeds),
+            "seeds": [
+                {
+                    "agent": s.get("agent_name", "unknown"),
+                    "host": s.get("source_host", "unknown"),
+                }
+                for s in seeds
+            ],
+        }
+    )
 
 
 HANDLERS: dict = {

@@ -14,12 +14,10 @@ Test coverage:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -36,6 +34,7 @@ def agent_home(tmp_path):
     (home / "identity" / "identity.json").write_text(json.dumps(identity))
     (home / "manifest.json").write_text(json.dumps({"name": "TestAgent", "version": "0.1.0"}))
     import yaml
+
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "TestAgent"}))
     return home
 
@@ -48,14 +47,24 @@ def agent_home_with_conv(agent_home):
     messages = [
         {"role": "user", "content": "Hello Lumina!", "timestamp": "2026-03-01T10:00:00Z"},
         {"role": "assistant", "content": "Hi! I'm here.", "timestamp": "2026-03-01T10:00:01Z"},
-        {"role": "user", "content": "Can you deploy the update?", "timestamp": "2026-03-01T10:01:00Z"},
-        {"role": "assistant", "content": "Sure, initiating deployment now.", "timestamp": "2026-03-01T10:01:05Z"},
+        {
+            "role": "user",
+            "content": "Can you deploy the update?",
+            "timestamp": "2026-03-01T10:01:00Z",
+        },
+        {
+            "role": "assistant",
+            "content": "Sure, initiating deployment now.",
+            "timestamp": "2026-03-01T10:01:05Z",
+        },
     ]
     (convs / "lumina.json").write_text(json.dumps(messages))
     return agent_home
 
 
-def _make_bridge(response: str = "Two agents discussed deployment of the update. The task was agreed upon and initiated."):
+def _make_bridge(
+    response: str = "Two agents discussed deployment of the update. The task was agreed upon and initiated.",  # noqa: E501
+):
     """Return a mock LLMBridge with a canned generate() return value."""
     bridge = MagicMock()
     bridge.generate.return_value = response
@@ -97,7 +106,7 @@ class TestConversationSummarizer:
         from skcapstone.conversation_summarizer import ConversationSummarizer
 
         summarizer = ConversationSummarizer(home=agent_home_with_conv)
-        result = summarizer.summarize("lumina", bridge=_make_bridge("Summary text here."))
+        summarizer.summarize("lumina", bridge=_make_bridge("Summary text here."))
 
         summary_file = agent_home_with_conv / "summaries" / "lumina.json"
         assert summary_file.exists(), "summaries/lumina.json should be created"
@@ -216,6 +225,7 @@ class TestChatSummaryCLI:
     def test_chat_summary_help(self, _mock_rt):
         """chat summary --help exits cleanly and mentions PEER."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["chat", "summary", "--help"])
         assert result.exit_code == 0
@@ -225,8 +235,8 @@ class TestChatSummaryCLI:
     @patch("skcapstone.conversation_summarizer.ConversationSummarizer.summarize")
     def test_chat_summary_prints_result(self, mock_summarize, mock_rt, agent_home_cli):
         """chat summary prints the generated summary text."""
-        from skcapstone.conversation_summarizer import ConversationSummary
         from skcapstone.cli import main
+        from skcapstone.conversation_summarizer import ConversationSummary
 
         mock_rt.return_value = self._make_runtime()
         mock_summarize.return_value = ConversationSummary(
@@ -237,9 +247,7 @@ class TestChatSummaryCLI:
         )
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, ["chat", "summary", "lumina", "--home", str(agent_home_cli)]
-        )
+        result = runner.invoke(main, ["chat", "summary", "lumina", "--home", str(agent_home_cli)])
 
         assert result.exit_code == 0
         assert "Two agents talked about deployment" in result.output
@@ -248,8 +256,8 @@ class TestChatSummaryCLI:
     @patch("skcapstone.conversation_summarizer.ConversationSummarizer.load_summary")
     def test_chat_summary_show_stored(self, mock_load, mock_rt, agent_home_cli):
         """chat summary --show-stored displays previously stored summary."""
-        from skcapstone.conversation_summarizer import ConversationSummary
         from skcapstone.cli import main
+        from skcapstone.conversation_summarizer import ConversationSummary
 
         mock_rt.return_value = self._make_runtime()
         mock_load.return_value = ConversationSummary(
@@ -294,9 +302,7 @@ class TestChatSummaryCLI:
         mock_summarize.side_effect = ValueError("No conversation history found for peer 'nobody'.")
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, ["chat", "summary", "nobody", "--home", str(agent_home)]
-        )
+        result = runner.invoke(main, ["chat", "summary", "nobody", "--home", str(agent_home)])
 
         assert result.exit_code == 0  # CLI handles the ValueError gracefully
         assert "Error" in result.output or "No conversation" in result.output

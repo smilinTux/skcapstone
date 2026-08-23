@@ -1,0 +1,12 @@
+[Unit]
+Description=Atlas operator seat: one report-only pass over the fleet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Report-only: NO --execute. Atlas observes, reasons, reports, and parks
+# escalations. It writes nothing to the fleet. Flip to actuation deliberately
+# by adding --execute here only after the act function is wired and reviewed.
+ExecStart=%h/.skenv/bin/skoperator run
+Environment=SKAGENT=operator

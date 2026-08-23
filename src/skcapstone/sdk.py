@@ -1,4 +1,4 @@
-"""skcapstone.sdk — the stable public integration facade for sk* services.
+"""skcapstone.sdk - the stable public integration facade for sk* services.
 
 This module is the **only** surface that downstream sk* services
 (skmemory, skcomms/skcomms, skchat, sksecurity, capauth, skvoice, skseed,
@@ -95,7 +95,7 @@ def is_available(require_daemon: bool = False) -> bool:
 
     Because the alert bus, scheduler drop-ins and coordination board are all
     file-based, in-process integration does *not* require the daemon to be
-    running — it only requires that the shared home is resolvable and
+    running - it only requires that the shared home is resolvable and
     writable.  ``is_available()`` therefore returns ``True`` whenever the
     package imported and the home directory can be created.
 
@@ -146,8 +146,8 @@ def alert(
     """Publish an alert to the shared bus, optionally raising a notification.
 
     The alert is published to the PubSub topic ``topic`` (callers should use
-    the ``<service>.<severity>`` convention).  When ``notify`` is true — or is
-    left ``None`` and ``level`` is warn/error/critical — a desktop/Telegram
+    the ``<service>.<severity>`` convention).  When ``notify`` is true - or is
+    left ``None`` and ``level`` is warn/error/critical - a desktop/Telegram
     notification is also dispatched via the notification manager.
 
     Args:
@@ -280,7 +280,7 @@ def register_service(
     Writes ``<home>/registry/<name>.json`` describing how to health-check the
     service.  ``service_health.check_all_services()`` unions these registry
     entries with its built-in defaults, so a service that calls this on start
-    becomes discoverable without being hardcoded.  Optional — health checks
+    becomes discoverable without being hardcoded.  Optional - health checks
     still work with an empty registry.
 
     Args:

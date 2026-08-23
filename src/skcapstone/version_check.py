@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.request
 import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -23,8 +23,8 @@ ECOSYSTEM_PACKAGES = [
     "capauth",
     "sksecurity",
     "skcomms",
-    "skchat",
-    "cloud9",
+    "skchat-sovereign",
+    "cloud9-protocol",
 ]
 
 
@@ -142,11 +142,13 @@ def check_versions(
         if installed and latest:
             up_to_date = installed == latest
 
-        report.packages.append(PackageVersion(
-            name=name,
-            installed=installed,
-            latest=latest,
-            up_to_date=up_to_date,
-        ))
+        report.packages.append(
+            PackageVersion(
+                name=name,
+                installed=installed,
+                latest=latest,
+                up_to_date=up_to_date,
+            )
+        )
 
     return report

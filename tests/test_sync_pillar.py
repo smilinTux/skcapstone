@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from skcapstone.models import PillarStatus, SyncConfig, SyncTransport
 from skcapstone.pillars.sync import (
     SEED_EXTENSION,
@@ -19,8 +17,8 @@ from skcapstone.pillars.sync import (
     save_sync_state,
 )
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _no_gpg_config(tmp_path: Path) -> SyncConfig:
     """SyncConfig that stores seeds under tmp_path/sync with no GPG."""
@@ -31,6 +29,7 @@ def _no_gpg_config(tmp_path: Path) -> SyncConfig:
 
 
 # ── TestInitializeSync ────────────────────────────────────────────────────────
+
 
 class TestInitializeSync:
     """Tests for initialize_sync()."""
@@ -106,6 +105,7 @@ class TestInitializeSync:
 
 
 # ── TestCollectSeed ───────────────────────────────────────────────────────────
+
 
 class TestCollectSeed:
     """Tests for collect_seed()."""
@@ -183,6 +183,7 @@ class TestCollectSeed:
 
 # ── TestDiscoverSync ──────────────────────────────────────────────────────────
 
+
 class TestDiscoverSync:
     """Tests for discover_sync()."""
 
@@ -237,6 +238,7 @@ class TestDiscoverSync:
 
 # ── TestPushSeed ──────────────────────────────────────────────────────────────
 
+
 class TestPushSeed:
     """Tests for push_seed()."""
 
@@ -271,6 +273,7 @@ class TestPushSeed:
 
 
 # ── TestPullSeeds ─────────────────────────────────────────────────────────────
+
 
 class TestPullSeeds:
     """Tests for pull_seeds()."""
@@ -320,11 +323,11 @@ class TestPullSeeds:
 
 # ── TestSaveSyncState ─────────────────────────────────────────────────────────
 
+
 class TestSaveSyncState:
     """Tests for save_sync_state()."""
 
     def test_writes_sync_state_file(self, tmp_agent_home: Path):
-        from skcapstone.models import SyncState
 
         cfg = _no_gpg_config(tmp_agent_home)
         state = initialize_sync(tmp_agent_home, config=cfg)

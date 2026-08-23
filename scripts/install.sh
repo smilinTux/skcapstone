@@ -5,9 +5,11 @@
 # This keeps the system Python clean and avoids --break-system-packages.
 #
 # Usage:
-#   bash scripts/install.sh           # Standard install
-#   bash scripts/install.sh --dev     # Include dev/test tools
-#   bash scripts/install.sh --force   # Recreate venv from scratch
+#   bash scripts/install.sh                  # Standard install
+#   bash scripts/install.sh --dev             # Include dev/test tools
+#   bash scripts/install.sh --force           # Recreate venv from scratch
+#   bash scripts/install.sh --non-interactive # venv + pip install only; never
+#                                              # prompt, never touch systemd
 #
 # After install, add to your shell profile:
 #   export PATH="$HOME/.skenv/bin:$PATH"
@@ -19,11 +21,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 DEV_MODE=false
 FORCE=false
+NON_INTERACTIVE=false
 
 for arg in "$@"; do
     case "$arg" in
         --dev)  DEV_MODE=true ;;
         --force) FORCE=true ;;
+        --non-interactive) NON_INTERACTIVE=true ;;
     esac
 done
 
@@ -257,8 +261,18 @@ echo "To activate:       source $SKENV/bin/activate"
 
 # ---------------------------------------------------------------------------
 # Linux: Install systemd user services for all SK* pillars
+#
+# Skipped entirely (no prompts, no systemd touched) under --non-interactive:
+# copy-vs-activate callers (e.g. skfleet install's "packages"/"core"
+# backends) only want the venv + pip install half of this script and must
+# never block on a TTY read or silently enable/start units on EOF-defaults-Y.
 # ---------------------------------------------------------------------------
-if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
+if [[ "$NON_INTERACTIVE" == "true" ]]; then
+    echo ""
+    echo "=== Linux Systemd Services ==="
+    echo ""
+    echo "Skipping (--non-interactive): no systemd units installed, enabled, or started."
+elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
     echo ""
     echo "=== Linux Systemd Services ==="
     echo ""
@@ -295,18 +309,6 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             fi
         done
 
-        # skchat services (sibling repo)
-        _SKCHAT_DIR="$(dirname "$REPO_ROOT")/skchat/systemd"
-        for _unit in skchat-daemon.service skchat-lumina-bridge.service \
-                     skchat-opus-bridge.service skchat-bridges.target; do
-            _src="$_SKCHAT_DIR/$_unit"
-            if [[ -f "$_src" ]]; then
-                sed "s/=lumina/=$_AGENT_NAME/g; s/=opus/=$_AGENT_NAME/g" "$_src" > "$_UNIT_DIR/$_unit"
-                echo "  [OK] $_unit"
-                (( _installed++ ))
-            fi
-        done
-
         # skcomms services (sibling repo)
         _SKCOMMS_DIR="$(dirname "$REPO_ROOT")/skcomms/systemd"
         for _unit in skcomms.service skcomms-daemon.service; do
@@ -318,6 +320,17 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             fi
         done
 
+        # Syncthing desktop-tuning drop-in (machine-wide, agent-agnostic):
+        # keeps the mesh's continuous sync deprioritised so it never starves
+        # the active desktop session. Applies to whatever agent was just set up.
+        _SYNCTHING_DROPIN="$REPO_ROOT/systemd/syncthing.service.d/nice.conf"
+        if [[ -f "$_SYNCTHING_DROPIN" ]]; then
+            mkdir -p "$_UNIT_DIR/syncthing.service.d"
+            cp "$_SYNCTHING_DROPIN" "$_UNIT_DIR/syncthing.service.d/nice.conf"
+            echo "  [OK] syncthing.service.d/nice.conf (desktop-courteous sync)"
+            (( _installed++ ))
+        fi
+
         echo ""
         echo "  Installed $_installed service files to $_UNIT_DIR/"
 
@@ -328,8 +341,6 @@ if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
         _START_NOW="${_START_NOW:-Y}"
         if [[ "$_START_NOW" =~ ^[Yy] ]]; then
             systemctl --user enable --now skcapstone.service 2>/dev/null && echo "  [STARTED] skcapstone" || true
-            systemctl --user enable --now skchat-daemon.service 2>/dev/null && echo "  [STARTED] skchat-daemon" || true
-            systemctl --user enable --now skchat-bridges.target 2>/dev/null && echo "  [STARTED] skchat-bridges" || true
             systemctl --user enable skcapstone-context.timer 2>/dev/null && echo "  [ENABLED] skcapstone-context.timer" || true
             systemctl --user enable skcomms-heartbeat.timer 2>/dev/null && echo "  [ENABLED] skcomms-heartbeat.timer" || true
         else

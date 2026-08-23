@@ -1,4 +1,4 @@
-"""Test runner command — unified pytest across all ecosystem packages.
+"""Test runner command - unified pytest across all ecosystem packages.
 
 Usage:
     skcapstone test                     # run all packages
@@ -16,8 +16,8 @@ from pathlib import Path
 
 import click
 
+from ..testrunner import ECOSYSTEM_PACKAGES, TestReport, run_all_tests
 from ._common import console
-from ..testrunner import ECOSYSTEM_PACKAGES, run_all_tests, TestReport, PackageResult
 
 
 def _monorepo_root() -> Path:
@@ -30,11 +30,11 @@ def _monorepo_root() -> Path:
         Path to the monorepo root.
     """
     # src/skcapstone/cli/test_cmd.py → go up 4 levels
-    candidate = Path(__file__).resolve().parent.parent.parent.parent.parent
+    Path(__file__).resolve().parent.parent.parent.parent.parent
     # candidate is now smilintux-org/skcapstone/src → go one more up to skcapstone pkg root,
     # then one more up to monorepo root
     # Path layout: monorepo/skcapstone/src/skcapstone/cli/test_cmd.py
-    # parents[0] = cli/, [1] = skcapstone (pkg), [2] = src/, [3] = skcapstone (repo), [4] = monorepo
+    # parents[0] = cli/, [1] = skcapstone (pkg), [2] = src/, [3] = skcapstone (repo), [4] = monorepo  # noqa: E501
     monorepo = Path(__file__).resolve().parents[4]
     if (monorepo / "skcapstone").is_dir():
         return monorepo
@@ -48,8 +48,8 @@ def _render_table(report: TestReport) -> None:
     Args:
         report: Completed test report.
     """
-    from rich.table import Table
     from rich.panel import Panel
+    from rich.table import Table
 
     table = Table(title="Ecosystem Test Results", show_lines=False, expand=True)
     table.add_column("Package", style="bold", min_width=16)
@@ -65,8 +65,11 @@ def _render_table(report: TestReport) -> None:
             table.add_row(
                 r.name,
                 "[dim]N/A[/]",
-                "-", "-", "-", "-",
-                "[dim]—[/]",
+                "-",
+                "-",
+                "-",
+                "-",
+                "[dim]-[/]",
             )
             continue
 
@@ -142,34 +145,45 @@ def register_test_commands(main: click.Group) -> None:
 
     @main.command("test")
     @click.option(
-        "--package", "-p",
+        "--package",
+        "-p",
         "packages",
         multiple=True,
         metavar="NAME",
         help="Restrict to one or more packages (repeat for multiple).",
     )
     @click.option(
-        "--fast", is_flag=True,
+        "--fast",
+        is_flag=True,
         help="Stop after the first failing package.",
     )
     @click.option(
-        "--verbose", "-v", is_flag=True,
+        "--verbose",
+        "-v",
+        is_flag=True,
         help="Pass -v to pytest for detailed output.",
     )
     @click.option(
-        "--json-out", is_flag=True,
+        "--json-out",
+        is_flag=True,
         help="Emit machine-readable JSON instead of a Rich table.",
     )
     @click.option(
-        "--timeout", default=120, show_default=True, type=int,
+        "--timeout",
+        default=120,
+        show_default=True,
+        type=int,
         help="Per-package timeout in seconds.",
     )
     @click.option(
-        "--root", default=None, type=click.Path(),
+        "--root",
+        default=None,
+        type=click.Path(),
         help="Override monorepo root path (auto-detected by default).",
     )
     @click.option(
-        "--show-output", is_flag=True,
+        "--show-output",
+        is_flag=True,
         help="Print pytest output for failing packages.",
     )
     def test_cmd(

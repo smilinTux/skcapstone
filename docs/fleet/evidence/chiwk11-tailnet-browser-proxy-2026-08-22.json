@@ -1,0 +1,57 @@
+{
+  "card_id": "510f3a0b",
+  "captured_at": "2026-08-22T23:35:47Z",
+  "host": "chiwk11",
+  "canonical_tailscale_peer": {
+    "id": "n34S7LY16511CNTRL",
+    "ip": "100.117.193.45",
+    "os": "linux"
+  },
+  "proxy": {
+    "service": "skcapstone-tailnet-browser-proxy.service",
+    "enabled": true,
+    "active": true,
+    "listeners": [
+      "127.0.0.1:1055",
+      "127.0.0.1:1056"
+    ],
+    "health": {
+      "ok": true,
+      "proxy_port": 1055
+    },
+    "binary_sha256": "ae34bfe1717397f1cd5e6fe1d43f1ab3c86851ec101511e35693d3b1065ac85a",
+    "unit_sha256": "754699256cdeda0f6e921347f65d790750a29e8966542afa9d002e4f3dea9ed7"
+  },
+  "windows": {
+    "public_desktop_shortcuts": [
+      "Enable Tailscale Browser Access.lnk",
+      "Disable Tailscale Browser Access.lnk"
+    ],
+    "profiles_visible_through_public_desktop": true,
+    "tailscale_service_status": "Stopped",
+    "tailscale_start_type": "Disabled",
+    "acceptance_profile": "skuser01",
+    "final_profile_proxy_state": "disabled",
+    "control_sha256": {
+      "enable": "577ab7072b0083558ee5b28b5da970325277997a74692c56f42825b99c2a96e7",
+      "disable": "eea0f6c9ed8b73107c221a3abadcb440995154793eb79f428cf2feba8a60ffdb",
+      "shortcut_installer": "60d8c8fb8cae005481dae8fe27d91f4dbfc65aa18502464cadd35b15f6a50d55",
+      "browser_test": "abe102e35cee1cbfe364518bace376b4e061f1d1c709555dd4d9690a2825d6ba"
+    }
+  },
+  "tests": {
+    "windows_localhost_health": "passed",
+    "headless_chrome_tailnet_page": "passed",
+    "tailnet_test_url": "http://100.81.238.58:18080/",
+    "expected_page_title": "SKCAPSTONE_TAILNET_PROXY_OK",
+    "non_tailnet_private_destination_status": 403,
+    "pac_default_route": "DIRECT",
+    "endpoint_audit_safe_to_route": true,
+    "endpoint_audit_findings": []
+  },
+  "rollback": {
+    "profile_settings_preserved": true,
+    "disable_control_tested": true,
+    "runbook": "docs/fleet/tailnet-browser-proxy.md"
+  }
+}

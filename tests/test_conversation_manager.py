@@ -1,4 +1,4 @@
-"""Tests for ConversationManager — centralized peer conversation management."""
+"""Tests for ConversationManager - centralized peer conversation management."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from skcapstone.conversation_manager import ConversationManager, _sanitize_peer_name
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # Python / venv detection
 # ---------------------------------------------------------------------------
 
+
 def _skenv_dir() -> Path:
     """Return the platform-appropriate skenv directory."""
     if sys.platform == "win32":
@@ -134,6 +135,7 @@ def find_python(explicit_venv: str | None = None) -> str:
 # Environment setup
 # ---------------------------------------------------------------------------
 
+
 def _setup_environment() -> None:
     """Set required environment variables if not already present."""
     home = Path.home()
@@ -169,6 +171,7 @@ def _setup_environment() -> None:
 # Launch
 # ---------------------------------------------------------------------------
 
+
 def launch(
     venv: str | None = None,
     log_level: str = "WARNING",
@@ -201,6 +204,7 @@ def launch(
     if os.path.realpath(python) == os.path.realpath(sys.executable):
         logger.info("Launching MCP server in-process.")
         from skcapstone.mcp_server import main as mcp_main
+
         mcp_main()
         return 0
 
@@ -224,6 +228,7 @@ def launch(
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """CLI entry point with argument parsing."""

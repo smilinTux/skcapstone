@@ -24,7 +24,6 @@ from skcapstone.memory_verifier import (
 )
 from skcapstone.models import MemoryEntry, MemoryLayer
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -79,6 +78,21 @@ def _contradicting_result(
     }
 
 
+def _ungraded_result() -> dict:
+    """Simulate truth_check that could not verify (no embedding backend reachable):
+    coherence defaults to a blocking 0.0 and the grade is ungraded."""
+    return {
+        "is_aligned": False,
+        "collider_result": {
+            "coherence_score": 0.0,
+            "truth_grade": "ungraded",
+            "collision_fragments": [],
+        },
+        "alignment_record": {},
+        "belief": {},
+    }
+
+
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
     """Minimal agent home directory."""
@@ -89,12 +103,11 @@ def home(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# verify_before_promotion — unit tests
+# verify_before_promotion - unit tests
 # ---------------------------------------------------------------------------
 
 
 class TestVerifyBeforePromotion:
-
     def test_fail_open_when_skseed_missing(self, home: Path) -> None:
         """Should allow promotion when skseed cannot be imported."""
         entry = _make_entry()
@@ -113,6 +126,20 @@ class TestVerifyBeforePromotion:
         with patch.dict(sys.modules, {"skseed": MagicMock(), "skseed.skill": skill_mock}):
             result = mv.verify_before_promotion(home, entry)
         assert result.should_promote is True
+
+    def test_fail_open_when_ungraded_no_embedding_backend(self, home: Path) -> None:
+        """An ungraded truth-check (embedding backend unreachable, coherence 0.0)
+        must fail open, not block. Regression: CI had every promotion blocked
+        because skvector was installed but no embedding server was reachable."""
+        import skcapstone.memory_verifier as mv
+
+        entry = _make_entry()
+        skill_mock = MagicMock()
+        skill_mock.truth_check = MagicMock(return_value=_ungraded_result())
+        with patch.dict(sys.modules, {"skseed": MagicMock(), "skseed.skill": skill_mock}):
+            result = mv.verify_before_promotion(home, entry)
+        assert result.should_promote is True
+        assert result.is_conflicting is False
 
     def test_skip_gate_for_mid_term_entries(self, home: Path) -> None:
         """Gate only fires for SHORT_TERM; mid-term entries pass through."""
@@ -160,6 +187,7 @@ class TestVerifyBeforePromotion:
 
         # Re-read from disk
         import json
+
         raw = json.loads(path.read_text())
         assert "conflicting" in raw["tags"]
 
@@ -180,6 +208,7 @@ class TestVerifyBeforePromotion:
         report_path = home / "memory" / "short-term" / f"{result.conflict_report_id}.json"
         assert report_path.exists()
         import json
+
         report = json.loads(report_path.read_text())
         assert "conflicting" in report["tags"]
         assert "CONFLICT REPORT" in report["content"]
@@ -209,15 +238,17 @@ class TestVerifyBeforePromotion:
         with patch.dict(sys.modules, {"skseed": MagicMock(), "skseed.skill": skill_mock}):
             with patch("skcapstone.notifications.notify") as mock_notify:
                 import skcapstone.memory_verifier as mv
+
                 # Ensure the module uses our patched notify
-                with patch.object(mv, "_fire_conflict_notification",
-                                  wraps=mv._fire_conflict_notification):
+                with patch.object(
+                    mv, "_fire_conflict_notification", wraps=mv._fire_conflict_notification
+                ):
                     verify_before_promotion(home, entry)
         # At least one call should have urgency=critical
         calls = mock_notify.call_args_list
         assert any(
-            call.kwargs.get("urgency") == "critical" or
-            (len(call.args) >= 3 and call.args[2] == "critical")
+            call.kwargs.get("urgency") == "critical"
+            or (len(call.args) >= 3 and call.args[2] == "critical")
             for call in calls
         ), f"No critical notification call found in {calls}"
 
@@ -226,7 +257,7 @@ class TestVerifyBeforePromotion:
         entry = _make_entry(memory_id="meta01")
         entry = _make_entry(memory_id="meta01")
         # Simulate a conflict-report entry
-        from dataclasses import replace
+
         entry2 = MemoryEntry(
             memory_id="meta01",
             content="[CONFLICT REPORT] some conflict",
@@ -249,14 +280,16 @@ class TestVerifyBeforePromotion:
         entry = _make_entry()
         skill_mock = MagicMock()
         # No fragments, but is_aligned=False
-        skill_mock.truth_check = MagicMock(return_value={
-            "is_aligned": False,
-            "collider_result": {
-                "coherence_score": 0.4,
-                "truth_grade": "weak",
-                "collision_fragments": [],
-            },
-        })
+        skill_mock.truth_check = MagicMock(
+            return_value={
+                "is_aligned": False,
+                "collider_result": {
+                    "coherence_score": 0.4,
+                    "truth_grade": "weak",
+                    "collision_fragments": [],
+                },
+            }
+        )
         with patch.dict(sys.modules, {"skseed": MagicMock(), "skseed.skill": skill_mock}):
             with patch("skcapstone.memory_verifier._fire_conflict_notification"):
                 result = verify_before_promotion(home, entry)
@@ -270,7 +303,6 @@ class TestVerifyBeforePromotion:
 
 
 class TestMemoryEnginePromoteGate:
-
     def test_engine_promote_short_term_blocked(self, home: Path) -> None:
         """_promote() in memory_engine stays in short-term when gate says no."""
         from skcapstone import memory_engine
@@ -353,15 +385,13 @@ class TestMemoryEnginePromoteGate:
 
 
 class TestPromotionEngineGate:
-
     def test_promoter_sweep_blocked_counts_as_skipped(self, home: Path) -> None:
         """A truth-check-blocked candidate is not in result.promoted."""
         from datetime import timedelta
 
-        from skcapstone.memory_promoter import PromotionEngine, PromotionThresholds
-
         # Write a short-term entry that scores well above threshold
         from skcapstone.memory_engine import _save_entry
+        from skcapstone.memory_promoter import PromotionEngine, PromotionThresholds
 
         created = datetime.now(timezone.utc) - timedelta(hours=30)
         entry = MemoryEntry(
@@ -390,8 +420,8 @@ class TestPromotionEngineGate:
         """A truth-check-allowed candidate ends up in mid-term."""
         from datetime import timedelta
 
-        from skcapstone.memory_promoter import PromotionEngine, PromotionThresholds
         from skcapstone.memory_engine import _save_entry
+        from skcapstone.memory_promoter import PromotionEngine, PromotionThresholds
 
         created = datetime.now(timezone.utc) - timedelta(hours=30)
         entry = MemoryEntry(

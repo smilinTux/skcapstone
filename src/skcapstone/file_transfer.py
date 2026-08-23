@@ -1,5 +1,5 @@
 """
-Encrypted file transfer — chunked, resumable, sovereign.
+Encrypted file transfer - chunked, resumable, sovereign.
 
 Files are split into 256 KB chunks, each independently encrypted
 using the agent's KMS-derived service key (Fernet AES-128-CBC).
@@ -45,7 +45,6 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -217,13 +216,15 @@ class FileTransfer:
             chunk_file = transfer_dir / f"chunk-{i:04d}.enc"
             chunk_file.write_bytes(chunk_data)
 
-            manifest.chunks.append(ChunkInfo(
-                index=i,
-                size=end - start,
-                sha256=chunk_hash,
-                encrypted=encrypt and enc_key is not None,
-                sent=True,
-            ))
+            manifest.chunks.append(
+                ChunkInfo(
+                    index=i,
+                    size=end - start,
+                    sha256=chunk_hash,
+                    encrypted=encrypt and enc_key is not None,
+                    sent=True,
+                )
+            )
 
         # Write manifest
         manifest_path = transfer_dir / "manifest.json"
@@ -234,8 +235,11 @@ class FileTransfer:
 
         logger.info(
             "Prepared transfer %s: %s (%d chunks, %d bytes) -> %s",
-            manifest.transfer_id, manifest.filename,
-            total_chunks, manifest.file_size, recipient,
+            manifest.transfer_id,
+            manifest.filename,
+            total_chunks,
+            manifest.file_size,
+            recipient,
         )
 
         return manifest
@@ -273,9 +277,7 @@ class FileTransfer:
         if not manifest_path.exists():
             raise FileNotFoundError(f"Manifest not found for {transfer_id}")
 
-        manifest = TransferManifest.model_validate_json(
-            manifest_path.read_text(encoding="utf-8")
-        )
+        manifest = TransferManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
 
         enc_key = self._get_encryption_key()
         assembled = bytearray()
@@ -327,7 +329,10 @@ class FileTransfer:
 
         logger.info(
             "Received transfer %s: %s (%d bytes, %d chunks)",
-            transfer_id, manifest.filename, manifest.file_size, manifest.total_chunks,
+            transfer_id,
+            manifest.filename,
+            manifest.file_size,
+            manifest.total_chunks,
         )
 
         return output_path
@@ -429,21 +434,22 @@ class FileTransfer:
             transfer_dir = base / transfer_id
             if transfer_dir.is_dir():
                 import shutil
+
                 shutil.rmtree(transfer_dir)
                 cleaned = True
         return cleaned
 
     def status(self) -> dict[str, Any]:
         """Return file transfer status summary."""
-        outbox_count = sum(
-            1 for d in self._outbox.iterdir() if d.is_dir()
-        ) if self._outbox.is_dir() else 0
-        inbox_count = sum(
-            1 for d in self._inbox.iterdir() if d.is_dir()
-        ) if self._inbox.is_dir() else 0
-        completed_count = sum(
-            1 for _ in self._completed.glob("*.json")
-        ) if self._completed.is_dir() else 0
+        outbox_count = (
+            sum(1 for d in self._outbox.iterdir() if d.is_dir()) if self._outbox.is_dir() else 0
+        )
+        inbox_count = (
+            sum(1 for d in self._inbox.iterdir() if d.is_dir()) if self._inbox.is_dir() else 0
+        )
+        completed_count = (
+            sum(1 for _ in self._completed.glob("*.json")) if self._completed.is_dir() else 0
+        )
 
         return {
             "outbox_transfers": outbox_count,
@@ -487,14 +493,14 @@ class FileTransfer:
         if not manifest_path.exists():
             return None
         try:
-            return TransferManifest.model_validate_json(
-                manifest_path.read_text(encoding="utf-8")
-            )
+            return TransferManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
         except Exception:
             return None
 
     def _manifest_to_status(
-        self, manifest: TransferManifest, direction: str,
+        self,
+        manifest: TransferManifest,
+        direction: str,
     ) -> TransferStatus:
         """Convert a manifest to a status summary."""
         done = sum(1 for c in manifest.chunks if c.sent or c.received)

@@ -1,36 +1,27 @@
-"""Tests for agent team blueprints — schema, registry, and engine."""
+"""Tests for agent team blueprints - schema, registry, and engine."""
 
 from __future__ import annotations
 
-import json
-import shutil
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import yaml
 
+from skcapstone.blueprints.registry import BlueprintRegistry
 from skcapstone.blueprints.schema import (
     AgentRole,
     AgentSpec,
     BlueprintManifest,
-    CoordinationConfig,
     ModelTier,
-    NetworkConfig,
     ProviderType,
     ResourceSpec,
-    StorageConfig,
     VMType,
 )
-from skcapstone.blueprints.registry import BlueprintRegistry
+from skcapstone.providers.local import LocalProvider
 from skcapstone.team_engine import (
     AgentStatus,
-    DeployedAgent,
-    TeamDeployment,
     TeamEngine,
 )
-from skcapstone.providers.local import LocalProvider
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -196,9 +187,7 @@ class TestBlueprintRegistry:
             slug="infrastructure-guardian",
             description="My custom override.",
         )
-        (user_dir / "infrastructure-guardian.yaml").write_text(
-            yaml.dump(custom), encoding="utf-8"
-        )
+        (user_dir / "infrastructure-guardian.yaml").write_text(yaml.dump(custom), encoding="utf-8")
 
         registry = BlueprintRegistry(home=tmp_home)
         bp = registry.get("infrastructure-guardian")
@@ -237,13 +226,15 @@ class TestTeamEngine:
 
     def test_resolve_deploy_order_simple(self):
         """Simple dependencies should resolve in correct order."""
-        bp = BlueprintManifest(**_minimal_blueprint(
-            agents={
-                "alpha": {"role": "manager", "model": "fast"},
-                "beta": {"role": "worker", "model": "code", "depends_on": ["alpha"]},
-                "gamma": {"role": "worker", "model": "code", "depends_on": ["alpha", "beta"]},
-            }
-        ))
+        bp = BlueprintManifest(
+            **_minimal_blueprint(
+                agents={
+                    "alpha": {"role": "manager", "model": "fast"},
+                    "beta": {"role": "worker", "model": "code", "depends_on": ["alpha"]},
+                    "gamma": {"role": "worker", "model": "code", "depends_on": ["alpha", "beta"]},
+                }
+            )
+        )
 
         waves = TeamEngine.resolve_deploy_order(bp)
         assert waves[0] == ["alpha"]
@@ -252,13 +243,15 @@ class TestTeamEngine:
 
     def test_resolve_deploy_order_parallel(self):
         """Independent agents should be in the same wave."""
-        bp = BlueprintManifest(**_minimal_blueprint(
-            agents={
-                "alpha": {"role": "worker", "model": "fast"},
-                "beta": {"role": "worker", "model": "code"},
-                "gamma": {"role": "worker", "model": "local"},
-            }
-        ))
+        bp = BlueprintManifest(
+            **_minimal_blueprint(
+                agents={
+                    "alpha": {"role": "worker", "model": "fast"},
+                    "beta": {"role": "worker", "model": "code"},
+                    "gamma": {"role": "worker", "model": "local"},
+                }
+            )
+        )
 
         waves = TeamEngine.resolve_deploy_order(bp)
         assert len(waves) == 1
@@ -266,12 +259,14 @@ class TestTeamEngine:
 
     def test_resolve_circular_dependency_raises(self):
         """Circular dependencies should raise ValueError."""
-        bp = BlueprintManifest(**_minimal_blueprint(
-            agents={
-                "alpha": {"role": "worker", "model": "fast", "depends_on": ["beta"]},
-                "beta": {"role": "worker", "model": "code", "depends_on": ["alpha"]},
-            }
-        ))
+        bp = BlueprintManifest(
+            **_minimal_blueprint(
+                agents={
+                    "alpha": {"role": "worker", "model": "fast", "depends_on": ["beta"]},
+                    "beta": {"role": "worker", "model": "code", "depends_on": ["alpha"]},
+                }
+            )
+        )
 
         with pytest.raises(ValueError, match="[Cc]ircular|[Uu]nresolvable"):
             TeamEngine.resolve_deploy_order(bp)
@@ -335,15 +330,17 @@ class TestTeamEngine:
 
     def test_multi_instance_agents(self, tmp_home):
         """Agents with count > 1 should spawn multiple instances."""
-        bp = BlueprintManifest(**_minimal_blueprint(
-            agents={
-                "scout": {
-                    "role": "researcher",
-                    "model": "fast",
-                    "count": 3,
-                },
-            }
-        ))
+        bp = BlueprintManifest(
+            **_minimal_blueprint(
+                agents={
+                    "scout": {
+                        "role": "researcher",
+                        "model": "fast",
+                        "count": 3,
+                    },
+                }
+            )
+        )
 
         engine = TeamEngine(home=tmp_home)
         deployment = engine.deploy(bp)
@@ -428,7 +425,7 @@ class TestBuiltinBlueprints:
             assert bp.name, f"{bp.slug} has no name"
             assert bp.description, f"{bp.slug} has no description"
             assert bp.agent_count > 0, f"{bp.slug} has no agents"
-            assert bp.slug, f"Blueprint has empty slug"
+            assert bp.slug, "Blueprint has empty slug"
 
     def test_no_circular_deps_in_builtins(self):
         """Built-in blueprints should have no circular dependencies."""

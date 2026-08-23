@@ -22,9 +22,7 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -39,6 +37,7 @@ def _try_quantum() -> Optional[object]:
     """
     try:
         import cloud9
+
         return cloud9
     except ImportError:
         return None
@@ -98,7 +97,8 @@ class Cloud9Bridge:
         if payload.intensity < self._threshold:
             logger.debug(
                 "Skipping low-intensity FEB (%.2f < %.2f)",
-                payload.intensity, self._threshold,
+                payload.intensity,
+                self._threshold,
             )
             return None
 
@@ -137,7 +137,9 @@ class Cloud9Bridge:
 
             logger.info(
                 "Ingested FEB -> Memory %s (%s, intensity=%.2f)",
-                memory.id[:8], payload.primary_emotion, payload.intensity,
+                memory.id[:8],
+                payload.primary_emotion,
+                payload.intensity,
             )
             return memory.id
 
@@ -201,7 +203,11 @@ class Cloud9Bridge:
         total = ingested + skipped + errors
         logger.info(
             "Scanned %s: %d ingested, %d skipped, %d errors (of %d)",
-            directory, ingested, skipped, errors, total,
+            directory,
+            ingested,
+            skipped,
+            errors,
+            total,
         )
         return {
             "ingested": ingested,
@@ -298,7 +304,9 @@ class Cloud9Bridge:
             tags.append("cloud9:medium-intensity")
 
         is_oof = quantum.get("oof", getattr(metadata, "oof_triggered", False))
-        is_cloud9 = quantum.get("cloud9_score", 0) >= 0.9 or getattr(metadata, "cloud9_achieved", False)
+        is_cloud9 = quantum.get("cloud9_score", 0) >= 0.9 or getattr(
+            metadata, "cloud9_achieved", False
+        )
 
         if is_oof:
             tags.append("cloud9:oof")
@@ -415,7 +423,9 @@ class Cloud9Bridge:
         emoji = getattr(payload, "emoji", "")
         emotion = payload.primary_emotion
         is_oof = quantum.get("oof", getattr(metadata, "oof_triggered", False))
-        is_cloud9 = quantum.get("cloud9_score", 0) >= 0.9 or getattr(metadata, "cloud9_achieved", False)
+        is_cloud9 = quantum.get("cloud9_score", 0) >= 0.9 or getattr(
+            metadata, "cloud9_achieved", False
+        )
         oof = " [OOF]" if is_oof else ""
         cloud9 = " [CLOUD 9]" if is_cloud9 else ""
         return f"{emoji} FEB: {emotion}{oof}{cloud9}"

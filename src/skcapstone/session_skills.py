@@ -1,4 +1,4 @@
-"""Session Skills Bridge — wire SKSkills into agent runtime sessions.
+"""Session Skills Bridge - wire SKSkills into agent runtime sessions.
 
 Bridges the gap between the team engine's session lifecycle and the
 SKSkills framework.  When an agent session starts, this module:
@@ -36,9 +36,9 @@ def resolve_skill_paths_with_skskills(
     """Resolve skill names to paths, checking SKSkills registry first.
 
     Resolution order per skill name:
-    1. Absolute path — use as-is if it exists
-    2. SKSkills registry — check ~/.skskills/installed/<name> or agents/<agent>/<name>
-    3. Pass-through — let crush resolve from its own skill paths
+    1. Absolute path - use as-is if it exists
+    2. SKSkills registry - check ~/.skskills/installed/<name> or agents/<agent>/<name>
+    3. Pass-through - let crush resolve from its own skill paths
 
     Args:
         skills: List of skill names or paths from AgentSpec.
@@ -61,7 +61,7 @@ def resolve_skill_paths_with_skskills(
             resolved.append(str(path))
             continue
 
-        # 2. SKSkills registry — per-agent first, then global
+        # 2. SKSkills registry - per-agent first, then global
         search_dirs = []
         if agent != "global":
             search_dirs.append(skskills_home / "agents" / agent / skill)
@@ -78,7 +78,7 @@ def resolve_skill_paths_with_skskills(
         if found_in_skskills:
             continue
 
-        # 3. Pass-through — let crush resolve from its own skill paths
+        # 3. Pass-through - let crush resolve from its own skill paths
         resolved.append(skill)
 
     return resolved
@@ -114,9 +114,9 @@ def prepare_session_skills(
 
     try:
         from skskills.loader import SkillLoader
-        from skskills.models import parse_skill_yaml
+        from skskills.models import parse_skill_yaml  # noqa: F401
     except ImportError:
-        logger.debug("skskills not installed — skipping skill loading for %s", agent_name)
+        logger.debug("skskills not installed - skipping skill loading for %s", agent_name)
         return result
 
     loader = SkillLoader()
@@ -126,7 +126,7 @@ def prepare_session_skills(
         skill_yaml = skill_path / "skill.yaml"
 
         if not skill_yaml.exists():
-            # Not an SKSkills directory — skip
+            # Not an SKSkills directory - skip
             continue
 
         try:
@@ -175,7 +175,7 @@ def _build_skill_mcp_config(agent: str, work_dir: Path) -> Dict[str, Any]:
             "skskills": {
                 "command": "skskills",
                 "args": ["run", "--agent", agent],
-                "description": "SKSkills aggregator — sovereign agent skills",
+                "description": "SKSkills aggregator - sovereign agent skills",
             },
         },
     }

@@ -1,5 +1,5 @@
 """
-Local Provider — runs agent teams as local processes backed by crush/SKSkills sessions.
+Local Provider - runs agent teams as local processes backed by crush/SKSkills sessions.
 
 Each agent is spawned as a real ``crush`` subprocess that receives its full identity
 via a generated session config: soul blueprint, skills list, model tier, and
@@ -9,12 +9,12 @@ installed.
 
 Session lifecycle
 -----------------
-1. ``provision()``  — create work dir, write ``config.json`` + ``session.json``
-2. ``configure()``  — resolve soul blueprint & skill paths; write ``crush.json``
-3. ``start()``      — spawn ``crush run --session session.json`` as a daemon process
-4. ``health_check()``— read session state file; fall back to PID liveness check
-5. ``stop()``       — SIGTERM → wait → SIGKILL; write tombstone
-6. ``destroy()``    — stop + remove work dir
+1. ``provision()``  - create work dir, write ``config.json`` + ``session.json``
+2. ``configure()``  - resolve soul blueprint & skill paths; write ``crush.json``
+3. ``start()``      - spawn ``crush run --session session.json`` as a daemon process
+4. ``health_check()``- read session state file; fall back to PID liveness check
+5. ``stop()``       - SIGTERM → wait → SIGKILL; write tombstone
+6. ``destroy()``    - stop + remove work dir
 
 Per hosted-agents best practice: session-isolated state, filesystem memory,
 health checks via session state file then PID monitoring.
@@ -156,6 +156,7 @@ def _resolve_skill_paths(
     """
     try:
         from ..session_skills import resolve_skill_paths_with_skskills
+
         return resolve_skill_paths_with_skskills(skills, agent=agent, repo_root=repo_root)
     except ImportError:
         pass
@@ -207,7 +208,9 @@ def _resolve_model_via_router(
         decision = router.route(signal)
         logger.debug(
             "Model router: tier=%s model=%s reason=%s",
-            decision.tier.value, decision.model_name, decision.reasoning,
+            decision.tier.value,
+            decision.model_name,
+            decision.reasoning,
         )
         return decision.model_name
     except ImportError:
@@ -236,9 +239,7 @@ def _build_session_config(
     Returns:
         Dictionary ready to be serialised as session.json.
     """
-    soul_path = _resolve_soul_blueprint_path(
-        spec.soul_blueprint, work_dir, repo_root
-    )
+    soul_path = _resolve_soul_blueprint_path(spec.soul_blueprint, work_dir, repo_root)
     skill_paths = _resolve_skill_paths(spec.skills, repo_root, agent=agent_name)
     model = _resolve_model_via_router(spec, f"{agent_name} in team {team_name}")
 
@@ -400,13 +401,13 @@ class LocalProvider(ProviderBackend):
     """Deploy agents as local processes backed by crush/SKSkills sessions.
 
     Each agent is given its own working directory containing:
-    - ``config.json``        — human-readable agent configuration
-    - ``session.json``       — crush session payload (soul, skills, model)
-    - ``crush.json``         — crush daemon config (written during configure())
-    - ``agent.pid``          — PID of the crush daemon process
-    - ``session_state.json`` — live state written by the crush daemon
-    - ``memory/``            — persistent memory directory
-    - ``scratch/``           — ephemeral scratch space
+    - ``config.json``        - human-readable agent configuration
+    - ``session.json``       - crush session payload (soul, skills, model)
+    - ``crush.json``         - crush daemon config (written during configure())
+    - ``agent.pid``          - PID of the crush daemon process
+    - ``session_state.json`` - live state written by the crush daemon
+    - ``memory/``            - persistent memory directory
+    - ``scratch/``           - ephemeral scratch space
 
     Args:
         home: Agent home directory (default: ``~/.skcapstone``).
@@ -482,6 +483,7 @@ class LocalProvider(ProviderBackend):
         if skill_result and skill_result.get("skills_loaded", 0) > 0:
             try:
                 from ..session_skills import enrich_session_config
+
                 enrich_session_config(session_config, skill_result)
             except ImportError:
                 pass
@@ -521,6 +523,7 @@ class LocalProvider(ProviderBackend):
         """
         try:
             from ..session_skills import prepare_session_skills
+
             return prepare_session_skills(agent_name, skills, work_dir)
         except ImportError:
             return None
@@ -560,6 +563,7 @@ class LocalProvider(ProviderBackend):
         if skill_result:
             try:
                 from ..session_skills import enrich_crush_config
+
                 enrich_crush_config(crush_cfg, skill_result)
             except ImportError:
                 pass
@@ -569,9 +573,7 @@ class LocalProvider(ProviderBackend):
                 json.dumps(crush_cfg, indent=2), encoding="utf-8"
             )
         except OSError as exc:
-            logger.error(
-                "configure: failed to write crush.json for %s: %s", agent_name, exc
-            )
+            logger.error("configure: failed to write crush.json for %s: %s", agent_name, exc)
             return False
 
         logger.debug("Configured crush session for %s at %s", agent_name, work_dir)
@@ -593,9 +595,9 @@ class LocalProvider(ProviderBackend):
         the required session state so the rest of the engine can proceed.
 
         The session receives:
-        - ``--session session.json``    — full agent identity config
-        - ``--config crush.json``       — crush daemon config
-        - ``--headless``                — non-interactive daemon mode
+        - ``--session session.json``    - full agent identity config
+        - ``--config crush.json``       - crush daemon config
+        - ``--headless``                - non-interactive daemon mode
 
         Environment variables passed to the process:
         - ``AGENT_NAME``, ``TEAM_NAME``, ``SOUL_BLUEPRINT``
@@ -626,16 +628,10 @@ class LocalProvider(ProviderBackend):
                 return self._start_claude_session(
                     agent_name, work_dir, binary, env, provision_result
                 )
-            return self._start_crush_session(
-                agent_name, work_dir, binary, env, provision_result
-            )
+            return self._start_crush_session(agent_name, work_dir, binary, env, provision_result)
         else:
-            logger.warning(
-                "crush binary not found on PATH; using stub for %s", agent_name
-            )
-            return self._start_stub_session(
-                agent_name, work_dir, env, provision_result
-            )
+            logger.warning("crush binary not found on PATH; using stub for %s", agent_name)
+            return self._start_stub_session(agent_name, work_dir, env, provision_result)
 
     def _build_process_env(self, session_config: Dict[str, Any]) -> Dict[str, str]:
         """Build the environment dict for the crush/stub subprocess.
@@ -647,19 +643,21 @@ class LocalProvider(ProviderBackend):
             Environment variable dict (inherits current process env).
         """
         env = os.environ.copy()
-        env.update({
-            "AGENT_NAME": session_config.get("agent_name", ""),
-            "TEAM_NAME": session_config.get("team_name", ""),
-            "SOUL_BLUEPRINT": session_config.get("soul_blueprint") or "",
-            "AGENT_MODEL": session_config.get("model", ""),
-            "AGENT_MODEL_TIER": session_config.get("model_tier", ""),
-            "AGENT_ROLE": session_config.get("role", ""),
-            "AGENT_SKILLS": json.dumps(session_config.get("skills", [])),
-            "SKCAPSTONE_HOME": str(self._home),
-            "AGENT_MEMORY_DIR": session_config.get("memory_dir", ""),
-            "AGENT_SCRATCH_DIR": session_config.get("scratch_dir", ""),
-            "AGENT_STATE_FILE": session_config.get("state_file", ""),
-        })
+        env.update(
+            {
+                "AGENT_NAME": session_config.get("agent_name", ""),
+                "TEAM_NAME": session_config.get("team_name", ""),
+                "SOUL_BLUEPRINT": session_config.get("soul_blueprint") or "",
+                "AGENT_MODEL": session_config.get("model", ""),
+                "AGENT_MODEL_TIER": session_config.get("model_tier", ""),
+                "AGENT_ROLE": session_config.get("role", ""),
+                "AGENT_SKILLS": json.dumps(session_config.get("skills", [])),
+                "SKCAPSTONE_HOME": str(self._home),
+                "AGENT_MEMORY_DIR": session_config.get("memory_dir", ""),
+                "AGENT_SCRATCH_DIR": session_config.get("scratch_dir", ""),
+                "AGENT_STATE_FILE": session_config.get("state_file", ""),
+            }
+        )
         # Merge spec-level env overrides
         extra_env = session_config.get("env", {}) or {}
         env.update({k: str(v) for k, v in extra_env.items()})
@@ -688,10 +686,13 @@ class LocalProvider(ProviderBackend):
         cmd = [
             binary,
             "run",
-            "--session", str(work_dir / _SESSION_CONFIG_FILE),
-            "--config", str(work_dir / _CRUSH_CONFIG_FILE),
+            "--session",
+            str(work_dir / _SESSION_CONFIG_FILE),
+            "--config",
+            str(work_dir / _CRUSH_CONFIG_FILE),
             "--headless",
-            "--state-file", str(work_dir / _SESSION_STATE_FILE),
+            "--state-file",
+            str(work_dir / _SESSION_STATE_FILE),
         ]
         log_file = work_dir / "agent.log"
 
@@ -706,26 +707,29 @@ class LocalProvider(ProviderBackend):
                     start_new_session=True,  # detach from parent's process group
                 )
         except OSError as exc:
-            logger.error(
-                "start: failed to launch crush for %s: %s", agent_name, exc
-            )
+            logger.error("start: failed to launch crush for %s: %s", agent_name, exc)
             return False
 
         pid = proc.pid
         (work_dir / _PID_FILE).write_text(str(pid), encoding="utf-8")
         provision_result["pid"] = pid
 
-        _write_session_state(work_dir, {
-            "status": _STATE_RUNNING,
-            "pid": pid,
-            "agent_name": agent_name,
-            "started_at": _now_iso(),
-            "binary": binary,
-        })
+        _write_session_state(
+            work_dir,
+            {
+                "status": _STATE_RUNNING,
+                "pid": pid,
+                "agent_name": agent_name,
+                "started_at": _now_iso(),
+                "binary": binary,
+            },
+        )
 
         logger.info(
             "Started crush session for %s (pid=%d binary=%s)",
-            agent_name, pid, binary,
+            agent_name,
+            pid,
+            binary,
         )
         return True
 
@@ -767,9 +771,7 @@ class LocalProvider(ProviderBackend):
             soul_file = Path(soul_path)
             if soul_file.is_file():
                 try:
-                    system_prompt_parts.append(
-                        soul_file.read_text(encoding="utf-8")
-                    )
+                    system_prompt_parts.append(soul_file.read_text(encoding="utf-8"))
                 except OSError:
                     system_prompt_parts.append(f"Soul blueprint: {soul_path}")
             elif soul_file.is_dir():
@@ -777,9 +779,7 @@ class LocalProvider(ProviderBackend):
                 for ext in ("*.md", "*.txt", "*.yaml"):
                     for f in sorted(soul_file.glob(ext)):
                         try:
-                            system_prompt_parts.append(
-                                f.read_text(encoding="utf-8")
-                            )
+                            system_prompt_parts.append(f.read_text(encoding="utf-8"))
                         except OSError:
                             pass
                 if not system_prompt_parts:
@@ -796,19 +796,19 @@ class LocalProvider(ProviderBackend):
         system_prompt = "\n".join(system_prompt_parts)
 
         # Deterministic session ID from agent name
-        session_id = str(
-            uuid.UUID(
-                hashlib.md5(agent_name.encode()).hexdigest()  # noqa: S324
-            )
-        )
+        session_id = str(uuid.UUID(hashlib.md5(agent_name.encode()).hexdigest()))  # noqa: S324
 
         cmd: List[str] = [
             binary,
             "-p",
-            "--model", model,
-            "--system-prompt", system_prompt,
-            "--output-format", "stream-json",
-            "--session-id", session_id,
+            "--model",
+            model,
+            "--system-prompt",
+            system_prompt,
+            "--output-format",
+            "stream-json",
+            "--session-id",
+            session_id,
             "--dangerously-skip-permissions",
         ]
 
@@ -816,16 +816,12 @@ class LocalProvider(ProviderBackend):
         crush_config_path = work_dir / _CRUSH_CONFIG_FILE
         if crush_config_path.exists():
             try:
-                crush_data = json.loads(
-                    crush_config_path.read_text(encoding="utf-8")
-                )
+                crush_data = json.loads(crush_config_path.read_text(encoding="utf-8"))
                 mcp_servers = crush_data.get("mcpServers")
                 if mcp_servers:
                     mcp_config = {"mcpServers": mcp_servers}
                     mcp_config_file = work_dir / "mcp_config.json"
-                    mcp_config_file.write_text(
-                        json.dumps(mcp_config, indent=2), encoding="utf-8"
-                    )
+                    mcp_config_file.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
                     cmd.extend(["--mcp-config", str(mcp_config_file)])
             except (json.JSONDecodeError, OSError):
                 pass
@@ -854,7 +850,8 @@ class LocalProvider(ProviderBackend):
         except OSError as exc:
             logger.error(
                 "start: failed to launch claude session for %s: %s",
-                agent_name, exc,
+                agent_name,
+                exc,
             )
             return False
 
@@ -862,19 +859,24 @@ class LocalProvider(ProviderBackend):
         (work_dir / _PID_FILE).write_text(str(pid), encoding="utf-8")
         provision_result["pid"] = pid
 
-        _write_session_state(work_dir, {
-            "status": _STATE_RUNNING,
-            "pid": pid,
-            "agent_name": agent_name,
-            "started_at": _now_iso(),
-            "binary": binary,
-            "session_id": session_id,
-            "backend": "claude",
-        })
+        _write_session_state(
+            work_dir,
+            {
+                "status": _STATE_RUNNING,
+                "pid": pid,
+                "agent_name": agent_name,
+                "started_at": _now_iso(),
+                "binary": binary,
+                "session_id": session_id,
+                "backend": "claude",
+            },
+        )
 
         logger.info(
             "Started claude session for %s (pid=%d session_id=%s)",
-            agent_name, pid, session_id,
+            agent_name,
+            pid,
+            session_id,
         )
         return True
 
@@ -912,26 +914,25 @@ class LocalProvider(ProviderBackend):
                 start_new_session=True,
             )
         except OSError as exc:
-            logger.error(
-                "start: failed to launch stub for %s: %s", agent_name, exc
-            )
+            logger.error("start: failed to launch stub for %s: %s", agent_name, exc)
             return False
 
         pid = proc.pid
         (work_dir / _PID_FILE).write_text(str(pid), encoding="utf-8")
         provision_result["pid"] = pid
 
-        _write_session_state(work_dir, {
-            "status": _STATE_RUNNING,
-            "pid": pid,
-            "agent_name": agent_name,
-            "started_at": _now_iso(),
-            "binary": "python-stub",
-        })
-
-        logger.info(
-            "Started stub session for %s (pid=%d)", agent_name, pid
+        _write_session_state(
+            work_dir,
+            {
+                "status": _STATE_RUNNING,
+                "pid": pid,
+                "agent_name": agent_name,
+                "started_at": _now_iso(),
+                "binary": "python-stub",
+            },
         )
+
+        logger.info("Started stub session for %s (pid=%d)", agent_name, pid)
         return True
 
     # ------------------------------------------------------------------
@@ -960,27 +961,23 @@ class LocalProvider(ProviderBackend):
             pid = _read_pid(work_dir)
 
         if not pid:
-            logger.debug("stop: no pid for %s — already stopped", agent_name)
+            logger.debug("stop: no pid for %s - already stopped", agent_name)
             self._write_stopped_state(agent_name, work_dir)
             return True
 
         if not _pid_is_alive(pid):
-            logger.debug(
-                "stop: pid %d for %s is already dead", pid, agent_name
-            )
+            logger.debug("stop: pid %d for %s is already dead", pid, agent_name)
             self._write_stopped_state(agent_name, work_dir)
             return True
 
-        # SIGTERM — polite shutdown
+        # SIGTERM - polite shutdown
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             self._write_stopped_state(agent_name, work_dir)
             return True
         except OSError as exc:
-            logger.warning(
-                "stop: SIGTERM failed for %s (pid %d): %s", agent_name, pid, exc
-            )
+            logger.warning("stop: SIGTERM failed for %s (pid %d): %s", agent_name, pid, exc)
             return False
 
         # Wait for graceful shutdown
@@ -994,7 +991,9 @@ class LocalProvider(ProviderBackend):
             # Escalate to SIGKILL
             logger.warning(
                 "stop: %s (pid %d) did not exit after %ds, sending SIGKILL",
-                agent_name, pid, _STOP_TIMEOUT_SECONDS,
+                agent_name,
+                pid,
+                _STOP_TIMEOUT_SECONDS,
             )
             try:
                 os.kill(pid, signal.SIGKILL)
@@ -1014,6 +1013,7 @@ class LocalProvider(ProviderBackend):
         if work_dir:
             try:
                 from ..session_skills import cleanup_session_skills
+
                 cleanup_session_skills(agent_name, work_dir)
             except ImportError:
                 pass
@@ -1021,9 +1021,7 @@ class LocalProvider(ProviderBackend):
         logger.info("Stopped agent %s (pid=%d ok=%s)", agent_name, pid, stopped)
         return stopped
 
-    def _write_stopped_state(
-        self, agent_name: str, work_dir: Optional[Path]
-    ) -> None:
+    def _write_stopped_state(self, agent_name: str, work_dir: Optional[Path]) -> None:
         """Write a STOPPED tombstone to the session state file.
 
         Args:
@@ -1031,11 +1029,14 @@ class LocalProvider(ProviderBackend):
             work_dir: Agent working directory (may be None).
         """
         if work_dir and work_dir.exists():
-            _write_session_state(work_dir, {
-                "status": _STATE_STOPPED,
-                "agent_name": agent_name,
-                "stopped_at": _now_iso(),
-            })
+            _write_session_state(
+                work_dir,
+                {
+                    "status": _STATE_STOPPED,
+                    "agent_name": agent_name,
+                    "stopped_at": _now_iso(),
+                },
+            )
 
     # ------------------------------------------------------------------
     # destroy
@@ -1117,9 +1118,7 @@ class LocalProvider(ProviderBackend):
 # ---------------------------------------------------------------------------
 
 
-def _session_state_to_agent_status(
-    state: Dict[str, Any], pid: Optional[int]
-) -> AgentStatus:
+def _session_state_to_agent_status(state: Dict[str, Any], pid: Optional[int]) -> AgentStatus:
     """Map a session state dict to an AgentStatus value.
 
     Args:

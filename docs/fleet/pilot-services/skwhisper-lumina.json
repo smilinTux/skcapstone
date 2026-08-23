@@ -1,0 +1,12 @@
+{
+  "kind": "service",
+  "name": "skwhisper-lumina",
+  "labels": {"tier": "agents"},
+  "spec": {
+    "runtime": "systemd-user",
+    "unit": "skwhisper@lumina.service",
+    "nodeSelector": {"always-on": "true"},
+    "restartPolicy": "on-failure",
+    "failover": "manual"
+  }
+}

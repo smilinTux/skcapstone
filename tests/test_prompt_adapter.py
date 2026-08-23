@@ -1,22 +1,18 @@
-"""Tests for the prompt adapter — per-model formatting."""
+"""Tests for the prompt adapter - per-model formatting."""
 
 from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from skcapstone.blueprints.schema import ModelTier
 from skcapstone.prompt_adapter import (
-    AdaptedPrompt,
     ModelProfile,
     PromptAdapter,
-    _GENERIC_PROFILE,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,7 +111,7 @@ class TestPromptAdapter:
         assert profile.family == "grok"
 
     def test_resolve_deepseek_r1(self, adapter):
-        """DeepSeek R1 resolves correctly — omit system prompt."""
+        """DeepSeek R1 resolves correctly - omit system prompt."""
         profile = adapter.resolve_profile("deepseek-r1-70b")
         assert profile.family == "deepseek-r1"
         assert profile.system_prompt_mode == "omit"
@@ -160,7 +156,7 @@ class TestAdapt:
         assert "system_as_separate_param" in result.adaptations_applied
 
     def test_deepseek_r1_no_system(self, adapter):
-        """DeepSeek R1 gets no system prompt — merged into user message."""
+        """DeepSeek R1 gets no system prompt - merged into user message."""
         result = adapter.adapt(
             "You are an agent.",
             "Explain quantum computing.",
@@ -191,8 +187,10 @@ class TestAdapt:
     def test_devstral_code_temperature(self, adapter):
         """Devstral gets 0.15 temperature for CODE tier."""
         result = adapter.adapt(
-            "System", "Write a function",
-            "devstral-2506", ModelTier.CODE,
+            "System",
+            "Write a function",
+            "devstral-2506",
+            ModelTier.CODE,
         )
         assert result.temperature == 0.15
         assert "set_temp_0.15" in result.adaptations_applied
@@ -200,16 +198,20 @@ class TestAdapt:
     def test_nemotron_reasoning_temperature(self, adapter):
         """Nemotron gets 1.0 temperature for REASON tier."""
         result = adapter.adapt(
-            "System", "Analyze this",
-            "nemotron-49b", ModelTier.REASON,
+            "System",
+            "Analyze this",
+            "nemotron-49b",
+            ModelTier.REASON,
         )
         assert result.temperature == 1.0
 
     def test_claude_thinking_config(self, adapter):
         """Claude gets thinking budget in extra_params."""
         result = adapter.adapt(
-            "System", "Think deeply",
-            "claude-opus-4-5", ModelTier.REASON,
+            "System",
+            "Think deeply",
+            "claude-opus-4-5",
+            ModelTier.REASON,
         )
         assert "thinking" in result.extra_params
         assert result.extra_params["thinking"]["type"] == "enabled"
@@ -255,7 +257,9 @@ class TestDetectModel:
 
     def test_detect_llama_returns_profile(self, adapter):
         """Successful Ollama response for a llama model yields a valid profile."""
-        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("llama", "7B", "Q4_0")):
+        with patch(
+            "urllib.request.urlopen", return_value=_make_ollama_resp("llama", "7B", "Q4_0")
+        ):
             profile = adapter.detect_model("custom-llama:7b")
 
         assert profile is not None
@@ -267,7 +271,9 @@ class TestDetectModel:
 
     def test_detect_qwen_enables_thinking(self, adapter):
         """Qwen family auto-detection sets thinking_enabled and toggle mode."""
-        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("qwen", "14B", "Q8_0")):
+        with patch(
+            "urllib.request.urlopen", return_value=_make_ollama_resp("qwen", "14B", "Q8_0")
+        ):
             profile = adapter.detect_model("qwen3-custom:14b")
 
         assert profile is not None
@@ -277,7 +283,9 @@ class TestDetectModel:
 
     def test_detect_nemotron_reasoning_temp(self, adapter):
         """Nemotron auto-detection sets reasoning_temperature=1.0."""
-        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("nemotron", "49B", "Q4_K_M")):
+        with patch(
+            "urllib.request.urlopen", return_value=_make_ollama_resp("nemotron", "49B", "Q4_K_M")
+        ):
             profile = adapter.detect_model("nemotron-custom:49b")
 
         assert profile is not None
@@ -287,7 +295,10 @@ class TestDetectModel:
     def test_detect_model_ollama_unreachable_returns_none(self, adapter):
         """When Ollama is unreachable detect_model returns None."""
         import urllib.error
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")):
+
+        with patch(
+            "urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")
+        ):
             profile = adapter.detect_model("mystery-model:latest")
 
         assert profile is None
@@ -308,22 +319,24 @@ class TestDetectModel:
 
     def test_resolve_profile_falls_back_to_detect(self, adapter):
         """Unknown model triggers detect_model via resolve_profile."""
-        with patch("urllib.request.urlopen", return_value=_make_ollama_resp("llama", "3B", "Q4_0")):
+        with patch(
+            "urllib.request.urlopen", return_value=_make_ollama_resp("llama", "3B", "Q4_0")
+        ):
             profile = adapter.resolve_profile("orca-mini:3b")
 
         assert profile.family == "ollama-llama"
 
     def test_resolve_profile_caches_detected(self, adapter):
-        """A detected profile is cached — second call skips HTTP."""
+        """A detected profile is cached - second call skips HTTP."""
         with patch("urllib.request.urlopen", return_value=_make_ollama_resp("llama")) as mock_open:
             adapter.resolve_profile("my-new-model:latest")
             adapter.resolve_profile("my-new-model:latest")
 
-        # urlopen called exactly once — second lookup hit the cache
+        # urlopen called exactly once - second lookup hit the cache
         assert mock_open.call_count == 1
 
     def test_resolve_static_profile_not_overridden(self, adapter):
-        """Known model uses static profile — detect_model is never called."""
+        """Known model uses static profile - detect_model is never called."""
         with patch.object(adapter, "detect_model") as mock_detect:
             profile = adapter.resolve_profile("claude-opus-4-5")
 

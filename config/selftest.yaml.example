@@ -1,0 +1,30 @@
+# Post-resume self-test configuration (example).
+#
+# Copy to ~/.skcapstone/config/selftest.yaml (or a per-agent home) and edit.
+# Safe defaults apply when this file is absent; malformed config falls back to
+# defaults. See docs/POST_RESUME_SELFTEST.md.
+
+# Doctor categories whose failure fails the overall self-test (exit 1).
+critical_categories: [identity, memory, transport]
+
+# Doctor categories surfaced as warnings (non-fatal, exit 0).
+warn_categories: [sync, agent, packages]
+
+# Toggle individual resume-specific checks.
+check_daemon: true
+check_board: true
+check_clock: true
+check_network: true
+
+# Clock-skew thresholds (seconds). Skew is the wall-vs-monotonic drift observed
+# right after resume. fail_seconds > 0 makes a large skew a failure, but it is
+# only fatal if you also add "clock" to critical_categories above.
+clock_skew_warn_seconds: 120
+clock_skew_fail_seconds: 0
+
+# Informational hint passed to the network probe (e.g. a tailscale peer name).
+network_host: ""
+
+# Opt-in. When true, a critical failure emits an alert via the existing
+# notification transport. --alert / --no-alert on the CLI overrides this.
+alert_enabled: false

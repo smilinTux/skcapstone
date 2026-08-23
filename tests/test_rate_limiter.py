@@ -9,7 +9,6 @@ import pytest
 
 from skcapstone.rate_limiter import RateLimiter, TokenBucket
 
-
 # ---------------------------------------------------------------------------
 # TokenBucket unit tests
 # ---------------------------------------------------------------------------
@@ -31,10 +30,10 @@ class TestTokenBucket:
     def test_tokens_refill_over_time(self):
         # Start with an empty-ish bucket (capacity=1, drain it, wait for refill)
         bucket = TokenBucket(rate=100.0, capacity=1)
-        assert bucket.consume() is True   # drain
+        assert bucket.consume() is True  # drain
         assert bucket.consume() is False  # empty
-        time.sleep(0.02)                  # wait 20 ms → ~2 tokens at 100/s
-        assert bucket.consume() is True   # should be refilled
+        time.sleep(0.02)  # wait 20 ms → ~2 tokens at 100/s
+        assert bucket.consume() is True  # should be refilled
 
     def test_invalid_rate_raises(self):
         with pytest.raises(ValueError):
@@ -77,15 +76,15 @@ class TestRateLimiter:
     def test_reset_restores_bucket(self):
         limiter = RateLimiter(requests_per_minute=1)
         ip = "10.0.0.5"
-        limiter.is_allowed(ip)           # drain the single token
+        limiter.is_allowed(ip)  # drain the single token
         assert limiter.is_allowed(ip) is False
-        limiter.reset(ip)                # discard bucket
+        limiter.reset(ip)  # discard bucket
         assert limiter.is_allowed(ip) is True  # fresh bucket
 
     def test_clear_removes_all_buckets(self):
         limiter = RateLimiter(requests_per_minute=1)
         for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3"):
-            limiter.is_allowed(ip)       # drain each
+            limiter.is_allowed(ip)  # drain each
         limiter.clear()
         for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3"):
             assert limiter.is_allowed(ip) is True

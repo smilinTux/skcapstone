@@ -1,16 +1,16 @@
 """
-ConnectorBackend — abstract interface for platform connectors.
+ConnectorBackend - abstract interface for platform connectors.
 
 A connector is a viewport into the sovereign agent from an external tool
 (terminal, VS Code, Cursor, Windsurf, etc.).  The agent is the truth;
 the platform is just a window.
 
 Every connector must implement five lifecycle methods:
-  connect()      — establish the channel
-  disconnect()   — clean teardown
-  send()         — push a message to the platform
-  receive()      — pull the next incoming message (non-blocking)
-  health_check() — return current ConnectorStatus
+  connect()      - establish the channel
+  disconnect()   - clean teardown
+  send()         - push a message to the platform
+  receive()      - pull the next incoming message (non-blocking)
+  health_check() - return current ConnectorStatus
 
 Wire format (Unix domain socket connectors)
 -------------------------------------------
@@ -36,8 +36,8 @@ The IDE extension connects as a client.  Only one client at a time is
 supported; a new connection replaces the previous one.
 
 Constants exported for use by subclasses:
-  FRAME_FORMAT      — struct format string (">I")
-  FRAME_HEADER_SIZE — byte size of the length prefix (4)
+  FRAME_FORMAT      - struct format string (">I")
+  FRAME_HEADER_SIZE - byte size of the length prefix (4)
 """
 
 from __future__ import annotations
@@ -408,7 +408,7 @@ class UnixSocketConnector(ConnectorBackend):
                 (length,) = struct.unpack(FRAME_FORMAT, header_data)
                 if length == 0 or length > _MAX_FRAME_BYTES:
                     _log.warning(
-                        "%s: invalid frame length %d — dropping connection",
+                        "%s: invalid frame length %d - dropping connection",
                         self.__class__.__name__,
                         length,
                     )

@@ -10,10 +10,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture
@@ -105,7 +104,7 @@ class TestSyncthingBackend:
 
         nonexistent = tmp_path / "missing.tar.gz"
         manifest = tmp_path / "missing.manifest.json"
-        # Don't create them — shutil.copy2 will raise OSError
+        # Don't create them - shutil.copy2 will raise OSError
         result = backend.push(nonexistent, manifest)
         assert result is False
 
@@ -193,7 +192,9 @@ class TestSyncthingBackend:
 
 
 class TestGitBackend:
-    def _make_github_backend(self, agent_home: Path, repo_url: str = "https://github.com/org/repo"):
+    def _make_github_backend(
+        self, agent_home: Path, repo_url: str = "https://github.com/org/repo"
+    ):
         from skcapstone.sync.backends import GitBackend
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
 
@@ -291,8 +292,10 @@ class TestGitBackend:
         )
         backend = GitBackend(config, agent_home)
         mock_result = MagicMock(returncode=0)
-        with patch.dict(os.environ, {"MY_GIT_TOKEN": "secret-token"}), \
-             patch("subprocess.run", return_value=mock_result) as mock_run:
+        with (
+            patch.dict(os.environ, {"MY_GIT_TOKEN": "secret-token"}),
+            patch("subprocess.run", return_value=mock_result) as mock_run,
+        ):
             backend._ensure_repo()
 
         env_passed = mock_run.call_args[1].get("env", {})
@@ -429,9 +432,7 @@ class TestLocalBackend:
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
 
         nonexistent = tmp_path / "does-not-exist"
-        config = SyncBackendConfig(
-            backend_type=SyncBackendType.LOCAL, local_path=nonexistent
-        )
+        config = SyncBackendConfig(backend_type=SyncBackendType.LOCAL, local_path=nonexistent)
         # Constructor creates the dir, so we need to remove it after
         backend = LocalBackend(config, agent_home)
         nonexistent.rmdir()
@@ -494,9 +495,7 @@ class TestLocalBackend:
         from skcapstone.sync.backends import LocalBackend
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
 
-        config = SyncBackendConfig(
-            backend_type=SyncBackendType.LOCAL, local_path=None
-        )
+        config = SyncBackendConfig(backend_type=SyncBackendType.LOCAL, local_path=None)
         backend = LocalBackend(config, agent_home)
         expected = agent_home / "sync" / "local-backup"
         assert backend.target == expected

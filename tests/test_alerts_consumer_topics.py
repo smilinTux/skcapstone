@@ -1,4 +1,4 @@
-"""T3 — alerts command surfaces consumer <service>.<severity> topics."""
+"""T3 - alerts command surfaces consumer <service>.<severity> topics."""
 
 from __future__ import annotations
 

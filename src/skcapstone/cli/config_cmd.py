@@ -16,11 +16,13 @@ def register_config_commands(main: click.Group) -> None:
 
     @main.group()
     def config():
-        """Config management — validate and inspect agent configuration."""
+        """Config management - validate and inspect agent configuration."""
 
     @config.command("show")
     @click.option(
-        "--home", default=AGENT_HOME, type=click.Path(),
+        "--home",
+        default=AGENT_HOME,
+        type=click.Path(),
         help="Agent home directory.",
     )
     @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
@@ -72,12 +74,15 @@ def register_config_commands(main: click.Group) -> None:
 
     @config.command("validate")
     @click.option(
-        "--home", default=AGENT_HOME, type=click.Path(),
+        "--home",
+        default=AGENT_HOME,
+        type=click.Path(),
         help="Agent home directory.",
     )
     @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
     @click.option(
-        "--strict", is_flag=True,
+        "--strict",
+        is_flag=True,
         help="Treat warnings as errors (non-zero exit when warnings present).",
     )
     def validate(home: str, json_out: bool, strict: bool) -> None:
@@ -144,17 +149,20 @@ def _json_output(report: object, strict: bool) -> None:  # type: ignore[type-arg
 
 def _rich_output(report: object, strict: bool) -> None:  # type: ignore[type-arg]
     """Emit formatted Rich output to the terminal."""
-    from ..config_validator import ConfigValidationReport
     from rich.panel import Panel
+
+    from ..config_validator import ConfigValidationReport
 
     r: ConfigValidationReport = report  # type: ignore[assignment]
 
     console.print()
-    console.print(Panel(
-        "[bold]Config Validation[/]",
-        border_style="cyan",
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            "[bold]Config Validation[/]",
+            border_style="cyan",
+            padding=(0, 2),
+        )
+    )
     console.print()
 
     for fr in r.results:
@@ -192,17 +200,12 @@ def _rich_output(report: object, strict: bool) -> None:  # type: ignore[type-arg
         console.print("  [bold green]✓ All configs valid.[/]")
     elif errors == 0:
         detail = f"{warnings} warning{'s' if warnings != 1 else ''}"
-        console.print(
-            f"  [bold yellow]~ {detail}.[/]  Configs are functional."
-        )
+        console.print(f"  [bold yellow]~ {detail}.[/]  Configs are functional.")
     else:
         err_detail = f"{errors} error{'s' if errors != 1 else ''}"
-        warn_detail = (
-            f", {warnings} warning{'s' if warnings != 1 else ''}"
-            if warnings else ""
-        )
+        warn_detail = f", {warnings} warning{'s' if warnings != 1 else ''}" if warnings else ""
         console.print(
-            f"  [bold red]✗ {err_detail}{warn_detail}[/]  — fix before running the agent."
+            f"  [bold red]✗ {err_detail}{warn_detail}[/]  - fix before running the agent."
         )
 
     console.print()

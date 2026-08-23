@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
@@ -15,12 +14,15 @@ def register_mood_commands(main: click.Group) -> None:
 
     @main.command("mood")
     @click.option(
-        "--home", default=AGENT_HOME, type=click.Path(),
+        "--home",
+        default=AGENT_HOME,
+        type=click.Path(),
         help="Agent home directory.",
     )
     @click.option("--json-out", is_flag=True, help="Output raw JSON.")
     @click.option(
-        "--update", is_flag=True,
+        "--update",
+        is_flag=True,
         help="Refresh from persisted daily metrics before displaying.",
     )
     def mood_cmd(home: str, json_out: bool, update: bool) -> None:
@@ -29,9 +31,9 @@ def register_mood_commands(main: click.Group) -> None:
         Mood is derived from three interaction pattern factors:
 
         \b
-          Success   — response success rate (happy / frustrated)
-          Social    — message frequency     (social / isolated)
-          Stress    — error rate            (calm / stressed)
+          Success   - response success rate (happy / frustrated)
+          Social    - message frequency     (social / isolated)
+          Stress    - error rate            (calm / stressed)
         """
         from ..mood import MoodTracker
 
@@ -41,6 +43,7 @@ def register_mood_commands(main: click.Group) -> None:
         if update:
             try:
                 from ..metrics import ConsciousnessMetrics
+
                 metrics = ConsciousnessMetrics(home=home_path, persist_interval=0)
                 tracker.update_from_metrics(metrics)
             except Exception as exc:

@@ -23,7 +23,6 @@ from .models import (
     SyncBackendConfig,
     SyncBackendType,
     SyncConfig,
-    SyncDirection,
     SyncState,
 )
 from .vault import Vault
@@ -44,9 +43,7 @@ class SyncEngine:
         Args:
             agent_home: Path to ~/.skcapstone/. Defaults to ~/.skcapstone.
         """
-        self.agent_home = (
-            agent_home or Path("~/.skcapstone")
-        ).expanduser()
+        self.agent_home = (agent_home or Path("~/.skcapstone")).expanduser()
         self.sync_dir = self.agent_home / "sync"
         self.sync_dir.mkdir(parents=True, exist_ok=True)
 
@@ -62,9 +59,7 @@ class SyncEngine:
                 data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
                 return SyncConfig(**data)
             except (yaml.YAMLError, ValueError) as exc:
-                logger.warning(
-                    "Failed to load sync config: %s", exc
-                )
+                logger.warning("Failed to load sync config: %s", exc)
         return SyncConfig()
 
     def _load_state(self) -> SyncState:
@@ -75,25 +70,19 @@ class SyncEngine:
                 data = json.loads(state_file.read_text(encoding="utf-8"))
                 return SyncState(**data)
             except (json.JSONDecodeError, ValueError) as exc:
-                logger.warning(
-                    "Failed to load sync state: %s", exc
-                )
+                logger.warning("Failed to load sync state: %s", exc)
         return SyncState()
 
     def _save_state(self) -> None:
         """Persist sync state to disk."""
         state_file = self.sync_dir / "state.json"
-        state_file.write_text(
-            self.state.model_dump_json(indent=2)
-        , encoding="utf-8")
+        state_file.write_text(self.state.model_dump_json(indent=2), encoding="utf-8")
 
     def save_config(self) -> None:
         """Persist sync configuration to disk."""
         config_file = self.sync_dir / "config.yaml"
         data = self.config.model_dump(mode="json")
-        config_file.write_text(
-            yaml.dump(data, default_flow_style=False)
-        , encoding="utf-8")
+        config_file.write_text(yaml.dump(data, default_flow_style=False), encoding="utf-8")
 
     def add_backend(self, config: SyncBackendConfig) -> None:
         """Register a new sync backend.
@@ -101,16 +90,11 @@ class SyncEngine:
         Args:
             config: Backend configuration to add.
         """
-        existing = [
-            b for b in self.config.backends
-            if b.backend_type != config.backend_type
-        ]
+        existing = [b for b in self.config.backends if b.backend_type != config.backend_type]
         existing.append(config)
         self.config.backends = existing
         self.save_config()
-        logger.info(
-            "Added sync backend: %s", config.backend_type.value
-        )
+        logger.info("Added sync backend: %s", config.backend_type.value)
 
     def push(
         self,
@@ -139,18 +123,13 @@ class SyncEngine:
             base = vault_path.name
             if base.endswith(".gpg"):
                 base = base[:-4]
-            manifest_path = vault_path.parent / (
-                base + ".manifest.json"
-            )
+            manifest_path = vault_path.parent / (base + ".manifest.json")
 
         results = {}
         for bc in self.config.backends:
             if not bc.enabled:
                 continue
-            if (
-                backend_filter
-                and bc.backend_type.value != backend_filter
-            ):
+            if backend_filter and bc.backend_type.value != backend_filter:
                 continue
 
             backend = create_backend(bc, self.agent_home)
@@ -199,10 +178,7 @@ class SyncEngine:
         for bc in self.config.backends:
             if not bc.enabled:
                 continue
-            if (
-                backend_filter
-                and bc.backend_type.value != backend_filter
-            ):
+            if backend_filter and bc.backend_type.value != backend_filter:
                 continue
 
             backend = create_backend(bc, self.agent_home)
@@ -255,11 +231,13 @@ class SyncEngine:
         backends_status = []
         for bc in self.config.backends:
             backend = create_backend(bc, self.agent_home)
-            backends_status.append({
-                "type": bc.backend_type.value,
-                "enabled": bc.enabled,
-                "available": backend.available(),
-            })
+            backends_status.append(
+                {
+                    "type": bc.backend_type.value,
+                    "enabled": bc.enabled,
+                    "available": backend.available(),
+                }
+            )
 
         return {
             "state": self.state.model_dump(mode="json"),
@@ -273,6 +251,7 @@ class SyncEngine:
         """Write to the security audit log."""
         try:
             from ..pillars.security import audit_event
+
             audit_event(self.agent_home, event_type, detail)
         except ImportError:
             logger.debug("Security audit module not available, skipping audit event")

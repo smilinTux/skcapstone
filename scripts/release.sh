@@ -16,6 +16,41 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUMP="${1:-patch}"
 
+# ── Branch guard ────────────────────────────────────────────────────────────
+# This script amends a commit, cuts a TAG, and pushes both. Run from a feature
+# branch it tags unmerged code, and the publish workflow ships that tag to PyPI
+# and npm. That has happened: 5 of the last 6 skchat tags were cut off unmerged
+# branches, including a release published from a branch still in review.
+#
+# The shared checkouts are also production and get parked on feature branches,
+# so "am I on main?" is not a safe assumption. Refuse instead of assuming.
+#
+# SKIP_BRANCH_GUARD=1 escapes it, for the rare deliberate case.
+if [ "${SKIP_BRANCH_GUARD:-}" != "1" ]; then
+    _branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+    if [ "$_branch" != "main" ] && [ "$_branch" != "master" ]; then
+        cat >&2 <<EOF
+release: REFUSING to cut a release from branch '$_branch'.
+
+This tags and pushes. From a feature branch that publishes UNMERGED code to
+PyPI and npm, and the tag points at a commit that is not on main.
+
+Merge first, then release from main:
+  git checkout main && git pull
+  ./scripts/release.sh ${BUMP}
+
+Override (rarely right): SKIP_BRANCH_GUARD=1
+EOF
+        exit 1
+    fi
+    if [ -n "$(git -C "$REPO_ROOT" status --porcelain | grep -v '^??')" ]; then
+        echo "release: REFUSING, uncommitted tracked changes would be swept into the amended release commit." >&2
+        git -C "$REPO_ROOT" status --porcelain | grep -v '^??' >&2
+        exit 1
+    fi
+fi
+
+
 # ── use existing bump_version.py for the actual bump ─────────────────────────
 
 BUMP_SCRIPT="$REPO_ROOT/scripts/bump_version.py"

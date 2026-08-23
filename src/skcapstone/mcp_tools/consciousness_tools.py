@@ -1,10 +1,10 @@
-"""Consciousness loop MCP tools — status and testing."""
+"""Consciousness loop MCP tools - status and testing."""
 
 from __future__ import annotations
 
 from mcp.types import TextContent, Tool
 
-from ._helpers import _home, _json_response, _text_response, _error_response
+from ._helpers import _error_response, _home, _json_response
 
 TOOLS: list[Tool] = [
     Tool(
@@ -38,14 +38,33 @@ TOOLS: list[Tool] = [
             "required": ["message"],
         },
     ),
+    Tool(
+        name="context_stats",
+        description=(
+            "Show per-sender context-window token usage for the consciousness "
+            "loop: token count, message count, percent of the model context "
+            "budget used, the compression threshold (80%), and when each "
+            "sender's history was last compressed. Optionally filter to one peer."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "peer": {
+                    "type": "string",
+                    "description": "Optional peer name to filter to a single sender.",
+                },
+            },
+            "required": [],
+        },
+    ),
 ]
 
 
 async def _handle_consciousness_status(arguments: dict) -> list[TextContent]:
     """Handle consciousness_status tool call."""
     try:
-        import urllib.request
         import json
+        import urllib.request
 
         url = "http://127.0.0.1:7777/consciousness"
         with urllib.request.urlopen(url, timeout=3) as resp:
@@ -55,18 +74,20 @@ async def _handle_consciousness_status(arguments: dict) -> list[TextContent]:
         # Fallback: try to load directly
         try:
             from ..consciousness_config import load_consciousness_config
-            from ..consciousness_loop import ConsciousnessConfig, LLMBridge
+            from ..consciousness_loop import LLMBridge
 
             home = _home()
             config = load_consciousness_config(home)
             bridge = LLMBridge(config)
 
-            return _json_response({
-                "enabled": config.enabled,
-                "backends": bridge.health_check(),
-                "daemon_reachable": False,
-                "note": "Loaded directly (daemon not running)",
-            })
+            return _json_response(
+                {
+                    "enabled": config.enabled,
+                    "backends": bridge.health_check(),
+                    "daemon_reachable": False,
+                    "note": "Loaded directly (daemon not running)",
+                }
+            )
         except Exception as exc:
             return _error_response(f"Cannot get consciousness status: {exc}")
 
@@ -94,21 +115,53 @@ async def _handle_consciousness_test(arguments: dict) -> list[TextContent]:
         system_prompt = builder.build()
         response = bridge.generate(system_prompt, message, signal)
 
-        return _json_response({
-            "message": message,
-            "signal": {
-                "tags": signal.tags,
-                "estimated_tokens": signal.estimated_tokens,
-            },
-            "system_prompt_length": len(system_prompt),
-            "response": response,
-            "response_length": len(response),
-        })
+        return _json_response(
+            {
+                "message": message,
+                "signal": {
+                    "tags": signal.tags,
+                    "estimated_tokens": signal.estimated_tokens,
+                },
+                "system_prompt_length": len(system_prompt),
+                "response": response,
+                "response_length": len(response),
+            }
+        )
     except Exception as exc:
         return _error_response(f"Consciousness test failed: {exc}")
+
+
+async def _handle_context_stats(arguments: dict) -> list[TextContent]:
+    """Handle context_stats tool call - per-sender context-window usage."""
+    try:
+        from ..consciousness_config import load_consciousness_config
+        from ..context_window import ContextWindowManager
+        from ..conversation_store import ConversationStore
+
+        home = _home()
+        config = load_consciousness_config(home)
+        store = ConversationStore(home)
+        mgr = ContextWindowManager(home, config.max_context_tokens)
+        stats = mgr.get_all_stats(store)
+
+        peer = arguments.get("peer")
+        if peer:
+            stats = {peer: stats.get(peer, {})}
+
+        return _json_response(
+            {
+                "max_context_tokens": config.max_context_tokens,
+                "threshold_pct": 80,
+                "senders": stats,
+                "sender_count": len(stats),
+            }
+        )
+    except Exception as exc:
+        return _error_response(f"Cannot get context stats: {exc}")
 
 
 HANDLERS = {
     "consciousness_status": _handle_consciousness_status,
     "consciousness_test": _handle_consciousness_test,
+    "context_stats": _handle_context_stats,
 }

@@ -1,5 +1,5 @@
 """
-Trustee Operations — autonomous agent team management for AI trustees.
+Trustee Operations: autonomous agent team management for AI trustees.
 
 Provides restart, scale, rotate, health-report, and log retrieval
 operations on deployed teams. All mutations are written to an audit
@@ -7,7 +7,7 @@ trail so every trustee action is transparent and accountable.
 
 Designed for AI trustees (Lumina, Opus) and human trustees (Chef)
 operating under the Trustee Oath:
-  "I escalate when uncertain — never guess with sovereignty."
+  "I escalate when uncertain. Never guess with sovereignty."
 
 Private helpers (audit, snapshot, log utilities) live in
 _trustee_helpers.py to keep this module under 500 lines.
@@ -27,7 +27,7 @@ from ._trustee_helpers import (
     stub_spec,
     write_audit,
 )
-from .team_engine import AgentStatus, DeployedAgent, TeamDeployment, TeamEngine
+from .team_engine import AgentStatus, DeployedAgent, TeamEngine
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +111,7 @@ class TrusteeOps:
 
         if agent_name:
             if agent_name not in deployment.agents:
-                raise ValueError(
-                    f"Agent '{agent_name}' not in deployment '{deployment_id}'."
-                )
+                raise ValueError(f"Agent '{agent_name}' not in deployment '{deployment_id}'.")
             targets = {agent_name: deployment.agents[agent_name]}
         else:
             targets = dict(deployment.agents)
@@ -140,7 +138,9 @@ class TrusteeOps:
 
         refresh_deployment_status(deployment)
         self._engine._save_deployment(deployment)
-        self._audit("restart_agent", deployment_id, agent_name=agent_name or "ALL", results=results)
+        self._audit(
+            "restart_agent", deployment_id, agent_name=agent_name or "ALL", results=results
+        )
         return results
 
     # ------------------------------------------------------------------
@@ -228,9 +228,12 @@ class TrusteeOps:
         refresh_deployment_status(deployment)
         self._engine._save_deployment(deployment)
         self._audit(
-            "scale_agent", deployment_id,
-            agent_spec_key=agent_spec_key, desired_count=count,
-            added=added, removed=removed,
+            "scale_agent",
+            deployment_id,
+            agent_spec_key=agent_spec_key,
+            desired_count=count,
+            added=added,
+            removed=removed,
         )
         return {"added": added, "removed": removed, "current_count": count}
 
@@ -312,6 +315,49 @@ class TrusteeOps:
     # Health report
     # ------------------------------------------------------------------
 
+    def _live_agent_health(
+        self,
+        name: str,
+        agent: DeployedAgent,
+    ) -> Dict[str, Any]:
+        """Run a live health check on a single agent and return its row.
+
+        Calls ``provider.health_check`` when a provider is configured,
+        updating the agent's cached status and heartbeat in place; without a
+        provider it falls back to the last-known status from disk. Shared by
+        :meth:`health_report` and :meth:`agent_health` so both surfaces
+        evaluate health identically.
+
+        Args:
+            name: The agent instance name.
+            agent: The deployed agent record to evaluate (mutated in place).
+
+        Returns:
+            Dict with name, status, host, last_heartbeat, error, healthy.
+        """
+        provider = self._engine._provider
+        live_status = agent.status
+
+        if provider:
+            try:
+                live_status = provider.health_check(name, self._provision_result(agent))
+                agent.status = live_status
+                if live_status == AgentStatus.RUNNING:
+                    agent.last_heartbeat = datetime.now(timezone.utc).isoformat()
+            except Exception as exc:
+                live_status = AgentStatus.DEGRADED
+                agent.status = live_status
+                agent.error = str(exc)
+
+        return {
+            "name": name,
+            "status": live_status.value,
+            "host": agent.host or "\u2014",
+            "last_heartbeat": agent.last_heartbeat or "\u2014",
+            "error": agent.error or "",
+            "healthy": live_status == AgentStatus.RUNNING,
+        }
+
     def health_report(self, deployment_id: str) -> List[Dict[str, Any]]:
         """Run health checks on all agents and return a status table.
 
@@ -332,41 +378,99 @@ class TrusteeOps:
         if not deployment:
             raise ValueError(f"Deployment '{deployment_id}' not found.")
 
-        provider = self._engine._provider
-        report: List[Dict[str, Any]] = []
-
-        for name, agent in deployment.agents.items():
-            provision = self._provision_result(agent)
-            live_status = agent.status
-
-            if provider:
-                try:
-                    live_status = provider.health_check(name, provision)
-                    agent.status = live_status
-                    if live_status == AgentStatus.RUNNING:
-                        agent.last_heartbeat = datetime.now(timezone.utc).isoformat()
-                except Exception as exc:
-                    live_status = AgentStatus.DEGRADED
-                    agent.status = live_status
-                    agent.error = str(exc)
-
-            report.append({
-                "name": name,
-                "status": live_status.value,
-                "host": agent.host or "—",
-                "last_heartbeat": agent.last_heartbeat or "—",
-                "error": agent.error or "",
-                "healthy": live_status == AgentStatus.RUNNING,
-            })
+        report: List[Dict[str, Any]] = [
+            self._live_agent_health(name, agent) for name, agent in deployment.agents.items()
+        ]
 
         refresh_deployment_status(deployment)
         self._engine._save_deployment(deployment)
         self._audit(
-            "health_report", deployment_id,
+            "health_report",
+            deployment_id,
             agent_count=len(report),
             healthy=sum(1 for r in report if r["healthy"]),
         )
         return report
+
+    # ------------------------------------------------------------------
+    # Focused single-agent (role) status surface
+    # ------------------------------------------------------------------
+
+    def agent_health(
+        self,
+        query: str,
+        deployment_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Report the live health of one agent, resolved by name or role.
+
+        Locates a deployed agent whose instance ``name`` or
+        ``agent_spec_key`` matches ``query`` (case-insensitive) and runs a
+        live health check on it. Unlike :meth:`health_report`, this surface
+        is role-focused: it answers "how is the Sentinel doing?" across every
+        deployment (or within a single ``deployment_id``) and, crucially,
+        reports ``present=False`` with status ``"absent"`` when no matching
+        agent is deployed anywhere. An absent Sentinel is the signal that the
+        security role guarding a team is not running and its posture is
+        unmonitored.
+
+        Args:
+            query: Agent instance name or spec key (e.g. ``"sentinel"``).
+            deployment_id: Restrict the search to a single deployment; when
+                omitted, all deployments are searched and the first match
+                wins.
+
+        Returns:
+            A status dict with keys: query, present, healthy, status,
+            deployment_id, name, spec_key, host, last_heartbeat, error.
+            When absent, ``present`` and ``healthy`` are ``False`` and
+            ``status`` is ``"absent"``.
+
+        Raises:
+            ValueError: If ``deployment_id`` is given but does not exist.
+        """
+        q = query.strip().lower()
+
+        if deployment_id:
+            dep = self._engine.get_deployment(deployment_id)
+            if not dep:
+                raise ValueError(f"Deployment '{deployment_id}' not found.")
+            deployments = [dep]
+        else:
+            deployments = self._engine.list_deployments()
+
+        for dep in deployments:
+            for name, agent in dep.agents.items():
+                if q in (name.lower(), agent.agent_spec_key.lower()):
+                    row = self._live_agent_health(name, agent)
+                    refresh_deployment_status(dep)
+                    self._engine._save_deployment(dep)
+                    self._audit(
+                        "agent_health",
+                        dep.deployment_id,
+                        agent_name=name,
+                        query=query,
+                        healthy=row["healthy"],
+                    )
+                    return {
+                        "query": query,
+                        "present": True,
+                        "deployment_id": dep.deployment_id,
+                        "spec_key": agent.agent_spec_key,
+                        **row,
+                    }
+
+        return {
+            "query": query,
+            "present": False,
+            "healthy": False,
+            "status": "absent",
+            "deployment_id": None,
+            "name": None,
+            "spec_key": None,
+            "host": None,
+            "last_heartbeat": None,
+            "error": "",
+        }
 
     # ------------------------------------------------------------------
     # Logs
@@ -401,9 +505,7 @@ class TrusteeOps:
 
         if agent_name:
             if agent_name not in deployment.agents:
-                raise ValueError(
-                    f"Agent '{agent_name}' not in deployment '{deployment_id}'."
-                )
+                raise ValueError(f"Agent '{agent_name}' not in deployment '{deployment_id}'.")
             names = [agent_name]
         else:
             names = list(deployment.agents.keys())
@@ -417,9 +519,7 @@ class TrusteeOps:
                 all_lines = log_file.read_text(encoding="utf-8").splitlines()
                 logs[name] = all_lines[-tail:]
             else:
-                logs[name] = audit_lines_for_agent(
-                    self._home, deployment_id, name, tail=tail
-                )
+                logs[name] = audit_lines_for_agent(self._home, deployment_id, name, tail=tail)
 
         self._audit("get_logs", deployment_id, agent_name=agent_name or "ALL", tail=tail)
         return logs

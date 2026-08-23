@@ -1,10 +1,10 @@
-"""Alerts command — subscribe to critical pubsub topics and stream live alerts."""
+"""Alerts command - subscribe to critical pubsub topics and stream live alerts."""
 
 from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -12,8 +12,8 @@ import click
 from rich.panel import Panel
 from rich.text import Text
 
-from ._common import AGENT_HOME, console
 from .. import SKCAPSTONE_AGENT, SKCAPSTONE_ROOT
+from ._common import AGENT_HOME, console
 
 # Import NotificationManager at module level so it can be patched in tests.
 try:
@@ -41,19 +41,19 @@ DEFAULT_TOPICS: tuple[str, ...] = (
 
 #: Rich markup styles per exact topic name.
 _TOPIC_STYLE: dict[str, str] = {
-    "agent.critical":     "bold red",
-    "coord.task_failed":  "red",
+    "agent.critical": "bold red",
+    "coord.task_failed": "red",
     "consciousness.error": "bold magenta",
-    "pillar.degraded":    "yellow",
+    "pillar.degraded": "yellow",
 }
 
-#: Rich markup styles by severity suffix — used for ``<service>.<severity>``
+#: Rich markup styles by severity suffix - used for ``<service>.<severity>``
 #: consumer topics with no exact match in ``_TOPIC_STYLE``.
 _SEVERITY_STYLE: dict[str, str] = {
     "critical": "bold red",
-    "error":    "red",
-    "warn":     "yellow",
-    "info":     "cyan",
+    "error": "red",
+    "warn": "yellow",
+    "info": "cyan",
 }
 
 #: Default polling interval in seconds.
@@ -63,6 +63,7 @@ DEFAULT_INTERVAL: float = 1.0
 # ---------------------------------------------------------------------------
 # Helpers (importable for unit-testing)
 # ---------------------------------------------------------------------------
+
 
 def _style_for_topic(topic: str) -> str:
     """Return the Rich markup style for a given topic name.
@@ -144,33 +145,43 @@ def _resolve_home(agent: str | None, home: str) -> Path:
 # Command registration
 # ---------------------------------------------------------------------------
 
+
 def register_alerts_commands(main: click.Group) -> None:
     """Register the top-level ``skcapstone alerts`` command."""
 
     @main.command("alerts")
     @click.option(
-        "--home", default=AGENT_HOME, type=click.Path(),
+        "--home",
+        default=AGENT_HOME,
+        type=click.Path(),
         help="Agent home directory.",
     )
     @click.option(
-        "--agent", default=None,
+        "--agent",
+        default=None,
         help="Named agent whose pubsub to monitor (e.g. opus, jarvis).",
     )
     @click.option(
-        "--notify", is_flag=True,
+        "--notify",
+        is_flag=True,
         help="Fire a desktop notification for each alert received.",
     )
     @click.option(
-        "--interval", default=DEFAULT_INTERVAL, show_default=True,
+        "--interval",
+        default=DEFAULT_INTERVAL,
+        show_default=True,
         type=float,
         help="Polling interval in seconds.",
     )
     @click.option(
-        "--once", is_flag=True,
+        "--once",
+        is_flag=True,
         help="Poll once and exit (instead of continuous streaming).",
     )
     @click.option(
-        "--topic", "extra_topics", multiple=True,
+        "--topic",
+        "extra_topics",
+        multiple=True,
         help="Additional topic to subscribe to (repeatable).",
     )
     def alerts_command(
@@ -264,6 +275,4 @@ def register_alerts_commands(main: click.Group) -> None:
                 time.sleep(interval)
 
         except KeyboardInterrupt:
-            console.print(
-                f"\n[dim]Stopped. {total} alert(s) received.[/]"
-            )
+            console.print(f"\n[dim]Stopped. {total} alert(s) received.[/]")

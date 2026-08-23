@@ -31,7 +31,7 @@ THUMB_NAMES = [
 ]
 
 FBI_VAULT_BASE = "https://vault.fbi.gov"
-# FBI Vault organizes the 62-HQ-83894 UFO file as "Unidentified Flying Objects (UFO)" — Part X of Y
+# FBI Vault organizes the 62-HQ-83894 UFO file as "Unidentified Flying Objects (UFO)" - Part X of Y
 # Known canonical layout has Parts 1-16. Tweet referenced Part 15.
 FBI_PART_PAGE = "https://vault.fbi.gov/UFO/UFO%20Part%2015%20of%2016/view"
 FBI_PART_PDF_GUESS = "https://vault.fbi.gov/UFO/UFO%20Part%2015%20of%2016/at_download/file"

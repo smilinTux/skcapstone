@@ -1,4 +1,4 @@
-"""Skills Registry Client — bridge between skcapstone and the remote skills-registry.
+"""Skills Registry Client - bridge between skcapstone and the remote skills-registry.
 
 Wraps the skskills RemoteRegistry client to provide a clean interface for
 skcapstone MCP tools and CLI commands to interact with the remote
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -44,9 +43,7 @@ class RegistryClient:
     def __init__(self, registry_url: Optional[str] = None) -> None:
         from skskills.remote import RemoteRegistry
 
-        self._url = registry_url or os.environ.get(
-            "SKSKILLS_REGISTRY_URL", DEFAULT_REGISTRY_URL
-        )
+        self._url = registry_url or os.environ.get("SKSKILLS_REGISTRY_URL", DEFAULT_REGISTRY_URL)
         self._remote = RemoteRegistry(registry_url=self._url)
 
     @property
@@ -148,5 +145,5 @@ def get_registry_client(registry_url: Optional[str] = None) -> Optional[Registry
     try:
         return RegistryClient(registry_url=registry_url)
     except ImportError:
-        logger.debug("skskills not installed — remote registry unavailable")
+        logger.debug("skskills not installed - remote registry unavailable")
         return None

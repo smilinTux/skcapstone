@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import signal
 from pathlib import Path
 from typing import Any, Dict
@@ -32,7 +31,6 @@ from skcapstone.crush_shim import (
     write_outbox,
     write_state,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -91,13 +89,18 @@ class TestArgParsing:
     """Tests for crush CLI argument parsing."""
 
     def test_parse_run_with_all_flags(self, tmp_path):
-        args = parse_args([
-            "run",
-            "--session", str(tmp_path / "session.json"),
-            "--config", str(tmp_path / "crush.json"),
-            "--headless",
-            "--state-file", str(tmp_path / "state.json"),
-        ])
+        args = parse_args(
+            [
+                "run",
+                "--session",
+                str(tmp_path / "session.json"),
+                "--config",
+                str(tmp_path / "crush.json"),
+                "--headless",
+                "--state-file",
+                str(tmp_path / "state.json"),
+            ]
+        )
         assert args.command == "run"
         assert args.session == str(tmp_path / "session.json")
         assert args.config == str(tmp_path / "crush.json")
@@ -105,37 +108,54 @@ class TestArgParsing:
         assert args.state_file == str(tmp_path / "state.json")
 
     def test_parse_run_without_headless(self, tmp_path):
-        args = parse_args([
-            "run",
-            "--session", str(tmp_path / "session.json"),
-            "--config", str(tmp_path / "crush.json"),
-            "--state-file", str(tmp_path / "state.json"),
-        ])
+        args = parse_args(
+            [
+                "run",
+                "--session",
+                str(tmp_path / "session.json"),
+                "--config",
+                str(tmp_path / "crush.json"),
+                "--state-file",
+                str(tmp_path / "state.json"),
+            ]
+        )
         assert args.headless is False
 
     def test_parse_run_requires_session(self, tmp_path):
         with pytest.raises(SystemExit):
-            parse_args([
-                "run",
-                "--config", str(tmp_path / "crush.json"),
-                "--state-file", str(tmp_path / "state.json"),
-            ])
+            parse_args(
+                [
+                    "run",
+                    "--config",
+                    str(tmp_path / "crush.json"),
+                    "--state-file",
+                    str(tmp_path / "state.json"),
+                ]
+            )
 
     def test_parse_run_requires_config(self, tmp_path):
         with pytest.raises(SystemExit):
-            parse_args([
-                "run",
-                "--session", str(tmp_path / "session.json"),
-                "--state-file", str(tmp_path / "state.json"),
-            ])
+            parse_args(
+                [
+                    "run",
+                    "--session",
+                    str(tmp_path / "session.json"),
+                    "--state-file",
+                    str(tmp_path / "state.json"),
+                ]
+            )
 
     def test_parse_run_requires_state_file(self, tmp_path):
         with pytest.raises(SystemExit):
-            parse_args([
-                "run",
-                "--session", str(tmp_path / "session.json"),
-                "--config", str(tmp_path / "crush.json"),
-            ])
+            parse_args(
+                [
+                    "run",
+                    "--session",
+                    str(tmp_path / "session.json"),
+                    "--config",
+                    str(tmp_path / "crush.json"),
+                ]
+            )
 
     def test_build_arg_parser_returns_parser(self):
         parser = build_arg_parser()
@@ -227,12 +247,8 @@ class TestDispatchToClaude:
 
     def test_calls_claude_binary(self):
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="Hello!", stderr=""
-            )
-            result = dispatch_to_claude(
-                "Hello", "fast", "system prompt", "/bin/claude"
-            )
+            mock_run.return_value = MagicMock(returncode=0, stdout="Hello!", stderr="")
+            result = dispatch_to_claude("Hello", "fast", "system prompt", "/bin/claude")
         assert result == "Hello!"
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "/bin/claude"
@@ -240,9 +256,7 @@ class TestDispatchToClaude:
 
     def test_passes_model_flag(self):
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="ok", stderr=""
-            )
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             dispatch_to_claude("test", "claude-opus-4-6", "sp", "/bin/claude")
         cmd = mock_run.call_args[0][0]
         model_idx = cmd.index("--model")
@@ -250,9 +264,7 @@ class TestDispatchToClaude:
 
     def test_returns_none_on_nonzero_exit(self):
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=1, stdout="", stderr="error"
-            )
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
             result = dispatch_to_claude("test", "fast", "sp")
         assert result is None
 
@@ -278,9 +290,7 @@ class TestInboxOutbox:
     """Tests for poll_inbox and write_outbox."""
 
     def test_poll_inbox_empty_when_no_dir(self, tmp_path):
-        with patch(
-            "skcapstone.crush_shim._comms_root", return_value=tmp_path / "comms"
-        ):
+        with patch("skcapstone.crush_shim._comms_root", return_value=tmp_path / "comms"):
             msgs = poll_inbox("team", "agent")
         assert msgs == []
 
@@ -345,7 +355,6 @@ class TestDaemonLoop:
 
         # Stop after one iteration
         call_count = 0
-        original_running = True
 
         def fake_sleep(duration):
             nonlocal call_count
@@ -354,9 +363,7 @@ class TestDaemonLoop:
                 shim._running = False
 
         with patch("time.sleep", side_effect=fake_sleep):
-            with patch(
-                "skcapstone.crush_shim.poll_inbox", return_value=[]
-            ):
+            with patch("skcapstone.crush_shim.poll_inbox", return_value=[]):
                 shim._running = True
                 daemon_loop(session_config, crush_config, state_file)
 
@@ -442,10 +449,13 @@ class TestGracefulShutdown:
         # The daemon_loop itself writes running state each iteration,
         # but since _running is False at entry, it exits without writing.
         # The caller (main) writes stopped state. Let's verify write_state works.
-        write_state(state_file, {
-            "status": "stopped",
-            "agent_name": "test-agent",
-        })
+        write_state(
+            state_file,
+            {
+                "status": "stopped",
+                "agent_name": "test-agent",
+            },
+        )
         data = json.loads(Path(state_file).read_text())
         assert data["status"] == "stopped"
 

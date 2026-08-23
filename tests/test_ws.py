@@ -6,11 +6,8 @@ import base64
 import json
 import socket
 import struct
-import threading
 import time
 from unittest.mock import patch
-
-import pytest
 
 from skcapstone.daemon import (
     DaemonConfig,
@@ -20,8 +17,8 @@ from skcapstone.daemon import (
     _ws_encode_frame,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -120,6 +117,7 @@ def _start_server(tmp_path):
 
 # ── Unit tests for module-level helpers ───────────────────────────────────────
 
+
 class TestWsHelpers:
     """Tests for the RFC 6455 frame-encoding and handshake helpers."""
 
@@ -165,6 +163,7 @@ class TestWsHelpers:
 
 # ── Unit tests for _ws_broadcast ─────────────────────────────────────────────
 
+
 class TestWsBroadcast:
     """Tests for DaemonService._ws_broadcast."""
 
@@ -203,6 +202,7 @@ class TestWsBroadcast:
 
 
 # ── Integration tests for the /ws HTTP endpoint ───────────────────────────────
+
 
 class TestWsEndpoint:
     """End-to-end tests against a live DaemonService API server."""

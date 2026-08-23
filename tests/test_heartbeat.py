@@ -12,7 +12,6 @@ from skcapstone.heartbeat import (
     AgentCapability,
     Heartbeat,
     HeartbeatBeacon,
-    MeshHealth,
     NodeCapacity,
     PeerInfo,
 )
@@ -22,10 +21,15 @@ from skcapstone.heartbeat import (
 def home(tmp_path: Path) -> Path:
     """Create a minimal agent home."""
     (tmp_path / "identity").mkdir()
-    (tmp_path / "identity" / "identity.json").write_text(json.dumps({
-        "name": "opus",
-        "fingerprint": "ABCD1234567890AB",
-    }), encoding="utf-8")
+    (tmp_path / "identity" / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "opus",
+                "fingerprint": "ABCD1234567890AB",
+            }
+        ),
+        encoding="utf-8",
+    )
     return tmp_path
 
 
@@ -62,7 +66,8 @@ def _write_peer_heartbeat(
     hb_dir = home / "heartbeats"
     hb_dir.mkdir(parents=True, exist_ok=True)
     (hb_dir / f"{agent_name}.json").write_text(
-        json.dumps(hb, indent=2), encoding="utf-8",
+        json.dumps(hb, indent=2),
+        encoding="utf-8",
     )
 
 
@@ -221,7 +226,8 @@ class TestDiscoverPeers:
     def test_discover_with_capabilities(self, beacon: HeartbeatBeacon, home: Path) -> None:
         """Peer capabilities are included in discovery."""
         _write_peer_heartbeat(
-            home, "capable-agent",
+            home,
+            "capable-agent",
             capabilities=[{"name": "code-review", "enabled": True}],
         )
         peers = beacon.discover_peers()
@@ -257,11 +263,13 @@ class TestMeshHealth:
     def test_mesh_health_capabilities(self, beacon: HeartbeatBeacon, home: Path) -> None:
         """Mesh health aggregates capabilities."""
         _write_peer_heartbeat(
-            home, "agent-a",
+            home,
+            "agent-a",
             capabilities=[{"name": "code-review", "enabled": True}],
         )
         _write_peer_heartbeat(
-            home, "agent-b",
+            home,
+            "agent-b",
             capabilities=[{"name": "deployment", "enabled": True}],
         )
 
@@ -281,11 +289,13 @@ class TestFindCapable:
     def test_find_capable_peers(self, beacon: HeartbeatBeacon, home: Path) -> None:
         """Find peers with a specific capability."""
         _write_peer_heartbeat(
-            home, "reviewer",
+            home,
+            "reviewer",
             capabilities=[{"name": "code-review", "enabled": True}],
         )
         _write_peer_heartbeat(
-            home, "deployer",
+            home,
+            "deployer",
             capabilities=[{"name": "deployment", "enabled": True}],
         )
 
@@ -347,8 +357,10 @@ class TestModels:
     def test_peer_info_defaults(self) -> None:
         """PeerInfo has sensible defaults."""
         p = PeerInfo(
-            agent_name="test", status="alive",
-            alive=True, age_seconds=10,
+            agent_name="test",
+            status="alive",
+            alive=True,
+            age_seconds=10,
         )
         assert p.capabilities == []
         assert p.claimed_tasks == 0

@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from skcapstone.cli import main
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_registry_client(skills: list[dict] | None = None) -> MagicMock:
     """Return a mock RegistryClient pre-populated with skills."""
@@ -52,7 +51,9 @@ class TestSkillsList:
         client = _make_registry_client()
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example"])
+            result = runner.invoke(
+                main, ["skills", "list", "--registry", "https://registry.example"]
+            )
 
         assert result.exit_code == 0
         assert "syncthing-setup" in result.output
@@ -64,7 +65,17 @@ class TestSkillsList:
         client = _make_registry_client()
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example", "--query", "syncthing"])
+            result = runner.invoke(
+                main,
+                [
+                    "skills",
+                    "list",
+                    "--registry",
+                    "https://registry.example",
+                    "--query",
+                    "syncthing",
+                ],
+            )
 
         assert result.exit_code == 0
         client.search.assert_called_once_with("syncthing")
@@ -78,7 +89,9 @@ class TestSkillsList:
         client = _make_registry_client()
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example", "--json"])
+            result = runner.invoke(
+                main, ["skills", "list", "--registry", "https://registry.example", "--json"]
+            )
 
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -91,7 +104,9 @@ class TestSkillsList:
         client = _make_registry_client(skills=[])
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example"])
+            result = runner.invoke(
+                main, ["skills", "list", "--registry", "https://registry.example"]
+            )
 
         assert result.exit_code == 0
         assert "No skills found" in result.output
@@ -102,7 +117,9 @@ class TestSkillsList:
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=None):
             with patch("skcapstone.cli.skills_cmd._fetch_github_catalog", return_value=None):
-                result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example", "--offline"])
+                result = runner.invoke(
+                    main, ["skills", "list", "--registry", "https://registry.example", "--offline"]
+                )
 
         assert result.exit_code == 0
 
@@ -113,7 +130,9 @@ class TestSkillsList:
         client.list_skills.side_effect = ConnectionError("offline")
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(main, ["skills", "list", "--registry", "https://registry.example"])
+            result = runner.invoke(
+                main, ["skills", "list", "--registry", "https://registry.example"]
+            )
 
         assert result.exit_code == 0
         assert "offline" not in result.output
@@ -213,9 +232,7 @@ class TestSkillsInstall:
         client.install.return_value = self._install_result()
 
         with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
-            result = runner.invoke(
-                main, ["skills", "install", "syncthing-setup", "--force"]
-            )
+            result = runner.invoke(main, ["skills", "install", "syncthing-setup", "--force"])
 
         assert result.exit_code == 0
         client.install.assert_called_once_with(

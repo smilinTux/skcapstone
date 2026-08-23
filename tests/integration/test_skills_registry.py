@@ -37,7 +37,6 @@ from skcapstone.mcp_tools.skills_tools import (
     _handle_skskills_run_tool,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -89,7 +88,7 @@ def agent_home(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# TestSkillDiscovery — discover_skills() filesystem integration
+# TestSkillDiscovery - discover_skills() filesystem integration
 # ---------------------------------------------------------------------------
 
 
@@ -205,7 +204,7 @@ class TestSkillDiscovery:
 
 
 # ---------------------------------------------------------------------------
-# TestRegistryClientIntegration — RegistryClient with mocked HTTP
+# TestRegistryClientIntegration - RegistryClient with mocked HTTP
 # ---------------------------------------------------------------------------
 
 
@@ -380,7 +379,7 @@ def _make_aggregator_module(
 
 
 # ---------------------------------------------------------------------------
-# TestSkillsListToolsMCP — skskills_list_tools handler
+# TestSkillsListToolsMCP - skskills_list_tools handler
 # ---------------------------------------------------------------------------
 
 
@@ -400,9 +399,7 @@ class TestSkillsListToolsMCP:
         mock_agg_module = _make_aggregator_module(tools=tools, skills=[], skills_loaded=1)
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="test-agent",
@@ -422,9 +419,7 @@ class TestSkillsListToolsMCP:
         mock_agg_module = _make_aggregator_module(tools=[], skills=skills, skills_loaded=1)
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="test-agent",
@@ -451,9 +446,7 @@ class TestSkillsListToolsMCP:
         mock_agg_module = _make_aggregator_module(tools=tools, skills=[], skills_loaded=1)
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="opus",
@@ -474,9 +467,7 @@ class TestSkillsListToolsMCP:
         raise ImportError when the handler does `from skskills.aggregator import ...`.
         """
         with patch.dict("sys.modules", {"skskills.aggregator": None}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 result = await _handle_skskills_list_tools({})
 
         data = json.loads(result[0].text)
@@ -488,9 +479,7 @@ class TestSkillsListToolsMCP:
         mock_agg_module = _make_aggregator_module(tools=[], skills=[], skills_loaded=0)
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="jarvis",
@@ -506,9 +495,7 @@ class TestSkillsListToolsMCP:
         mock_agg_module = _make_aggregator_module(tools=[], skills=[], skills_loaded=0)
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="anonymous",
@@ -522,7 +509,7 @@ class TestSkillsListToolsMCP:
 
 
 # ---------------------------------------------------------------------------
-# TestSkillsRunToolMCP — skskills_run_tool handler
+# TestSkillsRunToolMCP - skskills_run_tool handler
 # ---------------------------------------------------------------------------
 
 
@@ -533,14 +520,14 @@ class TestSkillsRunToolMCP:
     async def test_executes_tool_and_returns_json_result(self, tmp_path: Path):
         """Should call the tool and return its dict result as JSON."""
         mock_agg_module = _make_aggregator_module(
-            tools=[], skills=[], skills_loaded=1,
+            tools=[],
+            skills=[],
+            skills_loaded=1,
             call_result={"status": "ok", "version": "1.9.3"},
         )
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="test-agent",
@@ -555,9 +542,7 @@ class TestSkillsRunToolMCP:
 
         # Verify call_tool was invoked with the correct args
         agg_instance = mock_agg_module.SkillAggregator.return_value
-        agg_instance.loader.call_tool.assert_awaited_once_with(
-            "syncthing-setup.check_status", {}
-        )
+        agg_instance.loader.call_tool.assert_awaited_once_with("syncthing-setup.check_status", {})
 
     @pytest.mark.asyncio
     async def test_passes_args_to_tool(self, tmp_path: Path):
@@ -567,9 +552,7 @@ class TestSkillsRunToolMCP:
         )
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="test-agent",
@@ -594,9 +577,7 @@ class TestSkillsRunToolMCP:
         )
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 result = await _handle_skskills_run_tool({})
 
         data = json.loads(result[0].text)
@@ -614,9 +595,7 @@ class TestSkillsRunToolMCP:
         mock_module.SkillAggregator = MagicMock(return_value=mock_agg)
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="test-agent",
@@ -630,14 +609,14 @@ class TestSkillsRunToolMCP:
     async def test_string_result_returned_as_plain_text(self, tmp_path: Path):
         """When the tool returns a string, response should be plain text (not JSON)."""
         mock_agg_module = _make_aggregator_module(
-            tools=[], skills=[], skills_loaded=1,
+            tools=[],
+            skills=[],
+            skills_loaded=1,
             call_result="Syncthing is running.",
         )
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="test-agent",
@@ -660,9 +639,7 @@ class TestSkillsRunToolMCP:
         mock_module.SkillAggregator = MagicMock(return_value=mock_agg)
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 with patch(
                     "skcapstone.mcp_tools.skills_tools._get_agent_name",
                     return_value="test-agent",
@@ -683,9 +660,7 @@ class TestSkillsRunToolMCP:
         )
 
         with patch.dict("sys.modules", {"skskills.aggregator": mock_agg_module}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 await _handle_skskills_run_tool(
                     {"tool": "syncthing-setup.check_status", "agent": "jarvis"}
                 )
@@ -696,9 +671,7 @@ class TestSkillsRunToolMCP:
     async def test_returns_error_when_skskills_missing(self, tmp_path: Path):
         """Should return an error response when skskills is not installed."""
         with patch.dict("sys.modules", {"skskills.aggregator": None}):
-            with patch(
-                "skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path
-            ):
+            with patch("skcapstone.mcp_tools.skills_tools._home", return_value=tmp_path):
                 result = await _handle_skskills_run_tool({"tool": "syncthing-setup.run"})
 
         data = json.loads(result[0].text)
@@ -706,7 +679,7 @@ class TestSkillsRunToolMCP:
 
 
 # ---------------------------------------------------------------------------
-# TestMCPToolRegistration — verify TOOLS and HANDLERS are wired correctly
+# TestMCPToolRegistration - verify TOOLS and HANDLERS are wired correctly
 # ---------------------------------------------------------------------------
 
 

@@ -2,6 +2,7 @@
 
 import click
 from click.testing import CliRunner
+
 from skcapstone.cli.scheduler_cmd import register_scheduler_commands
 
 
@@ -9,8 +10,9 @@ def _app(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
     (tmp_path / "config" / "jobs.yaml").write_text(
-        "jobs:\n  demo:\n    every: 60s\n    type: shell\n    command: 'echo hi'\n    nodes: all\n",
-        encoding="utf-8")
+        "jobs:\n  demo:\n    every: 60s\n    type: shell\n    command: 'echo hi'\n    nodes: all\n",  # noqa: E501
+        encoding="utf-8",
+    )
 
     @click.group()
     def main():
@@ -43,5 +45,6 @@ def test_scheduler_disable_then_list(tmp_path, monkeypatch):
     assert CliRunner().invoke(main, ["scheduler", "disable", "demo"]).exit_code == 0
     # after disable, jobs.yaml should mark it disabled
     import yaml
+
     data = yaml.safe_load((tmp_path / "config" / "jobs.yaml").read_text())
     assert data["jobs"]["demo"]["enabled"] is False

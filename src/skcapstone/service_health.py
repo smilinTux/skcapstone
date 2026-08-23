@@ -3,6 +3,9 @@
 Pings all known services in the sovereign stack and returns structured
 status reports.  Each check uses urllib.request with a 3-second timeout
 so the full sweep completes in bounded time even when services are down.
+A probe that *times out* is retried once (see RETRY_ON_TIMEOUT) before being
+reported down, so a warm-idle service's first-hit cold start does not flap it
+to "down" and file a false incident; non-timeout failures are not retried.
 
 Usage (library):
     from skcapstone.service_health import check_all_services
@@ -25,27 +28,63 @@ import re
 import socket
 import time
 import urllib.error
-from pathlib import Path
 import urllib.request
-from urllib.parse import urlparse
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 logger = logging.getLogger("skcapstone.service_health")
 
 # Default timeout per service check (seconds).
 CHECK_TIMEOUT = 3
 
+# Number of *extra* attempts made when a probe times out (1 => two tries total).
+# A single timed-out probe is not proof a service is down: a warm-idle service
+# can cold-start past CHECK_TIMEOUT on the first hit and answer in milliseconds on
+# the next. Retrying only the timeout class kills that transient before it flaps a
+# healthy service to "down" and files a false ITIL incident (webui-health opus
+# cold-start false-down fired on every 5-min sweep for months). Non-timeout
+# failures (refused/http-error/unreachable) are not retried - those are real.
+RETRY_ON_TIMEOUT = 1
+
 # Hostname tag used to attribute one-time state-transition notes (e.g. a
 # service recovering) to the reporting node. Recurring "still down" notes are
-# intentionally never written — see _create_incident_for_down_service and
+# intentionally never written - see _create_incident_for_down_service and
 # prb-7810b08e for why that churn caused Syncthing conflicts.
 _HOSTNAME = socket.gethostname()
 
+
+def _failure_class(error: str | None) -> str:
+    """Coarsely classify a probe error for the deterministic incident id.
+
+    A stable, low-cardinality class (not the raw error string) keeps two nodes
+    detecting the same outage on the same ``_auto_incident_id`` key.
+
+    Args:
+        error: Raw error text from a service check (may be None).
+
+    Returns:
+        One of ``timeout``/``refused``/``http-error``/``unreachable``.
+    """
+    if not error:
+        return "unreachable"
+    e = error.lower()
+    if "timed out" in e or "timeout" in e:
+        return "timeout"
+    if "refused" in e:
+        return "refused"
+    if "no route" in e or "unreachable" in e or "name or service" in e:
+        return "unreachable"
+    if "http" in e:
+        return "http-error"
+    return "unreachable"
 
 
 # ---------------------------------------------------------------------------
 # Per-agent YAML config fallback
 # ---------------------------------------------------------------------------
+
 
 def _load_agent_yaml(config_name: str, agent: str | None = None) -> dict:
     """Load ~/.skcapstone/agents/<agent>/config/<config_name>.yaml.
@@ -67,6 +106,7 @@ def _load_agent_yaml(config_name: str, agent: str | None = None) -> dict:
         return {}
     try:
         import yaml  # type: ignore
+
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         return data if isinstance(data, dict) else {}
@@ -75,11 +115,10 @@ def _load_agent_yaml(config_name: str, agent: str | None = None) -> dict:
         return {}
 
 
-
 def _load_syncthing_config() -> tuple[str | None, str | None]:
     """Read ~/.config/syncthing/config.xml to get GUI URL + API key.
 
-    Returns (url, api_key) tuple — either may be None if the config can't
+    Returns (url, api_key) tuple - either may be None if the config can't
     be parsed. Uses regex (no XML lib dep) since we only need 2 small fields.
     """
     candidates = [
@@ -95,9 +134,7 @@ def _load_syncthing_config() -> tuple[str | None, str | None]:
         return None, None
 
     # Find <gui ...> ... <address>HOST:PORT</address> ... </gui>
-    gui_match = re.search(
-        r"<gui[^>]*>(.*?)</gui>", text, re.S | re.I
-    )
+    gui_match = re.search(r"<gui[^>]*>(.*?)</gui>", text, re.S | re.I)
     addr_in_gui = None
     if gui_match:
         body = gui_match.group(1)
@@ -111,7 +148,9 @@ def _load_syncthing_config() -> tuple[str | None, str | None]:
     if not addr_in_gui:
         return None, api_key
     # GUI tls flag
-    tls = bool(gui_match and ("tls=\"true\"" in gui_match.group(0) or "tls='true'" in gui_match.group(0)))
+    tls = bool(
+        gui_match and ('tls="true"' in gui_match.group(0) or "tls='true'" in gui_match.group(0))
+    )
     proto = "https" if tls else "http"
     return f"{proto}://{addr_in_gui}", api_key
 
@@ -121,6 +160,41 @@ def _load_syncthing_config() -> tuple[str | None, str | None]:
 # ---------------------------------------------------------------------------
 
 
+def _retry_on_timeout(probe: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run *probe*, retrying up to :data:`RETRY_ON_TIMEOUT` times on a timeout.
+
+    Only the ``timeout`` failure class is retried - a connection refused, HTTP 5xx,
+    or unreachable host is a real, immediate signal and is returned unchanged. When
+    a retry recovers the service the returned dict carries ``retried: True`` so the
+    log trail shows the first attempt was a transient timeout, not a clean pass.
+
+    Args:
+        probe: Zero-arg callable returning a probe result dict (status/error/...).
+
+    Returns:
+        The final probe result dict.
+    """
+    result = probe()
+    attempts = 1
+    while (
+        result.get("status") == "down"
+        and _failure_class(result.get("error")) == "timeout"
+        and attempts <= RETRY_ON_TIMEOUT
+    ):
+        logger.debug(
+            "Probe %s timed out (attempt %d/%d); retrying",
+            result.get("name"),
+            attempts,
+            RETRY_ON_TIMEOUT + 1,
+        )
+        result = probe()
+        attempts += 1
+    if attempts > 1 and result.get("status") == "up":
+        result["retried"] = True
+        logger.info("Probe %s recovered on retry after a timeout", result.get("name"))
+    return result
+
+
 def _http_check(
     name: str,
     url: str,
@@ -128,7 +202,25 @@ def _http_check(
     headers: dict[str, str] | None = None,
     version_key: str | None = None,
 ) -> dict[str, Any]:
-    """Perform an HTTP GET health check against *url*.
+    """Perform an HTTP GET health check against *url*, retrying once on timeout.
+
+    Thin wrapper over :func:`_http_check_once` that applies
+    :func:`_retry_on_timeout` so a single cold-start timeout does not flap a
+    healthy service to "down". See :func:`_http_check_once` for the probe itself.
+    """
+    return _retry_on_timeout(
+        lambda: _http_check_once(name, url, headers=headers, version_key=version_key)
+    )
+
+
+def _http_check_once(
+    name: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    version_key: str | None = None,
+) -> dict[str, Any]:
+    """Perform a single HTTP GET health check against *url*.
 
     Args:
         name: Human-readable service name.
@@ -179,7 +271,15 @@ def _http_check(
 
 
 def _tcp_check(name: str, host: str, port: int) -> dict[str, Any]:
-    """Perform a raw TCP connect check.
+    """Perform a raw TCP connect check, retrying once on timeout.
+
+    Thin wrapper over :func:`_tcp_check_once` (see :func:`_retry_on_timeout`).
+    """
+    return _retry_on_timeout(lambda: _tcp_check_once(name, host, port))
+
+
+def _tcp_check_once(name: str, host: str, port: int) -> dict[str, Any]:
+    """Perform a single raw TCP connect check.
 
     Args:
         name: Human-readable service name.
@@ -250,21 +350,21 @@ def check_all_services() -> list[dict[str, Any]]:
     """Ping every known service and return a list of status dicts.
 
     Environment variables override default URLs (set any to "disabled" to skip):
-        SKMEMORY_SKVECTOR_URL     — Qdrant REST base (default: read from
+        SKMEMORY_SKVECTOR_URL     - Qdrant REST base (default: read from
                                     ~/.skcapstone/agents/<agent>/config/skvector.yaml,
                                     else http://localhost:6333)
-        SKMEMORY_SKVECTOR_API_KEY — Qdrant API key (default: from skvector.yaml)
-        SKMEMORY_SKGRAPH_HOST     — FalkorDB host   (default: read from
+        SKMEMORY_SKVECTOR_API_KEY - Qdrant API key (default: from skvector.yaml)
+        SKMEMORY_SKGRAPH_HOST     - FalkorDB host   (default: read from
                                     ~/.skcapstone/agents/<agent>/config/skgraph.yaml,
                                     else localhost)
-        SKMEMORY_SKGRAPH_PORT     — FalkorDB port   (default: from skgraph.yaml,
+        SKMEMORY_SKGRAPH_PORT     - FalkorDB port   (default: from skgraph.yaml,
                                     else 6379)
-        SYNCTHING_API_URL         — Syncthing REST   (default: discovered from
+        SYNCTHING_API_URL         - Syncthing REST   (default: discovered from
                                     ~/.config/syncthing/config.xml gui address,
                                     else http://localhost:8384)
-        SYNCTHING_API_KEY         — Syncthing API key (default: from config.xml)
-        SKCAPSTONE_DAEMON_URL     — Daemon HTTP base (default http://localhost:9383)
-        SKCHAT_DAEMON_URL         — SKChat daemon    (default http://localhost:9385)
+        SYNCTHING_API_KEY         - Syncthing API key (default: from config.xml)
+        SKCAPSTONE_DAEMON_URL     - Daemon HTTP base (default http://localhost:9383)
+        SKCHAT_DAEMON_URL         - SKChat daemon    (default http://localhost:9385)
 
     Returns:
         List of dicts, each containing: name, url, status ("up"|"down"|"unknown"),
@@ -293,6 +393,11 @@ def check_all_services() -> list[dict[str, Any]]:
                         qdrant_base = f"{proto}://{host}:{port}"
             if not qdrant_api_key and cfg.get("api_key") and cfg["api_key"] != "CHANGE_ME":
                 qdrant_api_key = cfg["api_key"]
+        elif not qdrant_base:
+            # Explicitly disabled in skvector.yaml. Without this the code below
+            # falls through to the localhost default and probes a backend the
+            # operator already decommissioned, filing a false incident per sweep.
+            qdrant_base = "disabled"
     if not qdrant_base:
         qdrant_base = "http://localhost:6333"
     if qdrant_base.lower() != "disabled":
@@ -302,7 +407,7 @@ def check_all_services() -> list[dict[str, Any]]:
             qdrant_headers["api-key"] = qdrant_api_key
         results.append(_http_check("skvector (Qdrant)", qdrant_url, headers=qdrant_headers))
 
-    # -- SKGraph (FalkorDB) — TCP check on Redis protocol port ---------------
+    # -- SKGraph (FalkorDB) - TCP check on Redis protocol port ---------------
     graph_host = os.environ.get("SKMEMORY_SKGRAPH_HOST", "")
     graph_port_str = os.environ.get("SKMEMORY_SKGRAPH_PORT", "")
     # Fall back to per-agent skgraph.yaml when env vars are absent
@@ -319,6 +424,10 @@ def check_all_services() -> list[dict[str, Any]]:
                 graph_host = str(cfg["host"])
             if not graph_port_str and cfg.get("port"):
                 graph_port_str = str(cfg["port"])
+        elif not graph_host:
+            # Explicitly disabled in skgraph.yaml - same rationale as skvector
+            # above: do not fall through to the localhost default.
+            graph_host = "disabled"
     if not graph_host:
         graph_host = "localhost"
     if not graph_port_str:
@@ -382,11 +491,16 @@ def check_all_services() -> list[dict[str, Any]]:
         elif pid_file:
             results.append(_pid_check(name, Path(pid_file).expanduser()))
         else:
-            results.append({
-                "name": name, "url": None, "status": "unknown",
-                "latency_ms": None, "version": None,
-                "error": "registered without health_url or pid_file",
-            })
+            results.append(
+                {
+                    "name": name,
+                    "url": None,
+                    "status": "unknown",
+                    "latency_ms": None,
+                    "version": None,
+                    "error": "registered without health_url or pid_file",
+                }
+            )
         known.add(name)
 
     return results
@@ -397,7 +511,7 @@ def _load_registry_entries() -> list[dict[str, Any]]:
 
     Reads every ``<shared_home>/registry/*.json`` file written by
     :func:`skcapstone.sdk.register_service`. Missing directory or malformed
-    files are skipped silently — discovery is best-effort.
+    files are skipped silently - discovery is best-effort.
 
     Returns:
         A list of registry entry dicts (each with at least a ``name`` key).
@@ -428,33 +542,88 @@ def _load_registry_entries() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _incident_authority_node() -> str | None:
+    """Return the node designated to file health incidents, or None for any.
+
+    The ITIL store under ``~/.skcapstone/coordination/`` is Syncthing-synced
+    across every node, but the health probes are host-local: they check
+    ``localhost`` ports and PID files. A secondary node (e.g. the laptop) that
+    does not host skvoice/cloud9/skcomms therefore probes them, correctly finds
+    nothing listening, and files an incident claiming a *global* outage. Those
+    sync back and refill the GTD inbox indefinitely.
+
+    Setting ``health.incident_node`` in ``~/.skcapstone/config/config.yaml``
+    (or ``SKCAPSTONE_HEALTH_INCIDENT_NODE``) names the one node whose local view
+    is authoritative. Unset means "any node may file", preserving old behaviour.
+
+    Returns:
+        The designated node hostname, or None when unconfigured.
+    """
+    env = os.environ.get("SKCAPSTONE_HEALTH_INCIDENT_NODE", "").strip()
+    if env:
+        return env
+    try:
+        import yaml
+
+        from . import shared_home
+
+        cfg_path = shared_home() / "config" / "config.yaml"
+        if not cfg_path.is_file():
+            return None
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        node = (cfg.get("health") or {}).get("incident_node")
+        return str(node).strip() if node else None
+    except Exception:
+        # Config is best-effort. A malformed file must not stop health checks.
+        return None
+
+
+def _may_file_incidents() -> bool:
+    """True when this node is allowed to create health incidents."""
+    designated = _incident_authority_node()
+    if not designated:
+        return True
+    return socket.gethostname() == designated
+
+
 def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
     """Auto-create an ITIL incident for a down service (with dedup).
 
     Only creates a new incident if there is no existing open incident
     for the same service. Uses best-effort: failures are logged but
     never block the health check.
+
+    No-ops on nodes that are not the configured incident authority - see
+    :func:`_incident_authority_node`.
     """
+    if not _may_file_incidents():
+        logger.debug(
+            "Not the health-incident authority node (%s); skipping incident for %s",
+            _incident_authority_node(),
+            service_result.get("name"),
+        )
+        return
     try:
         from . import SHARED_ROOT
         from .itil import ITILManager
 
         svc_name = service_result["name"]
         error_info = service_result.get("error") or "unreachable"
+        failure_class = _failure_class(service_result.get("error"))
         mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
 
-        # Dedup: already tracked by an open incident → do nothing.
-        # We deliberately do NOT append recurring "still down" notes. That
-        # read-modify-write churn on a Syncthing-synced incident file, from
-        # multiple nodes every health cycle, is exactly what produced the
-        # sync-conflicts and 80+-entry timelines tracked in prb-7810b08e.
-        # Outage duration is derivable from the incident's created_at; the
-        # recovery (down->up) edge is handled by _auto_resolve_recovered_service.
+        # Dedup convenience (NOT the authority): the authority is the
+        # deterministic id + create-if-absent (O_EXCL) inside create_incident,
+        # so two nodes detecting the same outage converge on one core.json.
+        # This local find is only a cheap short-circuit so a single node does
+        # not re-emit a 'created' event every health cycle while down - the
+        # read-modify-write churn behind the sync-conflicts in prb-7810b08e.
         existing = mgr.find_open_incident_for_service(svc_name)
         if existing:
             logger.debug(
-                "Service %s already tracked by incident %s; no note appended",
-                svc_name, existing.id,
+                "Service %s already tracked by incident %s; no event appended",
+                svc_name,
+                existing.id,
             )
             return
         mgr.create_incident(
@@ -466,6 +635,7 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
             managed_by="lumina",
             created_by="service_health",
             tags=["auto-detected", "service-health"],
+            failure_class=failure_class,
         )
         logger.info("Auto-created incident for down service: %s", svc_name)
     except Exception as exc:
@@ -486,25 +656,26 @@ def _auto_resolve_recovered_service(service_result: dict[str, Any]) -> None:
 
         if existing.severity.value == "sev4":
             mgr.update_incident(
-                existing.id, "service_health",
+                existing.id,
+                "service_health",
                 new_status="resolved",
                 note=f"Service {svc_name} recovered automatically",
                 resolution_summary="Auto-resolved: service came back up",
             )
-            logger.info("Auto-resolved sev4 incident %s for recovered service %s",
-                        existing.id, svc_name)
+            logger.info(
+                "Auto-resolved sev4 incident %s for recovered service %s", existing.id, svc_name
+            )
         else:
-            # Skip if this host already noted recovery recently
-            last_notes = [e.get("note", "") for e in (existing.timeline or [])[-3:]]
-            host_tag = f"[{_HOSTNAME}]"
-            if not any(host_tag in n and "back up" in n for n in last_notes):
-                mgr.update_incident(
-                    existing.id, "service_health",
-                    note=f"[{_HOSTNAME}] Service {svc_name} appears to be back up",
-                )
+            # Append a recovery note to THIS node's own writer file. The manager
+            # bounds this to one recovery event per host (own-file check), so
+            # there is no last-3-notes timeline guard and no cross-node churn.
+            mgr.note_recovery(
+                existing.id,
+                "service_health",
+                f"[{_HOSTNAME}] Service {svc_name} appears to be back up",
+            )
     except Exception as exc:
-        logger.debug("Failed to auto-resolve incident for %s: %s",
-                      service_result.get("name"), exc)
+        logger.debug("Failed to auto-resolve incident for %s: %s", service_result.get("name"), exc)
 
 
 def make_service_health_task() -> callable:
@@ -523,13 +694,9 @@ def make_service_health_task() -> callable:
 
         if down:
             names = ", ".join(r["name"] for r in down)
-            logger.warning(
-                "Service health: %d/%d down — %s", len(down), len(results), names
-            )
+            logger.warning("Service health: %d/%d down - %s", len(down), len(results), names)
             for r in down:
-                logger.warning(
-                    "  %s (%s): %s", r["name"], r["url"], r["error"] or "unreachable"
-                )
+                logger.warning("  %s (%s): %s", r["name"], r["url"], r["error"] or "unreachable")
                 _create_incident_for_down_service(r)
         else:
             up_count = len(up)

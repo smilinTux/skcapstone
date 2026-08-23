@@ -6,7 +6,7 @@ Strategy (Release 02 is bundled into one ZIP, plus a fresh CSV + press release):
   2. Set Page.setDownloadBehavior to allow downloads to our target dir.
   3. Trigger ZIP download by injecting <a download href=...> and clicking it.
   4. Poll for .crdownload to drain and the final file to appear.
-  5. Also fetch the new CSV in-page (text response — simpler than download).
+  5. Also fetch the new CSV in-page (text response - simpler than download).
   6. Fetch the press release HTML the same way.
 
 Output → ~/nextcloud/cbrd21-share/reference/war-gov-UFO-PURSUE-2026/{docs/release-02, release-02-zip}/
@@ -237,7 +237,7 @@ def main() -> int:
         # Poll for completion
         zip_file = wait_for_file(ZIP_DIR, "release_02_document_bundle*.zip", timeout=1800.0, idle_threshold=5.0)
         if not zip_file:
-            print("[capture] ZIP download did NOT complete in 30 min — check ZIP_DIR manually", flush=True)
+            print("[capture] ZIP download did NOT complete in 30 min - check ZIP_DIR manually", flush=True)
             # Diagnostic: list what's in there
             for f in ZIP_DIR.iterdir():
                 print(f"  {f.name} {f.stat().st_size}", flush=True)
@@ -258,7 +258,7 @@ def main() -> int:
             "zip_sha256": sha,
             "csv_url": CSV_URL,
             "press_url": PRESS_URL,
-            "capture_method": "Lumina Chrome CDP (port 9222) — page-context fetch + <a download> click",
+            "capture_method": "Lumina Chrome CDP (port 9222) - page-context fetch + <a download> click",
         }
         (DOC_DIR / "release-02-manifest.json").write_text(json.dumps(manifest, indent=2))
         print(f"[capture] manifest written", flush=True)

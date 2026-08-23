@@ -1,4 +1,4 @@
-"""T4 — service_health unions sdk.register_service entries with defaults."""
+"""T4 - service_health unions sdk.register_service entries with defaults."""
 
 from __future__ import annotations
 

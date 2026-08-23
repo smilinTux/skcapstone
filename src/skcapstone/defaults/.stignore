@@ -1,0 +1,169 @@
+// SKCapstone Sovereign Singularity - Syncthing ignore rules
+//
+// Exclude-by-listing: everything under the shared root syncs UNLESS matched
+// here. Source-of-truth (memory/{short,mid,long}-term JSON, soul, seeds,
+// journal.md, trust/febs, coordination, comms/inbox) is NOT listed, so it
+// replicates. Everything below is derived/runtime/node-local and must never
+// leave this node or pin the scanner (F7 remediation).
+//
+// EVERY comment here is load-bearing: it is the only record of WHICH incident
+// bought the rule beneath it. Delete a comment and the next person deletes the
+// rule. This template is installed by a UNION merge (skills/syncthing_setup.py
+// ::_write_stignore), so it can only ever ADD to a live node's file, never
+// remove. That is deliberate: ignoring more costs a file that does not
+// replicate, ignoring less leaks private keys onto every peer.
+
+// --- Private key material (never leaves this node) ---
+// This block is the whole reason a control node can hold 11
+// agents/*/capauth/identity/private.asc files while a peer in the SAME
+// sendreceive folder holds zero: Syncthing never scans or announces an ignored
+// file, so the source never offers it. `skfleet node stignore` exists to
+// notice if these lines ever go missing.
+*.key
+*.pem
+**/private.*
+// Revocation certificates, passphrases, and secret keyrings are the same
+// class as the keys above: a folder that could sync them is a leak path even
+// when none exist yet (private-material sync policy, card 85fc7df1).
+*.rev
+**/revocation*
+**/passphrase*
+*.pass
+.gnupg/secring.gpg
+.gnupg/private-keys-v1.d
+**/*.kbx
+// security/tokens is the PDP token store: capability tokens are per-host
+// operational credentials and must not replicate, same as the capauth home
+// token store below (card 85fc7df1).
+security/tokens
+// Telegram session: machine-local, syncing it causes Telegram to boot sessions
+**/telegram.session
+// SKFed CoT PKI: private keys + keystores must never sync (secrets)
+skcomms/cot-pki/*.key
+skcomms/cot-pki/devices
+skcomms/cot-pki/packages
+// capauth/security/tokens: PERMANENT per-host exclusion (Lumina, 2026-08-15).
+// This is resolve_capauth_home()'s token store, written by local mint paths. It
+// is NEVER read for authorization (the PDP reads ~/.skcapstone/security/tokens, a
+// different home), so it is per-host write-only operational state, the same class
+// as promotion-log.json / retry_queue.jsonl below, and must not sync. It first
+// earned this block as a runaway-mint CONTAINMENT (grew past 34k files / 136MB,
+// operator:f60d5eac..., audience=skchat). The mint loop is now FIXED (reuse cache
+// + GC + store=False: capauth #48/#49, skchat #165/#166/#168) and all three nodes'
+// stores were drained 2026-08-15, but the exclusion STAYS: syncing an unread,
+// per-host, high-churn token store has no value and only ever risks a flood.
+capauth/security/tokens
+
+// --- Vector store / DB indexes (rebuilt locally from the flat files) ---
+// ChromaDB is a live SQLite database. Replicating one corrupts it; every host
+// rebuilds its own from the flat-file memories, which ARE synced.
+**/memory/chroma
+**/chroma.bak*
+// ChromaDB runtime state JSON: updated constantly, per-host
+**/memory/chroma-state.json
+// index.db is rebuilt from flat files (source of truth) on each host
+**/memory/index.db
+**/memory/index.db-shm
+**/memory/index.db-wal
+**/*.db-wal
+**/*.db-shm
+// Agent-root SQLite DBs (ava, jarvis: not in the memory/ subdir)
+agents/*/index.db
+// Syncthing conflict files from SQLite DBs: junk, source of truth is flat JSON
+**/*.sync-conflict-*.db
+
+// --- Sync conflicts, versioned trash, pidfiles, logs ---
+**/*.sync-conflict-*
+// Syncthing's own versioning/trash trees: never re-sync deleted content.
+.stversions
+**/.stversions
+**/*.pid
+daemon.pid
+// daemon logs: local runtime output (all locations)
+**/daemon.log
+logs
+
+// --- Runtime / session state (node-local, large, not source of truth) ---
+sessions
+conversations
+backups
+prompt_versions
+deployments
+connectors
+pubsub
+file-transfer
+souls
+// SKWhisper runtime state: actively rewritten every 30min, causes constant
+// conflicts. whisper.md (the useful output) IS synced; raw state/logs are not.
+**/skwhisper/state.json
+// Memory archive (deduped/aged-out memories: machine-local, not syncable).
+// Each host runs its own cleanup; syncing archives causes data loss.
+**/memory/archive
+**/comms/archive
+// Post-delivery ack receipts: ephemeral, node-local, never source of truth.
+// (skcomms/inbox + comms/inbox are live transport paths and are deliberately
+// NOT excluded; pruning keeps them small instead.)
+**/skcomms/acks
+// Seed outbox flood: housekeeping never pruned agents/*/sync/outbox and it
+// reached 83G on one node. The outbox is send-side staging; the peer receives
+// the delivered copy through its own inbox, so replicating the staging area
+// buys nothing and costs everything.
+**/comms/outbox
+// Terminal/local comms staging: node-local, must not replicate to peers.
+// deadletter = quarantined poison envelopes; processing = in-flight staging.
+deadletter
+**/deadletter
+processing
+**/processing
+
+// --- Operational files written independently per-host (cause sync conflicts) ---
+// promotion-log: the skcapstone daemon writes it hourly on every host
+memory/promotion-log.json
+// heartbeats/ (v1, root-level): per-host, same filename = conflicts.
+// sync/heartbeats/ (v2) is NOT ignored, it uses host-unique node IDs.
+/heartbeats
+// daily metrics: aggregated independently per-host
+metrics/daily
+// Runtime queues: written independently per-host
+retry_queue.jsonl
+**/retry_queue.jsonl
+// LLM fallback log (skcapstone.fallback_tracker writes ~/.skcapstone/fallbacks.json
+// per-host on every inference fallback). Syncing it conflicts every few hours and
+// was the recurring "sync conflict" the operator seat kept flagging (fix 2026-08-15).
+fallbacks.json
+**/fallbacks.json
+
+// --- ITIL coordination: derived, migrate-once, and conflict junk ---
+// (?d) lets Syncthing delete these while cleaning a directory instead of
+// treating them as protected files that block the delete.
+(?d)coordination/itil/**/*.sync-conflict-*
+(?d)coordination/itil/dedup
+(?d)coordination/itil/_legacy
+(?d)coordination/itil/**/migration.state.json
+
+// --- Bulk local artifacts (never source of truth, always large) ---
+**/_doubled-path-backup-*
+**/*.tar.gz
+**/skmemory-data-repo-backup
+
+// --- Python / build / OS junk ---
+__pycache__
+*.pyc
+*.pyo
+.cache
+.venv
+venv
+.git
+
+// transient atomic-write temp files (heartbeats etc.): never sync, these were
+// aborting the scanner (fix 2026-06-10). The (?d) prefix is the actual fix.
+// Without it the temp file is protected from deletion and the scan aborts again,
+// so keep the (?d) forms even though a bare *.tmp is listed below them.
+(?d)**/*.tmp
+(?d)*.tmp
+*.tmp
+
+// OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini

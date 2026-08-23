@@ -1,5 +1,5 @@
 """
-Sovereign Heartbeat v2 — active health beacon for agent meshes.
+Sovereign Heartbeat v2 - active health beacon for agent meshes.
 
 Each agent node publishes a heartbeat file containing its current
 state, capacity, capabilities, and TTL. Syncthing distributes these
@@ -49,8 +49,8 @@ DEFAULT_TTL_SECONDS = 300  # 5 minutes
 class HeartbeatService(BaseModel):
     """A backend service advertised in the heartbeat."""
 
-    name: str        # "skvector", "skgraph"
-    port: int        # 6333, 6379
+    name: str  # "skvector", "skgraph"
+    port: int  # 6333, 6379
     protocol: str = "http"  # http, redis
 
 
@@ -85,6 +85,7 @@ class Heartbeat(BaseModel):
         if not v or not v.strip():
             raise ValueError("agent_name must be a non-empty string")
         return v.strip()
+
     hostname: str = ""
     platform: str = ""
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -116,7 +117,7 @@ class Heartbeat(BaseModel):
     fingerprint: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    # Service advertisement (optional — old heartbeats without these still parse)
+    # Service advertisement (optional - old heartbeats without these still parse)
     services: list[HeartbeatService] = Field(default_factory=list)
     tailscale_ip: str = ""
 
@@ -184,9 +185,7 @@ class HeartbeatBeacon:
         heartbeats_dir: Optional[Path] = None,
     ) -> None:
         if not agent_name or not agent_name.strip():
-            raise ValueError(
-                "agent_name must be a non-empty string, got %r" % agent_name
-            )
+            raise ValueError("agent_name must be a non-empty string, got %r" % agent_name)
         self._home = home
         self._agent = agent_name.strip()
         self._ttl = ttl_seconds
@@ -213,7 +212,7 @@ class HeartbeatBeacon:
         """Publish a heartbeat beacon.
 
         Writes the agent's current state to its heartbeat file.
-        Only writes to its own file — never touches peer files.
+        Only writes to its own file - never touches peer files.
 
         Args:
             status: Agent status (alive, busy, draining, offline).
@@ -283,9 +282,7 @@ class HeartbeatBeacon:
         if not path.exists():
             return None
         try:
-            return Heartbeat.model_validate_json(
-                path.read_text(encoding="utf-8")
-            )
+            return Heartbeat.model_validate_json(path.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.warning("Cannot read heartbeat for %s: %s", agent_name, exc)
             return None
@@ -311,21 +308,21 @@ class HeartbeatBeacon:
                 continue
 
             try:
-                hb = Heartbeat.model_validate_json(
-                    f.read_text(encoding="utf-8")
+                hb = Heartbeat.model_validate_json(f.read_text(encoding="utf-8"))
+                peers.append(
+                    PeerInfo(
+                        agent_name=hb.agent_name,
+                        status=hb.status if hb.is_alive else "offline",
+                        alive=hb.is_alive,
+                        age_seconds=round(hb.age_seconds, 1),
+                        hostname=hb.hostname,
+                        capabilities=[c.name for c in hb.capabilities if c.enabled],
+                        soul_active=hb.soul_active,
+                        claimed_tasks=len(hb.claimed_tasks),
+                        services=[s.name for s in hb.services],
+                        tailscale_ip=hb.tailscale_ip,
+                    )
                 )
-                peers.append(PeerInfo(
-                    agent_name=hb.agent_name,
-                    status=hb.status if hb.is_alive else "offline",
-                    alive=hb.is_alive,
-                    age_seconds=round(hb.age_seconds, 1),
-                    hostname=hb.hostname,
-                    capabilities=[c.name for c in hb.capabilities if c.enabled],
-                    soul_active=hb.soul_active,
-                    claimed_tasks=len(hb.claimed_tasks),
-                    services=[s.name for s in hb.services],
-                    tailscale_ip=hb.tailscale_ip,
-                ))
             except Exception as exc:
                 logger.warning("Cannot parse heartbeat %s: %s", f.name, exc)
 
@@ -365,10 +362,7 @@ class HeartbeatBeacon:
             List of alive peers with the capability.
         """
         peers = self.discover_peers(include_self=True)
-        return [
-            p for p in peers
-            if p.alive and capability in p.capabilities
-        ]
+        return [p for p in peers if p.alive and capability in p.capabilities]
 
     def mark_offline(self) -> None:
         """Mark this agent as going offline.
@@ -393,6 +387,7 @@ class HeartbeatBeacon:
 
         try:
             import psutil
+
             loads = psutil.getloadavg()
             cpu_load = round(loads[0], 2)
             mem = psutil.virtual_memory()
@@ -432,12 +427,13 @@ class HeartbeatBeacon:
         try:
             cpu_count = os.cpu_count() or 0
             disk = shutil.disk_usage(self._home)
-            disk_free_gb = round(disk.free / (1024 ** 3), 1)
+            disk_free_gb = round(disk.free / (1024**3), 1)
 
             mem_total = 0
             mem_avail = 0
             try:
                 import psutil
+
                 mem = psutil.virtual_memory()
                 mem_total = mem.total // (1024 * 1024)
                 mem_avail = mem.available // (1024 * 1024)
@@ -484,6 +480,7 @@ class HeartbeatBeacon:
         try:
             if config_path.exists():
                 import yaml as _yaml
+
                 data = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
                 caps = data.get("capabilities")
                 if isinstance(caps, list):
@@ -492,6 +489,7 @@ class HeartbeatBeacon:
             logger.debug("Cannot load capabilities from config: %s", exc)
         # Fall back to AgentConfig defaults
         from .models import AgentConfig
+
         return AgentConfig().capabilities
 
     def _detect_capabilities(self) -> list[AgentCapability]:
@@ -528,6 +526,7 @@ class HeartbeatBeacon:
         """Detect skcapstone version."""
         try:
             from . import __version__
+
             return __version__
         except Exception as exc:
             logger.debug("Version detection failed: %s", exc)
@@ -575,9 +574,13 @@ class HeartbeatBeacon:
             try:
                 s = _socket.create_connection(("127.0.0.1", port), timeout=1)
                 s.close()
-                services.append(HeartbeatService(
-                    name=name, port=port, protocol=protocol,
-                ))
+                services.append(
+                    HeartbeatService(
+                        name=name,
+                        port=port,
+                        protocol=protocol,
+                    )
+                )
             except (OSError, _socket.timeout):
                 pass
 

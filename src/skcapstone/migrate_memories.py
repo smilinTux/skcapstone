@@ -1,5 +1,5 @@
 """
-Memory Migration — move JSON memories to the unified three-tier backend.
+Memory Migration - move JSON memories to the unified three-tier backend.
 
 Scans ~/.skcapstone/memory/{short-term,mid-term,long-term}/*.json,
 converts each MemoryEntry to a skmemory Memory, and writes to
@@ -18,9 +18,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from .models import MemoryEntry, MemoryLayer
+
+if TYPE_CHECKING:
+    import skmemory
 
 logger = logging.getLogger("skcapstone.migrate")
 
@@ -95,7 +98,7 @@ def migrate(
     if verify:
         return _verify_migration(entries, store, result)
 
-    # Deduplicate by memory_id — check what already exists in primary
+    # Deduplicate by memory_id - check what already exists in primary
     existing_ids: set[str] = set()
     try:
         existing = store.list_memories(limit=10000)
@@ -177,6 +180,8 @@ def _verify_migration(
             missing[:10],
         )
     else:
-        logger.info("Verification passed: all %d memories present in unified backend", len(entries))
+        logger.info(
+            "Verification passed: all %d memories present in unified backend", len(entries)
+        )
 
     return result

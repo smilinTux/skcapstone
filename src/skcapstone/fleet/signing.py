@@ -1,0 +1,305 @@
+"""Signed desired state (Card 3.5, R6): the actuation trust boundary.
+
+Spec and placement writes carry a detached capauth/PGP signature over
+canonical payload bytes in the writer.signature slot the Phase 1 store
+reserved. sknoded verifies before actuating (converge.py). Rollout is
+permissive-then-enforce behind the SKFLEET_SIGNING env flag; off is the
+default, so Phase 1/2 behavior is unchanged until the key ceremony.
+
+capauth is a lazy soft dependency: every factory degrades to None instead
+of raising, and callers treat None per mode (off ignores it, enforce
+fails safe by refusing actuation, never by stopping running services).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+from pathlib import Path
+from typing import Callable
+
+from ..key_io import read_armored_public_key
+
+MODES = frozenset({"off", "permissive", "enforce"})
+
+
+def _default_suite_id() -> str:
+    """The signature suite id, from the ONE registry that owns suite names.
+
+    PROVENANCE_AND_MUTATION_STANDARD section 1 requires `sig.suite_id` to come
+    from the `skcomms.crypto_suites` registry; an invented id is the
+    "hardcoded primitive" anti-pattern (CRYPTO_AGILITY section 4) and is
+    non-compliant, however descriptive it looks. capauth's PGP backend signs
+    with the identity key, and both the operator and agent identities here are
+    EdDSA/Ed25519, so the registry's signature default is the right name.
+
+    skcomms is not a declared dependency, so this soft-imports and falls back
+    to the same literal the registry holds. The fallback is a copy of a
+    registered id, never a new one.
+    """
+    try:
+        from skcomms.crypto_suites import DEFAULT_SIG_SUITE
+
+        return DEFAULT_SIG_SUITE
+    except Exception:  # noqa: BLE001
+        return "ed25519-v1"
+
+
+#: Names the crypto suite a signature was produced with, so a future algorithm
+#: change is DETECTABLE rather than silent. Without it, a verifier that later
+#: learns a second suite cannot tell which one an old signature used, and an
+#: unverifiable-because-unknown signature is indistinguishable from a forged
+#: one. Carried inside the writer block, so it is covered by the signature.
+SUITE_ID = _default_suite_id()
+SIGNING_ENV = "SKFLEET_SIGNING"
+PASSPHRASE_FILE_ENV = "CAPAUTH_PASSPHRASE_FILE"
+SYSTEMD_CREDENTIAL_NAME = "capauth-passphrase"
+MAX_PASSPHRASE_BYTES = 4096
+
+
+def signing_mode() -> str:
+    """The rollout mode: off (default) | permissive | enforce."""
+    mode = os.environ.get(SIGNING_ENV, "off").strip().lower()
+    return mode if mode in MODES else "off"
+
+
+def canonical_bytes(payload: dict) -> bytes:
+    """Deterministic bytes of a payload with its signature slot blanked.
+
+    The signature covers everything else in the file, including
+    generation and updatedAt, so replaying an old signed spec over a
+    newer one is detectable as invalid.
+    """
+    body = json.loads(json.dumps(payload, sort_keys=True))
+    writer = dict(body.get("writer") or {})
+    writer["signature"] = None
+    body["writer"] = writer
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_payload(payload: dict, verifier: Callable[[bytes, str], bool]) -> tuple[str, str]:
+    """Classify one payload: verified, unsigned, or invalid (with detail)."""
+    signature = (payload.get("writer") or {}).get("signature")
+    if not signature:
+        return ("unsigned", "no signature in writer block")
+    try:
+        ok = verifier(canonical_bytes(payload), signature)
+    except Exception as exc:
+        return ("invalid", f"verifier error: {exc}")
+    if ok:
+        return ("verified", "signature matches a trusted key")
+    return ("invalid", "signature does not match any trusted key")
+
+
+def _acting_agent() -> str:
+    """The acting agent, per the standard SKAGENT precedence."""
+    for var in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT"):
+        value = (os.environ.get(var) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _agent_capauth_home() -> Path | None:
+    """The acting agent's OWN capauth home, when it has one."""
+    agent = _acting_agent()
+    if not agent:
+        return None
+    try:
+        from ..mcp_tools._helpers import _shared_root
+
+        root = _shared_root()
+    except Exception:  # noqa: BLE001
+        return None
+    home = Path(root) / "agents" / agent / "capauth"
+    return home if (home / "identity" / "private.asc").exists() else None
+
+
+def _capauth_home() -> Path | None:
+    """Resolve the capauth home to sign and verify with.
+
+    Precedence: explicit CAPAUTH_HOME, then the ACTING AGENT's own home, then
+    the shared/operator home.
+
+    The agent step is not a nicety. ``capauth.resolve_agent_identity()`` is
+    agent-aware while ``capauth.resolve_capauth_home()`` is agent-BLIND and
+    always answers the operator home, so without this the envelope claims one
+    identity (``lumina``) while a completely different key signs it. On
+    noroc2027 that meant signing with a stray ``test-agent`` key that happened
+    to sit in the operator home, next to the operator's real public key, so
+    every signature verified as invalid, while the agent's own healthy keypair
+    sat one directory away, unused.
+    """
+    env = os.environ.get("CAPAUTH_HOME")
+    if env:
+        return Path(env)
+
+    agent_home = _agent_capauth_home()
+    if agent_home is not None:
+        return agent_home
+
+    try:
+        from capauth import resolve_capauth_home
+
+        return resolve_capauth_home()
+    except Exception:
+        return None
+
+
+def _fingerprint_of(path: Path) -> str | None:
+    """The fingerprint of a key file, or None when unreadable."""
+    try:
+        import pgpy
+
+        key, _ = pgpy.PGPKey.from_file(str(path))
+        return str(key.fingerprint).replace(" ", "")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _keypair_matches(home: Path) -> bool:
+    """True when private.asc and public.asc in a home are the SAME key.
+
+    Unknown (PGPy missing, or no public half to compare against) counts as a
+    match: this guard exists to catch a demonstrably wrong pair, not to block
+    signing wherever the check cannot run.
+    """
+    public = home / "identity" / "public.asc"
+    if not public.exists():
+        return True
+    priv_fpr = _fingerprint_of(home / "identity" / "private.asc")
+    pub_fpr = _fingerprint_of(public)
+    if priv_fpr is None or pub_fpr is None:
+        return True
+    return priv_fpr == pub_fpr
+
+
+def _passphrase() -> str:
+    """Resolve a protected signer passphrase without requiring an env secret.
+
+    The legacy direct environment value remains supported for interactive and
+    test callers. Services should use ``CAPAUTH_PASSPHRASE_FILE`` or systemd's
+    ``CREDENTIALS_DIRECTORY/capauth-passphrase``. Credential files fail closed
+    unless they are regular, non-symlink, owned by this uid, owner-only, and
+    bounded in size.
+    """
+    direct = os.environ.get("CAPAUTH_PASSPHRASE")
+    if direct is not None:
+        return direct
+
+    configured = os.environ.get(PASSPHRASE_FILE_ENV)
+    credentials_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+    path = (
+        Path(configured).expanduser()
+        if configured
+        else Path(credentials_dir) / SYSTEMD_CREDENTIAL_NAME if credentials_dir else None
+    )
+    if path is None:
+        return ""
+
+    try:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            return ""
+        if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+            return ""
+        if metadata.st_size <= 0 or metadata.st_size > MAX_PASSPHRASE_BYTES:
+            return ""
+        return path.read_text(encoding="utf-8").rstrip("\r\n")
+    except (OSError, UnicodeError):
+        return ""
+
+
+def capauth_signer() -> Callable[[bytes], str] | None:
+    """A signer over this seat's capauth identity key, or None.
+
+    Reads <capauth_home>/identity/private.asc; passphrase from a direct legacy
+    environment value or a protected credential file (empty default). Any
+    failure returns None:
+    signing is best-effort at write time, and enforcement lives at the
+    actuation boundary, not here.
+    """
+    home = _capauth_home()
+    if home is None:
+        return None
+    key_path = home / "identity" / "private.asc"
+    if not key_path.exists():
+        return None
+    if not _keypair_matches(home):
+        # Degrade to unsigned rather than emit a signature nobody can verify.
+        # An unverifiable signature is worse than none: it manufactures
+        # assurance, and the failure surfaces at someone else's verify
+        # boundary, later, as a crypto error rather than the custody problem
+        # it actually is. See capauth's keypair_match doctor check.
+        return None
+    try:
+        from capauth.crypto import get_backend
+
+        armor = key_path.read_text(encoding="utf-8")
+        passphrase = _passphrase()
+        backend = get_backend()
+
+        def _sign(data: bytes) -> str:
+            return backend.sign(data, armor, passphrase)
+
+        return _sign
+    except Exception:
+        return None
+
+
+def default_signer() -> Callable[[bytes], str] | None:
+    """The signer store writes use when none is passed: None while off."""
+    if signing_mode() == "off":
+        return None
+    return capauth_signer()
+
+
+def load_roster() -> list[str]:
+    """Trusted writer public keys (armored) from the LOCAL capauth home.
+
+    <capauth_home>/identity/public.asc (this seat) plus every *.asc under
+    <capauth_home>/fleet-trust/ (installed by the key ceremony runbook).
+    Never read from the synced fleet tree: the roster must not be
+    writable by the thing it authenticates.
+    """
+    home = _capauth_home()
+    if home is None:
+        return []
+    keys: list[str] = []
+    own = home / "identity" / "public.asc"
+    if own.exists():
+        own_armored = read_armored_public_key(own)
+        if own_armored:
+            keys.append(own_armored)
+    trust_dir = home / "fleet-trust"
+    if trust_dir.exists():
+        for path in sorted(trust_dir.glob("*.asc")):
+            armored = read_armored_public_key(path)
+            if armored:
+                keys.append(armored)
+    return keys
+
+
+def capauth_verifier() -> Callable[[bytes, str], bool] | None:
+    """A verifier over the local trust roster, or None when empty."""
+    roster = load_roster()
+    if not roster:
+        return None
+    try:
+        from capauth.crypto import get_backend
+
+        backend = get_backend()
+    except Exception:
+        return None
+
+    def _verify(data: bytes, signature: str) -> bool:
+        for key in roster:
+            try:
+                if backend.verify(data, signature, key):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    return _verify

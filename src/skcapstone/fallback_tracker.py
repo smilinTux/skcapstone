@@ -1,12 +1,12 @@
-"""Fallback event tracker — graceful degradation logging.
+"""Fallback event tracker - graceful degradation logging.
 
 Records every LLM fallback event to ~/.skcapstone/fallbacks.json so
 operators can diagnose which backends are failing and how often the
 agent is degrading to lower-quality providers.
 
 Architecture:
-    FallbackEvent  — Pydantic model for a single fallback occurrence
-    FallbackTracker — thread-safe writer / reader for fallbacks.json
+    FallbackEvent  - Pydantic model for a single fallback occurrence
+    FallbackTracker - thread-safe writer / reader for fallbacks.json
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ class FallbackTracker:
     """Thread-safe store for fallback events.
 
     Events are appended to a JSON file (list of objects). The file is
-    created on first write. Reads never raise — a missing or corrupt
+    created on first write. Reads never raise - a missing or corrupt
     file returns an empty list.
 
     Args:
@@ -150,7 +150,7 @@ class FallbackTracker:
             if isinstance(data, list):
                 return data
         except (json.JSONDecodeError, OSError):
-            logger.warning("fallbacks.json is corrupt or unreadable — resetting")
+            logger.warning("fallbacks.json is corrupt or unreadable - resetting")
         return []
 
     def _save_raw(self, events: list[dict]) -> None:
@@ -162,7 +162,7 @@ class FallbackTracker:
         )
 
 
-# Module-level singleton — shared across the process
+# Module-level singleton - shared across the process
 _tracker: Optional[FallbackTracker] = None
 _tracker_lock = threading.Lock()
 

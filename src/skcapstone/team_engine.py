@@ -1,5 +1,5 @@
 """
-Team Deployment Engine — provider-agnostic orchestration.
+Team Deployment Engine - provider-agnostic orchestration.
 
 Takes a BlueprintManifest and deploys it to the target infrastructure.
 The engine doesn't care whether agents land on local processes, Proxmox
@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 # Deployment state
 # ---------------------------------------------------------------------------
 
+
 class AgentStatus(str, Enum):
     """Runtime status of a deployed agent."""
 
@@ -81,9 +82,7 @@ class TeamDeployment(BaseModel):
     team_name: str
     provider: ProviderType
     agents: Dict[str, DeployedAgent] = Field(default_factory=dict)
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: str = "deploying"
     comms_channel: Optional[Any] = Field(
         default=None,
@@ -95,6 +94,7 @@ class TeamDeployment(BaseModel):
 # ---------------------------------------------------------------------------
 # Provider interface (abstract base)
 # ---------------------------------------------------------------------------
+
 
 class ProviderBackend(ABC):
     """Abstract base for infrastructure providers.
@@ -194,6 +194,7 @@ class ProviderBackend(ABC):
 # Deployment engine
 # ---------------------------------------------------------------------------
 
+
 class TeamEngine:
     """Orchestrates team deployment across any provider.
 
@@ -227,7 +228,7 @@ class TeamEngine:
     def resolve_deploy_order(blueprint: BlueprintManifest) -> List[List[str]]:
         """Topological sort of agents by depends_on.
 
-        Returns a list of "waves" — agents in the same wave can deploy
+        Returns a list of "waves" - agents in the same wave can deploy
         in parallel; each wave must complete before the next starts.
 
         Args:
@@ -251,9 +252,7 @@ class TeamEngine:
             iteration += 1
             if iteration > max_iterations:
                 unresolved = list(remaining.keys())
-                raise ValueError(
-                    f"Circular dependency detected among: {unresolved}"
-                )
+                raise ValueError(f"Circular dependency detected among: {unresolved}")
 
             wave = []
             for key, spec in list(remaining.items()):
@@ -263,9 +262,7 @@ class TeamEngine:
 
             if not wave:
                 unresolved = list(remaining.keys())
-                raise ValueError(
-                    f"Unresolvable dependencies for: {unresolved}"
-                )
+                raise ValueError(f"Unresolvable dependencies for: {unresolved}")
 
             for key in wave:
                 del remaining[key]
@@ -309,7 +306,9 @@ class TeamEngine:
         waves = self.resolve_deploy_order(blueprint)
         logger.info(
             "Deploying %s: %d agents in %d waves",
-            team_name, blueprint.agent_count, len(waves),
+            team_name,
+            blueprint.agent_count,
+            len(waves),
         )
 
         for wave_idx, wave in enumerate(waves):
@@ -333,7 +332,9 @@ class TeamEngine:
                     if self._provider:
                         try:
                             result = self._provider.provision(
-                                instance_name, spec, team_name,
+                                instance_name,
+                                spec,
+                                team_name,
                             )
                             deployed.host = result.get("host")
                             deployed.port = result.get("port")
@@ -345,17 +346,13 @@ class TeamEngine:
 
                             deployed.status = AgentStatus.RUNNING
                             self._provider.start(instance_name, result)
-                            deployed.started_at = datetime.now(
-                                timezone.utc
-                            ).isoformat()
+                            deployed.started_at = datetime.now(timezone.utc).isoformat()
                             deployed.last_heartbeat = deployed.started_at
 
                         except Exception as exc:
                             deployed.status = AgentStatus.FAILED
                             deployed.error = str(exc)
-                            logger.error(
-                                "Failed to deploy %s: %s", instance_name, exc
-                            )
+                            logger.error("Failed to deploy %s: %s", instance_name, exc)
                     else:
                         # Dry-run mode: no provider, just record the plan
                         deployed.status = AgentStatus.PENDING
@@ -375,9 +372,7 @@ class TeamEngine:
         self._save_deployment(deployment)
 
         if self._comms_root is not None:
-            deployment.comms_channel = self._bootstrap_comms(
-                deployment, blueprint
-            )
+            deployment.comms_channel = self._bootstrap_comms(deployment, blueprint)
 
         return deployment
 
@@ -434,8 +429,7 @@ class TeamEngine:
                 try:
                     self._provider.destroy(
                         agent.name,
-                        {"host": agent.host, "pid": agent.pid,
-                         "container_id": agent.container_id},
+                        {"host": agent.host, "pid": agent.pid, "container_id": agent.container_id},
                     )
                 except Exception as exc:
                     logger.error("Failed to destroy %s: %s", agent.name, exc)

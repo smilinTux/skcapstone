@@ -146,7 +146,7 @@ def main() -> int:
     cdp = CDP(tab["webSocketDebuggerUrl"])
     manifest: dict = {
         "finding": "2026-06-04_splc-doj-superseding-indictment-oneill-thread.md",
-        "capture_method": "Lumina Chrome CDP (port 9222) — page-context fetch (Akamai bypass)",
+        "capture_method": "Lumina Chrome CDP (port 9222) - page-context fetch (Akamai bypass)",
         "targets": {},
     }
     try:
@@ -177,7 +177,7 @@ def main() -> int:
             }
         else:
             manifest["targets"]["indictment_pdf"] = {"url": PDF_URL, "status": status, "error": True}
-            print("[capture] PDF FAILED — page-context fetch did not return 200", flush=True)
+            print("[capture] PDF FAILED - page-context fetch did not return 200", flush=True)
 
         # ---- 2. Discover + fetch DOJ press release ----
         print(f"[capture] searching DOJ news -> {SEARCH_URL}", flush=True)

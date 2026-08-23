@@ -1,0 +1,10 @@
+[Unit]
+Description=Atlas operator seat: run every 15 minutes (plus alert-wake, wired separately)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

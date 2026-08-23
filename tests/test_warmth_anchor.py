@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 import yaml
 
 from skcapstone.warmth_anchor import (
@@ -23,14 +22,19 @@ def _init_agent(home: Path, name: str = "anchor-test") -> None:
     from skcapstone.pillars.memory import initialize_memory
     from skcapstone.pillars.security import initialize_security
     from skcapstone.pillars.sync import initialize_sync
-    from skcapstone.pillars.trust import initialize_trust, record_trust_state
+    from skcapstone.pillars.trust import initialize_trust
 
     generate_identity(home, name)
     initialize_memory(home)
     initialize_trust(home)
     initialize_security(home)
     initialize_sync(home)
-    manifest = {"name": name, "version": "0.1.0", "created_at": "2026-01-01T00:00:00Z", "connectors": []}
+    manifest = {
+        "name": name,
+        "version": "0.1.0",
+        "created_at": "2026-01-01T00:00:00Z",
+        "connectors": [],
+    }
     (home / "manifest.json").write_text(json.dumps(manifest))
     (home / "config").mkdir(exist_ok=True)
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": name}))
@@ -49,6 +53,7 @@ class TestGetAnchor:
         """Anchor returns meaningful values with trust data."""
         _init_agent(tmp_agent_home)
         from skcapstone.pillars.trust import record_trust_state
+
         record_trust_state(tmp_agent_home, depth=8.0, trust_level=0.9, love_intensity=0.8)
 
         data = get_anchor(tmp_agent_home)
@@ -86,6 +91,7 @@ class TestCalibrate:
         """Calibration uses trust state data."""
         _init_agent(tmp_agent_home)
         from skcapstone.pillars.trust import record_trust_state
+
         record_trust_state(
             tmp_agent_home, depth=9.0, trust_level=0.95, love_intensity=0.9, entangled=True
         )
@@ -116,6 +122,7 @@ class TestCalibrate:
         """Calibration analyzes coordination activity."""
         _init_agent(tmp_agent_home)
         from skcapstone.coordination import Board, Task
+
         board = Board(tmp_agent_home)
         board.ensure_dirs()
 
@@ -133,7 +140,10 @@ class TestCalibrate:
         """Calibration provides reasoning for recommendations."""
         _init_agent(tmp_agent_home)
         from skcapstone.pillars.trust import record_trust_state
-        record_trust_state(tmp_agent_home, depth=9.0, trust_level=0.9, love_intensity=0.9, entangled=True)
+
+        record_trust_state(
+            tmp_agent_home, depth=9.0, trust_level=0.9, love_intensity=0.9, entangled=True
+        )
 
         cal = calibrate_from_data(tmp_agent_home)
         assert len(cal.reasoning) >= 1

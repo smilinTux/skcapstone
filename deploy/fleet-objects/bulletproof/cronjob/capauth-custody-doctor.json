@@ -1,0 +1,21 @@
+{
+  "kind": "cronjob",
+  "labels": {
+    "epic": "CR-7.3"
+  },
+  "name": "capauth-custody-doctor",
+  "spec": {
+    "command": "capauth doctor custody",
+    "conditions": [
+      "MissedRun",
+      "CustodyVerified"
+    ],
+    "nodeSelector": {
+      "control-plane": "true"
+    },
+    "note": "root revocation cert present + identity backup restorable + Nextcloud signing key verified in a second home (G5; commit 456cb3a never again).",
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "schedule": "@daily",
+    "source": "capauth/docs/deploy-plan/capauth-bulletproof-deploy.md"
+  }
+}

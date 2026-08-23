@@ -1,5 +1,5 @@
 """
-Uninstall wizard — clean, complete removal of a sovereign node.
+Uninstall wizard - clean, complete removal of a sovereign node.
 
 Steps:
   1. Confirm the user actually wants to do this (multiple confirmations)
@@ -20,7 +20,7 @@ Safety: requires typing "DELETE" to confirm. No accidental wipes.
 
 from __future__ import annotations
 
-import os
+import logging
 import shutil
 import socket
 import subprocess
@@ -35,15 +35,15 @@ from rich.table import Table
 
 from . import AGENT_HOME
 
-import logging
 logger = logging.getLogger(__name__)
 
 console = Console()
 
 
 # ---------------------------------------------------------------------------
-# Inventory — what will be deleted
+# Inventory - what will be deleted
 # ---------------------------------------------------------------------------
+
 
 def _build_inventory(home_path: Path) -> dict:
     """Scan what exists on this machine and build a deletion inventory.
@@ -71,9 +71,7 @@ def _build_inventory(home_path: Path) -> dict:
 
     vaults_dir = home_path / "vaults"
     if vaults_dir.exists():
-        inventory["vault_names"] = [
-            d.name for d in vaults_dir.iterdir() if d.is_dir()
-        ]
+        inventory["vault_names"] = [d.name for d in vaults_dir.iterdir() if d.is_dir()]
 
     sync_dir = home_path / "sync"
     registry_file = sync_dir / "vault-registry.json"
@@ -117,6 +115,7 @@ def _human_size(n: int) -> str:
 # Data transfer
 # ---------------------------------------------------------------------------
 
+
 def _offer_data_transfer(home_path: Path, inventory: dict) -> None:
     """Offer to transfer vault data to another location before wiping.
 
@@ -131,7 +130,7 @@ def _offer_data_transfer(home_path: Path, inventory: dict) -> None:
     """
     vault_names = inventory["vault_names"]
     if not vault_names:
-        console.print("  [dim]No vault data found — nothing to transfer.[/]")
+        console.print("  [dim]No vault data found - nothing to transfer.[/]")
         return
 
     vaults_dir = home_path / "vaults"
@@ -161,7 +160,7 @@ def _offer_data_transfer(home_path: Path, inventory: dict) -> None:
     console.print("    [cyan]2[/]  Copy vault data to another device on your network")
     console.print("       (copies to that device's sync folder)")
     console.print()
-    console.print("    [cyan]3[/]  Skip — just delete everything")
+    console.print("    [cyan]3[/]  Skip - just delete everything")
     console.print("       [dim](data is gone forever)[/]")
     console.print()
 
@@ -229,14 +228,15 @@ def _transfer_to_device(
         home_path: Agent home.
     """
     try:
-        from skref.registry import load_registry
         from skref.config import load_config
+        from skref.registry import load_registry
 
-        config = load_config()
+        load_config()
         registry = load_registry()
         hostname = socket.gethostname()
         other_devices = [
-            d for name, d in registry.get("devices", {}).items()
+            d
+            for name, d in registry.get("devices", {}).items()
             if name != hostname and d.get("is_datastore")
         ]
     except Exception as e:
@@ -265,7 +265,7 @@ def _transfer_to_device(
     target_host = target["hostname"]
 
     if not target_ip:
-        console.print(f"  [yellow]No IP for {target_host} — try option 1 instead.[/]")
+        console.print(f"  [yellow]No IP for {target_host} - try option 1 instead.[/]")
         return
 
     console.print(f"  Transferring to [cyan]{target_host}[/] ({target_ip})...")
@@ -279,14 +279,16 @@ def _transfer_to_device(
                 dest_remote = f"{target_ip}:~/.skcapstone/vaults/{name}/"
                 result = subprocess.run(
                     ["rsync", "-az", "--progress", f"{src}/", dest_remote],
-                    capture_output=True, text=True, timeout=300,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
                 )
                 if result.returncode == 0:
                     console.print("[green]done[/]")
                 else:
-                    console.print(f"[yellow]rsync failed — try scp or manual copy[/]")
+                    console.print("[yellow]rsync failed - try scp or manual copy[/]")
             except FileNotFoundError:
-                console.print("[yellow]rsync not found — install or use option 1[/]")
+                console.print("[yellow]rsync not found - install or use option 1[/]")
                 return
             except subprocess.TimeoutExpired:
                 console.print("[yellow]timed out[/]")
@@ -298,6 +300,7 @@ def _transfer_to_device(
 # Teardown steps
 # ---------------------------------------------------------------------------
 
+
 def _deregister_from_vault_registry(home_path: Path) -> None:
     """Remove this device from the vault registry.
 
@@ -307,12 +310,13 @@ def _deregister_from_vault_registry(home_path: Path) -> None:
     console.print("  Removing this device from the vault registry...", end=" ")
     try:
         from skref.registry import deregister_device
+
         result = deregister_device()
         vaults_removed = result.get("vaults_removed", 0)
         console.print(f"[green]done[/] ({vaults_removed} vault(s) removed)")
         console.print("  [dim]Other devices will see this update via Syncthing.[/]")
     except ImportError:
-        console.print("[dim]skref not installed — skipping[/]")
+        console.print("[dim]skref not installed - skipping[/]")
     except Exception as exc:
         logger.warning("uninstall_wizard.py: %s", exc)
         console.print(f"[yellow]{exc}[/]")
@@ -323,6 +327,7 @@ def _teardown_tailscale() -> None:
     console.print("  Disconnecting from Tailscale...", end=" ")
     try:
         from skref import tailscale
+
         if tailscale.is_installed():
             tailscale.logout()
             console.print("[green]logged out[/]")
@@ -332,9 +337,9 @@ def _teardown_tailscale() -> None:
                 f"  {tailscale.get_admin_console_url().replace('/keys', '/machines')}[/]"
             )
         else:
-            console.print("[dim]not installed — skipping[/]")
+            console.print("[dim]not installed - skipping[/]")
     except ImportError:
-        console.print("[dim]skref not installed — skipping[/]")
+        console.print("[dim]skref not installed - skipping[/]")
     except Exception as exc:
         logger.warning("uninstall_wizard.py: %s", exc)
         console.print(f"[yellow]{exc}[/]")
@@ -350,13 +355,13 @@ def _remove_syncthing_folder(home_path: Path) -> None:
     console.print("  Removing Syncthing sync folder...", end=" ")
 
     if not shutil.which("syncthing"):
-        console.print("[dim]syncthing not installed — skipping[/]")
+        console.print("[dim]syncthing not installed - skipping[/]")
         return
 
     # Syncthing REST API to remove a folder
     try:
-        import urllib.request
         import json
+        import urllib.request
 
         api_url = "http://localhost:8384/rest/config/folders"
         req = urllib.request.Request(api_url)
@@ -392,6 +397,7 @@ def _remove_auth_key(home_path: Path) -> None:
     console.print("  Removing synced auth key...", end=" ")
     try:
         from skref.tailscale import remove_auth_key
+
         if remove_auth_key():
             console.print("[green]removed[/]")
         else:
@@ -457,13 +463,20 @@ def _uninstall_packages() -> None:
 
     console.print("  Uninstalling packages...", end=" ")
     packages = [
-        "skcapstone", "capauth", "skmemory", "skcomms",
-        "cloud9", "skref", "skchat",
+        "skcapstone",
+        "capauth",
+        "skmemory",
+        "skcomms",
+        "cloud9",
+        "skref",
+        "skchat",
     ]
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "uninstall", "-y", *packages],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if result.returncode == 0:
             console.print("[green]done[/]")
@@ -476,6 +489,7 @@ def _uninstall_packages() -> None:
 # ---------------------------------------------------------------------------
 # Main wizard
 # ---------------------------------------------------------------------------
+
 
 def _export_backup(home_path: Path) -> Optional[Path]:
     """Create a full backup archive before wiping.
@@ -625,8 +639,7 @@ def run_uninstall_wizard(
     # --- Confirm ---
     if not force:
         console.print(
-            "  [bold red]Are you sure?[/]\n"
-            "  Type [bold]DELETE[/] to confirm (all caps):"
+            "  [bold red]Are you sure?[/]\n" "  Type [bold]DELETE[/] to confirm (all caps):"
         )
         confirmation = click.prompt("  ", default="", show_default=False)
         if confirmation != "DELETE":

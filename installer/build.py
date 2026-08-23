@@ -26,7 +26,7 @@ SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 SRC_DIR = PROJECT_ROOT / "src"
 ENTRY_POINT = SRC_DIR / "skcapstone" / "gui_installer.py"
-CLI_ENTRY = SRC_DIR / "skcapstone" / "_cli_monolith.py"
+CLI_ENTRY = SRC_DIR / "skcapstone" / "__main__.py"
 
 PRODUCT_NAME = "SovereignSetup"
 ICON_WIN = SCRIPT_DIR / "icon.ico"

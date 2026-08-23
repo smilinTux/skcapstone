@@ -1,0 +1,30 @@
+{
+  "kind": "service",
+  "labels": {
+    "epic": "CR-7.3",
+    "tier": "core"
+  },
+  "name": "skos-scheduler",
+  "spec": {
+    "conditions": [
+      "Ready",
+      "Progressing",
+      "CrashLooping",
+      "SchedulerAlive"
+    ],
+    "failover": "manual",
+    "nodeSelector": {
+      "control-plane": "true"
+    },
+    "note": "owns the CronJob ticks below. crons must not swallow gog failures and exit 0 (green-but-dead theme 6).",
+    "resources": {
+      "cores": 1,
+      "ram_gb": 1.0
+    },
+    "restartPolicy": "on-failure",
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "runtime": "systemd-user",
+    "source": "skos/docs/deploy-plan/skos-bulletproof-deploy.md",
+    "unit": "skos-scheduler.service"
+  }
+}

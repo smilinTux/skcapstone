@@ -9,17 +9,16 @@ import threading
 import time
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from skcapstone.daemon import DaemonConfig, DaemonService, DaemonState
 
-
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
+
 
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -73,6 +72,7 @@ def _run_healing_loop_once(svc: DaemonService) -> None:
 # ---------------------------------------------------------------------------
 # DaemonState healing history
 # ---------------------------------------------------------------------------
+
 
 class TestDaemonStateHealingHistory:
     """Tests for healing_history tracking and record_healing_run()."""
@@ -140,6 +140,7 @@ class TestDaemonStateHealingHistory:
 # ---------------------------------------------------------------------------
 # _healing_loop behaviour
 # ---------------------------------------------------------------------------
+
 
 class TestHealingLoop:
     """Tests for DaemonService._healing_loop integration."""
@@ -250,13 +251,12 @@ class TestHealingLoop:
 # GET /api/v1/health endpoint
 # ---------------------------------------------------------------------------
 
+
 class TestHealthAPIEndpoint:
     """Tests for the comprehensive /api/v1/health HTTP endpoint."""
 
     def _start_server(self, daemon_home, healing_report=None):
-        config = DaemonConfig(
-            home=daemon_home, shared_root=daemon_home, port=0, poll_interval=60
-        )
+        config = DaemonConfig(home=daemon_home, shared_root=daemon_home, port=0, poll_interval=60)
         svc = DaemonService(config)
         svc.state.running = True
         svc.state.started_at = datetime.now(timezone.utc)
@@ -361,6 +361,7 @@ class TestHealthAPIEndpoint:
 
     def test_health_endpoint_daemon_pid_matches(self, daemon_home):
         import os
+
         svc = self._start_server(daemon_home)
         try:
             _, data = self._get(svc.config.port, "/api/v1/health")
@@ -372,6 +373,7 @@ class TestHealthAPIEndpoint:
 # ---------------------------------------------------------------------------
 # Profile freshness warning
 # ---------------------------------------------------------------------------
+
 
 class TestProfileFreshnessWarning:
     """Tests that stale model profiles emit a WARNING log."""

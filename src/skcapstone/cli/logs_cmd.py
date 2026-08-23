@@ -1,4 +1,4 @@
-"""Logs command — tail daemon logs with optional filtering."""
+"""Logs command - tail daemon logs with optional filtering."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from pathlib import Path
 
 import click
 
-from ._common import AGENT_HOME, console
 from .. import SKCAPSTONE_ROOT
+from ._common import AGENT_HOME, console
 
 # Log level ordering (lowest → highest)
 _LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -32,6 +32,7 @@ _LEVEL_RE = re.compile(r"\]\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL):")
 # ---------------------------------------------------------------------------
 # Helpers (importable for unit-testing)
 # ---------------------------------------------------------------------------
+
 
 def _resolve_log_file(agent: str | None, home: str) -> Path:
     """Return the path to daemon.log for the given agent/home."""
@@ -88,24 +89,33 @@ def _tail(path: Path, n: int) -> list[str]:
 # Command registration
 # ---------------------------------------------------------------------------
 
+
 def register_logs_commands(main: click.Group) -> None:
     """Register the top-level ``skcapstone logs`` command."""
 
     @main.command("logs")
     @click.option(
-        "--home", default=AGENT_HOME, type=click.Path(),
+        "--home",
+        default=AGENT_HOME,
+        type=click.Path(),
         help="Agent home directory.",
     )
     @click.option(
-        "--agent", default=None,
+        "--agent",
+        default=None,
         help="Named agent whose logs to read (e.g. opus, jarvis).",
     )
     @click.option(
-        "--follow", "-f", is_flag=True,
+        "--follow",
+        "-f",
+        is_flag=True,
         help="Stream new log entries as they arrive (like tail -f).",
     )
     @click.option(
-        "--lines", "-n", default=50, show_default=True,
+        "--lines",
+        "-n",
+        default=50,
+        show_default=True,
         help="Number of recent lines to show.",
     )
     @click.option(
@@ -118,7 +128,8 @@ def register_logs_commands(main: click.Group) -> None:
         help="Minimum log level to display.",
     )
     @click.option(
-        "--peer", default=None,
+        "--peer",
+        default=None,
         help="Only show lines that mention this peer name.",
     )
     def logs_command(
@@ -160,9 +171,7 @@ def register_logs_commands(main: click.Group) -> None:
             # Static mode: read last N lines, apply filters, print, exit.
             raw = _tail(log_file, lines)
             filtered = [
-                ln.rstrip("\n")
-                for ln in raw
-                if _matches_filters(ln.rstrip("\n"), min_level, peer)
+                ln.rstrip("\n") for ln in raw if _matches_filters(ln.rstrip("\n"), min_level, peer)
             ]
             if not filtered:
                 console.print("[dim]No matching log lines.[/]")

@@ -15,13 +15,12 @@ from __future__ import annotations
 import logging
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
 
 from skcapstone.consciousness_loop import ConsciousnessConfig, ConsciousnessLoop
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -154,9 +153,7 @@ class TestReloadConfigLogsChanges:
         with caplog.at_level(logging.INFO, logger="skcapstone.consciousness"):
             loop._reload_config()
 
-        change_logs = [
-            r.message for r in caplog.records if "response_timeout" in r.message
-        ]
+        change_logs = [r.message for r in caplog.records if "response_timeout" in r.message]
         assert change_logs, "Expected a log entry mentioning 'response_timeout'"
         # Must mention both old and new values
         msg = change_logs[0]
@@ -167,18 +164,14 @@ class TestReloadConfigLogsChanges:
         loop = _make_loop(tmp_path)
         home = loop._home
 
-        # Write exact current config — nothing changes
+        # Write exact current config - nothing changes
         _write_config(home, loop._config.model_dump())
 
         with caplog.at_level(logging.INFO, logger="skcapstone.consciousness"):
             loop._reload_config()
 
-        change_logs = [
-            r.message for r in caplog.records if "changed:" in r.message
-        ]
-        assert not change_logs, (
-            "No 'changed:' log entries expected when config is unchanged"
-        )
+        change_logs = [r.message for r in caplog.records if "changed:" in r.message]
+        assert not change_logs, "No 'changed:' log entries expected when config is unchanged"
 
     def test_completion_log_emitted(self, tmp_path, caplog):
         """A 'Config hot-reload complete' log entry is emitted after a successful reload."""
@@ -193,9 +186,7 @@ class TestReloadConfigLogsChanges:
         with caplog.at_level(logging.INFO, logger="skcapstone.consciousness"):
             loop._reload_config()
 
-        complete_logs = [
-            r.message for r in caplog.records if "hot-reload complete" in r.message
-        ]
+        complete_logs = [r.message for r in caplog.records if "hot-reload complete" in r.message]
         assert complete_logs, "Expected 'Config hot-reload complete' log entry"
 
 
@@ -231,9 +222,7 @@ class TestReloadConfigReprobesBackends:
 
         _write_config(home, loop._config.model_dump())
 
-        with patch.object(
-            loop._bridge, "_probe_available_backends"
-        ) as mock_probe:
+        with patch.object(loop._bridge, "_probe_available_backends") as mock_probe:
             loop._reload_config()
 
         mock_probe.assert_not_called()
@@ -277,9 +266,9 @@ class TestReloadConfigErrorHandling:
 
         loop._reload_config()
 
-        assert loop._config.model_dump() == original_config.model_dump(), (
-            "Config must not change after a failed reload"
-        )
+        assert (
+            loop._config.model_dump() == original_config.model_dump()
+        ), "Config must not change after a failed reload"
 
     def test_missing_file_keeps_current_config(self, tmp_path):
         """Missing YAML file leaves self._config unchanged."""
@@ -299,7 +288,8 @@ class TestReloadConfigErrorHandling:
             loop._reload_config()
 
         warn_logs = [
-            r.message for r in caplog.records
+            r.message
+            for r in caplog.records
             if "not found" in r.message or "hot-reload" in r.message
         ]
         assert warn_logs, "Expected a warning log when config file is missing"
@@ -318,9 +308,7 @@ class TestReloadConfigErrorHandling:
         with caplog.at_level(logging.ERROR, logger="skcapstone.consciousness"):
             loop._reload_config()
 
-        error_logs = [
-            r.message for r in caplog.records if "hot-reload" in r.message
-        ]
+        error_logs = [r.message for r in caplog.records if "hot-reload" in r.message]
         assert error_logs, "Expected an error log for invalid YAML"
 
 
@@ -361,17 +349,16 @@ class TestRunConfigWatcher:
         loop._reload_config = fake_reload  # type: ignore[method-assign]
 
         try:
-            from watchdog.observers import Observer  # noqa: F401 — skip if not installed
+            from watchdog.observers import Observer  # noqa: F401 - skip if not installed
         except ImportError:
             pytest.skip("watchdog not installed")
 
-        watcher_thread = threading.Thread(
-            target=loop._run_config_watcher, daemon=True
-        )
+        watcher_thread = threading.Thread(target=loop._run_config_watcher, daemon=True)
         watcher_thread.start()
 
         # Give the observer a moment to start, then write a changed config
         import time
+
         time.sleep(0.3)
 
         _write_config(

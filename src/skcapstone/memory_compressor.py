@@ -1,5 +1,5 @@
 """
-MemoryCompressor — LLM-powered compression of aged long-term memories.
+MemoryCompressor - LLM-powered compression of aged long-term memories.
 
 Scans the long-term layer for memories older than 90 days, groups those
 sharing common tags into sets of 5+, sends each group to the local LLM
@@ -35,12 +35,13 @@ _SYSTEM_PROMPT = (
     "You will receive a set of related memories grouped by topic. "
     "Your task: produce a single comprehensive memory entry that preserves "
     "all key facts, decisions, and insights from the originals. "
-    "Write as dense, continuous prose — no bullet points, no headers. "
+    "Write as dense, continuous prose - no bullet points, no headers. "
     "Maximum 400 words."
 )
 
 
 # ── Data classes ────────────────────────────────────────────────────────────
+
 
 @dataclass
 class CompressionGroup:
@@ -77,6 +78,7 @@ class CompressionResult:
 
 
 # ── Core class ──────────────────────────────────────────────────────────────
+
 
 class MemoryCompressor:
     """Compress aged long-term memories with LLM synthesis.
@@ -131,8 +133,7 @@ class MemoryCompressor:
 
         if not eligible:
             logger.info(
-                "Found %d candidate memories but no tag group reached the "
-                "minimum size of %d.",
+                "Found %d candidate memories but no tag group reached the " "minimum size of %d.",
                 len(candidates),
                 self.min_group_size,
             )
@@ -257,9 +258,7 @@ class MemoryCompressor:
             return None
 
         # Merge all original tags (union) and add the compressed marker.
-        merged_tags: list[str] = sorted(
-            {t for e in entries for t in e.tags} | {COMPRESSED_TAG}
-        )
+        merged_tags: list[str] = sorted({t for e in entries for t in e.tags} | {COMPRESSED_TAG})
 
         # Take the highest importance from the group.
         max_importance = max(e.importance for e in entries)
@@ -352,6 +351,7 @@ class MemoryCompressor:
         """
         try:
             from .model_router import TaskSignal
+
             signal = TaskSignal(
                 description=f"Compress {n} memories tagged '{tag}'",
                 tags=["compression", "memory", tag],
@@ -359,7 +359,7 @@ class MemoryCompressor:
             )
             return bridge.generate(_SYSTEM_PROMPT, prompt, signal)
         except ImportError:
-            # model_router not available — call bridge without signal.
+            # model_router not available - call bridge without signal.
             return bridge.generate(_SYSTEM_PROMPT, prompt)
 
     def _make_bridge(self):
@@ -370,6 +370,7 @@ class MemoryCompressor:
         """
         try:
             from .consciousness_loop import ConsciousnessConfig, LLMBridge
+
             config = ConsciousnessConfig()
             return LLMBridge(config)
         except ImportError as exc:

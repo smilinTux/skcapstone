@@ -1,0 +1,12 @@
+{
+  "kind": "service",
+  "name": "skmemory-daemon",
+  "labels": {"tier": "core"},
+  "spec": {
+    "runtime": "systemd-user",
+    "unit": "skmemory-daemon.service",
+    "nodeSelector": {"always-on": "true"},
+    "restartPolicy": "on-failure",
+    "failover": "manual"
+  }
+}

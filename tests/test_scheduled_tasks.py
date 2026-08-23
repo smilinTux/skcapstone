@@ -1,14 +1,11 @@
-"""Tests for skcapstone.scheduled_tasks — cron-like scheduler."""
+"""Tests for skcapstone.scheduled_tasks - cron-like scheduler."""
 
 from __future__ import annotations
 
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch, call
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from skcapstone.scheduled_tasks import (
     ScheduledTask,
@@ -19,7 +16,6 @@ from skcapstone.scheduled_tasks import (
     make_memory_promotion_task,
     make_profile_freshness_task,
 )
-
 
 # ---------------------------------------------------------------------------
 # ScheduledTask unit tests
@@ -196,7 +192,7 @@ class TestTaskSchedulerExecution:
         time.sleep(0.2)
         stop.set()
 
-        assert counter["n"] == 0, "Task should not have fired — it was just run"
+        assert counter["n"] == 0, "Task should not have fired - it was just run"
 
     def test_error_in_task_does_not_crash_scheduler(self, tmp_path):
         """A raising callback must not kill the scheduler thread."""
@@ -216,7 +212,7 @@ class TestTaskSchedulerExecution:
 
 
 # ---------------------------------------------------------------------------
-# build_scheduler — registration completeness and intervals
+# build_scheduler - registration completeness and intervals
 # ---------------------------------------------------------------------------
 
 
@@ -225,8 +221,8 @@ class TestBuildScheduler:
         stop = threading.Event()
         scheduler = build_scheduler(tmp_path, stop)
         names = {s["name"] for s in scheduler.status()}
-        # The core standard tasks must be registered (more — sync, service
-        # health, itil, dreaming — have since been added to build_scheduler).
+        # The core standard tasks must be registered (more - sync, service
+        # health, itil, dreaming - have since been added to build_scheduler).
         assert {
             "heartbeat_pulse",
             "backend_reprobe",
@@ -258,6 +254,13 @@ class TestBuildScheduler:
         task = next(s for s in scheduler.status() if s["name"] == "profile_freshness_check")
         assert task["interval_seconds"] == 86400
 
+    def test_dreaming_reflection_is_not_a_builtin_task(self, tmp_path):
+        """dreaming moved to jobs.yaml (2026-07-09) - must not double-fire as a builtin."""
+        stop = threading.Event()
+        scheduler = build_scheduler(tmp_path, stop)
+        names = {s["name"] for s in scheduler.status()}
+        assert "dreaming_reflection" not in names
+
 
 # ---------------------------------------------------------------------------
 # Individual task callback tests
@@ -276,8 +279,10 @@ class TestMemoryPromotionTask:
         callback = make_memory_promotion_task(tmp_path)
 
         # PromotionEngine is imported lazily inside the closure via
-        # `from .memory_promoter import PromotionEngine` — patch the source.
-        with patch("skcapstone.memory_promoter.PromotionEngine", return_value=mock_engine) as MockEngine:
+        # `from .memory_promoter import PromotionEngine` - patch the source.
+        with patch(
+            "skcapstone.memory_promoter.PromotionEngine", return_value=mock_engine
+        ) as MockEngine:  # noqa: N806
             callback()
             MockEngine.assert_called_once_with(tmp_path)
             mock_engine.sweep.assert_called_once()
@@ -300,7 +305,9 @@ class TestMemoryPromotionTask:
         import time as _time
 
         callback = make_memory_promotion_task(tmp_path)
-        with patch("skcapstone.memory_promoter.PromotionEngine", side_effect=RuntimeError("unavailable")):
+        with patch(
+            "skcapstone.memory_promoter.PromotionEngine", side_effect=RuntimeError("unavailable")
+        ):
             callback()  # spawns a daemon thread; must return without raising
         _time.sleep(0.1)  # let the background sweep run and swallow the error
 
@@ -419,11 +426,11 @@ class TestProfileFreshnessTask:
 
     def test_missing_identity_dir_does_not_raise(self, tmp_path):
         callback = make_profile_freshness_task(tmp_path)
-        callback()  # identity dir absent — should not raise
+        callback()  # identity dir absent - should not raise
 
     def test_missing_profiles_dir_does_not_raise(self, tmp_path):
         callback = make_profile_freshness_task(tmp_path)
-        callback()  # data/model_profiles absent — should not raise
+        callback()  # data/model_profiles absent - should not raise
 
     def test_custom_max_age_respected(self, tmp_path, caplog):
         import logging

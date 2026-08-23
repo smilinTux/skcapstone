@@ -7,11 +7,10 @@ import sys
 from pathlib import Path
 
 import click
-
-from ._common import AGENT_HOME, console
-
 from rich.panel import Panel
 from rich.table import Table
+
+from ._common import AGENT_HOME, console
 
 
 def register_mount_commands(main: click.Group) -> None:
@@ -19,7 +18,7 @@ def register_mount_commands(main: click.Group) -> None:
 
     @main.group()
     def mount():
-        """Sovereign FUSE filesystem — browse agent data as files.
+        """Sovereign FUSE filesystem - browse agent data as files.
 
         \b
         Mount the sovereign virtual filesystem to access memories, identity,
@@ -81,7 +80,7 @@ def register_mount_commands(main: click.Group) -> None:
         if foreground:
             console.print(
                 f"[bold cyan]Mounting sovereign filesystem at [white]{mount_path}[/] "
-                f"[dim](foreground — Ctrl-C to unmount)[/]"
+                f"[dim](foreground - Ctrl-C to unmount)[/]"
             )
         else:
             console.print(
@@ -91,7 +90,7 @@ def register_mount_commands(main: click.Group) -> None:
         ok = daemon.start(foreground=foreground)
 
         if ok and not foreground:
-            console.print(f"[green]Mounted.[/] [dim]Unmount with: skcapstone mount stop[/]")
+            console.print("[green]Mounted.[/] [dim]Unmount with: skcapstone mount stop[/]")
         elif not ok:
             console.print("[bold red]Mount failed.[/] Check logs or try --foreground for details.")
             sys.exit(1)
@@ -131,8 +130,7 @@ def register_mount_commands(main: click.Group) -> None:
             console.print("[green]Unmounted.[/]")
         else:
             console.print(
-                "[bold red]Unmount failed.[/] "
-                f"[dim]Try manually: fusermount -u {mount_path}[/]"
+                "[bold red]Unmount failed.[/] " f"[dim]Try manually: fusermount -u {mount_path}[/]"
             )
             sys.exit(1)
 
@@ -176,7 +174,7 @@ def register_mount_commands(main: click.Group) -> None:
         mounted = status.get("mounted", False)
         icon = "[bold green]MOUNTED[/]" if mounted else "[bold red]NOT MOUNTED[/]"
         pid = status.get("pid")
-        updated = status.get("updated_at", "—")
+        updated = status.get("updated_at", "-")
 
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column("Key", style="dim")
@@ -185,9 +183,11 @@ def register_mount_commands(main: click.Group) -> None:
         table.add_row("Status", icon)
         table.add_row("Mount point", str(status.get("mount_point", "")))
         table.add_row("Agent home", str(status.get("agent_home", "")))
-        table.add_row("PID", str(pid) if pid else "[dim]—[/]")
-        table.add_row("Last updated", updated or "[dim]—[/]")
+        table.add_row("PID", str(pid) if pid else "[dim]-[/]")
+        table.add_row("Last updated", updated or "[dim]-[/]")
 
         console.print()
-        console.print(Panel(table, title="[bold]Sovereign Filesystem Status[/]", border_style="cyan"))
+        console.print(
+            Panel(table, title="[bold]Sovereign Filesystem Status[/]", border_style="cyan")
+        )
         console.print()

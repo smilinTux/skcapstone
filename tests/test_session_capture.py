@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,6 @@ import pytest
 from skcapstone.memory_engine import search
 from skcapstone.pillars.memory import initialize_memory
 from skcapstone.session_capture import (
-    CapturedMoment,
     SessionCapture,
     _text_overlap,
 )
@@ -69,7 +67,9 @@ class TestMomentScoring:
     def test_decision_scores_higher(self, capture_home: Path):
         """Moments with decision keywords score above baseline."""
         cap = SessionCapture(capture_home)
-        decision = cap.score_moment("We decided to use PostgreSQL instead of MySQL for the database.")
+        decision = cap.score_moment(
+            "We decided to use PostgreSQL instead of MySQL for the database."
+        )
         generic = cap.score_moment("The sky is blue and the weather is nice today in the park.")
 
         assert decision.importance > generic.importance
@@ -77,7 +77,9 @@ class TestMomentScoring:
     def test_architecture_tagged(self, capture_home: Path):
         """Architecture mentions get tagged and boosted."""
         cap = SessionCapture(capture_home)
-        moment = cap.score_moment("The architecture uses a plugin-based design pattern for transports.")
+        moment = cap.score_moment(
+            "The architecture uses a plugin-based design pattern for transports."
+        )
         assert moment.importance > 0.3
         assert "architecture" in moment.reason
 

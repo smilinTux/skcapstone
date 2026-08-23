@@ -24,7 +24,6 @@ import os
 import tarfile
 import tempfile
 from datetime import datetime, timezone
-from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
@@ -131,16 +130,12 @@ class Vault:
                     continue
 
                 for root, dirs, files in os.walk(pillar_dir):
-                    dirs[:] = [
-                        d for d in dirs if not self._should_exclude(d)
-                    ]
+                    dirs[:] = [d for d in dirs if not self._should_exclude(d)]
                     for fname in files:
                         if self._should_exclude(fname):
                             continue
                         full_path = Path(root) / fname
-                        arcname = str(
-                            full_path.relative_to(self.agent_home)
-                        )
+                        arcname = str(full_path.relative_to(self.agent_home))
                         tar.add(str(full_path), arcname=arcname)
                         file_hashes[arcname] = _sha256_file(full_path)
 
@@ -174,14 +169,10 @@ class Vault:
                 manifest.signed_by = self._get_agent_fingerprint()
 
         manifest_file = archive_path.with_suffix(".manifest.json")
-        manifest_file.write_text(
-            manifest.model_dump_json(indent=2)
-        , encoding="utf-8")
+        manifest_file.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
 
         if encrypt:
-            encrypted_path = self._encrypt_vault(
-                archive_path, passphrase
-            )
+            encrypted_path = self._encrypt_vault(archive_path, passphrase)
             archive_path.unlink()
             logger.info("Vault packed and encrypted: %s", encrypted_path)
             return encrypted_path
@@ -227,9 +218,7 @@ class Vault:
         if decrypt:
             vault_path = self._decrypt_vault(vault_path, passphrase)
 
-        manifest = self._load_and_verify_manifest(
-            vault_path, verify_signature
-        )
+        manifest = self._load_and_verify_manifest(vault_path, verify_signature)
 
         if manifest and manifest.archive_hash and verify_hashes:
             actual_hash = _sha256_file(vault_path)
@@ -245,9 +234,7 @@ class Vault:
 
         if manifest and manifest.file_hashes and verify_hashes:
             self._verify_file_hashes(extract_to, manifest.file_hashes)
-            logger.info(
-                "All %d file hashes verified", len(manifest.file_hashes)
-            )
+            logger.info("All %d file hashes verified", len(manifest.file_hashes))
 
         logger.info("Vault unpacked to %s", extract_to)
         return extract_to
@@ -291,9 +278,7 @@ class Vault:
                 rotated.append(new_encrypted)
                 logger.info("Rotated encryption: %s", new_encrypted.name)
             except RuntimeError as exc:
-                logger.error(
-                    "Failed to rotate %s: %s", vault_file.name, exc
-                )
+                logger.error("Failed to rotate %s: %s", vault_file.name, exc)
 
         for vault_file in sorted(self.vault_dir.glob("vault-*.tar.gz")):
             if vault_file.name.endswith(".gpg"):
@@ -317,9 +302,7 @@ class Vault:
                 rotated.append(new_encrypted)
                 logger.info("Encrypted plaintext vault: %s", new_encrypted.name)
             except (RuntimeError, OSError) as exc:
-                logger.error(
-                    "Failed to encrypt %s: %s", vault_file.name, exc
-                )
+                logger.error("Failed to encrypt %s: %s", vault_file.name, exc)
 
         logger.info("Key rotation complete: %d vaults rotated", len(rotated))
         return rotated
@@ -376,9 +359,7 @@ class Vault:
 
         if verify_signature and manifest.signature:
             if not self._verify_signature(manifest):
-                raise VaultSignatureError(
-                    f"Invalid signature on manifest for {vault_path.name}"
-                )
+                raise VaultSignatureError(f"Invalid signature on manifest for {vault_path.name}")
             logger.info("Manifest signature verified")
 
         logger.info(
@@ -389,9 +370,7 @@ class Vault:
         )
         return manifest
 
-    def _verify_file_hashes(
-        self, extract_dir: Path, expected_hashes: dict[str, str]
-    ) -> None:
+    def _verify_file_hashes(self, extract_dir: Path, expected_hashes: dict[str, str]) -> None:
         """Verify SHA-256 hashes of extracted files.
 
         Args:
@@ -413,9 +392,7 @@ class Vault:
                     f"expected {expected_hash}, got {actual_hash}"
                 )
 
-    def _sign_manifest(
-        self, manifest: VaultManifest, passphrase: Optional[str]
-    ) -> Optional[str]:
+    def _sign_manifest(self, manifest: VaultManifest, passphrase: Optional[str]) -> Optional[str]:
         """Sign the manifest data with the agent's private key.
 
         Args:
@@ -434,9 +411,7 @@ class Vault:
                 logger.debug("No private key found for signing")
                 return None
 
-            sign_data = manifest.model_dump_json(
-                exclude={"signature", "signed_by"}
-            ).encode()
+            sign_data = manifest.model_dump_json(exclude={"signature", "signed_by"}).encode()
             sig = backend.sign(
                 sign_data,
                 private_key_path.read_text(encoding="utf-8"),
@@ -453,13 +428,18 @@ class Vault:
             if not private_key_path.exists():
                 return None
 
-            sign_data = manifest.model_dump_json(
-                exclude={"signature", "signed_by"}
-            ).encode()
+            sign_data = manifest.model_dump_json(exclude={"signature", "signed_by"}).encode()
 
             result = subprocess.run(
-                ["gpg", "--batch", "--yes", "--detach-sign", "--armor",
-                 "--default-key", manifest.fingerprint or ""],
+                [
+                    "gpg",
+                    "--batch",
+                    "--yes",
+                    "--detach-sign",
+                    "--armor",
+                    "--default-key",
+                    manifest.fingerprint or "",
+                ],
                 input=sign_data,
                 capture_output=True,
                 check=False,
@@ -487,9 +467,7 @@ class Vault:
             from capauth.crypto import get_backend
 
             backend = get_backend()
-            sign_data = manifest.model_dump_json(
-                exclude={"signature", "signed_by"}
-            ).encode()
+            sign_data = manifest.model_dump_json(exclude={"signature", "signed_by"}).encode()
             return backend.verify(sign_data, manifest.signature)
         except (ImportError, Exception) as exc:
             logger.debug("CapAuth verify unavailable: %s", exc)
@@ -497,9 +475,7 @@ class Vault:
         try:
             import subprocess
 
-            sign_data = manifest.model_dump_json(
-                exclude={"signature", "signed_by"}
-            ).encode()
+            sign_data = manifest.model_dump_json(exclude={"signature", "signed_by"}).encode()
 
             with tempfile.NamedTemporaryFile(suffix=".sig", delete=False) as sig_file:
                 sig_file.write(manifest.signature.encode())
@@ -520,16 +496,12 @@ class Vault:
 
         return False
 
-    def _encrypt_vault(
-        self, archive_path: Path, passphrase: Optional[str]
-    ) -> Path:
+    def _encrypt_vault(self, archive_path: Path, passphrase: Optional[str]) -> Path:
         """Encrypt a vault archive with GPG.
 
         Tries CapAuth first, falls back to system gpg.
         """
-        output_path = archive_path.with_suffix(
-            archive_path.suffix + ".gpg"
-        )
+        output_path = archive_path.with_suffix(archive_path.suffix + ".gpg")
 
         try:
             from capauth.crypto import get_backend
@@ -538,10 +510,8 @@ class Vault:
             data = archive_path.read_bytes()
             identity_file = self.agent_home / "identity" / "identity.json"
             if identity_file.exists():
-                identity = json.loads(identity_file.read_text(encoding="utf-8"))
-                private_key_path = (
-                    self.agent_home / "identity" / "agent.key"
-                )
+                json.loads(identity_file.read_text(encoding="utf-8"))
+                private_key_path = self.agent_home / "identity" / "agent.key"
                 if private_key_path.exists():
                     signed = backend.sign(
                         data,
@@ -557,16 +527,18 @@ class Vault:
         import subprocess
 
         cmd = [
-            "gpg", "--batch", "--yes", "--symmetric",
-            "--cipher-algo", "AES256",
+            "gpg",
+            "--batch",
+            "--yes",
+            "--symmetric",
+            "--cipher-algo",
+            "AES256",
         ]
         if passphrase:
             cmd.extend(["--passphrase", passphrase])
         cmd.extend(["-o", str(output_path), str(archive_path)])
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             logger.error("GPG encryption failed: %s", result.stderr)
             return archive_path
@@ -574,9 +546,7 @@ class Vault:
         logger.info("Vault encrypted via system GPG")
         return output_path
 
-    def _decrypt_vault(
-        self, vault_path: Path, passphrase: Optional[str]
-    ) -> Path:
+    def _decrypt_vault(self, vault_path: Path, passphrase: Optional[str]) -> Path:
         """Decrypt a GPG-encrypted vault archive."""
         output_path = vault_path.with_suffix("")
 
@@ -585,17 +555,11 @@ class Vault:
         cmd = ["gpg", "--batch", "--yes"]
         if passphrase:
             cmd.extend(["--passphrase", passphrase])
-        cmd.extend(
-            ["-o", str(output_path), "--decrypt", str(vault_path)]
-        )
+        cmd.extend(["-o", str(output_path), "--decrypt", str(vault_path)])
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            raise RuntimeError(
-                f"Vault decryption failed: {result.stderr}"
-            )
+            raise RuntimeError(f"Vault decryption failed: {result.stderr}")
 
         return output_path
 

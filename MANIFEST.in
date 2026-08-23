@@ -4,3 +4,5 @@ include pyproject.toml
 recursive-include src *.py
 recursive-include tests *.py
 recursive-include src/skcapstone/defaults *.json *.yaml *.feb *.md
+include src/skcapstone/defaults/.stignore
+recursive-include src/skcapstone/data *.service *.timer *.socket *.yaml *.sh

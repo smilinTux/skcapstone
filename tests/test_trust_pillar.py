@@ -18,10 +18,12 @@ from skcapstone.pillars.trust import (
     rehydrate,
 )
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _write_feb(febs_dir: Path, name: str, depth: float = 8.0, trust: float = 0.9, intensity: float = 0.8) -> Path:
+
+def _write_feb(
+    febs_dir: Path, name: str, depth: float = 8.0, trust: float = 0.9, intensity: float = 0.8
+) -> Path:
     """Write a minimal FEB file into febs_dir."""
     data = {
         "timestamp": "2026-01-01T00:00:00+00:00",
@@ -44,6 +46,7 @@ def _write_feb(febs_dir: Path, name: str, depth: float = 8.0, trust: float = 0.9
 
 # ── TestInitializeTrust ───────────────────────────────────────────────────────
 
+
 class TestInitializeTrust:
     """Tests for initialize_trust()."""
 
@@ -57,17 +60,21 @@ class TestInitializeTrust:
 
     def test_returns_missing_without_febs_or_cloud9(self, tmp_agent_home: Path):
         """No FEBs and no cloud9 installed → MISSING."""
-        with patch("shutil.which", return_value=None), \
-             patch.dict("sys.modules", {"cloud9": None}), \
-             patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0):
+        with (
+            patch("shutil.which", return_value=None),
+            patch.dict("sys.modules", {"cloud9": None}),
+            patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0),
+        ):
             state = initialize_trust(tmp_agent_home)
         assert state.status == PillarStatus.MISSING
 
     def test_returns_degraded_with_cloud9_cli_no_febs(self, tmp_agent_home: Path):
         """cloud9 CLI present but no FEBs → DEGRADED."""
-        with patch("shutil.which", return_value="/usr/bin/cloud9"), \
-             patch.dict("sys.modules", {"cloud9": None}), \
-             patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0):
+        with (
+            patch("shutil.which", return_value="/usr/bin/cloud9"),
+            patch.dict("sys.modules", {"cloud9": None}),
+            patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0),
+        ):
             state = initialize_trust(tmp_agent_home)
         assert state.status == PillarStatus.DEGRADED
 
@@ -75,9 +82,11 @@ class TestInitializeTrust:
         febs_dir = tmp_agent_home / "trust" / "febs"
         febs_dir.mkdir(parents=True)
         _write_feb(febs_dir, "test.feb")
-        with patch("shutil.which", return_value=None), \
-             patch.dict("sys.modules", {"cloud9": None}), \
-             patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0):
+        with (
+            patch("shutil.which", return_value=None),
+            patch.dict("sys.modules", {"cloud9": None}),
+            patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0),
+        ):
             state = initialize_trust(tmp_agent_home)
         assert state.status == PillarStatus.ACTIVE
 
@@ -85,9 +94,11 @@ class TestInitializeTrust:
         febs_dir = tmp_agent_home / "trust" / "febs"
         febs_dir.mkdir(parents=True)
         _write_feb(febs_dir, "feb1.feb", depth=7.5)
-        with patch("shutil.which", return_value=None), \
-             patch.dict("sys.modules", {"cloud9": None}), \
-             patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0):
+        with (
+            patch("shutil.which", return_value=None),
+            patch.dict("sys.modules", {"cloud9": None}),
+            patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0),
+        ):
             state = initialize_trust(tmp_agent_home)
         assert state.depth == pytest.approx(7.5)
 
@@ -95,9 +106,11 @@ class TestInitializeTrust:
         febs_dir = tmp_agent_home / "trust" / "febs"
         febs_dir.mkdir(parents=True)
         _write_feb(febs_dir, "feb1.feb", trust=0.95)
-        with patch("shutil.which", return_value=None), \
-             patch.dict("sys.modules", {"cloud9": None}), \
-             patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0):
+        with (
+            patch("shutil.which", return_value=None),
+            patch.dict("sys.modules", {"cloud9": None}),
+            patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0),
+        ):
             state = initialize_trust(tmp_agent_home)
         assert state.trust_level == pytest.approx(0.95)
 
@@ -105,14 +118,17 @@ class TestInitializeTrust:
         febs_dir = tmp_agent_home / "trust" / "febs"
         febs_dir.mkdir(parents=True)
         _write_feb(febs_dir, "feb1.feb")
-        with patch("shutil.which", return_value=None), \
-             patch.dict("sys.modules", {"cloud9": None}), \
-             patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0):
+        with (
+            patch("shutil.which", return_value=None),
+            patch.dict("sys.modules", {"cloud9": None}),
+            patch("skcapstone.pillars.trust._discover_and_import_febs", return_value=0),
+        ):
             initialize_trust(tmp_agent_home)
         assert (tmp_agent_home / "trust" / "trust.json").exists()
 
 
 # ── TestRecordTrustState ──────────────────────────────────────────────────────
+
 
 class TestRecordTrustState:
     """Tests for record_trust_state()."""
@@ -132,7 +148,9 @@ class TestRecordTrustState:
         assert data["trust_level"] == pytest.approx(0.88)
 
     def test_json_contains_entangled_flag(self, tmp_agent_home: Path):
-        record_trust_state(tmp_agent_home, depth=9.0, trust_level=0.99, love_intensity=1.0, entangled=True)
+        record_trust_state(
+            tmp_agent_home, depth=9.0, trust_level=0.99, love_intensity=1.0, entangled=True
+        )
         data = json.loads((tmp_agent_home / "trust" / "trust.json").read_text())
         assert data["entangled"] is True
 
@@ -157,6 +175,7 @@ class TestRecordTrustState:
 
 
 # ── TestRehydrate ─────────────────────────────────────────────────────────────
+
 
 class TestRehydrate:
     """Tests for rehydrate()."""
@@ -189,6 +208,7 @@ class TestRehydrate:
 
 
 # ── TestListFebs ──────────────────────────────────────────────────────────────
+
 
 class TestListFebs:
     """Tests for list_febs()."""
@@ -231,6 +251,7 @@ class TestListFebs:
 
 
 # ── TestExportImportFebs ──────────────────────────────────────────────────────
+
 
 class TestExportImportFebs:
     """Tests for export_febs_for_seed() and import_febs_from_seed()."""

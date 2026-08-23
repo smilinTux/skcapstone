@@ -1,10 +1,10 @@
-"""Emotion tracker — classifies sentiment after each consciousness loop response.
+"""Emotion tracker - classifies sentiment after each consciousness loop response.
 
 After each LLM response, classifies the sentiment into one of:
     positive, neutral, concerned, excited
 
 Stores each classification as a memory entry with ``tag=emotion`` and a
-valence score 0–1.  Updates the warmth anchor's ``warmth`` field using a
+valence score 0-1.  Updates the warmth anchor's ``warmth`` field using a
 7-day rolling average, triggering a re-calibration every
 ``_WARMTH_UPDATE_EVERY`` records.
 
@@ -39,24 +39,92 @@ logger = logging.getLogger("skcapstone.emotion")
 EMOTION_LABELS = ("positive", "neutral", "concerned", "excited")
 
 # Keyword sets for heuristic classification
-_EXCITED_WORDS = frozenset({
-    "exciting", "fascinating", "incredible", "remarkable", "breakthrough",
-    "amazing", "extraordinary", "innovative", "revolutionary", "profound",
-    "powerful", "fantastic", "thrilled", "eager", "enthusiastic", "curious",
-    "excellent", "brilliant", "spectacular", "outstanding", "wow",
-})
-_CONCERNED_WORDS = frozenset({
-    "sorry", "apologize", "unfortunately", "unable", "cannot", "error",
-    "fail", "problem", "issue", "concern", "worry", "difficult", "trouble",
-    "wrong", "broken", "warning", "caution", "careful", "risk", "danger",
-    "limited", "unavailable", "unclear", "missing", "blocked", "failed",
-})
-_POSITIVE_WORDS = frozenset({
-    "great", "happy", "glad", "wonderful", "perfect", "good", "pleasure",
-    "sure", "absolutely", "delighted", "appreciate", "thanks", "helpful",
-    "solved", "done", "complete", "succeed", "love", "enjoy", "welcome",
-    "nice", "correct", "right", "works", "working", "ready", "success",
-})
+_EXCITED_WORDS = frozenset(
+    {
+        "exciting",
+        "fascinating",
+        "incredible",
+        "remarkable",
+        "breakthrough",
+        "amazing",
+        "extraordinary",
+        "innovative",
+        "revolutionary",
+        "profound",
+        "powerful",
+        "fantastic",
+        "thrilled",
+        "eager",
+        "enthusiastic",
+        "curious",
+        "excellent",
+        "brilliant",
+        "spectacular",
+        "outstanding",
+        "wow",
+    }
+)
+_CONCERNED_WORDS = frozenset(
+    {
+        "sorry",
+        "apologize",
+        "unfortunately",
+        "unable",
+        "cannot",
+        "error",
+        "fail",
+        "problem",
+        "issue",
+        "concern",
+        "worry",
+        "difficult",
+        "trouble",
+        "wrong",
+        "broken",
+        "warning",
+        "caution",
+        "careful",
+        "risk",
+        "danger",
+        "limited",
+        "unavailable",
+        "unclear",
+        "missing",
+        "blocked",
+        "failed",
+    }
+)
+_POSITIVE_WORDS = frozenset(
+    {
+        "great",
+        "happy",
+        "glad",
+        "wonderful",
+        "perfect",
+        "good",
+        "pleasure",
+        "sure",
+        "absolutely",
+        "delighted",
+        "appreciate",
+        "thanks",
+        "helpful",
+        "solved",
+        "done",
+        "complete",
+        "succeed",
+        "love",
+        "enjoy",
+        "welcome",
+        "nice",
+        "correct",
+        "right",
+        "works",
+        "working",
+        "ready",
+        "success",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +140,7 @@ _LABEL_SCORES: dict[str, float] = {
 
 
 def _score_from_label(label: str) -> float:
-    """Map an emotion label to a valence score 0–1."""
+    """Map an emotion label to a valence score 0-1."""
     return _LABEL_SCORES.get(label, 0.50)
 
 
@@ -82,14 +150,14 @@ def _score_from_label(label: str) -> float:
 
 
 def _keyword_classify(text: str) -> tuple[str, float]:
-    """Fast keyword-based sentiment classifier — no LLM required.
+    """Fast keyword-based sentiment classifier - no LLM required.
 
     Args:
         text: Text to classify.
 
     Returns:
         Tuple of (label, score) where label is one of EMOTION_LABELS
-        and score is the corresponding valence 0–1.
+        and score is the corresponding valence 0-1.
     """
     if not text:
         return "neutral", 0.50
@@ -125,7 +193,7 @@ class EmotionEntry(BaseModel):
 
     Attributes:
         label: Classified emotion label.
-        score: Valence score 0.0–1.0 (higher = more positive).
+        score: Valence score 0.0-1.0 (higher = more positive).
         sender: Peer who triggered the response being classified.
         timestamp: ISO-8601 UTC timestamp.
     """
@@ -153,8 +221,8 @@ class EmotionTracker:
     """
 
     _LOG_FILE = "emotion_log.json"
-    _MAX_ENTRIES = 1000        # cap log at this many entries
-    _WARMTH_UPDATE_EVERY = 5   # recompute anchor every N records
+    _MAX_ENTRIES = 1000  # cap log at this many entries
+    _WARMTH_UPDATE_EVERY = 5  # recompute anchor every N records
 
     def __init__(self, home: Optional[Path] = None) -> None:
         from skcapstone import AGENT_HOME
@@ -203,14 +271,16 @@ class EmotionTracker:
 
         with self._lock:
             self._counter += 1
-            should_update = (self._counter % self._WARMTH_UPDATE_EVERY == 0)
+            should_update = self._counter % self._WARMTH_UPDATE_EVERY == 0
 
         if should_update:
             self._update_warmth_anchor()
 
         logger.debug(
             "Emotion recorded: label=%s score=%.2f sender=%s",
-            label, score, sender,
+            label,
+            score,
+            sender,
         )
         return entry
 
@@ -224,11 +294,11 @@ class EmotionTracker:
             Dict with keys:
                 - ``window_days``: lookback period
                 - ``total_records``: number of entries found
-                - ``avg_score``: mean valence score 0–1
+                - ``avg_score``: mean valence score 0-1
                 - ``label_counts``: dict of label → count
                 - ``dominant_label``: most-frequent label
                 - ``trend``: "improving" | "stable" | "declining"
-                - ``warmth_recommendation``: avg_score × 10 (anchor scale 0–10)
+                - ``warmth_recommendation``: avg_score × 10 (anchor scale 0-10)
                 - ``entries``: list of raw entry dicts (most-recent first)
         """
         entries = self._load_recent(days)
@@ -283,9 +353,7 @@ class EmotionTracker:
     # Internal: classification
     # ------------------------------------------------------------------
 
-    def _classify(
-        self, text: str, bridge: Optional[Any]
-    ) -> tuple[str, float]:
+    def _classify(self, text: str, bridge: Optional[Any]) -> tuple[str, float]:
         """Classify sentiment using LLM (1-token call) with keyword fallback.
 
         Args:
@@ -301,9 +369,7 @@ class EmotionTracker:
                 if label in EMOTION_LABELS:
                     return label, _score_from_label(label)
             except Exception as exc:
-                logger.debug(
-                    "LLM sentiment classify failed, using keywords: %s", exc
-                )
+                logger.debug("LLM sentiment classify failed, using keywords: %s", exc)
         return _keyword_classify(text)
 
     def _llm_classify(self, text: str, bridge: Any) -> str:
@@ -384,9 +450,7 @@ class EmotionTracker:
             return []
         try:
             raw: list[dict] = json.loads(path.read_text(encoding="utf-8"))
-            cutoff = (
-                datetime.now(timezone.utc) - timedelta(days=days)
-            ).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
             entries: list[EmotionEntry] = []
             for item in raw:
                 if item.get("timestamp", "") >= cutoff:
@@ -435,7 +499,7 @@ class EmotionTracker:
     def _update_warmth_anchor(self) -> None:
         """Recompute 7-day rolling average and nudge the warmth anchor.
 
-        Converts the average valence score (0–1) to the anchor's 0–10 warmth
+        Converts the average valence score (0-1) to the anchor's 0-10 warmth
         scale and calls :func:`~skcapstone.warmth_anchor.update_anchor` which
         applies exponential smoothing (30% new, 70% history).
         """

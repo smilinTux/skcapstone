@@ -13,9 +13,7 @@ from skcapstone.usage import (
     ModelUsageSummary,
     UsageTracker,
     _cost_per_million,
-    _today_str,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -198,7 +196,8 @@ class TestRangeQueries:
 
     def test_weekly_includes_data(self, tracker: UsageTracker) -> None:
         """get_weekly includes a day that has data recorded."""
-        from datetime import date, timedelta
+        from datetime import date
+
         today = date.today().strftime("%Y-%m-%d")
         tracker.record_usage("ollama:llama3.1", 100, 50, date_str=today)
         reports = tracker.get_weekly()
@@ -267,10 +266,9 @@ class TestThreadSafety:
             barrier.wait()
             tracker.record_usage("model-b", 20, 10, date_str=date_str)
 
-        threads = (
-            [threading.Thread(target=_record_a) for _ in range(n)]
-            + [threading.Thread(target=_record_b) for _ in range(n)]
-        )
+        threads = [threading.Thread(target=_record_a) for _ in range(n)] + [
+            threading.Thread(target=_record_b) for _ in range(n)
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -291,9 +289,7 @@ class TestModelUsageSummary:
 
     def test_total_tokens(self) -> None:
         """total_tokens sums input and output."""
-        m = ModelUsageSummary(
-            model="test", calls=1, input_tokens=100, output_tokens=50
-        )
+        m = ModelUsageSummary(model="test", calls=1, input_tokens=100, output_tokens=50)
         assert m.total_tokens == 150
 
     def test_defaults(self) -> None:

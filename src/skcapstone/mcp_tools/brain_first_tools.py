@@ -27,8 +27,7 @@ TOOLS: list[Tool] = [
                 "context": {
                     "type": "string",
                     "description": (
-                        "The task description, prompt, or action context "
-                        "to search memory for"
+                        "The task description, prompt, or action context " "to search memory for"
                     ),
                 },
                 "tags": {
@@ -49,7 +48,7 @@ TOOLS: list[Tool] = [
 
 async def _handle_brain_first_check(args: dict) -> list[TextContent]:
     """Run a brain-first memory consultation."""
-    from ..brain_first import BrainFirstConfig, brain_first_check, _load_config
+    from ..brain_first import _load_config, brain_first_check
 
     context = args.get("context", "")
     if not context:

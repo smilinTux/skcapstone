@@ -131,7 +131,7 @@ def main() -> None:
             run(["git", "push", "--tags"], args.dry_run, cwd=args.pkg)
 
     if args.dry_run:
-        print("\n[dry-run complete — no changes were made]")
+        print("\n[dry-run complete - no changes were made]")
     else:
         print(f"\nDone. To publish: git push && git push --tags")
         print(f"  (or use --push --tag flags next time)")

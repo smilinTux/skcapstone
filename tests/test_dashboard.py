@@ -17,20 +17,19 @@ import json
 import threading
 import time
 from http.client import HTTPConnection
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 import yaml
 
 from skcapstone.dashboard import (
-    DashboardHandler,
     _DASHBOARD_HTML,
     _get_agent_status,
     _get_board_state,
-    _get_doctor_report,
     _get_daemon_json,
+    _get_doctor_report,
     _get_memory_stats,
+    create_app,
     start_dashboard,
 )
 
@@ -39,25 +38,58 @@ from skcapstone.dashboard import (
 def agent_home(tmp_path):
     """Create a minimal agent home for dashboard testing."""
     home = tmp_path / ".skcapstone"
-    for d in ["identity", "memory", "memory/short-term", "memory/mid-term",
-              "memory/long-term", "trust", "security", "sync", "sync/outbox",
-              "sync/inbox", "config", "coordination", "coordination/tasks",
-              "coordination/agents"]:
+    for d in [
+        "identity",
+        "memory",
+        "memory/short-term",
+        "memory/mid-term",
+        "memory/long-term",
+        "trust",
+        "security",
+        "sync",
+        "sync/outbox",
+        "sync/inbox",
+        "config",
+        "coordination",
+        "coordination/tasks",
+        "coordination/agents",
+    ]:
         (home / d).mkdir(parents=True, exist_ok=True)
 
-    (home / "manifest.json").write_text(json.dumps({
-        "name": "DashBot", "version": "0.1.0",
-    }))
-    (home / "identity" / "identity.json").write_text(json.dumps({
-        "name": "DashBot", "fingerprint": "DASH1234", "capauth_managed": False,
-    }))
+    (home / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "DashBot",
+                "version": "0.1.0",
+            }
+        )
+    )
+    (home / "identity" / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "DashBot",
+                "fingerprint": "DASH1234",
+                "capauth_managed": False,
+            }
+        )
+    )
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "DashBot"}))
     (home / "memory" / "index.json").write_text("{}")
     (home / "memory" / "short-term" / "m1.json").write_text(
-        json.dumps({"memory_id": "m1", "content": "test", "tags": [],
-                     "source": "test", "importance": 0.5, "layer": "short-term",
-                     "created_at": "2026-02-24T00:00:00Z", "access_count": 0,
-                     "accessed_at": None, "metadata": {}})
+        json.dumps(
+            {
+                "memory_id": "m1",
+                "content": "test",
+                "tags": [],
+                "source": "test",
+                "importance": 0.5,
+                "layer": "short-term",
+                "created_at": "2026-02-24T00:00:00Z",
+                "access_count": 0,
+                "accessed_at": None,
+                "metadata": {},
+            }
+        )
     )
 
     return home
@@ -76,7 +108,18 @@ def dashboard_server(agent_home):
     server = start_dashboard(agent_home, port=port)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    time.sleep(0.3)
+
+    # Wait for uvicorn to be accepting connections (startup timing varies).
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            probe = HTTPConnection("127.0.0.1", port, timeout=1)
+            probe.request("GET", "/")
+            probe.getresponse().read()
+            probe.close()
+            break
+        except OSError:
+            time.sleep(0.1)
 
     yield server, port
 
@@ -160,7 +203,46 @@ class TestHTTPServer:
         assert resp.status == 200
         assert "text/html" in resp.getheader("Content-Type")
         body = resp.read().decode("utf-8")
-        assert "SKCapstone" in body
+        assert "SKDashboard" in body
+        conn.close()
+
+    def test_serves_models_console_page(self, dashboard_server):
+        """GET /models returns the model-management console HTML."""
+        server, port = dashboard_server
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/models")
+        resp = conn.getresponse()
+        assert resp.status == 200
+        body = resp.read().decode("utf-8")
+        assert "Models" in body and "/api/models" in body
+        conn.close()
+
+    def test_api_models_fails_soft_when_gateway_down(self, dashboard_server):
+        """GET /api/models never 500s: an unreachable gateway yields an empty
+        catalog with an error note, so the console degrades instead of breaking."""
+        server, port = dashboard_server
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/api/models")
+        resp = conn.getresponse()
+        assert resp.status == 200
+        data = json.loads(resp.read())
+        # gateway is not running under test -> data is a list (possibly empty)
+        assert "data" in data and isinstance(data["data"], list)
+        conn.close()
+
+    def test_api_models_advertise_rejects_bad_shape(self, dashboard_server):
+        """POST /api/models/advertise with a non-list `enabled` is a 400, not a
+        write (the value feeds the gateway allowlist and must be validated)."""
+        server, port = dashboard_server
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/api/models/advertise",
+            body=json.dumps({"enabled": "not-a-list"}),
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        assert resp.status == 400
         conn.close()
 
     def test_api_status_json(self, dashboard_server):
@@ -234,7 +316,7 @@ class TestHTTPServer:
 
 
 class TestGetDaemonJson:
-    """Unit tests for _get_daemon_json() — the Flutter-ready status blob."""
+    """Unit tests for _get_daemon_json() - the Flutter-ready status blob."""
 
     def test_returns_all_required_keys(self, agent_home):
         """_get_daemon_json always returns all top-level keys even when daemon is offline."""
@@ -303,8 +385,6 @@ class TestGetDaemonJson:
             "backends": {"ollama": True, "grok": False},
         }
 
-        import urllib.request
-
         class _FakeResponse:
             def __init__(self, data):
                 self._data = json.dumps(data).encode()
@@ -357,8 +437,14 @@ class TestDaemonApiEndpoint:
         assert resp.status == 200
         assert "application/json" in resp.getheader("Content-Type")
         data = json.loads(resp.read())
-        for key in ("generated_at", "daemon", "consciousness", "backend_health",
-                    "active_conversations", "system"):
+        for key in (
+            "generated_at",
+            "daemon",
+            "consciousness",
+            "backend_health",
+            "active_conversations",
+            "system",
+        ):
             assert key in data, f"Missing key in /api/daemon response: {key}"
         conn.close()
 
@@ -391,9 +477,10 @@ class TestDashboardJsonCLI:
 
     def test_json_flag_outputs_valid_json(self, agent_home):
         """dashboard --json prints JSON to stdout and exits without starting a server."""
-        from click.testing import CliRunner
-        from skcapstone.cli.status import register_status_commands
         import click
+        from click.testing import CliRunner
+
+        from skcapstone.cli.status import register_status_commands
 
         @click.group()
         def _cli():
@@ -414,9 +501,10 @@ class TestDashboardJsonCLI:
 
     def test_json_flag_contains_generated_at(self, agent_home):
         """dashboard --json output includes a generated_at timestamp."""
-        from click.testing import CliRunner
-        from skcapstone.cli.status import register_status_commands
         import click
+        from click.testing import CliRunner
+
+        from skcapstone.cli.status import register_status_commands
 
         @click.group()
         def _cli():
@@ -434,9 +522,10 @@ class TestDashboardJsonCLI:
 
     def test_json_flag_daemon_offline_still_exits_zero(self, agent_home):
         """dashboard --json exits 0 even when daemon is unreachable (daemon offline)."""
-        from click.testing import CliRunner
-        from skcapstone.cli.status import register_status_commands
         import click
+        from click.testing import CliRunner
+
+        from skcapstone.cli.status import register_status_commands
 
         @click.group()
         def _cli():
@@ -452,3 +541,142 @@ class TestDashboardJsonCLI:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["daemon"]["running"] is False
+
+
+class TestStarletteApp:
+    """Phase 1: Starlette app parity via TestClient (fast, non-flaky)."""
+
+    def test_create_app_serves_html_and_json(self, agent_home):
+        from starlette.testclient import TestClient
+
+        client = TestClient(create_app(agent_home))
+        r = client.get("/")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "SKDashboard" in r.text
+        b = client.get("/api/board")
+        assert b.status_code == 200
+        assert "application/json" in b.headers["content-type"]
+        assert b.headers["access-control-allow-origin"] == "*"
+        assert "tasks" in b.json()
+        assert client.get("/api/nope").status_code == 404
+
+
+class TestSidebarNav:
+    """U1 restyle: the dashboard nav renders as a left sidebar rail.
+
+    The menu was restyled from a horizontal top bar into a vertical left
+    sidebar (matching the shell's left-nav pattern). These checks lock in
+    that (a) the sidebar marker markup is present, (b) every original nav
+    destination still renders, and (c) the shared stylesheet actually
+    positions the rail on the left (fixed, with the rail-width variable).
+    """
+
+    # Every page carries the same section nav; keep the destinations pinned.
+    NAV_LINKS = ("/", "/cockpit", "/cmdb", "/board", "/assistant", "/trust")
+    PAGES = ("/", "/board", "/cockpit", "/cmdb", "/assistant", "/trust")
+
+    def _client(self, agent_home):
+        from starlette.testclient import TestClient
+
+        return TestClient(create_app(agent_home))
+
+    def test_pages_carry_sidebar_marker(self, agent_home):
+        """Each page's nav container is marked as a sidebar rail."""
+        client = self._client(agent_home)
+        for path in self.PAGES:
+            body = client.get(path).text
+            assert 'class="topbar sidebar"' in body, f"{path} missing sidebar marker"
+            assert 'role="navigation"' in body, f"{path} missing nav role"
+
+    def test_all_nav_destinations_present(self, agent_home):
+        """No navigation destination was dropped in the restyle."""
+        client = self._client(agent_home)
+        for path in self.PAGES:
+            body = client.get(path).text
+            for link in self.NAV_LINKS:
+                assert f'href="{link}"' in body, f"{path} lost nav link {link}"
+
+    def test_stylesheet_positions_rail_on_left(self, agent_home):
+        """The shared board.css lays the nav out as a fixed left rail."""
+        css = self._client(agent_home).get("/static/css/board.css").text
+        assert "--rail-w" in css
+        assert "position:fixed" in css
+        # the rail offsets page content by its own width
+        assert "padding-left:var(--rail-w)" in css
+
+    # Icons are keyed by the tab's data-nav slug, NOT by href. The CSS moved to
+    # that scheme when the dashboard was extracted to skdashboard; this test
+    # still asserted `.tab[href="/"]`, which no longer appears anywhere in
+    # board.css, so it failed on every run and kept main red.
+    NAV_ICON_SLUGS = ("home", "cockpit", "cmdb", "board", "assistant", "trust")
+
+    def test_nav_links_have_section_icons(self, agent_home):
+        """Each destination gets an inline-SVG icon mask (icons + labels)."""
+        css = self._client(agent_home).get("/static/css/board.css").text
+        assert "--nav-ic" in css
+        assert "mask:var(--nav-ic" in css
+        for slug in self.NAV_ICON_SLUGS:
+            assert f'.tab[data-nav="{slug}"]' in css, f"no icon for {slug}"
+
+    def test_every_nav_link_carries_the_data_nav_the_css_keys_on(self, agent_home):
+        """The markup and the CSS have to agree on the slug, or an icon silently
+        renders blank. Asserting the CSS alone would not catch that."""
+        body = self._client(agent_home).get("/").text
+        for slug in self.NAV_ICON_SLUGS:
+            assert f'data-nav="{slug}"' in body, f"nav markup lost data-nav={slug}"
+
+
+class TestDoctorReportCache:
+    """_get_doctor_report caches so the whole-tree diagnostic scan does not
+    run on every /api/doctor poll and block the dashboard's event loop.
+    """
+
+    def test_doctor_report_is_cached_within_ttl(self, tmp_path, monkeypatch):
+        from skcapstone import dashboard as d
+
+        # Reset the module cache so this test is order-independent.
+        d._doctor_cache.update(ts=0.0, home=None, report=None)
+
+        calls = {"n": 0}
+
+        class _FakeReport:
+            def to_dict(self):
+                return {"checks": [], "call": calls["n"]}
+
+        def _fake_run_diagnostics(home):
+            calls["n"] += 1
+            return _FakeReport()
+
+        import skcapstone.doctor as doctor_mod
+
+        monkeypatch.setattr(doctor_mod, "run_diagnostics", _fake_run_diagnostics)
+
+        first = d._get_doctor_report(tmp_path)
+        second = d._get_doctor_report(tmp_path)
+        third = d._get_doctor_report(tmp_path)
+
+        assert calls["n"] == 1  # ran once, served from cache twice
+        assert first == second == third
+
+    def test_doctor_cache_misses_on_different_home(self, tmp_path, monkeypatch):
+        from skcapstone import dashboard as d
+
+        d._doctor_cache.update(ts=0.0, home=None, report=None)
+        calls = {"n": 0}
+
+        class _FakeReport:
+            def to_dict(self):
+                return {"checks": []}
+
+        def _fake_run_diagnostics(home):
+            calls["n"] += 1
+            return _FakeReport()
+
+        import skcapstone.doctor as doctor_mod
+
+        monkeypatch.setattr(doctor_mod, "run_diagnostics", _fake_run_diagnostics)
+
+        d._get_doctor_report(tmp_path / "a")
+        d._get_doctor_report(tmp_path / "b")
+        assert calls["n"] == 2  # different home key -> recompute

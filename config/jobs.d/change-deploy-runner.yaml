@@ -1,0 +1,28 @@
+# Change-deploy runner job (repo template).
+#
+# Canonical copy ships bundled in the package at
+# src/skcapstone/defaults/config/jobs.d/change-deploy-runner.yaml and is
+# copied into ~/.skcapstone/config/jobs.d/ on a fresh init by
+# ensure_skeleton() (idempotent, never overwrites an existing user file).
+# This repo-root copy is a human-readable reference / manual-install
+# convenience.
+#
+# CM P3.1 (docs/specs/2026-08-13-change-management-cab-ai-arch.md section
+# 5.3): every 60s, scans ITIL changes with status "scheduled" and either
+# records a would-deploy plan (window arrived) or appends "window_missed"
+# (window closed without a deploy, fold sends the change back to
+# "approved"). Callback: skcapstone.change_deploy:run_change_deploy_job.
+#
+# Safe: plan-only until SKAI_DEPLOY_BRIDGE=1 AND the skharness deploy bridge
+# (a later card, P3.2) is installed and its own prerequisites hold. With the
+# seam unwired, which is every state this repo ships with today, nothing
+# deploys: no merge, no push, no repo mutation, ever, from this job alone.
+jobs:
+  change-deploy-runner:
+    every: 60s
+    type: python
+    nodes: [noroc2027]
+    callback: skcapstone.change_deploy:run_change_deploy_job
+    timeout: 1800
+    notify: on_failure
+    enabled: true            # safe: plan-only until SKAI_DEPLOY_BRIDGE=1

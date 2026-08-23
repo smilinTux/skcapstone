@@ -1,0 +1,21 @@
+[Unit]
+Description=SKCapstone GFS Backup Monitor - flag missing / stale / failed backups and alert
+Documentation=https://github.com/smilinTux/skcapstone
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Exits non-zero when the backup is missing / stale / failed. With
+# SKCAPSTONE_BACKUP_ALERT=1 an sk-alert is also sent to Telegram.
+ExecStart=%h/.skenv/bin/skcapstone backup health
+Nice=15
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SKCAPSTONE_BACKUP_ALERT=1

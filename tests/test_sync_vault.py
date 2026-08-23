@@ -12,10 +12,9 @@ import json
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -31,14 +30,14 @@ def agent_home(tmp_path: Path) -> Path:
         (home / pillar).mkdir()
 
     (home / "identity" / "identity.json").write_text(
-        json.dumps({
-            "name": "VaultTestAgent",
-            "fingerprint": "BBBB2222CCCC3333DDDD4444EEEE5555FFFF6666",
-        })
+        json.dumps(
+            {
+                "name": "VaultTestAgent",
+                "fingerprint": "BBBB2222CCCC3333DDDD4444EEEE5555FFFF6666",
+            }
+        )
     )
-    (home / "trust" / "trust.json").write_text(
-        json.dumps({"depth": 4.0, "trust_level": 0.85})
-    )
+    (home / "trust" / "trust.json").write_text(json.dumps({"depth": 4.0, "trust_level": 0.85}))
     (home / "config" / "config.yaml").write_text("agent_name: VaultTestAgent\n")
     (home / "manifest.json").write_text(
         json.dumps({"name": "VaultTestAgent", "version": "0.2.0", "connectors": []})
@@ -249,6 +248,7 @@ class TestVaultPack:
 class TestVaultPackEncrypt:
     def test_pack_encrypt_returns_gpg_path(self, vault):
         """pack(encrypt=True) should return a .tar.gz.gpg path."""
+
         def fake_encrypt(archive_path, passphrase):
             # Create the .gpg output; pack() will unlink the original itself
             gpg_path = archive_path.with_suffix(archive_path.suffix + ".gpg")
@@ -262,6 +262,7 @@ class TestVaultPackEncrypt:
 
     def test_pack_encrypt_removes_plaintext(self, vault):
         """The plaintext .tar.gz should be deleted after encryption."""
+
         def fake_encrypt(archive_path, passphrase):
             gpg_path = archive_path.with_suffix(archive_path.suffix + ".gpg")
             gpg_path.write_bytes(b"encrypted")
@@ -292,7 +293,7 @@ class TestVaultUnpack:
 
     def test_unpack_default_target_is_agent_home(self, vault, agent_home: Path, tmp_path: Path):
         """Without explicit target, unpack extracts to agent_home."""
-        alt_vault = Vault_helper(agent_home)
+        alt_vault = _vault_helper(agent_home)
         archive = alt_vault.pack(encrypt=False)
         result = alt_vault.unpack(archive, verify_signature=False)
         assert result == agent_home
@@ -321,7 +322,9 @@ class TestVaultUnpack:
         with pytest.raises(VaultIntegrityError, match="[Hh]ash mismatch"):
             vault.unpack(archive, target=restore, verify_signature=False)
 
-    def test_unpack_detects_tampered_file_via_manifest(self, vault, tmp_path: Path, agent_home: Path):
+    def test_unpack_detects_tampered_file_via_manifest(
+        self, vault, tmp_path: Path, agent_home: Path
+    ):
         """Faking a file hash in manifest triggers VaultIntegrityError on extraction."""
         from skcapstone.sync.vault import VaultIntegrityError
 
@@ -460,33 +463,25 @@ class TestVaultManifestModel:
     def test_default_schema_version(self):
         from skcapstone.sync.models import VaultManifest
 
-        m = VaultManifest(
-            agent_name="A", source_host="h", created_at=datetime.now(timezone.utc)
-        )
+        m = VaultManifest(agent_name="A", source_host="h", created_at=datetime.now(timezone.utc))
         assert m.schema_version == "1.1"
 
     def test_default_encrypted_true(self):
         from skcapstone.sync.models import VaultManifest
 
-        m = VaultManifest(
-            agent_name="A", source_host="h", created_at=datetime.now(timezone.utc)
-        )
+        m = VaultManifest(agent_name="A", source_host="h", created_at=datetime.now(timezone.utc))
         assert m.encrypted is True
 
     def test_default_pillars_empty(self):
         from skcapstone.sync.models import VaultManifest
 
-        m = VaultManifest(
-            agent_name="A", source_host="h", created_at=datetime.now(timezone.utc)
-        )
+        m = VaultManifest(agent_name="A", source_host="h", created_at=datetime.now(timezone.utc))
         assert m.pillars_included == []
 
     def test_default_file_hashes_empty(self):
         from skcapstone.sync.models import VaultManifest
 
-        m = VaultManifest(
-            agent_name="A", source_host="h", created_at=datetime.now(timezone.utc)
-        )
+        m = VaultManifest(agent_name="A", source_host="h", created_at=datetime.now(timezone.utc))
         assert m.file_hashes == {}
 
     def test_roundtrip_json(self):
@@ -557,9 +552,7 @@ class TestVaultExceptions:
         restore.mkdir()
         with patch.object(vault, "_verify_signature", return_value=False):
             with pytest.raises(VaultSignatureError):
-                vault.unpack(
-                    archive, target=restore, verify_signature=True, verify_hashes=False
-                )
+                vault.unpack(archive, target=restore, verify_signature=True, verify_hashes=False)
 
     def test_no_signature_does_not_raise(self, vault, tmp_path: Path):
         """A manifest with no signature should not trigger VaultSignatureError."""
@@ -575,7 +568,7 @@ class TestVaultExceptions:
 # ---------------------------------------------------------------------------
 
 
-def Vault_helper(agent_home: Path):
+def _vault_helper(agent_home: Path):
     from skcapstone.sync.vault import Vault
 
     return Vault(agent_home)

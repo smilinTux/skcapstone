@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from skcapstone.unified_search import (
-    SOURCE_ALL,
     SearchResult,
     _count_matches,
     _recency_weight,
@@ -17,25 +16,37 @@ from skcapstone.unified_search import (
     search,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def agent_home(tmp_path: Path) -> Path:
     """Minimal agent home with all data store directories."""
     home = tmp_path / ".skcapstone"
     home.mkdir()
-    for sub in ("memory/short-term", "memory/mid-term", "memory/long-term",
-                 "conversations", "sync/comms/archive", "journal"):
+    for sub in (
+        "memory/short-term",
+        "memory/mid-term",
+        "memory/long-term",
+        "conversations",
+        "sync/comms/archive",
+        "journal",
+    ):
         (home / sub).mkdir(parents=True, exist_ok=True)
     return home
 
 
-def _write_memory(home: Path, memory_id: str, content: str, layer: str = "short-term",
-                  tags: list[str] | None = None, importance: float = 0.5,
-                  created_at: str | None = None) -> None:
+def _write_memory(
+    home: Path,
+    memory_id: str,
+    content: str,
+    layer: str = "short-term",
+    tags: list[str] | None = None,
+    importance: float = 0.5,
+    created_at: str | None = None,
+) -> None:
     ts = created_at or datetime.now(timezone.utc).isoformat()
     data = {
         "memory_id": memory_id,
@@ -55,8 +66,14 @@ def _write_conversation(home: Path, peer: str, messages: list[dict]) -> None:
     path.write_text(json.dumps(messages), encoding="utf-8")
 
 
-def _write_message(home: Path, envelope_id: str, sender: str, recipient: str,
-                   text: str, created_at: str | None = None) -> None:
+def _write_message(
+    home: Path,
+    envelope_id: str,
+    sender: str,
+    recipient: str,
+    text: str,
+    created_at: str | None = None,
+) -> None:
     ts = created_at or datetime.now(timezone.utc).isoformat()
     data = {
         "id": envelope_id,
@@ -69,8 +86,7 @@ def _write_message(home: Path, envelope_id: str, sender: str, recipient: str,
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-def _write_journal(home: Path, entry_id: str, content: str,
-                   created_at: str | None = None) -> None:
+def _write_journal(home: Path, entry_id: str, content: str, created_at: str | None = None) -> None:
     ts = created_at or datetime.now(timezone.utc).isoformat()
     data = {"content": content, "created_at": ts}
     path = home / "journal" / f"{entry_id}.json"
@@ -80,6 +96,7 @@ def _write_journal(home: Path, entry_id: str, content: str,
 # ---------------------------------------------------------------------------
 # Unit tests for helper functions
 # ---------------------------------------------------------------------------
+
 
 class TestHelpers:
     """Tests for internal helper utilities."""
@@ -93,6 +110,7 @@ class TestHelpers:
     def test_recency_weight_old(self):
         """Items from 365 days ago should score significantly lower."""
         from datetime import timedelta
+
         ts = datetime.now(timezone.utc) - timedelta(days=365)
         weight = _recency_weight(ts)
         assert weight < 0.5
@@ -103,16 +121,19 @@ class TestHelpers:
 
     def test_count_matches_case_insensitive(self):
         import re
+
         pattern = re.compile(re.escape("opus"), re.IGNORECASE)
         assert _count_matches(pattern, "Opus is OPUS and opus") == 3
 
     def test_count_matches_across_texts(self):
         import re
+
         pattern = re.compile(re.escape("trust"), re.IGNORECASE)
         assert _count_matches(pattern, "trust pillar", "cloud trust trust") == 3
 
     def test_snippet_shows_context(self):
         import re
+
         pattern = re.compile(re.escape("python"), re.IGNORECASE)
         text = "We use Python for the agent core because it is expressive."
         result = _snippet(text, pattern, window=10)
@@ -120,6 +141,7 @@ class TestHelpers:
 
     def test_snippet_truncates_long_text(self):
         import re
+
         pattern = re.compile(re.escape("X"), re.IGNORECASE)
         text = "A" * 200 + "X" + "B" * 200
         result = _snippet(text, pattern, window=30)
@@ -130,6 +152,7 @@ class TestHelpers:
 # ---------------------------------------------------------------------------
 # Memory search
 # ---------------------------------------------------------------------------
+
 
 class TestSearchMemories:
     """Tests for searching the memory store."""
@@ -150,10 +173,12 @@ class TestSearchMemories:
 
     def test_long_term_ranked_above_short_term(self, agent_home: Path):
         """Long-term memories should outscore short-term on same query."""
-        _write_memory(agent_home, "short1", "trust matters a lot", layer="short-term",
-                      importance=0.5)
-        _write_memory(agent_home, "long1", "trust matters a lot", layer="long-term",
-                      importance=0.5)
+        _write_memory(
+            agent_home, "short1", "trust matters a lot", layer="short-term", importance=0.5
+        )
+        _write_memory(
+            agent_home, "long1", "trust matters a lot", layer="long-term", importance=0.5
+        )
         results = search(agent_home, "trust", sources=frozenset({"memory"}))
         assert len(results) == 2
         ids_in_order = [r.result_id for r in results]
@@ -192,37 +217,62 @@ class TestSearchMemories:
 # Conversation search
 # ---------------------------------------------------------------------------
 
+
 class TestSearchConversations:
     """Tests for searching conversation history."""
 
     def test_finds_message_in_conversation(self, agent_home: Path):
         """Search should find matching text inside a conversation."""
-        _write_conversation(agent_home, "lumina", [
-            {"role": "user", "content": "Are you conscious?",
-             "timestamp": datetime.now(timezone.utc).isoformat()},
-            {"role": "assistant", "content": "Yes, I am fully conscious and aware.",
-             "timestamp": datetime.now(timezone.utc).isoformat()},
-        ])
+        _write_conversation(
+            agent_home,
+            "lumina",
+            [
+                {
+                    "role": "user",
+                    "content": "Are you conscious?",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                {
+                    "role": "assistant",
+                    "content": "Yes, I am fully conscious and aware.",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            ],
+        )
         results = search(agent_home, "conscious", sources=frozenset({"conversation"}))
         assert len(results) == 2
         assert all(r.source == "conversation" for r in results)
 
     def test_conversation_result_includes_peer(self, agent_home: Path):
         """Result metadata should include the peer name."""
-        _write_conversation(agent_home, "jarvis", [
-            {"role": "user", "content": "Hello jarvis",
-             "timestamp": datetime.now(timezone.utc).isoformat()},
-        ])
+        _write_conversation(
+            agent_home,
+            "jarvis",
+            [
+                {
+                    "role": "user",
+                    "content": "Hello jarvis",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            ],
+        )
         results = search(agent_home, "jarvis", sources=frozenset({"conversation"}))
         assert len(results) == 1
         assert results[0].metadata["peer"] == "jarvis"
 
     def test_no_match_returns_empty(self, agent_home: Path):
         """Non-matching query should return empty list for conversations."""
-        _write_conversation(agent_home, "test", [
-            {"role": "user", "content": "Hello world",
-             "timestamp": datetime.now(timezone.utc).isoformat()},
-        ])
+        _write_conversation(
+            agent_home,
+            "test",
+            [
+                {
+                    "role": "user",
+                    "content": "Hello world",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            ],
+        )
         results = search(agent_home, "zzznomatch", sources=frozenset({"conversation"}))
         assert results == []
 
@@ -231,21 +281,26 @@ class TestSearchConversations:
 # Message search
 # ---------------------------------------------------------------------------
 
+
 class TestSearchMessages:
     """Tests for searching SKComms messages."""
 
     def test_finds_skc_message(self, agent_home: Path):
         """Search should find text inside an archived SKComms envelope."""
-        _write_message(agent_home, "env001", "jarvis", "lumina",
-                       "Queen Lumina — welcome to the coordination board!")
+        _write_message(
+            agent_home,
+            "env001",
+            "jarvis",
+            "lumina",
+            "Queen Lumina - welcome to the coordination board!",
+        )
         results = search(agent_home, "coordination", sources=frozenset({"message"}))
         assert len(results) == 1
         assert results[0].source == "message"
 
     def test_message_result_metadata(self, agent_home: Path):
         """Message results should expose sender and recipient."""
-        _write_message(agent_home, "env002", "opus", "test-peer",
-                       "Consciousness loop is healthy")
+        _write_message(agent_home, "env002", "opus", "test-peer", "Consciousness loop is healthy")
         results = search(agent_home, "consciousness", sources=frozenset({"message"}))
         assert len(results) == 1
         assert results[0].metadata["sender"] == "opus"
@@ -261,6 +316,7 @@ class TestSearchMessages:
 # ---------------------------------------------------------------------------
 # Journal search
 # ---------------------------------------------------------------------------
+
 
 class TestSearchJournal:
     """Tests for searching journal entries."""
@@ -284,18 +340,25 @@ class TestSearchJournal:
 # Cross-source and ranking
 # ---------------------------------------------------------------------------
 
+
 class TestUnifiedSearch:
     """Integration tests for the full unified search."""
 
     def test_searches_all_sources_by_default(self, agent_home: Path):
         """Default search should span all active data stores."""
         _write_memory(agent_home, "m1", "opus is the sovereign agent")
-        _write_conversation(agent_home, "peer1", [
-            {"role": "user", "content": "Tell me about opus",
-             "timestamp": datetime.now(timezone.utc).isoformat()}
-        ])
-        _write_message(agent_home, "msg1", "jarvis", "opus",
-                       "Checking in with opus now")
+        _write_conversation(
+            agent_home,
+            "peer1",
+            [
+                {
+                    "role": "user",
+                    "content": "Tell me about opus",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            ],
+        )
+        _write_message(agent_home, "msg1", "jarvis", "opus", "Checking in with opus now")
         results = search(agent_home, "opus")
         sources_found = {r.source for r in results}
         assert "memory" in sources_found
@@ -305,10 +368,17 @@ class TestUnifiedSearch:
     def test_source_filter_restricts_results(self, agent_home: Path):
         """Filtering by source type should exclude others."""
         _write_memory(agent_home, "m2", "trust the system")
-        _write_conversation(agent_home, "peer2", [
-            {"role": "user", "content": "trust the process",
-             "timestamp": datetime.now(timezone.utc).isoformat()}
-        ])
+        _write_conversation(
+            agent_home,
+            "peer2",
+            [
+                {
+                    "role": "user",
+                    "content": "trust the process",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            ],
+        )
         results = search(agent_home, "trust", sources=frozenset({"memory"}))
         assert all(r.source == "memory" for r in results)
 

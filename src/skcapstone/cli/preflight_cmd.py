@@ -1,4 +1,4 @@
-"""CLI command: skcapstone preflight — run daemon startup checks."""
+"""CLI command: skcapstone preflight - run daemon startup checks."""
 
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ def register_preflight_commands(main: click.Group) -> None:
     """Register the preflight command."""
 
     @main.command("preflight")
-    @click.option("--home", default=AGENT_HOME, type=click.Path(),
-                  help="Agent home directory.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
     @click.option("--json-out", is_flag=True, help="Output as JSON.")
     def preflight_cmd(home: str, json_out: bool):
         """Run daemon preflight checks.
@@ -33,6 +32,7 @@ def register_preflight_commands(main: click.Group) -> None:
             skcapstone preflight --json-out
         """
         import json
+
         from .. import ensure_skeleton
         from ..preflight import PreflightChecker
 
@@ -79,7 +79,7 @@ def register_preflight_commands(main: click.Group) -> None:
                 console.print("[bold green]All preflight checks passed.[/]")
         else:
             console.print(
-                f"[bold red]Preflight FAILED — {critical} critical failure(s).[/] "
+                f"[bold red]Preflight FAILED - {critical} critical failure(s).[/] "
                 "Fix the issues above before starting the daemon."
             )
 

@@ -1,4 +1,4 @@
-"""Tests for Memory Migration — JSON memories to unified backend."""
+"""Tests for Memory Migration - JSON memories to unified backend."""
 
 from __future__ import annotations
 
@@ -6,11 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from skcapstone.migrate_memories import _scan_json_memories, _verify_migration, migrate
 from skcapstone.models import MemoryEntry, MemoryLayer
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -369,9 +366,7 @@ class TestVerifyMigration:
 
     def _make_entries(self, ids: list[str]) -> list[MemoryEntry]:
         """Create minimal MemoryEntry list from a set of ids."""
-        return [
-            MemoryEntry(memory_id=mid, content=f"Content for {mid}") for mid in ids
-        ]
+        return [MemoryEntry(memory_id=mid, content=f"Content for {mid}") for mid in ids]
 
     def test_all_present_returns_ok_true(self) -> None:
         """When all entries are found in the store, ok is True."""

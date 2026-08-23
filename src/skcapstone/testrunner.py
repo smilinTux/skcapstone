@@ -3,7 +3,7 @@ Unified test runner for the sovereign agent ecosystem.
 
 Discovers all packages in the monorepo, runs pytest for each,
 and presents a consolidated pass/fail summary. Works from any
-terminal — no CI server, no IDE, no special tooling.
+terminal - no CI server, no IDE, no special tooling.
 
 Usage:
     skcapstone test                     # run all packages
@@ -14,14 +14,12 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-
 
 ECOSYSTEM_PACKAGES = [
     {"name": "skcapstone", "path": "skcapstone", "tests": "skcapstone/tests"},
@@ -172,15 +170,20 @@ def run_all_tests(
     for pkg_info in targets:
         test_dir = monorepo_root / pkg_info["tests"]
         if not test_dir.exists():
-            report.results.append(PackageResult(
-                name=pkg_info["name"],
-                available=False,
-                output=f"Test directory not found: {test_dir}",
-            ))
+            report.results.append(
+                PackageResult(
+                    name=pkg_info["name"],
+                    available=False,
+                    output=f"Test directory not found: {test_dir}",
+                )
+            )
             continue
 
         result = _run_package_tests(
-            monorepo_root, pkg_info, verbose=verbose, timeout=timeout,
+            monorepo_root,
+            pkg_info,
+            verbose=verbose,
+            timeout=timeout,
         )
         report.results.append(result)
 
@@ -212,7 +215,9 @@ def _run_package_tests(
     test_dir = root / pkg_info["tests"]
 
     cmd = [
-        sys.executable, "-m", "pytest",
+        sys.executable,
+        "-m",
+        "pytest",
         str(test_dir),
         "--tb=line",
         "-q",
@@ -265,7 +270,8 @@ def _parse_pytest_summary(output: str, result: PackageResult) -> None:
 
     for line in reversed(output.split("\n")):
         match = re.search(
-            r"(\d+)\s+passed", line,
+            r"(\d+)\s+passed",
+            line,
         )
         if match:
             result.passed = int(match.group(1))

@@ -52,6 +52,6 @@ def test_concurrent_record_run_is_safe(tmp_path: Path):
     data = json.loads(st.state_file.read_text())
     assert len(data) == 8, f"expected 8 job keys, got {len(data)}: {list(data)}"
     for i in range(8):
-        assert data[f"job{i}"]["run_count"] == 20, (
-            f"job{i} run_count={data[f'job{i}']['run_count']}, expected 20"
-        )
+        assert (
+            data[f"job{i}"]["run_count"] == 20
+        ), f"job{i} run_count={data[f'job{i}']['run_count']}, expected 20"

@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 import yaml
@@ -30,25 +29,54 @@ from skcapstone.whoami import (
 def agent_home(tmp_path):
     """Create a populated agent home for testing."""
     home = tmp_path / ".skcapstone"
-    for d in ["identity", "memory", "memory/short-term", "memory/mid-term",
-              "memory/long-term", "trust", "security", "sync", "config", "skills"]:
+    for d in [
+        "identity",
+        "memory",
+        "memory/short-term",
+        "memory/mid-term",
+        "memory/long-term",
+        "trust",
+        "security",
+        "sync",
+        "config",
+        "skills",
+    ]:
         (home / d).mkdir(parents=True, exist_ok=True)
 
-    (home / "manifest.json").write_text(json.dumps({
-        "name": "TestAgent", "version": "0.1.0",
-    }))
-    (home / "identity" / "identity.json").write_text(json.dumps({
-        "name": "TestAgent",
-        "email": "test@skcapstone.local",
-        "fingerprint": "AABBCCDD11223344AABBCCDD11223344AABBCCDD",
-    }))
+    (home / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "version": "0.1.0",
+            }
+        )
+    )
+    (home / "identity" / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "email": "test@skcapstone.local",
+                "fingerprint": "AABBCCDD11223344AABBCCDD11223344AABBCCDD",
+            }
+        )
+    )
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "TestAgent"}))
     (home / "memory" / "index.json").write_text("{}")
     (home / "memory" / "short-term" / "m1.json").write_text(
-        json.dumps({"memory_id": "m1", "content": "test", "tags": [],
-                     "source": "test", "importance": 0.5, "layer": "short-term",
-                     "created_at": "2026-02-24T00:00:00Z", "access_count": 0,
-                     "accessed_at": None, "metadata": {}})
+        json.dumps(
+            {
+                "memory_id": "m1",
+                "content": "test",
+                "tags": [],
+                "source": "test",
+                "importance": 0.5,
+                "layer": "short-term",
+                "created_at": "2026-02-24T00:00:00Z",
+                "access_count": 0,
+                "accessed_at": None,
+                "metadata": {},
+            }
+        )
     )
     (home / "skills" / "test-skill.json").write_text(
         json.dumps({"name": "test-skill", "version": "1.0"})
@@ -96,7 +124,7 @@ class TestIdentityCard:
         card = IdentityCard(
             name="Test",
             fingerprint="FP123",
-            public_key="-----BEGIN PGP PUBLIC KEY BLOCK-----\ndata\n-----END PGP PUBLIC KEY BLOCK-----",
+            public_key="-----BEGIN PGP PUBLIC KEY BLOCK-----\ndata\n-----END PGP PUBLIC KEY BLOCK-----",  # noqa: E501
             entity_type="human",
             email="test@test.com",
             handle="test@capauth.local",
@@ -151,6 +179,38 @@ class TestGenerateCard:
         card = generate_card(tmp_path / "nope")
         assert card.skcapstone_card == "1.0.0"
 
+    def test_binary_public_key_is_armored(self, agent_home, tmp_path, monkeypatch):
+        """A binary (non-armored) public.asc is converted to ASCII armor."""
+        pgpy = pytest.importorskip("pgpy")
+        from pgpy.constants import (
+            CompressionAlgorithm,
+            HashAlgorithm,
+            KeyFlags,
+            PubKeyAlgorithm,
+            SymmetricKeyAlgorithm,
+        )
+
+        fake_home = tmp_path / "home"
+        capauth_dir = fake_home / ".capauth" / "identity"
+        capauth_dir.mkdir(parents=True)
+
+        key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 2048)
+        uid = pgpy.PGPUID.new("TestAgent", email="test@skcapstone.local")
+        key.add_uid(
+            uid,
+            usage={KeyFlags.Sign},
+            hashes=[HashAlgorithm.SHA256],
+            ciphers=[SymmetricKeyAlgorithm.AES256],
+            compression=[CompressionAlgorithm.Uncompressed],
+        )
+        (capauth_dir / "public.asc").write_bytes(bytes(key.pubkey))
+
+        monkeypatch.setattr("skcapstone.whoami.Path.home", lambda: fake_home)
+
+        card = generate_card(agent_home)
+
+        assert card.public_key.startswith("-----BEGIN PGP PUBLIC KEY BLOCK-----")
+
 
 class TestExportImport:
     """Test card file export and import."""
@@ -197,6 +257,7 @@ class TestCLI:
     def test_whoami_help(self):
         """whoami --help works."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["whoami", "--help"])
         assert result.exit_code == 0
@@ -207,6 +268,7 @@ class TestCLI:
     def test_whoami_json(self, agent_home):
         """whoami --json-out produces valid JSON."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["whoami", "--home", str(agent_home), "--json-out"])
         assert result.exit_code == 0
@@ -217,10 +279,11 @@ class TestCLI:
     def test_whoami_compact_json(self, agent_home):
         """whoami --json-out --compact omits public key."""
         from skcapstone.cli import main
+
         runner = CliRunner()
-        result = runner.invoke(main, [
-            "whoami", "--home", str(agent_home), "--json-out", "--compact"
-        ])
+        result = runner.invoke(
+            main, ["whoami", "--home", str(agent_home), "--json-out", "--compact"]
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "public_key" not in data
@@ -228,17 +291,19 @@ class TestCLI:
     def test_whoami_export(self, agent_home, tmp_path):
         """whoami --export saves a card file."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         output = tmp_path / "exported.json"
-        result = runner.invoke(main, [
-            "whoami", "--home", str(agent_home), "--export", str(output)
-        ])
+        result = runner.invoke(
+            main, ["whoami", "--home", str(agent_home), "--export", str(output)]
+        )
         assert result.exit_code == 0
         assert output.exists()
 
     def test_whoami_human_output(self, agent_home):
         """whoami without flags shows the Rich panel."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["whoami", "--home", str(agent_home)])
         assert result.exit_code == 0

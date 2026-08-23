@@ -53,20 +53,25 @@ async def _handle_send_message(args: dict) -> list[TextContent]:
 
     try:
         from skcomms.core import SKComms
+
         comm = SKComms.from_config()
         report = comm.send(recipient, message)
-        return _json_response({
-            "sent": report.success,
-            "recipient": recipient,
-            "attempts": [
-                {
-                    "transport": a.transport_name,
-                    "success": a.success,
-                    "error": a.error,
-                }
-                for a in report.attempts
-            ],
-        })
+        return _json_response(
+            {
+                "sent": report.delivered,
+                "confirmed": report.confirmed,
+                "transport": report.successful_transport,
+                "recipient": recipient,
+                "attempts": [
+                    {
+                        "transport": a.transport_name,
+                        "success": a.success,
+                        "error": a.error,
+                    }
+                    for a in report.attempts
+                ],
+            }
+        )
     except ImportError:
         return _error_response("SKComms not installed. Run: pip install skcomms")
     except Exception as exc:
@@ -77,21 +82,24 @@ async def _handle_check_inbox(_args: dict) -> list[TextContent]:
     """Check for incoming messages."""
     try:
         from skcomms.core import SKComms
+
         comm = SKComms.from_config()
         envelopes = comm.receive()
-        return _json_response([
-            {
-                "envelope_id": e.envelope_id[:12],
-                "sender": e.sender,
-                "recipient": e.recipient,
-                "content": e.payload.content[:300],
-                "type": e.payload.content_type.value,
-                "urgency": e.metadata.urgency.value,
-                "thread_id": e.metadata.thread_id,
-                "created_at": e.metadata.created_at.isoformat(),
-            }
-            for e in envelopes
-        ])
+        return _json_response(
+            [
+                {
+                    "envelope_id": e.envelope_id[:12],
+                    "sender": e.sender,
+                    "recipient": e.recipient,
+                    "content": e.payload.content[:300],
+                    "type": e.payload.content_type.value,
+                    "urgency": e.metadata.urgency.value,
+                    "thread_id": e.metadata.thread_id,
+                    "created_at": e.metadata.created_at.isoformat(),
+                }
+                for e in envelopes
+            ]
+        )
     except ImportError:
         return _error_response("SKComms not installed. Run: pip install skcomms")
     except Exception as exc:

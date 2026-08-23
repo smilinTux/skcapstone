@@ -1,4 +1,5 @@
 """Doctor checks added for sync-conflicts and the skscheduler."""
+
 from pathlib import Path
 
 from skcapstone.doctor import _check_scheduler, _check_sync_conflicts

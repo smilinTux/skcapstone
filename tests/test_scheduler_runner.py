@@ -1,4 +1,4 @@
-"""Tests for skcapstone.scheduler_runner — JobRunner execution, overlap lock,
+"""Tests for skcapstone.scheduler_runner - JobRunner execution, overlap lock,
 result shapes, and error containment.
 
 Each test targets a specific contract:
@@ -19,6 +19,7 @@ from skcapstone.scheduler_runner import JobRunner
 def test_python_job_calls_callback(tmp_path: Path):
     called = {}
     import skcapstone.scheduler_runner as sr
+
     sr._TEST_HOOK = lambda: called.setdefault("hit", True)  # type: ignore
     job = JobSpec(name="t", type="python", callback="skcapstone.scheduler_runner:_TEST_HOOK")
     result = JobRunner(log_dir=tmp_path).run(job)
@@ -39,7 +40,10 @@ def test_shell_job_nonzero_is_error(tmp_path: Path):
 
 def test_python_job_exception_is_caught(tmp_path: Path):
     import skcapstone.scheduler_runner as sr
-    def _boom(): raise RuntimeError("nope")
+
+    def _boom():
+        raise RuntimeError("nope")
+
     sr._TEST_BOOM = _boom  # type: ignore
     job = JobSpec(name="b", type="python", callback="skcapstone.scheduler_runner:_TEST_BOOM")
     result = JobRunner(log_dir=tmp_path).run(job)

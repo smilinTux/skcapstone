@@ -1,4 +1,4 @@
-"""Tests for skcapstone.log_config — structured JSON logging."""
+"""Tests for skcapstone.log_config - structured JSON logging."""
 
 from __future__ import annotations
 
@@ -6,13 +6,11 @@ import json
 import logging
 import logging.handlers
 import sys
-from pathlib import Path
 
 import pytest
 
 import skcapstone.log_config as log_config_module
 from skcapstone.log_config import JsonFormatter, configure_logging
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -84,6 +82,7 @@ class TestJsonFormatter:
         assert "ts" in data
         # ts should be a parseable ISO-8601 string
         from datetime import datetime
+
         datetime.fromisoformat(data["ts"])  # raises if malformed
 
     def test_exception_info_included(self):

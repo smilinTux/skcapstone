@@ -1,0 +1,31 @@
+{
+  "node": "node-noroc2027",
+  "collected": "2026-08-15",
+  "packages": {
+    "capauth": "0.2.21.dev9+g178f692.d20260814",
+    "cloud9": "1.2.5.dev6+g8ad0f173c",
+    "sk-pqc": "0.1.0",
+    "sk-pqc-rs": "0.1.0",
+    "sk_pgp": "0.1.0",
+    "skcapstone": "0.15.15.dev48+gf3f36e9.d20260815",
+    "skchat-sovereign": "0.14.129.dev5+g0b4354a74",
+    "skcomms": "0.2.8",
+    "skcoord": "0.1.6.dev2+g80bc1b8",
+    "skcore": "0.1.0",
+    "skcot": "0.1.0",
+    "skdashboard": "0.1.9.dev6+gd058cbd",
+    "skguide": "0.1.0",
+    "skharness": "0.3.0",
+    "skingest": "0.2.0",
+    "skmemory": "0.11.10",
+    "skos": "0.2.2",
+    "skrender": "0.1.0",
+    "skseal": "0.1.0",
+    "sksecurity": "1.2.6",
+    "skseed": "0.1.9.dev6+gabeedefe7",
+    "skskills": "0.1.1",
+    "sktrip": "0.1.0",
+    "skvault": "0.1.0",
+    "skvoice": "0.2.2"
+  }
+}
