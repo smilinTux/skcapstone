@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a governed SKCounter AI Usage workspace beside Autopilot and Joule,
+  including separate harness and gateway measurement lanes, token and cost
+  trends, model and fleet breakdowns, collector freshness, coverage gaps, and
+  strict rejection of raw harness content.
+
 - Added CMDB operator coverage by node and collector, verified reconciliation
   history, evidence freshness, provenance, last-seen and health history, grouped
   relationship impact, linked ITIL records, and filters for type, node, status,
