@@ -1814,10 +1814,10 @@ def create_app(home: Path):
         return _json(_cmdb().seed(home))
 
     # ── Economy: fleet-wide cost (autopilot cost ledger) + joule wealth ──
-    async def api_economy(_request):
+    async def api_economy(request):
         from . import dashboard_economy as deco
 
-        return _json(deco.get_economy(home))
+        return _json(deco.get_economy(home, dict(request.query_params)))
 
     # ── Fleet drift: install-profile drift per node (epic 3bbf39ea, card d1c6d605) ──
     # Reads published inventories out of the fleet tree, so this is the same

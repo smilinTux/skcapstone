@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SKDashboard — Economy</title>
+  <title>SKDashboard | Economy</title>
   <link rel="stylesheet" href="/static/css/board.css">
   <link rel="stylesheet" href="/static/css/cockpit.css">
   <link rel="stylesheet" href="/static/css/economy.css">
@@ -25,35 +25,130 @@
       </div>
       <div class="spacer"></div>
       <span id="eco-errors" class="eco-err" hidden></span>
-      <button class="btn" id="btn-refresh">Refresh</button>
+      <button class="btn" id="btn-refresh" type="button">Refresh</button>
     </div>
 
-    <div class="kpirow" id="eco-kpi"></div>
+    <main class="eco-workspace">
+      <header class="eco-hero">
+        <div>
+          <p class="eco-eyebrow">Sovereign economy and compute</p>
+          <h2>Economy</h2>
+          <p>Meter model usage, understand autonomous-work cost, and inspect Joule value without mixing their units.</p>
+        </div>
+        <div class="eco-freshness" id="eco-freshness">Waiting for data</div>
+      </header>
 
-    <div class="card" style="margin-top:14px">
-      <h2>Cost over time <span class="badge">joules / day, last 30 days</span></h2>
-      <div class="cbody" id="eco-chart"><div class="spinner"></div></div>
-    </div>
+      <nav class="eco-subnav" role="tablist" aria-label="Economy workspaces">
+        <button class="eco-subtab active" id="tab-ai-usage" role="tab" aria-selected="true" aria-controls="eco-ai-usage" data-section="ai-usage" type="button">
+          <span>AI Usage</span><small>SKCounter</small>
+        </button>
+        <button class="eco-subtab" id="tab-autopilot" role="tab" aria-selected="false" aria-controls="eco-autopilot" data-section="autopilot" type="button">
+          <span>Autopilot</span><small>governed work cost</small>
+        </button>
+        <button class="eco-subtab" id="tab-joule" role="tab" aria-selected="false" aria-controls="eco-joule" data-section="joule" type="button">
+          <span>Joule</span><small>sovereign value</small>
+        </button>
+      </nav>
 
-    <div class="ov-grid" style="margin-top:14px">
-      <div class="card">
-        <h2>By repo <span class="badge">all-time, sorted by joules</span></h2>
-        <div class="cbody" id="eco-by-repo"><div class="spinner"></div></div>
-      </div>
-      <div class="card">
-        <h2>Agent wallets <span class="badge">fleet joule wealth</span></h2>
-        <div class="cbody" id="eco-wallets"><div class="spinner"></div></div>
-      </div>
-    </div>
+      <section id="eco-ai-usage" class="eco-section" role="tabpanel" aria-labelledby="tab-ai-usage">
+        <div class="card eco-filter-card">
+          <div class="eco-card-heading">
+            <div><h2>AI Usage filters</h2><p>One measurement lane at a time. Missing coverage is never treated as zero usage.</p></div>
+            <span class="eco-status" id="usage-status">Empty</span>
+          </div>
+          <div class="eco-filter-grid">
+            <label>Measurement lane<select id="filter-lane"><option value="harness_reported">Harness reported</option><option value="gateway_observed">Gateway observed</option></select></label>
+            <label>Node<select id="filter-node"><option value="">All nodes</option></select></label>
+            <label>Client<select id="filter-client"><option value="">All clients</option></select></label>
+            <label>Provider<select id="filter-provider"><option value="">All providers</option></select></label>
+            <label>Model<select id="filter-model"><option value="">All models</option></select></label>
+            <label>From<input id="filter-from" type="date"></label>
+            <label>To<input id="filter-to" type="date"></label>
+            <div class="eco-filter-actions"><button class="btn" id="btn-apply-filters" type="button">Apply</button><button class="btn ghost" id="btn-clear-filters" type="button">Clear</button></div>
+          </div>
+        </div>
 
-    <div class="card" style="margin-top:14px">
-      <h2>Recent settlements <span class="badge">last 20</span></h2>
-      <div class="cbody" id="eco-settlements"><div class="spinner"></div></div>
-    </div>
+        <div class="kpirow eco-kpis" id="usage-kpi"><div class="spinner"></div></div>
+
+        <div class="eco-grid eco-grid-main">
+          <div class="card eco-span-2">
+            <div class="eco-card-heading"><div><h2>Usage over time</h2><p>Daily aggregate observations in the selected lane.</p></div><span class="badge" id="usage-series-badge">0 buckets</span></div>
+            <div class="cbody" id="usage-chart"><div class="spinner"></div></div>
+          </div>
+          <div class="card">
+            <div class="eco-card-heading"><div><h2>Token mix</h2><p>Input, output, and cache composition.</p></div></div>
+            <div class="cbody" id="usage-mix"><div class="spinner"></div></div>
+          </div>
+          <div class="card">
+            <div class="eco-card-heading"><div><h2>Activity and speed</h2><p>Timing coverage is shown with every performance estimate.</p></div></div>
+            <div class="cbody" id="usage-activity"><div class="spinner"></div></div>
+          </div>
+        </div>
+
+        <div class="card eco-breakdown-card">
+          <div class="eco-card-heading eco-heading-wrap">
+            <div><h2>Usage breakdown</h2><p>Explore the same metered usage without combining overlapping source views.</p></div>
+            <div class="eco-pills" role="tablist" aria-label="Usage breakdown dimension">
+              <button class="eco-pill active" data-breakdown="models" type="button">Models</button>
+              <button class="eco-pill" data-breakdown="clients" type="button">Clients</button>
+              <button class="eco-pill" data-breakdown="providers" type="button">Providers</button>
+              <button class="eco-pill" data-breakdown="nodes" type="button">Nodes</button>
+              <button class="eco-pill" data-breakdown="agents" type="button">Agents</button>
+              <button class="eco-pill" data-breakdown="workspaces" type="button">Workspaces</button>
+              <button class="eco-pill" data-breakdown="sessions" type="button">Sessions</button>
+              <button class="eco-pill" data-breakdown="tasks" type="button">Tasks</button>
+            </div>
+          </div>
+          <div class="cbody eco-table-wrap" id="usage-breakdown"><div class="spinner"></div></div>
+        </div>
+
+        <div class="eco-grid">
+          <div class="card">
+            <div class="eco-card-heading"><div><h2>Contribution history</h2><p>Daily intensity, similar to the local terminal Stats view.</p></div></div>
+            <div class="cbody" id="usage-contributions"><div class="spinner"></div></div>
+          </div>
+          <div class="card">
+            <div class="eco-card-heading"><div><h2>Hourly profile</h2><p>Most recent reported hourly buckets.</p></div><span class="badge" id="usage-hourly-badge">0 buckets</span></div>
+            <div class="cbody eco-table-wrap" id="usage-hourly"><div class="spinner"></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="eco-card-heading eco-heading-wrap">
+            <div><h2>Collector coverage</h2><p>Package and report health by node and harness principal.</p></div>
+            <div id="coverage-summary" class="eco-inline-metrics"></div>
+          </div>
+          <div class="cbody eco-table-wrap" id="usage-collectors"><div class="spinner"></div></div>
+        </div>
+
+        <div class="eco-boundary-note">
+          <strong>Provider quota connectors are not configured.</strong>
+          Subscription-limit calls need separate service-scoped credentials and approval. SKCounter does not reuse harness credentials for the dashboard.
+        </div>
+      </section>
+
+      <section id="eco-autopilot" class="eco-section" role="tabpanel" aria-labelledby="tab-autopilot" hidden>
+        <div class="eco-section-intro"><div><h2>Autopilot cost</h2><p>Governed autonomous-work consumption and settlement history.</p></div><span class="eco-unit-rule">USD and Joule values remain separately labeled</span></div>
+        <div class="kpirow eco-kpis" id="auto-kpi"><div class="spinner"></div></div>
+        <div class="card">
+          <div class="eco-card-heading"><div><h2>Cost over time</h2><p>Joules per day for the last 30 days.</p></div></div>
+          <div class="cbody" id="auto-chart"><div class="spinner"></div></div>
+        </div>
+        <div class="eco-grid">
+          <div class="card"><div class="eco-card-heading"><div><h2>By repository</h2><p>All-time governed runs.</p></div></div><div class="cbody eco-table-wrap" id="auto-by-repo"><div class="spinner"></div></div></div>
+          <div class="card"><div class="eco-card-heading"><div><h2>Recent settlements</h2><p>Latest append-only settlement entries.</p></div></div><div class="cbody eco-table-wrap" id="auto-settlements"><div class="spinner"></div></div></div>
+        </div>
+      </section>
+
+      <section id="eco-joule" class="eco-section" role="tabpanel" aria-labelledby="tab-joule" hidden>
+        <div class="eco-section-intro"><div><h2>Joule economy</h2><p>Sovereign value supply, balances, and agent levels.</p></div><span class="eco-unit-rule">No implicit token or USD conversion</span></div>
+        <div class="kpirow eco-kpis" id="joule-kpi"><div class="spinner"></div></div>
+        <div class="card"><div class="eco-card-heading"><div><h2>Agent wallets</h2><p>Fleet balances ordered by current Joule holdings.</p></div></div><div class="cbody eco-table-wrap" id="joule-wallets"><div class="spinner"></div></div></div>
+      </section>
+    </main>
   </div>
 
   <div class="toast" id="toast"></div>
-
   <script type="module" src="/static/js/economy.js"></script>
 </body>
 </html>
