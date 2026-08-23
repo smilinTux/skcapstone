@@ -1,6 +1,4 @@
-"""Dashboard Economy view: the best single view into the cost of SKWorld's
-work -- the autonomous-work cost ledger (skharness autopilot_cost) plus the
-fleet-wide joule wealth (skcapstone skjoule wallets), in one JSON payload.
+"""Dashboard Economy view for AI usage, autonomous-work cost, and Joules.
 
 Both sources are lazy-imported: a dev seat without ``skharness`` or
 ``skcapstone`` installed still gets a well-formed, empty payload (plus an
@@ -14,6 +12,61 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _EMPTY_AGG = {"cost_usd": 0.0, "joules": 0, "tokens": 0, "runs": 0}
+
+
+def _empty_ai_usage() -> dict:
+    token_fields = ("input", "output", "cache_read", "cache_write", "reasoning", "total")
+    return {
+        "status": "degraded",
+        "schema_version": "skcounter.snapshot.v1",
+        "available_lanes": [],
+        "selected_lane": "harness_reported",
+        "filters": {key: "" for key in ("node", "client", "provider", "model", "from", "to")},
+        "facets": {key: [] for key in ("nodes", "clients", "providers", "models")},
+        "summary": {
+            "tokens": {field: 0 for field in token_fields},
+            "message_count": 0,
+            "cost_usd": 0.0,
+            "cost_state": "unavailable",
+            "pricing_revisions": [],
+            "cache_ratio": 0.0,
+            "duration_ms": 0,
+            "timed_tokens": 0,
+            "sample_count": 0,
+            "token_coverage": 0.0,
+            "ms_per_1k_tokens": None,
+            "active_seconds": 0,
+            "longest_continuous_seconds": 0,
+            "max_concurrent": 0,
+        },
+        "series": [],
+        "hourly": [],
+        "breakdowns": {
+            key: []
+            for key in (
+                "models",
+                "clients",
+                "providers",
+                "nodes",
+                "agents",
+                "workspaces",
+                "sessions",
+                "tasks",
+            )
+        },
+        "collectors": [],
+        "coverage": {
+            "expected_nodes": 0,
+            "reporting_nodes": 0,
+            "fresh_collectors": 0,
+            "delayed_collectors": 0,
+            "stale_collectors": 0,
+            "missing_nodes": [],
+            "percent": None,
+        },
+        "observation_count": 0,
+        "errors": ["SKCounter projection unavailable"],
+    }
 
 
 def _cap_usd() -> float | None:
@@ -92,7 +145,7 @@ def _joule_section(home: Path, errors: list[str]) -> dict:
     return {"total_supply": 0, "active_agents": 0, "agents": []}
 
 
-def get_economy(home: Path) -> dict:
+def get_economy(home: Path, filters: dict[str, str] | None = None) -> dict:
     """Assemble the fleet-wide Economy view for ``GET /api/economy``.
 
     Args:
@@ -100,16 +153,24 @@ def get_economy(home: Path) -> dict:
             panel queries -- board, memory, doctor, CMDB, etc).
 
     Returns:
-        dict with ``autopilot_cost``, ``cost_series``, ``settlements``,
-        ``joule_economy``, and ``errors`` (empty on the happy path).
+        dict with ``ai_usage``, ``autopilot_cost``, ``cost_series``,
+        ``settlements``, ``joule_economy``, and ``errors``.
     """
     errors: list[str] = []
     today = datetime.now(timezone.utc).date().isoformat()
 
     autopilot = _autopilot_section(today, errors)
     joule_economy = _joule_section(home, errors)
+    try:
+        from .dashboard_skcounter import get_ai_usage
+
+        ai_usage = get_ai_usage(home, filters)
+    except Exception as exc:  # noqa: BLE001 -- never 500 the Economy workspace
+        errors.append(f"skcounter failed: {exc}")
+        ai_usage = _empty_ai_usage()
 
     return {
+        "ai_usage": ai_usage,
         "autopilot_cost": autopilot["summary"],
         "cost_series": autopilot["cost_series"],
         "settlements": autopilot["settlements"],

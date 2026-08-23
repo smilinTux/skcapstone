@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a governed SKCounter AI Usage workspace beside Autopilot and Joule,
+  including separate harness and gateway measurement lanes, token and cost
+  trends, model and fleet breakdowns, collector freshness, coverage gaps, and
+  strict rejection of raw harness content.
+
 - Added a dedicated Syncthing CMDB summary with fleet health, pending work,
   error totals, peer connectivity, and per-node service state.
 
