@@ -1305,7 +1305,6 @@ def scenario_scheduler_overlap(ctx: DrillContext) -> ScenarioResult:
     )
 
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1346,6 +1345,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_mid_run_freeze_race,
     scenario_scheduler_overlap,
 ]
+
 
 def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillReport:
     """Run the full P3.2 fault-injection drill against a freshly-claimed,
