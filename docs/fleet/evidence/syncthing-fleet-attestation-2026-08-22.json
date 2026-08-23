@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-23T00:24:00Z",
+  "card_id": "74a66ff7",
+  "epic_id": "74a9a804",
+  "scope": {
+    "cmdb_nodes": [
+      "chiap01",
+      "chiap02",
+      "chiap03",
+      "chiap04",
+      "chiap08",
+      "chiap09",
+      "chiap10",
+      "chipv05",
+      "chiwk11",
+      "chiwk12"
+    ],
+    "node_count": 10
+  },
+  "release": {
+    "observed_version": "v2.1.3",
+    "official_latest_version": "v2.1.3",
+    "official_release_source": "https://syncthing.net/downloads/"
+  },
+  "canonical_folder_policy": {
+    "folder_id": "skcapstone",
+    "required_on_all_nodes": true,
+    "type": "sendreceive",
+    "config_schema": 52,
+    "device_count": 10,
+    "paused": false,
+    "sensitive_material_rules": [
+      "*.key",
+      "*.pem",
+      "**/private.*",
+      "*.rev",
+      "**/revocation*",
+      "**/passphrase*",
+      "*.pass",
+      ".gnupg/secring.gpg",
+      ".gnupg/private-keys-v1.d",
+      "**/*.kbx",
+      "security/tokens",
+      "capauth/security/tokens"
+    ]
+  },
+  "supplemental_folder_policy": {
+    "basis": "Preserve reviewed node pairings and explicitly disposition each configured folder. Do not infer authorization to add or remove data roots from role names alone.",
+    "allowed_states": [
+      "active and healthy",
+      "paused and explicitly retained",
+      "local-only and healthy"
+    ]
+  },
+  "nodes": [
+    {
+      "node": "chiap01",
+      "role": "application-worker",
+      "folders": {
+        "skcapstone": "active and healthy",
+        "skcapstone-dev": "paused and explicitly retained",
+        "skcapstone-sync": "active and healthy"
+      }
+    },
+    {
+      "node": "chiap02",
+      "role": "application-worker",
+      "folders": {
+        "jarvis-agent": "active and healthy",
+        "skcapstone": "active and healthy",
+        "skcapstone-dev": "paused and explicitly retained",
+        "skcapstone-sync": "active and healthy"
+      }
+    },
+    {
+      "node": "chiap03",
+      "role": "application-worker",
+      "folders": {
+        "jarvis-agent": "active and healthy",
+        "skcapstone": "active and healthy",
+        "skcapstone-dev": "paused and explicitly retained",
+        "skcapstone-sync": "active and healthy"
+      }
+    },
+    {
+      "node": "chiap04",
+      "role": "operator-control-plane",
+      "folders": {
+        "jarvis-agent": "active and healthy",
+        "skcapstone": "active and healthy",
+        "skcapstone-sync": "active and healthy"
+      }
+    },
+    {
+      "node": "chiap08",
+      "role": "development-coordinator",
+      "folders": {
+        "skcapstone": "active and healthy",
+        "skcapstone-sync": "active and healthy"
+      }
+    },
+    {
+      "node": "chiap09",
+      "role": "edge-agent-runtime",
+      "folders": {
+        "jarvis-agent": "active and healthy",
+        "skcapstone": "active and healthy",
+        "skcapstone-dev": "active and healthy",
+        "skcapstone-sync": "active and healthy"
+      }
+    },
+    {
+      "node": "chiap10",
+      "role": "application-worker",
+      "folders": {
+        "jarvis-agent": "active and healthy",
+        "skcapstone": "active and healthy",
+        "skcapstone-dev": "active and healthy",
+        "skcapstone-sync": "active and healthy"
+      }
+    },
+    {
+      "node": "chipv05",
+      "role": "virtualization-host",
+      "folders": {
+        "jarvis-agent": "active and healthy",
+        "skcapstone": "active and healthy"
+      }
+    },
+    {
+      "node": "chiwk11",
+      "role": "workstation-pending-qualification",
+      "folders": {
+        "skcapstone": "active and healthy"
+      }
+    },
+    {
+      "node": "chiwk12",
+      "role": "windows-wsl2-workstation-canary",
+      "folders": {
+        "default": "local-only and healthy",
+        "skcapstone": "active and healthy"
+      }
+    }
+  ],
+  "acceptance": {
+    "services_enabled": 10,
+    "services_active": 10,
+    "rolling_restart_passed": 10,
+    "api_healthy": 10,
+    "canonical_folders_with_zero_needed_items": 10,
+    "folders_with_pull_errors": 0,
+    "nodes_with_system_errors": 0,
+    "nodes_with_all_stignore_required_rules": 10,
+    "nodes_with_all_stignore_recommended_rules": 10,
+    "connected_peer_count_per_node": 9,
+    "private_identity_bytes_copied": false
+  },
+  "security_actions": {
+    "legacy_capauth_identity_folder_present": 0,
+    "chiwk11_api_key_rotated": true,
+    "chiwk11_old_api_key_rejected_http_status": 403,
+    "chiwk11_shell_startup_key_exports_remaining": 0,
+    "fleet_shell_startup_files_with_api_key_exports": 0
+  },
+  "rollback": {
+    "chiap09_folder_config": "/home/skuser01/.local/state/syncthing/remediation-backups/ac65be76-capauth-identity.json",
+    "chipv05_native_config": "/home/skuser01/.local/state/syncthing/config.xml.v37",
+    "chiwk12_stignore": "/home/mrarch/.skcapstone/.stignore.bak-aa84f4ce"
+  },
+  "follow_up_cards": {
+    "retired_e93_plaintext_tree": "9ff64535",
+    "sync_audit_alias_false_positive": "08c8bf34",
+    "cmdb_scheduled_discovery": "c806064b",
+    "automatic_recovery_and_alerting": "0a7f5a65",
+    "fleet_acceptance": "d8ccb3c9"
+  }
+}

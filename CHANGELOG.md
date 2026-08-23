@@ -7,8 +7,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `skcapstone atlas eyes` (`operator_seat/eyes.py` + `cli/atlas_cmd.py`):
+  a read-only, freeze-proof estate assessor. In one pass it observes every
+  registered Operatorapp through TWO lanes - the declared `<spec.cli> observe`
+  contract out-of-process (hard per-app timeout) and the in-process
+  `loop.ADAPTERS` code an unfrozen ATLAS would run - and renders per-app
+  verdicts (OK / FIRING / CONFLICT / UNKNOWN / BLIND). Unknown is a first-class
+  result distinct from unreachable (`no-cli` / `cli-error` / `timeout` /
+  `unparseable` / `no-adapter`), declared-but-unreported conditions surface as
+  Unknown (absent), and lane disagreements are flagged per condition. The pass
+  correlates open ITIL incidents/problems to apps, surfaces the pending-change
+  backlog, unmigrated legacy flat ITIL files, unregistered shell modules, and
+  ends with a plain "blind even if unfrozen" list. It never calls `act`, never
+  touches the freeze, and writes nothing.
+
 ### Documentation
 
+- Added the remote operator-plane transport standard
+  (`docs/OPERATOR_PLANE_REMOTE_STANDARD.md`) and its no-flag-day migration
+  plan (`docs/OPERATOR_PLANE_MIGRATION.md`): HTTP/1.1+JSON over Tailscale
+  served by a per-node sknoded operator agent (port 9392) with SSE watch and
+  cursor/relist semantics, capauth request signing with separate
+  `operator.observe` / `operator.act` scopes, a three-way
+  unreachable/unknown/unauthorized failure taxonomy that never renders as
+  healthy, a single-authoritative-lane rule resolving the Eyes lane
+  disagreements (card 504d0046), skos as a read-only estate consumer, and a
+  disk-SEV2-gated sequencing for moving skgateway to .100. Design only; no
+  running service changed.
 - Recorded the GitHub-first, two-node CMDB package deployment and verification
   procedure used by card `3799733b`, including the dashboard restart required
   after updating the in-process `skcoord`/`skdashboard` dependencies.
@@ -46,6 +73,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   store flow before a seed reaches `MemoryStore.snapshot`, so malformed or
   oversized seeds are rejected with a clear error instead of being silently
   stored.
+- Added a bounded Syncthing guard for scheduled fleet reconciliation. It can
+  verify service state and CMDB coverage, attempt an approved service restart,
+  and retain checksummed evidence without exposing API credentials.
+
 - Added an opt-in, loopback-only Windows browser proxy through each
   workstation's canonical WSL Tailscale identity. The installer provides
   shared enable and disable desktop controls, preserves per-profile browser
@@ -86,6 +117,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `completeness.complete` only true for an actual `--apply` so a
   `--record-run`-only dry run cannot be mistaken for a fresh apply by
   `cmdb status`'s freshness SLO.
+- Updated the release gate and runtime dependency to require the Syncthing
+  discovery contract published by skcoord 0.1.32.
+
 - Reject blank legacy `MemoryEntry.memory_id` values at load, save, index,
   verification, and both promotion boundaries. This prevents the SKCapstone
   verifier/promoter from recreating unsafe `.json` files after SKMemory has
