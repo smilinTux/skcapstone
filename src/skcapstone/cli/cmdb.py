@@ -12,6 +12,7 @@ that writes by default is a scan nobody can safely run twice.
 from __future__ import annotations
 
 import json as _json
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -427,7 +428,16 @@ def register_cmdb_commands(main: click.Group) -> None:
                     "sha256": checksum,
                 }
             report_data = artifact["reconcile"]
+            if artifact.get("artifact"):
+                report_data["artifact"] = artifact["artifact"]
         else:
+            # card fb801e30: this branch used to accept --record-run/--apply
+            # and silently drop it on the floor - write_run_artifact() was
+            # only ever called from the --network branch above, so the
+            # 3-hourly `--local --apply` timer mutated the CMDB with zero
+            # checksummed evidence. Give local/--host runs the same durable,
+            # checksummed artifact the network path already gets.
+            started = datetime.now(timezone.utc)
             found = run_scan(home, runners=_build_runners(host, local))
             report = run_reconcile(mgr, found, agent=agent, apply=apply)
             report_data = report.as_dict()
@@ -435,6 +445,40 @@ def register_cmdb_commands(main: click.Group) -> None:
                 raise click.ClickException(
                     "refusing --apply: discovery evidence failed validation; inspect `cmdb plan`"
                 )
+            if apply or record_run:
+                ended = datetime.now(timezone.utc)
+                run_scan_id = next((item.scan_id for item in found if item.scan_id), None)
+                run_envelope = {
+                    "scan_id": run_scan_id or uuid.uuid4().hex,
+                    "started_at": started.isoformat(),
+                    "ended_at": ended.isoformat(),
+                    "duration_seconds": (ended - started).total_seconds(),
+                    "applied": apply,
+                    "code_version": "skcapstone",
+                    "scope": "local+ssh-hosts" if host else "local",
+                    "hosts": list(host),
+                    "local": local,
+                    "agent": agent,
+                    # `cmdb status` (operator_summary) only counts an
+                    # artifact as a "success" toward the freshness SLO when
+                    # completeness.complete is true. Only an actually-applied
+                    # run earns that: a --record-run-only dry run left the
+                    # CMDB untouched and must not look like a fresh apply.
+                    "completeness": {
+                        "complete": bool(apply and not report.validation_failures),
+                        "targets_expected": 1,
+                        "targets_complete": 1 if apply else 0,
+                        "deadline_exceeded": False,
+                        "failure_budget_exceeded": False,
+                    },
+                    "reconcile": report_data,
+                }
+                orch = _orchestration()
+                artifact_path, checksum = orch.write_run_artifact(home, run_envelope)
+                report_data["artifact"] = {
+                    "path": str(artifact_path),
+                    "sha256": checksum,
+                }
 
         if as_json:
             click.echo(_json.dumps(artifact or report_data, indent=2, default=str))
@@ -452,6 +496,9 @@ def register_cmdb_commands(main: click.Group) -> None:
             console.print(f"    [yellow]~[/yellow] {ci_id}: {', '.join(keys)}")
         for ci_id in report_data["orphans"][:20]:
             console.print(f"    [dim]?[/dim] {ci_id} (not seen; left in place)")
+        if report_data.get("artifact"):
+            console.print(f"  artifact:  {report_data['artifact']['path']}")
+            console.print(f"  sha256:    {report_data['artifact']['sha256']}")
         if not apply:
             console.print("\n[dim]Nothing was written. Re-run with --apply.[/dim]")
 

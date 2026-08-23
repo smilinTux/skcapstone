@@ -195,6 +195,65 @@ def test_reconcile_apply_writes_and_is_idempotent(home: Path) -> None:
 
 
 @needs_discovery
+def test_local_apply_persists_a_checksummed_run_artifact(home: Path) -> None:
+    """card fb801e30: the 3-hourly timer's `--local --apply` used to write
+    the CMDB with zero artifacts, because write_run_artifact() only ever
+    ran on the --network branch. Every apply (local included) must now
+    leave a checksum-verifiable record."""
+    (home / "registry").mkdir(parents=True)
+    (home / "registry" / "svc.json").write_text(json.dumps({"name": "svc"}))
+
+    payload = json.loads(run("reconcile", "--no-local", "--apply", "--json").output)
+
+    assert payload["applied"] is True
+    runs = sorted((home / "cmdb" / "reconcile-runs").glob("*.json"))
+    assert len(runs) == 1
+    artifact_path = runs[0]
+    checksum_path = artifact_path.with_suffix(".sha256")
+    assert checksum_path.is_file()
+
+    import hashlib
+
+    expected = checksum_path.read_text().split()[0]
+    assert hashlib.sha256(artifact_path.read_bytes()).hexdigest() == expected
+    assert payload["artifact"]["path"] == str(artifact_path)
+    assert payload["artifact"]["sha256"] == expected
+
+    artifact_json = json.loads(artifact_path.read_text())
+    assert artifact_json["applied"] is True
+    assert artifact_json["completeness"]["complete"] is True
+
+
+@needs_discovery
+def test_local_record_run_persists_artifact_without_applying(home: Path) -> None:
+    """--record-run must work standalone (shadow mode), same as --network."""
+    (home / "registry").mkdir(parents=True)
+    (home / "registry" / "svc.json").write_text(json.dumps({"name": "svc"}))
+
+    payload = json.loads(run("reconcile", "--no-local", "--record-run", "--json").output)
+
+    assert payload["applied"] is False
+    assert CMDBManager(home).list_cis() == [], "record-run alone must not write the CMDB"
+    runs = list((home / "cmdb" / "reconcile-runs").glob("*.json"))
+    assert len(runs) == 1
+    artifact_json = json.loads(runs[0].read_text())
+    assert artifact_json["completeness"]["complete"] is False, (
+        "a dry-run artifact must not look like a successful apply to `cmdb status`"
+    )
+
+
+@needs_discovery
+def test_local_dry_run_without_record_run_writes_no_artifact(home: Path) -> None:
+    """Plain `reconcile --no-local` (no --apply, no --record-run) stays inert."""
+    (home / "registry").mkdir(parents=True)
+    (home / "registry" / "svc.json").write_text(json.dumps({"name": "svc"}))
+
+    run("reconcile", "--no-local", "--json")
+
+    assert not (home / "cmdb" / "reconcile-runs").exists()
+
+
+@needs_discovery
 def test_plan_and_apply_are_supported_explicit_verbs(home: Path) -> None:
     (home / "registry").mkdir(parents=True)
     (home / "registry" / "svc.json").write_text(json.dumps({"name": "svc"}))
