@@ -11,6 +11,7 @@ that writes by default is a scan nobody can safely run twice.
 
 from __future__ import annotations
 
+import importlib
 import json as _json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,13 +35,15 @@ def _manager():
 
 
 def _discovery():
-    """Import skcoord.discovery, or say plainly which package is too old.
+    """Import the SKCapstone discovery facade or report an old dependency.
 
-    The discovery collectors ship in skcoord. Without this the failure is a
-    bare ImportError naming a module the operator has never heard of.
+    The base collectors ship in skcoord while SKCapstone adds governed ingress
+    identity and address-set support. Without skcoord the failure should name
+    the package an operator must upgrade.
     """
     try:
-        import skcoord.discovery as mod
+        importlib.import_module("skcoord.discovery")
+        import skcapstone.cmdb_discovery as mod
     except ImportError as exc:  # pragma: no cover - depends on installed version
         raise click.ClickException(
             "skcoord.discovery is missing: this skcoord is too old for "
@@ -58,6 +61,9 @@ def _orchestration():
         raise click.ClickException(
             "skcoord.cmdb_reconcile is missing; upgrade skcoord for --network support"
         ) from exc
+    discovery = _discovery()
+    mod.DECLARED_COLLECTORS = discovery.DECLARED_COLLECTORS
+    mod.OBSERVED_COLLECTORS = discovery.OBSERVED_COLLECTORS
     return mod
 
 
