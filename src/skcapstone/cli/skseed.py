@@ -598,9 +598,7 @@ def validate_seed_for_store(
     if isinstance(metadata, dict):
         tags = metadata.get("tags")
         if tags is not None and not isinstance(tags, list):
-            result["errors"].append(
-                f"metadata.tags must be a list, got {type(tags).__name__}"
-            )
+            result["errors"].append(f"metadata.tags must be a list, got {type(tags).__name__}")
             result["valid"] = False
 
     if not result["valid"]:

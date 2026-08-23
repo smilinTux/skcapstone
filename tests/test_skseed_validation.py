@@ -37,6 +37,7 @@ def _valid_seed() -> dict:
 # validate_seed_for_store — happy path
 # ---------------------------------------------------------------------------
 
+
 def test_valid_seed_passes_and_returns_result():
     """A well-formed seed validates and returns the result dict."""
     result = validate_seed_for_store(_valid_seed())
@@ -59,6 +60,7 @@ def test_cloud9_format_seed_passes():
 # ---------------------------------------------------------------------------
 # validate_seed_for_store — rejections with clear errors
 # ---------------------------------------------------------------------------
+
 
 def test_missing_required_field_rejected():
     """A seed missing seed_id is rejected with a clear, specific error."""
@@ -89,6 +91,7 @@ def test_non_dict_input_rejected():
 # ---------------------------------------------------------------------------
 # validate_seed_for_store — size/type constraints (edge cases)
 # ---------------------------------------------------------------------------
+
 
 def test_oversized_summary_rejected():
     """A summary above the store limit is rejected."""
@@ -134,6 +137,7 @@ def test_error_is_a_valueerror():
 # ingest_document — validation wired BEFORE the store
 # ---------------------------------------------------------------------------
 
+
 class _FakeMemory:
     id = "mem-123"
 
@@ -157,9 +161,7 @@ def test_ingest_valid_document_stores(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     store = _FakeStore()
-    monkeypatch.setattr(
-        "skcapstone.cli.skseed._get_memory_store", lambda: store
-    )
+    monkeypatch.setattr("skcapstone.cli.skseed._get_memory_store", lambda: store)
     result = ingest_document(source=str(doc))
     assert result["memory_id"] == "mem-123"
     assert store.calls == 1
@@ -171,17 +173,13 @@ def test_ingest_rejects_invalid_seed_before_store(tmp_path, monkeypatch):
     doc.write_text("Some extractable content that is long enough.", encoding="utf-8")
 
     store = _FakeStore()
-    monkeypatch.setattr(
-        "skcapstone.cli.skseed._get_memory_store", lambda: store
-    )
+    monkeypatch.setattr("skcapstone.cli.skseed._get_memory_store", lambda: store)
 
     # Force the generated seed to be malformed (missing required seed_id).
     def _bad_seed(*args, **kwargs):
         return {"version": "1.0", "experience": {"summary": "x"}}
 
-    monkeypatch.setattr(
-        "skcapstone.cli.skseed._generate_seed_json", _bad_seed
-    )
+    monkeypatch.setattr("skcapstone.cli.skseed._generate_seed_json", _bad_seed)
 
     with pytest.raises(SeedValidationError):
         ingest_document(source=str(doc))
