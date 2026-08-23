@@ -20,6 +20,7 @@ from ..fleet import operatorapp, store
 from . import (
     adapter,
     cmdb_adapter,
+    fleet_adapter,
     skchat_adapter,
     skcode_adapter,
     skcomms_adapter,
@@ -30,9 +31,34 @@ from . import (
 )
 
 #: Per-app registration metadata: the explain fn plus the app's operator CLI and
-#: home repos. The fleet itself is NOT here: it is the reference the apps plug
-#: into, not an Operatorapp.
+#: home repos.
 APP_REGISTRY: dict[str, dict] = {
+    # ``fleet`` is the operator's own reference actuator: fleet_observe has
+    # been a loop.ADAPTERS builtin since the first cut of the operator seat,
+    # but it never got an Operatorapp registration, so the discovery path
+    # (anything that lists/ratifies apps via the fleet store, not the
+    # in-process loop) could not see it at all -- ATLAS Eyes flagged this
+    # explicitly (card 90b5b277): "fleet: observed only by the built-in seat
+    # adapter; no Operatorapp registration". Registering it here is the fix:
+    # `apps list`/`apps ratify` and any future remote discovery now enumerate
+    # it like every other app.
+    #
+    # ``cli`` is deliberately None (not a made-up command). Every other entry
+    # names a real out-of-process binary; fleet has none -- it is not a
+    # separate daemon with its own CLI, it *is* the in-process reference the
+    # other adapters plug into (fleet_adapter.fleet_observe, wired directly
+    # in loop.ADAPTERS). Inventing a `cli` string here that does not resolve
+    # would just trade "BLIND (no registration)" for "cli-error", the exact
+    # confident-but-wrong reading this pass exists to avoid. An out-of-process
+    # transport for the fleet reference itself is tracked separately by the
+    # remote-operator-plane epic (c880017b) and its HTTP surface
+    # (fleet/sknoded.py, out of scope here); this registration only fixes
+    # discoverability, not transport.
+    "fleet": {
+        "explain": fleet_adapter.fleet_explain,
+        "cli": None,
+        "repos": ["skcapstone"],
+    },
     "cmdb": {
         "explain": cmdb_adapter.cmdb_explain,
         "cli": "skcapstone cmdb operator",

@@ -406,3 +406,19 @@ def test_failed_verification_executes_typed_rollback(tmp_path, monkeypatch):
     intent_id = result["outcomes"][0]["intent_id"]
     assert len(rollbacks) == 1
     assert ledger.current_state(intent_id) is action_ledger.ActionState.ROLLED_BACK
+
+
+def test_skdashboard_is_wired_into_the_seat(monkeypatch):
+    """skdashboard was registered as an Operatorapp (registration.APP_REGISTRY)
+    but never added to loop.ADAPTERS, so an unfrozen ATLAS never actually
+    observed it (ATLAS Eyes reported seat: NO ADAPTER; card 90b5b277).
+    Regression: it must be a real in-process seat adapter."""
+    from skcapstone.operator_seat import skdashboard_adapter
+
+    assert "skdashboard" in loop.ADAPTERS
+    assert loop.ADAPTERS["skdashboard"] is skdashboard_adapter.observe
+    # Condition polarity/schema must also be derived from the real module, not
+    # silently missing (loop.CONDITION_SCHEMAS is zipped from ADAPTERS/_ADAPTER_MODULES
+    # positionally, so a mismatch here would misattribute another app's polarity).
+    assert "skdashboard" in loop.CONDITION_SCHEMAS
+    assert set(loop.CONDITION_SCHEMAS["skdashboard"]) == set(skdashboard_adapter.CONDITIONS)

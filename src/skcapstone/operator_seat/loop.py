@@ -30,6 +30,7 @@ from . import (
     skchat_adapter,
     skcode_adapter,
     skcomms_adapter,
+    skdashboard_adapter,
     skgateway_adapter,
     skmemory_adapter,
     skos_adapter,
@@ -39,12 +40,19 @@ from . import (
 #: One operator, many apps: the fleet is the reference; each app plugs in here.
 #: Every app observe fails safe (reports healthy when the app is unreachable), so a
 #: down probe never raises a false alarm.
+#:
+#: skdashboard was registered as an Operatorapp (registration.APP_REGISTRY) but
+#: was never added here, so an unfrozen ATLAS never actually observed it: the
+#: seat lane read "no-adapter" regardless of what its (also-dead) declared cli
+#: said (ATLAS Eyes, card 90b5b277). Wiring it in is the real fix; see
+#: ``skdashboard_adapter`` for the read-only, fail-safe probe itself.
 ADAPTERS: dict[str, Callable[..., dict]] = {
     "fleet": fleet_adapter.fleet_observe,
     "cmdb": cmdb_adapter.observe,
     "skchat": skchat_adapter.observe,
     "skcode": skcode_adapter.observe,
     "skcomms": skcomms_adapter.observe,
+    "skdashboard": skdashboard_adapter.observe,
     "skmemory": skmemory_adapter.observe,
     "skgateway": skgateway_adapter.observe,
     "skos": skos_adapter.observe,
@@ -58,6 +66,7 @@ _ADAPTER_MODULES = (
     skchat_adapter,
     skcode_adapter,
     skcomms_adapter,
+    skdashboard_adapter,
     skmemory_adapter,
     skgateway_adapter,
     skos_adapter,

@@ -272,3 +272,78 @@ def test_render_distinguishes_unknown_from_unreachable(tmp_path):
     assert "NO CLI" in text  # unreachable state, rendered as such
     assert "? Ready" in text  # Unknown condition, rendered as a question, not an error
     assert "BLIND EVEN IF UNFROZEN" in text
+
+
+# ── disabled vs invisible shell modules (card 90b5b277) ─────────────────────
+
+
+def test_disabled_module_notes_only_covers_disabled_entries():
+    modules = [
+        {"id": "skbrain", "enabled": False},
+        {"id": "skwidget", "enabled": True},
+    ]
+    notes = eyes.disabled_module_notes(modules)
+    assert len(notes) == 1
+    assert "skbrain" in notes[0]
+    assert "disabled" in notes[0]
+    assert "skwidget" not in " ".join(notes)
+
+
+def _write_modules_json(home, modules):
+    shell = home / "shell"
+    shell.mkdir(parents=True, exist_ok=True)
+    (shell / "modules.json").write_text(json.dumps({"modules": modules}))
+
+
+def test_assess_separates_disabled_module_from_blind_spots(tmp_path):
+    paths = _tmp_fleet(tmp_path)
+    home = tmp_path / "home"
+    _write_modules_json(
+        home,
+        [
+            {"id": "skbrain", "enabled": False},
+            {"id": "skwidget", "enabled": True},
+        ],
+    )
+    res = eyes.assess(
+        paths,
+        run=lambda argv, t: (0, "{}", ""),
+        adapters={},
+        problem_when_true=PWT,
+        skcapstone_home=home,
+        itil_home=tmp_path / "nohome",
+    )
+    # A disabled module is off ON PURPOSE: never a blind spot, and never
+    # described as "no operator seat can observe it" (that phrasing is
+    # reserved for a genuine, unexplained gap).
+    assert not any("skbrain" in s for s in res["blind_spots"])
+    assert any("skbrain" in s and "disabled" in s for s in res["disabled_modules"])
+    # An ENABLED-but-unregistered module IS a genuine gap and stays in
+    # blind_spots, unaffected by the disabled-module split.
+    assert any(
+        "skwidget" in s and "no operator seat can observe it" in s for s in res["blind_spots"]
+    )
+    assert not any("skwidget" in s for s in res["disabled_modules"])
+
+
+def test_render_disabled_section_is_separate_from_blind_even_if_unfrozen(tmp_path):
+    paths = _tmp_fleet(tmp_path)
+    home = tmp_path / "home"
+    _write_modules_json(home, [{"id": "skbrain", "enabled": False}])
+    res = eyes.assess(
+        paths,
+        run=lambda argv, t: (0, "{}", ""),
+        adapters={},
+        problem_when_true=PWT,
+        skcapstone_home=home,
+        itil_home=tmp_path / "nohome",
+    )
+    text = eyes.render(res)
+    assert "DISABLED (off by choice, not a blind spot)" in text
+    disabled_idx = text.index("DISABLED (off by choice")
+    blind_idx = text.index("BLIND EVEN IF UNFROZEN")
+    # skbrain must appear under DISABLED, not under BLIND EVEN IF UNFROZEN.
+    blind_section = text[blind_idx:disabled_idx]
+    disabled_section = text[disabled_idx:]
+    assert "skbrain" not in blind_section
+    assert "skbrain" in disabled_section

@@ -9,6 +9,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card 90b5b277: skdashboard, fleet, and skbrain made observable (ATLAS
+  Eyes was showing 1 BLIND app + 2 structurally invisible ones).**
+  - `skdashboard` was registered as an Operatorapp with a working, tested
+    adapter (`operator_seat/skdashboard_adapter.py`) that was simply never
+    added to `loop.ADAPTERS`, so an unfrozen ATLAS never actually observed it
+    (seat: `NO ADAPTER`) -- and its declared cli contract was dead
+    (`skcapstone dashboard operator` exited 2, "unexpected extra argument":
+    `dashboard` was a plain command with no subcommands). Both are fixed: the
+    adapter is wired into `loop.ADAPTERS`, and `skcapstone dashboard` is now a
+    group (`invoke_without_command=True`, same pattern as `capabilities`/
+    `usage`) exposing `dashboard operator explain|observe|act`, mirroring
+    `cmdb operator`. `skdashboard` now reads OK in both lanes.
+  - `fleet` (`fleet_adapter.fleet_observe`) has been a `loop.ADAPTERS` builtin
+    since the first cut of the operator seat but was deliberately excluded
+    from `registration.APP_REGISTRY` ("the reference the apps plug into, not
+    an Operatorapp"), which meant the discovery path -- anything that lists or
+    ratifies apps via the fleet store rather than the in-process loop -- could
+    not see it at all. Decision: register it. `cli` is deliberately `None`
+    (not a made-up command): fleet is not a separate daemon with its own CLI,
+    and inventing one that does not resolve would just trade "no
+    registration" for "cli-error" -- a confident-but-wrong reading. An
+    out-of-process transport for the fleet reference is tracked by the
+    remote-operator-plane epic (`c880017b`) and its HTTP surface
+    (`fleet/sknoded.py`), out of scope here.
+  - `skbrain` (a shell module, `enabled: false` in `shell/modules.json`, no
+    Operatorapp) is not given a fabricated adapter -- it is not installed in
+    this environment, so any probe would either invent a confident value or
+    manufacture a new BLIND row, both of which this pass exists to prevent.
+    Instead, "disabled on purpose" is now made legible as its own state,
+    distinct from "invisible / no observation path exists": `eyes.py` used to
+    fold both into one "BLIND EVEN IF UNFROZEN" bucket, distinguished only by
+    an inline `(enabled)`/`(disabled)` word. A disabled module no longer
+    appears there at all; it gets its own `disabled_modules` assessment key
+    and a separate, non-alarming "DISABLED (off by choice, not a blind spot)"
+    report section (`eyes.disabled_module_notes`). An *enabled*-but-
+    unregistered module (a real gap) still surfaces under "BLIND EVEN IF
+    UNFROZEN" as before.
+  - Net result: `skcapstone atlas eyes` now reports zero BLIND rows (down
+    from 1), zero CONFLICT rows, and zero lane-conflict (`!=`) lines, with
+    `fleet` newly enumerable via `skoperator apps list`/`apps ratify`.
+
 - **Card 504d0046: the 10 lying ATLAS Eyes lane conflicts, root-caused and
   fixed; `atlas eyes` now reports zero CONFLICT rows.** ATLAS Eyes' first real
   run (PR #178) found the cli lane and the in-process seat lane disagreeing on

@@ -379,9 +379,14 @@ def correlate_itil(app_names: list[str], itil_home: Path) -> dict:
 
 
 def unregistered_modules(home: Path, registered: list[str]) -> list[dict]:
-    """Shell modules that are NOT registered Operatorapps (e.g. a disabled skbrain).
+    """Shell modules that are NOT registered Operatorapps (e.g. skbrain).
 
-    Context only: these are declared capabilities no operator seat can see at all.
+    Context only: read-only, never writes/enables anything. Each entry carries
+    ``enabled`` verbatim from ``shell/modules.json`` because "registered in the
+    shell but turned off" and "no observation path exists at all" are different
+    states (card 90b5b277) -- callers (``blind_spots`` / ``render``) are the
+    ones that must not fold them into one bucket; this function just reports
+    what is on disk.
     """
     path = home / "shell" / "modules.json"
     try:
@@ -394,6 +399,26 @@ def unregistered_modules(home: Path, registered: list[str]) -> list[dict]:
         if mid and mid not in registered:
             out.append({"id": mid, "enabled": bool(mod.get("enabled"))})
     return out
+
+
+def disabled_module_notes(extra_modules: list[dict]) -> list[str]:
+    """Plain sentences for shell modules that are off ON PURPOSE.
+
+    Deliberately separate from ``blind_spots``: a module a human disabled in
+    ``shell/modules.json`` (e.g. skbrain) not being observed is EXPECTED, not a
+    gap ATLAS needs fixing. Folding it into "BLIND EVEN IF UNFROZEN" -- which
+    used to happen, distinguished only by an inline "(disabled)" word easy to
+    skim past -- made a deliberate off-switch look like the same class of bug
+    as skdashboard's dead cli or fleet's missing registration. This function
+    (and its own report section, see ``render``) exists so "disabled" reads as
+    its own state, not a flavor of "invisible".
+    """
+    return [
+        f"{mod['id']}: shell module disabled in shell/modules.json; not observed "
+        f"because it is turned off, not because no observation path exists."
+        for mod in extra_modules
+        if not mod["enabled"]
+    ]
 
 
 # ── the one pass ────────────────────────────────────────────────────────────
@@ -510,6 +535,8 @@ def assess(
         "itil": itil,
         "unregistered_modules": extra_modules,
         "blind_spots": blind_spots(frozen, apps, itil, extra_modules),
+        # Deliberately off, not a gap ATLAS needs to fix: see disabled_module_notes.
+        "disabled_modules": disabled_module_notes(extra_modules),
     }
 
 
@@ -581,9 +608,14 @@ def blind_spots(
     else:
         out.append(f"ITIL store unreadable: {itil.get('detail', 'unknown reason')}.")
     for mod in extra_modules:
-        state = "enabled" if mod["enabled"] else "disabled"
+        # A DISABLED module is reported separately (disabled_module_notes /
+        # the render "DISABLED" section): it is off on purpose, not a blind
+        # spot. Only an ENABLED-but-unregistered module belongs here -- it is
+        # turned on and still nothing can see it, which is the real gap.
+        if not mod["enabled"]:
+            continue
         out.append(
-            f"{mod['id']}: shell module ({state}) with no Operatorapp registration; "
+            f"{mod['id']}: shell module (enabled) with no Operatorapp registration; "
             f"no operator seat can observe it at all."
         )
     return out
@@ -692,6 +724,16 @@ def render(assessment: dict) -> str:
             lines.append(f" - {spot}")
     else:
         lines.append(" - none found")
+
+    # Separate from the section above ON PURPOSE (see disabled_module_notes):
+    # a disabled module is an expected off-switch, not a blind spot, and must
+    # not read like one just because both used to share a header.
+    disabled = assessment.get("disabled_modules", [])
+    if disabled:
+        lines.append("")
+        lines.append("DISABLED (off by choice, not a blind spot)")
+        for note in disabled:
+            lines.append(f" - {note}")
     return "\n".join(lines)
 
 
@@ -704,6 +746,7 @@ __all__ = [
     "blind_spots",
     "classify_condition",
     "correlate_itil",
+    "disabled_module_notes",
     "lane_conflicts",
     "observe_via_cli",
     "observe_via_seat",

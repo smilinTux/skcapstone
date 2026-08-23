@@ -810,7 +810,7 @@ def register_status_commands(main: click.Group) -> None:
         console.print(table)
         console.print(f"\n  [dim]{len(entries)} entries[/]\n")
 
-    @main.command()
+    @main.group(invoke_without_command=True)
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
         "--host",
@@ -832,8 +832,15 @@ def register_status_commands(main: click.Group) -> None:
         show_default=True,
         help="Daemon HTTP API port (used with --json).",
     )
+    @click.pass_context
     def dashboard(
-        home: str, host: str, port: int, no_open: bool, json_mode: bool, daemon_port: int
+        ctx: click.Context,
+        home: str,
+        host: str,
+        port: int,
+        no_open: bool,
+        json_mode: bool,
+        daemon_port: int,
     ):
         """Launch the sovereign agent web dashboard.
 
@@ -841,7 +848,17 @@ def register_status_commands(main: click.Group) -> None:
         status, consciousness stats, backend health, active conversations,
         message counts, and error count - then exits without starting a
         server.  Designed for Flutter app consumption.
+
+        ``dashboard operator ...`` is a separate facet (ATLAS's explain /
+        observe / act contract, mirroring ``cmdb operator``) and does not
+        launch a server.
         """
+        if ctx.invoked_subcommand is not None:
+            # A subcommand (e.g. `operator`) handles its own work; this group
+            # callback only runs the launch/--json behavior when invoked bare,
+            # same pattern as `capabilities`/`usage` (register_capabilities_commands).
+            return
+
         from ..dashboard import _get_daemon_json, start_dashboard
 
         home_path = Path(home).expanduser()
@@ -874,6 +891,44 @@ def register_status_commands(main: click.Group) -> None:
         except KeyboardInterrupt:
             console.print("\n  [dim]Dashboard stopped.[/]\n")
             server.shutdown()
+
+    @dashboard.group("operator")
+    def dashboard_operator():
+        """ATLAS operator facet: explain, observe, and governed actuation.
+
+        Repairs the declared Operatorapp cli contract (``skcapstone dashboard
+        operator``, registration.APP_REGISTRY["skdashboard"]["cli"]): before
+        this, ``skcapstone dashboard`` was a plain command with no subcommands
+        at all, so ``... operator observe`` exited 2 ("unexpected extra
+        argument") and any seat honoring the registration saw nothing (ATLAS
+        Eyes, card 90b5b277).
+        """
+
+    @dashboard_operator.command("explain")
+    def dashboard_operator_explain():
+        """Describe skdashboard conditions and actions to ATLAS."""
+        from skcapstone.operator_seat.skdashboard_adapter import skdashboard_explain
+
+        click.echo(json.dumps(skdashboard_explain(), indent=2))
+
+    @dashboard_operator.command("observe")
+    def dashboard_operator_observe():
+        """Read skdashboard health without changing the store or the server."""
+        from skcapstone.operator_seat.skdashboard_adapter import skdashboard_observe
+
+        click.echo(json.dumps(skdashboard_observe(), indent=2))
+
+    @dashboard_operator.command("act")
+    @click.argument("action", type=click.Choice(["restart-dashboard"]))
+    def dashboard_operator_act(action):
+        """Apply a reversible standard skdashboard action (freeze-aware)."""
+        from skcapstone.fleet.paths import default_paths
+        from skcapstone.operator_seat.skdashboard_adapter import skdashboard_act
+
+        paths = default_paths()
+        proposal = {"action": action, "ts": datetime.now().astimezone().isoformat()}
+        result = skdashboard_act(paths, proposal, {"change_class": "auto-standard"})
+        click.echo(json.dumps(result, indent=2, default=str))
 
     @main.command()
     @click.option("--home", default=AGENT_HOME, type=click.Path())

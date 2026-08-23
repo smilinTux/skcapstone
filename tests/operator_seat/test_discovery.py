@@ -146,9 +146,11 @@ def test_discovery_unions_with_builtins_in_register_all(tmp_path, on):
         runner=_healthy_skbrain,
     )
     written = registration.register_all(paths, writer=_seat(), discovered=specs)
-    # The seven built-ins stay exactly as-is; skbrain is registered ALONGSIDE.
+    # The built-ins stay exactly as-is; skbrain is registered ALONGSIDE
+    # (register_all returns the full written set alphabetically sorted).
     assert written == [
         "cmdb",
+        "fleet",
         "skbrain",
         "skchat",
         "skcode",
