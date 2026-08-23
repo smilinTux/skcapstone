@@ -11,6 +11,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 from skcoord.cmdb import CMDBManager
+from skcoord.discovery_systemd import (
+    collect_systemd_units as collect_upstream_systemd_units,
+)
 
 from skcapstone.cli import main
 from skcapstone.cmdb_discovery import (
@@ -197,10 +200,10 @@ def test_role_like_service_names_preserve_legacy_identity(unit: str) -> None:
     assert item.name == unit.removesuffix(".service")
 
 
-def test_long_unit_identities_are_collision_resistant() -> None:
+def test_long_observed_services_preserve_upstream_identity_bytes() -> None:
     names = (
-        "skgateway-shared-codex-ingress-proxy.service",
-        "skgateway-shared-codex-ingress-proxy-helper.service",
+        "ordinary-legacy-service-with-a-name-that-is-definitely-long-alpha.service",
+        "ordinary-legacy-service-with-a-name-that-is-definitely-long-beta.service",
     )
     outputs = {
         (
@@ -218,11 +221,41 @@ def test_long_unit_identities_are_collision_resistant() -> None:
         ),
         ("dependencies",): "\n\n".join(f"Id={unit}\nRequires=\nWants=" for unit in names),
     }
-    found = collect_systemd_units(
-        SyntheticRunner(outputs=outputs), scopes=("--system",), kinds=("service",)
-    )
-    assert len({item.ci_id for item in found}) == 2
-    assert all(item.attributes["systemd_unit"] in names for item in found)
+    runner = SyntheticRunner(outputs=outputs)
+    found = collect_systemd_units(runner, scopes=("--system",), kinds=("service",))
+    upstream = collect_upstream_systemd_units(runner, scopes=("--system",), kinds=("service",))
+
+    def identity(item):
+        return item.name, item.canonical_name, item.ci_id
+
+    assert sorted(map(identity, found)) == sorted(map(identity, upstream))
+    assert [item.name for item in found] == [unit.removesuffix(".service") for unit in names]
+
+
+def test_governed_long_unit_identities_remain_collision_resistant(tmp_path: Path) -> None:
+    target = _install_fixture(tmp_path)
+    payload = json.loads(target.read_text())
+    gateway = "skgateway-governed-unit-with-a-shared-prefix-that-exceeds-forty-eight-alpha.service"
+    proxy = "skgateway-governed-unit-with-a-shared-prefix-that-exceeds-forty-eight-beta.service"
+    units = {item["role"]: item for item in payload["profiles"][0]["units"]}
+    units["gateway"]["unit"] = gateway
+    units["socket"]["targets"] = [gateway]
+    units["proxy"]["unit"] = proxy
+    units["proxy"]["targets"] = [gateway]
+    units["firewall"]["targets"] = [proxy]
+    target.write_text(json.dumps(payload))
+
+    declared = collect_declared_skgateway_ingress(tmp_path)
+    governed = [
+        item
+        for item in declared
+        if item.ci_type == "service" and set(item.aliases) & {gateway, proxy}
+    ]
+
+    assert len(governed) == 2
+    assert {item.aliases[0] for item in governed} == {gateway, proxy}
+    assert len({item.name for item in governed}) == 2
+    assert len({item.ci_id for item in governed}) == 2
 
 
 def _install_fixture(home: Path) -> Path:
