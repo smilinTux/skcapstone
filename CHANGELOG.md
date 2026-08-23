@@ -7,6 +7,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Card 504d0046: the 10 lying ATLAS Eyes lane conflicts, root-caused and
+  fixed; `atlas eyes` now reports zero CONFLICT rows.** ATLAS Eyes' first real
+  run (PR #178) found the cli lane and the in-process seat lane disagreeing on
+  10 conditions across 5 apps. Root causes, all fixed at the source (never by
+  hiding a disagreement or inventing a confident default):
+  - `skcomms_adapter._default_probe` / `skmemory_adapter._default_probe`
+    shelled out to `<app> daemon status`, a subcommand that no longer exists
+    on either CLI (exit 2), which read as confidently WRONG health; and the
+    skcomms probe hardcoded `queue_depth: 0`, so `QueueDrained` could never see
+    a real backlog. Both now delegate to the app's own
+    `<app>.operator_probe.observe()` / `queue_depth()` (the exact module the
+    `<app> operator observe` cli lane runs): one real signal, two callers.
+  - `skos_adapter._default_probe`'s `SchedulerAlive` shelled out to
+    `skos scheduler status` (also nonexistent, exit 2); `GtdSinkDraining` was
+    hardcoded `None` (never implemented) though the real quarantine-backlog
+    signal was available the whole time. Both now delegate to
+    `skos.operator_probe.observe()`.
+  - `skchat.operator_probe` (skchat repo) and `skharness.operator_cli` (the
+    skcode-hostd operator facet) each collapsed a genuinely-unknown signal
+    (`AuthEnforced` with neither the daemon nor the env reporting anything;
+    `HostdReady`/`SessionsHealthy`/`RegistryConsistent`/`AuthEnforced` when
+    hostd was totally unreachable) into a confident `True`, while Atlas's
+    in-process seat adapters already read Unknown for the same nodes. Fixed
+    upstream in those repos (skchat PR #181, skharness PR #59) to render
+    Unknown instead of inventing health.
+- **Lane conflicts are now a hard failure, not just a printed line.** Added
+  `eyes.LaneConflict` and `eyes.assert_no_conflicts(assessment)`, and wired
+  `skcapstone atlas eyes --strict` to raise it (non-zero exit, after still
+  printing the report) when any app has a lane conflict. Per PR #179's design
+  ("exactly one authoritative producer per condition; two authoritative
+  readings = hard LaneConflict rather than a silent preference"), this makes
+  the P0 gate ("eyes CONFLICT=0") script-checkable instead of relying on a
+  human reading the report carefully enough to notice a `!=` line.
+
 ### Added
 
 - Added `skcapstone atlas eyes` (`operator_seat/eyes.py` + `cli/atlas_cmd.py`):

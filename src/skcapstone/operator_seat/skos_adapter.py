@@ -252,24 +252,44 @@ def _grading_backlog(digest: Optional[dict]) -> Optional[bool]:
 def _default_probe() -> dict:
     """Best-effort skos health.
 
-    The scheduler/GTD halves fail SAFE (healthy) when skos is unreachable; the two
-    watchdog halves fail to UNKNOWN (None), never to healthy. Each half is read
-    independently, so a failing scheduler probe never hides the digest reading and
-    vice versa.
+    The scheduler/GTD halves DELEGATE to skos' own operator-facet contract
+    (``skos.operator_probe``, the exact module ``skos operator observe`` runs)
+    instead of maintaining a second, independent signal reader here. This is a
+    fix for card 504d0046 (ATLAS Eyes PR #178 first run):
+
+      * ``scheduler_alive`` used to shell out to ``skos scheduler status``, a
+        subcommand that does not exist on the installed CLI (exit 2, "no such
+        command"), which read as a confidently WRONG ``SchedulerAlive=False``
+        regardless of whether the scheduler was actually alive.
+      * ``gtd_draining`` was hardcoded ``None`` (never implemented), which read
+        as ``GtdSinkDraining=Unknown`` even though the real signal (the GTD
+        quarantine backlog depth) was available the whole time.
+
+    Delegating to the real, tested probe (the cron-ledger newest-run age and the
+    quarantine-backlog depth) makes this ONE real signal with two callers
+    (in-process seat, out-of-process cli), so the two lanes cannot drift again
+    short of the underlying probe itself changing behavior mid-flight. Both
+    halves fail SAFE (healthy, matching their prior documented posture) when
+    skos is not importable or the probe raises.
+
+    The two watchdog halves are untouched: they already fail to UNKNOWN (None),
+    never to healthy, and were never part of this conflict. Each half is read
+    independently, so a failing scheduler probe never hides the digest reading
+    and vice versa.
     """
     try:
-        import subprocess
+        from skos.operator_probe import observe as _skos_operator_observe
 
-        r = subprocess.run(
-            ["skos", "scheduler", "status"], capture_output=True, text=True, timeout=10
-        )
-        alive = r.returncode == 0
+        by_type = {c["type"]: c["status"] for c in _skos_operator_observe()["conditions"]}
+        alive = by_type.get("SchedulerAlive") == "True"
+        draining = by_type.get("GtdSinkDraining") == "True"
     except Exception:
         alive = None
+        draining = None
     digest = _read_digest()
     return {
         "scheduler_alive": alive,
-        "gtd_draining": None,
+        "gtd_draining": draining,
         "digest_fresh": _digest_fresh(_digest_age_s(digest)),
         "grading_backlog": _grading_backlog(digest),
     }

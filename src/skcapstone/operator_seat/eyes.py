@@ -62,6 +62,43 @@ _UNREACHABLE = frozenset(
 )
 
 
+class LaneConflictError(Exception):
+    """Raised when the cli lane and the seat lane disagree about a condition.
+
+    Per PR #179's design ("exactly one authoritative producer per condition;
+    two authoritative readings = hard LaneConflictError rather than a silent
+    preference"), a second reading for the same condition is never averaged,
+    never silently preferred, and never dropped: it is a hard failure. Use
+    :func:`assert_no_conflicts` to turn an assessment's conflicts into this
+    exception, e.g. from a CI gate or a caller that must not proceed on a
+    reading it cannot trust (card 504d0046).
+    """
+
+
+def assert_no_conflicts(assessment: dict) -> None:
+    """Raise :class:`LaneConflictError` if any app in ``assessment`` has a lane
+    conflict. Silent (returns None) when there are none.
+
+    This is the hard-failure counterpart to ``render``'s ``!=`` lines: printing
+    a conflict is necessary but not sufficient, because printed text is easy to
+    skim past. A caller that needs to KNOW, not just be told, calls this after
+    :func:`assess` and lets it raise. Used by ``atlas eyes --strict`` to turn
+    "zero CONFLICT rows" into a script-checkable exit code instead of a report
+    a human has to read carefully.
+    """
+    conflicts = [
+        f"{app['name']}.{c['type']} (cli={c['cli']!r} seat={c['seat']!r})"
+        for app in assessment.get("apps", [])
+        for c in app.get("conflicts", [])
+    ]
+    if conflicts:
+        raise LaneConflictError(
+            "lane conflict: at least one reading is wrong for "
+            + ", ".join(conflicts)
+            + " (a lying lane must not be promoted to source of truth)"
+        )
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -660,6 +697,8 @@ def render(assessment: dict) -> str:
 
 __all__ = [
     "SCHEMA",
+    "LaneConflictError",
+    "assert_no_conflicts",
     "assess",
     "app_verdict",
     "blind_spots",

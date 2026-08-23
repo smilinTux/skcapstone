@@ -110,7 +110,9 @@ def test_skos_default_probe_failure_is_unknown(monkeypatch):
     def _boom(*a, **k):
         raise OSError("down")
 
-    monkeypatch.setattr("subprocess.run", _boom, raising=False)
+    import skos.operator_probe as sop
+
+    monkeypatch.setattr(sop, "observe", _boom)
     monkeypatch.setattr("urllib.request.urlopen", _boom, raising=False)
     st = ad._default_probe()
     # Missing reachability evidence is Unknown, never fabricated healthy.
@@ -120,6 +122,31 @@ def test_skos_default_probe_failure_is_unknown(monkeypatch):
     # published there is nothing to call fresh.
     assert st["digest_fresh"] is None
     assert st["grading_backlog"] is None
+
+
+def test_skos_default_probe_delegates_to_skos_operator_probe(monkeypatch):
+    # Card 504d0046: scheduler_alive/gtd_draining must be ONE real signal with
+    # two callers (this in-process seat, the out-of-process `skos operator
+    # observe` cli), not a second, independently-drifting signal reader. The
+    # old default probe shelled out to `skos scheduler status` (a subcommand
+    # that does not exist, always reading confidently WRONG) and hardcoded
+    # gtd_draining to None (never implemented, though the real signal was
+    # available the whole time). Assert the delegation actually happens.
+    import skos.operator_probe as sop
+
+    monkeypatch.setattr(
+        sop,
+        "observe",
+        lambda: {
+            "conditions": [
+                {"type": "SchedulerAlive", "status": "False", "object": "skscheduler"},
+                {"type": "GtdSinkDraining", "status": "True", "object": "gtd-sink"},
+            ]
+        },
+    )
+    st = ad._default_probe()
+    assert st["scheduler_alive"] is False
+    assert st["gtd_draining"] is True
 
 
 # --- WatchdogDigestFresh -----------------------------------------------------

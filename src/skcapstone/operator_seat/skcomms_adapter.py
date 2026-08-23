@@ -2,9 +2,24 @@
 
 Conformant to the adapter contract (explain / observe / act). One operator, many
 apps: skcomms plugs in by exposing the same three verbs the fleet does. The health
-probe is injectable so tests never touch a live skcomms; the default reads the
-skcomms daemon status and queue depth, and fails safe (reports healthy) rather
-than raising a false alarm when skcomms cannot be reached.
+probe is injectable so tests never touch a live skcomms.
+
+The default probe DELEGATES to skcomms' own operator-facet contract
+(``skcomms.operator_probe``, the exact module ``skcomms operator observe`` runs)
+instead of maintaining a second, independent signal reader here. This is a fix
+for card 504d0046 (ATLAS Eyes PR #178 first run): the old default probe shelled
+out to ``skcomms daemon status``, a subcommand that no longer exists (the CLI
+answers exit 2, "no such command"), which read as a confidently WRONG
+``PathHealthy=False``; and it hardcoded ``queue_depth: 0``, which read as a
+confidently WRONG ``QueueDrained=True`` no matter how deep the real backlog was
+(the exact class of blind spot that let a 140k-file outbox leak go unseen).
+Delegating to the real, tested probe (``queue_depth()``, already the single
+canonical backlog metric per coord eb659f61 / roadmap CR-5.3, plus
+``operator_probe.observe()`` for ``PathHealthy``) makes this ONE real signal with
+two callers (in-process seat, out-of-process cli), so the two lanes cannot drift
+again short of the underlying probe itself changing behavior mid-flight. Fails
+SAFE (healthy) when skcomms is not importable or the probe raises, so an
+inability to probe never raises a false alarm.
 """
 
 from __future__ import annotations
@@ -43,16 +58,20 @@ def _b(value: bool) -> str:
 
 
 def _default_probe() -> dict:
-    """Best-effort skcomms health. Fails SAFE (healthy) when skcomms is
-    unreachable, so an inability to probe never raises a false alarm."""
+    """Best-effort skcomms health, delegated to ``skcomms.operator_probe`` (the
+    same real-signal module the ``skcomms operator observe`` cli lane runs).
+    Fails SAFE (healthy) when skcomms is not importable or the probe raises, so
+    an inability to probe never raises a false alarm."""
     try:
-        import subprocess
+        from skcomms.operator_probe import observe as _skcomms_operator_observe
+        from skcomms.operator_probe import queue_depth
 
-        r = subprocess.run(
-            ["skcomms", "daemon", "status"], capture_output=True, text=True, timeout=10
-        )
-        healthy = r.returncode == 0
-        return {"path_healthy": healthy, "queue_depth": 0, "queue_limit": _QUEUE_LIMIT}
+        by_type = {c["type"]: c["status"] for c in _skcomms_operator_observe()["conditions"]}
+        return {
+            "path_healthy": by_type.get("PathHealthy") == "True",
+            "queue_depth": queue_depth(),
+            "queue_limit": _QUEUE_LIMIT,
+        }
     except Exception as exc:
         return {"_probe_error": type(exc).__name__}
 

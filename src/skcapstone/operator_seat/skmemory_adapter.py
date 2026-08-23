@@ -2,9 +2,21 @@
 
 Conformant to the adapter contract (explain / observe / act). One operator, many
 apps: skmemory plugs in by exposing the same three verbs the fleet does. The health
-probe is injectable so tests never touch a live skmemory; the default reads the
-skmemory daemon status and fails safe (reports healthy) rather than raising a
-false alarm when skmemory cannot be reached.
+probe is injectable so tests never touch a live skmemory.
+
+The default probe DELEGATES to skmemory's own operator-facet contract
+(``skmemory.operator_probe``, the exact module ``skmemory operator observe``
+runs) instead of maintaining a second, independent signal reader here. This is a
+fix for card 504d0046 (ATLAS Eyes PR #178 first run): the old default probe
+shelled out to ``skmemory daemon status``, a subcommand that does not exist on
+the installed CLI (exit 2, "no such command"), which read as confidently WRONG
+``EmbedServing=False`` / ``ReconcileFresh=False`` no matter the real embed
+backend or index-freshness state. Delegating to the real, tested probe (the
+embedding-backend health check and the local index-age check) makes this ONE
+real signal with two callers (in-process seat, out-of-process cli), so the two
+lanes cannot drift again short of the underlying probe itself changing behavior
+mid-flight. Fails SAFE (healthy) when skmemory is not importable or the probe
+raises, so an inability to probe never raises a false alarm.
 """
 
 from __future__ import annotations
@@ -41,16 +53,18 @@ def _b(value: bool) -> str:
 
 
 def _default_probe() -> dict:
-    """Best-effort skmemory health. Fails SAFE (healthy) when skmemory is
-    unreachable, so an inability to probe never raises a false alarm."""
+    """Best-effort skmemory health, delegated to ``skmemory.operator_probe`` (the
+    same real-signal module the ``skmemory operator observe`` cli lane runs).
+    Fails SAFE (healthy) when skmemory is not importable or the probe raises, so
+    an inability to probe never raises a false alarm."""
     try:
-        import subprocess
+        from skmemory.operator_probe import observe as _skmemory_operator_observe
 
-        r = subprocess.run(
-            ["skmemory", "daemon", "status"], capture_output=True, text=True, timeout=10
-        )
-        alive = r.returncode == 0
-        return {"embed_serving": alive, "reconcile_fresh": alive}
+        by_type = {c["type"]: c["status"] for c in _skmemory_operator_observe()["conditions"]}
+        return {
+            "embed_serving": by_type.get("EmbedServing") == "True",
+            "reconcile_fresh": by_type.get("ReconcileFresh") == "True",
+        }
     except Exception as exc:
         return {"_probe_error": type(exc).__name__}
 

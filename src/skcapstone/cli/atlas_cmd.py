@@ -29,7 +29,18 @@ def register_atlas_commands(main: click.Group) -> None:
         default=None,
         help="Per-app deadline in seconds for the out-of-process cli lane (default 15).",
     )
-    def atlas_eyes(as_json: bool, timeout: float | None):
+    @click.option(
+        "--strict",
+        is_flag=True,
+        help=(
+            "Exit non-zero (after printing the report) if any app has a lane "
+            "conflict. Per PR #179's P0 gate: 'eyes CONFLICT=0' becomes a "
+            "script-checkable exit code instead of a report a human has to "
+            "read carefully; a lying lane must not be promoted to source of "
+            "truth by going unnoticed in a CI log."
+        ),
+    )
+    def atlas_eyes(as_json: bool, timeout: float | None, strict: bool):
         """Assess the whole operator estate in one read-only pass.
 
         Works WHILE FROZEN: `observe` is read-only and freeze-independent.
@@ -46,3 +57,8 @@ def register_atlas_commands(main: click.Group) -> None:
             click.echo(_json.dumps(assessment, indent=2))
         else:
             click.echo(eyes.render(assessment))
+        if strict:
+            try:
+                eyes.assert_no_conflicts(assessment)
+            except eyes.LaneConflictError as exc:
+                raise click.ClickException(str(exc)) from exc

@@ -118,6 +118,48 @@ def test_lane_conflicts_only_on_shared_types_with_different_status():
     assert conflicts == [{"type": "A", "cli": "True", "seat": "False"}]
 
 
+def test_assert_no_conflicts_is_silent_when_none():
+    assessment = {"apps": [{"name": "appx", "conflicts": []}]}
+    eyes.assert_no_conflicts(assessment)  # must not raise
+
+
+def test_assert_no_conflicts_raises_lane_conflict_naming_app_and_condition():
+    # Card 504d0046 / PR #179: "exactly one authoritative producer per
+    # condition; two authoritative readings = hard LaneConflictError rather than a
+    # silent preference." This is that hard failure: a conflict must not be
+    # something a caller can silently walk past.
+    assessment = {
+        "apps": [
+            {
+                "name": "skcomms",
+                "conflicts": [{"type": "PathHealthy", "cli": "True", "seat": "False"}],
+            }
+        ]
+    }
+    try:
+        eyes.assert_no_conflicts(assessment)
+        raise AssertionError("expected LaneConflictError")
+    except eyes.LaneConflictError as exc:
+        assert "skcomms.PathHealthy" in str(exc)
+        assert "cli='True'" in str(exc)
+        assert "seat='False'" in str(exc)
+
+
+def test_assert_no_conflicts_reports_every_conflict_across_every_app():
+    assessment = {
+        "apps": [
+            {"name": "a", "conflicts": [{"type": "X", "cli": "True", "seat": "False"}]},
+            {"name": "b", "conflicts": [{"type": "Y", "cli": "False", "seat": "True"}]},
+        ]
+    }
+    try:
+        eyes.assert_no_conflicts(assessment)
+        raise AssertionError("expected LaneConflictError")
+    except eyes.LaneConflictError as exc:
+        assert "a.X" in str(exc)
+        assert "b.Y" in str(exc)
+
+
 def test_verdict_precedence_blind_firing_conflict_unknown_ok():
     dead = {"state": "no-cli", "conditions": [], "detail": ""}
     assert eyes.app_verdict(dead, {"state": "no-adapter", "conditions": []}, []) == "BLIND"
