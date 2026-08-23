@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the human-approved SK control-plane architecture candidate, versioned
+  metric and report contracts, `/api/v1` OpenAPI baseline, breadth-first sprint
+  plan, synthetic wireframes, exact-hash approval record, and executable
+  contract tests.
+- Added an independent review report that keeps implementation blocked on
+  false-zero truth-state, empty recommendation-grounding, and empty
+  approval-requirement contract gaps.
+
 - Added a governed SKCounter AI Usage workspace beside Autopilot and Joule,
   including separate harness and gateway measurement lanes, token and cost
   trends, model and fleet breakdowns, collector freshness, coverage gaps, and
@@ -66,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the SOP so the live service is updated from a traceable repository commit.
 
 ### Fixed
+
+- Pinned the CI Ruff version so an unrelated upstream release cannot change the
+  lint gate without a reviewed repository change.
 
 - Restored the missing `main` push trigger in `publish.yml`; without it, the
   documented automatic patch-tag job was unreachable except by manual dispatch.

@@ -1,0 +1,89 @@
+{
+  "manifest_version": "1.0.0",
+  "generated_at": "2026-08-23T19:50:01Z",
+  "epic_id": "6f7fd828",
+  "architecture_card_id": "9442b3b3",
+  "human_review_card_id": "9508b8fd",
+  "independent_review_card_id": "d0edbff1",
+  "board_confirmation_card_id": "d79100a7",
+  "status": "proposed_for_human_review",
+  "implementation_authorized": false,
+  "artifacts": [
+    {
+      "path": "docs/architecture/ADR-0001-CONTROL-PLANE-MEASUREMENT-AND-REPORTING.md",
+      "sha256": "a1ea6ddc823edf8e7e17bcf800785d0bf4451e33622900f9dbbda362144c6553"
+    },
+    {
+      "path": "docs/planning/SK-CONTROL-PLANE-BREADTH-FIRST-SPRINTS.md",
+      "sha256": "03c77ad31ba890431bf08ef6fb9e2f5e954192a1e5f19b2eac101c1be04dd2f4"
+    },
+    {
+      "path": "docs/contracts/control-plane-action-preview.schema.json",
+      "sha256": "ffcd4013169b790c9d8ace621987affb55dec99037d0f2ac5e43ef2941af92b4"
+    },
+    {
+      "path": "docs/contracts/control-plane-insight.schema.json",
+      "sha256": "5f37dda3de9a0c60639084924d2b0974421a8d56fc97e9fc2cea0972f4be7587"
+    },
+    {
+      "path": "docs/contracts/control-plane-metric-result.schema.json",
+      "sha256": "a4d91290163132d573cb01f5857cf461d3751e29bc51ae27c05f5b14584da30c"
+    },
+    {
+      "path": "docs/contracts/control-plane-recommendation.schema.json",
+      "sha256": "9864f9f07f4085b82bad06108939ba003d243b0de07cd5e071493df3572fe7d5"
+    },
+    {
+      "path": "docs/contracts/control-plane-report-snapshot.schema.json",
+      "sha256": "a05b51dc42ed5f114d615ff16f094bab6dc6f75fbdc3de4f1ee4e2ebee269289"
+    },
+    {
+      "path": "docs/contracts/openapi.control-plane.v1.json",
+      "sha256": "d23bee601562c2561a2ed998537465d2161c87d410d51ea0183496d51e6050ef"
+    },
+    {
+      "path": "docs/wireframes/control-plane-estate-pulse.html",
+      "sha256": "c073938d90bca705f9e52641715800cbd0c181350849c8ba013729ebf05d4831"
+    },
+    {
+      "path": "docs/wireframes/control-plane-estate-pulse.png",
+      "sha256": "1fc7d3d1f1150d14fa1295a9c8e0e1d81f4b57440b2bf174115a338ede8e4b93"
+    },
+    {
+      "path": "docs/wireframes/control-plane-authorization-preview.png",
+      "sha256": "388ec19946df6f2f4e9211119a86a4794b9c5ff47e3c88a59e53f9b9aeb0f616"
+    }
+  ],
+  "sprint_containers": {
+    "0": "84f763ac",
+    "1": "4747a506",
+    "2": "973b802f",
+    "3": "ef218eb9",
+    "4": "e3cef4b4",
+    "5": "7aad8af1"
+  },
+  "leaf_cards": {
+    "SKCP-11": "9e88de5c",
+    "SKCP-12": "804f14de",
+    "SKCP-13": "c6828b8a",
+    "SKCP-14": "5026359d",
+    "SKCP-15": "08f4cdcb",
+    "SKCP-20": "b7ada8b9",
+    "SKCP-21": "5ee56779",
+    "SKCP-22": "da097cbb",
+    "SKCP-23": "866ffaac",
+    "SKCP-24": "77d6bae0",
+    "SKCP-25": "b548a77a",
+    "SKCP-30": "169028ce",
+    "SKCP-31": "f080f150",
+    "SKCP-31A": "efa9bee8",
+    "SKCP-32": "38731952",
+    "SKCP-33": "631f90bf",
+    "SKCP-34": "5858a34f",
+    "SKCP-40": "008bd490",
+    "SKCP-41": "cae1eaef",
+    "SKCP-50": "83a8c40b",
+    "SKCP-51": "2d02b6ed",
+    "SKCP-52": "ecf1148c"
+  }
+}

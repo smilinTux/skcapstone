@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.skworld.local/skdashboard/control-plane-insight.schema.json",
+  "title": "SKDashboard governed insight proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "insight_id",
+    "schema_version",
+    "status",
+    "kind",
+    "summary",
+    "scope",
+    "window",
+    "metric_refs",
+    "evidence_refs",
+    "calculation_refs",
+    "uncertainty",
+    "exclusions",
+    "model_provenance",
+    "policy_decision_ref",
+    "recommendations",
+    "next_steps"
+  ],
+  "properties": {
+    "insight_id": {
+      "type": "string",
+      "pattern": "^ins-[a-z0-9][a-z0-9-]{7,95}$"
+    },
+    "schema_version": {"const": "1.0.0"},
+    "status": {"enum": ["proposal", "abstained"]},
+    "kind": {
+      "enum": [
+        "brief",
+        "metric_explanation",
+        "comparison",
+        "anomaly",
+        "forecast_explanation",
+        "dependency_analysis",
+        "report_narrative",
+        "data_quality"
+      ]
+    },
+    "summary": {"type": "string", "maxLength": 4000},
+    "scope": {
+      "$ref": "control-plane-metric-result.schema.json#/$defs/scope"
+    },
+    "window": {
+      "$ref": "control-plane-metric-result.schema.json#/$defs/window"
+    },
+    "metric_refs": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"type": "string", "maxLength": 256}
+    },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"type": "string", "maxLength": 512}
+    },
+    "calculation_refs": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"type": "string", "maxLength": 512}
+    },
+    "uncertainty": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string", "maxLength": 500}
+    },
+    "contradictions": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string", "maxLength": 500}
+    },
+    "exclusions": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string", "maxLength": 500}
+    },
+    "model_provenance": {
+      "$ref": "#/$defs/model_provenance"
+    },
+    "policy_decision_ref": {"type": "string", "maxLength": 256},
+    "recommendations": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "$ref": "control-plane-recommendation.schema.json"
+      }
+    },
+    "next_steps": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "kind", "preview_only"],
+        "properties": {
+          "label": {"type": "string", "maxLength": 200},
+          "kind": {"enum": ["open_evidence", "save_view", "draft_report", "preview_command"]},
+          "preview_only": {"const": true},
+          "target_ref": {"type": ["string", "null"], "maxLength": 512}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "model_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_route",
+        "transport_profile",
+        "gateway_revision",
+        "backend",
+        "requested_model",
+        "served_model",
+        "model_revision",
+        "prompt_hash",
+        "schema_hash"
+      ],
+      "properties": {
+        "logical_route": {"type": "string", "maxLength": 128},
+        "transport_profile": {"type": "string", "maxLength": 128},
+        "gateway_revision": {"type": "string", "maxLength": 128},
+        "backend": {"type": "string", "maxLength": 128},
+        "requested_model": {"type": "string", "maxLength": 128},
+        "served_model": {"type": "string", "maxLength": 128},
+        "model_revision": {"type": "string", "maxLength": 128},
+        "prompt_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "schema_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    }
+  }
+}
