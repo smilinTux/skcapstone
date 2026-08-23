@@ -7,7 +7,12 @@ import pytest
 from skcapstone.fleet import store
 from skcapstone.fleet.operatorapp_controller import operatorapp_rows
 from skcapstone.fleet.paths import FleetPaths
-from skcapstone.operator_seat import fleet_adapter, registration, skchat_adapter, skdashboard_adapter
+from skcapstone.operator_seat import (
+    fleet_adapter,
+    registration,
+    skchat_adapter,
+    skdashboard_adapter,
+)
 
 
 def _paths(tmp_path):
