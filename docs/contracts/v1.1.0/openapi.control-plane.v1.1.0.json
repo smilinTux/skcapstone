@@ -1,0 +1,708 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SKDashboard control-plane API",
+    "version": "1.1.0",
+    "description": "Superseding read-first contract for the SK estate control plane. The reporting query boundary cannot execute commands."
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "Origin-relative canonical API"
+    }
+  ],
+  "tags": [
+    {"name": "health"},
+    {"name": "overview"},
+    {"name": "board"},
+    {"name": "fleet"},
+    {"name": "economy"},
+    {"name": "reports"},
+    {"name": "insights"},
+    {"name": "actions"},
+    {"name": "events"}
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getControlPlaneHealth",
+        "tags": ["health"],
+        "summary": "Read component and source health without hiding unavailable evidence",
+        "responses": {
+          "200": {
+            "description": "Bounded health projection",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ETag"}
+            },
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ProjectionEnvelope"}
+              }
+            }
+          },
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/overview": {
+      "get": {
+        "operationId": "getEstatePulse",
+        "tags": ["overview"],
+        "summary": "Read the breadth-first estate pulse",
+        "security": [{"capability": ["skdashboard.read"]}],
+        "parameters": [
+          {"$ref": "#/components/parameters/ProjectId"},
+          {"$ref": "#/components/parameters/ServiceId"},
+          {"$ref": "#/components/parameters/Environment"},
+          {"$ref": "#/components/parameters/From"},
+          {"$ref": "#/components/parameters/To"},
+          {"$ref": "#/components/parameters/Timezone"},
+          {"$ref": "#/components/parameters/Baseline"},
+          {"$ref": "#/components/parameters/IfNoneMatch"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Cross-estate overview with one signal from every authorized silo",
+            "headers": {"ETag": {"$ref": "#/components/headers/ETag"}},
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ProjectionEnvelope"}
+              }
+            }
+          },
+          "304": {"description": "Projection has not changed"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/board/summary": {
+      "get": {
+        "operationId": "getBoardSummary",
+        "tags": ["board"],
+        "summary": "Read bounded portfolio, project, dependency, and flow projections",
+        "security": [{"capability": ["skdashboard.read"]}],
+        "parameters": [
+          {"$ref": "#/components/parameters/ProjectId"},
+          {"$ref": "#/components/parameters/From"},
+          {"$ref": "#/components/parameters/To"},
+          {"$ref": "#/components/parameters/Timezone"},
+          {"$ref": "#/components/parameters/Cursor"},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/IfNoneMatch"}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ProjectionPage"},
+          "304": {"description": "Projection has not changed"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/fleet/summary": {
+      "get": {
+        "operationId": "getFleetSummary",
+        "tags": ["fleet"],
+        "summary": "Read expected, reporting, stale, unavailable, and drifted fleet populations",
+        "security": [{"capability": ["skdashboard.read"]}],
+        "parameters": [
+          {"$ref": "#/components/parameters/Environment"},
+          {"$ref": "#/components/parameters/Cursor"},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/IfNoneMatch"}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ProjectionPage"},
+          "304": {"description": "Projection has not changed"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/economy/summary": {
+      "get": {
+        "operationId": "getEconomySummary",
+        "tags": ["economy"],
+        "summary": "Read separate AI usage, cost-confidence, and Joule projections",
+        "security": [{"capability": ["skdashboard.read"]}],
+        "parameters": [
+          {"$ref": "#/components/parameters/ProjectId"},
+          {"$ref": "#/components/parameters/MeasurementLane"},
+          {"$ref": "#/components/parameters/From"},
+          {"$ref": "#/components/parameters/To"},
+          {"$ref": "#/components/parameters/Timezone"},
+          {"$ref": "#/components/parameters/Cursor"},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/IfNoneMatch"}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ProjectionPage"},
+          "304": {"description": "Projection has not changed"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/reports/{snapshot_id}": {
+      "get": {
+        "operationId": "getReportSnapshot",
+        "tags": ["reports"],
+        "summary": "Read an immutable report snapshot",
+        "security": [{"capability": ["skdashboard.reports.read"]}],
+        "parameters": [
+          {
+            "name": "snapshot_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string", "maxLength": 96}
+          },
+          {"$ref": "#/components/parameters/IfNoneMatch"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Immutable report snapshot",
+            "headers": {"ETag": {"$ref": "#/components/headers/ETag"}},
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "control-plane-report-snapshot.v1.1.0.schema.json"}
+              }
+            }
+          },
+          "304": {"description": "Snapshot has not changed"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/insights/query": {
+      "post": {
+        "operationId": "queryInsights",
+        "tags": ["insights"],
+        "summary": "Request a read-only, evidence-linked insight proposal",
+        "description": "This endpoint cannot invoke the command API or execute an action.",
+        "security": [{"capability": ["skdashboard.insights.query"]}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/InsightQuery"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Typed proposal or abstention",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "control-plane-insight.v1.1.0.schema.json"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/actions/preview": {
+      "post": {
+        "operationId": "previewRecommendedAction",
+        "tags": ["actions"],
+        "summary": "Resolve a recommendation into a deterministic authorization preview",
+        "description": "Preview is allowlisted, policy-aware, non-executing, and contains no bearer capability material.",
+        "security": [{"capability": ["skdashboard.actions.preview"]}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/ActionPreviewRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Exact action, policy, impact, verification, and rollback preview",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "control-plane-action-preview.v1.1.0.schema.json"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/action-previews/{preview_id}/authorize": {
+      "post": {
+        "operationId": "authorizeActionPreview",
+        "tags": ["actions"],
+        "summary": "Authorize and queue one exact, unexpired action preview",
+        "description": "The owner service revalidates policy, expected version, required approvals, preview hash, idempotency, and expiry before accepting the command.",
+        "security": [{"capability": ["skdashboard.actions.authorize"]}],
+        "parameters": [
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string", "maxLength": 96}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/ActionAuthorizationRequest"}
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Authorization accepted and owner command queued",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/CommandReceipt"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "operationId": "streamControlPlaneEvents",
+        "tags": ["events"],
+        "summary": "Subscribe to bounded projection-change events",
+        "security": [{"capability": ["skdashboard.events.read"]}],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {"type": "string", "maxLength": 512},
+            "description": "Opaque resume cursor"
+          },
+          {
+            "name": "topics",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {"type": "string", "maxLength": 64}
+            },
+            "style": "form",
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent event stream with heartbeat and explicit reset-required event",
+            "content": {
+              "text/event-stream": {
+                "schema": {"type": "string"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "capability": {
+        "type": "oauth2",
+        "description": "CapAuth-issued, short-lived, audience-scoped capability. The API never returns bearer material.",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "/capauth/token",
+            "scopes": {
+              "skdashboard.read": "Read authorized projections",
+              "skdashboard.events.read": "Read authorized projection events",
+              "skdashboard.reports.read": "Read authorized report snapshots",
+              "skdashboard.insights.query": "Request a read-only insight proposal",
+              "skdashboard.actions.preview": "Preview one allowlisted action contract",
+              "skdashboard.actions.authorize": "Authorize one exact action preview"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "ProjectId": {
+        "name": "project_id",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "maxLength": 128}
+      },
+      "ServiceId": {
+        "name": "service_id",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "maxLength": 128}
+      },
+      "Environment": {
+        "name": "environment",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "maxLength": 64}
+      },
+      "MeasurementLane": {
+        "name": "measurement_lane",
+        "in": "query",
+        "required": false,
+        "schema": {"enum": ["harness_reported", "gateway_observed"]}
+      },
+      "From": {
+        "name": "from",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "format": "date-time"}
+      },
+      "To": {
+        "name": "to",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "format": "date-time"}
+      },
+      "Timezone": {
+        "name": "timezone",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "default": "UTC", "maxLength": 64}
+      },
+      "Baseline": {
+        "name": "baseline",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "maxLength": 128}
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "maxLength": 512},
+        "description": "Opaque page cursor"
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}
+      },
+      "IfNoneMatch": {
+        "name": "If-None-Match",
+        "in": "header",
+        "required": false,
+        "schema": {"type": "string", "maxLength": 256}
+      }
+    },
+    "headers": {
+      "ETag": {
+        "description": "Opaque projection or snapshot validator",
+        "schema": {"type": "string"}
+      }
+    },
+    "schemas": {
+      "TruthState": {
+        "enum": ["current", "stale", "partial", "unavailable", "unknown", "not_applicable"]
+      },
+      "Visibility": {
+        "$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/visibility"
+      },
+      "Scope": {
+        "$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/scope"
+      },
+      "Freshness": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "truth_state",
+          "visibility",
+          "observed_at",
+          "projected_at",
+          "ttl_seconds"
+        ],
+        "properties": {
+          "truth_state": {"$ref": "#/components/schemas/TruthState"},
+          "visibility": {"$ref": "#/components/schemas/Visibility"},
+          "observed_at": {"type": "string", "format": "date-time"},
+          "projected_at": {"type": "string", "format": "date-time"},
+          "ttl_seconds": {"type": "integer", "minimum": 1},
+          "age_seconds": {"type": "integer", "minimum": 0}
+        }
+      },
+      "Page": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["limit", "next_cursor", "has_more"],
+        "properties": {
+          "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+          "next_cursor": {"type": ["string", "null"], "maxLength": 512},
+          "has_more": {"type": "boolean"}
+        }
+      },
+      "ProjectionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "request_id",
+          "source_owner",
+          "scope",
+          "freshness",
+          "visibility",
+          "metrics",
+          "errors"
+        ],
+        "properties": {
+          "schema_version": {"const": "1.1.0"},
+          "request_id": {"type": "string", "maxLength": 128},
+          "source_owner": {"type": "string", "maxLength": 128},
+          "scope": {"$ref": "#/components/schemas/Scope"},
+          "freshness": {"$ref": "#/components/schemas/Freshness"},
+          "visibility": {"$ref": "#/components/schemas/Visibility"},
+          "metrics": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {"$ref": "control-plane-metric-result.v1.1.0.schema.json"}
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {"type": "object"}
+          },
+          "page": {"$ref": "#/components/schemas/Page"},
+          "errors": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {"$ref": "#/components/schemas/Error"}
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": ["errors"],
+              "properties": {
+                "errors": {"minItems": 1}
+              }
+            },
+            "then": {
+              "properties": {
+                "freshness": {
+                  "properties": {
+                    "truth_state": {
+                      "enum": [
+                        "stale",
+                        "partial",
+                        "unavailable",
+                        "unknown",
+                        "not_applicable"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["visibility"],
+              "properties": {
+                "visibility": {
+                  "properties": {
+                    "state": {
+                      "enum": ["policy_filtered", "unauthorized", "redacted", "unknown"]
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "freshness": {
+                  "properties": {
+                    "truth_state": {"not": {"const": "not_applicable"}}
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "InsightQuery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "scope", "window", "intent", "metric_families"],
+        "properties": {
+          "question": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "scope": {"$ref": "#/components/schemas/Scope"},
+          "window": {"$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/window"},
+          "intent": {
+            "enum": ["brief", "explain", "compare", "forecast_explanation", "draft_report"]
+          },
+          "metric_families": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "enum": [
+                "portfolio",
+                "flow",
+                "reliability",
+                "delivery",
+                "architecture",
+                "ai",
+                "economy",
+                "governance",
+                "experience"
+              ]
+            }
+          },
+          "baseline": {"type": ["string", "null"], "maxLength": 128}
+        }
+      },
+      "ActionPreviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["recommendation_id", "action_contract_id", "parameter_proposal_ref"],
+        "properties": {
+          "recommendation_id": {"type": "string", "maxLength": 96},
+          "action_contract_id": {"type": "string", "maxLength": 128},
+          "parameter_proposal_ref": {"type": "string", "maxLength": 512}
+        }
+      },
+      "ActionAuthorizationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["preview_hash", "idempotency_key", "approval_reason"],
+        "properties": {
+          "preview_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+          "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128},
+          "approval_reason": {"type": "string", "minLength": 1, "maxLength": 1000}
+        }
+      },
+      "CommandReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt_id",
+          "preview_id",
+          "preview_hash",
+          "status",
+          "owner_service",
+          "owner_receipt_ref",
+          "policy_decision_ref",
+          "accepted_at",
+          "verification_state"
+        ],
+        "properties": {
+          "receipt_id": {"type": "string", "maxLength": 128},
+          "preview_id": {"type": "string", "maxLength": 96},
+          "preview_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+          "status": {"enum": ["queued", "accepted", "denied", "conflict", "expired", "duplicate"]},
+          "owner_service": {"type": "string", "maxLength": 128},
+          "owner_receipt_ref": {"type": ["string", "null"], "maxLength": 512},
+          "policy_decision_ref": {"type": "string", "maxLength": 256},
+          "accepted_at": {"type": "string", "format": "date-time"},
+          "verification_state": {"enum": ["pending", "passed", "failed", "rolled_back", "not_applicable"]}
+        }
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "retryable", "request_id"],
+        "properties": {
+          "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+          "message": {"type": "string", "maxLength": 500},
+          "retryable": {"type": "boolean"},
+          "request_id": {"type": "string", "maxLength": 128},
+          "evidence_ref": {"type": ["string", "null"], "maxLength": 512},
+          "safe_detail": {"type": ["object", "null"]}
+        }
+      }
+    },
+    "responses": {
+      "ProjectionPage": {
+        "description": "Bounded projection page",
+        "headers": {"ETag": {"$ref": "#/components/headers/ETag"}},
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/ProjectionEnvelope"}
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "Invalid or mixed-scope request",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid authentication",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "Forbidden": {
+        "description": "CapAuth or owner policy denied the request",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "Conflict": {
+        "description": "Preview, expected version, approval, or idempotency state conflicts with the request",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "NotFound": {
+        "description": "Resource or route not found",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "TooLarge": {
+        "description": "Request exceeds the bounded query budget",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "RateLimited": {
+        "description": "Rate or concurrency limit reached",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds before a bounded retry",
+            "schema": {"type": "integer", "minimum": 1}
+          }
+        },
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "Unavailable": {
+        "description": "Source, projection, or policy dependency unavailable",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      }
+    }
+  }
+}

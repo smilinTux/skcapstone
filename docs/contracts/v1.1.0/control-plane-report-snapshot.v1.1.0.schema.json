@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.skworld.local/skdashboard/control-plane-report-snapshot.v1.1.0.schema.json",
+  "title": "SKDashboard immutable report snapshot version 1.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "snapshot_id",
+    "schema_version",
+    "report_type",
+    "audience",
+    "generated_at",
+    "as_of",
+    "scope",
+    "metric_definition_hashes",
+    "source_watermarks",
+    "quality_statement",
+    "sections",
+    "review_state",
+    "report_hash"
+  ],
+  "properties": {
+    "snapshot_id": {
+      "type": "string",
+      "pattern": "^rpt-[a-z0-9][a-z0-9-]{7,95}$"
+    },
+    "schema_version": {
+      "const": "1.1.0"
+    },
+    "report_type": {
+      "enum": [
+        "daily_operations",
+        "weekly_portfolio",
+        "sprint_flow",
+        "monthly_service",
+        "monthly_ai_economy",
+        "quarterly_strategy",
+        "ad_hoc_evidence"
+      ]
+    },
+    "audience": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {"type": "string", "maxLength": 128}
+    },
+    "generated_at": {"type": "string", "format": "date-time"},
+    "as_of": {"type": "string", "format": "date-time"},
+    "scope": {
+      "$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/scope"
+    },
+    "baseline": {"type": ["string", "null"], "maxLength": 128},
+    "metric_definition_hashes": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 256,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      }
+    },
+    "source_watermarks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "value"],
+        "properties": {
+          "source": {"type": "string", "maxLength": 128},
+          "value": {"type": "string", "maxLength": 256}
+        }
+      }
+    },
+    "quality_statement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["truth_state", "visibility", "summary", "errors", "exclusions"],
+      "properties": {
+        "truth_state": {
+          "enum": ["current", "stale", "partial", "unavailable", "unknown"]
+        },
+        "visibility": {
+          "$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/visibility"
+        },
+        "summary": {"type": "string", "maxLength": 1000},
+        "errors": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {"type": "string", "maxLength": 256}
+        },
+        "exclusions": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {"type": "string", "maxLength": 256}
+        }
+      }
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["section_id", "title", "metric_results", "insights"],
+        "properties": {
+          "section_id": {"type": "string", "maxLength": 128},
+          "title": {"type": "string", "maxLength": 200},
+          "metric_results": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "$ref": "control-plane-metric-result.v1.1.0.schema.json"
+            }
+          },
+          "insights": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "control-plane-insight.v1.1.0.schema.json"
+            }
+          }
+        }
+      }
+    },
+    "model_provenance": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "control-plane-insight.v1.1.0.schema.json#/$defs/model_provenance"
+      }
+    },
+    "review_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {"enum": ["unreviewed", "reviewed", "approved", "rejected"]},
+        "reviewer": {"type": ["string", "null"], "maxLength": 128},
+        "reviewed_at": {"type": ["string", "null"], "format": "date-time"},
+        "note": {"type": ["string", "null"], "maxLength": 1000}
+      }
+    },
+    "supersedes": {"type": ["string", "null"], "maxLength": 96},
+    "report_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}

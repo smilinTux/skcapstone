@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.skworld.local/skdashboard/control-plane-insight.v1.1.0.schema.json",
+  "title": "SKDashboard governed insight proposal version 1.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "insight_id",
+    "schema_version",
+    "status",
+    "kind",
+    "summary",
+    "scope",
+    "window",
+    "metric_refs",
+    "evidence_refs",
+    "calculation_refs",
+    "uncertainty",
+    "exclusions",
+    "visibility",
+    "model_provenance",
+    "policy_decision_ref",
+    "recommendations",
+    "next_steps"
+  ],
+  "properties": {
+    "insight_id": {
+      "type": "string",
+      "pattern": "^ins-[a-z0-9][a-z0-9-]{7,95}$"
+    },
+    "schema_version": {"const": "1.1.0"},
+    "status": {"enum": ["proposal", "abstained"]},
+    "kind": {
+      "enum": [
+        "brief",
+        "metric_explanation",
+        "comparison",
+        "anomaly",
+        "forecast_explanation",
+        "dependency_analysis",
+        "report_narrative",
+        "data_quality"
+      ]
+    },
+    "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "scope": {
+      "$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/scope"
+    },
+    "window": {
+      "$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/window"
+    },
+    "visibility": {
+      "$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/visibility"
+    },
+    "metric_refs": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"type": "string", "minLength": 1, "maxLength": 256}
+    },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    },
+    "calculation_refs": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    },
+    "uncertainty": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string", "minLength": 1, "maxLength": 500}
+    },
+    "contradictions": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string", "maxLength": 500}
+    },
+    "exclusions": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string", "maxLength": 500}
+    },
+    "model_provenance": {
+      "$ref": "#/$defs/model_provenance"
+    },
+    "policy_decision_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "abstention_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "insufficient_evidence",
+            "conflicting_evidence",
+            "policy_unavailable",
+            "scope_denied",
+            "source_unavailable",
+            "unsupported_request",
+            "model_uncertainty"
+          ]
+        },
+        "message": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "$ref": "control-plane-recommendation.v1.1.0.schema.json"
+      }
+    },
+    "next_steps": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "kind", "preview_only"],
+        "properties": {
+          "label": {"type": "string", "maxLength": 200},
+          "kind": {"enum": ["open_evidence", "save_view", "draft_report", "preview_command"]},
+          "preview_only": {"const": true},
+          "target_ref": {"type": ["string", "null"], "maxLength": 512}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "model_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_route",
+        "transport_profile",
+        "gateway_revision",
+        "backend",
+        "requested_model",
+        "served_model",
+        "model_revision",
+        "prompt_hash",
+        "schema_hash"
+      ],
+      "properties": {
+        "logical_route": {"type": "string", "minLength": 1, "maxLength": 128},
+        "transport_profile": {"type": "string", "minLength": 1, "maxLength": 128},
+        "gateway_revision": {"type": "string", "minLength": 1, "maxLength": 128},
+        "backend": {"type": "string", "minLength": 1, "maxLength": 128},
+        "requested_model": {"type": "string", "minLength": 1, "maxLength": 128},
+        "served_model": {"type": "string", "minLength": 1, "maxLength": 128},
+        "model_revision": {"type": "string", "minLength": 1, "maxLength": 128},
+        "prompt_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "schema_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {"status": {"const": "proposal"}}
+      },
+      "then": {
+        "properties": {
+          "evidence_refs": {"minItems": 1},
+          "calculation_refs": {"minItems": 1},
+          "uncertainty": {"minItems": 1},
+          "policy_decision_ref": {"minLength": 1},
+          "visibility": {
+            "properties": {
+              "state": {"const": "visible"},
+              "authorization": {"const": "authorized"}
+            }
+          }
+        },
+        "anyOf": [
+          {"required": ["recommendations"], "properties": {"recommendations": {"minItems": 1}}},
+          {"required": ["next_steps"], "properties": {"next_steps": {"minItems": 1}}}
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {"status": {"const": "abstained"}}
+      },
+      "then": {
+        "required": ["abstention_reason"],
+        "properties": {
+          "next_steps": {
+            "items": {
+              "not": {
+                "properties": {"kind": {"const": "preview_command"}},
+                "required": ["kind"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {"status": {"const": "proposal"}}
+      },
+      "then": {"not": {"required": ["abstention_reason"]}}
+    }
+  ]
+}
