@@ -1,0 +1,65 @@
+name: CI
+
+# Forgejo Actions CI for skcapstone (mirrors .github/workflows/pytest.yml +
+# the ruff lint step from .github/workflows/ci.yml).
+#
+# - Sets up Python 3.11 (the supported runtime floor per CLAUDE.md: "Python 3.11+").
+# - Installs the package editable with ALL optional sovereign extras + dev tools
+#   ([all,dev]) so the full test tree imports cleanly (capauth, sksecurity,
+#   skmemory[skvector], skseed, skwhisper, skchat-sovereign, skcomms, fusepy,
+#   cloud SDKs). See [project.optional-dependencies] in pyproject.toml.
+# - Lints with ruff (the repo's configured linter — [tool.ruff] in pyproject.toml).
+# - Runs pytest, excluding integration + e2e tests HONESTLY via the pytest
+#   markers registered in [tool.pytest.ini_options], with --strict-markers.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Lint (ruff)
+        run: |
+          # Report lint issues but don't fail CI (pre-existing debt).
+          # Mirrors .github/workflows/ci.yml. TODO: fix debt, then drop || true.
+          ruff check src/ || true
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # libfuse is needed for the fusepy optional extra (FUSE mount tests).
+      - name: Install system deps (libfuse)
+        run: sudo apt-get update && sudo apt-get install -y libfuse-dev
+
+      - name: Install package with all extras + dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,dev]"
+
+      - name: Run unit tests (exclude integration + e2e via markers)
+        run: |
+          python -m pytest tests/ \
+            --strict-markers \
+            -m "not integration and not e2e" \
+            --cov=skcapstone --cov-report=term-missing

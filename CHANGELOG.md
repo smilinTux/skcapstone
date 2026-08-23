@@ -22,6 +22,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (gathered memories/journal context and recent snapshots) is shortened or
   dropped lowest-priority-first, replacing the previous blind tail-truncation
   that could cut off protected sections first.
+- Added `validate_seed_for_store()` to `skcapstone cli skseed`, wiring a
+  raising guard (schema validation plus store-level size/type limits on
+  summary length, key-claim count, and tag type) into the `ingest_document`
+  store flow before a seed reaches `MemoryStore.snapshot`, so malformed or
+  oversized seeds are rejected with a clear error instead of being silently
+  stored.
 - Added an opt-in, loopback-only Windows browser proxy through each
   workstation's canonical WSL Tailscale identity. The installer provides
   shared enable and disable desktop controls, preserves per-profile browser
