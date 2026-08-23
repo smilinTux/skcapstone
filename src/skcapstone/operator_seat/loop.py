@@ -287,24 +287,53 @@ def _run_once(
     )
 
     outcomes: list[dict] = []
+    # Per-PASS memo of resolved occurrences (keyed on the same 9-field base
+    # identity ActionIntent.identity() uses at occurrence=0). Two proposals for
+    # the same identity within this ONE pass ("same episode, repeated
+    # observation") MUST collapse onto the same occurrence even if the first
+    # one's lineage reaches a terminal state (e.g. VERIFIED) before the
+    # second is examined below -- see ActionLedger.resolve_occurrence's
+    # docstring. Cleared automatically every call: a NEW pass gets a fresh
+    # memo and so is free to see a truly prior pass's terminal state and
+    # advance the occurrence, which is exactly how a genuinely later
+    # real-world recurrence earns its own intent.
+    occurrence_memo: dict[tuple, int] = {}
     for i, pl in enumerate(planned):
         prop, disp = pl["proposal"], pl["disposition"]
         intent_id: str | None = None
         if lifecycle_ledger is not None:
             created_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+            base_identity = {
+                "condition_fingerprint": safety.action_fingerprint(prop),
+                "application": str(prop.get("app") or "unknown"),
+                "target_kind": str(prop.get("target_kind") or "CI"),
+                "target_id": str(prop.get("object") or "unknown"),
+                "action": str(prop.get("action") or "unknown"),
+                "catalog_generation": str(prop.get("catalog_generation") or catalog_generation),
+                "itil_change_id": prop.get("change_id") or prop.get("itil_change_id"),
+                "cmdb_ci_id": prop.get("ci_id") or prop.get("cmdb_ci_id"),
+                "authorization_ref": prop.get("authorization_ref"),
+            }
+            memo_key = tuple(sorted(base_identity.items()))
+            if memo_key in occurrence_memo:
+                occurrence = occurrence_memo[memo_key]
+            else:
+                occurrence = lifecycle_ledger.resolve_occurrence(base_identity)
+                occurrence_memo[memo_key] = occurrence
             intent = action_ledger.ActionIntent(
-                condition_fingerprint=safety.action_fingerprint(prop),
-                application=str(prop.get("app") or "unknown"),
-                target_kind=str(prop.get("target_kind") or "CI"),
-                target_id=str(prop.get("object") or "unknown"),
-                action=str(prop.get("action") or "unknown"),
-                catalog_generation=str(prop.get("catalog_generation") or catalog_generation),
+                condition_fingerprint=base_identity["condition_fingerprint"],
+                application=base_identity["application"],
+                target_kind=base_identity["target_kind"],
+                target_id=base_identity["target_id"],
+                action=base_identity["action"],
+                catalog_generation=base_identity["catalog_generation"],
                 created_at=created_at,
-                itil_change_id=prop.get("change_id") or prop.get("itil_change_id"),
-                cmdb_ci_id=prop.get("ci_id") or prop.get("cmdb_ci_id"),
+                itil_change_id=base_identity["itil_change_id"],
+                cmdb_ci_id=base_identity["cmdb_ci_id"],
                 verification=dict(prop.get("verification") or {}),
                 rollback=dict(prop.get("rollback") or {}),
-                authorization_ref=prop.get("authorization_ref"),
+                authorization_ref=base_identity["authorization_ref"],
+                occurrence=occurrence,
             )
             lifecycle_ledger.create(
                 intent,
@@ -381,11 +410,24 @@ def _run_once(
                 if execution_state is not None:
                     execution_state.record(fingerprint, time.time(), success=True)
                 if intent_id is not None:
+                    # ActionIntent.itil_change_id is frozen identity, set only
+                    # when the PROPOSER pre-supplied change_id/itil_change_id
+                    # (see base_identity above); it cannot be rewritten after
+                    # the intent exists without silently changing what
+                    # identity it hashes to. When the honor apply_fn instead
+                    # AUTO-creates its own ITIL change (act_dispatch.
+                    # build_apply_fn, no proposer-supplied change_id), that
+                    # change's id is only known once apply_fn returns here --
+                    # record it on this durable, append-only VERIFIED event so
+                    # the correlation is never lost, even though the frozen
+                    # intent core itself stays proposer-scoped.
+                    auto_change_id = result.get("change_id") if isinstance(result, dict) else None
                     lifecycle_ledger.append(
                         intent_id,
                         action_ledger.ActionState.VERIFIED,
                         occurred_at=datetime.fromisoformat(now_iso.replace("Z", "+00:00")),
                         actor=ledger_actor,
+                        detail={"itil_change_id": auto_change_id} if auto_change_id else {},
                     )
                 outcome = "verified" if require_verified_actions else "applied"
             except Exception as exc:
@@ -429,12 +471,25 @@ def _run_once(
                     is action_ledger.ActionState.EXECUTING
                 ):
                     event_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                    # apply_fn's own exception (e.g. act_dispatch's "actuation
+                    # failed: ...") loses its return value, but build_apply_fn
+                    # stamps the ITIL change it already opened onto the
+                    # exception (`exc.change_id`) before raising, precisely so
+                    # this correlation survives a failed attempt too. A later
+                    # step's exception (postcondition/performed-proof checks)
+                    # instead leaves `result` populated with apply_fn's return.
+                    auto_change_id = getattr(exc, "change_id", None)
+                    if auto_change_id is None and isinstance(result, dict):
+                        auto_change_id = result.get("change_id")
+                    fail_detail = {"reason": str(exc)}
+                    if auto_change_id:
+                        fail_detail["itil_change_id"] = auto_change_id
                     lifecycle_ledger.append(
                         intent_id,
                         action_ledger.ActionState.FAILED,
                         occurred_at=event_at,
                         actor=ledger_actor,
-                        detail={"reason": str(exc)},
+                        detail=fail_detail,
                     )
                     if rollback_result is not None and rollback_error is None:
                         lifecycle_ledger.append(

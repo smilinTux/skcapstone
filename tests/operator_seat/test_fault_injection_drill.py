@@ -50,13 +50,14 @@ def test_full_drill_runs_clean_against_an_isolated_root(tmp_path):
     assert any((ledger_dir / "intents").glob("*.json"))
     assert state_path.is_file()
 
-    # Documented gaps are surfaced, not swallowed.
+    # Documented gaps are surfaced, not swallowed. Card 0e98a570 fixed the
+    # ledger-terminal-dead-end gap (scenario 11) and the auto-created-ITIL-
+    # change correlation loss (scenario 7), so neither carries a `finding`
+    # any more -- only the gaps this drill is NOT permitted to patch remain.
     finding_scenarios = {
         name
         for name in (
-            "7. signed ledger (real PGP) + ITIL correlation",
             "9. stale evidence is not rejected [GAP]",
-            "11. ledger cannot represent a later, separate occurrence [GAP]",
             "12. mid-run freeze race",
         )
     }

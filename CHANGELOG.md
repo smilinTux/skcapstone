@@ -23,6 +23,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ends with a plain "blind even if unfrozen" list. It never calls `act`, never
   touches the freeze, and writes nothing.
 
+### Fixed
+
+- Fixed card `0e98a570` (critical, blocked lifting the ATLAS freeze): a
+  genuinely later real-world recurrence of a condition that had already run
+  its lifecycle to a terminal ledger state (VERIFIED / ROLLED_BACK /
+  ESCALATED) previously died with `invalid action transition: <terminal> ->
+  authorized` and never actuated again, because
+  `action_ledger.stable_intent_id()` derives identity from nine governance
+  fields with no time or attempt component, so two separate real occurrences
+  of the same condition on the same target hashed to the same `intent_id`.
+  `ActionIntent` now carries an `occurrence` field (omitted from the identity
+  hash, and therefore byte-identical for occurrence 0, when it is unset), and
+  `ActionLedger.resolve_occurrence()` derives it purely from durable on-disk
+  lineage state: it reuses occurrence 0 while that lineage is still open
+  (dedup holds - a condition observed repeatedly within one still-open
+  episode never gets a second intent), and advances to the next occurrence
+  only once every prior one has reached a terminal state. `loop.py` memoizes
+  the resolved occurrence for the lifetime of one operator pass, so two
+  identical proposals within the SAME pass still collapse onto one intent
+  even if the first finishes (e.g. VERIFIED) before the second is examined -
+  only a genuinely later pass is allowed to see the prior terminal state and
+  mint a new occurrence. Accepted failure mode: a condition that flaps
+  faster than the existing cooldown/circuit-breaker window will now create
+  one ledger lineage per flap (previously it silently stopped after the
+  first terminal state); it still cannot re-actuate faster than that
+  cooldown, because `safety.ExecutionState`'s fingerprint-keyed eligibility
+  check is untouched by this change and still gates every physical
+  actuation attempt independently of the ledger.
+- Fixed the companion correlation loss on the `--honor` path (same card,
+  defect 2): `act_dispatch.build_apply_fn` auto-creates its own ITIL change
+  whenever proposer-supplied `change_id` is absent, but that id was created
+  after the `ActionIntent` was already frozen and so was never recorded
+  anywhere the ledger could show it. The frozen intent's `itil_change_id`
+  field stays proposer-scoped by design (rewriting it post-freeze would
+  silently change what identity it hashes to), but `loop.py` now records the
+  auto-created change id on the durable, append-only `VERIFIED` (success) or
+  `FAILED`/`ESCALATED` (failure) event's `detail`, and `build_apply_fn`
+  stamps it onto any exception it raises so the correlation survives a
+  failed attempt too. Combined with the recurrence fix above, the circuit
+  breaker's `retry_budget` (previously unreachable on the production
+  `--honor` path for any standard action with no `rollback_plan`, because
+  one failure already terminated the ledger lineage before a second retry
+  could occur) is now genuinely reachable: 3 consecutive real failures are
+  each a distinct occurrence/intent, and only the 4th attempt is refused,
+  by `safety.ExecutionState`'s circuit breaker, not the ledger.
+- Rebased the ATLAS P3.2 fault-injection drill's `scenario 11` and
+  `scenario 7` onto this fix (both previously asserted the pre-fix gap
+  behaviour) and added two scenarios: same-episode duplicate observations
+  still dedupe onto one intent even when the first's lineage completes
+  terminal mid-pass, and `retry_budget` is genuinely reachable on the
+  `--honor` path with a lifecycle ledger attached.
+
 ### Documentation
 
 - Added the remote operator-plane transport standard

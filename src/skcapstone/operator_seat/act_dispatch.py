@@ -117,24 +117,37 @@ def build_apply_fn(
             change_id = getattr(chg, "id", None)
             emit(f"itil: change {change_id} recorded for {action!r}")
 
-        if adapter_name == "skchat":
-            actuation = skchat_adapter.skchat_act(paths, proposal, classification, runner=runner)
-        else:  # fleet: annotate the signed intent, then physically honor it.
-            fleet_adapter.fleet_act(paths, proposal, classification, now_iso=now_iso)
-            unit = proposal.get("unit") or proposal.get("object")
-            actuation = actuator.honor(
-                paths,
-                {"action": "restart_service", "ts": proposal.get("ts")},
-                unit,
-                runner=runner,
-            )
-        if not isinstance(actuation, dict) or actuation.get("performed") is not True:
-            reason = (
-                actuation.get("reason", "actuator did not perform action")
-                if isinstance(actuation, dict)
-                else "invalid actuator response"
-            )
-            raise RuntimeError(f"actuation failed: {reason}")
+        try:
+            if adapter_name == "skchat":
+                actuation = skchat_adapter.skchat_act(
+                    paths, proposal, classification, runner=runner
+                )
+            else:  # fleet: annotate the signed intent, then physically honor it.
+                fleet_adapter.fleet_act(paths, proposal, classification, now_iso=now_iso)
+                unit = proposal.get("unit") or proposal.get("object")
+                actuation = actuator.honor(
+                    paths,
+                    {"action": "restart_service", "ts": proposal.get("ts")},
+                    unit,
+                    runner=runner,
+                )
+            if not isinstance(actuation, dict) or actuation.get("performed") is not True:
+                reason = (
+                    actuation.get("reason", "actuator did not perform action")
+                    if isinstance(actuation, dict)
+                    else "invalid actuator response"
+                )
+                raise RuntimeError(f"actuation failed: {reason}")
+        except Exception as exc:
+            # A change may already be open in ITIL by this point (above) even
+            # though the actuation itself failed or never returned. apply_fn's
+            # exception is all the caller (loop.py) sees -- its return value is
+            # lost -- so stamp the change id onto the exception itself. This is
+            # the ONLY way loop.py can still record ITIL correlation on the
+            # ledger's FAILED/ESCALATED event when the honor path auto-created
+            # the change (no proposer-supplied change_id).
+            exc.change_id = change_id  # type: ignore[attr-defined]
+            raise
         emit(f"honor: {adapter_name} {action!r} -> {actuation}")
         return {
             "adapter": adapter_name,

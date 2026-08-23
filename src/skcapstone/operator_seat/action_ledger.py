@@ -52,6 +52,13 @@ _TRANSITIONS: dict[ActionState, frozenset[ActionState]] = {
     ActionState.ESCALATED: frozenset(),
 }
 
+#: A lineage in one of these states is DONE: it will never accept another
+#: transition (see ``_TRANSITIONS`` above, all three map to an empty set).
+#: Derived, not hand-maintained, so the two can never drift apart.
+_TERMINAL_STATES: frozenset[ActionState] = frozenset(
+    state for state, nxt in _TRANSITIONS.items() if not nxt
+)
+
 
 def _canonical(value: Any) -> bytes:
     """Return deterministic UTF-8 JSON bytes."""
@@ -61,6 +68,22 @@ def _canonical(value: Any) -> bytes:
 def stable_intent_id(identity: dict[str, Any]) -> str:
     """Derive a stable, non-secret identifier from an intent identity."""
     return "ai-" + hashlib.sha256(_canonical(identity)).hexdigest()[:24]
+
+
+def _identity_with_occurrence(base_identity: dict[str, Any], occurrence: int) -> dict[str, Any]:
+    """Fold ``occurrence`` into a base (9-field) identity dict.
+
+    ``occurrence`` is omitted entirely when it is 0 (the overwhelming common
+    case: a condition's first-ever, still-open, or currently-active lineage),
+    so the identity -- and therefore ``stable_intent_id`` -- is BYTE IDENTICAL
+    to the pre-occurrence hash for every existing caller that never sees a
+    terminal-then-recurring condition. Only a genuinely later occurrence
+    (``occurrence >= 1``, see ``ActionLedger.resolve_occurrence``) changes the
+    hash at all.
+    """
+    if not occurrence:
+        return dict(base_identity)
+    return {**base_identity, "occurrence": occurrence}
 
 
 class ActionIntent(BaseModel):
@@ -82,6 +105,7 @@ class ActionIntent(BaseModel):
     verification: dict[str, Any] = Field(default_factory=dict)
     rollback: dict[str, Any] = Field(default_factory=dict)
     authorization_ref: str | None = Field(default=None, min_length=1, max_length=1024)
+    occurrence: int = Field(default=0, ge=0)
 
     @field_validator("schema_id")
     @classmethod
@@ -91,8 +115,21 @@ class ActionIntent(BaseModel):
         return value
 
     def identity(self) -> dict[str, Any]:
-        """Return the fields defining deduplication identity."""
-        return {
+        """Return the fields defining deduplication identity.
+
+        ``created_at`` is deliberately excluded (see module docstring history):
+        identity must be a pure function of WHAT is being done, not WHEN, so
+        that the same real-world condition observed repeatedly within one
+        still-open episode dedupes to one intent. ``occurrence`` is the one
+        exception, and it is not a clock: it is assigned by
+        ``ActionLedger.resolve_occurrence`` only after a PRIOR lineage for
+        this exact identity has already reached a terminal state
+        (VERIFIED/ROLLED_BACK/ESCALATED), so it distinguishes "this condition,
+        genuinely recurring after its last lineage concluded" from "this
+        condition, observed again while still being worked." See that method
+        for the full derivation.
+        """
+        base = {
             "condition_fingerprint": self.condition_fingerprint,
             "application": self.application,
             "target_kind": self.target_kind,
@@ -103,6 +140,7 @@ class ActionIntent(BaseModel):
             "cmdb_ci_id": self.cmdb_ci_id,
             "authorization_ref": self.authorization_ref,
         }
+        return _identity_with_occurrence(base, self.occurrence)
 
     @model_validator(mode="after")
     def _derive_or_verify_id(self) -> "ActionIntent":
@@ -189,6 +227,54 @@ class ActionLedger:
         return _canonical(
             {k: v for k, v in normalized.items() if k not in {"event_hash", "signature"}}
         )
+
+    def resolve_occurrence(self, base_identity: dict[str, Any]) -> int:
+        """Return the occurrence number to bind for a real-world action identity.
+
+        ``base_identity`` is the same 9-field dict :meth:`ActionIntent.identity`
+        produces for ``occurrence=0`` (condition_fingerprint, application,
+        target_kind, target_id, action, catalog_generation, itil_change_id,
+        cmdb_ci_id, authorization_ref). This walks occurrence 0, 1, 2, ...
+        deterministically -- no clock, no external counter, purely a function
+        of what is already durably on disk in THIS ledger:
+
+        - an occurrence whose intent file does not exist yet is unused: return
+          it (the first-ever occurrence, or the next fresh one once every
+          prior occurrence has concluded).
+        - an occurrence whose lineage is NOT yet in a terminal state is the
+          SAME still-open episode: return it, so the caller's ``create()``
+          call is idempotent and no second lifecycle is started for a
+          condition that is still being worked (dedup holds).
+        - an occurrence whose lineage IS terminal (VERIFIED / ROLLED_BACK /
+          ESCALATED) has concluded and can never accept another transition
+          (see ``_TERMINAL_STATES``): it cannot represent a new real-world
+          firing, so probe the next occurrence.
+
+        Callers MUST memoize the result for the lifetime of one caller-defined
+        "episode" (in ``operator_seat.loop``, one operator pass) so that two
+        proposals for the same identity observed within that SAME episode
+        resolve to the SAME occurrence even if the first one's lineage
+        reaches a terminal state (e.g. actuates and is VERIFIED) before the
+        second is examined. Only a genuinely later episode, calling this
+        again with a fresh memo, is allowed to see the prior terminal state
+        and advance the occurrence. Called fresh every time (no memo) this
+        method is safe but degenerate: it would treat every duplicate within
+        an episode as a new occurrence once the first completes, which is
+        exactly the failure mode ``loop.py``'s per-pass cache exists to avoid.
+        """
+        with self._locked():
+            return self._resolve_occurrence_unlocked(base_identity)
+
+    def _resolve_occurrence_unlocked(self, base_identity: dict[str, Any]) -> int:
+        occurrence = 0
+        while True:
+            candidate_id = stable_intent_id(_identity_with_occurrence(base_identity, occurrence))
+            if not self._intent_path(candidate_id).is_file():
+                return occurrence
+            events = self._read_events_unlocked(candidate_id)
+            if not events or events[-1].state not in _TERMINAL_STATES:
+                return occurrence
+            occurrence += 1
 
     def create(
         self,

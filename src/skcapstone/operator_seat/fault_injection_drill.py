@@ -863,7 +863,14 @@ def scenario_escalation_rollback_fails(ctx: DrillContext) -> ScenarioResult:
 
 def scenario_signed_ledger_and_itil(ctx: DrillContext) -> ScenarioResult:
     """A real capauth-signed ledger entry, plus ITIL change correlation supplied
-    on the proposal. Also documents the one-directional correlation gap."""
+    on the proposal. Also proves the auto-created-change correlation gap (card
+    0e98a570, defect 2) is now closed: act_dispatch's OWN auto-created change
+    (from apply_fn's `itil=itil`, which fires regardless of whether the
+    proposer pre-supplied one) is a separate record from the frozen intent's
+    proposer-scoped `itil_change_id` field -- that stays true by design, the
+    field cannot be rewritten post-freeze without changing what identity it
+    hashes to -- but its id is no longer LOST: loop.py now records it on the
+    durable, append-only VERIFIED event's detail."""
     slug = "s11-ledger-itil"
     if not ctx.ledger_signed:
         return ScenarioResult(
@@ -912,13 +919,20 @@ def scenario_signed_ledger_and_itil(ctx: DrillContext) -> ScenarioResult:
         prev_hash = e.event_hash
     correlated = intent is not None and intent.itil_change_id == pre_created.id
 
-    # The gap: act_dispatch's OWN auto-created ITIL change (from apply_fn's
-    # `itil=itil`) is a SEPARATE record, never fed back into the already-frozen
-    # ActionIntent. Demonstrate it exists and differs.
+    # act_dispatch's OWN auto-created ITIL change (from apply_fn's `itil=itil`,
+    # which always fires) is still a SEPARATE record from the frozen intent's
+    # itil_change_id -- but it must now show up on the VERIFIED event's detail
+    # (card 0e98a570 defect 2 fix), closing the correlation loss.
     auto_records = [c for c in itil.list_changes() if c.id != pre_created.id]
     auto_change_id = auto_records[-1].id if auto_records else None
+    verified_event = events[-1] if events else None
+    auto_change_recorded_on_ledger = (
+        verified_event is not None
+        and verified_event.state is action_ledger.ActionState.VERIFIED
+        and verified_event.detail.get("itil_change_id") == auto_change_id
+    )
 
-    passed = all_signed and chain_ok and correlated
+    passed = all_signed and chain_ok and correlated and auto_change_recorded_on_ledger
     return ScenarioResult(
         name="7. signed ledger (real PGP) + ITIL correlation",
         passed=passed,
@@ -928,21 +942,18 @@ def scenario_signed_ledger_and_itil(ctx: DrillContext) -> ScenarioResult:
             "hash_chain_ok": chain_ok,
             "event_count": len(events),
             "pre_created_itil_change_id": pre_created.id,
-            "ledger_itil_change_id": intent.itil_change_id if intent else None,
+            "ledger_itil_change_id (frozen intent field)": (
+                intent.itil_change_id if intent else None
+            ),
             "auto_created_itil_change_id (act_dispatch's own record)": auto_change_id,
+            "auto_change_id_recorded_on_verified_event_detail": auto_change_recorded_on_ledger,
             "sample_event_redacted": _redact_event(events[-1]) if events else None,
         },
-        note="ITIL correlation works when the proposer supplies change_id in advance",
-        finding=(
-            None
-            if auto_change_id is None
-            else "act_dispatch.build_apply_fn's OWN auto-created ITIL change "
-            f"({auto_change_id}) is NOT the same record as the ledger's itil_change_id "
-            f"({intent.itil_change_id if intent else None}) and is never written back onto "
-            "the ActionIntent (frozen at creation, before apply_fn runs). Correlation only "
-            "works end-to-end when the proposer pre-creates the change and stamps "
-            "proposal['change_id'] itself."
-        ),
+        note="ITIL correlation works end-to-end two ways now: the proposer-supplied "
+        "change_id is bound onto the frozen intent's itil_change_id field, AND "
+        "act_dispatch's own auto-created change (a separate record, since build_apply_fn "
+        "always opens one when itil= is wired) is recorded on the VERIFIED event's detail "
+        "-- so an auditor can trace either path from the ledger",
     )
 
 
@@ -1081,11 +1092,15 @@ def scenario_auth_expiry_fails_closed(ctx: DrillContext) -> ScenarioResult:
 
 
 def scenario_ledger_terminal_dead_end(ctx: DrillContext) -> ScenarioResult:
-    """Deliberately reuses ONE intent identity across TWO separate real
-    occurrences of the same standing fault, to show what happens once the
-    first occurrence's lifecycle reaches a terminal state (VERIFIED /
-    ROLLED_BACK / ESCALATED). This is a documented gap, not a bug this drill
-    is permitted to patch."""
+    """Card 0e98a570 (defect 1), FIXED: reuses ONE real-world condition across
+    TWO separate PASSES (episodes), the second only after the first's lineage
+    has reached a terminal state (VERIFIED) and cooldown has elapsed. Before
+    the fix this dead-ended ('invalid action transition: verified ->
+    authorized') because action_ledger.stable_intent_id() had no way to tell
+    "still the same open episode" from "a later, separate occurrence". Now
+    ActionLedger.resolve_occurrence() makes that call itself, from durable
+    on-disk lineage state, and the second occurrence gets its OWN intent_id
+    (occurrence=1) and actually re-actuates instead of dying in the ledger."""
     slug = "s15-ledger-terminal-dead-end"
     state = ctx.scenario_state(slug)
     ledger = ctx.scenario_ledger(slug)
@@ -1107,10 +1122,13 @@ def scenario_ledger_terminal_dead_end(ctx: DrillContext) -> ScenarioResult:
     first_outcome = first["outcomes"][0] if first["outcomes"] else {}
     intent_id = first_outcome.get("intent_id")
     first_state = ledger.current_state(intent_id) if intent_id else None
+    first_occurrence = ledger.read_intent(intent_id).occurrence if intent_id else None
 
-    # Time passes (cooldown elapses); the SAME real fault recurs later. A brand
-    # new, independent occurrence in the real world -- but action_ledger's
-    # stable_intent_id() has no time component, so it is the SAME intent_id.
+    # Time passes (cooldown elapses); the SAME real fault recurs later, in a
+    # brand new pass/episode. Pre-fix this collided on the SAME intent_id
+    # (stable_intent_id has no time component) and dead-ended; post-fix,
+    # resolve_occurrence() sees occurrence 0's lineage is now terminal and
+    # mints occurrence 1, a genuinely distinct intent.
     ctx.backdate_last_attempt(
         state, safety.action_fingerprint(proposal), state.cooldown_seconds + 1
     )
@@ -1127,39 +1145,184 @@ def scenario_ledger_terminal_dead_end(ctx: DrillContext) -> ScenarioResult:
         decisions_dir=decisions_dir,
     )
     second_outcome = second["outcomes"][0] if second["outcomes"] else {}
+    second_intent_id = second_outcome.get("intent_id")
+    second_state = ledger.current_state(second_intent_id) if second_intent_id else None
+    second_occurrence = (
+        ledger.read_intent(second_intent_id).occurrence if second_intent_id else None
+    )
     ctx.heal_wedge()
 
-    dead_end = "invalid action transition" in second_outcome.get("outcome", "")
-    same_identity = second_outcome.get("intent_id") == intent_id
+    no_dead_end = "invalid action transition" not in second_outcome.get("outcome", "")
+    distinct_intent = second_intent_id is not None and second_intent_id != intent_id
+    second_actuated = second_outcome.get("outcome") == "applied"
+    both_verified = first_state is action_ledger.ActionState.VERIFIED and (
+        second_state is action_ledger.ActionState.VERIFIED
+    )
+    occurrences_advanced = first_occurrence == 0 and second_occurrence == 1
+    passed = (
+        no_dead_end
+        and distinct_intent
+        and second_actuated
+        and both_verified
+        and (occurrences_advanced)
+    )
     return ScenarioResult(
-        name="11. ledger cannot represent a later, separate occurrence [GAP]",
-        passed=dead_end and same_identity,  # "pass" = the drill correctly demonstrates the gap
+        name="11. a genuinely later occurrence gets its own intent and re-actuates",
+        passed=passed,
         evidence={
             "first_occurrence_outcome": first_outcome,
             "first_occurrence_final_ledger_state": str(first_state),
+            "first_occurrence_field": first_occurrence,
             "second_occurrence_outcome": second_outcome,
-            "same_intent_id_both_times": same_identity,
+            "second_occurrence_final_ledger_state": str(second_state),
+            "second_occurrence_field": second_occurrence,
+            "distinct_intent_id": distinct_intent,
         },
-        note="occurrence 1 self-heals to VERIFIED; occurrence 2, a genuinely later and "
-        "separate real-world firing of the SAME condition/object/action, gets the SAME "
-        "stable intent_id and its transition is REJECTED by the ledger",
-        finding="skcapstone.operator_seat.action_ledger.stable_intent_id() derives identity "
-        "from (condition_fingerprint, application, target_kind, target_id, action, "
-        "catalog_generation, itil_change_id, cmdb_ci_id, authorization_ref) with NO time or "
-        "attempt component. Once that identity's lifecycle reaches a terminal state "
-        "(VERIFIED/ROLLED_BACK/ESCALATED), loop.py's unconditional AUTHORIZED/EXECUTING "
-        "append on the NEXT real occurrence of the exact same standing condition raises "
-        "'invalid action transition: <terminal> -> authorized' and is caught by the broad "
-        "except handler -- so every future recurrence of that condition fails with what "
-        "looks like a ledger/lifecycle bug, not a description of the actual actuator "
-        "outcome, and never reaches actuation again through this ledger. This is worse than "
-        "it first looks even for the RETRY BUDGET (scenario 4): with a ledger attached and no "
-        "rollback plan, ONE failure already escalates the intent to a terminal ledger state, "
-        "so the SECOND of the three retries retry_budget=3 is supposed to allow fails "
-        "immediately with this ledger error instead of a genuine re-attempt -- the circuit "
-        "breaker's 3-strike budget is effectively moot on the production --honor path (which "
-        "always attaches a ledger; operator_seat/cli.py) for any standard action proposed "
-        "without a rollback_plan.",
+        note="occurrence 1 self-heals to VERIFIED; a later pass's genuinely separate firing "
+        "of the SAME condition/object/action (cooldown elapsed) now gets its OWN intent_id "
+        "(occurrence=1, via ActionLedger.resolve_occurrence) and re-actuates cleanly instead "
+        "of dead-ending with 'invalid action transition: verified -> authorized' (card "
+        "0e98a570, defect 1 fix)",
+    )
+
+
+def scenario_duplicate_observation_survives_terminal_mid_pass(ctx: DrillContext) -> ScenarioResult:
+    """Card 0e98a570 regression guard: TWO identical proposals in the SAME
+    pass (same episode) must still collapse onto ONE intent_id even though
+    the first one's lineage reaches VERIFIED (a terminal state) before the
+    second is examined, sequentially, later in the SAME planned-list loop.
+    Without loop.py's per-pass occurrence memo, resolve_occurrence() would
+    see the first's now-terminal lineage and (correctly, for a LATER pass)
+    mint a fresh occurrence for the second -- which would be WRONG here,
+    since both proposals are the same real-world observation within one
+    episode. This is the dedup half of the fix that scenario 11 does not
+    cover (scenario 11 uses two separate passes on purpose)."""
+    slug = "s18-duplicate-survives-mid-pass-terminal"
+    ctx.inject_wedge()
+    proposal = ctx.wedge_proposal()
+    duplicate = dict(proposal)
+    ledger = ctx.scenario_ledger(slug)
+    calls_before = len(ctx.calls)
+    res = _run_pass(
+        ctx,
+        propose=lambda b, r: [proposal, duplicate],
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=ctx.runner_success_and_heal(), itil=None
+        ),
+        execution_state=ctx.scenario_state(slug),
+        ledger=ledger,
+        decisions_dir=ctx.decisions_dir / slug,
+    )
+    outcomes = res["outcomes"]
+    intent_ids = {o.get("intent_id") for o in outcomes}
+    same_intent = len(intent_ids) == 1 and None not in intent_ids
+    one_actuation = len(ctx.calls) - calls_before == 1
+    only_intent_id = next(iter(intent_ids)) if same_intent else None
+    occurrence = ledger.read_intent(only_intent_id).occurrence if only_intent_id else None
+    events = ledger.events(only_intent_id) if only_intent_id else []
+    no_duplicate_events = len(events) == len({e.sequence for e in events})
+    passed = same_intent and one_actuation and occurrence == 0 and no_duplicate_events
+    return ScenarioResult(
+        name="14. same-episode duplicate still dedupes even though occurrence 1 finishes "
+        "VERIFIED before occurrence 2 is examined",
+        passed=passed,
+        evidence={
+            "outcomes": outcomes,
+            "distinct_intent_ids": list(intent_ids),
+            "occurrence_field": occurrence,
+            "physical_restart_calls": len(ctx.calls) - calls_before,
+        },
+        note="two identical proposals in ONE pass: proposal 1 runs to completion (VERIFIED, "
+        "a terminal state) before proposal 2 is even looked at, but loop.py's per-pass "
+        "occurrence memo keeps proposal 2 on occurrence=0 (same intent_id) rather than "
+        "resolve_occurrence() seeing the now-terminal lineage and minting occurrence=1 -- "
+        "only ONE physical restart happens (the second is caught by cooldown, same as "
+        "scenario 8)",
+    )
+
+
+def scenario_retry_budget_reachable_with_ledger(ctx: DrillContext) -> ScenarioResult:
+    """Card 0e98a570 (defect 1's compounding effect on the circuit breaker),
+    FIXED: retry_budget consecutive real failures on the --honor path WITH a
+    lifecycle_ledger attached (the actual production shape: operator_seat/
+    cli.py always attaches a ledger when --honor is on) and no rollback plan.
+    Before the fix, ONE failure already escalated the intent to a terminal
+    ledger state (ESCALATED), so the retry that safety.py's retry_budget=3 is
+    supposed to allow failed immediately with 'invalid action transition:
+    escalated -> authorized' instead of a genuine second attempt -- the
+    circuit breaker's 3-strike budget was moot. Now each retry (after cooldown
+    is backdated past, same as scenario 4) is a genuinely new occurrence with
+    its own intent, so all three real attempts actually reach the actuator,
+    and the circuit only opens on attempt 4 -- safety.py's execution_state is
+    the limiting mechanism again, exactly as CR-9.1 documents it."""
+    slug = "s19-retry-budget-with-ledger"
+    proposal = ctx.wedge_proposal()
+    fingerprint = safety.action_fingerprint(proposal)
+    state = ctx.scenario_state(slug)
+    ledger = ctx.scenario_ledger(slug)
+    decisions_dir = ctx.decisions_dir / slug
+    budget = state.retry_budget
+    cooldown = state.cooldown_seconds
+
+    attempt_outcomes = []
+    for _attempt in range(budget):
+        res = _run_pass(
+            ctx,
+            propose=lambda b, r: [proposal],
+            apply_fn=act_dispatch.build_apply_fn(
+                ctx.paths, _now_iso(), runner=ctx.runner_fail(), itil=None
+            ),
+            execution_state=state,
+            ledger=ledger,
+            decisions_dir=decisions_dir,
+        )
+        attempt_outcomes.append(res["outcomes"][0] if res["outcomes"] else {})
+        ctx.backdate_last_attempt(state, fingerprint, cooldown + 1)
+
+    calls_before = len(ctx.calls)
+    final = _run_pass(
+        ctx,
+        propose=lambda b, r: [proposal],
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=None
+        ),
+        execution_state=state,
+        ledger=ledger,
+        decisions_dir=decisions_dir,
+    )
+    final_outcome = final["outcomes"][0] if final["outcomes"] else {}
+
+    all_were_genuine_attempts = all(
+        "actuation failed" in o.get("outcome", "") for o in attempt_outcomes
+    )
+    none_were_ledger_dead_ends = not any(
+        "invalid action transition" in o.get("outcome", "") for o in attempt_outcomes
+    )
+    distinct_intents = len({o.get("intent_id") for o in attempt_outcomes}) == budget
+    circuit_open = "execution suppressed: circuit-open" in final_outcome.get("outcome", "")
+    passed = (
+        all_were_genuine_attempts
+        and none_were_ledger_dead_ends
+        and distinct_intents
+        and circuit_open
+        and len(ctx.calls) == calls_before  # the circuit-open 4th never reached the actuator
+    )
+    state_entry = json.loads(state.path.read_text())["actions"].get(fingerprint, {})
+    return ScenarioResult(
+        name=f"15. retry_budget={budget} is genuinely reachable on --honor WITH a ledger "
+        "attached",
+        passed=passed,
+        evidence={
+            "attempt_outcomes": attempt_outcomes,
+            "distinct_intent_ids": [o.get("intent_id") for o in attempt_outcomes],
+            "final_outcome_after_cooldown_elapsed": final_outcome,
+            "execution_state_entry": state_entry,
+        },
+        note="3 real actuation failures via the actual honor path, ledger attached, no "
+        "rollback plan -- pre-fix, attempt 2 would have died with an 'invalid action "
+        "transition' ledger error instead of a real attempt; here all 3 are genuine, each "
+        "on its own occurrence/intent, and the circuit only opens on the 4th (safety.py's "
+        "retry_budget, not the ledger, is the limiting mechanism)",
     )
 
 
@@ -1342,6 +1505,8 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_stale_evidence,
     scenario_auth_expiry_fails_closed,
     scenario_ledger_terminal_dead_end,
+    scenario_duplicate_observation_survives_terminal_mid_pass,
+    scenario_retry_budget_reachable_with_ledger,
     scenario_mid_run_freeze_race,
     scenario_scheduler_overlap,
 ]
