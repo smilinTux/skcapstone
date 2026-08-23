@@ -45,6 +45,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed `cmdb reconcile --local`/`--host` silently dropping `--record-run`
+  and `--apply` evidence: `write_run_artifact()` was only ever wired into
+  the `--network` branch, so the 3-hourly `skcapstone-cmdb-reconcile.service`
+  timer (`--local --apply`) was mutating the live CMDB with zero auditable
+  artifact. The local/host branch now builds the same checksummed run
+  envelope (scan id, timing, scope, reconcile report) as the network branch
+  and persists it via the existing `orch.write_run_artifact()`, with
+  `completeness.complete` only true for an actual `--apply` so a
+  `--record-run`-only dry run cannot be mistaken for a fresh apply by
+  `cmdb status`'s freshness SLO.
 - Reject blank legacy `MemoryEntry.memory_id` values at load, save, index,
   verification, and both promotion boundaries. This prevents the SKCapstone
   verifier/promoter from recreating unsafe `.json` files after SKMemory has

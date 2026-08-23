@@ -237,9 +237,9 @@ def test_local_record_run_persists_artifact_without_applying(home: Path) -> None
     runs = list((home / "cmdb" / "reconcile-runs").glob("*.json"))
     assert len(runs) == 1
     artifact_json = json.loads(runs[0].read_text())
-    assert artifact_json["completeness"]["complete"] is False, (
-        "a dry-run artifact must not look like a successful apply to `cmdb status`"
-    )
+    assert (
+        artifact_json["completeness"]["complete"] is False
+    ), "a dry-run artifact must not look like a successful apply to `cmdb status`"
 
 
 @needs_discovery
