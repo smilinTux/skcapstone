@@ -22,6 +22,7 @@ from skcapstone.cmdb_discovery import (
     collect_systemd_units,
     scan,
 )
+from skcapstone.cmdb_ingress_declaration import systemd_service_identity
 
 FIXTURE = Path(__file__).parent / "fixtures" / "cmdb" / "chiap01-skgateway-ingress.json"
 
@@ -230,6 +231,40 @@ def test_long_observed_services_preserve_upstream_identity_bytes() -> None:
 
     assert sorted(map(identity, found)) == sorted(map(identity, upstream))
     assert [item.name for item in found] == [unit.removesuffix(".service") for unit in names]
+
+
+@pytest.mark.parametrize("kind", ["socket", "timer"])
+def test_long_observed_nonservice_identities_are_collision_resistant(kind: str) -> None:
+    names = (
+        f"governed-nonservice-with-a-shared-prefix-that-is-definitely-long-alpha.{kind}",
+        f"governed-nonservice-with-a-shared-prefix-that-is-definitely-long-beta.{kind}",
+    )
+    outputs = {
+        (
+            "systemctl",
+            "--system",
+            "list-units",
+            f"--type={kind}",
+            "--all",
+            "--no-legend",
+            "--no-pager",
+            "--plain",
+        ): "\n".join(f"{unit} loaded active running" for unit in names),
+        ("fragment-paths",): "\n\n".join(
+            f"Id={unit}\nFragmentPath=/etc/systemd/system/{unit}" for unit in names
+        ),
+        ("dependencies",): "\n\n".join(f"Id={unit}\nRequires=\nWants=" for unit in names),
+    }
+    runner = SyntheticRunner(outputs=outputs)
+
+    first = collect_systemd_units(runner, scopes=("--system",), kinds=(kind,))
+    second = collect_systemd_units(runner, scopes=("--system",), kinds=(kind,))
+
+    expected = {systemd_service_identity("chiap01", "system", unit) for unit in names}
+    assert first == second
+    assert {item.name for item in first} == expected
+    assert len({item.ci_id for item in first}) == 2
+    assert all(item.attributes["systemd_kind"] == kind for item in first)
 
 
 def test_governed_long_unit_identities_remain_collision_resistant(tmp_path: Path) -> None:

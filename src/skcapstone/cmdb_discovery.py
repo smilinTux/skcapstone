@@ -29,6 +29,7 @@ from skcoord.discovery_systemd import _classify_origin, _fragment_paths, _unit_d
 
 from .cmdb_ingress_declaration import (
     collect_declared_skgateway_ingress,
+    systemd_service_identity,
 )
 
 logger = logging.getLogger("skcapstone.cmdb.discovery")
@@ -136,7 +137,7 @@ def _service_identity(host: str, scope: str, unit_id: str) -> str:
     unit, kind = unit_id.rsplit(".", 1)
     if kind == "service":
         return unit
-    return f"{host}:{scope.lstrip('-')}:{unit_id}"
+    return systemd_service_identity(host, scope.lstrip("-"), unit_id)
 
 
 def collect_systemd_units(
