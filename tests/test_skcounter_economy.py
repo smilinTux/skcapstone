@@ -233,6 +233,34 @@ def test_stale_and_missing_coverage_are_visible(data_root, tmp_path, monkeypatch
     assert result["coverage"]["percent"] == pytest.approx(33.3)
 
 
+def test_gateway_coverage_uses_its_own_eligible_node_inventory(
+    data_root, tmp_path, monkeypatch
+):
+    _write(
+        data_root,
+        "gateway.json",
+        _snapshot(lane="gateway_observed", node="chiap01", principal="skgateway"),
+    )
+    monkeypatch.setenv("SKCOUNTER_EXPECTED_NODES", "chiap01,chiap04,chiap08")
+    monkeypatch.setenv("SKCOUNTER_EXPECTED_GATEWAY_NODES", "chiap01")
+
+    result = get_ai_usage(
+        tmp_path,
+        {"lane": "gateway_observed"},
+        now=datetime(2026, 8, 23, 12, 10, tzinfo=timezone.utc),
+    )
+
+    assert result["coverage"] == {
+        "expected_nodes": 1,
+        "reporting_nodes": 1,
+        "fresh_collectors": 1,
+        "delayed_collectors": 0,
+        "stale_collectors": 0,
+        "missing_nodes": [],
+        "percent": 100.0,
+    }
+
+
 def test_collectors_are_ordered_by_freshness_then_identity(data_root, tmp_path):
     _write(data_root, "stale.json", _snapshot(node="chiap01", observed="2026-08-20T12:00:00Z"))
     _write(data_root, "delayed.json", _snapshot(node="chiap04", observed="2026-08-23T00:00:00Z"))

@@ -526,11 +526,16 @@ def _apply_filters(rows: Iterable[dict], filters: dict[str, str]) -> list[dict]:
     return result
 
 
-def _expected_nodes() -> list[str]:
+def _expected_nodes(lane: str) -> list[str]:
+    environment = (
+        "SKCOUNTER_EXPECTED_GATEWAY_NODES"
+        if lane == "gateway_observed"
+        else "SKCOUNTER_EXPECTED_NODES"
+    )
     return sorted(
         {
             value.strip()
-            for value in os.environ.get("SKCOUNTER_EXPECTED_NODES", "").split(",")
+            for value in os.environ.get(environment, "").split(",")
             if value.strip()
         }
     )
@@ -575,7 +580,7 @@ def get_ai_usage(
         summary[field] = activity[field]
 
     collectors = _collectors(observations, lane, now)
-    expected_nodes = _expected_nodes()
+    expected_nodes = _expected_nodes(lane)
     reporting_nodes = sorted({item["node_id"] for item in collectors})
     missing_nodes = sorted(set(expected_nodes) - set(reporting_nodes))
     coverage = {

@@ -44,7 +44,7 @@ Central observations never include raw prompts, responses, tool input, tool outp
 
 ## Fleet integration
 
-Set `SKCOUNTER_EXPECTED_NODES` to the comma-separated eligible-node set until SKDashboard consumes the authoritative SKCapstone Fleet eligibility projection directly. Missing nodes are a coverage state, not zero usage.
+Set `SKCOUNTER_EXPECTED_NODES` to the comma-separated eligible harness-node set and `SKCOUNTER_EXPECTED_GATEWAY_NODES` to the comma-separated eligible gateway-node set until SKDashboard consumes the authoritative SKCapstone Fleet eligibility projection directly. Each measurement lane computes coverage from its own inventory. Missing nodes are a coverage state, not zero usage.
 
 Collectors run per harness user. A root collector must not scan every home directory. The recommended schedule is every 15 minutes with randomized delay and a local durable outbox for offline delivery.
 
