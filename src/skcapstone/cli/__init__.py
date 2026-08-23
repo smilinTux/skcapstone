@@ -48,6 +48,7 @@ from .agents import register_agents_commands  # noqa: E402
 from .alerts import register_alerts_commands  # noqa: E402
 from .anchor import register_anchor_commands  # noqa: E402
 from .archive_cmd import register_archive_commands  # noqa: E402
+from .atlas_cmd import register_atlas_commands  # noqa: E402
 from .autopilot_cost_cmd import register_autopilot_cost_commands  # noqa: E402
 from .backup import register_backup_commands  # noqa: E402
 from .benchmark import register_benchmark_commands  # noqa: E402
@@ -167,3 +168,4 @@ register_scheduler_commands(main)
 register_identity_commands(main)
 register_selftest_commands(main)
 register_fleet_commands(main)
+register_atlas_commands(main)

@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `skcapstone atlas eyes` (`operator_seat/eyes.py` + `cli/atlas_cmd.py`):
+  a read-only, freeze-proof estate assessor. In one pass it observes every
+  registered Operatorapp through TWO lanes - the declared `<spec.cli> observe`
+  contract out-of-process (hard per-app timeout) and the in-process
+  `loop.ADAPTERS` code an unfrozen ATLAS would run - and renders per-app
+  verdicts (OK / FIRING / CONFLICT / UNKNOWN / BLIND). Unknown is a first-class
+  result distinct from unreachable (`no-cli` / `cli-error` / `timeout` /
+  `unparseable` / `no-adapter`), declared-but-unreported conditions surface as
+  Unknown (absent), and lane disagreements are flagged per condition. The pass
+  correlates open ITIL incidents/problems to apps, surfaces the pending-change
+  backlog, unmigrated legacy flat ITIL files, unregistered shell modules, and
+  ends with a plain "blind even if unfrozen" list. It never calls `act`, never
+  touches the freeze, and writes nothing.
+
 ### Documentation
 
 - Recorded the GitHub-first, two-node CMDB package deployment and verification
