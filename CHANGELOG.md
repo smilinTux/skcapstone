@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Documentation
 
+- Added the remote operator-plane transport standard
+  (`docs/OPERATOR_PLANE_REMOTE_STANDARD.md`) and its no-flag-day migration
+  plan (`docs/OPERATOR_PLANE_MIGRATION.md`): HTTP/1.1+JSON over Tailscale
+  served by a per-node sknoded operator agent (port 9392) with SSE watch and
+  cursor/relist semantics, capauth request signing with separate
+  `operator.observe` / `operator.act` scopes, a three-way
+  unreachable/unknown/unauthorized failure taxonomy that never renders as
+  healthy, a single-authoritative-lane rule resolving the Eyes lane
+  disagreements (card 504d0046), skos as a read-only estate consumer, and a
+  disk-SEV2-gated sequencing for moving skgateway to .100. Design only; no
+  running service changed.
 - Recorded the GitHub-first, two-node CMDB package deployment and verification
   procedure used by card `3799733b`, including the dashboard restart required
   after updating the in-process `skcoord`/`skdashboard` dependencies.
