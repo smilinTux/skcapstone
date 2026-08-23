@@ -1,4 +1,4 @@
-"""skscheduler — JobSpec dataclass, YAML loader, node-affinity resolution,
+"""skscheduler - JobSpec dataclass, YAML loader, node-affinity resolution,
 due-check (cron + interval), and host-alias discovery.
 
 This module is the foundation of the unified fleet job scheduler.  It is
@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Union
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -70,8 +69,9 @@ def _parse_duration(value: Union[str, int, float]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Group A — JobSpec dataclass + load_jobs
+# Group A - JobSpec dataclass + load_jobs
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class JobSpec:
@@ -79,7 +79,7 @@ class JobSpec:
 
     Attributes:
         name: Unique job identifier (the YAML key).
-        type: Job type — ``"python"``, ``"shell"``, or ``"agent"``.
+        type: Job type - ``"python"``, ``"shell"``, or ``"agent"``.
         schedule: Cron expression (mutually exclusive with ``every_seconds``).
         every_seconds: Interval in seconds (mutually exclusive with ``schedule``).
         nodes: Node-affinity list of host aliases, or the string ``"all"``.
@@ -103,12 +103,12 @@ class JobSpec:
     timeout: float = 900.0
     enabled: bool = True
     # --- reliability / fleet / observability (added 2026-06-09) ---
-    retries: int = 0                 # extra attempts on failure (0 = run once)
-    retry_backoff: float = 0.0       # seconds between attempts (linear)
-    jitter: float = 0.0              # max random splay (s) before dispatch — avoids
-                                     #   fleet thundering-herd on shared cron slots
-    notify: str = "off"              # off | on_failure | on_success | always (sk-alert hook)
-    notify_level: str = "warn"       # sk-alert level for failure notifications
+    retries: int = 0  # extra attempts on failure (0 = run once)
+    retry_backoff: float = 0.0  # seconds between attempts (linear)
+    jitter: float = 0.0  # max random splay (s) before dispatch - avoids
+    #   fleet thundering-herd on shared cron slots
+    notify: str = "off"  # off | on_failure | on_success | always (sk-alert hook)
+    notify_level: str = "warn"  # sk-alert level for failure notifications
 
 
 def load_jobs(config_path: Path) -> list[JobSpec]:
@@ -133,7 +133,7 @@ def load_jobs(config_path: Path) -> list[JobSpec]:
     if not config_path.exists():
         return []
 
-    import yaml  # lazy import — pyyaml optional at module level
+    import yaml  # lazy import - pyyaml optional at module level
 
     with config_path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
@@ -141,10 +141,22 @@ def load_jobs(config_path: Path) -> list[JobSpec]:
     jobs_raw: dict = (data or {}).get("jobs") or {}
     result: list[JobSpec] = []
 
-    _KNOWN_KEYS = {
-        "type", "schedule", "every", "nodes", "agent", "prompt",
-        "command", "callback", "timeout", "enabled",
-        "retries", "retry_backoff", "jitter", "notify", "notify_level",
+    _KNOWN_KEYS = {  # noqa: N806
+        "type",
+        "schedule",
+        "every",
+        "nodes",
+        "agent",
+        "prompt",
+        "command",
+        "callback",
+        "timeout",
+        "enabled",
+        "retries",
+        "retry_backoff",
+        "jitter",
+        "notify",
+        "notify_level",
     }
 
     for name, raw in jobs_raw.items():
@@ -191,8 +203,9 @@ def load_jobs(config_path: Path) -> list[JobSpec]:
 
 
 # ---------------------------------------------------------------------------
-# Group A2 — jobs.d/ drop-in registration (added 2026-06-09)
+# Group A2 - jobs.d/ drop-in registration (added 2026-06-09)
 # ---------------------------------------------------------------------------
+
 
 def load_jobs_with_dropins(config_path: Path) -> list[JobSpec]:
     """Load jobs from ``jobs.yaml`` plus every ``jobs.d/*.yaml`` drop-in.
@@ -244,8 +257,8 @@ def load_jobs_with_dropins(config_path: Path) -> list[JobSpec]:
 def _dropin_dir(home: Optional[Path] = None) -> Path:
     """Return the ``config/jobs.d`` drop-in directory under *home*.
 
-    When *home* is not given, the skcapstone shared root is used — which
-    honours the ``SKCAPSTONE_HOME`` environment variable — so drop-ins land in
+    When *home* is not given, the skcapstone shared root is used - which
+    honours the ``SKCAPSTONE_HOME`` environment variable - so drop-ins land in
     the same tree the scheduler reads from (and tests stay sandboxed).
     """
     if home is not None:
@@ -263,7 +276,7 @@ def _dropin_dir(home: Optional[Path] = None) -> Path:
 def register_job(spec: dict, home: Optional[Path] = None) -> Path:
     """Register a scheduled job by writing a ``jobs.d/<name>.yaml`` fragment.
 
-    This is the programmatic counterpart to hand-editing ``jobs.yaml`` — it
+    This is the programmatic counterpart to hand-editing ``jobs.yaml`` - it
     lets a service own its own scheduler entry.  The fragment is written
     atomically; calling again with the same ``name`` overwrites it (idempotent
     re-registration on every service start is the intended pattern).
@@ -282,16 +295,14 @@ def register_job(spec: dict, home: Optional[Path] = None) -> Path:
         ValueError: If ``name`` is missing or neither ``schedule`` nor
             ``every`` is present.
     """
-    import yaml  # lazy — pyyaml optional at module level
+    import yaml  # lazy - pyyaml optional at module level
 
     spec = dict(spec)
     name = spec.pop("name", None)
     if not name:
         raise ValueError("register_job: spec must include a 'name'")
     if "schedule" not in spec and "every" not in spec:
-        raise ValueError(
-            f"register_job: job {name!r} must define 'schedule' or 'every'"
-        )
+        raise ValueError(f"register_job: job {name!r} must define 'schedule' or 'every'")
 
     dropin = _dropin_dir(home)
     dropin.mkdir(parents=True, exist_ok=True)
@@ -324,8 +335,9 @@ def unregister_job(name: str, home: Optional[Path] = None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Group B — node affinity
+# Group B - node affinity
 # ---------------------------------------------------------------------------
+
 
 def job_runs_here(job: JobSpec, host_aliases: set[str]) -> bool:
     """Return ``True`` if *job* should fire on the current node.
@@ -352,8 +364,9 @@ def job_runs_here(job: JobSpec, host_aliases: set[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Group C — due-check cron + interval with misfire catch-up
+# Group C - due-check cron + interval with misfire catch-up
 # ---------------------------------------------------------------------------
+
 
 def is_due(
     job: JobSpec,
@@ -427,14 +440,15 @@ def is_due(
 
 
 # ---------------------------------------------------------------------------
-# Group D — host alias discovery
+# Group D - host alias discovery
 # ---------------------------------------------------------------------------
+
 
 def current_host_aliases() -> set[str]:
     """Return the set of aliases that identify the current host.
 
     Combines:
-    - ``socket.gethostname()`` — the OS hostname.
+    - ``socket.gethostname()`` - the OS hostname.
     - Comma-separated values from the ``SK_NODE_ALIAS`` environment variable
       (stripped, non-empty tokens only).
 
@@ -445,7 +459,7 @@ def current_host_aliases() -> set[str]:
 
         # With SK_NODE_ALIAS=".41" set in the environment:
         aliases = current_host_aliases()
-        # e.g. {'my-host', '.41'}   — hostname + SK_NODE_ALIAS token
+        # e.g. {'my-host', '.41'}   - hostname + SK_NODE_ALIAS token
     """
     aliases: set[str] = {socket.gethostname()}
     env_alias = os.environ.get("SK_NODE_ALIAS", "")

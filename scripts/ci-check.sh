@@ -16,7 +16,7 @@ echo -e "${YELLOW}=== SKCapstone CI Check ===${NC}"
 echo ""
 
 # 1. Test collection — make sure all tests can be imported
-echo -e "${YELLOW}[1/4] Test collection...${NC}"
+echo -e "${YELLOW}[1/5] Test collection...${NC}"
 if python -m pytest tests/ --collect-only -q 2>&1 | tail -1 | grep -q "error"; then
     echo -e "${RED}FAIL: Test collection errors${NC}"
     python -m pytest tests/ --collect-only -q 2>&1 | grep -i error
@@ -28,7 +28,7 @@ fi
 
 # 2. Lint check
 echo ""
-echo -e "${YELLOW}[2/4] Ruff lint...${NC}"
+echo -e "${YELLOW}[2/5] Ruff lint...${NC}"
 if ruff check src/ 2>&1; then
     echo -e "${GREEN}OK: No lint errors${NC}"
 else
@@ -38,7 +38,7 @@ fi
 
 # 3. Build check
 echo ""
-echo -e "${YELLOW}[3/4] Build check...${NC}"
+echo -e "${YELLOW}[3/5] Build check...${NC}"
 if python -m build --no-isolation 2>&1 | tail -1 | grep -q "Successfully"; then
     echo -e "${GREEN}OK: Package builds${NC}"
     rm -rf dist/ build/ *.egg-info
@@ -47,9 +47,18 @@ else
     FAIL=1
 fi
 
-# 4. Version consistency
+# 4. No retired capauth shim imports (CR-3.6)
 echo ""
-echo -e "${YELLOW}[4/4] Version consistency...${NC}"
+echo -e "${YELLOW}[4/5] Shim-import gate...${NC}"
+if bash scripts/check-no-shim-imports.sh; then
+    :
+else
+    FAIL=1
+fi
+
+# 5. Version consistency
+echo ""
+echo -e "${YELLOW}[5/5] Version consistency...${NC}"
 PY_VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])" 2>/dev/null || python3 -c "import tomli; print(tomli.load(open('pyproject.toml','rb'))['project']['version'])")
 JS_VER=$(python -c "import json; print(json.load(open('package.json'))['version'])")
 if [ "$PY_VER" = "$JS_VER" ]; then

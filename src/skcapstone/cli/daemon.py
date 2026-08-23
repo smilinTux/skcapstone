@@ -8,13 +8,11 @@ import sys
 from pathlib import Path
 
 import click
-
-from ._common import AGENT_HOME, console
-
 from rich.console import Console
 from rich.panel import Panel
 
-from .. import AGENT_PORTS, DEFAULT_PORT, SKCAPSTONE_ROOT
+from .. import AGENT_PORTS, DEFAULT_PORT, SKCAPSTONE_ROOT, hashed_agent_port
+from ._common import AGENT_HOME, console
 
 
 def _resolve_agent_home(agent: str | None, home: str) -> Path:
@@ -30,11 +28,23 @@ def _resolve_agent_home(agent: str | None, home: str) -> Path:
 
 
 def _resolve_agent_port(agent: str | None, explicit_port: int | None) -> int:
-    """Return the port for *agent*, falling back to *explicit_port* or 7777."""
+    """Return the deterministic daemon status-API port for *agent*.
+
+    Resolution order:
+      1. An explicit ``--port`` always wins.
+      2. A known agent gets its distinct registered port from ``AGENT_PORTS``.
+      3. An unknown agent gets a stable hash-based port in the dynamic range
+         (``hashed_agent_port``) that avoids every documented fleet port - so
+         two agents on one host never collide and unknown agents never land on
+         skcomms' 9384 or any other reserved fleet port.
+      4. The no-agent (single-daemon) path keeps the package ``DEFAULT_PORT``.
+    """
     if explicit_port is not None:
         return explicit_port
     if agent:
-        return AGENT_PORTS.get(agent, max(AGENT_PORTS.values(), default=DEFAULT_PORT) + 1)
+        if agent in AGENT_PORTS:
+            return AGENT_PORTS[agent]
+        return hashed_agent_port(agent)
     return DEFAULT_PORT
 
 
@@ -97,7 +107,7 @@ def register_daemon_commands(main: click.Group) -> None:
 
     @main.group()
     def daemon():
-        """Background daemon — the agent's heartbeat.
+        """Background daemon - the agent's heartbeat.
 
         Start the always-on daemon for inbox polling, vault sync,
         transport health monitoring, and the local status API.
@@ -108,14 +118,33 @@ def register_daemon_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--port", default=None, type=int, help="API port (auto-assigned per agent).")
     @click.option("--poll", default=10, help="Inbox poll interval in seconds.")
-    @click.option("--sync-interval", "sync_int", default=300, help="Vault sync interval in seconds.")
+    @click.option(
+        "--sync-interval", "sync_int", default=300, help="Vault sync interval in seconds."
+    )
     @click.option("--foreground", is_flag=True, help="Run in foreground (don't daemonize).")
-    @click.option("--no-consciousness", "no_consciousness", is_flag=True,
-                  help="Disable the consciousness loop.")
-    @click.option("--yes", "-y", "auto_confirm", is_flag=True,
-                  help="Skip interactive confirmation prompts (for CI/automation).")
-    def daemon_start(agent: str | None, home: str, port: int | None, poll: int, sync_int: int,
-                     foreground: bool, no_consciousness: bool, auto_confirm: bool):
+    @click.option(
+        "--no-consciousness",
+        "no_consciousness",
+        is_flag=True,
+        help="Disable the consciousness loop.",
+    )
+    @click.option(
+        "--yes",
+        "-y",
+        "auto_confirm",
+        is_flag=True,
+        help="Skip interactive confirmation prompts (for CI/automation).",
+    )
+    def daemon_start(
+        agent: str | None,
+        home: str,
+        port: int | None,
+        poll: int,
+        sync_int: int,
+        foreground: bool,
+        no_consciousness: bool,
+        auto_confirm: bool,
+    ):
         """Start the sovereign agent daemon.
 
         Runs continuously, polling for messages, syncing vault state,
@@ -164,7 +193,9 @@ def register_daemon_commands(main: click.Group) -> None:
         svc = DaemonService(config)
 
         agent_label = f"[cyan]{agent}[/]" if agent else "[dim]default[/]"
-        console.print(f"\n  [green]Starting daemon[/] ({agent_label}) on port [cyan]{effective_port}[/]")
+        console.print(
+            f"\n  [green]Starting daemon[/] ({agent_label}) on port [cyan]{effective_port}[/]"
+        )
         console.print(f"  Home: {home_path}")
         console.print(f"  Poll: {poll}s | Sync: {sync_int}s")
         consciousness_label = "[red]disabled[/]" if no_consciousness else "[green]enabled[/]"
@@ -201,7 +232,7 @@ def register_daemon_commands(main: click.Group) -> None:
             os.kill(pid, sig.SIGTERM)
             console.print(f"\n  [green]Sent SIGTERM to daemon (PID {pid})[/]\n")
         except ProcessLookupError:
-            console.print("[yellow]Daemon process not found — cleaning up PID file.[/]")
+            console.print("[yellow]Daemon process not found - cleaning up PID file.[/]")
             (home_path / "daemon.pid").unlink(missing_ok=True)
 
     @daemon.command("status")
@@ -226,7 +257,9 @@ def register_daemon_commands(main: click.Group) -> None:
 
         status = get_daemon_status(home_path, effective_port)
         if json_out:
-            click.echo(json.dumps(status or {"running": True, "pid": pid, "api": "unreachable"}, indent=2))
+            click.echo(
+                json.dumps(status or {"running": True, "pid": pid, "api": "unreachable"}, indent=2)
+            )
             return
 
         if status:
@@ -271,8 +304,12 @@ def register_daemon_commands(main: click.Group) -> None:
             console.print(f"  [yellow]API unreachable on port {effective_port}[/]\n")
 
     @daemon.command("install")
-    @click.option("--agent", "agent_name", default=None,
-                  help="Agent name for SKCAPSTONE_AGENT (default: from env or 'sovereign').")
+    @click.option(
+        "--agent",
+        "agent_name",
+        default=None,
+        help="Agent name for SKCAPSTONE_AGENT (default: from env or 'sovereign').",
+    )
     @click.option("--start", is_flag=True, help="Start services immediately after installing.")
     def daemon_install(agent_name: str | None, start: bool):
         """Install the daemon as a system service.
@@ -297,13 +334,15 @@ def register_daemon_commands(main: click.Group) -> None:
         if platform.system() == "Darwin":
             from ..launchd import install_service as launchd_install
 
-            console.print(f"\n[cyan]Installing launchd services for agent '{effective_agent}'...[/]")
+            console.print(
+                f"\n[cyan]Installing launchd services for agent '{effective_agent}'...[/]"
+            )
             result = launchd_install(agent_name=effective_agent, start=start)
 
             if result["installed"]:
                 for svc in result.get("services", []):
                     status = "[green]loaded[/]" if svc.get("loaded") else "[green]installed[/]"
-                    console.print(f"  [green]✓[/] {svc['label']} — {status}")
+                    console.print(f"  [green]✓[/] {svc['label']} - {status}")
                 console.print()
                 console.print("[dim]  Manage: launchctl list | grep skcapstone[/]")
                 if not start:
@@ -315,23 +354,25 @@ def register_daemon_commands(main: click.Group) -> None:
             console.print()
 
         elif platform.system() == "Linux":
-            from ..systemd import install_service, systemd_available, SERVICE_NAME
+            from ..systemd import SERVICE_NAME, install_service, systemd_available
 
             if not systemd_available():
                 console.print("[red]systemd user session not available.[/]")
                 console.print("[dim]This command requires a Linux system with systemd.[/]")
                 raise SystemExit(1)
 
-            console.print(f"\n[cyan]Installing skcapstone systemd service for agent '{effective_agent}'...[/]")
+            console.print(
+                f"\n[cyan]Installing skcapstone systemd service for agent '{effective_agent}'...[/]"  # noqa: E501
+            )
             result = install_service(agent_name=effective_agent, start=start)
             svc_name = result.get("service_name", SERVICE_NAME)
 
             if result["installed"]:
                 console.print(f"[green]  Unit files installed ({svc_name}).[/]")
             if result["enabled"]:
-                console.print(f"[green]  Service enabled at login.[/]")
+                console.print("[green]  Service enabled at login.[/]")
             if result.get("started"):
-                console.print(f"[green]  Service started.[/]")
+                console.print("[green]  Service started.[/]")
             else:
                 console.print(f"[dim]  Start: systemctl --user start {svc_name}[/]")
             console.print()
@@ -407,7 +448,7 @@ def register_daemon_commands(main: click.Group) -> None:
         import urllib.error
         import urllib.request
 
-        home_path = _resolve_agent_home(agent, home)
+        _resolve_agent_home(agent, home)
         effective_port = _resolve_agent_port(agent, port)
 
         try:
@@ -454,9 +495,9 @@ def register_daemon_commands(main: click.Group) -> None:
             color = status_colors.get(status, "white")
             restarts = str(info.get("restart_count", 0))
             age = info.get("heartbeat_age_seconds")
-            age_str = f"{age}s" if age is not None else "—"
+            age_str = f"{age}s" if age is not None else "-"
             auto = "[green]yes[/]" if info.get("auto_restart") else "[dim]no[/]"
-            last_error = (info.get("last_error") or "")[:40] or "—"
+            last_error = (info.get("last_error") or "")[:40] or "-"
             table.add_row(
                 name,
                 f"[{color}]{status}[/]",
@@ -495,12 +536,15 @@ def register_daemon_commands(main: click.Group) -> None:
                 console.print(f"\n  Run: [bold cyan]tail -f {log_path}[/]\n")
             else:
                 from ..launchd import service_logs
+
                 output = service_logs(lines=lines)
                 if output.strip():
                     click.echo(output)
                 else:
                     console.print("[dim]No logs found in ~/.skcapstone/logs/[/]")
-                    console.print("[dim]Is the service installed? Run: skcapstone daemon install[/]")
+                    console.print(
+                        "[dim]Is the service installed? Run: skcapstone daemon install[/]"
+                    )
         else:
             from ..systemd import service_logs
 

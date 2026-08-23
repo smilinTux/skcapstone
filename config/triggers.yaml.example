@@ -1,0 +1,77 @@
+# Proactive trigger rules - condition -> action.
+#
+# Copy to  ~/.skcapstone/config/triggers.yaml  (or drop fragments into
+# ~/.skcapstone/config/triggers.d/*.yaml) to activate.  Nothing here runs
+# unless a daemon evaluates it: either the main skcapstone daemon (which wires
+# the engine onto its scheduler tick) or the standalone runner
+# `python -m skcapstone.triggers`.
+#
+# Two condition forms:
+#   * declarative - metric + op + value, compared against a read-only state
+#     snapshot.  A missing metric fails safe (never fires).
+#   * named       - condition: <name registered via register_condition()> for
+#     python-defined predicates that need real logic.
+#
+# op is one of:  <  <=  >  >=  ==  !=   (word aliases lt le gt ge eq ne also ok).
+#
+# Firing is idempotent: `cooldown` (per-rule) plus the notification layer's own
+# content-dedup stop a still-true condition from re-firing every tick.
+# Durations accept 30s / 5m / 1h / 1d or a plain number of seconds.
+#
+# Desktop popups are opt-in: set SKCAPSTONE_DESKTOP_NOTIFY=1 for the `notify`
+# action to actually reach the tray.
+#
+# The metric keys below are the ones the built-in `system_metrics_context()`
+# provider emits (used by the standalone runner).
+
+triggers:
+
+  disk-low:
+    metric: disk_free_pct
+    op: "<"
+    value: 10
+    title: "Disk space low"
+    body: "Root filesystem free space dropped below 10%."
+    urgency: critical
+    cooldown: 1h
+    enabled: true
+
+  disk-critical:
+    metric: disk_free_gb
+    op: "<"
+    value: 2
+    title: "Disk nearly full"
+    body: "Less than 2 GiB free on root."
+    urgency: critical
+    cooldown: 30m
+
+  memory-pressure:
+    metric: mem_available_pct
+    op: "<"
+    value: 8
+    title: "Memory pressure"
+    body: "Available RAM below 8% - a runaway process may be leaking."
+    urgency: normal
+    cooldown: 15m
+
+  load-spike:
+    metric: load_avg_1m
+    op: ">="
+    value: 8
+    title: "Load spike"
+    body: "1-minute load average is high."
+    urgency: normal
+    cooldown: 10m
+    # Disabled by default - the threshold is host-specific; tune to cpu_count.
+    enabled: false
+
+  # Named-condition example (requires register_condition("backups_stale", fn)
+  # somewhere in-process before this rule can fire).  Left disabled so an
+  # unknown-condition warning is not logged on a fresh install.
+  # backups-stale:
+  #   condition: backups_stale
+  #   title: "Backups stale"
+  #   body: "No successful backup in the expected window."
+  #   urgency: critical
+  #   cooldown: 6h
+  #   enabled: false

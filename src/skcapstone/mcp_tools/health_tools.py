@@ -28,16 +28,23 @@ async def _handle_service_health(_args: dict) -> list[TextContent]:
     up = sum(1 for r in results if r["status"] == "up")
     down = sum(1 for r in results if r["status"] == "down")
 
-    return _json_response({
-        "summary": {
-            "total": len(results),
-            "up": up,
-            "down": down,
-            "unknown": len(results) - up - down,
-        },
-        "services": results,
-    })
+    return _json_response(
+        {
+            "summary": {
+                "total": len(results),
+                "up": up,
+                "down": down,
+                "unknown": len(results) - up - down,
+            },
+            "services": results,
+        }
+    )
 
+
+# Tools present in this module but intentionally NOT published on the MCP
+# wire surface (kept for direct import / tests). Excluded by
+# collect_all_tools / collect_all_handlers.
+HIDDEN: set[str] = {"service_health"}
 
 HANDLERS: dict = {
     "service_health": _handle_service_health,

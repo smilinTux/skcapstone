@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from skcapstone.models import PillarStatus
 from skcapstone.pillars.identity import (
     _generate_placeholder_fingerprint,
@@ -45,17 +43,13 @@ class TestGenerateIdentity:
 
     def test_identity_json_has_required_fields(self, tmp_agent_home: Path):
         generate_identity(tmp_agent_home, "agent-x")
-        data = json.loads(
-            (tmp_agent_home / "identity" / "identity.json").read_text()
-        )
+        data = json.loads((tmp_agent_home / "identity" / "identity.json").read_text())
         for field in ("name", "email", "fingerprint", "created_at"):
             assert field in data, f"missing field: {field}"
 
     def test_identity_json_name_matches(self, tmp_agent_home: Path):
         generate_identity(tmp_agent_home, "lumina")
-        data = json.loads(
-            (tmp_agent_home / "identity" / "identity.json").read_text()
-        )
+        data = json.loads((tmp_agent_home / "identity" / "identity.json").read_text())
         assert data["name"] == "lumina"
 
     def test_idempotent_second_call_succeeds(self, tmp_agent_home: Path):
@@ -65,16 +59,18 @@ class TestGenerateIdentity:
 
     def test_degraded_status_without_capauth(self, tmp_agent_home: Path):
         """Without capauth installed the status should be DEGRADED."""
-        with patch.dict("sys.modules", {"capauth": None, "capauth.profile": None, "capauth.keys": None}):
+        with patch.dict(
+            "sys.modules", {"capauth": None, "capauth.profile": None, "capauth.keys": None}
+        ):
             state = generate_identity(tmp_agent_home, "test-agent")
         assert state.status == PillarStatus.DEGRADED
 
     def test_capauth_managed_false_without_capauth(self, tmp_agent_home: Path):
-        with patch.dict("sys.modules", {"capauth": None, "capauth.profile": None, "capauth.keys": None}):
+        with patch.dict(
+            "sys.modules", {"capauth": None, "capauth.profile": None, "capauth.keys": None}
+        ):
             generate_identity(tmp_agent_home, "no-capauth")
-        data = json.loads(
-            (tmp_agent_home / "identity" / "identity.json").read_text()
-        )
+        data = json.loads((tmp_agent_home / "identity" / "identity.json").read_text())
         assert data["capauth_managed"] is False
 
     def test_active_status_with_capauth_profile(self, tmp_agent_home: Path):
@@ -88,7 +84,9 @@ class TestGenerateIdentity:
         mock_capauth_profile = MagicMock()
         mock_capauth_profile.load_profile.return_value = mock_profile
 
-        with patch.dict("sys.modules", {"capauth": MagicMock(), "capauth.profile": mock_capauth_profile}):
+        with patch.dict(
+            "sys.modules", {"capauth": MagicMock(), "capauth.profile": mock_capauth_profile}
+        ):
             state = generate_identity(tmp_agent_home, "opus")
 
         assert state.status == PillarStatus.ACTIVE

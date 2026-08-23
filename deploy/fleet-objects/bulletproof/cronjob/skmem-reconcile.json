@@ -1,0 +1,22 @@
+{
+  "kind": "cronjob",
+  "labels": {
+    "epic": "CR-7.3"
+  },
+  "name": "skmem-reconcile",
+  "spec": {
+    "command": "skmemory reconcile --all-agents",
+    "conditions": [
+      "MissedRun",
+      "ReconcileFresh"
+    ],
+    "nodeSelector": {
+      "always-on": "true"
+    },
+    "note": "THE flat->pg sync path (per-agent, idempotent); the core HA mechanism for skmem-pg (not replication). Must cover every agent the node serves, not just lumina.",
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "schedule": "@daily",
+    "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md",
+    "window": "04:15"
+  }
+}

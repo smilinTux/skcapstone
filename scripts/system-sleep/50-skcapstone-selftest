@@ -1,0 +1,30 @@
+#!/bin/sh
+# SKCapstone post-resume self-test - system-sleep hook TEMPLATE (Option B).
+#
+# This is an INERT template. It is NOT installed or enabled by scripts/install.sh.
+# To use it, copy it to the system-sleep drop-in and make it executable (root):
+#
+#   sudo install -m 0755 scripts/system-sleep/50-skcapstone-selftest \
+#        /usr/lib/systemd/system-sleep/50-skcapstone-selftest
+#
+# systemd-sleep invokes system-sleep hooks around every suspend/hibernate:
+#   $1 = pre | post      (we act only on "post", i.e. after wake)
+#   $2 = suspend | hibernate | hybrid-sleep | suspend-then-hibernate
+#
+# See docs/POST_RESUME_SELFTEST.md for the systemd --user alternative (Option A).
+
+[ "$1" = "post" ] || exit 0
+
+# The agent's Unix user. system-sleep hooks run as root, so drop to the user
+# whose ~/.skcapstone home the self-test should inspect. Edit this, or leave it
+# to auto-detect the first active graphical/seat user via loginctl.
+SK_USER="${SK_USER:-}"
+if [ -z "$SK_USER" ] && command -v loginctl >/dev/null 2>&1; then
+    SK_USER="$(loginctl list-users --no-legend 2>/dev/null | awk 'NR==1{print $2}')"
+fi
+[ -n "$SK_USER" ] || { echo "50-skcapstone-selftest: no SK_USER resolved; edit the hook" >&2; exit 0; }
+
+# Drop to the agent user so the agent home and notification bus resolve. The
+# trailing "|| true" keeps a failed self-test from blocking anything: it already
+# flags via --alert and a non-zero exit that only this hook would see.
+runuser -l "$SK_USER" -c '~/.skenv/bin/skcapstone selftest post-resume --alert --quiet' || true

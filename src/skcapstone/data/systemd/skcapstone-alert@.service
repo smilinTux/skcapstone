@@ -1,0 +1,25 @@
+# SKCapstone agent-failure alert (OnFailure= hook).
+#
+# Instantiated as skcapstone-alert@<agent> and triggered when
+# skcapstone@<agent>.service (or the legacy skcapstone.service) enters the
+# failed state: a crash-loop give-up (StartLimit hit) or a hard failure.
+# It exists so a dark or looping agent pages instead of failing silently,
+# which is the observability gap that hid the .41 outage.
+#
+# Deliberately best-effort: it always writes a visible journal event
+# (tag skcapstone-alert, priority err — read it with
+#   journalctl --user -t skcapstone-alert
+# or `--user -u skcapstone-alert@<agent>`) and opportunistically pages via
+# sk-alert when that transport is installed. It never fails itself, so a
+# missing sk-alert never turns a daemon failure into a second failure.
+
+[Unit]
+Description=SKCapstone agent-failure alert — %i
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=%i
+Environment=SKCAPSTONE_AGENT=%i
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh -c 'msg="skcapstone agent %i entered the failed state on $(hostname) at $(date -Is)"; echo "$msg" | systemd-cat -t skcapstone-alert -p err; command -v sk-alert >/dev/null 2>&1 && sk-alert send "$msg" >/dev/null 2>&1 || true'

@@ -16,8 +16,7 @@ import importlib.resources
 from pathlib import Path
 from typing import Optional
 
-from skmemory.register import detect_environments, register_package
-
+from skmemory.register import detect_environments, register_mcp, register_package
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -53,64 +52,117 @@ def _build_package_registry(workspace: Optional[Path] = None) -> list[dict]:
             "mcp_cmd": "skmemory-mcp",
             "mcp_args": [],
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "skmemory" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "pillar-repos"
+            / "skmemory"
+            / "openclaw-plugin"
+            / "src"
+            / "index.ts",
         },
         {
             "name": "skcapstone",
             "mcp_cmd": "skcapstone-mcp",
             "mcp_args": [],
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "skcapstone" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "skcapstone"
+            / "openclaw-plugin"
+            / "src"
+            / "index.ts",
         },
         {
             "name": "skcomms",
             "mcp_cmd": "skcomms-mcp",
             "mcp_args": [],
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "skcomms" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "pillar-repos"
+            / "skcomms"
+            / "openclaw-plugin"
+            / "src"
+            / "index.ts",
         },
         {
             "name": "skchat",
             "mcp_cmd": "skchat-mcp",
             "mcp_args": [],
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "skchat" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "pillar-repos"
+            / "skchat"
+            / "openclaw-plugin"
+            / "src"
+            / "index.ts",
         },
         {
             "name": "capauth",
             "mcp_cmd": None,
             "mcp_args": None,
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "capauth" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "pillar-repos"
+            / "capauth"
+            / "openclaw-plugin"
+            / "src"
+            / "index.ts",
         },
         {
             "name": "cloud9",
             "mcp_cmd": None,
             "mcp_args": None,
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "cloud9" / "openclaw-plugin-python" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "pillar-repos"
+            / "cloud9"
+            / "openclaw-plugin-python"
+            / "src"
+            / "index.ts",
         },
         {
             "name": "sksecurity",
             "mcp_cmd": None,
             "mcp_args": None,
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "sksecurity" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "pillar-repos"
+            / "sksecurity"
+            / "openclaw-plugin"
+            / "src"
+            / "index.ts",
         },
         {
             "name": "skseed",
             "mcp_cmd": None,
             "mcp_args": None,
             "mcp_env": None,
-            "openclaw_plugin_path": workspace / "pillar-repos" / "skseed" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "pillar-repos"
+            / "skseed"
+            / "openclaw-plugin"
+            / "src"
+            / "index.ts",
         },
         {
             "name": "skgit",
             "mcp_cmd": "node",
-            "mcp_args": [str(Path.home() / ".npm-global" / "lib" / "node_modules"
-                             / "forgejo-mcp" / "build" / "index.js")],
+            "mcp_args": [
+                str(
+                    Path.home()
+                    / ".npm-global"
+                    / "lib"
+                    / "node_modules"
+                    / "forgejo-mcp"
+                    / "build"
+                    / "index.js"
+                )
+            ],
             "mcp_env": _get_skgit_env(),
-            "openclaw_plugin_path": workspace / "skills" / "skgit" / "openclaw-plugin" / "src" / "index.ts",
+            "openclaw_plugin_path": workspace
+            / "skills"
+            / "skgit"
+            / "openclaw-plugin"
+            / "src"
+            / "index.ts",
         },
     ]
 
@@ -136,8 +188,9 @@ def find_skill_md(pkg_name: str, workspace: Optional[Path] = None) -> Optional[P
 
     Search order:
       1. Workspace skills directory (~/clawd/skills/<name>/SKILL.md)
-      2. Pillar repos directory (~/clawd/pillar-repos/<dir>/SKILL.md)
-      3. Installed package data (importlib.resources)
+      2. Current suite checkout (~/clawd/skcapstone-repos/<name>/SKILL.md)
+      3. Pillar repos directory (~/clawd/pillar-repos/<dir>/SKILL.md)
+      4. Installed package data (importlib.resources)
 
     Args:
         pkg_name: Package name.
@@ -149,25 +202,30 @@ def find_skill_md(pkg_name: str, workspace: Optional[Path] = None) -> Optional[P
     if workspace is None:
         workspace = Path.home() / "clawd"
 
-    # 1. Check skills directory (may be a symlink — that's fine)
+    # 1. Check skills directory (may be a symlink - that's fine)
     skill_path = workspace / "skills" / pkg_name / "SKILL.md"
     if skill_path.exists():
         return skill_path.resolve()
 
-    # 2. Check pillar repos
+    # 2. Check the current suite checkout layout.
+    suite_path = workspace / "skcapstone-repos" / pkg_name / "SKILL.md"
+    if suite_path.exists():
+        return suite_path
+
+    # 3. Check pillar repos
     pillar_dir = _PILLAR_DIR_MAP.get(pkg_name)
     if pillar_dir:
         pillar_path = workspace / "pillar-repos" / pillar_dir / "SKILL.md"
         if pillar_path.exists():
             return pillar_path
 
-    # 2b. Special case: skcapstone lives in workspace root
+    # 3b. Legacy special case: skcapstone in workspace/skcapstone.
     if pkg_name == "skcapstone":
         capstone_path = workspace / "skcapstone" / "SKILL.md"
         if capstone_path.exists():
             return capstone_path
 
-    # 3. Check installed package data
+    # 4. Check installed package data
     try:
         pkg_module = pkg_name.replace("-", "_")
         ref = importlib.resources.files(pkg_module) / "SKILL.md"
@@ -179,6 +237,53 @@ def find_skill_md(pkg_name: str, workspace: Optional[Path] = None) -> Optional[P
         pass
 
     return None
+
+
+# ── skskills plugin discovery ───────────────────────────────────────────────
+
+
+def _discover_plugin_servers(workspace: Path) -> list[dict]:
+    """Scan skskills-compiled plugin envelopes for MCP servers.
+
+    Reads <workspace>/skskills/dist/*/.mcp.json (the `skskills plugin build`
+    output) and returns one entry per server:
+      {plugin, name, transport, command, args, url}
+    transport is 'stdio' (has command) or 'remote' (has url).
+    """
+    import json
+
+    out: list[dict] = []
+    dist = workspace / "skskills" / "dist"
+    for mcp_json in sorted(dist.glob("*/.mcp.json")):
+        plugin = mcp_json.parent.name
+        try:
+            servers = (json.loads(mcp_json.read_text()) or {}).get("mcpServers", {})
+        except (OSError, json.JSONDecodeError):
+            continue
+        for name, spec in servers.items():
+            if spec.get("command"):
+                out.append(
+                    {
+                        "plugin": plugin,
+                        "name": name,
+                        "transport": "stdio",
+                        "command": spec["command"],
+                        "args": spec.get("args", []),
+                        "url": None,
+                    }
+                )
+            elif spec.get("url"):
+                out.append(
+                    {
+                        "plugin": plugin,
+                        "name": name,
+                        "transport": "remote",
+                        "command": None,
+                        "args": [],
+                        "url": spec["url"],
+                    }
+                )
+    return out
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -212,9 +317,44 @@ def register_all(
         "packages": {},
     }
 
+    # Wire the Codex AGENTS.md bootstrap (agent context loader + profile)
+    # whenever Codex is a registered environment, so a fresh install gets the
+    # SK agent context setup out of the box.
+    results["codex_setup"] = {"action": "skip", "reason": "codex not detected"}
+    if "codex" in environments:
+        from .codex_setup import check_codex_setup, ensure_codex_setup
+
+        if dry_run:
+            results["codex_setup"] = {"action": "dry-run"}
+        else:
+            _, detail = check_codex_setup()
+            actions = ensure_codex_setup()
+            status = "created" if "missing" in detail else "exists"
+            results["codex_setup"] = {
+                "action": "updated" if actions else status,
+                "detail": detail,
+                "actions": actions,
+            }
+
+    results["pi_setup"] = {"action": "skip", "reason": "pi not detected"}
+    if "pi" in environments:
+        from .codex_setup import ensure_pi_setup
+
+        if dry_run:
+            results["pi_setup"] = {"action": "dry-run"}
+        else:
+            actions = ensure_pi_setup()
+            results["pi_setup"] = {
+                "action": "updated" if actions else "exists",
+                "actions": actions,
+            }
+
     for pkg in packages:
         name = pkg["name"]
         skill_md = find_skill_md(name, workspace)
+        package_environments = environments
+        if "pi" in environments and name not in {"skcapstone", "skmemory"}:
+            package_environments = [env for env in environments if env != "pi"]
 
         if skill_md is None and not dry_run:
             results["packages"][name] = {
@@ -229,7 +369,7 @@ def register_all(
         if name == "skgit" and mcp_env is None:
             mcp_cmd = None
 
-        # Resolve OpenClaw plugin path — skip if not on disk
+        # Resolve OpenClaw plugin path - skip if not on disk
         plugin_path = pkg.get("openclaw_plugin_path")
         if plugin_path and not Path(plugin_path).exists():
             plugin_path = None
@@ -242,8 +382,28 @@ def register_all(
             mcp_env=mcp_env,
             openclaw_plugin_path=plugin_path,
             workspace=workspace,
-            environments=environments,
+            environments=package_environments,
             dry_run=dry_run,
         )
+
+    results["plugins"] = {}
+    for srv in _discover_plugin_servers(workspace):
+        key = f"{srv['plugin']}:{srv['name']}"
+        if srv["transport"] == "stdio":
+            if dry_run:
+                results["plugins"][key] = {"action": "would-register", "transport": "stdio"}
+            else:
+                results["plugins"][key] = register_mcp(
+                    name=srv["name"],
+                    command=srv["command"],
+                    args=srv["args"],
+                    environments=environments,
+                )
+        else:
+            # url/http/sse: register_mcp has no url path yet - surface, don't mis-write.
+            results["plugins"][key] = {
+                "action": "skip",
+                "reason": "remote (url) MCP server - register manually or via `claude mcp add`",
+            }
 
     return results

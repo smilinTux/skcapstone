@@ -25,7 +25,6 @@ import json
 import logging
 import os
 import tarfile
-import tempfile
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -198,7 +197,10 @@ def create_backup(
 
     logger.info(
         "Backup created: %s (%d files, %d bytes -> %d bytes compressed)",
-        archive_path, file_count, total_size, archive_size,
+        archive_path,
+        file_count,
+        total_size,
+        archive_size,
     )
 
     return {
@@ -263,7 +265,7 @@ def restore_backup(
             if _should_exclude(member.name):
                 continue
 
-            rel_path = member.name[len(backup_prefix) + 1:]
+            rel_path = member.name[len(backup_prefix) + 1 :]
             member.name = rel_path
             tar.extract(member, path=target, filter="data")
             file_count += 1
@@ -281,7 +283,9 @@ def restore_backup(
 
     logger.info(
         "Restored %d files to %s (%d verification errors)",
-        file_count, target, len(errors),
+        file_count,
+        target,
+        len(errors),
     )
 
     return {
@@ -306,19 +310,21 @@ def list_backups(
     Returns:
         list[dict]: Backup metadata sorted newest first.
     """
-    search_dir = (backup_dir or Path(AGENT_HOME).expanduser() / "backups")
+    search_dir = backup_dir or Path(AGENT_HOME).expanduser() / "backups"
     if not search_dir.exists():
         return []
 
     backups = []
     for f in sorted(search_dir.glob("backup-*.tar.gz"), reverse=True):
         stat = f.stat()
-        backups.append({
-            "filepath": str(f),
-            "filename": f.name,
-            "size": stat.st_size,
-            "created": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-        })
+        backups.append(
+            {
+                "filepath": str(f),
+                "filename": f.name,
+                "size": stat.st_size,
+                "created": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            }
+        )
 
     return backups
 

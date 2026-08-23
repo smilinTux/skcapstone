@@ -1,8 +1,8 @@
-"""Watch command — live terminal dashboard for sovereign agent monitoring.
+"""Watch command - live terminal dashboard for sovereign agent monitoring.
 
 Renders a Rich.Live dashboard that auto-refreshes on a configurable
 interval. Shows consciousness status, recent memories, open coordination
-tasks, and pillar health — all on one screen.
+tasks, and pillar health - all on one screen.
 
 Usage:
     skcapstone watch                  # 5s refresh (default)
@@ -118,9 +118,7 @@ def _build_renderable(home: Path, daemon_port: int = 7777) -> Group:
             "open": sum(1 for v in views if v.status.value == "open"),
             "in_progress": sum(1 for v in views if v.status.value == "in_progress"),
         }
-        board_tasks = [
-            v for v in views if v.status.value in ("open", "in_progress")
-        ][:8]
+        board_tasks = [v for v in views if v.status.value in ("open", "in_progress")][:8]
     except Exception as exc:
         logger.warning("Failed to load coordination board for watch display: %s", exc)
 
@@ -213,9 +211,7 @@ def _build_renderable(home: Path, daemon_port: int = 7777) -> Group:
     if recent_memories:
         mem_lines = []
         for entry in recent_memories:
-            layer = (
-                entry.layer.value if hasattr(entry.layer, "value") else str(entry.layer)
-            )
+            layer = entry.layer.value if hasattr(entry.layer, "value") else str(entry.layer)
             lc = layer_colors.get(layer, "dim")
             snippet = entry.content[:80].replace("\n", " ")
             if len(entry.content) > 80:
@@ -252,9 +248,7 @@ def _build_renderable(home: Path, daemon_port: int = 7777) -> Group:
             pc = priority_colors.get(pri_val, "dim")
             title_text = (v.task.title or "")[:64]
             assignee = f"  [dim]@{v.claimed_by}[/]" if v.claimed_by else ""
-            task_lines.append(
-                f"{icon} [{pc}][dim]{pri_val}[/][/] {title_text}{assignee}"
-            )
+            task_lines.append(f"{icon} [{pc}][dim]{pri_val}[/][/] {title_text}{assignee}")
         tasks_body = "\n".join(task_lines)
     else:
         tasks_body = "[dim]No open tasks[/]"
@@ -267,9 +261,7 @@ def _build_renderable(home: Path, daemon_port: int = 7777) -> Group:
     )
 
     # ── Footer ────────────────────────────────────────────────────────────
-    footer = Text.from_markup(
-        f"  [dim]Updated: {ts}  \u2022  Ctrl+C to exit[/]"
-    )
+    footer = Text.from_markup(f"  [dim]Updated: {ts}  \u2022  Ctrl+C to exit[/]")
 
     return Group(
         header,

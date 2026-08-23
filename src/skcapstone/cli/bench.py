@@ -25,7 +25,7 @@ from rich.table import Table
 
 from ._common import console
 
-# Mirrors skcomms.core.BUILTIN_TRANSPORTS — kept local to avoid hard dep
+# Mirrors skcomms.core.BUILTIN_TRANSPORTS - kept local to avoid hard dep
 _BUILTIN_TRANSPORTS: dict[str, str] = {
     "file": "skcomms.transports.file",
     "syncthing": "skcomms.transports.syncthing",
@@ -193,18 +193,20 @@ def run_bench(
     for name, module_path in selected.items():
         r: dict = {"transport": name}
 
-        # File transport — always benchmarked via send-loop loopback
+        # File transport - always benchmarked via send-loop loopback
         if name == "file":
             r.update(_bench_file_loopback(count, size))
             results.append(r)
             continue
 
-        # Network transports — load module, check availability, health-check bench
+        # Network transports - load module, check availability, health-check bench
         try:
             mod = importlib.import_module(module_path)
             factory = getattr(mod, "create_transport", None)
             if factory is None:
-                r.update({"status": "unavailable", "error": f"no create_transport() in {module_path}"})
+                r.update(
+                    {"status": "unavailable", "error": f"no create_transport() in {module_path}"}
+                )
                 results.append(r)
                 continue
         except ImportError as exc:
@@ -266,9 +268,9 @@ def _render_table(results: list[dict], count: int, size: int, health_count: int)
         if status == "ok":
             status_str = "[green]ok[/]"
             mode_str = r.get("mode", "")
-            p50 = str(r.get("p50_ms") or "—")
-            p95 = str(r.get("p95_ms") or "—")
-            p99 = str(r.get("p99_ms") or "—")
+            p50 = str(r.get("p50_ms") or "-")
+            p95 = str(r.get("p95_ms") or "-")
+            p99 = str(r.get("p99_ms") or "-")
             tput = f"{r.get('throughput_msg_s', 0):.1f} msg/s"
             err_count = r.get("errors", 0)
             err_rate = r.get("error_rate", 0.0)
@@ -278,13 +280,13 @@ def _render_table(results: list[dict], count: int, size: int, health_count: int)
             status_str = "[dim]unavailable[/]"
             err = r.get("error", "")
             mode_str = err[:40] if err else ""
-            p50 = p95 = p99 = tput = "—"
+            p50 = p95 = p99 = tput = "-"
             err_str = ""
 
         else:
             status_str = "[red]error[/]"
             mode_str = (r.get("error") or "")[:40]
-            p50 = p95 = p99 = tput = "—"
+            p50 = p95 = p99 = tput = "-"
             err_str = ""
 
         table.add_row(r["transport"], status_str, mode_str, p50, p95, p99, tput, err_str)
@@ -296,7 +298,7 @@ def _render_table(results: list[dict], count: int, size: int, health_count: int)
         fastest = min(ok_results, key=lambda r: r.get("p50_ms") or float("inf"))
         console.print(
             f"\n[bold]Fastest (p50):[/] [green]{fastest['transport']}[/] "
-            f"— {fastest['p50_ms']} ms  ([dim]{fastest.get('mode')}[/])"
+            f"- {fastest['p50_ms']} ms  ([dim]{fastest.get('mode')}[/])"
         )
 
 
@@ -310,19 +312,32 @@ def register_bench_commands(main: click.Group) -> None:
 
     @main.command("bench")
     @click.option(
-        "--count", "-n", default=100, show_default=True, type=int,
+        "--count",
+        "-n",
+        default=100,
+        show_default=True,
+        type=int,
         help="Number of messages to send via the file transport loopback.",
     )
     @click.option(
-        "--size", default=1024, show_default=True, type=int,
+        "--size",
+        default=1024,
+        show_default=True,
+        type=int,
         help="Message payload size in bytes.",
     )
     @click.option(
-        "--health-count", default=5, show_default=True, type=int,
+        "--health-count",
+        default=5,
+        show_default=True,
+        type=int,
         help="Number of health_check() iterations for network transports.",
     )
     @click.option(
-        "--transport", "-t", "transports", multiple=True,
+        "--transport",
+        "-t",
+        "transports",
+        multiple=True,
         help="Benchmark only this transport. Repeat to select multiple. Default: all.",
     )
     @click.option("--json-out", is_flag=True, help="Output raw JSON instead of a table.")
@@ -340,9 +355,9 @@ def register_bench_commands(main: click.Group) -> None:
 
         \b
         Transport modes:
-          file            — send-loop via temp-dir loopback (COUNT msgs × SIZE B)
+          file            - send-loop via temp-dir loopback (COUNT msgs × SIZE B)
           syncthing/nostr
-          websocket       — health_check() × HEALTH_COUNT (no real peer needed)
+          websocket       - health_check() × HEALTH_COUNT (no real peer needed)
           tailscale/webrtc
 
         \b

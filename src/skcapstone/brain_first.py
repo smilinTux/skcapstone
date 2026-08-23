@@ -1,5 +1,5 @@
 """
-Brain-First Protocol — think before you act.
+Brain-First Protocol - think before you act.
 
 Before an agent acts on any task, it consults its memory to see if it
 already knows something relevant.  This avoids redundant work, surfaces
@@ -24,7 +24,6 @@ Configuration (config.yaml):
 from __future__ import annotations
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,21 +32,121 @@ from typing import Optional
 logger = logging.getLogger("skcapstone.brain_first")
 
 # Stop-words to strip from queries before searching memory
-_STOP_WORDS = frozenset({
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
-    "should", "may", "might", "must", "can", "could", "to", "of", "in",
-    "for", "on", "with", "at", "by", "from", "as", "into", "through",
-    "during", "before", "after", "above", "below", "between", "out",
-    "off", "over", "under", "again", "further", "then", "once", "here",
-    "there", "when", "where", "why", "how", "all", "each", "every",
-    "both", "few", "more", "most", "other", "some", "such", "no", "nor",
-    "not", "only", "own", "same", "so", "than", "too", "very", "just",
-    "because", "but", "and", "or", "if", "while", "about", "up", "it",
-    "its", "this", "that", "these", "those", "i", "me", "my", "we",
-    "our", "you", "your", "he", "him", "his", "she", "her", "they",
-    "them", "their", "what", "which", "who", "whom",
-})
+_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "shall",
+        "should",
+        "may",
+        "might",
+        "must",
+        "can",
+        "could",
+        "to",
+        "of",
+        "in",
+        "for",
+        "on",
+        "with",
+        "at",
+        "by",
+        "from",
+        "as",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "between",
+        "out",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
+        "here",
+        "there",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "nor",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "because",
+        "but",
+        "and",
+        "or",
+        "if",
+        "while",
+        "about",
+        "up",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "they",
+        "them",
+        "their",
+        "what",
+        "which",
+        "who",
+        "whom",
+    }
+)
 
 
 @dataclass
@@ -116,9 +215,7 @@ def extract_keywords(text: str) -> list[str]:
     # Lowercase, split on non-alphanumeric
     tokens = re.split(r"[^a-zA-Z0-9_-]+", text.lower())
     # Filter: no stop-words, no short tokens
-    keywords = list(dict.fromkeys(
-        t for t in tokens if t and t not in _STOP_WORDS and len(t) > 2
-    ))
+    keywords = list(dict.fromkeys(t for t in tokens if t and t not in _STOP_WORDS and len(t) > 2))
     # Sort longest first (longer terms tend to be more specific)
     keywords.sort(key=len, reverse=True)
     return keywords
@@ -194,8 +291,8 @@ def brain_first_check(
     search_query = " ".join(keywords[:6])
 
     try:
-        from .memory_engine import search as memory_search
         from .mcp_tools._helpers import _home
+        from .memory_engine import search as memory_search
 
         home = _home()
         entries = memory_search(
@@ -209,7 +306,7 @@ def brain_first_check(
         entries = [e for e in entries if e.importance >= config.min_importance]
 
         # Truncate to max_results
-        entries = entries[:config.max_results]
+        entries = entries[: config.max_results]
 
         result.memories = [
             {

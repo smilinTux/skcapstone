@@ -9,12 +9,11 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Optional
 
 import click
 from rich.table import Table
 
-from ._common import AGENT_HOME, console
+from ._common import console
 
 # Ordered list of all known backends (matches consciousness_loop.py fallback_chain)
 BACKENDS: list[str] = ["ollama", "grok", "kimi", "nvidia", "anthropic", "openai", "passthrough"]
@@ -91,7 +90,13 @@ class BenchmarkRunner:
         for name in BACKENDS:
             if not available.get(name, False):
                 results.append(
-                    {"backend": name, "status": "unavailable", "ms": None, "model": None, "error": None}
+                    {
+                        "backend": name,
+                        "status": "unavailable",
+                        "ms": None,
+                        "model": None,
+                        "error": None,
+                    }
                 )
                 continue
             results.append(self.run_backend(name))
@@ -128,21 +133,19 @@ class BenchmarkRunner:
     # ------------------------------------------------------------------
 
     def _bench_passthrough(self) -> dict:
-        """Passthrough — instant in-process mock (always succeeds)."""
+        """Passthrough - instant in-process mock (always succeeds)."""
         t0 = time.perf_counter()
         _ = f"[passthrough] {self.prompt}"
         ms = round((time.perf_counter() - t0) * 1000, 3)
         return {"backend": "passthrough", "status": "ok", "ms": ms, "model": "mock", "error": None}
 
     def _bench_ollama(self) -> dict:
-        """Ollama — local HTTP POST to /api/generate."""
+        """Ollama - local HTTP POST to /api/generate."""
         import urllib.request
 
         host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         model = os.environ.get("OLLAMA_MODEL", "llama3.2")
-        payload = json.dumps(
-            {"model": model, "prompt": self.prompt, "stream": False}
-        ).encode()
+        payload = json.dumps({"model": model, "prompt": self.prompt, "stream": False}).encode()
         req = urllib.request.Request(
             f"{host}/api/generate",
             data=payload,
@@ -161,11 +164,11 @@ class BenchmarkRunner:
         }
 
     def _bench_anthropic(self) -> dict:
-        """Anthropic Claude — requires ``anthropic`` SDK + ANTHROPIC_API_KEY."""
+        """Anthropic Claude - requires ``anthropic`` SDK + ANTHROPIC_API_KEY."""
         try:
             import anthropic as _anthropic
         except ImportError:
-            raise RuntimeError("anthropic SDK not installed — run: pip install anthropic")
+            raise RuntimeError("anthropic SDK not installed - run: pip install anthropic")
 
         model = "claude-haiku-4-5-20251001"
         client = _anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -179,11 +182,11 @@ class BenchmarkRunner:
         return {"backend": "anthropic", "status": "ok", "ms": ms, "model": model, "error": None}
 
     def _bench_openai(self) -> dict:
-        """OpenAI — requires ``openai`` SDK + OPENAI_API_KEY."""
+        """OpenAI - requires ``openai`` SDK + OPENAI_API_KEY."""
         try:
             import openai as _openai
         except ImportError:
-            raise RuntimeError("openai SDK not installed — run: pip install openai")
+            raise RuntimeError("openai SDK not installed - run: pip install openai")
 
         model = "gpt-3.5-turbo"
         client = _openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -197,11 +200,11 @@ class BenchmarkRunner:
         return {"backend": "openai", "status": "ok", "ms": ms, "model": model, "error": None}
 
     def _bench_grok(self) -> dict:
-        """xAI Grok — OpenAI-compatible API, requires ``openai`` SDK + XAI_API_KEY."""
+        """xAI Grok - OpenAI-compatible API, requires ``openai`` SDK + XAI_API_KEY."""
         try:
             import openai as _openai
         except ImportError:
-            raise RuntimeError("openai SDK not installed — run: pip install openai")
+            raise RuntimeError("openai SDK not installed - run: pip install openai")
 
         model = "grok-3-mini"
         client = _openai.OpenAI(
@@ -218,11 +221,11 @@ class BenchmarkRunner:
         return {"backend": "grok", "status": "ok", "ms": ms, "model": model, "error": None}
 
     def _bench_kimi(self) -> dict:
-        """Moonshot Kimi — OpenAI-compatible API, requires ``openai`` SDK + MOONSHOT_API_KEY."""
+        """Moonshot Kimi - OpenAI-compatible API, requires ``openai`` SDK + MOONSHOT_API_KEY."""
         try:
             import openai as _openai
         except ImportError:
-            raise RuntimeError("openai SDK not installed — run: pip install openai")
+            raise RuntimeError("openai SDK not installed - run: pip install openai")
 
         model = "moonshot-v1-8k"
         client = _openai.OpenAI(
@@ -239,11 +242,11 @@ class BenchmarkRunner:
         return {"backend": "kimi", "status": "ok", "ms": ms, "model": model, "error": None}
 
     def _bench_nvidia(self) -> dict:
-        """NVIDIA NIM — OpenAI-compatible API, requires ``openai`` SDK + NVIDIA_API_KEY."""
+        """NVIDIA NIM - OpenAI-compatible API, requires ``openai`` SDK + NVIDIA_API_KEY."""
         try:
             import openai as _openai
         except ImportError:
-            raise RuntimeError("openai SDK not installed — run: pip install openai")
+            raise RuntimeError("openai SDK not installed - run: pip install openai")
 
         model = "meta/llama-3.1-8b-instruct"
         client = _openai.OpenAI(
@@ -281,15 +284,15 @@ def _render_table(results: list[dict]) -> None:
             ms_str = f"[green]{r['ms']}[/]"
         elif status == "unavailable":
             status_str = "[dim]unavailable[/]"
-            ms_str = "[dim]—[/]"
+            ms_str = "[dim]-[/]"
         else:
             status_str = "[red]error[/]"
-            ms_str = "[red]—[/]"
+            ms_str = "[red]-[/]"
 
         table.add_row(
             r["backend"],
             status_str,
-            r.get("model") or "—",
+            r.get("model") or "-",
             ms_str,
             r.get("error") or "",
         )
@@ -300,7 +303,7 @@ def _render_table(results: list[dict]) -> None:
     if ok_results:
         fastest = min(ok_results, key=lambda r: r["ms"])
         console.print(
-            f"\n[bold]Fastest:[/] [green]{fastest['backend']}[/] — {fastest['ms']} ms"
+            f"\n[bold]Fastest:[/] [green]{fastest['backend']}[/] - {fastest['ms']} ms"
             f"  ([dim]{fastest['model']}[/])"
         )
     elif all(r["status"] == "unavailable" for r in results):
@@ -317,15 +320,21 @@ def register_benchmark_commands(main: click.Group) -> None:
 
     @main.command("benchmark")
     @click.option(
-        "--prompt", default="Hello", show_default=True,
+        "--prompt",
+        default="Hello",
+        show_default=True,
         help="Prompt to send to each backend.",
     )
     @click.option(
-        "--timeout", default=30.0, show_default=True, type=float,
+        "--timeout",
+        default=30.0,
+        show_default=True,
+        type=float,
         help="Per-backend timeout in seconds.",
     )
     @click.option(
-        "--include-unavailable", is_flag=True,
+        "--include-unavailable",
+        is_flag=True,
         help="Include unavailable backends in output (they will show as 'unavailable').",
     )
     @click.option("--json-out", is_flag=True, help="Output raw JSON instead of a table.")
@@ -346,7 +355,7 @@ def register_benchmark_commands(main: click.Group) -> None:
 
         if not json_out:
             console.print(
-                f"[bold]Benchmarking LLM backends[/] — "
+                f"[bold]Benchmarking LLM backends[/] - "
                 f"prompt: [cyan]{prompt!r}[/]  timeout: {timeout}s"
             )
             console.print()

@@ -1,4 +1,4 @@
-"""Shell command — launch the interactive sovereign agent REPL."""
+"""Shell command - launch the interactive sovereign agent REPL."""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def register_shell_commands(main: click.Group) -> None:
 
         This sources the picker shipped inside the skcapstone package,
         so a single `pip install skcapstone` (PyPI, editable, or via
-        install.sh) is enough — no external script copy required.
+        install.sh) is enough - no external script copy required.
         """
         from .. import DEFAULT_AGENT
 

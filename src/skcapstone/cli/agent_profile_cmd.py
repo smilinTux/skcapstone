@@ -1,4 +1,4 @@
-"""Agent profile — the unified per-agent capability manifest.
+"""Agent profile - the unified per-agent capability manifest.
 
 One view, one file per agent, that pulls together everything that defines an
 agent's *capabilities*: its soul overlay, the LLM/model backend, the MCP
@@ -12,6 +12,7 @@ the skskills registry). ``--init`` materializes a ``profile.yaml`` in the agent
 home that captures the bridge-curation block so the bridge can read one file
 instead of scattered env vars.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,22 +21,48 @@ from pathlib import Path
 import click
 import yaml
 
-from ._common import SHARED_ROOT, console, resolve_agent_home
+from ._common import console, resolve_agent_home
 
 PROFILE_FILENAME = "profile.yaml"
 
 # The curated, context-lean tool default the Telegram bridge exposes when no
 # explicit selection is configured. Kept in sync with the bridge's own default.
 DEFAULT_BRIDGE_TOOLS = [
-    "memory_search", "memory_recall", "memory_store", "memory_list", "memory_context",
-    "coord_status", "coord_create", "coord_claim", "coord_complete",
-    "gtd_capture", "gtd_inbox", "gtd_next", "gtd_status", "gtd_done", "gtd_waiting",
-    "journal_write", "journal_read", "anchor_show", "ritual",
-    "skchat_send", "skchat_inbox", "skchat_peers", "who_is_online",
-    "send_notification", "telegram_send", "telegram_chats",
-    "gmail_unread", "gmail_search", "gmail_read", "gmail_send",
-    "calendar_today", "calendar_week", "calendar_create_event",
-    "nextcloud_notes_search_notes", "nextcloud_notes_create_note",
+    "memory_search",
+    "memory_recall",
+    "memory_store",
+    "memory_list",
+    "memory_context",
+    "coord_status",
+    "coord_create",
+    "coord_claim",
+    "coord_complete",
+    "gtd_capture",
+    "gtd_inbox",
+    "gtd_next",
+    "gtd_status",
+    "gtd_done",
+    "gtd_waiting",
+    "journal_write",
+    "journal_read",
+    "anchor_show",
+    "ritual",
+    "skchat_send",
+    "skchat_inbox",
+    "skchat_peers",
+    "who_is_online",
+    "send_notification",
+    "telegram_send",
+    "telegram_chats",
+    "gmail_unread",
+    "gmail_search",
+    "gmail_read",
+    "gmail_send",
+    "calendar_today",
+    "calendar_week",
+    "calendar_create_event",
+    "nextcloud_notes_search_notes",
+    "nextcloud_notes_create_note",
     "skseed_truth_check",
 ]
 
@@ -145,13 +172,17 @@ def register_agent_profile_commands(main: click.Group) -> None:
 
     @main.group()
     def agent() -> None:
-        """Per-agent capability manifest — soul + tools + skills, unified."""
+        """Per-agent capability manifest - soul + tools + skills, unified."""
 
     @agent.command("profile")
     @click.option("--agent", "agent_name", default="", help="Agent to inspect (default: active).")
     @click.option("--json", "json_out", is_flag=True, help="Output the manifest as JSON.")
-    @click.option("--init", "do_init", is_flag=True,
-                  help="Write/refresh profile.yaml (bridge-curation block) in the agent home.")
+    @click.option(
+        "--init",
+        "do_init",
+        is_flag=True,
+        help="Write/refresh profile.yaml (bridge-curation block) in the agent home.",
+    )
     def profile(agent_name: str, json_out: bool, do_init: bool) -> None:
         """Show (or initialize) the unified capability manifest for an agent."""
         from .. import SKCAPSTONE_AGENT
@@ -174,11 +205,12 @@ def register_agent_profile_commands(main: click.Group) -> None:
                     "voice_reply": manifest["bridge"].get("voice_reply", "voice"),
                 },
                 "_note": "Bridge-curation block read by telegram_bridge.py. "
-                         "tools: 'default' | 'all' | [explicit list]. "
-                         "Full manifest: `skcapstone agent profile --agent %s`." % name,
+                "tools: 'default' | 'all' | [explicit list]. "
+                "Full manifest: `skcapstone agent profile --agent %s`." % name,
             }
-            out.write_text(yaml.dump(doc, default_flow_style=False, sort_keys=False),
-                           encoding="utf-8")
+            out.write_text(
+                yaml.dump(doc, default_flow_style=False, sort_keys=False), encoding="utf-8"
+            )
             console.print(f"[green]Wrote[/] {out}")
 
         if json_out:
@@ -192,10 +224,13 @@ def register_agent_profile_commands(main: click.Group) -> None:
         from rich.table import Table
 
         soul = m["soul"]
-        console.print(Panel.fit(
-            f"[bold cyan]{m['agent']}[/]   soul: [magenta]{soul['active']}[/] "
-            f"(base {soul['base']})\n[dim]{m['home']}[/]",
-            title="Agent Capability Manifest"))
+        console.print(
+            Panel.fit(
+                f"[bold cyan]{m['agent']}[/]   soul: [magenta]{soul['active']}[/] "
+                f"(base {soul['base']})\n[dim]{m['home']}[/]",
+                title="Agent Capability Manifest",
+            )
+        )
 
         st = Table(title="MCP servers → exposed tools", show_lines=False)
         st.add_column("server", style="cyan")
@@ -208,11 +243,15 @@ def register_agent_profile_commands(main: click.Group) -> None:
         console.print(st)
 
         rt = m["bridge"]["resolved_tools"]
-        console.print(Panel.fit(
-            f"tools setting: [yellow]{m['bridge'].get('tools')}[/]   "
-            f"voice_reply: [yellow]{m['bridge'].get('voice_reply')}[/]\n"
-            f"[bold]bridge exposes {len(rt)} tools:[/] " + ", ".join(rt[:40]) +
-            ("…" if len(rt) > 40 else ""),
-            title="Telegram bridge curation"))
+        console.print(
+            Panel.fit(
+                f"tools setting: [yellow]{m['bridge'].get('tools')}[/]   "
+                f"voice_reply: [yellow]{m['bridge'].get('voice_reply')}[/]\n"
+                f"[bold]bridge exposes {len(rt)} tools:[/] "
+                + ", ".join(rt[:40])
+                + ("…" if len(rt) > 40 else ""),
+                title="Telegram bridge curation",
+            )
+        )
 
         console.print(f"[bold]Skills ({len(m['skills'])}):[/] " + ", ".join(m["skills"]))

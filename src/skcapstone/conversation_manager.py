@@ -1,5 +1,5 @@
 """
-ConversationManager — centralized manager for all peer conversation histories.
+ConversationManager - centralized manager for all peer conversation histories.
 
 Owns the {home}/conversations/ directory. Provides a clean API for adding,
 retrieving, searching, and exporting conversations instead of ad-hoc file
@@ -16,7 +16,6 @@ import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("skcapstone.conversation_manager")
 
@@ -81,12 +80,14 @@ class ConversationManager:
             if not messages:
                 continue
             last = messages[-1]
-            peers.append({
-                "peer": peer,
-                "message_count": len(messages),
-                "last_message_time": last.get("timestamp"),
-                "last_message_preview": last.get("content", "")[:80],
-            })
+            peers.append(
+                {
+                    "peer": peer,
+                    "message_count": len(messages),
+                    "last_message_time": last.get("timestamp"),
+                    "last_message_preview": last.get("content", "")[:80],
+                }
+            )
         peers.sort(key=lambda p: p["last_message_time"] or "", reverse=True)
         return peers
 
@@ -125,7 +126,7 @@ class ConversationManager:
         }
         self._history[peer].append(msg)
         if len(self._history[peer]) > self._max_history_messages:
-            self._history[peer] = self._history[peer][-self._max_history_messages:]
+            self._history[peer] = self._history[peer][-self._max_history_messages :]
         self._persist(peer)
         return msg
 
@@ -146,12 +147,14 @@ class ConversationManager:
         for peer, messages in self._history.items():
             for msg in messages:
                 if query_lower in msg.get("content", "").lower():
-                    matches.append({
-                        "peer": peer,
-                        "role": msg.get("role"),
-                        "content": msg.get("content"),
-                        "timestamp": msg.get("timestamp"),
-                    })
+                    matches.append(
+                        {
+                            "peer": peer,
+                            "role": msg.get("role"),
+                            "content": msg.get("content"),
+                            "timestamp": msg.get("timestamp"),
+                        }
+                    )
         return matches
 
     def export_all(self) -> dict[str, list[dict]]:
@@ -214,7 +217,7 @@ class ConversationManager:
             try:
                 data = json.loads(conv_file.read_text(encoding="utf-8"))
                 if isinstance(data, list):
-                    self._history[peer] = data[-self._max_history_messages:]
+                    self._history[peer] = data[-self._max_history_messages :]
             except Exception as exc:
                 logger.debug("Failed to load conversation %s: %s", conv_file, exc)
 

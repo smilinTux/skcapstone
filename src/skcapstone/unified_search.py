@@ -1,14 +1,14 @@
 """
-Unified Search — full-text search across all agent data stores.
+Unified Search - full-text search across all agent data stores.
 
 Searches memories, conversations, and SKComms messages in one query.
 Results are ranked by a combined relevance + recency score.
 
 Data stores searched:
-    memories     — ~/.skcapstone/memory/{short,mid,long}-term/*.json
-    conversations — ~/.skcapstone/conversations/*.json
-    messages     — ~/.skcapstone/sync/comms/archive/*.skc.json
-    journal      — ~/.skcapstone/journal/*.json  (if present)
+    memories     - ~/.skcapstone/memory/{short,mid,long}-term/*.json
+    conversations - ~/.skcapstone/conversations/*.json
+    messages     - ~/.skcapstone/sync/comms/archive/*.skc.json
+    journal      - ~/.skcapstone/journal/*.json  (if present)
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from typing import Optional
 
 logger = logging.getLogger("skcapstone.unified_search")
 
-# Score decay: 1 point per match, multiplied by recency weight (0–1).
+# Score decay: 1 point per match, multiplied by recency weight (0-1).
 # Recency weight = 1 / (1 + age_days * RECENCY_DECAY)
 RECENCY_DECAY = 0.05  # ~14-day half-life
 MEMORY_LAYER_BOOST = {"long-term": 1.5, "mid-term": 1.2, "short-term": 1.0}
@@ -60,7 +60,7 @@ def _recency_weight(ts: Optional[datetime]) -> float:
         Float in (0, 1].
     """
     if ts is None:
-        return 0.5  # unknown age — neutral weight
+        return 0.5  # unknown age - neutral weight
     now = datetime.now(timezone.utc)
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)

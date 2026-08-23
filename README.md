@@ -1,8 +1,21 @@
 # SKCapstone
 
-### Your agent. Everywhere. Secured. Remembering.
+[![CI](https://github.com/smilinTux/skcapstone/actions/workflows/ci.yml/badge.svg)](https://github.com/smilinTux/skcapstone/actions/workflows/ci.yml)
+[![pytest](https://github.com/smilinTux/skcapstone/actions/workflows/pytest.yml/badge.svg)](https://github.com/smilinTux/skcapstone/actions/workflows/pytest.yml)
+[![providers](https://github.com/smilinTux/skcapstone/actions/workflows/providers.yml/badge.svg)](https://github.com/smilinTux/skcapstone/actions/workflows/providers.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
-**SKCapstone is the sovereign agent framework that unifies CapAuth identity, Cloud 9 trust, SKMemory persistence, and SKSecurity protection into a single portable agent runtime that lives in your home directory.**
+**Purpose:** the sovereign **agent runtime** of SKWorld — an always-on daemon + consciousness loop that unifies CapAuth identity, Cloud 9 trust, SKMemory persistence, and SKSecurity protection into one portable agent that lives in `~/.skcapstone/`.
+**Maturity tier:** `T0` (all classical). PGP identity is delegated to
+[capauth](https://github.com/smilinTux/capauth), but skcapstone is **not**
+key-material-free: it generates and stores its own RSA-2048 TLS key under
+`~/.skcapstone/tls/`, and it drives PGP signing/encryption over capauth-held keys.
+Full inventory in [SOP.md §9](SOP.md). · VERSION_LIFECYCLE phase **Active v2** ·
+Version is derived from the git tag by setuptools-scm (`dynamic = ["version"]`), so it
+is deliberately not quoted here; run `skcapstone --version`.
+
+### Your agent. Everywhere. Secured. Remembering.
 
 Every tool. Every platform. Every IDE. Same agent. Same bond. Same memories. Same context.
 
@@ -455,7 +468,8 @@ core. SKCapstone is a **core** capability: it's the agent *runtime* that binds t
 core identity/memory/trust/security pillars together and **hosts several of the
 shared platform primitives** the rest of the stack runs on — the coordination board,
 the `skscheduler` fleet job scheduler, the `sk-alert` Telegram bus, and the ITIL ops
-tools (which [skops](https://github.com/smilinTux/skops) reuses wholesale).
+tools used by ATLAS. The former `skops` consumer is archived history; it is not an
+active deployment, catalog entry, or operations control plane.
 
 ```mermaid
 flowchart TD
@@ -492,10 +506,10 @@ flowchart TD
     subgraph COMPUTE["compute"]
       direction LR
       SKMODEL["skmodel<br/>(ollama · local LLMs)"]
-      SKDATA["skdata → skmem-pg<br/>(pgvector · BM25 · AGE graph)"]
+      SKDATA["skdata → skmem-pg (per-node)<br/>(pgvector · BM25 · AGE graph)"]
     end
 
-    DATA["skmem-pg + Syncthing P2P<br/>(knowledge substrate + encrypted sync)"]
+    DATA["skmem-pg (per-node local index) + Syncthing P2P<br/>(rebuildable derived index + encrypted flat/wiki sync)"]
 
     style SKCAP fill:#2d6a4f,color:#fff,stroke:#1b4332
     style COORD fill:#1b4332,color:#fff,stroke:#081c15
@@ -505,8 +519,20 @@ Everything skcapstone touches above is a **real** dependency or hosted primitive
 `capauth`, `skmemory`, `skseed`, `skwhisper`, `skchat-sovereign`, `skcomms`, and
 `sksecurity` are declared in [`pyproject.toml`](pyproject.toml); the coord board /
 `skscheduler` / `sk-alert` / ITIL tools live in this repo's `src/skcapstone/`; the
-knowledge substrate is `skmem-pg` (Postgres pgvector + pg_search BM25 + Apache AGE
-graph) and cross-device propagation is Syncthing.
+query index is `skmem-pg` (Postgres pgvector + pg_search BM25 + Apache AGE graph)
+and cross-device propagation is Syncthing.
+
+`skmem-pg` is a **per-node, local, rebuildable derived index**, not a shared or
+streaming-replicated substrate and not a SPOF. Each node runs its OWN writable
+Postgres on `localhost:5432` (fleet-wide uniform port; per-node override via
+`SKMEMORY_PG_DSN`), and agents connect only to `localhost`. The `memories` table
+is a derived cache in the same class as the SQLite `index.db`: it is rebuilt from
+the Syncthing-synced flat JSON by the reconcile engine, and embeddings are a
+deterministic function of flat content plus mxbai on `.100`, so any node
+regenerates them locally. The `docs` / `file_locations` wiki-canon is built
+per-node by skingest from the git-synced wiki. HA/DR is node self-sufficiency plus
+rebuild-from-source (flat files and git wiki, both replicated), not a
+primary/replica or failover topology.
 
 ### Where SKCapstone Sits in the Vertical
 
@@ -563,6 +589,10 @@ See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIG
 
 ## Documentation
 
+- [Qualification evidence](docs/QUALIFICATION.md): immutable review checkpoints,
+  durable sealed artifacts, exact Git dependency audits, and agent lifecycle
+  reconciliation.
+
 | Document | Description |
 |----------|-------------|
 | [Developer Quickstart](../docs/QUICKSTART.md) | Install + first sovereign agent in 5 minutes |
@@ -572,6 +602,8 @@ See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIG
 | [Architecture](docs/ARCHITECTURE.md) | Technical deep dive |
 | [Security Design](docs/SECURITY_DESIGN.md) | Four-layer security model |
 | [Token System](docs/TOKEN_SYSTEM.md) | PGP-signed capability tokens |
+| [Backup](docs/BACKUP.md) | Portable `backup` CLI + recommended GFS cron rotation |
+| [ChatGPT/Codex SK client deployment](docs/runbooks/chatgpt-codex-sk-client.md) | Linux and Windows/WSL2 desktop setup, MCPs, skills, soul, SKWhisper, acceptance, and rollback |
 
 ## Contributing
 
@@ -596,6 +628,30 @@ Never commit `node_modules/`. Never use `npm install` in CI — always `npm ci`.
 
 Python packages use `pyproject.toml` with pinned ranges; see individual
 package `pyproject.toml` files. The shared venv is at `~/.skenv/`.
+
+---
+
+## Related projects / See also
+
+SKCapstone is the core runtime everything else plugs into. Learn the whole system by
+wandering the graph:
+
+- ⬆️ **Depends on:** [capauth](https://github.com/smilinTux/capauth) — the identity source
+  of truth (PGP keypairs, DID docs, challenge-response). skcapstone holds **no key
+  material of its own**; all crypto identity is delegated here.
+- ⬆️ **Depends on:** [skmemory](https://github.com/smilinTux/skmemory) — the persistent
+  short/mid/long-term memory store; the single source of truth for durable agent state.
+- 🗃️ **Historical:** `skops` previously consumed these ITIL primitives. It is
+  archive-only; ATLAS now owns cognitive operations orchestration.
+- ↔️ **Sibling:** [skcomms](https://github.com/smilinTux/skcomms) — the encrypted P2P
+  envelope transport the daemon polls to send/receive agent messages.
+- ↔️ **Sibling:** [skchat](https://github.com/smilinTux/skchat) — the messaging layer
+  (threads, inbox, history) the consciousness loop uses to converse with peers.
+- 📐 **Standards:** [sk-standards](https://github.com/smilinTux/sk-standards) — the
+  canonical crypto / data-flow / version / doc-SOP standards this repo conforms to.
+
+See [`SOP.md`](./SOP.md) for the operational source of truth and
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the full runtime reference.
 
 ---
 

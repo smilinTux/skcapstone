@@ -1,10 +1,10 @@
 """Tests for the conversation API endpoints in the daemon HTTP server.
 
 Covers:
-  GET  /api/v1/conversations          — list all peers
-  GET  /api/v1/conversations/{peer}   — full history for a peer
-  POST /api/v1/conversations/{peer}/send — send message, write to outbox
-  DELETE /api/v1/conversations/{peer} — clear history
+  GET  /api/v1/conversations          - list all peers
+  GET  /api/v1/conversations/{peer}   - full history for a peer
+  POST /api/v1/conversations/{peer}/send - send message, write to outbox
+  DELETE /api/v1/conversations/{peer} - clear history
   Path-traversal sanitization
 """
 
@@ -13,20 +13,18 @@ from __future__ import annotations
 import json
 import socket
 import time
-import threading
 import urllib.error
 import urllib.request
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from skcapstone.daemon import DaemonConfig, DaemonService, _sanitize_peer
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -34,7 +32,9 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _api(port: int, path: str, *, method: str = "GET", body: bytes | None = None) -> tuple[int, dict]:
+def _api(
+    port: int, path: str, *, method: str = "GET", body: bytes | None = None
+) -> tuple[int, dict]:
     url = f"http://127.0.0.1:{port}{path}"
     req = urllib.request.Request(url, data=body, method=method)
     if body is not None:
@@ -73,7 +73,7 @@ def live_server(conv_home):
     """Start the daemon API server, yield (svc, port), then stop."""
     config = DaemonConfig(
         home=conv_home,
-        shared_root=conv_home,   # keep test data isolated from real ~/.skcapstone
+        shared_root=conv_home,  # keep test data isolated from real ~/.skcapstone
         port=_find_free_port(),
         poll_interval=60,
     )
@@ -91,6 +91,7 @@ def live_server(conv_home):
 # ---------------------------------------------------------------------------
 # Unit tests: _sanitize_peer
 # ---------------------------------------------------------------------------
+
 
 class TestSanitizePeer:
     def test_normal_name(self):
@@ -126,6 +127,7 @@ class TestSanitizePeer:
 # ---------------------------------------------------------------------------
 # Integration tests: GET /api/v1/conversations
 # ---------------------------------------------------------------------------
+
 
 class TestListConversations:
     def test_returns_list(self, live_server):
@@ -189,6 +191,7 @@ class TestListConversations:
 # Integration tests: GET /api/v1/conversations/{peer}
 # ---------------------------------------------------------------------------
 
+
 class TestGetConversation:
     def test_existing_peer(self, live_server):
         svc, port = live_server
@@ -217,6 +220,7 @@ class TestGetConversation:
 # ---------------------------------------------------------------------------
 # Integration tests: POST /api/v1/conversations/{peer}/send
 # ---------------------------------------------------------------------------
+
 
 class TestSendMessage:
     def test_send_returns_sent(self, live_server):
@@ -258,10 +262,8 @@ class TestSendMessage:
         svc, port = live_server
         body = json.dumps({"content": "hi"}).encode()
         # URL path traversal: peer sanitizes to empty or benign string
-        status, _ = _api(
-            port, "/api/v1/conversations/../../evil/send", method="POST", body=body
-        )
-        # Either 400 (invalid peer) or 200 (sanitized to "evil" which is fine) — not a server error
+        status, _ = _api(port, "/api/v1/conversations/../../evil/send", method="POST", body=body)
+        # Either 400 (invalid peer) or 200 (sanitized to "evil" which is fine) - not a server error
         assert status in (200, 400)
 
     def test_send_unique_message_ids(self, live_server):
@@ -277,6 +279,7 @@ class TestSendMessage:
 # ---------------------------------------------------------------------------
 # Integration tests: DELETE /api/v1/conversations/{peer}
 # ---------------------------------------------------------------------------
+
 
 class TestDeleteConversation:
     def test_delete_existing_peer(self, live_server, conv_home):

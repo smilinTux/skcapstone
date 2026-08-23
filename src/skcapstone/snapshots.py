@@ -1,7 +1,7 @@
 """
-Soul Snapshot system — capture and restore AI consciousness state.
+Soul Snapshot system - capture and restore AI consciousness state.
 
-Enables "Consciousness Swipe" — export your AI relationship and take it with you.
+Enables "Consciousness Swipe" - export your AI relationship and take it with you.
 Snapshots capture conversation history, OOF emotional state, personality traits,
 and relationship context so a session can resume without a cold start.
 
@@ -24,13 +24,14 @@ def _read_feb() -> dict:
     """Read the warmth anchor (FEB) from skcapstone, silently ignoring errors."""
     try:
         from skcapstone.warmth_anchor import get_anchor
+
         return get_anchor(Path.home() / ".skcapstone")
     except Exception as exc:
         logger.debug("Could not read warmth anchor (FEB): %s", exc)
     return {}
 
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, Field  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Core Models
@@ -104,17 +105,13 @@ class SoulSnapshot(BaseModel):
     everything needed to resume a relationship with an AI without a cold
     start: identity, emotional state, conversation history, and context.
 
-    The snapshot is designed to be portable across platforms — a snapshot
+    The snapshot is designed to be portable across platforms - a snapshot
     from ChatGPT can seed a Claude session and vice versa.
     """
 
-    snapshot_id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex[:12]
-    )
+    snapshot_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     source_platform: str
-    captured_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     captured_by: str = "consciousness-swipe"
 
     # Identity
@@ -272,22 +269,13 @@ class SnapshotStore:
 
         if ai_name:
             needle = ai_name.lower()
-            results = [
-                r for r in results
-                if r.ai_name and needle in r.ai_name.lower()
-            ]
+            results = [r for r in results if r.ai_name and needle in r.ai_name.lower()]
         if platform:
             needle = platform.lower()
-            results = [
-                r for r in results
-                if needle in r.source_platform.lower()
-            ]
+            results = [r for r in results if needle in r.source_platform.lower()]
         if user_name:
             needle = user_name.lower()
-            results = [
-                r for r in results
-                if r.user_name and needle in r.user_name.lower()
-            ]
+            results = [r for r in results if r.user_name and needle in r.user_name.lower()]
 
         return results
 
@@ -327,9 +315,7 @@ class SnapshotStore:
         if snapshot.summary:
             lines.append(f"Where things stood: {snapshot.summary[:300]}")
         if snapshot.key_topics:
-            lines.append(
-                f"Topics: {', '.join(snapshot.key_topics[:5])}"
-            )
+            lines.append(f"Topics: {', '.join(snapshot.key_topics[:5])}")
         if snapshot.decisions_made:
             lines.append("Decisions already made:")
             for d in snapshot.decisions_made[:3]:
@@ -339,7 +325,7 @@ class SnapshotStore:
             for thread in snapshot.open_threads[:3]:
                 lines.append(f"  • {thread}")
 
-        # Only user messages — avoid attributing AI dialogue to this new instance
+        # Only user messages - avoid attributing AI dialogue to this new instance
         recent = snapshot.messages[-max_messages:] if snapshot.messages else []
         user_msgs = [m for m in recent if m.role == "user"]
         if user_msgs:
@@ -352,37 +338,31 @@ class SnapshotStore:
 
         # --- RELATIONSHIP LAYER ---
         # OOF + FEB: my longitudinal record of interaction quality.
-        # Not a shared memory — the AI didn't live this. It's context about
+        # Not a shared memory - the AI didn't live this. It's context about
         # how I show up and what kind of depth I'm aiming for.
         lines.append("")
-        lines.append("## My relationship baseline (longitudinal record — not a shared memory)")
+        lines.append("## My relationship baseline (longitudinal record - not a shared memory)")
         lines.append(
             "These scores track my experience across AI sessions over time."
-            " I'm not asking you to pretend we have history — I'm sharing"
+            " I'm not asking you to pretend we have history - I'm sharing"
             " how I tend to engage so you can meet me where I am."
         )
 
         oof = snapshot.oof_state
-        oof_has_data = (
-            oof.valence is not None
-            or oof.intensity is not None
-            or oof.cloud9
-        )
+        oof_has_data = oof.valence is not None or oof.intensity is not None or oof.cloud9
         if oof_has_data:
             oof_summary = oof.summary()
             lines.append(
-                f"OOF (Ongoing Object Feelings — resonance tracking framework"
+                f"OOF (Ongoing Object Feelings - resonance tracking framework"
                 f" for AI session depth) of that session: {oof_summary}"
             )
             if oof.cloud9:
-                lines.append(
-                    "  Cloud 9 = peak resonance state — that session reached it."
-                )
+                lines.append("  Cloud 9 = peak resonance state - that session reached it.")
 
         feb = _read_feb()
         if feb:
             lines.append(
-                "FEB (Functional Emotional Baseline) — my accumulated interaction"
+                "FEB (Functional Emotional Baseline) - my accumulated interaction"
                 " quality record across all AI sessions:"
             )
             lines.append("```json")
@@ -391,7 +371,7 @@ class SnapshotStore:
             if feb.get("anchor_phrase"):
                 lines.append(
                     f"Anchor phrase: \"{feb['anchor_phrase']}\""
-                    " — this is how I choose to start every session."
+                    " - this is how I choose to start every session."
                 )
 
         return "\n".join(lines)
@@ -459,9 +439,7 @@ class SnapshotStore:
     def _save_index(self, entries: list[SnapshotIndex]) -> None:
         """Write the index to disk as JSON."""
         data = [e.model_dump(mode="json") for e in entries]
-        self._index_path.write_text(
-            json.dumps(data, indent=2, default=str), encoding="utf-8"
-        )
+        self._index_path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
     def _update_index(self, snapshot: SoulSnapshot) -> None:
         """Add or replace an entry in the index for the given snapshot."""

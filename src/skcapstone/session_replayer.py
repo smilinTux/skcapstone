@@ -1,5 +1,5 @@
 """
-SKCapstone Session Replayer — play back a recorded JSONL session.
+SKCapstone Session Replayer - play back a recorded JSONL session.
 
 Two modes:
 
@@ -26,10 +26,9 @@ Each replayed entry produces a ``ReplayResult``::
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generator, Optional
 
@@ -46,7 +45,7 @@ class ReplayResult:
     recorded_result: list[Any]
     replayed_result: Optional[list[Any]]
     duration_ms: int
-    match: Optional[bool]   # None in dry-run; True/False in live mode
+    match: Optional[bool]  # None in dry-run; True/False in live mode
     error: Optional[str] = None
 
 
@@ -88,7 +87,7 @@ class SessionReplayer:
         tool = entry.get("tool", "<unknown>")
         arguments = entry.get("arguments", {})
         recorded = entry.get("result", [])
-        orig_ms = entry.get("duration_ms", 0)
+        entry.get("duration_ms", 0)
 
         if self._dry_run:
             return ReplayResult(
@@ -132,6 +131,7 @@ class SessionReplayer:
 # Mock MCP server for dry-run
 # ---------------------------------------------------------------------------
 
+
 class MockMCPServer:
     """Minimal mock that accepts tool calls and returns recorded results.
 
@@ -145,7 +145,7 @@ class MockMCPServer:
 
     def call(self, tool: str, arguments: dict[str, Any]) -> Optional[list[Any]]:
         """Return the next recorded result that matches *tool*, or None."""
-        for entry in self._entries[self._index:]:
+        for entry in self._entries[self._index :]:
             self._index += 1
             if entry.get("tool") == tool:
                 return entry.get("result")
@@ -160,6 +160,7 @@ class MockMCPServer:
 def _load_handlers() -> dict:
     """Import and return the live MCP handler table."""
     from .mcp_tools import collect_all_handlers
+
     return collect_all_handlers()
 
 
@@ -175,6 +176,7 @@ def _call_handler(handlers: Optional[dict], tool: str, arguments: dict) -> list[
 
 def _results_match(recorded: list[Any], replayed: list[Any]) -> bool:
     """Compare two result lists by their serialised text content."""
+
     def _texts(items: list[Any]) -> list[str]:
         texts = []
         for item in items:

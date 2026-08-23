@@ -1,5 +1,5 @@
 """
-Proxmox Provider — deploy agents as LXC containers on Proxmox VE.
+Proxmox Provider - deploy agents as LXC containers on Proxmox VE.
 
 Uses the Proxmox REST API to create, configure, and manage LXC
 containers. Each agent gets its own isolated container with
@@ -21,10 +21,9 @@ import json
 import logging
 import os
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ..blueprints.schema import AgentSpec, ProviderType, ResourceSpec
+from ..blueprints.schema import AgentSpec, ProviderType
 from ..team_engine import AgentStatus, ProviderBackend
 
 logger = logging.getLogger(__name__)
@@ -103,14 +102,14 @@ class ProxmoxProvider(ProviderBackend):
             RuntimeError: If the API call fails.
         """
         try:
+            import warnings
+
             import requests
             from urllib3.exceptions import InsecureRequestWarning
-            import warnings
+
             warnings.filterwarnings("ignore", category=InsecureRequestWarning)
         except ImportError:
-            raise RuntimeError(
-                "Proxmox provider requires 'requests': pip install requests"
-            )
+            raise RuntimeError("Proxmox provider requires 'requests': pip install requests")
 
         url = f"{self._api_host}/api2/json{endpoint}"
         headers = {
@@ -118,13 +117,17 @@ class ProxmoxProvider(ProviderBackend):
         }
 
         resp = requests.request(
-            method, url, headers=headers, json=data, verify=False, timeout=30,
+            method,
+            url,
+            headers=headers,
+            json=data,
+            verify=False,
+            timeout=30,
         )
 
         if resp.status_code >= 400:
             raise RuntimeError(
-                f"Proxmox API {method} {endpoint} failed: "
-                f"{resp.status_code} {resp.text}"
+                f"Proxmox API {method} {endpoint} failed: " f"{resp.status_code} {resp.text}"
             )
 
         return resp.json().get("data", {})
@@ -173,18 +176,24 @@ class ProxmoxProvider(ProviderBackend):
             "net0": "name=eth0,bridge=vmbr0,ip=dhcp",
             "start": 0,
             "unprivileged": 1,
-            "description": json.dumps({
-                "team": team_name,
-                "agent": agent_name,
-                "role": spec.role.value,
-                "model": spec.model_name or spec.model.value,
-                "managed_by": "skcapstone",
-            }),
+            "description": json.dumps(
+                {
+                    "team": team_name,
+                    "agent": agent_name,
+                    "role": spec.role.value,
+                    "model": spec.model_name or spec.model.value,
+                    "managed_by": "skcapstone",
+                }
+            ),
         }
 
         logger.info(
             "Creating LXC %s (vmid=%d, %dMB RAM, %d cores, %dGB disk)",
-            hostname, vmid, memory_mb, spec.resources.cores, disk_gb,
+            hostname,
+            vmid,
+            memory_mb,
+            spec.resources.cores,
+            disk_gb,
         )
 
         self._api_call("POST", f"/nodes/{self._node}/lxc", data=create_data)
@@ -232,9 +241,7 @@ class ProxmoxProvider(ProviderBackend):
         except RuntimeError:
             # Proxmox exec API may not be available; fall back to writing
             # the config via the container's rootfs mount on the node.
-            logger.debug(
-                "Exec API unavailable for LXC %d, trying config mount", vmid
-            )
+            logger.debug("Exec API unavailable for LXC %d, trying config mount", vmid)
 
         # Fallback: write via the container's filesystem using the Proxmox
         # file-restore or vz push mechanism. We POST the file content as
@@ -244,10 +251,12 @@ class ProxmoxProvider(ProviderBackend):
                 "PUT",
                 f"/nodes/{self._node}/lxc/{vmid}/config",
                 data={
-                    "description": json.dumps({
-                        "pending_config": command,
-                        "managed_by": "skcapstone",
-                    }),
+                    "description": json.dumps(
+                        {
+                            "pending_config": command,
+                            "managed_by": "skcapstone",
+                        }
+                    ),
                 },
             )
             return True
@@ -307,10 +316,7 @@ class ProxmoxProvider(ProviderBackend):
 
         # Write config inside the container
         escaped = config_json.replace("'", "'\\''")
-        write_cmd = (
-            f"mkdir -p /opt/agent && "
-            f"printf '%s' '{escaped}' > /opt/agent/config.json"
-        )
+        write_cmd = f"mkdir -p /opt/agent && " f"printf '%s' '{escaped}' > /opt/agent/config.json"
 
         ok = self._exec_in_container(vmid, write_cmd)
 
@@ -324,7 +330,9 @@ class ProxmoxProvider(ProviderBackend):
 
         logger.info(
             "LXC %d configured for agent %s (config_written=%s)",
-            vmid, agent_name, ok,
+            vmid,
+            agent_name,
+            ok,
         )
         return True
 

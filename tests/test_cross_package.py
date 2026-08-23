@@ -1,4 +1,4 @@
-"""Cross-package integration tests — end-to-end sovereign agent flow.
+"""Cross-package integration tests - end-to-end sovereign agent flow.
 
 Exercises the real interfaces between packages:
     capauth   -> skcapstone   (identity discovery)
@@ -19,14 +19,14 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
+from capauth.tokens import issue_token
 
 # ---------------------------------------------------------------------------
 # Core skcapstone imports
 # ---------------------------------------------------------------------------
 from skcapstone.coordination import Board, Task, TaskPriority
 from skcapstone.discovery import discover_all, discover_identity
-from skcapstone.memory_engine import recall, search, store
+from skcapstone.memory_engine import search, store
 from skcapstone.models import IdentityState, MemoryLayer, PillarStatus
 from skcapstone.pillars.identity import generate_identity
 from skcapstone.pillars.memory import initialize_memory
@@ -34,7 +34,6 @@ from skcapstone.pillars.security import audit_event, initialize_security, read_a
 from skcapstone.pillars.sync import collect_seed, initialize_sync
 from skcapstone.pillars.trust import initialize_trust, record_trust_state
 from skcapstone.runtime import AgentRuntime
-from skcapstone.tokens import issue_token
 
 
 def _init_full_agent(home: Path, name: str = "test-agent") -> None:
@@ -62,9 +61,7 @@ def _init_full_agent(home: Path, name: str = "test-agent") -> None:
     import yaml
 
     config = {"agent_name": name}
-    (home / "config" / "config.yaml").write_text(
-        yaml.dump(config, default_flow_style=False)
-    )
+    (home / "config" / "config.yaml").write_text(yaml.dump(config, default_flow_style=False))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -108,21 +105,19 @@ class TestCapAuthToSKCapstone:
 
         assert state.status == PillarStatus.DEGRADED
         assert len(state.fingerprint) == 40
-        data = json.loads(
-            (tmp_agent_home / "identity" / "identity.json").read_text()
-        )
+        data = json.loads((tmp_agent_home / "identity" / "identity.json").read_text())
         assert data["capauth_managed"] is False
 
     def test_capauth_models_importable(self):
         """CapAuth core models are importable alongside skcapstone."""
-        from capauth.models import EntityInfo, KeyInfo, SovereignProfile
+        from capauth.models import EntityInfo
 
         entity = EntityInfo(name="test", email="test@test.local")
         assert entity.name == "test"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. SKComms file transport — cross-process message delivery
+# 2. SKComms file transport - cross-process message delivery
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -133,10 +128,8 @@ class TestSKCommsFileTransport:
         """Message sent via file transport is receivable from the inbox."""
         from skcomms.models import (
             MessageEnvelope,
-            MessageMetadata,
             MessagePayload,
             MessageType,
-            RoutingConfig,
         )
         from skcomms.transports.file import FileTransport
 
@@ -144,7 +137,7 @@ class TestSKCommsFileTransport:
         inbox = tmp_path / "inbox"
 
         sender_transport = FileTransport(outbox_path=outbox, inbox_path=inbox)
-        receiver_transport = FileTransport(outbox_path=inbox, inbox_path=outbox)
+        FileTransport(outbox_path=inbox, inbox_path=outbox)
 
         envelope = MessageEnvelope(
             sender="opus",
@@ -386,9 +379,13 @@ class TestFullSovereignPipeline:
         assert manifest.memory.total_memories >= 1
         assert manifest.memory.status == PillarStatus.ACTIVE
 
-    def test_token_and_audit_across_operations(self, tmp_agent_home: Path):
+    def test_token_and_audit_across_operations(self, tmp_agent_home: Path, signing_identity):
         """Token issuance and audit trail span multiple subsystems."""
         _init_full_agent(tmp_agent_home, "audit-test")
+        # Reason: the subject is the audit trail spanning subsystems; the token
+        # is one of the operations feeding it, so it uses the shared throwaway
+        # signing key rather than its own.
+        signing_identity(tmp_agent_home)
 
         token = issue_token(
             tmp_agent_home,
@@ -419,10 +416,11 @@ class TestPackageImportCompatibility:
     def test_all_packages_importable(self):
         """capauth, skcapstone, skmemory, skcomms, skchat all import cleanly."""
         import capauth
-        import skcapstone
         import skchat
         import skcomms
         import skmemory
+
+        import skcapstone
 
         assert hasattr(capauth, "__version__") or hasattr(capauth, "profile")
         assert hasattr(skcapstone, "__version__")
@@ -536,23 +534,21 @@ class TestCapAuthToCloud9Flow:
 
         This is the primary acceptance test for the cross-stack flow.
         """
-        from skcapstone.cloud9_bridge import Cloud9Bridge
         from skchat.group import GroupChat, MemberRole, ParticipantType
-        from skchat.models import ChatMessage, ContentType
+
+        from skcapstone.cloud9_bridge import Cloud9Bridge
 
         # 1. Initialize agent with all pillars
         _init_full_agent(tmp_agent_home, "integration-agent")
 
-        identity_data = json.loads(
-            (tmp_agent_home / "identity" / "identity.json").read_text()
-        )
+        identity_data = json.loads((tmp_agent_home / "identity" / "identity.json").read_text())
         agent_fingerprint = identity_data["fingerprint"]
         assert len(agent_fingerprint) == 40
 
         # 2. Create a group chat between two agents
         group = GroupChat.create(
             name="Integration Test Group",
-            creator_uri=f"capauth:integration-agent@local",
+            creator_uri="capauth:integration-agent@local",
             description="Cross-stack integration test",
         )
         group.add_member(
@@ -621,7 +617,7 @@ class TestCapAuthToCloud9Flow:
         # Store an agent communication as memory
         mem = store(
             tmp_agent_home,
-            "[agent_comm] messenger-test -> peer: Security audit complete, no vulnerabilities found",
+            "[agent_comm] messenger-test -> peer: Security audit complete, no vulnerabilities found",  # noqa: E501
             tags=["skchat", "agent_comm", "finding", "security"],
             source="skchat:agent_comm",
             importance=0.9,
@@ -653,9 +649,9 @@ class TestCapAuthToCloud9Flow:
 
     def test_group_chat_with_cloud9_emotional_memory(self, tmp_agent_home: Path):
         """Group chat messages paired with FEB emotional context create rich memories."""
-        from skcapstone.cloud9_bridge import Cloud9Bridge
         from skchat.group import GroupChat, ParticipantType
-        from skchat.models import ChatMessage
+
+        from skcapstone.cloud9_bridge import Cloud9Bridge
 
         _init_full_agent(tmp_agent_home, "emotional-test")
 
@@ -721,7 +717,6 @@ class TestCapAuthToCloud9Flow:
 
     def test_sync_seed_captures_cross_stack_state(self, tmp_agent_home: Path):
         """Sync seed contains data from all stack layers."""
-        from skchat.models import ChatMessage
 
         _init_full_agent(tmp_agent_home, "sync-cross-test")
 
@@ -757,15 +752,13 @@ class TestCapAuthToCloud9Flow:
         """CapAuth fingerprint used as identity in SKChat messages."""
         _init_full_agent(tmp_agent_home, "capauth-chat-test")
 
-        identity_data = json.loads(
-            (tmp_agent_home / "identity" / "identity.json").read_text()
-        )
+        identity_data = json.loads((tmp_agent_home / "identity" / "identity.json").read_text())
         fingerprint = identity_data["fingerprint"]
 
         from skchat.models import ChatMessage, ContentType
 
         msg = ChatMessage(
-            sender=f"capauth:capauth-chat-test@local",
+            sender="capauth:capauth-chat-test@local",
             recipient="capauth:peer@local",
             content="Authenticated message with sovereign identity",
             content_type=ContentType.MARKDOWN,

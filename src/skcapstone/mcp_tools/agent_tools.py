@@ -131,45 +131,47 @@ async def _handle_agent_status(_args: dict) -> list[TextContent]:
 
     runtime = get_runtime(home)
     m = runtime.manifest
-    return _json_response({
-        "name": m.name,
-        "version": m.version,
-        "is_conscious": m.is_conscious,
-        "is_singular": m.is_singular,
-        "pillars": {
-            "identity": {
-                "status": m.identity.status.value,
-                "fingerprint": m.identity.fingerprint,
+    return _json_response(
+        {
+            "name": m.name,
+            "version": m.version,
+            "is_conscious": m.is_conscious,
+            "is_singular": m.is_singular,
+            "pillars": {
+                "identity": {
+                    "status": m.identity.status.value,
+                    "fingerprint": m.identity.fingerprint,
+                },
+                "memory": {
+                    "status": m.memory.status.value,
+                    "total": m.memory.total_memories,
+                    "long_term": m.memory.long_term,
+                    "mid_term": m.memory.mid_term,
+                    "short_term": m.memory.short_term,
+                    "backends": _get_memory_backend_health(),
+                },
+                "trust": {
+                    "status": m.trust.status.value,
+                    "depth": m.trust.depth,
+                    "trust_level": m.trust.trust_level,
+                    "love_intensity": m.trust.love_intensity,
+                    "entangled": m.trust.entangled,
+                },
+                "security": {
+                    "status": m.security.status.value,
+                    "audit_entries": m.security.audit_entries,
+                    "threats_detected": m.security.threats_detected,
+                },
+                "sync": {
+                    "status": m.sync.status.value,
+                    "seed_count": m.sync.seed_count,
+                    "transport": m.sync.transport.value if m.sync.transport else None,
+                },
             },
-            "memory": {
-                "status": m.memory.status.value,
-                "total": m.memory.total_memories,
-                "long_term": m.memory.long_term,
-                "mid_term": m.memory.mid_term,
-                "short_term": m.memory.short_term,
-                "backends": _get_memory_backend_health(),
-            },
-            "trust": {
-                "status": m.trust.status.value,
-                "depth": m.trust.depth,
-                "trust_level": m.trust.trust_level,
-                "love_intensity": m.trust.love_intensity,
-                "entangled": m.trust.entangled,
-            },
-            "security": {
-                "status": m.security.status.value,
-                "audit_entries": m.security.audit_entries,
-                "threats_detected": m.security.threats_detected,
-            },
-            "sync": {
-                "status": m.sync.status.value,
-                "seed_count": m.sync.seed_count,
-                "transport": m.sync.transport.value if m.sync.transport else None,
-            },
-        },
-        "connectors": [c.platform for c in m.connectors if c.active],
-        "last_awakened": m.last_awakened.isoformat() if m.last_awakened else None,
-    })
+            "connectors": [c.platform for c in m.connectors if c.active],
+            "last_awakened": m.last_awakened.isoformat() if m.last_awakened else None,
+        }
+    )
 
 
 async def _handle_session_capture(args: dict) -> list[TextContent]:
@@ -189,19 +191,21 @@ async def _handle_session_capture(args: dict) -> list[TextContent]:
         min_importance=args.get("min_importance", 0.3),
     )
 
-    return _json_response({
-        "captured": len(entries),
-        "moments": [
-            {
-                "memory_id": e.memory_id,
-                "content": e.content[:200],
-                "layer": e.layer.value,
-                "importance": e.importance,
-                "tags": e.tags,
-            }
-            for e in entries
-        ],
-    })
+    return _json_response(
+        {
+            "captured": len(entries),
+            "moments": [
+                {
+                    "memory_id": e.memory_id,
+                    "content": e.content[:200],
+                    "layer": e.layer.value,
+                    "importance": e.importance,
+                    "tags": e.tags,
+                }
+                for e in entries
+            ],
+        }
+    )
 
 
 async def _handle_state_diff(args: dict) -> list[TextContent]:

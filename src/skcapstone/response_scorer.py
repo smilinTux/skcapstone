@@ -28,26 +28,88 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
-
 
 # ---------------------------------------------------------------------------
-# Stopwords — filtered out before coherence keyword matching
+# Stopwords - filtered out before coherence keyword matching
 # ---------------------------------------------------------------------------
 
 _STOPWORDS: frozenset[str] = frozenset(
     {
-        "a", "an", "the", "and", "or", "but", "not", "no", "so", "if", "then",
-        "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did",
-        "will", "would", "could", "should", "may", "might", "shall", "can",
-        "to", "of", "in", "on", "at", "by", "for", "with", "about", "from",
-        "as", "into", "that", "this", "these", "those",
-        "i", "you", "he", "she", "it", "we", "they",
-        "me", "him", "her", "us", "them",
-        "my", "your", "his", "its", "our", "their",
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "not",
+        "no",
+        "so",
+        "if",
+        "then",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "shall",
+        "can",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "with",
+        "about",
+        "from",
+        "as",
+        "into",
+        "that",
+        "this",
+        "these",
+        "those",
+        "i",
+        "you",
+        "he",
+        "she",
+        "it",
+        "we",
+        "they",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them",
+        "my",
+        "your",
+        "his",
+        "its",
+        "our",
+        "their",
         # Question / interrogative words (carry no domain meaning)
-        "what", "when", "where", "who", "whom", "which", "why", "how",
+        "what",
+        "when",
+        "where",
+        "who",
+        "whom",
+        "which",
+        "why",
+        "how",
     }
 )
 
@@ -77,9 +139,7 @@ class ResponseScore:
 
     def __post_init__(self) -> None:
         self.overall = round(
-            self.coherence_score * 0.4
-            + self.length_score * 0.3
-            + self.latency_score * 0.3,
+            self.coherence_score * 0.4 + self.length_score * 0.3 + self.latency_score * 0.3,
             4,
         )
 
@@ -130,7 +190,7 @@ def _score_length(question: str, response: str) -> float:
     if r_words < lo:
         # Linear ramp from 0 at r_words=0 up to 1 at r_words=lo
         return round(r_words / lo, 4)
-    # r_words > hi — verbose, but penalise gently (verbose > silent)
+    # r_words > hi - verbose, but penalise gently (verbose > silent)
     return round(max(0.3, hi / r_words), 4)
 
 
@@ -153,7 +213,7 @@ def _score_coherence(question: str, response: str) -> float:
 
     q_tokens = set(re.findall(r"\b\w+\b", question.lower())) - _STOPWORDS
     if not q_tokens:
-        # No content words in question — treat as neutral
+        # No content words in question - treat as neutral
         return 0.5
 
     r_tokens = set(re.findall(r"\b\w+\b", response.lower()))

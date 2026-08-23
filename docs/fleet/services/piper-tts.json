@@ -1,0 +1,13 @@
+{
+  "kind": "service",
+  "name": "piper-tts",
+  "labels": {"tier": "media"},
+  "spec": {
+    "runtime": "systemd-user",
+    "unit": "piper-tts.service",
+    "nodeSelector": {"always-on": "true"},
+    "healthCheck": {"port": 18797},
+    "restartPolicy": "on-failure",
+    "failover": "manual"
+  }
+}

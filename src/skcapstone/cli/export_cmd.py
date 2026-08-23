@@ -7,10 +7,9 @@ import sys
 from pathlib import Path
 
 import click
+from rich.panel import Panel
 
 from ._common import AGENT_HOME, console
-
-from rich.panel import Panel
 
 
 def register_export_commands(main: click.Group) -> None:
@@ -19,11 +18,15 @@ def register_export_commands(main: click.Group) -> None:
     @main.command("export")
     @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
     @click.option(
-        "--output", "-o", default=None, type=click.Path(),
+        "--output",
+        "-o",
+        default=None,
+        type=click.Path(),
         help="Output file path. Defaults to stdout.",
     )
     @click.option(
-        "--pretty/--compact", default=True,
+        "--pretty/--compact",
+        default=True,
         help="Pretty-print JSON (default) or compact output.",
     )
     def export_cmd(home: str, output: str | None, pretty: bool):
@@ -62,17 +65,19 @@ def register_export_commands(main: click.Group) -> None:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(serialized, encoding="utf-8")
             size_kb = out_path.stat().st_size / 1024
-            console.print(Panel(
-                f"[bold green]Export complete[/]\n"
-                f"Agent: {bundle['agent_name']}\n"
-                f"Memories: {len(bundle['memories'])}\n"
-                f"Conversations: {len(bundle['conversations'])}\n"
-                f"Soul overlays: {len((bundle.get('soul') or {}).get('installed') or {})}\n"
-                f"Size: {size_kb:.1f} KB\n"
-                f"File: [cyan]{out_path}[/]",
-                title="Agent Bundle Exported",
-                border_style="green",
-            ))
+            console.print(
+                Panel(
+                    f"[bold green]Export complete[/]\n"
+                    f"Agent: {bundle['agent_name']}\n"
+                    f"Memories: {len(bundle['memories'])}\n"
+                    f"Conversations: {len(bundle['conversations'])}\n"
+                    f"Soul overlays: {len((bundle.get('soul') or {}).get('installed') or {})}\n"
+                    f"Size: {size_kb:.1f} KB\n"
+                    f"File: [cyan]{out_path}[/]",
+                    title="Agent Bundle Exported",
+                    border_style="green",
+                )
+            )
         else:
             sys.stdout.write(serialized)
             sys.stdout.write("\n")
@@ -80,7 +85,9 @@ def register_export_commands(main: click.Group) -> None:
 
     @main.command("import")
     @click.argument("bundle_file", metavar="BUNDLE")
-    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Target agent home directory.")
+    @click.option(
+        "--home", default=AGENT_HOME, type=click.Path(), help="Target agent home directory."
+    )
     @click.option("--overwrite-identity", is_flag=True, help="Overwrite existing identity file.")
     @click.option("--overwrite-config", is_flag=True, help="Overwrite existing config file.")
     @click.option("--overwrite-soul", is_flag=True, help="Overwrite existing soul files.")
@@ -95,7 +102,7 @@ def register_export_commands(main: click.Group) -> None:
 
         Memories are always merged (existing memories with the same ID are
         kept). Conversations are merged per peer. Identity, config, and soul
-        are only written when their target file is absent — unless the
+        are only written when their target file is absent - unless the
         corresponding ``--overwrite-*`` flag is passed.
 
         Examples:
@@ -139,16 +146,18 @@ def register_export_commands(main: click.Group) -> None:
         identity_status = "[green]written[/]" if result["identity_written"] else "[dim]skipped[/]"
         config_status = "[green]written[/]" if result["config_written"] else "[dim]skipped[/]"
 
-        console.print(Panel(
-            f"[bold green]Import complete[/]\n"
-            f"Memories imported:      {result['memories_imported']}\n"
-            f"Conversations imported: {result['conversations_imported']}\n"
-            f"Soul files written:     {result['soul_files_written']}\n"
-            f"Identity:               {identity_status}\n"
-            f"Config:                 {config_status}",
-            title="Agent Bundle Imported",
-            border_style="green",
-        ))
+        console.print(
+            Panel(
+                f"[bold green]Import complete[/]\n"
+                f"Memories imported:      {result['memories_imported']}\n"
+                f"Conversations imported: {result['conversations_imported']}\n"
+                f"Soul files written:     {result['soul_files_written']}\n"
+                f"Identity:               {identity_status}\n"
+                f"Config:                 {config_status}",
+                title="Agent Bundle Imported",
+                border_style="green",
+            )
+        )
 
         if result["errors"]:
             console.print("[yellow]Warnings:[/]")

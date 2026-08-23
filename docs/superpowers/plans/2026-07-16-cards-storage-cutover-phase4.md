@@ -1,0 +1,97 @@
+# Cards Storage Cutover (Phase 4) Implementation Plan
+
+**Status: 4a-4d SHIPPED and proven live. READ CUTOVER APPLIED node-wide on noroc2027 (2026-08-05): every coord writer carries `SKCOORD_CARD_STORE=1`. 4e-core (code default-ON + catastrophe guard) SHIPPED (#92). 4e one-way-door gate CLOSED (2026-08-05): the `export_to_legacy()` store->legacy exporter (`coord export-legacy`) makes legacy write retirement reversible; retirement (move `tasks/*.json` -> read-only `legacy/`, drop the derived-status scan) is now unblocked.**
+
+**4e-core DONE (code default-ON):** `card_store_write_enabled()`/`card_store_read_enabled()` now default to the store when `SKCOORD_CARD_STORE` is unset; only an explicit disable token (`0`/`off`/`false`/`no`) reverts to legacy. The store is thus authoritative by code contract, no longer dependent on the per-process drop-ins/`~/.bashrc` env plumbing. Two safety additions ship with it: (1) a catastrophe guard so a behind/empty store never silently empties the board (falls back to the legacy projection when the store is empty but legacy task files exist), and (2) the force-legacy shim used by migrate/parity now pins `=0` instead of unsetting the var (unset now means "on"), so the parity gate stays a real store-vs-legacy drift detector. Rollback is still one env flip: `SKCOORD_CARD_STORE=0` on any process reverts it to a fully-current legacy board (legacy is still hot-written).
+
+**4e-retire (legacy write retirement / move `tasks/*.json` -> read-only `legacy/` / delete the derived-status scan):** Gate (a) CLOSED (2026-08-05): `export_to_legacy()` (`coord export-legacy`) is the store->legacy inverse of `import_from_legacy`. It rebuilds a fully-current legacy board from the event-sourced store -- existing immutable task files are preserved (they carry `notes` the store never modelled), and the mutable agent status layer (current_task/claimed_tasks/completed_tasks) is recomputed from the store while identity fields (capabilities/itil_claims/host/notes) are preserved. Round-trip fidelity (store -> export -> force-legacy read == store status+owner) is unit-tested; a live dry-run reproduced the board (3163 coord cards, 0 task files to synthesize, 107 agent files rebuilt). Retirement is therefore reversible: `SKCOORD_CARD_STORE=0` + `coord export-legacy` + restart lands on a current legacy board. Gate (b): the `ORGANIC-HOLD` soak has been green organically since 2026-08-05T05:17Z (raw pre-converge drift=0, migrate/reconcile both 0) across the 05:17/05:20/08:00 runs. `.41` is a standby scheduler node (not writing); no other live peers.
+
+  Rollback recipe (post-retirement): `export SKCOORD_CARD_STORE=0` on the process, `coord export-legacy` to regenerate `tasks/` + `agents/` from the store, restart. Worst case (store corruption) still has the `legacy/` snapshot taken at retirement time, so at most post-retirement deltas are lost, never the whole board.
+
+## Read cutover as-applied (2026-08-05)
+
+- Writer flags (all `=1`): `skcapstone@.service.d/cardstore.conf`, `skcapstone-dashboard.service.d/cardstore.conf`, `skchat-telegram-{lumina,opus}.service.d/cardstore.conf`, `skcapstone.service.d/cardstore.conf` (base daemon + in-process scheduler), and `~/.bashrc` (interactive CLI).
+- Soak gate: `~/.skcapstone/scripts/cardstore-parity-soak.sh` measures RAW pre-converge drift first (ORGANIC-HOLD OK/WARN), then migrate + reconcile as a safety net, then parity as the hard exit gate. Runs `0 */4 * * *` on noroc2027.
+- Rollback (pre-4e): remove the `cardstore.conf` drop-ins + the `~/.bashrc` line, `systemctl --user daemon-reload` + restart, and legacy is authoritative again. `rm -rf ~/.skcapstone/cards` fully undoes the store.
+- Watch item before 4e: ORGANIC-HOLD stays OK and migrate/reconcile stay 0 across several days of real agent activity. Any ORGANIC-HOLD WARN means a writer surfaced without the flag.
+
+**Goal:** Replace coord's Task-files + derived-status storage with one event-sourced `cards/<id>/{core.json, events/*.jsonl}` store shared by coord and ITIL, so every work item has a single source of truth.
+
+## Execution status (2026-07-16)
+
+- **4a Card store engine — DONE.** `card_store.py::CardStore` (write-once core + per-writer events + fold). 12 tests.
+- **4b Importer — DONE.** `import_from_legacy()` (idempotent). Live: imported 1750 cards.
+- **4c Parity — DONE and GREEN.** `parity_check()`; live board vs store = 1750/1750 matched, 0 mismatches, 0 missing.
+- **4d Flag-gated read + dual-write — DONE.** `SKCOORD_CARD_STORE=1` serves the board from the store; `Board.create/claim/complete` + `coord move` mirror into the store when the flag is `1`/`dual`. Default OFF = zero behavior change.
+- **4e Split (2026-08-05).** Core (code default-ON + catastrophe guard + force-legacy shim fix) SHIPPED and reversible. Legacy write retirement HELD on two gates: no store->legacy exporter (one-way door) and an empty organic soak. See the status block at the top.
+
+## Soak-to-flip runbook (the remaining work)
+
+1. **Start dual-write:** set `SKCOORD_CARD_STORE=dual` in every process that writes coord (agent MCP servers, the skcapstone daemon, the Telegram bridge units, interactive shells). Re-run `skcapstone coord migrate` to backfill anything created between the initial import and dual-write going live (idempotent).
+2. **Soak:** for several days across .158 + .41, run `skcapstone coord parity` (a cron is fine). It must stay `mismatches=0 missing=0` while real agents create/claim/complete/move.
+3. **Read cutover:** once parity holds, flip readers to `SKCOORD_CARD_STORE=1`. Watch the dashboard + `coord kanban`.
+4. **4e retire:** flip the default ON in code, move `tasks/*.json` + `agents/*.json` to a read-only `legacy/`, make `BOARD.md` a pure `render(fold(events))` projection, delete the derived-status scan. Roll all nodes together (July-13 ITIL rule).
+5. **Rollback at any point before 4e:** unset the flag; legacy is authoritative again. `rm -rf ~/.skcapstone/cards` fully undoes the import.
+
+---
+
+## Original design notes
+
+---
+
+## Recommendation: defer this (why it is shelved)
+
+After Phases 1-3, the board is already unified (one kanban view over coord + ITIL),
+bounded (archival + a daily maintenance job), and operable (move/label/link + WIP,
+via an event overlay), and agents can drive it over MCP. Those phases delivered the
+value Chef asked for.
+
+Phase 4 replaces a **working, conflict-free, fleet-wide** write path (every agent,
+the autopilot, the dashboard, `coord_*` MCP tools, joule minting, changelog, briefing)
+for a **modest internal gain** (status becomes a folded event instead of a derived
+scan). The blast radius is the entire coordination substrate on both .158 and .41
+simultaneously. The overlay already gives event-sourcing where it changes the user
+experience (kanban ops). So the honest engineering call is: **do not big-bang this.**
+
+If it is ever wanted, do it as the strictly-incremental, reversible sequence below,
+never as a single cutover. The key safety property is a long **parallel-run parity
+window** where the new store is built and continuously diffed against the live board
+before anything reads or writes it for real.
+
+---
+
+## Global Constraints (if executed)
+
+- NO em or en dashes anywhere. Commit trailer `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>`.
+- Reuse ITIL's proven engine (`itil.py`: immutable `core.json` + per-writer `events/<agent>@<host>.jsonl` + fold-on-read + deterministic dedup ids). Do NOT invent a second event engine; generalize that one with a `kind` field.
+- Every step is reversible: legacy `tasks/*.json` + `agents/*.json` are retained read-only until the very last step, and the whole feature sits behind a flag (`SKCOORD_CARD_STORE`) defaulting OFF.
+- Roll all fleet nodes together (same rule as the July-13 ITIL refactor); restart MCP + dashboard together.
+
+## Phased sequence (each phase independently shippable and OFF by default)
+
+### Phase 4a: Card store engine (additive, unused)
+- Generalize the ITIL fold engine into a `CardStore` writing `cards/<id>/{core.json, events/*.jsonl}` with a `kind` discriminator. Fold produces a `Card` (the Phase 1 model).
+- Events: `create, move, claim, release, comment, label, link, priority, archive, reopen`.
+- Tests: fold determinism, concurrent per-writer merge, dedup ids. NOTHING reads it yet.
+
+### Phase 4b: Importer (additive, idempotent)
+- `import_legacy_to_cards()`: read coord Task files + agent-derived status + archive index + card_events overlay + ITIL records, and emit `create` + `move` + `archive` events per item. Idempotent (re-runnable; keyed by id).
+- Verify: import the live board into a scratch dir, count parity vs `get_task_views()`.
+
+### Phase 4c: Parallel-read parity (flagged, still OFF)
+- `KanbanBoard` gains a `source` switch: legacy projection vs `CardStore` fold.
+- A `coord parity` command diffs the two for every card (column, owner, archived) and reports mismatches. Run it for a real soak window (days) across .158 + .41 until zero drift.
+
+### Phase 4d: Write cutover behind a flag (reversible)
+- With `SKCOORD_CARD_STORE=1`, `coord create/claim/complete/move` and the `coord_*` MCP tools write `CardStore` events (adapters keep the exact same public signatures). With the flag OFF, behavior is unchanged.
+- Dual-write option during bake: write both stores, read from legacy, diff continuously.
+- Enable on one node first, watch, then the fleet.
+
+### Phase 4e: Retire legacy (final, only after a clean soak)
+- Flip the default flag ON. Move `tasks/*.json` + `agents/*.json` to a read-only `legacy/` archive. `BOARD.md` becomes a pure `render(fold(events))` projection. Delete the derived-status scan path.
+
+## Rollback
+At any phase before 4e: set `SKCOORD_CARD_STORE=0` and the legacy path is authoritative again. After 4e: restore `legacy/` and revert the flag default. The event log is append-only, so no history is ever lost.
+
+## Self-Review
+- This plan intentionally has no inline TDD code because it is shelved; when green-lit it should be re-expanded into bite-sized TDD tasks per the writing-plans skill, reusing the concrete engine in `itil.py` as the reference implementation.

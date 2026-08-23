@@ -2,7 +2,7 @@
 
 Covers:
   - Dynamic completion callbacks (complete_memory_tags, complete_agent_names,
-    complete_task_ids) — unit tests with tmp_path fixtures.
+    complete_task_ids) - unit tests with tmp_path fixtures.
   - CLI commands: skcapstone install-completion --help, completions --help,
     completions show, completions install (mocked), completions uninstall.
   - Graceful degradation: callbacks return [] when dirs are missing or files
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -22,12 +22,12 @@ from skcapstone.cli import main
 
 try:
     from skcapstone.completions import (
-        complete_memory_tags,
-        complete_agent_names,
-        complete_task_ids,
-        generate_script,
-        detect_shell,
         SUPPORTED_SHELLS,
+        complete_agent_names,
+        complete_memory_tags,
+        complete_task_ids,
+        detect_shell,
+        generate_script,
     )
 except ImportError:
     pytest.skip(
@@ -109,9 +109,7 @@ class TestCompleteMemoryTags:
         layer_dir = tmp_path / "memory" / "short-term"
         layer_dir.mkdir(parents=True)
         (layer_dir / "bad.json").write_text("not json{{", encoding="utf-8")
-        (layer_dir / "good.json").write_text(
-            json.dumps({"tags": ["valid"]}), encoding="utf-8"
-        )
+        (layer_dir / "good.json").write_text(json.dumps({"tags": ["valid"]}), encoding="utf-8")
 
         ctx, param = _make_ctx_param()
         values = {r.value for r in complete_memory_tags(ctx, param, "")}
@@ -122,9 +120,7 @@ class TestCompleteMemoryTags:
         for layer in ("short-term", "mid-term", "long-term"):
             d = tmp_path / "memory" / layer
             d.mkdir(parents=True)
-            (d / "m.json").write_text(
-                json.dumps({"tags": [f"tag-{layer}"]}), encoding="utf-8"
-            )
+            (d / "m.json").write_text(json.dumps({"tags": [f"tag-{layer}"]}), encoding="utf-8")
 
         ctx, param = _make_ctx_param()
         values = {r.value for r in complete_memory_tags(ctx, param, "")}
@@ -263,7 +259,7 @@ class TestDetectShell:
 
 
 # ---------------------------------------------------------------------------
-# CLI — install-completion command
+# CLI - install-completion command
 # ---------------------------------------------------------------------------
 
 
@@ -319,7 +315,7 @@ class TestInstallCompletionCommand:
 
 
 # ---------------------------------------------------------------------------
-# CLI — completions group
+# CLI - completions group
 # ---------------------------------------------------------------------------
 
 
@@ -357,9 +353,7 @@ class TestCompletionsGroup:
                 "script_path": "/tmp/skcapstone.bash-completion",
                 "rc_updated": False,
             }
-            result = self.runner.invoke(
-                main, ["completions", "install", "--shell", "bash"]
-            )
+            result = self.runner.invoke(main, ["completions", "install", "--shell", "bash"])
         assert result.exit_code == 0
         mock_install.assert_called_once_with(shell="bash")
 
@@ -391,8 +385,6 @@ class TestCompletionsGroup:
                 "removed": ["/home/user/.zfunc/_skcapstone"],
                 "note": "Source lines in RC files were not removed.",
             }
-            result = self.runner.invoke(
-                main, ["completions", "uninstall", "--shell", "zsh"]
-            )
+            result = self.runner.invoke(main, ["completions", "uninstall", "--shell", "zsh"])
         assert result.exit_code == 0
         assert "_skcapstone" in result.output

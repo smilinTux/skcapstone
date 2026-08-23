@@ -1,15 +1,17 @@
-"""Tests for ResponseCache — TTL, cache hit/miss, skip_cache wiring."""
+"""Tests for ResponseCache - TTL, cache hit/miss, skip_cache wiring."""
 
 from __future__ import annotations
 
-import time
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from skcapstone.blueprints.schema import ModelTier
-from skcapstone.response_cache import ResponseCache, _TTL_CODE, _TTL_FAST, _ttl_for_tier, hash_prompt
-
+from skcapstone.response_cache import (
+    _TTL_CODE,
+    _TTL_FAST,
+    ResponseCache,
+    _ttl_for_tier,
+    hash_prompt,
+)
 
 # ---------------------------------------------------------------------------
 # hash_prompt
@@ -66,7 +68,7 @@ class TestTtlForTier:
 
 
 # ---------------------------------------------------------------------------
-# ResponseCache — basic put/get
+# ResponseCache - basic put/get
 # ---------------------------------------------------------------------------
 
 
@@ -222,7 +224,7 @@ class TestResponseCacheStats:
 
 
 # ---------------------------------------------------------------------------
-# LLMBridge integration — cache wired into generate()
+# LLMBridge integration - cache wired into generate()
 # ---------------------------------------------------------------------------
 
 
@@ -247,13 +249,13 @@ class TestLLMBridgeCacheIntegration:
 
         # Pre-populate the cache
         ph = hash_prompt("system", "hello")
-        model = bridge._router.route(
-            TaskSignal(description="hello", tags=["simple"])
-        ).model_name
+        model = bridge._router.route(TaskSignal(description="hello", tags=["simple"])).model_name
         cache.put(ph, model, ModelTier.FAST, "cached answer")
 
         with patch.object(bridge, "_resolve_callback") as mock_cb:
-            result = bridge.generate("system", "hello", TaskSignal(description="hello", tags=["simple"]))
+            result = bridge.generate(
+                "system", "hello", TaskSignal(description="hello", tags=["simple"])
+            )
 
         mock_cb.assert_not_called()
         assert result == "cached answer"
@@ -269,7 +271,8 @@ class TestLLMBridgeCacheIntegration:
         with patch.object(bridge, "_resolve_callback", return_value=fake_callback):
             with patch.object(bridge, "_timed_call", return_value="live answer"):
                 result = bridge.generate(
-                    "system", "hello",
+                    "system",
+                    "hello",
                     TaskSignal(description="hello", tags=["simple"]),
                     skip_cache=True,
                 )
@@ -287,7 +290,8 @@ class TestLLMBridgeCacheIntegration:
         with patch.object(bridge, "_timed_call", return_value="fresh answer"):
             with patch.object(bridge, "_resolve_callback", return_value=MagicMock()):
                 bridge.generate(
-                    "system", "hello",
+                    "system",
+                    "hello",
                     TaskSignal(description="hello", tags=["simple"]),
                     skip_cache=False,
                 )

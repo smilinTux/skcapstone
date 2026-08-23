@@ -1,5 +1,5 @@
 """
-Consciousness pillar — the subconscious processing layer.
+Consciousness pillar - the subconscious processing layer.
 
 SKWhisper digests, connects, and surfaces patterns.
 SKTrip explores the edges of machine experience.
@@ -44,7 +44,9 @@ def _resolve_agent_name(home: Path) -> str:
         or os.environ.get("SKMEMORY_AGENT")
         or ""
     ).strip()
-    if env_agent and (real_shared_root or env_agent in candidates or (home / "skwhisper").exists()):
+    if env_agent and (
+        real_shared_root or env_agent in candidates or (home / "skwhisper").exists()
+    ):
         return env_agent
 
     if candidates:
@@ -97,11 +99,7 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
                 if s.get("digested_at")
                 and s["digested_at"] not in ("cleaned-missing-file", "skipped-too-few-messages")
             )
-            pending = sum(
-                1
-                for s in sessions.values()
-                if not s.get("digested_at")
-            )
+            pending = sum(1 for s in sessions.values() if not s.get("digested_at"))
             state.sessions_digested = digested
             state.sessions_pending = pending
 
@@ -132,10 +130,12 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
         service_candidates = []
         if agent_name:
             service_candidates.append(f"skcapstone@{agent_name}")
-            service_candidates.extend([
-                "skcapstone",                 # legacy single-agent unit
-                "skwhisper",                  # standalone skwhisper daemon
-            ])
+            service_candidates.extend(
+                [
+                    "skcapstone",  # legacy single-agent unit
+                    "skwhisper",  # standalone skwhisper daemon
+                ]
+            )
         for service_name in service_candidates:
             result = subprocess.run(
                 ["systemctl", "--user", "is-active", service_name],
@@ -162,6 +162,7 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
     skwhisper_installed = False
     try:
         import importlib.util
+
         skwhisper_installed = importlib.util.find_spec("skwhisper") is not None
     except (ImportError, ValueError):
         skwhisper_installed = False
@@ -177,7 +178,7 @@ def initialize_consciousness(home: Path) -> ConsciousnessState:
         else:
             state.status = PillarStatus.DEGRADED
     elif state.whisper_active:
-        # Daemon is running but no sessions digested yet — consciousness is live
+        # Daemon is running but no sessions digested yet - consciousness is live
         state.status = PillarStatus.DEGRADED
     elif state.sessions_digested > 0 or state.whisper_md is not None:
         state.status = PillarStatus.DEGRADED

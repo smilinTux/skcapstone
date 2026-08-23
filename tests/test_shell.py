@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 import yaml
 
 from skcapstone.shell import (
@@ -36,7 +35,12 @@ def _init_agent(home: Path, name: str = "shell-test") -> None:
     initialize_trust(home)
     initialize_security(home)
     initialize_sync(home)
-    manifest = {"name": name, "version": "0.1.0", "created_at": "2026-01-01T00:00:00Z", "connectors": []}
+    manifest = {
+        "name": name,
+        "version": "0.1.0",
+        "created_at": "2026-01-01T00:00:00Z",
+        "connectors": [],
+    }
     (home / "manifest.json").write_text(json.dumps(manifest))
     (home / "config").mkdir(exist_ok=True)
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": name}))
@@ -98,7 +102,9 @@ class TestCaptureCommand:
         """Capture auto-extracts and stores memories."""
         _init_agent(tmp_agent_home)
         with patch("skcapstone.shell._home", return_value=tmp_agent_home):
-            _handle_capture(["We", "decided", "to", "use", "Ed25519", "for", "all", "agent", "PGP", "keys"])
+            _handle_capture(
+                ["We", "decided", "to", "use", "Ed25519", "for", "all", "agent", "PGP", "keys"]
+            )
 
     def test_capture_empty(self, tmp_agent_home: Path):
         """Empty capture shows usage."""
@@ -157,6 +163,7 @@ class TestCoordCommand:
         """Coord status shows board info."""
         _init_agent(tmp_agent_home)
         from skcapstone.coordination import Board, Task
+
         board = Board(tmp_agent_home)
         board.ensure_dirs()
         board.create_task(Task(title="Shell test task"))
@@ -169,6 +176,7 @@ class TestCoordCommand:
         """Coord create makes a new task."""
         _init_agent(tmp_agent_home)
         from skcapstone.coordination import Board
+
         Board(tmp_agent_home).ensure_dirs()
 
         with patch("skcapstone.shell._home", return_value=tmp_agent_home):
@@ -198,6 +206,7 @@ class TestHelpCommand:
     def test_help_shows_all_commands(self):
         """Help output mentions key commands."""
         import io
+
         from rich.console import Console as TestConsole
 
         buf = io.StringIO()
@@ -206,5 +215,15 @@ class TestHelpCommand:
             _handle_help()
 
         output = buf.getvalue()
-        for keyword in ["status", "memory", "capture", "context", "trust", "coord", "sync", "help", "exit"]:
+        for keyword in [
+            "status",
+            "memory",
+            "capture",
+            "context",
+            "trust",
+            "coord",
+            "sync",
+            "help",
+            "exit",
+        ]:
             assert keyword in output, f"Help missing '{keyword}'"

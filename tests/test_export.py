@@ -13,9 +13,8 @@ from skcapstone.export import (
     export_bundle,
     import_bundle,
 )
-from skcapstone.memory_engine import list_memories, store as memory_store
-from skcapstone.models import MemoryLayer
-
+from skcapstone.memory_engine import list_memories
+from skcapstone.memory_engine import store as memory_store
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -70,10 +69,16 @@ def populated_home(agent_home: Path) -> Path:
     conv_dir = agent_home / "conversations"
     conv_dir.mkdir()
     (conv_dir / "peer-alice.json").write_text(
-        json.dumps([
-            {"role": "user", "content": "Hello", "timestamp": "2026-03-01T10:00:00+00:00"},
-            {"role": "assistant", "content": "Hi there!", "timestamp": "2026-03-01T10:00:01+00:00"},
-        ]),
+        json.dumps(
+            [
+                {"role": "user", "content": "Hello", "timestamp": "2026-03-01T10:00:00+00:00"},
+                {
+                    "role": "assistant",
+                    "content": "Hi there!",
+                    "timestamp": "2026-03-01T10:00:01+00:00",
+                },
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -93,8 +98,17 @@ class TestExportBundle:
         bundle = export_bundle(populated_home)
 
         assert isinstance(bundle, dict)
-        for key in ("bundle_version", "exported_at", "agent_name", "skcapstone_version",
-                    "identity", "config", "soul", "memories", "conversations"):
+        for key in (
+            "bundle_version",
+            "exported_at",
+            "agent_name",
+            "skcapstone_version",
+            "identity",
+            "config",
+            "soul",
+            "memories",
+            "conversations",
+        ):
             assert key in bundle, f"Missing key: {key}"
 
     def test_bundle_version_is_correct(self, agent_home: Path):
@@ -203,7 +217,7 @@ class TestImportBundleMemories:
     def test_import_preserves_existing_memories(self, populated_home: Path):
         """Import should not overwrite memories already in the target."""
         # Pre-store a memory in the target
-        pre_entry = memory_store(populated_home, "Pre-existing memory")
+        memory_store(populated_home, "Pre-existing memory")
 
         # Export from a second home
         source = populated_home.parent / "source"
@@ -365,6 +379,7 @@ class TestExportCLI:
     def test_export_command_stdout(self, populated_home: Path):
         """skcapstone export should write valid JSON to stdout."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         runner = CliRunner()
@@ -377,6 +392,7 @@ class TestExportCLI:
     def test_export_command_to_file(self, populated_home: Path, tmp_path: Path):
         """skcapstone export --output should write a JSON file."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         out_file = tmp_path / "bundle.json"
@@ -393,6 +409,7 @@ class TestExportCLI:
     def test_import_command(self, populated_home: Path, tmp_path: Path):
         """skcapstone import should restore memories from a bundle file."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         # Export first
@@ -419,6 +436,7 @@ class TestExportCLI:
     def test_export_nonexistent_home_fails(self, tmp_path: Path):
         """export from a non-existent home should exit with error."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         runner = CliRunner()
@@ -431,6 +449,7 @@ class TestExportCLI:
     def test_import_nonexistent_bundle_fails(self, agent_home: Path):
         """import from a missing file should exit with error."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         runner = CliRunner()

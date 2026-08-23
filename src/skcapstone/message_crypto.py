@@ -1,5 +1,5 @@
 """
-SKChat message encryption — AES-256-GCM content encryption.
+SKChat message encryption - AES-256-GCM content encryption.
 
 Provides encrypt/decrypt for chat message content with a key derived
 from the agent's KMS service key (label: 'skchat').
@@ -40,6 +40,7 @@ _VERSION = 1
 # ---------------------------------------------------------------------------
 # Low-level AES-256-GCM primitives (no KMS dependency)
 # ---------------------------------------------------------------------------
+
 
 def encrypt_message(plaintext: str, key: bytes) -> str:
     """Encrypt a plaintext string with AES-256-GCM.
@@ -87,7 +88,7 @@ def decrypt_message(token: str, key: bytes) -> str:
 
     raw = base64.b64decode(token)
     if len(raw) < 12:
-        raise ValueError("Ciphertext too short — must be at least 12 bytes (nonce)")
+        raise ValueError("Ciphertext too short - must be at least 12 bytes (nonce)")
 
     nonce, ct = raw[:12], raw[12:]
     aesgcm = AESGCM(key)
@@ -98,6 +99,7 @@ def decrypt_message(token: str, key: bytes) -> str:
 # Envelope helpers
 # ---------------------------------------------------------------------------
 
+
 def pack_encrypted(ciphertext_b64: str) -> str:
     """Wrap a base64 ciphertext in the skchat_encrypted JSON envelope.
 
@@ -107,11 +109,13 @@ def pack_encrypted(ciphertext_b64: str) -> str:
     Returns:
         JSON string with the skchat_encrypted envelope.
     """
-    return json.dumps({
-        _MARKER: True,
-        "v": _VERSION,
-        "ciphertext": ciphertext_b64,
-    })
+    return json.dumps(
+        {
+            _MARKER: True,
+            "v": _VERSION,
+            "ciphertext": ciphertext_b64,
+        }
+    )
 
 
 def unpack_encrypted(content: str) -> Optional[str]:
@@ -148,6 +152,7 @@ def is_encrypted_content(content: str) -> bool:
 # KMS-backed key derivation
 # ---------------------------------------------------------------------------
 
+
 def derive_chat_key(home: Path) -> bytes:
     """Derive the skchat service key from the agent's KMS.
 
@@ -178,6 +183,7 @@ def derive_chat_key(home: Path) -> bytes:
 # ---------------------------------------------------------------------------
 # Convenience API (KMS-aware)
 # ---------------------------------------------------------------------------
+
 
 def encrypt_content(plaintext: str, home: Path) -> str:
     """Encrypt message content using the agent's KMS-derived skchat key.

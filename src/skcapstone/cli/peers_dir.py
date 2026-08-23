@@ -6,10 +6,9 @@ import json
 from pathlib import Path
 
 import click
+from rich.table import Table
 
 from ._common import AGENT_HOME, console
-
-from rich.table import Table
 
 
 def register_peers_dir_commands(main: click.Group) -> None:
@@ -17,7 +16,7 @@ def register_peers_dir_commands(main: click.Group) -> None:
 
     @main.group("peers")
     def peers_dir():
-        """Peer transport directory — routing addresses for the mesh.
+        """Peer transport directory - routing addresses for the mesh.
 
         SKComms transport endpoints. For identity/trust peers, see 'peer'."""
 
@@ -38,7 +37,9 @@ def register_peers_dir_commands(main: click.Group) -> None:
         console.print()
         if not peers:
             console.print("  [dim]No peers in directory.[/]")
-            console.print("  Add one: skcapstone peers add --name lumina --address /path/to/outbox/lumina")
+            console.print(
+                "  Add one: skcapstone peers add --name lumina --address /path/to/outbox/lumina"
+            )
             console.print("  Or auto-discover: skcapstone peers discover")
             console.print()
             return
@@ -120,5 +121,5 @@ def register_peers_dir_commands(main: click.Group) -> None:
         else:
             console.print(f"  [green]Discovered {len(added)} new peer(s):[/]")
             for entry in added:
-                console.print(f"    [cyan]{entry.name}[/] — {entry.transport} → {entry.address}")
+                console.print(f"    [cyan]{entry.name}[/] - {entry.transport} → {entry.address}")
         console.print()

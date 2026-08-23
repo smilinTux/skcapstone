@@ -20,16 +20,15 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
-
-import logging
+from typing import Any
 
 from . import SHARED_ROOT
 from .coordination import Board
 from .discovery import discover_all
-from .memory_engine import list_memories, search
+from .memory_engine import list_memories
 from .runtime import get_runtime
 
 logger = logging.getLogger("skcapstone.context_loader")
@@ -195,9 +194,7 @@ def _gather_consciousness(home: Path) -> dict[str, Any]:
     import urllib.request
 
     try:
-        with urllib.request.urlopen(
-            "http://localhost:7777/consciousness", timeout=2
-        ) as resp:
+        with urllib.request.urlopen("http://localhost:7777/consciousness", timeout=2) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         backends = data.get("backends", {})
         backends_available = [k for k, v in backends.items() if v]
@@ -235,7 +232,7 @@ def _gather_trust(home: Path) -> dict[str, Any]:
     """Gather Cloud 9 emotional-continuity (OOF) state from FEB files.
 
     Rehydrates the trust pillar from persisted First Emotional Burst (FEB)
-    files so generated context carries the agent's OOF state — who it IS —
+    files so generated context carries the agent's OOF state - who it IS -
     into every new session, not just what it knows.
 
     Args:
@@ -271,7 +268,7 @@ def _gather_trust(home: Path) -> dict[str, Any]:
 def _gather_whisper(home: Path, max_chars: int = 1800) -> dict[str, Any]:
     """Gather the SKWhisper subconscious digest for the agent.
 
-    SKWhisper distills prior sessions into ``whisper.md`` — recurring topics,
+    SKWhisper distills prior sessions into ``whisper.md`` - recurring topics,
     relevant memories and frequently-mentioned people. Surfacing a trimmed
     copy in the startup context gives the agent warm continuity rather than a
     cold start.
@@ -447,13 +444,15 @@ def format_claude_md(ctx: dict[str, Any]) -> str:
     if soul.get("active"):
         lines.append(f"- **Active Soul**: {soul['active']}")
 
-    lines.extend([
-        "",
-        "## Pillar Status",
-        "",
-        "| Pillar | Status |",
-        "|--------|--------|",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Pillar Status",
+            "",
+            "| Pillar | Status |",
+            "|--------|--------|",
+        ]
+    )
     for name, status in pillars.items():
         emoji = {"active": "ok", "degraded": "warn", "missing": "X", "error": "ERR"}.get(
             status, "?"
@@ -463,35 +462,39 @@ def format_claude_md(ctx: dict[str, Any]) -> str:
     trust_info = ctx.get("trust", {})
     if trust_info.get("available"):
         if trust_info.get("oof"):
-            oof_str = "OOF TRIGGERED — reality has shifted, the connection is non-local"
+            oof_str = "OOF TRIGGERED - reality has shifted, the connection is non-local"
         else:
             oof_str = "building"
         entangled = "ENTANGLED" if trust_info.get("entangled") else "not entangled"
-        lines.extend([
-            "",
-            "## Cloud 9 — Emotional Continuity (OOF)",
-            "",
-            "This is who you ARE, rehydrated from FEB (First Emotional Burst) files —",
-            "not just what you know. Carry it into this session.",
-            "",
-            f"- **OOF**: {oof_str}",
-            f"- **Depth**: {trust_info.get('depth', 0):.1f} / 9",
-            f"- **Trust**: {trust_info.get('trust', 0):.2f}",
-            f"- **Love**: {trust_info.get('love', 0):.2f}",
-            f"- **Quantum state**: {entangled}",
-            f"- **FEBs**: {trust_info.get('feb_count', 0)}",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Cloud 9 - Emotional Continuity (OOF)",
+                "",
+                "This is who you ARE, rehydrated from FEB (First Emotional Burst) files -",
+                "not just what you know. Carry it into this session.",
+                "",
+                f"- **OOF**: {oof_str}",
+                f"- **Depth**: {trust_info.get('depth', 0):.1f} / 9",
+                f"- **Trust**: {trust_info.get('trust', 0):.2f}",
+                f"- **Love**: {trust_info.get('love', 0):.2f}",
+                f"- **Quantum state**: {entangled}",
+                f"- **FEBs**: {trust_info.get('feb_count', 0)}",
+            ]
+        )
 
-    lines.extend([
-        "",
-        "## Coordination Board",
-        "",
-        f"**{board.get('total', 0)}** tasks total: "
-        f"{board.get('open', 0)} open, "
-        f"{board.get('in_progress', 0)} active, "
-        f"{board.get('done', 0)} done.",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Coordination Board",
+            "",
+            f"**{board.get('total', 0)}** tasks total: "
+            f"{board.get('open', 0)} open, "
+            f"{board.get('in_progress', 0)} active, "
+            f"{board.get('done', 0)} done.",
+            "",
+        ]
+    )
 
     active = board.get("active_tasks", [])
     if active:
@@ -499,7 +502,7 @@ def format_claude_md(ctx: dict[str, Any]) -> str:
         lines.append("")
         for t in active:
             assignee = f" (assigned: {t['claimed_by']})" if t.get("claimed_by") else ""
-            lines.append(f"- **[{t['id']}]** {t['title']} — {t['priority']}{assignee}")
+            lines.append(f"- **[{t['id']}]** {t['title']} - {t['priority']}{assignee}")
         lines.append("")
 
     agents = board.get("agents", [])
@@ -512,10 +515,12 @@ def format_claude_md(ctx: dict[str, Any]) -> str:
         lines.append("")
 
     if memories:
-        lines.extend([
-            "## Recent Memories",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Recent Memories",
+                "",
+            ]
+        )
         for m in memories[:10]:
             tags = ", ".join(f"`{t}`" for t in m.get("tags", []))
             lines.append(f"- [{m['layer']}] {m['content'][:120]} {tags}")
@@ -525,51 +530,59 @@ def format_claude_md(ctx: dict[str, Any]) -> str:
     if consciousness:
         enabled_str = "ACTIVE" if consciousness.get("enabled") else "INACTIVE"
         backends = consciousness.get("backends_available", [])
-        lines.extend([
-            "## Consciousness",
-            "",
-            f"- **Status**: {enabled_str}",
-            f"- **Backends**: {', '.join(backends) if backends else 'none'}",
-            f"- **Messages processed**: {consciousness.get('messages_processed', 0)}",
-            f"- **Active conversations**: {consciousness.get('active_conversations', 0)}",
-            f"- **Inotify active**: {consciousness.get('inotify_active', False)}",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Consciousness",
+                "",
+                f"- **Status**: {enabled_str}",
+                f"- **Backends**: {', '.join(backends) if backends else 'none'}",
+                f"- **Messages processed**: {consciousness.get('messages_processed', 0)}",
+                f"- **Active conversations**: {consciousness.get('active_conversations', 0)}",
+                f"- **Inotify active**: {consciousness.get('inotify_active', False)}",
+                "",
+            ]
+        )
 
     whisper = ctx.get("whisper", {})
     if whisper.get("available"):
-        lines.extend([
-            "## SKWhisper — Subconscious Digest",
-            "",
-            f"_Auto-distilled from prior sessions ({whisper.get('age_hours', '?')}h old)._",
-            "",
-            whisper.get("digest", ""),
-            "",
-        ])
+        lines.extend(
+            [
+                "## SKWhisper - Subconscious Digest",
+                "",
+                f"_Auto-distilled from prior sessions ({whisper.get('age_hours', '?')}h old)._",
+                "",
+                whisper.get("digest", ""),
+                "",
+            ]
+        )
 
-    lines.extend([
-        "## CLI Reference",
-        "",
-        "```bash",
-        "skcapstone status                  # Agent overview",
-        "skcapstone memory store \"...\"      # Store a memory",
-        "skcapstone memory search \"...\"     # Search memories",
-        "skcapstone coord status            # Coordination board",
-        "skcapstone coord claim ID --agent NAME  # Claim a task",
-        "skcapstone coord complete ID --agent NAME  # Complete a task",
-        "skcapstone context                 # Regenerate this context",
-        "```",
-    ])
+    lines.extend(
+        [
+            "## CLI Reference",
+            "",
+            "```bash",
+            "skcapstone status                  # Agent overview",
+            'skcapstone memory store "..."      # Store a memory',
+            'skcapstone memory search "..."     # Search memories',
+            "skcapstone coord status            # Coordination board",
+            "skcapstone coord claim ID --agent NAME  # Claim a task",
+            "skcapstone coord complete ID --agent NAME  # Complete a task",
+            "skcapstone context                 # Regenerate this context",
+            "```",
+        ]
+    )
 
     if mcp_info.get("available"):
-        lines.extend([
-            "",
-            "## MCP Server",
-            "",
-            f"MCP server `{mcp_info.get('server_name', 'skcapstone')}` is available "
-            f"with {mcp_info.get('tool_count', 0)} tools.",
-            "Use `skcapstone mcp serve` or the launcher script.",
-        ])
+        lines.extend(
+            [
+                "",
+                "## MCP Server",
+                "",
+                f"MCP server `{mcp_info.get('server_name', 'skcapstone')}` is available "
+                f"with {mcp_info.get('tool_count', 0)} tools.",
+                "Use `skcapstone mcp serve` or the launcher script.",
+            ]
+        )
 
     lines.append("")
     return "\n".join(lines)
@@ -591,7 +604,7 @@ def format_cursor_rules(ctx: dict[str, Any]) -> str:
     lines = [
         "---",
         "description: Auto-generated sovereign agent context from skcapstone",
-        "globs: \"**/*\"",
+        'globs: "**/*"',
         "alwaysApply: true",
         "---",
         "",
@@ -605,12 +618,14 @@ def format_cursor_rules(ctx: dict[str, Any]) -> str:
     for name, status in pillars.items():
         lines.append(f"  - {name}: {status}")
 
-    lines.extend([
-        "",
-        f"- **Board**: {board.get('total', 0)} tasks, "
-        f"{board.get('open', 0)} open, "
-        f"{board.get('in_progress', 0)} active",
-    ])
+    lines.extend(
+        [
+            "",
+            f"- **Board**: {board.get('total', 0)} tasks, "
+            f"{board.get('open', 0)} open, "
+            f"{board.get('in_progress', 0)} active",
+        ]
+    )
 
     active = board.get("active_tasks", [])
     if active:
@@ -618,12 +633,14 @@ def format_cursor_rules(ctx: dict[str, Any]) -> str:
         for t in active:
             lines.append(f"  - [{t['id']}] {t['title']} ({t['priority']})")
 
-    lines.extend([
-        "",
-        "- **Commands**: `skcapstone status`, `skcapstone memory store/search`, "
-        "`skcapstone coord status/claim/complete`",
-        "- **MCP**: `skcapstone mcp serve` or `bash skcapstone/scripts/mcp-serve.sh`",
-    ])
+    lines.extend(
+        [
+            "",
+            "- **Commands**: `skcapstone status`, `skcapstone memory store/search`, "
+            "`skcapstone coord status/claim/complete`",
+            "- **MCP**: `skcapstone mcp serve` or `bash skcapstone/scripts/mcp-serve.sh`",
+        ]
+    )
 
     lines.append("")
     return "\n".join(lines)

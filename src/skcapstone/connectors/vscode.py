@@ -1,5 +1,5 @@
 """
-VSCodeConnector — sovereign agent viewport into Visual Studio Code.
+VSCodeConnector - sovereign agent viewport into Visual Studio Code.
 
 Communicates with the SKCapstone VS Code extension via a Unix domain socket
 at ``~/.skcapstone/connectors/vscode.sock``.
@@ -44,7 +44,7 @@ class VSCodeConnector(UnixSocketConnector):
     def __init__(self, socket_path: Optional[Path] = None) -> None:
         super().__init__(socket_path or _DEFAULT_SOCKET_PATH)
 
-    # health_check is inherited — returns UNAVAILABLE only if _connected is False
+    # health_check is inherited - returns UNAVAILABLE only if _connected is False
     # and no error; override to surface UNAVAILABLE while socket dir is absent
     # so that registry.probe() can distinguish "never started" from "disconnected".
 

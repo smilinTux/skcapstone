@@ -1,15 +1,18 @@
 """
-tests/test_e2e_automated.py — Automated multi-agent E2E test via subprocess.
+tests/test_e2e_automated.py - Automated multi-agent E2E test via subprocess.
 
 Starts the real skcapstone daemon, injects a message into the inbox,
 and verifies that a response appears within the timeout window.
 
-Marks are applied so the test is automatically skipped in unit-test
-environments where the CLI is not installed or system requirements
-are not met.
+These tests require a live estate: they start the real daemon against the
+real agent home (~/.skcapstone), inject a message into the live inbox, and
+wait for the consciousness loop (LLM backend) to answer. They also conflict
+with any already-running daemon (the CLI refuses a second instance against
+the same home). They are therefore skipped by default and must be opted in
+explicitly.
 
 Run manually:
-    pytest tests/test_e2e_automated.py -v -s --timeout=360
+    SKCAPSTONE_E2E=1 pytest tests/test_e2e_automated.py -v -s --timeout=360
 """
 
 from __future__ import annotations
@@ -19,7 +22,6 @@ import os
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -33,7 +35,14 @@ import pytest
 pytestmark = [
     pytest.mark.skipif(
         not shutil.which("skcapstone"),
-        reason="skcapstone CLI not installed — skipping live E2E",
+        reason="skcapstone CLI not installed - skipping live E2E",
+    ),
+    pytest.mark.skipif(
+        os.environ.get("SKCAPSTONE_E2E") != "1",
+        reason=(
+            "live E2E disabled by default: requires a live estate, starts the "
+            "real daemon, and mutates the real agent home - set SKCAPSTONE_E2E=1 to opt in"
+        ),
     ),
     pytest.mark.e2e,
 ]
@@ -64,7 +73,7 @@ def _write_test_message(inbox_dir: Path, peer: str) -> tuple[Path, str]:
         "sender": peer,
         "recipient": "Opus",
         "payload": {
-            "content": f"Ping test — automated pytest E2E at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
+            "content": f"Ping test - automated pytest E2E at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",  # noqa: E501
             "content_type": "text",
         },
         "message_id": msg_id,
@@ -149,21 +158,18 @@ def daemon_process():
     )
     os.close(log_fd)
 
-    print(f"\n  [e2e] Daemon started (PID {proc.pid}) — log: {log_path}")
+    print(f"\n  [e2e] Daemon started (PID {proc.pid}) - log: {log_path}")
     print(f"  [e2e] Waiting {STARTUP_WAIT}s for startup…")
     time.sleep(STARTUP_WAIT)
 
     if proc.poll() is not None:
         with open(log_path) as fh:
             tail = fh.read()[-2000:]
-        pytest.fail(
-            f"Daemon exited prematurely (rc={proc.returncode}).\n"
-            f"Log tail:\n{tail}"
-        )
+        pytest.fail(f"Daemon exited prematurely (rc={proc.returncode}).\n" f"Log tail:\n{tail}")
 
     yield proc, log_path
 
-    # Teardown — send SIGTERM to the whole process group
+    # Teardown - send SIGTERM to the whole process group
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     except ProcessLookupError:
@@ -193,8 +199,8 @@ class TestDaemonStartup:
 
     def test_consciousness_endpoint_responds(self, daemon_process):
         """GET /consciousness must return valid JSON."""
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         url = f"http://127.0.0.1:{DAEMON_PORT}/consciousness"
         try:
@@ -270,7 +276,7 @@ class TestMessageRoundTrip:
         must exist and contain valid JSON with the peer's conversation history.
         """
         inbox_dir = AGENT_HOME / "sync" / "comms" / "inbox" / PEER
-        outbox_dir = AGENT_HOME / "sync" / "comms" / "outbox" / PEER
+        AGENT_HOME / "sync" / "comms" / "outbox" / PEER
         conv_file = AGENT_HOME / "conversations" / f"{PEER}.json"
 
         msg_path, msg_id = _write_test_message(inbox_dir, PEER)
@@ -284,12 +290,8 @@ class TestMessageRoundTrip:
                 break
             time.sleep(2)
 
-        assert conv_file.exists(), (
-            f"conversations/{PEER}.json not found after {POLL_TIMEOUT}s"
-        )
+        assert conv_file.exists(), f"conversations/{PEER}.json not found after {POLL_TIMEOUT}s"
 
         content = conv_file.read_text()
         data = json.loads(content)  # raises if invalid JSON
-        assert isinstance(data, (dict, list)), (
-            f"Unexpected conversations format: {content[:200]}"
-        )
+        assert isinstance(data, (dict, list)), f"Unexpected conversations format: {content[:200]}"

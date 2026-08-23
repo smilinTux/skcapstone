@@ -7,10 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-from skcapstone.tokens import (
-    Capability,
-    SignedToken,
+from capauth.tokens import (
     TokenPayload,
     TokenType,
     export_token,

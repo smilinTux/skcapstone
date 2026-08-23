@@ -1,0 +1,48 @@
+# Proactive Trigger Daemon (OPTIONAL, standalone) - INERT TEMPLATE.
+#
+# This unit is a template only. It is NOT installed or enabled by
+# scripts/install.sh. Do NOT `systemctl enable` it blindly.
+#
+# In most deployments you do NOT want this: the main `skcapstone.service`
+# daemon already owns a scheduler tick, and the trigger engine is meant to
+# ride it via skcapstone.triggers.register_with_scheduler(). Run this
+# standalone unit ONLY if you want a triggers-only service on a host that is
+# not running the full daemon.
+#
+# To use:
+#   1. Write your rules to  ~/.skcapstone/config/triggers.yaml
+#      (copy from config/triggers.yaml.example).
+#   2. For desktop popups, set SKCAPSTONE_DESKTOP_NOTIFY=1 below.
+#   3. Install as a user unit:
+#        cp systemd/skcapstone-triggers.service ~/.config/systemd/user/
+#        systemctl --user daemon-reload
+#        systemctl --user enable --now skcapstone-triggers
+#
+# The runner reuses the framework TaskScheduler (no bespoke loop) and evaluates
+# rules against a read-only host-metrics snapshot every 30s.
+
+[Unit]
+Description=SKCapstone Proactive Trigger Daemon (standalone, optional)
+Documentation=https://github.com/smilinTux/skcapstone
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.skenv/bin/python -m skcapstone.triggers
+Restart=on-failure
+RestartSec=10
+Nice=15
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
+# Desktop popups are opt-in - uncomment to let the `notify` action reach the tray:
+# Environment=SKCAPSTONE_DESKTOP_NOTIFY=1
+
+[Install]
+WantedBy=default.target

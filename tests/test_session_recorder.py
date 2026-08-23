@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # SessionRecorder
 # ---------------------------------------------------------------------------
@@ -133,6 +132,7 @@ class TestSessionHelpers:
 
     def test_list_sessions_newest_first(self, tmp_agent_home: Path) -> None:
         import time
+
         from skcapstone.session_recorder import SessionRecorder, list_sessions
 
         recs = []
@@ -150,7 +150,7 @@ class TestSessionHelpers:
 
 
 # ---------------------------------------------------------------------------
-# SessionReplayer — dry-run
+# SessionReplayer - dry-run
 # ---------------------------------------------------------------------------
 
 
@@ -164,10 +164,25 @@ class TestSessionReplayerDryRun:
         from skcapstone.session_replayer import SessionReplayer
 
         f = tmp_path / "s.jsonl"
-        self._write_session(f, [
-            {"ts": "t", "tool": "agent_status", "arguments": {}, "result": [], "duration_ms": 5},
-            {"ts": "t", "tool": "coord_status", "arguments": {}, "result": [], "duration_ms": 3},
-        ])
+        self._write_session(
+            f,
+            [
+                {
+                    "ts": "t",
+                    "tool": "agent_status",
+                    "arguments": {},
+                    "result": [],
+                    "duration_ms": 5,
+                },
+                {
+                    "ts": "t",
+                    "tool": "coord_status",
+                    "arguments": {},
+                    "result": [],
+                    "duration_ms": 3,
+                },
+            ],
+        )
 
         replayer = SessionReplayer(f, dry_run=True)
         results = list(replayer.replay())
@@ -179,9 +194,18 @@ class TestSessionReplayerDryRun:
         from skcapstone.session_replayer import SessionReplayer
 
         f = tmp_path / "s.jsonl"
-        self._write_session(f, [
-            {"ts": "t", "tool": "agent_status", "arguments": {}, "result": [], "duration_ms": 5},
-        ])
+        self._write_session(
+            f,
+            [
+                {
+                    "ts": "t",
+                    "tool": "agent_status",
+                    "arguments": {},
+                    "result": [],
+                    "duration_ms": 5,
+                },
+            ],
+        )
 
         replayer = SessionReplayer(f, dry_run=True)
         results = list(replayer.replay())
@@ -205,10 +229,18 @@ class TestSessionReplayerDryRun:
 
         args = {"content": "test memory", "tags": ["debug"]}
         f = tmp_path / "s.jsonl"
-        self._write_session(f, [
-            {"ts": "t", "tool": "memory_store", "arguments": args,
-             "result": [{"type": "text", "text": "{}"}], "duration_ms": 10},
-        ])
+        self._write_session(
+            f,
+            [
+                {
+                    "ts": "t",
+                    "tool": "memory_store",
+                    "arguments": args,
+                    "result": [{"type": "text", "text": "{}"}],
+                    "duration_ms": 10,
+                },
+            ],
+        )
 
         results = list(SessionReplayer(f, dry_run=True).replay())
         assert results[0].arguments == args
@@ -227,10 +259,16 @@ class TestMockMCPServer:
         f = tmp_path / "s.jsonl"
         result_data = [{"type": "text", "text": '{"status": "ok"}'}]
         f.write_text(
-            json.dumps({
-                "ts": "t", "tool": "agent_status", "arguments": {},
-                "result": result_data, "duration_ms": 5,
-            }) + "\n"
+            json.dumps(
+                {
+                    "ts": "t",
+                    "tool": "agent_status",
+                    "arguments": {},
+                    "result": result_data,
+                    "duration_ms": 5,
+                }
+            )
+            + "\n"
         )
 
         mock = MockMCPServer(f)
@@ -242,10 +280,16 @@ class TestMockMCPServer:
 
         f = tmp_path / "s.jsonl"
         f.write_text(
-            json.dumps({
-                "ts": "t", "tool": "memory_store", "arguments": {},
-                "result": [], "duration_ms": 1,
-            }) + "\n"
+            json.dumps(
+                {
+                    "ts": "t",
+                    "tool": "memory_store",
+                    "arguments": {},
+                    "result": [],
+                    "duration_ms": 1,
+                }
+            )
+            + "\n"
         )
 
         mock = MockMCPServer(f)
@@ -257,10 +301,22 @@ class TestMockMCPServer:
 
         f = tmp_path / "s.jsonl"
         lines = [
-            {"ts": "t", "tool": "tool_a", "arguments": {}, "result": [{"t": "a"}], "duration_ms": 1},
-            {"ts": "t", "tool": "tool_b", "arguments": {}, "result": [{"t": "b"}], "duration_ms": 2},
+            {
+                "ts": "t",
+                "tool": "tool_a",
+                "arguments": {},
+                "result": [{"t": "a"}],
+                "duration_ms": 1,
+            },
+            {
+                "ts": "t",
+                "tool": "tool_b",
+                "arguments": {},
+                "result": [{"t": "b"}],
+                "duration_ms": 2,
+            },
         ]
-        f.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+        f.write_text("\n".join(json.dumps(ln) for ln in lines) + "\n")
 
         mock = MockMCPServer(f)
         r1 = mock.call("tool_a", {})
@@ -279,6 +335,7 @@ class TestCLIRecordCommands:
         self, tmp_agent_home: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         monkeypatch.setenv("SKCAPSTONE_ROOT", str(tmp_agent_home.parent))
@@ -291,6 +348,7 @@ class TestCLIRecordCommands:
         self, tmp_agent_home: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from click.testing import CliRunner
+
         from skcapstone.cli import main
         from skcapstone.session_recorder import SessionRecorder
 
@@ -307,18 +365,23 @@ class TestCLIRecordCommands:
         self, tmp_agent_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import json as _json
+
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         f = tmp_path / "test_session.jsonl"
         f.write_text(
-            _json.dumps({
-                "ts": "2026-01-01T00:00:00+00:00",
-                "tool": "agent_status",
-                "arguments": {},
-                "result": [],
-                "duration_ms": 3,
-            }) + "\n"
+            _json.dumps(
+                {
+                    "ts": "2026-01-01T00:00:00+00:00",
+                    "tool": "agent_status",
+                    "arguments": {},
+                    "result": [],
+                    "duration_ms": 3,
+                }
+            )
+            + "\n"
         )
 
         runner = CliRunner()
@@ -330,29 +393,31 @@ class TestCLIRecordCommands:
         assert "agent_status" in result.output
         assert "SKIP" in result.output or "dry" in result.output.lower()
 
-    def test_replay_json_format(
-        self, tmp_agent_home: Path, tmp_path: Path
-    ) -> None:
+    def test_replay_json_format(self, tmp_agent_home: Path, tmp_path: Path) -> None:
         import json as _json
+
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         f = tmp_path / "test_session.jsonl"
         f.write_text(
-            _json.dumps({
-                "ts": "2026-01-01T00:00:00+00:00",
-                "tool": "coord_status",
-                "arguments": {},
-                "result": [{"type": "text", "text": "{}"}],
-                "duration_ms": 7,
-            }) + "\n"
+            _json.dumps(
+                {
+                    "ts": "2026-01-01T00:00:00+00:00",
+                    "tool": "coord_status",
+                    "arguments": {},
+                    "result": [{"type": "text", "text": "{}"}],
+                    "duration_ms": 7,
+                }
+            )
+            + "\n"
         )
 
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["replay", str(f), "--dry-run", "--format", "json",
-             "--home", str(tmp_agent_home)],
+            ["replay", str(f), "--dry-run", "--format", "json", "--home", str(tmp_agent_home)],
         )
         assert result.exit_code == 0
         rows = _json.loads(result.output)

@@ -1,15 +1,15 @@
 """SKComms notification and status tools.
 
 Exposes two tools:
-    comm_notify — Send a notification via SKComms transports
-    comm_status — Show SKComms subsystem status
+    comm_notify - Send a notification via SKComms transports
+    comm_status - Show SKComms subsystem status
 """
 
 from __future__ import annotations
 
 from mcp.types import TextContent, Tool
 
-from ._helpers import _error_response, _home, _json_response
+from ._helpers import _error_response, _json_response
 
 TOOLS: list[Tool] = [
     Tool(
@@ -67,19 +67,23 @@ async def _handle_comm_notify(args: dict) -> list[TextContent]:
 
         comm = SKComms.from_config()
         report = comm.send(recipient, message)
-        return _json_response({
-            "sent": report.success,
-            "recipient": recipient,
-            "urgency": args.get("urgency", "normal"),
-            "attempts": [
-                {
-                    "transport": a.transport_name,
-                    "success": a.success,
-                    "error": a.error,
-                }
-                for a in report.attempts
-            ],
-        })
+        return _json_response(
+            {
+                "sent": report.delivered,
+                "confirmed": report.confirmed,
+                "transport": report.successful_transport,
+                "recipient": recipient,
+                "urgency": args.get("urgency", "normal"),
+                "attempts": [
+                    {
+                        "transport": a.transport_name,
+                        "success": a.success,
+                        "error": a.error,
+                    }
+                    for a in report.attempts
+                ],
+            }
+        )
     except ImportError:
         return _error_response("SKComms not installed. Run: pip install skcomms")
     except Exception as exc:
@@ -104,9 +108,7 @@ async def _handle_comm_status(_args: dict) -> list[TextContent]:
         from skcomms.core import SKComms  # type: ignore[import]
 
         comm = SKComms.from_config()
-        result["transports"] = [
-            t.name for t in getattr(comm, "transports", [])
-        ]
+        result["transports"] = [t.name for t in getattr(comm, "transports", [])]
         result["connected"] = True
     except Exception as exc:
         result["transports"] = []

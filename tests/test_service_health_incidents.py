@@ -1,4 +1,5 @@
-"""service_health incident behavior — no recurring-note churn (prb-7810b08e)."""
+"""service_health incident behavior - no recurring-note churn (prb-7810b08e)."""
+
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,7 @@ def test_repeated_down_creates_one_incident_with_no_still_down_notes(tmp_path: P
     mgr = ITILManager(str(tmp_path))
     incidents = [i for i in mgr.list_incidents() if "skvector" in i.affected_services]
 
-    # Exactly one incident — no duplicates from repeated cycles.
+    # Exactly one incident - no duplicates from repeated cycles.
     assert len(incidents) == 1
     # And the timeline never accumulated recurring "still down" churn.
     still_down = [e for e in incidents[0].timeline if "still down" in (e.get("note") or "")]

@@ -6,14 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from skcapstone.memory_engine import list_memories, recall, store
 from skcapstone.memory_curator import (
     CurationResult,
     MemoryCurator,
     _content_hash,
     _suggest_tags,
 )
-from skcapstone.models import MemoryLayer
+from skcapstone.memory_engine import list_memories, store
 from skcapstone.pillars.memory import initialize_memory
 
 
@@ -104,6 +103,7 @@ class TestCuratorPromote:
         entry = store(curator_home, "Frequently accessed memory", importance=0.3)
         entry.access_count = 5
         from skcapstone.memory_engine import _save_entry
+
         _save_entry(curator_home, entry)
 
         curator = MemoryCurator(curator_home)
@@ -116,7 +116,7 @@ class TestCuratorPromote:
         store(curator_home, "Very important memory", importance=0.8)
 
         curator = MemoryCurator(curator_home)
-        result = curator.curate(auto_tag=False, dedupe=False)
+        curator.curate(auto_tag=False, dedupe=False)
 
         # Reason: importance >= 0.7 auto-promotes to mid-term at store time,
         # so this won't be in short-term. Store at 0.65 instead.

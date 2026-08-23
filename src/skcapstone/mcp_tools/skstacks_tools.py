@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+
 from mcp.types import TextContent, Tool
 
 from ._helpers import _error_response, _json_response
@@ -22,7 +23,7 @@ TOOLS: list[Tool] = [
         description=(
             "Retrieve a deployment secret from the SKStacks v2 CapAuth backend "
             "for use in Claude Code and other MCP clients. "
-            "Simpler than skstacks_secret_get: no env required — uses "
+            "Simpler than skstacks_secret_get: no env required - uses "
             "SKSTACKS_ENV (default: prod). "
             "key is the plain secret name; scope groups related keys "
             "(default: 'default'). "
@@ -38,8 +39,7 @@ TOOLS: list[Tool] = [
                 "scope": {
                     "type": "string",
                     "description": (
-                        "Secret scope / service group, e.g. 'skfence'. "
-                        "Defaults to 'default'."
+                        "Secret scope / service group, e.g. 'skfence'. " "Defaults to 'default'."
                     ),
                 },
             },
@@ -144,8 +144,7 @@ def _load_factory():
     v2_path = os.environ.get("SKSTACKS_V2_PATH", "").strip()
     if not v2_path:
         raise RuntimeError(
-            "SKSTACKS_V2_PATH is not set. "
-            "Point it to the skstacks/v2/ directory."
+            "SKSTACKS_V2_PATH is not set. " "Point it to the skstacks/v2/ directory."
         )
 
     import importlib
@@ -153,9 +152,7 @@ def _load_factory():
 
     resolved = Path(v2_path).expanduser().resolve()
     if not resolved.is_dir():
-        raise RuntimeError(
-            f"SKSTACKS_V2_PATH={v2_path!r} does not exist or is not a directory."
-        )
+        raise RuntimeError(f"SKSTACKS_V2_PATH={v2_path!r} does not exist or is not a directory.")
 
     path_str = str(resolved)
     if path_str not in sys.path:
@@ -186,14 +183,16 @@ async def _handle_capauth_secret_get(args: dict) -> list[TextContent]:
 
     try:
         value, meta = backend.get_with_meta(scope, env, key)
-        return _json_response({
-            "ok": True,
-            "key": key,
-            "scope": scope,
-            "env": env,
-            "value": value,
-            "rotated_at": meta.rotated_at,
-        })
+        return _json_response(
+            {
+                "ok": True,
+                "key": key,
+                "scope": scope,
+                "env": env,
+                "value": value,
+                "rotated_at": meta.rotated_at,
+            }
+        )
     except Exception as exc:
         return _error_response(f"capauth get failed: {type(exc).__name__}: {exc}")
     finally:
@@ -221,23 +220,25 @@ async def _handle_skstacks_secret_get(args: dict) -> list[TextContent]:
 
     try:
         value, meta = backend.get_with_meta(scope, env, key)
-        return _json_response({
-            "ok": True,
-            "key": raw_key,
-            "scope": scope,
-            "env": env,
-            "backend": backend_name or os.environ.get("SKSTACKS_SECRET_BACKEND", "vault-file"),
-            "value": value,
-            "meta": {
-                "version": meta.version,
-                "created_at": meta.created_at,
-                "expires_at": meta.expires_at,
-                "rotated_at": meta.rotated_at,
-                "tags": meta.tags,
-            },
-        })
+        return _json_response(
+            {
+                "ok": True,
+                "key": raw_key,
+                "scope": scope,
+                "env": env,
+                "backend": backend_name or os.environ.get("SKSTACKS_SECRET_BACKEND", "vault-file"),
+                "value": value,
+                "meta": {
+                    "version": meta.version,
+                    "created_at": meta.created_at,
+                    "expires_at": meta.expires_at,
+                    "rotated_at": meta.rotated_at,
+                    "tags": meta.tags,
+                },
+            }
+        )
     except Exception as exc:
-        # Re-raise as error response — includes SecretNotFoundError, auth errors, etc.
+        # Re-raise as error response - includes SecretNotFoundError, auth errors, etc.
         return _error_response(f"secret get failed: {type(exc).__name__}: {exc}")
     finally:
         backend.close()
@@ -267,14 +268,16 @@ async def _handle_skstacks_secret_set(args: dict) -> list[TextContent]:
 
     try:
         backend.set(scope, env, key, str(value))
-        return _json_response({
-            "ok": True,
-            "key": raw_key,
-            "scope": scope,
-            "env": env,
-            "backend": backend_name or os.environ.get("SKSTACKS_SECRET_BACKEND", "vault-file"),
-            "message": f"Secret '{raw_key}' written to {env} via {backend_name or 'default'} backend.",
-        })
+        return _json_response(
+            {
+                "ok": True,
+                "key": raw_key,
+                "scope": scope,
+                "env": env,
+                "backend": backend_name or os.environ.get("SKSTACKS_SECRET_BACKEND", "vault-file"),
+                "message": f"Secret '{raw_key}' written to {env} via {backend_name or 'default'} backend.",  # noqa: E501
+            }
+        )
     except Exception as exc:
         return _error_response(f"secret set failed: {type(exc).__name__}: {exc}")
     finally:

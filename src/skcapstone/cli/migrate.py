@@ -33,7 +33,7 @@ def migrate_cmd(agent: str, dry_run: bool, root: str) -> None:
     )
 
     if dry_run:
-        console.print("[yellow]DRY RUN[/] — no files will be moved\n")
+        console.print("[yellow]DRY RUN[/] - no files will be moved\n")
 
     if results["moved"]:
         console.print("[green]Moved:[/]")

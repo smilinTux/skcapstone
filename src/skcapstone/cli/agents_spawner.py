@@ -7,11 +7,10 @@ from pathlib import Path
 from typing import Optional
 
 import click
-
-from ._common import AGENT_HOME, console
-
 from rich.panel import Panel
 from rich.table import Table
+
+from ._common import AGENT_HOME, console
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,8 @@ def _resolve_provider_backend(provider: Optional[str], home_path: Path):
     if provider:
         prov_type = ProviderType(provider)
         try:
-            from ..providers import LocalProvider, DockerProvider, ProxmoxProvider
+            from ..providers import DockerProvider, LocalProvider, ProxmoxProvider
+
             if prov_type == ProviderType.LOCAL:
                 prov_backend = LocalProvider(agents_root=home_path / "agents" / "local")
             elif prov_type == ProviderType.DOCKER:
@@ -52,19 +52,21 @@ def _show_spawn_result(result) -> None:
         result: SpawnResult from the spawner.
     """
     if result.status == "failed":
-        console.print(
-            f"\n  [red bold]Spawn failed:[/] {result.error}\n"
-        )
+        console.print(f"\n  [red bold]Spawn failed:[/] {result.error}\n")
     else:
         console.print(
             Panel(
                 f"  [bold green]Agent spawned successfully![/]\n\n"
                 f"  [bold]Name:[/]       [cyan]{result.agent_name}[/]\n"
                 f"  [bold]Deployment:[/] [dim]{result.deployment_id}[/]\n"
-                f"  [bold]Status:[/]     [green]{result.status.value if hasattr(result.status, 'value') else result.status}[/]\n"
+                f"  [bold]Status:[/]     [green]{result.status.value if hasattr(result.status, 'value') else result.status}[/]\n"  # noqa: E501
                 f"  [bold]Host:[/]       {result.host}\n"
                 + (f"  [bold]PID:[/]        {result.pid}\n" if result.pid else "")
-                + (f"  [bold]Claimed:[/]    {result.coord_task_id}\n" if result.coord_task_id else "")
+                + (
+                    f"  [bold]Claimed:[/]    {result.coord_task_id}\n"
+                    if result.coord_task_id
+                    else ""
+                )
                 + f"\n  [dim]Kill:[/] [cyan]skcapstone agents kill {result.deployment_id}[/]",
                 title="[bold green]Sub-Agent Spawned[/]",
                 border_style="green",
@@ -79,21 +81,55 @@ def register_agents_spawner_commands(agents: click.Group) -> None:
     @click.argument("task")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
-        "--provider", "-p", type=click.Choice(["local", "docker", "proxmox", "hetzner"]),
-        default=None, help="Target provider (auto-selects if not specified).",
+        "--provider",
+        "-p",
+        type=click.Choice(["local", "docker", "proxmox", "hetzner"]),
+        default=None,
+        help="Target provider (auto-selects if not specified).",
     )
-    @click.option("--role", "-r", type=click.Choice([
-        "manager", "worker", "researcher", "coder", "reviewer",
-        "documentarian", "security", "ops",
-    ]), default=None, help="Override auto-detected agent role.")
-    @click.option("--model", "-m", type=click.Choice([
-        "fast", "code", "reason", "nuance", "local",
-    ]), default=None, help="Override auto-detected model tier.")
+    @click.option(
+        "--role",
+        "-r",
+        type=click.Choice(
+            [
+                "manager",
+                "worker",
+                "researcher",
+                "coder",
+                "reviewer",
+                "documentarian",
+                "security",
+                "ops",
+            ]
+        ),
+        default=None,
+        help="Override auto-detected agent role.",
+    )
+    @click.option(
+        "--model",
+        "-m",
+        type=click.Choice(
+            [
+                "fast",
+                "code",
+                "reason",
+                "nuance",
+                "local",
+            ]
+        ),
+        default=None,
+        help="Override auto-detected model tier.",
+    )
     @click.option("--skill", "-s", multiple=True, help="Skills to load (repeatable).")
     @click.option("--claim", "coord_task_id", default=None, help="Claim a coordination task.")
     @click.option("--name", "agent_name", default=None, help="Custom agent name.")
-    @click.option("--baby", "-b", is_flag=True, default=False,
-                  help="Treat TASK as a baby agent name instead of a free-text task.")
+    @click.option(
+        "--baby",
+        "-b",
+        is_flag=True,
+        default=False,
+        help="Treat TASK as a baby agent name instead of a free-text task.",
+    )
     def agents_spawn(
         task: str,
         home: str,
@@ -123,7 +159,7 @@ def register_agents_spawner_commands(agents: click.Group) -> None:
             skcapstone agents spawn "Deploy monitoring" --provider docker --role ops
             skcapstone agents spawn "Research FUSE mounting" --claim dbfb78e3
         """
-        from ..blueprints.schema import AgentRole, ModelTier, ProviderType
+        from ..blueprints.schema import AgentRole, ModelTier
         from ..spawner import SubAgentSpawner, classify_task
 
         home_path = Path(home).expanduser()
@@ -131,7 +167,7 @@ def register_agents_spawner_commands(agents: click.Group) -> None:
 
         # Baby agent mode: spawn a pre-defined baby agent by name
         if baby:
-            from ..baby_agents import get_baby_agent, BABY_AGENTS
+            from ..baby_agents import BABY_AGENTS, get_baby_agent
 
             baby_def = get_baby_agent(task)
             if baby_def is None:
@@ -222,7 +258,7 @@ def register_agents_spawner_commands(agents: click.Group) -> None:
         if not results:
             console.print(
                 "\n  [dim]No spawned sub-agents found.[/]\n"
-                "  [dim]Spawn one:[/] [cyan]skcapstone agents spawn \"your task here\"[/]\n"
+                '  [dim]Spawn one:[/] [cyan]skcapstone agents spawn "your task here"[/]\n'
             )
             return
 
@@ -236,18 +272,28 @@ def register_agents_spawner_commands(agents: click.Group) -> None:
 
         for r in results:
             status_val = r.status.value if hasattr(r.status, "value") else str(r.status)
-            status_style = "green" if status_val == "running" else "yellow" if status_val == "pending" else "red"
+            status_style = (
+                "green"
+                if status_val == "running"
+                else "yellow" if status_val == "pending" else "red"
+            )
             table.add_row(
                 r.agent_name,
                 f"[{status_style}]{status_val}[/]",
                 r.host,
                 str(r.pid) if r.pid else "\u2014",
-                (r.task_description[:50] + "\u2026") if len(r.task_description) > 50 else r.task_description,
+                (
+                    (r.task_description[:50] + "\u2026")
+                    if len(r.task_description) > 50
+                    else r.task_description
+                ),
                 r.deployment_id,
             )
 
         console.print(
-            Panel(table, title=f"[bold]Spawned Sub-Agents ({len(results)})[/]", border_style="cyan")
+            Panel(
+                table, title=f"[bold]Spawned Sub-Agents ({len(results)})[/]", border_style="cyan"
+            )
         )
 
     @agents.command("kill")
@@ -290,7 +336,10 @@ def register_agents_spawner_commands(agents: click.Group) -> None:
         babies = list_baby_agents()
 
         table = Table(
-            show_header=True, header_style="bold", box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("#", style="dim", justify="right")
         table.add_column("Name", style="bold cyan")

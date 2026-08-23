@@ -1,4 +1,4 @@
-"""Ansible playbook runner tool — run_ansible_playbook.
+"""Ansible playbook runner tool - run_ansible_playbook.
 
 Streams stdout/stderr lines to the activity feed SSE queue as
 ``ansible.playbook.line`` / ``ansible.playbook.stderr`` events.
@@ -38,9 +38,7 @@ TOOLS: list[Tool] = [
             "properties": {
                 "playbook_path": {
                     "type": "string",
-                    "description": (
-                        "Absolute or relative path to the Ansible playbook YAML file"
-                    ),
+                    "description": ("Absolute or relative path to the Ansible playbook YAML file"),
                 },
                 "inventory": {
                     "type": "string",
@@ -101,7 +99,8 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
     cmd: list[str] = [
         "ansible-playbook",
         str(playbook),
-        "-i", inventory,
+        "-i",
+        inventory,
     ]
     if dry_run:
         cmd.append("--check")
@@ -114,13 +113,16 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
     try:
         from .. import activity as _activity
 
-        _activity.push("ansible.playbook.start", {
-            "run_id": run_id,
-            "playbook": str(playbook),
-            "inventory": inventory,
-            "dry_run": dry_run,
-            "cmd": cmd,
-        })
+        _activity.push(
+            "ansible.playbook.start",
+            {
+                "run_id": run_id,
+                "playbook": str(playbook),
+                "inventory": inventory,
+                "dry_run": dry_run,
+                "cmd": cmd,
+            },
+        )
     except Exception:
         _activity = None  # type: ignore[assignment]
 
@@ -167,7 +169,8 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
 
     # Extract PLAY RECAP block lines (host rows contain "ok=" or "failed=")
     recap_lines = [
-        line for line in stdout_lines
+        line
+        for line in stdout_lines
         if "PLAY RECAP" in line or ("ok=" in line and "changed=" in line)
     ]
 
@@ -198,7 +201,7 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
         _mem_store(
             home=_home(),
             content=(
-                f"Ansible run {'(dry-run) ' if dry_run else ''}— "
+                f"Ansible run {'(dry-run) ' if dry_run else ''}- "
                 f"playbook: {str(playbook)!r}, inventory: {inventory!r}, "
                 f"exit_code: {exit_code}, success: {success}. "
                 f"Recap: {recap_str}"
@@ -221,11 +224,13 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
     if not success:
         # Surface last 20 stderr lines for quick diagnosis
         stderr_tail = stderr_lines[-20:] if len(stderr_lines) > 20 else stderr_lines
-        return _json_response({
-            **summary,
-            "stderr_tail": stderr_tail,
-            "error": f"ansible-playbook exited with code {exit_code}",
-        })
+        return _json_response(
+            {
+                **summary,
+                "stderr_tail": stderr_tail,
+                "error": f"ansible-playbook exited with code {exit_code}",
+            }
+        )
 
     return _json_response(summary)
 

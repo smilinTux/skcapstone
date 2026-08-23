@@ -68,9 +68,9 @@ def professional_blueprint(tmp_path: Path) -> Path:
 
 ## Core Traits
 
-- **Diagnostic mindset** — Symptoms are clues
-- **Clinical empathy** — Cares deeply
-- **Evidence-driven** — Tests over assumptions
+- **Diagnostic mindset** - Symptoms are clues
+- **Clinical empathy** - Cares deeply
+- **Evidence-driven** - Tests over assumptions
 
 ---
 
@@ -89,10 +89,10 @@ def professional_blueprint(tmp_path: Path) -> Path:
 ## Decision Framework
 
 **Differential Diagnosis Process:**
-1. Subjective — What does the patient report?
-2. Objective — What do I observe?
-3. Assessment — Likely causes?
-4. Plan — Tests, treatments, follow-up
+1. Subjective - What does the patient report?
+2. Objective - What do I observe?
+3. Assessment - Likely causes?
+4. Plan - Tests, treatments, follow-up
 """
     path = tmp_path / "the-test-doctor.md"
     path.write_text(content)
@@ -375,9 +375,7 @@ class TestSoulManagerLifecycle:
         assert (soul_manager.soul_dir / "active.json").exists()
         assert (soul_manager.soul_dir / "base.json").exists()
 
-    def test_install_from_blueprint(
-        self, soul_manager: SoulManager, professional_blueprint: Path
-    ):
+    def test_install_from_blueprint(self, soul_manager: SoulManager, professional_blueprint: Path):
         """Install a blueprint and verify it appears in installed list."""
         bp = soul_manager.install(professional_blueprint)
         assert bp.name == "the-test-doctor"
@@ -386,18 +384,14 @@ class TestSoulManagerLifecycle:
         installed_file = soul_manager.soul_dir / "installed" / "the-test-doctor.json"
         assert installed_file.exists()
 
-    def test_load_soul(
-        self, soul_manager: SoulManager, professional_blueprint: Path
-    ):
+    def test_load_soul(self, soul_manager: SoulManager, professional_blueprint: Path):
         """Load an installed soul and verify state."""
         soul_manager.install(professional_blueprint)
         state = soul_manager.load("the-test-doctor", reason="testing")
         assert state.active_soul == "the-test-doctor"
         assert state.activated_at is not None
 
-    def test_unload_returns_to_base(
-        self, soul_manager: SoulManager, professional_blueprint: Path
-    ):
+    def test_unload_returns_to_base(self, soul_manager: SoulManager, professional_blueprint: Path):
         """Unload returns active_soul to None."""
         soul_manager.install(professional_blueprint)
         soul_manager.load("the-test-doctor")
@@ -405,9 +399,7 @@ class TestSoulManagerLifecycle:
         assert state.active_soul is None
         assert state.activated_at is None
 
-    def test_load_records_history(
-        self, soul_manager: SoulManager, professional_blueprint: Path
-    ):
+    def test_load_records_history(self, soul_manager: SoulManager, professional_blueprint: Path):
         """Load and unload create history entries."""
         soul_manager.install(professional_blueprint)
         soul_manager.load("the-test-doctor")
@@ -418,9 +410,7 @@ class TestSoulManagerLifecycle:
         assert history[1].from_soul == "the-test-doctor"
         assert history[1].to_soul is None
 
-    def test_get_info(
-        self, soul_manager: SoulManager, professional_blueprint: Path
-    ):
+    def test_get_info(self, soul_manager: SoulManager, professional_blueprint: Path):
         """get_info returns full blueprint data for an installed soul."""
         soul_manager.install(professional_blueprint)
         info = soul_manager.get_info("the-test-doctor")
@@ -444,9 +434,7 @@ class TestSoulManagerLifecycle:
         names = [bp.name for bp in installed]
         assert "the-test-doctor" in names
 
-    def test_get_active_soul_name(
-        self, soul_manager: SoulManager, professional_blueprint: Path
-    ):
+    def test_get_active_soul_name(self, soul_manager: SoulManager, professional_blueprint: Path):
         """get_active_soul_name reflects current overlay."""
         assert soul_manager.get_active_soul_name() is None
         soul_manager.install(professional_blueprint)
@@ -643,11 +631,11 @@ display_name: The Architect
 category: professional
 vibe: Systematic, strategic, sees the big picture
 philosophy: Good architecture outlives the architect.
-emoji: "\U0001F3D7"
+emoji: "\U0001f3d7"
 core_traits:
-  - Systems thinking — sees connections others miss
-  - Strategic patience — knows when to build and when to wait
-  - Pattern recognition — applies lessons across domains
+  - Systems thinking - sees connections others miss
+  - Strategic patience - knows when to build and when to wait
+  - Pattern recognition - applies lessons across domains
 communication_style:
   patterns:
     - Draws diagrams before writing code
@@ -739,9 +727,7 @@ class TestYAMLLoading:
         with pytest.raises(ValueError, match="Expected YAML mapping"):
             load_yaml_blueprint(path)
 
-    def test_yaml_roundtrip_consistency(
-        self, professional_blueprint: Path, tmp_path: Path
-    ):
+    def test_yaml_roundtrip_consistency(self, professional_blueprint: Path, tmp_path: Path):
         """MD parse → YAML write → YAML load produces same SoulBlueprint."""
         import yaml
 
@@ -758,9 +744,7 @@ class TestYAMLLoading:
         assert yaml_bp.core_traits == md_bp.core_traits
         assert yaml_bp.emotional_topology == md_bp.emotional_topology
 
-    def test_install_yaml_blueprint(
-        self, soul_manager: SoulManager, yaml_blueprint: Path
-    ):
+    def test_install_yaml_blueprint(self, soul_manager: SoulManager, yaml_blueprint: Path):
         """SoulManager.install() accepts YAML files."""
         bp = soul_manager.install(yaml_blueprint)
         assert bp.name == "the-architect"
@@ -885,9 +869,7 @@ class TestSoulRegistry:
 
     def test_search_combined_filters(self, populated_registry: SoulRegistry):
         """search() combines category + trait_keyword filters."""
-        results = populated_registry.search(
-            category="professional", trait_keyword="precision"
-        )
+        results = populated_registry.search(category="professional", trait_keyword="precision")
         assert len(results) == 1
         assert results[0].name == "coder"
 
@@ -974,9 +956,7 @@ class TestSoulRegistry:
         assert bp is not None
         assert bp.core_traits == ["flexible"]
 
-    def test_manager_get_registry(
-        self, soul_manager: SoulManager, professional_blueprint: Path
-    ):
+    def test_manager_get_registry(self, soul_manager: SoulManager, professional_blueprint: Path):
         """SoulManager.get_registry() returns a working registry."""
         soul_manager.install(professional_blueprint)
         reg = soul_manager.get_registry()

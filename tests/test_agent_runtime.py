@@ -16,10 +16,9 @@ from __future__ import annotations
 import json
 import os
 import signal
-import subprocess
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,25 +26,20 @@ from skcapstone.blueprints.schema import (
     AgentRole,
     AgentSpec,
     ModelTier,
-    ProviderType,
     ResourceSpec,
 )
 from skcapstone.providers.local import (
-    LocalProvider,
-    _SESSION_STATE_FILE,
+    _CRUSH_CONFIG_FILE,
     _PID_FILE,
     _SESSION_CONFIG_FILE,
-    _CRUSH_CONFIG_FILE,
+    _SESSION_STATE_FILE,
     _STATE_RUNNING,
     _STATE_STOPPED,
-    _STATE_ERROR,
-    _STATE_IDLE,
+    LocalProvider,
     _build_crush_config,
     _build_session_config,
     _find_crush_binary,
     _is_claude_binary,
-    _pid_is_alive,
-    _read_pid,
     _read_session_state,
     _resolve_skill_paths,
     _resolve_soul_blueprint_path,
@@ -54,7 +48,6 @@ from skcapstone.providers.local import (
     _write_session_state,
 )
 from skcapstone.team_engine import AgentStatus
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -128,7 +121,9 @@ class TestFindCrushBinary:
             assert _find_crush_binary() is None
 
     def test_returns_crush_path_when_found(self):
-        with patch("shutil.which", side_effect=lambda x: "/usr/bin/crush" if x == "crush" else None):
+        with patch(
+            "shutil.which", side_effect=lambda x: "/usr/bin/crush" if x == "crush" else None
+        ):
             result = _find_crush_binary()
         assert result == "/usr/bin/crush"
 
@@ -170,9 +165,7 @@ class TestResolveSoulBlueprintPath:
         soul_file = tmp_path / "soul-blueprints" / "sentinel.yaml"
         soul_file.parent.mkdir(parents=True)
         soul_file.write_text("soul: sentinel")
-        result = _resolve_soul_blueprint_path(
-            "sentinel.yaml", tmp_path, repo_root=tmp_path
-        )
+        result = _resolve_soul_blueprint_path("sentinel.yaml", tmp_path, repo_root=tmp_path)
         assert result == str(soul_file)
 
     def test_returns_original_value_when_unresolvable(self, tmp_path):
@@ -223,9 +216,19 @@ class TestBuildSessionConfig:
     def test_required_keys_present(self, tmp_path):
         spec = _make_spec(role="coder", model="reason")
         config = _build_session_config("agent-1", "team-1", spec, tmp_path)
-        for key in ("agent_name", "team_name", "role", "model", "model_tier",
-                    "soul_blueprint", "skills", "memory_dir", "scratch_dir",
-                    "state_file", "env"):
+        for key in (
+            "agent_name",
+            "team_name",
+            "role",
+            "model",
+            "model_tier",
+            "soul_blueprint",
+            "skills",
+            "memory_dir",
+            "scratch_dir",
+            "state_file",
+            "env",
+        ):
             assert key in config
 
     def test_agent_and_team_name_set(self, tmp_path):
@@ -387,7 +390,7 @@ class TestConfigure:
 
 
 # ---------------------------------------------------------------------------
-# LocalProvider.start — crush binary path
+# LocalProvider.start - crush binary path
 # ---------------------------------------------------------------------------
 
 
@@ -537,7 +540,7 @@ class TestStartWithCrushBinary:
 
 
 # ---------------------------------------------------------------------------
-# LocalProvider.start — stub fallback
+# LocalProvider.start - stub fallback
 # ---------------------------------------------------------------------------
 
 
@@ -581,9 +584,7 @@ class TestStartStubFallback:
         ):
             provider.start("agent-stub2", pr)
 
-        state = json.loads(
-            (Path(pr["work_dir"]) / _SESSION_STATE_FILE).read_text()
-        )
+        state = json.loads((Path(pr["work_dir"]) / _SESSION_STATE_FILE).read_text())
         assert state["status"] == _STATE_RUNNING
         assert state["pid"] == 7777
 
@@ -642,9 +643,7 @@ class TestStop:
                 return_value=True,
             ):
                 with patch("skcapstone.providers.local._STOP_TIMEOUT_SECONDS", 0):
-                    with patch(
-                        "skcapstone.providers.local._STOP_KILL_TIMEOUT_SECONDS", 0
-                    ):
+                    with patch("skcapstone.providers.local._STOP_KILL_TIMEOUT_SECONDS", 0):
                         provider.stop("slow-agent", pr)
 
         mock_kill.assert_any_call(12345, signal.SIGTERM)
@@ -666,9 +665,7 @@ class TestStop:
 
     def test_returns_false_on_sigterm_oserror(self, provider, agent_dir):
         pr = _provision_result(str(agent_dir), pid=12345)
-        with patch(
-            "skcapstone.providers.local._pid_is_alive", return_value=True
-        ):
+        with patch("skcapstone.providers.local._pid_is_alive", return_value=True):
             with patch("os.kill", side_effect=OSError("eperm")):
                 result = provider.stop("perm-agent", pr)
 
@@ -783,16 +780,12 @@ class TestSessionStateToAgentStatus:
 
     def test_running_with_live_pid(self):
         with patch("skcapstone.providers.local._pid_is_alive", return_value=True):
-            result = _session_state_to_agent_status(
-                {"status": "running", "pid": 1234}, 1234
-            )
+            result = _session_state_to_agent_status({"status": "running", "pid": 1234}, 1234)
         assert result == AgentStatus.RUNNING
 
     def test_running_with_dead_pid_returns_degraded(self):
         with patch("skcapstone.providers.local._pid_is_alive", return_value=False):
-            result = _session_state_to_agent_status(
-                {"status": "running", "pid": 1234}, 1234
-            )
+            result = _session_state_to_agent_status({"status": "running", "pid": 1234}, 1234)
         assert result == AgentStatus.DEGRADED
 
     def test_idle_returns_running(self):
@@ -933,7 +926,7 @@ class TestIsClaudeBinary:
 
 
 # ---------------------------------------------------------------------------
-# LocalProvider.start — claude binary path
+# LocalProvider.start - claude binary path
 # ---------------------------------------------------------------------------
 
 
@@ -1060,9 +1053,7 @@ class TestStartWithClaudeBinary:
 
         assert pr["pid"] == 44444
 
-    def test_writes_session_state_with_claude_backend(
-        self, provider, tmp_path, _patched_popen
-    ):
+    def test_writes_session_state_with_claude_backend(self, provider, tmp_path, _patched_popen):
         _, mock_proc = _patched_popen
         mock_proc.pid = 55000
         spec = _make_spec()
@@ -1075,9 +1066,7 @@ class TestStartWithClaudeBinary:
         ):
             provider.start("agent-csb", pr)
 
-        state = json.loads(
-            (Path(pr["work_dir"]) / _SESSION_STATE_FILE).read_text()
-        )
+        state = json.loads((Path(pr["work_dir"]) / _SESSION_STATE_FILE).read_text())
         assert state["status"] == _STATE_RUNNING
         assert state["backend"] == "claude"
         assert state["pid"] == 55000
@@ -1091,9 +1080,7 @@ class TestStartWithClaudeBinary:
             "skcapstone.providers.local._find_crush_binary",
             return_value="/bin/claude",
         ):
-            with patch(
-                "subprocess.Popen", side_effect=OSError("not found")
-            ):
+            with patch("subprocess.Popen", side_effect=OSError("not found")):
                 result = provider.start("agent-cerr", pr)
 
         assert result is False

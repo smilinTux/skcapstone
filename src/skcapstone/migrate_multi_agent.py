@@ -20,7 +20,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .operator_link import build_agent_manifest, discover_human_operator
-from typing import Optional
 
 logger = logging.getLogger("skcapstone.migrate")
 
@@ -101,7 +100,9 @@ def migrate_to_multi_agent(
                     # Create symlink for backward compat
                     src.symlink_to(dst)
                     results["moved"].append(f"{dirname}/")
-                    results["symlinks_created"].append(f"{dirname} -> agents/{agent_name}/{dirname}")
+                    results["symlinks_created"].append(
+                        f"{dirname} -> agents/{agent_name}/{dirname}"
+                    )
                     logger.info("Moved %s -> %s (symlinked)", src, dst)
                 except Exception as exc:
                     results["errors"].append(f"{dirname}: {exc}")
@@ -124,7 +125,9 @@ def migrate_to_multi_agent(
                     shutil.move(str(src), str(dst))
                     src.symlink_to(dst)
                     results["moved"].append(filename)
-                    results["symlinks_created"].append(f"{filename} -> agents/{agent_name}/{filename}")
+                    results["symlinks_created"].append(
+                        f"{filename} -> agents/{agent_name}/{filename}"
+                    )
                     logger.info("Moved %s -> %s (symlinked)", src, dst)
                 except Exception as exc:
                     results["errors"].append(f"{filename}: {exc}")
@@ -244,6 +247,5 @@ def list_agents(root: Path) -> list[str]:
     if not agents_dir.exists():
         return []
     return sorted(
-        d.name for d in agents_dir.iterdir()
-        if d.is_dir() and not d.name.startswith(".")
+        d.name for d in agents_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
     )

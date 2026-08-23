@@ -4,6 +4,7 @@ This module provides per-host, per-job run state that is intentionally kept
 node-local so it never becomes a Syncthing conflict source.  State is stored
 at ``<root>/scheduler/<hostname>/state.json`` and is never replicated.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,7 +23,7 @@ class SchedulerState:
     State is deliberately node-local: the file lives outside any Syncthing-
     watched subtree so the scheduler never races with sync.  Each instance
     reads from disk on construction and writes through on every
-    :meth:`record_run` call — there is no in-process cache staleness issue
+    :meth:`record_run` call - there is no in-process cache staleness issue
     because schedulers are single-process per host.
 
     Attributes:
@@ -47,13 +48,9 @@ class SchedulerState:
         self._write_lock = threading.Lock()
         if self.state_file.exists():
             try:
-                self._data = json.loads(
-                    self.state_file.read_text(encoding="utf-8")
-                )
+                self._data = json.loads(self.state_file.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
-                logger.warning(
-                    "Could not read scheduler state from %s: %s", self.state_file, exc
-                )
+                logger.warning("Could not read scheduler state from %s: %s", self.state_file, exc)
                 self._data = {}
 
     # ------------------------------------------------------------------
@@ -76,9 +73,7 @@ class SchedulerState:
             dict does **not** persist anything; call :meth:`record_run` to
             persist changes.
         """
-        return self._data.get(
-            job, {"run_count": 0, "error_count": 0, "last_run": None}
-        )
+        return self._data.get(job, {"run_count": 0, "error_count": 0, "last_run": None})
 
     def last_run(self, job: str) -> Optional[datetime]:
         """Return the timestamp of the most recent run of *job*, or ``None``.
@@ -157,6 +152,4 @@ class SchedulerState:
             OSError: If the file cannot be written (e.g. permission denied).
         """
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text(
-            json.dumps(self._data, indent=2) + "\n", encoding="utf-8"
-        )
+        self.state_file.write_text(json.dumps(self._data, indent=2) + "\n", encoding="utf-8")

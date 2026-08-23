@@ -1,0 +1,14 @@
+{
+  "kind": "service",
+  "name": "ollama",
+  "labels": {"tier": "models"},
+  "spec": {
+    "runtime": "systemd-user",
+    "unit": "ollama.service",
+    "nodeSelector": {"gpu": "true"},
+    "tolerations": [{"key": "dedicated", "value": "model-serving"}],
+    "healthCheck": {"port": 11434},
+    "restartPolicy": "on-failure",
+    "failover": "manual"
+  }
+}

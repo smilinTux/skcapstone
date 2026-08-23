@@ -1,8 +1,8 @@
 """SKChat send and history tools.
 
 Exposes two tools:
-    chat_send    — Send a message via SKChat
-    chat_history — Retrieve chat history
+    chat_send    - Send a message via SKChat
+    chat_history - Retrieve chat history
 """
 
 from __future__ import annotations
@@ -79,9 +79,11 @@ def _get_skchat_identity() -> str:
     """Resolve the sovereign identity for SKChat operations."""
     try:
         from skchat.identity_bridge import get_sovereign_identity  # type: ignore[import]
+
         return get_sovereign_identity()
     except ImportError:
         from ..runtime import get_runtime
+
         home = _home()
         runtime = get_runtime(home)
         return f"capauth:{runtime.manifest.name}@local"
@@ -95,6 +97,7 @@ def _resolve_recipient(name: str) -> str:
         return name
     try:
         from skchat.identity_bridge import resolve_peer_name  # type: ignore[import]
+
         return resolve_peer_name(name)
     except Exception:
         return f"capauth:{name}@local"
@@ -126,14 +129,16 @@ async def _handle_chat_send(args: dict) -> list[TextContent]:
         thread_id=args.get("thread_id"),
     )
 
-    return _json_response({
-        "sent": True,
-        "message_id": result.get("message_id"),
-        "recipient": recipient_uri,
-        "delivered": result.get("delivered", False),
-        "transport": result.get("transport"),
-        "error": result.get("error"),
-    })
+    return _json_response(
+        {
+            "sent": True,
+            "message_id": result.get("message_id"),
+            "recipient": recipient_uri,
+            "delivered": result.get("delivered", False),
+            "transport": result.get("transport"),
+            "error": result.get("error"),
+        }
+    )
 
 
 async def _handle_chat_history(args: dict) -> list[TextContent]:
@@ -150,21 +155,23 @@ async def _handle_chat_history(args: dict) -> list[TextContent]:
     try:
         history = ChatHistory.from_config()
         messages = history.recent(limit=limit, peer=peer, thread_id=thread_id)
-        return _json_response({
-            "count": len(messages),
-            "messages": [
-                {
-                    "message_id": m.get("message_id") or m.get("id"),
-                    "sender": m.get("sender"),
-                    "recipient": m.get("recipient"),
-                    "content": (m.get("content") or "")[:500],
-                    "message_type": m.get("message_type", "text"),
-                    "thread_id": m.get("thread_id"),
-                    "timestamp": str(m.get("timestamp", "")),
-                }
-                for m in messages
-            ],
-        })
+        return _json_response(
+            {
+                "count": len(messages),
+                "messages": [
+                    {
+                        "message_id": m.get("message_id") or m.get("id"),
+                        "sender": m.get("sender"),
+                        "recipient": m.get("recipient"),
+                        "content": (m.get("content") or "")[:500],
+                        "message_type": m.get("message_type", "text"),
+                        "thread_id": m.get("thread_id"),
+                        "timestamp": str(m.get("timestamp", "")),
+                    }
+                    for m in messages
+                ],
+            }
+        )
     except Exception as exc:
         return _error_response(f"Could not retrieve chat history: {exc}")
 

@@ -1,16 +1,16 @@
 """Session record/replay commands.
 
-    skcapstone record [--output FILE.jsonl]
-        Start the MCP server in recording mode.  All tool calls +
-        responses are captured as JSONL.  Sessions are also auto-saved
-        to ~/.skcapstone/sessions/ (last 5 kept).
+skcapstone record [--output FILE.jsonl]
+    Start the MCP server in recording mode.  All tool calls +
+    responses are captured as JSONL.  Sessions are also auto-saved
+    to ~/.skcapstone/sessions/ (last 5 kept).
 
-    skcapstone replay FILE.jsonl [--dry-run]
-        Play back a recorded session.  --dry-run prints what would
-        be called without executing any handlers.
+skcapstone replay FILE.jsonl [--dry-run]
+    Play back a recorded session.  --dry-run prints what would
+    be called without executing any handlers.
 
-    skcapstone sessions list
-        List all auto-saved sessions.
+skcapstone sessions list
+    List all auto-saved sessions.
 """
 
 from __future__ import annotations
@@ -34,7 +34,8 @@ def register_record_commands(main: click.Group) -> None:
 
     @main.command("record")
     @click.option(
-        "--output", "-o",
+        "--output",
+        "-o",
         default=None,
         type=click.Path(),
         help="Write tool calls to this JSONL file (in addition to auto-session).",
@@ -59,19 +60,18 @@ def register_record_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         if not home_path.exists():
-            console.print(
-                "[bold red]No agent found.[/] Run [cyan]skcapstone init[/] first."
-            )
+            console.print("[bold red]No agent found.[/] Run [cyan]skcapstone init[/] first.")
             sys.exit(1)
 
         console.print(
-            "  [dim]Auto-session saved to[/] "
-            f"[cyan]{home_path / 'sessions'}[/]  (last 5 kept)"
+            "  [dim]Auto-session saved to[/] " f"[cyan]{home_path / 'sessions'}[/]  (last 5 kept)"
         )
         console.print("  [dim]Starting MCP server … (Ctrl-C to stop)[/]\n")
 
         import asyncio
+
         from ..mcp_server import _run_server
+
         try:
             asyncio.run(_run_server())
         except KeyboardInterrupt:
@@ -84,13 +84,15 @@ def register_record_commands(main: click.Group) -> None:
     @main.command("replay")
     @click.argument("session_file", type=click.Path(exists=True))
     @click.option(
-        "--dry-run", "dry_run",
+        "--dry-run",
+        "dry_run",
         is_flag=True,
         default=False,
         help="Print what would be called without executing handlers.",
     )
     @click.option(
-        "--format", "fmt",
+        "--format",
+        "fmt",
         type=click.Choice(["text", "json"]),
         default="text",
         help="Output format.",
@@ -123,19 +125,21 @@ def register_record_commands(main: click.Group) -> None:
         results = list(replayer.replay())
 
         if fmt == "json":
-            # Pure JSON output — no decorative header so callers can parse stdout.
+            # Pure JSON output - no decorative header so callers can parse stdout.
             rows = []
             for r in results:
-                rows.append({
-                    "index": r.index,
-                    "tool": r.tool,
-                    "arguments": r.arguments,
-                    "recorded_result": r.recorded_result,
-                    "replayed_result": r.replayed_result,
-                    "duration_ms": r.duration_ms,
-                    "match": r.match,
-                    "error": r.error,
-                })
+                rows.append(
+                    {
+                        "index": r.index,
+                        "tool": r.tool,
+                        "arguments": r.arguments,
+                        "recorded_result": r.recorded_result,
+                        "replayed_result": r.replayed_result,
+                        "duration_ms": r.duration_ms,
+                        "match": r.match,
+                        "error": r.error,
+                    }
+                )
             click.echo(json.dumps(rows, indent=2, default=str))
             return
 
@@ -211,12 +215,10 @@ def register_record_commands(main: click.Group) -> None:
         files = list_sessions(home_path)
 
         if not files:
-            console.print("\n  [dim]No sessions found in "
-                          f"{home_path / 'sessions'}[/]\n")
+            console.print("\n  [dim]No sessions found in " f"{home_path / 'sessions'}[/]\n")
             return
 
-        console.print(f"\n  [bold]{len(files)}[/] session(s) found "
-                      f"(showing up to {limit}):\n")
+        console.print(f"\n  [bold]{len(files)}[/] session(s) found " f"(showing up to {limit}):\n")
         for f in files[:limit]:
             try:
                 entries = load_session(f)
@@ -231,8 +233,7 @@ def register_record_commands(main: click.Group) -> None:
 
             size_kb = f.stat().st_size / 1024
             console.print(
-                f"  [cyan]{f.name}[/]  "
-                f"[dim]{count} calls  {size_kb:.1f}KB  {tools_str}[/]"
+                f"  [cyan]{f.name}[/]  " f"[dim]{count} calls  {size_kb:.1f}KB  {tools_str}[/]"
             )
             console.print(f"    [dim]{f}[/]")
         console.print()

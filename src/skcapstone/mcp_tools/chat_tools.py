@@ -19,7 +19,7 @@ TOOLS: list[Tool] = [
             "properties": {
                 "recipient": {
                     "type": "string",
-                    "description": "Recipient agent name or CapAuth URI (e.g. 'lumina' or 'capauth:lumina@skworld.io')",
+                    "description": "Recipient agent name or CapAuth URI (e.g. 'lumina' or 'capauth:lumina@skworld.io')",  # noqa: E501
                 },
                 "message": {
                     "type": "string",
@@ -86,7 +86,7 @@ TOOLS: list[Tool] = [
                 "members": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Initial member URIs to add (creator is always included as admin)",
+                    "description": "Initial member URIs to add (creator is always included as admin)",  # noqa: E501
                 },
             },
             "required": ["name"],
@@ -128,9 +128,11 @@ def _get_skchat_identity() -> str:
     """Resolve the sovereign identity for SKChat operations."""
     try:
         from skchat.identity_bridge import get_sovereign_identity
+
         return get_sovereign_identity()
     except ImportError:
         from ..runtime import get_runtime
+
         home = _home()
         runtime = get_runtime(home)
         return f"capauth:{runtime.manifest.name}@local"
@@ -141,6 +143,7 @@ def _get_skchat_identity() -> str:
 def _get_skchat_history():
     """Get a ChatHistory instance for message persistence."""
     from skchat.history import ChatHistory
+
     return ChatHistory.from_config()
 
 
@@ -150,6 +153,7 @@ def _resolve_recipient(name: str) -> str:
         return name
     try:
         from skchat.identity_bridge import resolve_peer_name
+
         return resolve_peer_name(name)
     except Exception:
         return f"capauth:{name}@local"
@@ -182,14 +186,16 @@ async def _handle_skchat_send(args: dict) -> list[TextContent]:
         ttl=args.get("ttl"),
     )
 
-    return _json_response({
-        "sent": True,
-        "message_id": result.get("message_id"),
-        "recipient": recipient_uri,
-        "delivered": result.get("delivered", False),
-        "transport": result.get("transport"),
-        "error": result.get("error"),
-    })
+    return _json_response(
+        {
+            "sent": True,
+            "message_id": result.get("message_id"),
+            "recipient": recipient_uri,
+            "delivered": result.get("delivered", False),
+            "transport": result.get("transport"),
+            "error": result.get("error"),
+        }
+    )
 
 
 async def _handle_skchat_inbox(args: dict) -> list[TextContent]:
@@ -209,27 +215,29 @@ async def _handle_skchat_inbox(args: dict) -> list[TextContent]:
     if message_type:
         messages = [m for m in messages if m.get("message_type") == message_type]
 
-    return _json_response({
-        "count": len(messages),
-        "messages": [
-            {
-                "message_id": m.get("message_id"),
-                "sender": m.get("sender"),
-                "content": (m.get("content") or "")[:500],
-                "message_type": m.get("message_type", "text"),
-                "thread_id": m.get("thread_id"),
-                "timestamp": str(m.get("timestamp", "")),
-            }
-            for m in messages
-        ],
-    })
+    return _json_response(
+        {
+            "count": len(messages),
+            "messages": [
+                {
+                    "message_id": m.get("message_id"),
+                    "sender": m.get("sender"),
+                    "content": (m.get("content") or "")[:500],
+                    "message_type": m.get("message_type", "text"),
+                    "thread_id": m.get("thread_id"),
+                    "timestamp": str(m.get("timestamp", "")),
+                }
+                for m in messages
+            ],
+        }
+    )
 
 
 async def _handle_skchat_group_create(args: dict) -> list[TextContent]:
     """Create a new SKChat group chat."""
     try:
         from skchat.group import GroupChat
-        from skchat.history import ChatHistory
+        from skchat.history import ChatHistory  # noqa: F401
     except ImportError:
         return _error_response("skchat not installed. Run: pip install skchat")
 
@@ -258,16 +266,18 @@ async def _handle_skchat_group_create(args: dict) -> list[TextContent]:
     thread.metadata["group_data"] = grp.model_dump(mode="json")
     history.store_thread(thread)
 
-    return _json_response({
-        "created": True,
-        "group_id": grp.id,
-        "name": grp.name,
-        "description": grp.description,
-        "admin": identity,
-        "members": grp.member_uris,
-        "members_added": members_added,
-        "key_version": grp.key_version,
-    })
+    return _json_response(
+        {
+            "created": True,
+            "group_id": grp.id,
+            "name": grp.name,
+            "description": grp.description,
+            "admin": identity,
+            "members": grp.member_uris,
+            "members_added": members_added,
+            "key_version": grp.key_version,
+        }
+    )
 
 
 async def _handle_skchat_group_send(args: dict) -> list[TextContent]:
@@ -308,13 +318,15 @@ async def _handle_skchat_group_send(args: dict) -> list[TextContent]:
 
     mem_id = history.store_message(msg)
 
-    return _json_response({
-        "sent": True,
-        "message_id": msg.id,
-        "group_id": grp.id,
-        "group_name": grp.name,
-        "stored": bool(mem_id),
-    })
+    return _json_response(
+        {
+            "sent": True,
+            "message_id": msg.id,
+            "group_id": grp.id,
+            "group_name": grp.name,
+            "stored": bool(mem_id),
+        }
+    )
 
 
 HANDLERS: dict = {

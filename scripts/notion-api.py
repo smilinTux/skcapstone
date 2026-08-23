@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-notion-api — Simple Notion API wrapper for AI agents.
+notion-api - Simple Notion API wrapper for AI agents.
 
 Lets agents read and update Notion pages via CLI without needing
 to construct raw curl/JSON. Uses NOTION_API_KEY from environment.

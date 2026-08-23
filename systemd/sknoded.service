@@ -1,0 +1,11 @@
+[Unit]
+Description=SKWorld fleet node agent (self-report, Phase 1)
+After=network.target
+
+[Service]
+ExecStart=%h/.skenv/bin/skfleet sknoded --interval 300
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

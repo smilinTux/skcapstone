@@ -1,5 +1,5 @@
 """
-Memory Auto-Promotion Engine — intelligent memory tier management.
+Memory Auto-Promotion Engine - intelligent memory tier management.
 
 Periodically sweeps memory layers and promotes qualifying memories based
 on multiple signals: access patterns, importance scores, emotional
@@ -40,10 +40,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .memory_engine import (
-    _entry_path,
     _load_entry,
     _memory_dir,
     _remove_from_index,
+    _require_memory_id,
     _save_entry,
     _update_index,
 )
@@ -57,11 +57,24 @@ logger = logging.getLogger("skcapstone.memory_promoter")
 # ---------------------------------------------------------------------------
 
 # Emotion-related tags that boost promotion scores
-EMOTIONAL_TAGS = frozenset({
-    "emotional", "love", "trust", "bond", "cloud9", "feb",
-    "breakthrough", "milestone", "joy", "gratitude",
-    "connection", "entanglement", "oof", "warmth",
-})
+EMOTIONAL_TAGS = frozenset(
+    {
+        "emotional",
+        "love",
+        "trust",
+        "bond",
+        "cloud9",
+        "feb",
+        "breakthrough",
+        "milestone",
+        "joy",
+        "gratitude",
+        "connection",
+        "entanglement",
+        "oof",
+        "warmth",
+    }
+)
 
 # High-value content patterns that indicate important memories
 HIGH_VALUE_PATTERNS = [
@@ -217,10 +230,10 @@ class PromotionEngine:
                         continue
 
                     if not dry_run:
-                        self._promote(entry, f)
-                        candidate.promoted = True
-                        candidate.summary = self._generate_summary(entry)
-                        promoted_count += 1
+                        if self._promote(entry, f):
+                            candidate.promoted = True
+                            candidate.summary = self._generate_summary(entry)
+                            promoted_count += 1
 
                     result.promoted.append(candidate)
                 else:
@@ -328,7 +341,7 @@ class PromotionEngine:
         for title, group in entries_by_title.items():
             if len(group) <= 1:
                 continue
-            # Sort by created_at descending — keep newest
+            # Sort by created_at descending - keep newest
             group.sort(key=lambda g: g[2].created_at, reverse=True)
             keeper = group[0]
             for path, raw, entry in group[1:]:
@@ -337,7 +350,9 @@ class PromotionEngine:
                 removed += 1
                 logger.info(
                     "Dedup: archived %s (dup of %s, title='%s')",
-                    entry.memory_id, keeper[2].memory_id, title[:60],
+                    entry.memory_id,
+                    keeper[2].memory_id,
+                    title[:60],
                 )
 
         # Phase 2: near-duplicates (first 50 chars of title match)
@@ -365,7 +380,9 @@ class PromotionEngine:
                 removed += 1
                 logger.info(
                     "Dedup (near): archived %s (near-dup of %s, prefix='%s')",
-                    entry.memory_id, keeper[2].memory_id, prefix[:50],
+                    entry.memory_id,
+                    keeper[2].memory_id,
+                    prefix[:50],
                 )
 
         # Log dedup actions to promotion-log.json
@@ -411,7 +428,7 @@ class PromotionEngine:
                 if age < age_threshold:
                     continue
 
-                # Already short enough — skip
+                # Already short enough - skip
                 if len(entry.content) <= max_chars:
                     continue
 
@@ -420,7 +437,10 @@ class PromotionEngine:
                 compressed += 1
                 logger.info(
                     "Compressed %s (%s, age=%dd, truncated to %d chars)",
-                    entry.memory_id, lyr.value, age.days, max_chars,
+                    entry.memory_id,
+                    lyr.value,
+                    age.days,
+                    max_chars,
                 )
 
         return compressed
@@ -464,7 +484,9 @@ class PromotionEngine:
                 archived += 1
                 logger.info(
                     "Archived %s (%s, age=%dd) -> archive/",
-                    entry.memory_id, lyr.value, age.days,
+                    entry.memory_id,
+                    lyr.value,
+                    age.days,
                 )
 
         return archived
@@ -595,16 +617,14 @@ class PromotionEngine:
         Checks tags and content for emotional indicators.
         """
         tag_hits = sum(1 for t in entry.tags if t.lower() in EMOTIONAL_TAGS)
-        content_hits = sum(
-            1 for p in HIGH_VALUE_PATTERNS if p.search(entry.content)
-        )
+        content_hits = sum(1 for p in HIGH_VALUE_PATTERNS if p.search(entry.content))
         # Normalize: 3+ hits = max score
         return min(1.0, (tag_hits + content_hits) / 3)
 
     def _score_age(self, entry: MemoryEntry) -> float:
         """Score based on age-importance interaction.
 
-        Older memories with high importance score higher — they've
+        Older memories with high importance score higher - they've
         proven their worth by persisting.
         """
         age = entry.age_hours
@@ -633,21 +653,35 @@ class PromotionEngine:
     # Promotion
     # -------------------------------------------------------------------
 
-    def _promote(self, entry: MemoryEntry, old_path: Path) -> None:
+    def _promote(self, entry: MemoryEntry, old_path: Path) -> bool:
         """Promote a memory to the next tier.
+
+        SHORT_TERM -> MID_TERM transitions pass through the truth-check gate
+        (``memory_verifier.verify_before_promotion``). When the gate blocks the
+        promotion the entry stays in short-term (tagged conflicting) and this
+        returns False. The gate is fail-open when its backend is unavailable.
 
         Args:
             entry: The MemoryEntry to promote.
             old_path: Current file path (will be removed).
+
+        Returns:
+            True if the memory advanced a tier, False otherwise.
         """
+        _require_memory_id(entry.memory_id)
         old_layer = entry.layer
 
         if entry.layer == MemoryLayer.SHORT_TERM:
+            # Local import so tests can patch verify_before_promotion.
+            from .memory_verifier import verify_before_promotion
+
+            if not verify_before_promotion(self._home, entry).should_promote:
+                return False
             entry.layer = MemoryLayer.MID_TERM
         elif entry.layer == MemoryLayer.MID_TERM:
             entry.layer = MemoryLayer.LONG_TERM
         else:
-            return
+            return False
 
         if old_path.exists():
             old_path.unlink()
@@ -657,8 +691,11 @@ class PromotionEngine:
 
         logger.info(
             "Promoted %s: %s -> %s",
-            entry.memory_id, old_layer.value, entry.layer.value,
+            entry.memory_id,
+            old_layer.value,
+            entry.layer.value,
         )
+        return True
 
     def _generate_summary(self, entry: MemoryEntry) -> str:
         """Generate a short summary for a promoted memory.

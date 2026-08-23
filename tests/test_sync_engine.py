@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -28,14 +27,14 @@ def agent_home(tmp_path: Path) -> Path:
         (home / d).mkdir()
 
     (home / "identity" / "identity.json").write_text(
-        json.dumps({
-            "name": "EngineTestAgent",
-            "fingerprint": "FFFF1111AAAA2222BBBB3333CCCC4444DDDD5555",
-        })
+        json.dumps(
+            {
+                "name": "EngineTestAgent",
+                "fingerprint": "FFFF1111AAAA2222BBBB3333CCCC4444DDDD5555",
+            }
+        )
     )
-    (home / "trust" / "trust.json").write_text(
-        json.dumps({"depth": 3.0, "trust_level": 0.7})
-    )
+    (home / "trust" / "trust.json").write_text(json.dumps({"depth": 3.0, "trust_level": 0.7}))
     (home / "config" / "config.yaml").write_text("agent_name: EngineTestAgent\n")
     (home / "manifest.json").write_text(
         json.dumps({"name": "EngineTestAgent", "version": "0.1.0", "connectors": []})
@@ -95,7 +94,7 @@ class TestSyncEngineInit:
 
     def test_loads_existing_config(self, agent_home: Path):
         """Engine reads backends from an existing config.yaml."""
-        from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
+        from skcapstone.sync.models import SyncBackendType
 
         config_data = {
             "backends": [{"backend_type": "syncthing", "enabled": True}],
@@ -176,10 +175,7 @@ class TestAddBackend:
         engine.add_backend(first)
         engine.add_backend(second)
         # Only one LOCAL backend should remain
-        local_backends = [
-            b for b in engine.config.backends
-            if b.backend_type.value == "local"
-        ]
+        local_backends = [b for b in engine.config.backends if b.backend_type.value == "local"]
         assert len(local_backends) == 1
         assert local_backends[0].local_path == tmp_path / "second"
 
@@ -269,9 +265,9 @@ class TestSyncEnginePush:
         backup = tmp_path / "bkp"
         backup.mkdir()
         engine.add_backend(SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING))
-        engine.add_backend(SyncBackendConfig(
-            backend_type=SyncBackendType.LOCAL, local_path=backup
-        ))
+        engine.add_backend(
+            SyncBackendConfig(backend_type=SyncBackendType.LOCAL, local_path=backup)
+        )
 
         with patch("shutil.which", return_value=None):
             results = engine.push(backend_filter="local")
@@ -289,9 +285,7 @@ class TestSyncEnginePush:
         for i in range(2):
             d = tmp_path / f"bkp{i}"
             d.mkdir()
-            engine.add_backend(SyncBackendConfig(
-                backend_type=SyncBackendType.LOCAL, local_path=d
-            ))
+            engine.add_backend(SyncBackendConfig(backend_type=SyncBackendType.LOCAL, local_path=d))
         # Second add_backend replaces first (same type), so only 1 local backend
         results = engine.push()
         assert "local" in results
@@ -395,11 +389,15 @@ class TestSyncEnginePull:
         # Also add syncthing (unavailable) - filter should pull from local only
         engine2.add_backend(SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING))
 
-        with patch("shutil.which", side_effect=lambda x: None if x == "syncthing" else "/usr/bin/git"):
+        with patch(
+            "shutil.which", side_effect=lambda x: None if x == "syncthing" else "/usr/bin/git"
+        ):
             result = engine2.pull(backend_filter="local")
         assert result is not None
 
-    def test_pull_skips_unavailable_backend_tries_next(self, engine, local_backend_config, tmp_path: Path):
+    def test_pull_skips_unavailable_backend_tries_next(
+        self, engine, local_backend_config, tmp_path: Path
+    ):
         """Pull skips unavailable backends and tries the next one."""
         from skcapstone.sync.engine import SyncEngine
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
@@ -416,7 +414,9 @@ class TestSyncEnginePull:
             local_backend_config,
         ]
 
-        with patch("shutil.which", side_effect=lambda x: None if x == "syncthing" else "/bin/true"):
+        with patch(
+            "shutil.which", side_effect=lambda x: None if x == "syncthing" else "/bin/true"
+        ):
             result = engine2.pull()
         # Local backend should succeed
         assert result is not None

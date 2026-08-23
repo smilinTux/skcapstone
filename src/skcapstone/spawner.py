@@ -1,5 +1,5 @@
 """
-Sub-agent Spawner — spin up task-specific agents on correct nodes.
+Sub-agent Spawner - spin up task-specific agents on correct nodes.
 
 Unlike the TeamEngine which deploys full teams from blueprints, the
 spawner creates lightweight single-purpose agents for specific tasks.
@@ -37,9 +37,7 @@ from .blueprints.schema import (
     ModelTier,
     NetworkConfig,
     ProviderType,
-    ResourceSpec,
     StorageConfig,
-    VMType,
 )
 from .team_engine import AgentStatus, DeployedAgent, ProviderBackend, TeamEngine
 
@@ -106,6 +104,7 @@ def classify_task(description: str) -> tuple[AgentRole, ModelTier]:
 # Node selection
 # ---------------------------------------------------------------------------
 
+
 class NodeInfo(BaseModel):
     """Describes an available deployment target node."""
 
@@ -164,6 +163,7 @@ def select_node(
 # Spawn result
 # ---------------------------------------------------------------------------
 
+
 class SpawnResult(BaseModel):
     """Result of spawning a sub-agent."""
 
@@ -177,15 +177,14 @@ class SpawnResult(BaseModel):
     model: ModelTier = ModelTier.FAST
     task_description: str = ""
     coord_task_id: Optional[str] = None
-    spawned_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    spawned_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     error: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
 # Sub-agent spawner
 # ---------------------------------------------------------------------------
+
 
 class SubAgentSpawner:
     """Lightweight spawner for task-specific sub-agents.
@@ -308,19 +307,28 @@ class SubAgentSpawner:
 
         # Select node
         node = select_node(
-            self._nodes, final_role, final_model,
+            self._nodes,
+            final_role,
+            final_model,
             preferred_provider=provider,
         )
         target_provider = provider or node.provider
 
         logger.info(
             "Spawning %s agent (model=%s) on %s for: %s",
-            final_role.value, final_model.value, node.name, task[:80],
+            final_role.value,
+            final_model.value,
+            node.name,
+            task[:80],
         )
 
         # Build mini blueprint
         blueprint = self._build_mini_blueprint(
-            task, final_role, final_model, skills, soul_blueprint,
+            task,
+            final_role,
+            final_model,
+            skills,
+            soul_blueprint,
         )
 
         # Deploy
@@ -406,11 +414,9 @@ class SubAgentSpawner:
         baby = get_baby_agent(name)
         if baby is None:
             from .baby_agents import BABY_AGENTS
+
             available = ", ".join(sorted(BABY_AGENTS.keys()))
-            raise ValueError(
-                f"Unknown baby agent '{name}'. "
-                f"Available: {available}"
-            )
+            raise ValueError(f"Unknown baby agent '{name}'. " f"Available: {available}")
 
         logger.info("Spawning baby agent: %s", baby.name)
         return self.spawn(
@@ -464,16 +470,18 @@ class SubAgentSpawner:
                     continue
 
             for agent in dep.agents.values():
-                results.append(SpawnResult(
-                    agent_name=agent.name,
-                    deployment_id=dep.deployment_id,
-                    status=agent.status,
-                    provider=dep.provider,
-                    host=agent.host or "localhost",
-                    pid=agent.pid,
-                    task_description=dep.team_name or "",
-                    spawned_at=agent.started_at or dep.created_at,
-                ))
+                results.append(
+                    SpawnResult(
+                        agent_name=agent.name,
+                        deployment_id=dep.deployment_id,
+                        status=agent.status,
+                        provider=dep.provider,
+                        host=agent.host or "localhost",
+                        pid=agent.pid,
+                        task_description=dep.team_name or "",
+                        spawned_at=agent.started_at or dep.created_at,
+                    )
+                )
         return results
 
     def kill(self, deployment_id: str) -> bool:
@@ -495,6 +503,7 @@ class SubAgentSpawner:
         """Claim a coordination board task for the spawned agent."""
         try:
             from .coordination import Board
+
             board = Board(home=self._home)
             board.claim_task(agent_name, task_id)
             logger.info("Claimed coord task %s for %s", task_id, agent_name)
@@ -510,6 +519,7 @@ class SubAgentSpawner:
         """Write an audit entry for the spawn."""
         try:
             from ._trustee_helpers import write_audit
+
             write_audit(
                 "spawn_agent",
                 deployment_id,
@@ -528,6 +538,7 @@ class SubAgentSpawner:
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 def _role_icon(role: AgentRole) -> str:
     """Map agent role to an emoji icon."""

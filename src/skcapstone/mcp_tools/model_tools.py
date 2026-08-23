@@ -10,45 +10,43 @@ TOOLS: list[Tool] = [
     Tool(
         name="model_route",
         description=(
-            "Route a task to the optimal model tier and concrete model name. "
-            "Accepts a task description, optional tags, privacy/localhost flags, "
-            "and token estimate. Returns the selected tier (fast/code/reason/"
-            "nuance/local), model name, and reasoning. Use this to automatically "
-            "select the best model for any task based on complexity, type, and "
-            "constraints."
+            "Route a task to the optimal model tier and concrete model name. Accepts a task "
+            "description, optional tags, privacy/localhost flags, and token estimate. "
+            "Returns the selected tier (fast/code/reason/nuance/local), model name, and "
+            "reasoning. Use this to automatically select the best model for any task based "
+            "on complexity, type, and constraints."
         ),
         inputSchema={
-            "type": "object",
             "properties": {
-                "description": {
-                    "type": "string",
-                    "description": "What the task is about",
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
+                "description": {"description": "What the task is about", "type": "string"},
+                "estimated_tokens": {
                     "description": (
-                        "Classification tags (e.g. ['code', 'refactor']). "
-                        "Used for rule-based tier matching."
+                        "Rough token budget hint. Tasks > 16000 tokens default to REASON tier "
+                        "when no "
+                        "tag rule matches."
                     ),
-                },
-                "requires_localhost": {
-                    "type": "boolean",
-                    "description": "Force LOCAL tier on originating node (default: false)",
+                    "type": "integer",
                 },
                 "privacy_sensitive": {
+                    "description": "Force LOCAL tier - data never leaves node (default: false)",
                     "type": "boolean",
-                    "description": "Force LOCAL tier \u2014 data never leaves node (default: false)",
                 },
-                "estimated_tokens": {
-                    "type": "integer",
+                "requires_localhost": {
+                    "description": "Force LOCAL tier on originating node (default: false)",
+                    "type": "boolean",
+                },
+                "tags": {
                     "description": (
-                        "Rough token budget hint. Tasks > 16000 tokens "
-                        "default to REASON tier when no tag rule matches."
+                        "Classification tags (e.g. ['code', 'refactor']). Used for rule-based "
+                        "tier "
+                        "matching."
                     ),
+                    "items": {"type": "string"},
+                    "type": "array",
                 },
             },
             "required": ["description"],
+            "type": "object",
         },
     ),
 ]

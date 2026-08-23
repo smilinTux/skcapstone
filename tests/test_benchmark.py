@@ -1,4 +1,4 @@
-"""Tests for ``skcapstone benchmark`` — LLM backend latency benchmarking.
+"""Tests for ``skcapstone benchmark`` - LLM backend latency benchmarking.
 
 Covers:
 - BenchmarkRunner.detect_backends() availability detection
@@ -16,7 +16,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,7 +76,7 @@ class TestDetectBackends:
             "nvidia": "NVIDIA_API_KEY",
         }
         with patch.object(runner, "_probe_ollama", return_value=False):
-            # No keys set — all cloud backends False
+            # No keys set - all cloud backends False
             clean_env = {k: "" for k in env_cases.values()}
             with patch.dict(os.environ, clean_env, clear=False):
                 # Temporarily remove the keys
@@ -90,8 +89,10 @@ class TestDetectBackends:
     def test_anthropic_available_with_env_var(self):
         """anthropic becomes available when ANTHROPIC_API_KEY is set."""
         runner = _make_runner()
-        with patch.object(runner, "_probe_ollama", return_value=False), \
-             patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
+        with (
+            patch.object(runner, "_probe_ollama", return_value=False),
+            patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}),
+        ):
             detected = runner.detect_backends()
         assert detected["anthropic"] is True
 
@@ -107,12 +108,12 @@ class TestDetectBackends:
 
 
 # ---------------------------------------------------------------------------
-# run_backend — passthrough
+# run_backend - passthrough
 # ---------------------------------------------------------------------------
 
 
 class TestRunBackendPassthrough:
-    """Passthrough backend — always ok, no external calls."""
+    """Passthrough backend - always ok, no external calls."""
 
     def test_passthrough_returns_ok(self):
         """_bench_passthrough returns status=ok with a float ms value."""
@@ -138,7 +139,7 @@ class TestRunBackendPassthrough:
 
 
 # ---------------------------------------------------------------------------
-# run_backend — error handling
+# run_backend - error handling
 # ---------------------------------------------------------------------------
 
 
@@ -171,7 +172,7 @@ class TestRunBackendErrors:
 
 
 # ---------------------------------------------------------------------------
-# run_all — aggregation
+# run_all - aggregation
 # ---------------------------------------------------------------------------
 
 
@@ -185,8 +186,10 @@ class TestRunAll:
         unavail = {name: False for name in runner.detect_backends()}
         unavail["passthrough"] = True
 
-        with patch.object(runner, "detect_backends", return_value=unavail), \
-             patch.object(runner, "_bench_passthrough", return_value=_ok("passthrough")):
+        with (
+            patch.object(runner, "detect_backends", return_value=unavail),
+            patch.object(runner, "_bench_passthrough", return_value=_ok("passthrough")),
+        ):
             results = runner.run_all()
 
         by_name = {r["backend"]: r for r in results}
@@ -201,12 +204,14 @@ class TestRunAll:
 
         runner = _make_runner()
         with patch.object(runner, "detect_backends", return_value={n: False for n in BACKENDS}):
-            # passthrough would still be run — override detect_backends to all-False
+            # passthrough would still be run - override detect_backends to all-False
             # except passthrough
             avail = {n: False for n in BACKENDS}
             avail["passthrough"] = True
-            with patch.object(runner, "detect_backends", return_value=avail), \
-                 patch.object(runner, "_bench_passthrough", return_value=_ok("passthrough")):
+            with (
+                patch.object(runner, "detect_backends", return_value=avail),
+                patch.object(runner, "_bench_passthrough", return_value=_ok("passthrough")),
+            ):
                 results = runner.run_all()
 
         assert len(results) == len(BACKENDS)
@@ -217,8 +222,10 @@ class TestRunAll:
         avail = {n: False for n in runner.detect_backends()}
         avail["ollama"] = True
 
-        with patch.object(runner, "detect_backends", return_value=avail), \
-             patch.object(runner, "_bench_ollama", side_effect=OSError("network down")):
+        with (
+            patch.object(runner, "detect_backends", return_value=avail),
+            patch.object(runner, "_bench_ollama", side_effect=OSError("network down")),
+        ):
             results = runner.run_all()
 
         ollama_result = next(r for r in results if r["backend"] == "ollama")
@@ -231,8 +238,10 @@ class TestRunAll:
         avail = {n: False for n in runner.detect_backends()}
         avail["passthrough"] = True
 
-        with patch.object(runner, "detect_backends", return_value=avail), \
-             patch.object(runner, "_bench_passthrough", return_value=_ok("passthrough", ms=7.5)):
+        with (
+            patch.object(runner, "detect_backends", return_value=avail),
+            patch.object(runner, "_bench_passthrough", return_value=_ok("passthrough", ms=7.5)),
+        ):
             results = runner.run_all()
 
         pt = next(r for r in results if r["backend"] == "passthrough")
@@ -285,6 +294,7 @@ class TestBenchmarkCLI:
 
     def _invoke(self, *args):
         from skcapstone.cli import main
+
         runner = CliRunner()
         return runner.invoke(main, ["benchmark", *args])
 
@@ -329,8 +339,10 @@ class TestBenchmarkCLI:
         """--prompt value is forwarded to BenchmarkRunner."""
         from skcapstone.cli.benchmark import BenchmarkRunner
 
-        with patch.object(BenchmarkRunner, "__init__", return_value=None) as mock_init, \
-             patch.object(BenchmarkRunner, "run_all", return_value=[]):
+        with (
+            patch.object(BenchmarkRunner, "__init__", return_value=None) as mock_init,
+            patch.object(BenchmarkRunner, "run_all", return_value=[]),
+        ):
             self._invoke("--prompt", "Ping", "--json-out")
 
         call_kwargs = mock_init.call_args
@@ -356,7 +368,7 @@ class TestBenchmarkCLI:
 
     def test_no_backends_available_message(self):
         """When all backends are unavailable, a friendly message is shown."""
-        from skcapstone.cli.benchmark import BenchmarkRunner, BACKENDS
+        from skcapstone.cli.benchmark import BACKENDS, BenchmarkRunner
 
         all_unavail = [_unavail(name) for name in BACKENDS]
         with patch.object(BenchmarkRunner, "run_all", return_value=all_unavail):

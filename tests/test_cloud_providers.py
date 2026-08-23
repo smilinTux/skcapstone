@@ -1,30 +1,26 @@
 """Tests for AWS EC2 and GCP Compute cloud provider adapters.
 
-All cloud API calls are mocked — no real infrastructure required.
+All cloud API calls are mocked - no real infrastructure required.
 """
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from skcapstone.blueprints.schema import AgentRole, AgentSpec, ModelTier, ResourceSpec
 from skcapstone.providers.cloud import (
+    _CLOUD_ADAPTERS,
     AWSAdapter,
     CloudProvider,
     GCPAdapter,
     HetznerAdapter,
-    _CLOUD_ADAPTERS,
     _build_cloud_init,
     _memory_to_ec2_instance_type,
     _memory_to_gcp_machine_type,
-    _memory_to_hetzner_type,
 )
 from skcapstone.team_engine import AgentStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -146,10 +142,12 @@ class TestAWSAdapterProvision:
     def mock_ec2(self):
         mock = MagicMock()
         mock.run_instances.return_value = {
-            "Instances": [{
-                "InstanceId": "i-abc123",
-                "PublicIpAddress": "1.2.3.4",
-            }]
+            "Instances": [
+                {
+                    "InstanceId": "i-abc123",
+                    "PublicIpAddress": "1.2.3.4",
+                }
+            ]
         }
         return mock
 
@@ -184,15 +182,11 @@ class TestAWSAdapterProvision:
 
     def test_provision_waits_for_ip_if_missing(self, adapter):
         mock_ec2 = MagicMock()
-        mock_ec2.run_instances.return_value = {
-            "Instances": [{"InstanceId": "i-noip"}]
-        }
+        mock_ec2.run_instances.return_value = {"Instances": [{"InstanceId": "i-noip"}]}
         mock_waiter = MagicMock()
         mock_ec2.get_waiter.return_value = mock_waiter
         mock_ec2.describe_instances.return_value = {
-            "Reservations": [{
-                "Instances": [{"PublicIpAddress": "5.6.7.8"}]
-            }]
+            "Reservations": [{"Instances": [{"PublicIpAddress": "5.6.7.8"}]}]
         }
         with patch.object(adapter, "_ec2_client", return_value=mock_ec2):
             result = adapter.provision("agent-wait", _make_spec(), "team-a")
@@ -339,7 +333,14 @@ class TestGCPAdapterProvision:
     def _mock_compute_v1(self):
         """Mock the google.cloud.compute_v1 module so provision() can import it."""
         mock_mod = MagicMock()
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.cloud": MagicMock(), "google.cloud.compute_v1": mock_mod}):
+        with patch.dict(
+            "sys.modules",
+            {
+                "google": MagicMock(),
+                "google.cloud": MagicMock(),
+                "google.cloud.compute_v1": mock_mod,
+            },
+        ):
             yield mock_mod
 
     def test_provision_calls_insert(self, adapter, _mock_compute_v1):
@@ -357,7 +358,11 @@ class TestGCPAdapterProvision:
         mock_client.get.return_value = mock_inst
 
         with patch.object(adapter, "_compute_client", return_value=mock_client):
-            with patch.object(adapter, "_get_source_image", return_value="projects/debian-cloud/global/images/debian-12"):
+            with patch.object(
+                adapter,
+                "_get_source_image",
+                return_value="projects/debian-cloud/global/images/debian-12",
+            ):
                 result = adapter.provision("agent-gcp", _make_spec(), "team-g")
 
         assert result["instance_name"] == "agent-gcp"

@@ -21,7 +21,7 @@ def _isolate_gtd_dir(tmp_path: Path, monkeypatch) -> None:
 
 def test_resolving_problem_completes_its_gtd_project(tmp_path: Path):
     from skcapstone.itil import ITILManager
-    from skcapstone.mcp_tools.gtd_tools import _load_list, _load_archive
+    from skcapstone.mcp_tools.gtd_tools import _load_archive, _load_list
 
     mgr = ITILManager(str(tmp_path))
 

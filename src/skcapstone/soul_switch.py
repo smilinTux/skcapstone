@@ -1,5 +1,5 @@
 """
-Soul Switch — load and activate named soul personas.
+Soul Switch - load and activate named soul personas.
 
 Loads soul blueprints from ``~/.skcapstone/souls/{name}.yaml`` and
 persists the active selection to ``~/.skcapstone/souls/active.json``.
@@ -14,7 +14,7 @@ on top of the standard SoulBlueprint ones:
                     SystemPromptBuilder when this soul is active
     journal_tone:   short string describing the emotional tone for journal entries
 
-All fields except ``name`` are optional — an empty blueprint still
+All fields except ``name`` are optional - an empty blueprint still
 records the soul as active and suppresses the default personality text.
 """
 
@@ -146,16 +146,20 @@ def load_switch_soul(home: Path, name: str) -> SoulSwitchBlueprint:
         raise ValueError(f"Invalid YAML in {blueprint_path}: {exc}") from exc
 
     if not isinstance(data, dict):
-        raise ValueError(
-            f"Expected a YAML mapping in {blueprint_path}, got {type(data).__name__}"
-        )
+        raise ValueError(f"Expected a YAML mapping in {blueprint_path}, got {type(data).__name__}")
 
     # Inject the name from filename if not present in file
     data.setdefault("name", name)
 
     # Coerce None → "" for string fields
-    for str_field in ("display_name", "agent_name", "system_prompt", "journal_tone",
-                      "category", "vibe"):
+    for str_field in (
+        "display_name",
+        "agent_name",
+        "system_prompt",
+        "journal_tone",
+        "category",
+        "vibe",
+    ):
         if data.get(str_field) is None:
             data[str_field] = ""
 
@@ -215,7 +219,7 @@ def get_active_switch_state(home: Path) -> SoulSwitchState:
         home: Agent home directory.
 
     Returns:
-        :class:`SoulSwitchState` — ``active`` is ``None`` when at base.
+        :class:`SoulSwitchState` - ``active`` is ``None`` when at base.
     """
     return _load_state(home)
 

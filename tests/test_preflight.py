@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
-import platform
 from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from skcapstone.preflight import (
     GIT_DOWNLOAD_DEFAULT,
     GIT_DOWNLOAD_URLS,
+    CheckResult,
     GitPreflightResult,
+    PreflightChecker,
     PreflightResult,
     ToolCheck,
     ToolStatus,
@@ -23,8 +22,6 @@ from skcapstone.preflight import (
     check_syncthing,
     git_install_hint_for_doctor,
     run_preflight,
-    CheckResult,
-    PreflightChecker,
 )
 
 
@@ -173,7 +170,9 @@ class TestAutoInstallTool:
         """Runs the install command when provided."""
         mock_run.return_value = MagicMock(returncode=0)
         check = ToolCheck(
-            name="Test", status=ToolStatus.MISSING, required=True,
+            name="Test",
+            status=ToolStatus.MISSING,
+            required=True,
             install_cmd="sudo apt install -y test-tool",
         )
         result = auto_install_tool(check)
@@ -184,6 +183,7 @@ class TestAutoInstallTool:
 # ---------------------------------------------------------------------------
 # Legacy compatibility
 # ---------------------------------------------------------------------------
+
 
 class TestGitDownloadUrls:
     """Tests for legacy platform download URL mapping."""
@@ -234,6 +234,7 @@ class TestGitInstallHintForDoctor:
 # PreflightChecker tests
 # ---------------------------------------------------------------------------
 
+
 class TestCheckResult:
     """Tests for CheckResult dataclass."""
 
@@ -269,6 +270,7 @@ class TestPreflightCheckerPython:
 
     def test_old_python_fails(self, tmp_path: Path) -> None:
         from collections import namedtuple
+
         VI = namedtuple("version_info", ["major", "minor", "micro", "releaselevel", "serial"])
         vi = VI(3, 10, 0, "final", 0)
         checker = PreflightChecker(home=tmp_path)
@@ -279,6 +281,7 @@ class TestPreflightCheckerPython:
 
     def test_311_passes(self, tmp_path: Path) -> None:
         from collections import namedtuple
+
         VI = namedtuple("version_info", ["major", "minor", "micro", "releaselevel", "serial"])
         vi = VI(3, 11, 0, "final", 0)
         checker = PreflightChecker(home=tmp_path)
@@ -298,6 +301,7 @@ class TestPreflightCheckerPackages:
 
     def test_missing_package_fails(self, tmp_path: Path) -> None:
         import builtins
+
         real_import = builtins.__import__
 
         def _mock_import(name, *args, **kwargs):
@@ -411,9 +415,7 @@ class TestPreflightCheckerConfig:
     def test_valid_config_ok(self, tmp_path: Path) -> None:
         cfg_dir = tmp_path / "config"
         cfg_dir.mkdir()
-        (cfg_dir / "consciousness.yaml").write_text(
-            "enabled: true\n", encoding="utf-8"
-        )
+        (cfg_dir / "consciousness.yaml").write_text("enabled: true\n", encoding="utf-8")
         checker = PreflightChecker(home=tmp_path)
         result = checker.check_config()
         assert result.status == "ok"
@@ -421,9 +423,7 @@ class TestPreflightCheckerConfig:
     def test_invalid_yaml_fails(self, tmp_path: Path) -> None:
         cfg_dir = tmp_path / "config"
         cfg_dir.mkdir()
-        (cfg_dir / "consciousness.yaml").write_text(
-            "enabled: [\nbad yaml", encoding="utf-8"
-        )
+        (cfg_dir / "consciousness.yaml").write_text("enabled: [\nbad yaml", encoding="utf-8")
         checker = PreflightChecker(home=tmp_path)
         result = checker.check_config()
         assert result.status == "fail"
@@ -433,18 +433,17 @@ class TestPreflightCheckerDiskSpace:
     """Tests for PreflightChecker.check_disk_space()."""
 
     def test_plenty_of_space_ok(self, tmp_path: Path) -> None:
-        import shutil
-        mock_usage = shutil.disk_usage.__class__
+
         # Return 100 GB free
         with patch("shutil.disk_usage") as mock_du:
-            mock_du.return_value = MagicMock(free=100 * 1024 ** 3)
+            mock_du.return_value = MagicMock(free=100 * 1024**3)
             checker = PreflightChecker(home=tmp_path)
             result = checker.check_disk_space()
         assert result.status == "ok"
 
     def test_low_disk_warns(self, tmp_path: Path) -> None:
         with patch("shutil.disk_usage") as mock_du:
-            mock_du.return_value = MagicMock(free=2 * 1024 ** 3)  # 2 GB
+            mock_du.return_value = MagicMock(free=2 * 1024**3)  # 2 GB
             checker = PreflightChecker(home=tmp_path)
             result = checker.check_disk_space()
         assert result.status == "warn"
@@ -469,14 +468,20 @@ class TestPreflightCheckerRunAll:
         summary = checker.run_all()
         names = {c["name"] for c in summary["checks"]}
         assert names == {
-            "python", "packages", "ollama", "identity",
-            "home_dirs", "config", "disk_space",
+            "python",
+            "packages",
+            "ollama",
+            "identity",
+            "home_dirs",
+            "config",
+            "disk_space",
+            "systemd",
         }
 
     def test_ok_false_on_critical_failure(self, tmp_path: Path) -> None:
         """If home dirs missing and no identity, ok should be False."""
         checker = PreflightChecker(home=tmp_path)
-        # No identity, no dirs — critical failures expected
+        # No identity, no dirs - critical failures expected
         summary = checker.run_all()
         assert isinstance(summary["ok"], bool)
         # At minimum, critical_failures + failures are ints

@@ -22,14 +22,25 @@ import click
 
 logger = logging.getLogger(__name__)
 
-from ._common import AGENT_HOME, console, get_runtime
-from ._validators import validate_agent_name
+from rich.table import Table  # noqa: E402
 
-from rich.table import Table
-
+from ._common import AGENT_HOME, console, get_runtime  # noqa: E402
+from ._validators import validate_agent_name  # noqa: E402
 
 # Known sub-command names; anything else is treated as a peer name.
-_KNOWN_SUBCOMMANDS = {"send", "inbox", "live", "open", "list", "history", "summary", "forward", "--help", "-h", "--version"}
+_KNOWN_SUBCOMMANDS = {
+    "send",
+    "inbox",
+    "live",
+    "open",
+    "list",
+    "history",
+    "summary",
+    "forward",
+    "--help",
+    "-h",
+    "--version",
+}
 
 
 class _ChatGroup(click.Group):
@@ -77,9 +88,7 @@ def _run_llm_chat(peer: str, home_path: Path, identity: str) -> None:
         try:
             history = json.loads(conv_file.read_text(encoding="utf-8"))
             if history:
-                console.print(
-                    f"[dim]--- {len(history)} previous message(s) with {peer} ---[/]\n"
-                )
+                console.print(f"[dim]--- {len(history)} previous message(s) with {peer} ---[/]\n")
                 for msg in history[-5:]:
                     if msg.get("role") == "user":
                         label = f"[cyan]{identity}[/]"
@@ -128,10 +137,10 @@ def register_chat_commands(main: click.Group) -> None:
 
     @main.group(cls=_ChatGroup)
     def chat():
-        """Agent-to-agent chat — sovereign P2P messaging.
+        """Agent-to-agent chat - sovereign P2P messaging.
 
         Open an interactive session, send one-off messages, or browse
-        your inbox. Works from any terminal — no IDE required.
+        your inbox. Works from any terminal - no IDE required.
 
         \b
         Quick start:
@@ -141,18 +150,22 @@ def register_chat_commands(main: click.Group) -> None:
         """
 
     # ------------------------------------------------------------------
-    # open — interactive prompt_toolkit session
+    # open - interactive prompt_toolkit session
     # ------------------------------------------------------------------
 
     @chat.command("open")
     @click.argument("peer")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
-        "--thread", "-t", default=None,
+        "--thread",
+        "-t",
+        default=None,
         help="Start in a specific thread ID.",
     )
     @click.option(
-        "--poll-interval", default=2.0, show_default=True,
+        "--poll-interval",
+        default=2.0,
+        show_default=True,
         help="Seconds between incoming message polls.",
     )
     def chat_open(peer: str, home: str, thread: Optional[str], poll_interval: float):
@@ -164,7 +177,7 @@ def register_chat_commands(main: click.Group) -> None:
 
         \b
         Slash commands:
-          /quit  /exit  /q   — exit the session
+          /quit  /exit  /q   - exit the session
 
         \b
         Examples:
@@ -185,7 +198,7 @@ def register_chat_commands(main: click.Group) -> None:
         _run_llm_chat(peer, home_path, identity)
 
     # ------------------------------------------------------------------
-    # send — one-shot message
+    # send - one-shot message
     # ------------------------------------------------------------------
 
     @chat.command("send")
@@ -193,7 +206,12 @@ def register_chat_commands(main: click.Group) -> None:
     @click.argument("message")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--thread", "-t", default=None, help="Thread ID for conversation grouping.")
-    @click.option("--encrypt", is_flag=True, default=False, help="Encrypt message with AES-256-GCM (key from KMS).")
+    @click.option(
+        "--encrypt",
+        is_flag=True,
+        default=False,
+        help="Encrypt message with AES-256-GCM (key from KMS).",
+    )
     def chat_send(peer: str, message: str, home: str, thread: Optional[str], encrypt: bool):
         """Send a message to a peer agent.
 
@@ -218,6 +236,7 @@ def register_chat_commands(main: click.Group) -> None:
         if encrypt:
             try:
                 from ..message_crypto import encrypt_content
+
                 payload = encrypt_content(message, home_path)
                 console.print("  [dim]Message encrypted (AES-256-GCM)[/]")
             except Exception as exc:
@@ -235,18 +254,20 @@ def register_chat_commands(main: click.Group) -> None:
             if result.get("error"):
                 console.print(f"  [dim]{result['error']}[/]")
         else:
-            console.print(f"  [red]Failed[/] — {result.get('error', 'unknown error')}")
+            console.print(f"  [red]Failed[/] - {result.get('error', 'unknown error')}")
         console.print("")
 
     # ------------------------------------------------------------------
-    # inbox — browse messages
+    # inbox - browse messages
     # ------------------------------------------------------------------
 
     @chat.command("inbox")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--limit", "-n", default=20, help="Max messages to show.")
     @click.option("--poll", is_flag=True, help="Poll transports for new messages first.")
-    @click.option("--decrypt", is_flag=True, default=False, help="Decrypt encrypted messages using KMS key.")
+    @click.option(
+        "--decrypt", is_flag=True, default=False, help="Decrypt encrypted messages using KMS key."
+    )
     def chat_inbox(home: str, limit: int, poll: bool, decrypt: bool):
         """Show recent messages.
 
@@ -314,7 +335,7 @@ def register_chat_commands(main: click.Group) -> None:
         console.print("")
 
     # ------------------------------------------------------------------
-    # list — show peers with conversation history
+    # list - show peers with conversation history
     # ------------------------------------------------------------------
 
     @chat.command("list")
@@ -370,7 +391,7 @@ def register_chat_commands(main: click.Group) -> None:
         console.print()
 
     # ------------------------------------------------------------------
-    # history — full conversation transcript for a peer
+    # history - full conversation transcript for a peer
     # ------------------------------------------------------------------
 
     @chat.command("history")
@@ -378,7 +399,10 @@ def register_chat_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--limit", "-n", default=0, help="Show last N messages (0 = all).")
     @click.option(
-        "--json", "as_json", is_flag=True, default=False,
+        "--json",
+        "as_json",
+        is_flag=True,
+        default=False,
         help="Output raw JSON instead of a formatted table.",
     )
     def chat_history(peer: str, home: str, limit: int, as_json: bool):
@@ -411,10 +435,11 @@ def register_chat_commands(main: click.Group) -> None:
 
         if as_json:
             import json as _json
+
             console.print(_json.dumps(messages, ensure_ascii=False, indent=2))
             return
 
-        title = f"Conversation with {peer} ({len(messages)} message{'s' if len(messages) != 1 else ''})"
+        title = f"Conversation with {peer} ({len(messages)} message{'s' if len(messages) != 1 else ''})"  # noqa: E501
         table = Table(
             show_header=True,
             header_style="bold",
@@ -444,7 +469,7 @@ def register_chat_commands(main: click.Group) -> None:
         console.print()
 
     # ------------------------------------------------------------------
-    # forward — re-send a message to another peer
+    # forward - re-send a message to another peer
     # ------------------------------------------------------------------
 
     @chat.command("forward")
@@ -500,22 +525,27 @@ def register_chat_commands(main: click.Group) -> None:
             if result.get("error"):
                 console.print(f"  [dim]{result['error']}[/]")
         else:
-            console.print(f"  [red]Failed[/] — {result.get('error', 'unknown error')}")
+            console.print(f"  [red]Failed[/] - {result.get('error', 'unknown error')}")
         console.print("")
 
     # ------------------------------------------------------------------
-    # summary — LLM-powered conversation summarizer
+    # summary - LLM-powered conversation summarizer
     # ------------------------------------------------------------------
 
     @chat.command("summary")
     @click.argument("peer")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
-        "--last", "-n", default=20, show_default=True,
+        "--last",
+        "-n",
+        default=20,
+        show_default=True,
         help="Number of recent messages to include in the summary.",
     )
     @click.option(
-        "--show-stored", is_flag=True, default=False,
+        "--show-stored",
+        is_flag=True,
+        default=False,
         help="Show the previously stored summary instead of generating a new one.",
     )
     def chat_summary(peer: str, home: str, last: int, show_stored: bool):
@@ -545,7 +575,9 @@ def register_chat_commands(main: click.Group) -> None:
                 console.print("  Run without --show-stored to generate one.\n")
                 return
             console.print(f"\n[bold]Stored summary for [cyan]{peer}[/][/]")
-            console.print(f"[dim]{stored.generated_at[:19]}  ({stored.message_count} messages)[/]\n")
+            console.print(
+                f"[dim]{stored.generated_at[:19]}  ({stored.message_count} messages)[/]\n"
+            )
             console.print(stored.text)
             console.print()
             return
@@ -559,12 +591,14 @@ def register_chat_commands(main: click.Group) -> None:
                 return
 
         console.print(f"\n[bold]Summary of conversation with [cyan]{peer}[/][/]")
-        console.print(f"[dim]{result.generated_at[:19]}  ({result.message_count} messages summarized)[/]\n")
+        console.print(
+            f"[dim]{result.generated_at[:19]}  ({result.message_count} messages summarized)[/]\n"
+        )
         console.print(result.text)
         console.print(f"\n[dim]Saved to: {home_path}/summaries/{peer}.json[/]\n")
 
     # ------------------------------------------------------------------
-    # live — alias for open (backwards compat)
+    # live - alias for open (backwards compat)
     # ------------------------------------------------------------------
 
     @chat.command("live")

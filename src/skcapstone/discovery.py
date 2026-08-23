@@ -2,7 +2,7 @@
 Component discovery engine.
 
 Auto-detects installed SK ecosystem components and their state.
-No hardcoded paths — probes the environment like a sovereign should.
+No hardcoded paths - probes the environment like a sovereign should.
 """
 
 from __future__ import annotations
@@ -11,14 +11,13 @@ import importlib
 import json
 import logging
 import shutil
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from .models import (
+from .models import (  # noqa: E402
     ConsciousnessState,
     IdentityState,
     MemoryState,
@@ -367,15 +366,16 @@ def _probe_remote_registry(state: SkillsState) -> None:
     Args:
         state: SkillsState to update with remote info (mutated in place).
     """
-    from .registry_client import get_registry_client, DEFAULT_REGISTRY_URL
     import os
+
+    from .registry_client import DEFAULT_REGISTRY_URL, get_registry_client
 
     registry_url = os.environ.get("SKSKILLS_REGISTRY_URL", DEFAULT_REGISTRY_URL)
     state.registry_url = registry_url
 
     client = get_registry_client(registry_url=registry_url)
     if client is None:
-        # skskills package not installed — remote registry unavailable
+        # skskills package not installed - remote registry unavailable
         return
 
     try:
@@ -384,7 +384,7 @@ def _probe_remote_registry(state: SkillsState) -> None:
         state.remote_skill_count = len(skills)
     except Exception as e:
         logger.warning("discovery.py: %s", e)
-        # Remote unreachable — cached index may still work; that is
+        # Remote unreachable - cached index may still work; that is
         # handled by RemoteRegistry.fetch_index() internally.
         state.registry_available = False
 

@@ -8,11 +8,9 @@ from pathlib import Path
 import pytest
 
 from skcapstone.file_transfer import (
+    ChunkInfo,
     FileTransfer,
     TransferManifest,
-    ChunkInfo,
-    TransferStatus,
-    CHUNK_SIZE,
 )
 
 
@@ -21,10 +19,15 @@ def home(tmp_path: Path) -> Path:
     """Create a minimal agent home for file transfer tests."""
     identity_dir = tmp_path / "identity"
     identity_dir.mkdir()
-    (identity_dir / "identity.json").write_text(json.dumps({
-        "name": "test-agent",
-        "fingerprint": "ABCD1234567890ABCDEF1234567890ABCDEF1234",
-    }), encoding="utf-8")
+    (identity_dir / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "test-agent",
+                "fingerprint": "ABCD1234567890ABCDEF1234567890ABCDEF1234",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     security_dir = tmp_path / "security"
     security_dir.mkdir()
@@ -88,7 +91,10 @@ class TestSend:
     """Tests for file sending."""
 
     def test_send_creates_manifest(
-        self, ft: FileTransfer, sample_file: Path, home: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
+        home: Path,
     ) -> None:
         """Send creates a manifest file."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -96,7 +102,10 @@ class TestSend:
         assert manifest_path.exists()
 
     def test_send_creates_chunks(
-        self, ft: FileTransfer, sample_file: Path, home: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
+        home: Path,
     ) -> None:
         """Send creates encrypted chunk files."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -106,7 +115,9 @@ class TestSend:
         assert len(chunks) > 0
 
     def test_send_manifest_metadata(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Manifest contains correct file metadata."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -118,14 +129,18 @@ class TestSend:
         assert manifest.total_chunks > 0
 
     def test_send_marks_chunks_sent(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """All chunks are marked as sent."""
         manifest = ft.send(sample_file, recipient="grok")
         assert all(c.sent for c in manifest.chunks)
 
     def test_send_multiple_chunks(
-        self, ft: FileTransfer, large_file: Path,
+        self,
+        ft: FileTransfer,
+        large_file: Path,
     ) -> None:
         """Large files produce multiple chunks."""
         manifest = ft.send(large_file, recipient="lumina")
@@ -144,7 +159,9 @@ class TestSend:
             ft.send(empty, recipient="lumina")
 
     def test_send_without_encryption(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Files can be sent without encryption."""
         manifest = ft.send(sample_file, recipient="lumina", encrypt=False)
@@ -160,7 +177,10 @@ class TestReceive:
     """Tests for file receiving."""
 
     def test_receive_reassembles_file(
-        self, ft: FileTransfer, sample_file: Path, home: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
+        home: Path,
     ) -> None:
         """Receive reassembles the original file."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -169,7 +189,9 @@ class TestReceive:
         assert output.read_bytes() == sample_file.read_bytes()
 
     def test_receive_large_file(
-        self, ft: FileTransfer, large_file: Path,
+        self,
+        ft: FileTransfer,
+        large_file: Path,
     ) -> None:
         """Receive handles multi-chunk files."""
         manifest = ft.send(large_file, recipient="lumina")
@@ -177,7 +199,10 @@ class TestReceive:
         assert output.read_bytes() == large_file.read_bytes()
 
     def test_receive_records_completion(
-        self, ft: FileTransfer, sample_file: Path, home: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
+        home: Path,
     ) -> None:
         """Receive writes a completion receipt."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -186,7 +211,10 @@ class TestReceive:
         assert receipt.exists()
 
     def test_receive_custom_output_dir(
-        self, ft: FileTransfer, sample_file: Path, tmp_path: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
+        tmp_path: Path,
     ) -> None:
         """Receive writes to custom output directory."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -201,7 +229,10 @@ class TestReceive:
             ft.receive("nonexistent-id")
 
     def test_receive_detects_tampering(
-        self, ft: FileTransfer, sample_file: Path, home: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
+        home: Path,
     ) -> None:
         """Receive detects tampered chunks."""
         manifest = ft.send(sample_file, recipient="lumina", encrypt=False)
@@ -214,7 +245,9 @@ class TestReceive:
             ft.receive(manifest.transfer_id)
 
     def test_receive_without_encryption(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Unencrypted transfers reassemble correctly."""
         manifest = ft.send(sample_file, recipient="lumina", encrypt=False)
@@ -231,7 +264,9 @@ class TestResume:
     """Tests for transfer resume functionality."""
 
     def test_resume_send_complete(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Complete transfer has no unsent chunks."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -239,7 +274,9 @@ class TestResume:
         assert unsent == []
 
     def test_resume_receive_all_present(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Transfer with all chunks has no missing."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -247,7 +284,10 @@ class TestResume:
         assert missing == []
 
     def test_resume_receive_missing_chunks(
-        self, ft: FileTransfer, large_file: Path, home: Path,
+        self,
+        ft: FileTransfer,
+        large_file: Path,
+        home: Path,
     ) -> None:
         """Detect missing chunks for resume."""
         manifest = ft.send(large_file, recipient="lumina")
@@ -277,7 +317,9 @@ class TestListTransfers:
         assert ft.list_transfers() == []
 
     def test_list_after_send(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Sent transfers appear in listing."""
         ft.send(sample_file, recipient="lumina")
@@ -287,7 +329,9 @@ class TestListTransfers:
         assert transfers[0].filename == "test-document.txt"
 
     def test_list_filter_direction(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Can filter by send/receive direction."""
         ft.send(sample_file, recipient="lumina")
@@ -295,7 +339,9 @@ class TestListTransfers:
         assert len(ft.list_transfers(direction="receive")) == 0
 
     def test_list_progress(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Transfer status shows progress."""
         ft.send(sample_file, recipient="lumina")
@@ -313,7 +359,9 @@ class TestManifestAndStatus:
     """Tests for manifest retrieval and status."""
 
     def test_get_manifest(
-        self, ft: FileTransfer, sample_file: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
     ) -> None:
         """Get manifest by transfer ID."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -342,7 +390,10 @@ class TestCleanup:
     """Tests for transfer cleanup."""
 
     def test_cleanup_removes_files(
-        self, ft: FileTransfer, sample_file: Path, home: Path,
+        self,
+        ft: FileTransfer,
+        sample_file: Path,
+        home: Path,
     ) -> None:
         """Cleanup removes transfer directory."""
         manifest = ft.send(sample_file, recipient="lumina")
@@ -366,16 +417,20 @@ class TestModels:
     def test_manifest_progress_empty(self) -> None:
         """Empty manifest has zero progress."""
         m = TransferManifest(
-            filename="test", file_size=100,
-            file_sha256="abc", total_chunks=0,
+            filename="test",
+            file_size=100,
+            file_sha256="abc",
+            total_chunks=0,
         )
         assert m.progress == 0.0
 
     def test_manifest_is_complete(self) -> None:
         """Complete manifest detected correctly."""
         m = TransferManifest(
-            filename="test", file_size=100,
-            file_sha256="abc", total_chunks=1,
+            filename="test",
+            file_size=100,
+            file_sha256="abc",
+            total_chunks=1,
             chunks=[ChunkInfo(index=0, size=100, sha256="def", sent=True, received=True)],
         )
         assert m.is_complete is True
@@ -383,8 +438,10 @@ class TestModels:
     def test_manifest_not_complete(self) -> None:
         """Incomplete manifest detected correctly."""
         m = TransferManifest(
-            filename="test", file_size=100,
-            file_sha256="abc", total_chunks=1,
+            filename="test",
+            file_size=100,
+            file_sha256="abc",
+            total_chunks=1,
             chunks=[ChunkInfo(index=0, size=100, sha256="def", sent=True, received=False)],
         )
         assert m.is_complete is False

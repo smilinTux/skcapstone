@@ -1,4 +1,4 @@
-"""Tests for the skcapstone onboard wizard — new system-setup steps.
+"""Tests for the skcapstone onboard wizard - new system-setup steps.
 
 Covers:
 - _step_prereqs(): Python/pip/Ollama detection
@@ -12,7 +12,6 @@ Covers:
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +19,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -78,7 +76,10 @@ class TestStepPrereqs:
 
         runner = CliRunner()
         with runner.isolated_filesystem():
-            with patch("shutil.which", side_effect=lambda t: "/usr/bin/pip" if t in ("pip", "pip3") else None):
+            with patch(
+                "shutil.which",
+                side_effect=lambda t: "/usr/bin/pip" if t in ("pip", "pip3") else None,
+            ):
                 result = _step_prereqs()
 
         # Running under test means Python >= 3.10 in this project
@@ -113,8 +114,13 @@ class TestStepPrereqs:
         def fake_which(tool: str) -> str | None:
             return "/usr/local/bin/ollama" if tool == "ollama" else "/usr/bin/pip"
 
-        with patch("shutil.which", side_effect=fake_which), \
-             patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="ollama version 0.5.0\n")):
+        with (
+            patch("shutil.which", side_effect=fake_which),
+            patch(
+                "subprocess.run",
+                return_value=MagicMock(returncode=0, stdout="ollama version 0.5.0\n"),
+            ),
+        ):
             result = _step_prereqs()
 
         assert result["ollama"] is True
@@ -167,9 +173,11 @@ class TestStepOllamaModels:
         """Returns a non-ok result when user does not confirm the pull."""
         from skcapstone.onboard import _step_ollama_models
 
-        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="")), \
-             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]), \
-             patch("click.confirm", return_value=False):
+        with (
+            patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="")),
+            patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]),
+            patch("click.confirm", return_value=False),
+        ):
             result = _step_ollama_models({"ollama": True})
 
         assert result == {
@@ -182,8 +190,15 @@ class TestStepOllamaModels:
         """Returns ok=True without pulling if model already in 'ollama list'."""
         from skcapstone.onboard import _step_ollama_models
 
-        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="NAME ID SIZE\nllama3.2 abc123 2.0 GB")), \
-             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]):
+        with (
+            patch(
+                "subprocess.run",
+                return_value=MagicMock(
+                    returncode=0, stdout="NAME ID SIZE\nllama3.2 abc123 2.0 GB"
+                ),
+            ),
+            patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]),
+        ):
             result = _step_ollama_models({"ollama": True})
 
         assert result["ok"] is True
@@ -198,9 +213,11 @@ class TestStepOllamaModels:
                 return MagicMock(returncode=0, stdout="")
             return MagicMock(returncode=0)
 
-        with patch("subprocess.run", side_effect=fake_run), \
-             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]), \
-             patch("click.confirm", return_value=True):
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]),
+            patch("click.confirm", return_value=True),
+        ):
             result = _step_ollama_models({"ollama": True})
 
         assert result["ok"] is True
@@ -214,9 +231,11 @@ class TestStepOllamaModels:
                 return MagicMock(returncode=0, stdout="")
             return MagicMock(returncode=1)
 
-        with patch("subprocess.run", side_effect=fake_run), \
-             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]), \
-             patch("click.confirm", return_value=True):
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]),
+            patch("click.confirm", return_value=True),
+        ):
             result = _step_ollama_models({"ollama": True})
 
         assert result["ok"] is False
@@ -230,9 +249,11 @@ class TestStepOllamaModels:
                 return MagicMock(returncode=0, stdout="")
             raise subprocess.TimeoutExpired(cmd, 600)
 
-        with patch("subprocess.run", side_effect=fake_run), \
-             patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]), \
-             patch("click.confirm", return_value=True):
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch("click.prompt", side_effect=["http://localhost:11434", "llama3.2"]),
+            patch("click.confirm", return_value=True),
+        ):
             result = _step_ollama_models({"ollama": True})
 
         assert result["ok"] is False
@@ -270,9 +291,10 @@ class TestStepConfigFiles:
 
     def test_writes_model_profiles_yaml(self, tmp_home: Path) -> None:
         """Copies bundled model_profiles.yaml when missing."""
-        from skcapstone.onboard import _step_config_files
         from pathlib import Path as _Path
+
         import skcapstone.onboard as _onboard_module
+        from skcapstone.onboard import _step_config_files
 
         bundled = _Path(_onboard_module.__file__).parent / "data" / "model_profiles.yaml"
         if not bundled.exists():
@@ -337,8 +359,10 @@ class TestStepSystemdService:
         """Returns False when systemd user session is not running."""
         from skcapstone.onboard import _step_systemd_service_linux
 
-        with patch("click.confirm", return_value=True), \
-             patch("skcapstone.systemd.systemd_available", return_value=False):
+        with (
+            patch("click.confirm", return_value=True),
+            patch("skcapstone.systemd.systemd_available", return_value=False),
+        ):
             result = _step_systemd_service_linux()
 
         assert result is False
@@ -347,9 +371,14 @@ class TestStepSystemdService:
         """Returns True when systemd install succeeds."""
         from skcapstone.onboard import _step_systemd_service_linux
 
-        with patch("click.confirm", return_value=True), \
-             patch("skcapstone.systemd.systemd_available", return_value=True), \
-             patch("skcapstone.systemd.install_service", return_value={"installed": True, "enabled": True}):
+        with (
+            patch("click.confirm", return_value=True),
+            patch("skcapstone.systemd.systemd_available", return_value=True),
+            patch(
+                "skcapstone.systemd.install_service",
+                return_value={"installed": True, "enabled": True},
+            ),
+        ):
             result = _step_systemd_service_linux()
 
         assert result is True
@@ -358,9 +387,11 @@ class TestStepSystemdService:
         """Returns False when install_service reports not installed."""
         from skcapstone.onboard import _step_systemd_service_linux
 
-        with patch("click.confirm", return_value=True), \
-             patch("skcapstone.systemd.systemd_available", return_value=True), \
-             patch("skcapstone.systemd.install_service", return_value={"installed": False}):
+        with (
+            patch("click.confirm", return_value=True),
+            patch("skcapstone.systemd.systemd_available", return_value=True),
+            patch("skcapstone.systemd.install_service", return_value={"installed": False}),
+        ):
             result = _step_systemd_service_linux()
 
         assert result is False
@@ -393,8 +424,6 @@ class TestStepDoctorCheck:
 
     def test_emits_pass_fail_markers(self, tmp_home: Path, capsys) -> None:
         """Output contains ✓ or ✗ check markers."""
-        import io
-        from click.testing import CliRunner
         from skcapstone.onboard import _step_doctor_check
 
         # Capture click.echo output via runner
@@ -428,9 +457,14 @@ class TestStepTestConsciousness:
         mock_config = MagicMock(ollama_model="llama3.2", ollama_host="http://localhost:11434")
         mock_callback = MagicMock(return_value="Hello, I am running fine.")
 
-        with patch("click.confirm", return_value=True), \
-             patch("skcapstone.consciousness_config.load_consciousness_config", return_value=mock_config), \
-             patch("skseed.llm.ollama_callback", return_value=mock_callback):
+        with (
+            patch("click.confirm", return_value=True),
+            patch(
+                "skcapstone.consciousness_config.load_consciousness_config",
+                return_value=mock_config,
+            ),
+            patch("skseed.llm.ollama_callback", return_value=mock_callback),
+        ):
             result = _step_test_consciousness(tmp_home)
 
         assert result is True
@@ -442,9 +476,14 @@ class TestStepTestConsciousness:
         mock_config = MagicMock(ollama_model="llama3.2", ollama_host="http://localhost:11434")
         mock_callback = MagicMock(return_value="")
 
-        with patch("click.confirm", return_value=True), \
-             patch("skcapstone.consciousness_config.load_consciousness_config", return_value=mock_config), \
-             patch("skseed.llm.ollama_callback", return_value=mock_callback):
+        with (
+            patch("click.confirm", return_value=True),
+            patch(
+                "skcapstone.consciousness_config.load_consciousness_config",
+                return_value=mock_config,
+            ),
+            patch("skseed.llm.ollama_callback", return_value=mock_callback),
+        ):
             result = _step_test_consciousness(tmp_home)
 
         assert result is False
@@ -453,8 +492,10 @@ class TestStepTestConsciousness:
         """Returns False when the Ollama callback raises an exception."""
         from skcapstone.onboard import _step_test_consciousness
 
-        with patch("click.confirm", return_value=True), \
-             patch("skseed.llm.ollama_callback", side_effect=RuntimeError("backend down")):
+        with (
+            patch("click.confirm", return_value=True),
+            patch("skseed.llm.ollama_callback", side_effect=RuntimeError("backend down")),
+        ):
             result = _step_test_consciousness(tmp_home)
 
         assert result is False

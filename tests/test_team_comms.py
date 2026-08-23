@@ -1,5 +1,5 @@
 """
-Tests for skcapstone.team_comms — agent-to-agent communication layer.
+Tests for skcapstone.team_comms - agent-to-agent communication layer.
 
 Covers:
 - Channel bootstrapping (directory creation)
@@ -17,22 +17,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from skcapstone.team_comms import (
+    _ENVELOPE_SUFFIX,
     TeamChannel,
+    _build_envelope,
     bootstrap_team_channel,
     broadcast_to_team,
     receive_broadcast,
     receive_messages,
     send_to_teammate,
-    _ENVELOPE_SUFFIX,
-    _build_envelope,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,9 +64,7 @@ def channel(comms_root: Path) -> TeamChannel:
 class TestBootstrapTeamChannel:
     """Tests for bootstrap_team_channel()."""
 
-    def test_creates_inbox_and_archive_for_each_agent(
-        self, comms_root: Path
-    ) -> None:
+    def test_creates_inbox_and_archive_for_each_agent(self, comms_root: Path) -> None:
         """Inbox and archive directories are created for every agent."""
         channel = bootstrap_team_channel(
             team_slug="myteam",
@@ -79,9 +75,7 @@ class TestBootstrapTeamChannel:
             assert channel.inbox_for(agent).is_dir()
             assert channel.archive_for(agent).is_dir()
 
-    def test_broadcast_dir_created_when_queen_set(
-        self, comms_root: Path
-    ) -> None:
+    def test_broadcast_dir_created_when_queen_set(self, comms_root: Path) -> None:
         """Broadcast directory exists when queen is specified."""
         channel = bootstrap_team_channel(
             team_slug="queenteam",
@@ -91,9 +85,7 @@ class TestBootstrapTeamChannel:
         )
         assert channel.broadcast_dir.is_dir()
 
-    def test_broadcast_dir_not_created_without_queen(
-        self, comms_root: Path
-    ) -> None:
+    def test_broadcast_dir_not_created_without_queen(self, comms_root: Path) -> None:
         """No broadcast directory when no queen is set."""
         channel = bootstrap_team_channel(
             team_slug="peerteam",
@@ -238,9 +230,7 @@ class TestBroadcastToTeam:
         assert len(receive_messages("beta", channel)) == 1
         assert len(receive_messages("gamma", channel)) == 1
 
-    def test_queen_does_not_receive_own_broadcast(
-        self, channel: TeamChannel
-    ) -> None:
+    def test_queen_does_not_receive_own_broadcast(self, channel: TeamChannel) -> None:
         """The queen's inbox is not written to during a broadcast."""
         broadcast_to_team("alpha", "Hello team", channel)
         assert receive_messages("alpha", channel) == []
@@ -258,9 +248,7 @@ class TestBroadcastToTeam:
 
     def test_no_queen_allows_any_broadcast(self, comms_root: Path) -> None:
         """When channel has no queen, any member may broadcast."""
-        ch = bootstrap_team_channel(
-            "open-team", ["x", "y", "z"], comms_root, queen=None
-        )
+        ch = bootstrap_team_channel("open-team", ["x", "y", "z"], comms_root, queen=None)
         eids = broadcast_to_team("x", "peer broadcast", ch)
         # y and z each get one message
         assert len(eids) == 2
@@ -355,9 +343,7 @@ class TestTeamEngineCommsIntegration:
         assert isinstance(deployment.comms_channel, TeamChannel)
         assert len(deployment.comms_channel.members) == 2
 
-    def test_deploy_without_comms_root_skips_channel(
-        self, tmp_path: Path
-    ) -> None:
+    def test_deploy_without_comms_root_skips_channel(self, tmp_path: Path) -> None:
         """When comms_root is explicitly None, comms_channel stays None."""
         from skcapstone.blueprints.schema import AgentSpec, BlueprintManifest
         from skcapstone.team_engine import TeamEngine

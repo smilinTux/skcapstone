@@ -10,12 +10,10 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -32,6 +30,7 @@ def agent_home(tmp_path):
     (home / "identity" / "identity.json").write_text(json.dumps(identity))
     (home / "manifest.json").write_text(json.dumps({"name": "TestAgent", "version": "0.1.0"}))
     import yaml
+
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "TestAgent"}))
     return home
 
@@ -43,7 +42,11 @@ def agent_home_with_convs(agent_home):
     convs.mkdir(parents=True)
     lumina_history = [
         {"role": "user", "content": "Hello Lumina!", "timestamp": "2026-03-01T10:00:00Z"},
-        {"role": "assistant", "content": "Hello! How can I help?", "timestamp": "2026-03-01T10:00:01Z"},
+        {
+            "role": "assistant",
+            "content": "Hello! How can I help?",
+            "timestamp": "2026-03-01T10:00:01Z",
+        },
     ]
     (convs / "lumina.json").write_text(json.dumps(lumina_history))
     jarvis_history = [
@@ -64,6 +67,7 @@ class TestChatList:
     @patch("skcapstone.cli.chat.get_runtime")
     def test_chat_list_help(self, _mock_rt):
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["chat", "list", "--help"])
         assert result.exit_code == 0
@@ -73,6 +77,7 @@ class TestChatList:
     def test_chat_list_empty_no_dir(self, _mock_rt, agent_home):
         """No conversations dir → 'No conversations yet' message."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["chat", "list", "--home", str(agent_home)])
         assert result.exit_code == 0
@@ -83,6 +88,7 @@ class TestChatList:
         """Empty conversations dir → 'No conversations yet' message."""
         (agent_home / "conversations").mkdir(parents=True)
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["chat", "list", "--home", str(agent_home)])
         assert result.exit_code == 0
@@ -92,6 +98,7 @@ class TestChatList:
     def test_chat_list_shows_peers(self, _mock_rt, agent_home_with_convs):
         """Peers with conversations are listed with message counts."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["chat", "list", "--home", str(agent_home_with_convs)])
         assert result.exit_code == 0
@@ -104,6 +111,7 @@ class TestChatList:
     def test_chat_list_shows_last_message_preview(self, _mock_rt, agent_home_with_convs):
         """Last message content is shown in the list."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["chat", "list", "--home", str(agent_home_with_convs)])
         assert result.exit_code == 0
@@ -117,6 +125,7 @@ class TestChatListFlag:
     def test_chat_double_dash_list(self, _mock_rt, agent_home):
         """chat --list routes to the list subcommand."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["chat", "--list", "--home", str(agent_home)])
         assert result.exit_code == 0
@@ -135,6 +144,7 @@ class TestChatOpenLLM:
     def test_chat_open_help(self, _mock_rt):
         """chat open --help works and shows PEER argument."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["chat", "open", "--help"])
         assert result.exit_code == 0
@@ -144,6 +154,7 @@ class TestChatOpenLLM:
     def test_chat_open_missing_home(self, _mock_rt, tmp_path):
         """chat open exits with error if home dir doesn't exist."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(
             main, ["chat", "open", "lumina", "--home", str(tmp_path / "nonexistent")]
@@ -159,6 +170,7 @@ class TestChatOpenLLM:
         mock_rt.return_value = mock_runtime
 
         from skcapstone.cli import main
+
         runner = CliRunner()
         runner.invoke(main, ["chat", "open", "lumina", "--home", str(agent_home)])
 
@@ -174,6 +186,7 @@ class TestChatOpenLLM:
         mock_rt.return_value = mock_runtime
 
         from skcapstone.cli import main
+
         runner = CliRunner()
         runner.invoke(main, ["chat", "lumina", "--home", str(agent_home)])
 
@@ -184,7 +197,7 @@ class TestChatOpenLLM:
 # _run_llm_chat unit tests
 # ---------------------------------------------------------------------------
 
-# Patch targets — lazy imports inside _run_llm_chat are fetched from
+# Patch targets - lazy imports inside _run_llm_chat are fetched from
 # consciousness_loop at call time, so patch at the source module.
 _CL = "skcapstone.consciousness_loop"
 
@@ -216,11 +229,13 @@ class TestRunLLMChat:
         mock_bridge = self._make_mock_bridge("Hello from LLM!")
         mock_builder = self._make_mock_builder()
 
-        with patch(f"{_CL}.LLMBridge", return_value=mock_bridge), \
-             patch(f"{_CL}.SystemPromptBuilder", return_value=mock_builder), \
-             patch(f"{_CL}.ConsciousnessConfig"), \
-             patch(f"{_CL}._classify_message", return_value=MagicMock()), \
-             patch("skcapstone.cli.chat.console") as mock_console:
+        with (
+            patch(f"{_CL}.LLMBridge", return_value=mock_bridge),
+            patch(f"{_CL}.SystemPromptBuilder", return_value=mock_builder),
+            patch(f"{_CL}.ConsciousnessConfig"),
+            patch(f"{_CL}._classify_message", return_value=MagicMock()),
+            patch("skcapstone.cli.chat.console") as mock_console,
+        ):
             self._status_ctx(mock_console)
             mock_console.input.side_effect = ["hi", "/quit"]
 
@@ -239,11 +254,13 @@ class TestRunLLMChat:
         mock_bridge = self._make_mock_bridge()
         mock_builder = self._make_mock_builder()
 
-        with patch(f"{_CL}.LLMBridge", return_value=mock_bridge), \
-             patch(f"{_CL}.SystemPromptBuilder", return_value=mock_builder), \
-             patch(f"{_CL}.ConsciousnessConfig"), \
-             patch(f"{_CL}._classify_message", return_value=MagicMock()), \
-             patch("skcapstone.cli.chat.console") as mock_console:
+        with (
+            patch(f"{_CL}.LLMBridge", return_value=mock_bridge),
+            patch(f"{_CL}.SystemPromptBuilder", return_value=mock_builder),
+            patch(f"{_CL}.ConsciousnessConfig"),
+            patch(f"{_CL}._classify_message", return_value=MagicMock()),
+            patch("skcapstone.cli.chat.console") as mock_console,
+        ):
             self._status_ctx(mock_console)
             mock_console.input.side_effect = ["", "  ", "/quit"]
 
@@ -255,11 +272,13 @@ class TestRunLLMChat:
         """KeyboardInterrupt exits the loop without raising."""
         from skcapstone.cli.chat import _run_llm_chat
 
-        with patch(f"{_CL}.LLMBridge", return_value=self._make_mock_bridge()), \
-             patch(f"{_CL}.SystemPromptBuilder", return_value=self._make_mock_builder()), \
-             patch(f"{_CL}.ConsciousnessConfig"), \
-             patch(f"{_CL}._classify_message", return_value=MagicMock()), \
-             patch("skcapstone.cli.chat.console") as mock_console:
+        with (
+            patch(f"{_CL}.LLMBridge", return_value=self._make_mock_bridge()),
+            patch(f"{_CL}.SystemPromptBuilder", return_value=self._make_mock_builder()),
+            patch(f"{_CL}.ConsciousnessConfig"),
+            patch(f"{_CL}._classify_message", return_value=MagicMock()),
+            patch("skcapstone.cli.chat.console") as mock_console,
+        ):
             mock_console.input.side_effect = KeyboardInterrupt
 
             _run_llm_chat("lumina", agent_home, "TestAgent")
@@ -270,11 +289,13 @@ class TestRunLLMChat:
         """Existing conversation history is shown at startup."""
         from skcapstone.cli.chat import _run_llm_chat
 
-        with patch(f"{_CL}.LLMBridge", return_value=self._make_mock_bridge()), \
-             patch(f"{_CL}.SystemPromptBuilder", return_value=self._make_mock_builder()), \
-             patch(f"{_CL}.ConsciousnessConfig"), \
-             patch(f"{_CL}._classify_message", return_value=MagicMock()), \
-             patch("skcapstone.cli.chat.console") as mock_console:
+        with (
+            patch(f"{_CL}.LLMBridge", return_value=self._make_mock_bridge()),
+            patch(f"{_CL}.SystemPromptBuilder", return_value=self._make_mock_builder()),
+            patch(f"{_CL}.ConsciousnessConfig"),
+            patch(f"{_CL}._classify_message", return_value=MagicMock()),
+            patch("skcapstone.cli.chat.console") as mock_console,
+        ):
             self._status_ctx(mock_console)
             mock_console.input.side_effect = ["/quit"]
 
@@ -291,18 +312,21 @@ class TestRunLLMChat:
         mock_bridge.generate.side_effect = RuntimeError("LLM offline")
         mock_builder = self._make_mock_builder()
 
-        with patch(f"{_CL}.LLMBridge", return_value=mock_bridge), \
-             patch(f"{_CL}.SystemPromptBuilder", return_value=mock_builder), \
-             patch(f"{_CL}.ConsciousnessConfig"), \
-             patch(f"{_CL}._classify_message", return_value=MagicMock()), \
-             patch("skcapstone.cli.chat.console") as mock_console:
+        with (
+            patch(f"{_CL}.LLMBridge", return_value=mock_bridge),
+            patch(f"{_CL}.SystemPromptBuilder", return_value=mock_builder),
+            patch(f"{_CL}.ConsciousnessConfig"),
+            patch(f"{_CL}._classify_message", return_value=MagicMock()),
+            patch("skcapstone.cli.chat.console") as mock_console,
+        ):
             self._status_ctx(mock_console)
             mock_console.input.side_effect = ["hello", "/quit"]
 
             _run_llm_chat("lumina", agent_home, "TestAgent")
 
-        saved_calls = [c for c in mock_builder.add_to_history.call_args_list
-                       if c[0][1] == "assistant"]
+        saved_calls = [
+            c for c in mock_builder.add_to_history.call_args_list if c[0][1] == "assistant"
+        ]
         assert saved_calls
         assert "Error" in saved_calls[0][0][2]
 
@@ -316,10 +340,12 @@ class TestRunLLMChat:
         # Use a real SystemPromptBuilder so the JSON persistence path is exercised.
         real_builder = SystemPromptBuilder(home=agent_home)
 
-        with patch(f"{_CL}.LLMBridge", return_value=mock_bridge), \
-             patch(f"{_CL}.SystemPromptBuilder", return_value=real_builder), \
-             patch(f"{_CL}.ConsciousnessConfig"), \
-             patch("skcapstone.cli.chat.console") as mock_console:
+        with (
+            patch(f"{_CL}.LLMBridge", return_value=mock_bridge),
+            patch(f"{_CL}.SystemPromptBuilder", return_value=real_builder),
+            patch(f"{_CL}.ConsciousnessConfig"),
+            patch("skcapstone.cli.chat.console") as mock_console,
+        ):
             self._status_ctx(mock_console)
             mock_console.input.side_effect = ["persist this", "/quit"]
 

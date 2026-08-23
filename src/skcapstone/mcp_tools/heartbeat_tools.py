@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mcp.types import TextContent, Tool
 
-from ._helpers import _get_agent_name, _home, _json_response, _shared_root
+from ._helpers import _get_agent_name, _home, _json_response
 
 TOOLS: list[Tool] = [
     Tool(
@@ -86,9 +86,7 @@ async def _handle_heartbeat_pulse(args: dict) -> list[TextContent]:
 
     home = _home()
     agent_name = _get_agent_name(home)
-    shared = _shared_root()
-    beacon = HeartbeatBeacon(home, agent_name=agent_name,
-                             heartbeats_dir=shared / "heartbeats")
+    beacon = HeartbeatBeacon(home, agent_name=agent_name)
     beacon.initialize()
 
     hb = beacon.pulse(
@@ -96,22 +94,24 @@ async def _handle_heartbeat_pulse(args: dict) -> list[TextContent]:
         claimed_tasks=args.get("claimed_tasks"),
         loaded_model=args.get("loaded_model", ""),
     )
-    return _json_response({
-        "agent_name": hb.agent_name,
-        "status": hb.status,
-        "hostname": hb.hostname,
-        "platform": hb.platform,
-        "ttl_seconds": hb.ttl_seconds,
-        "uptime_hours": hb.uptime_hours,
-        "capabilities": [c.name for c in hb.capabilities],
-        "fingerprint": hb.fingerprint,
-        "capacity": {
-            "cpu_count": hb.capacity.cpu_count,
-            "memory_total_mb": hb.capacity.memory_total_mb,
-            "disk_free_gb": hb.capacity.disk_free_gb,
-            "gpu_available": hb.capacity.gpu_available,
-        },
-    })
+    return _json_response(
+        {
+            "agent_name": hb.agent_name,
+            "status": hb.status,
+            "hostname": hb.hostname,
+            "platform": hb.platform,
+            "ttl_seconds": hb.ttl_seconds,
+            "uptime_hours": hb.uptime_hours,
+            "capabilities": [c.name for c in hb.capabilities],
+            "fingerprint": hb.fingerprint,
+            "capacity": {
+                "cpu_count": hb.capacity.cpu_count,
+                "memory_total_mb": hb.capacity.memory_total_mb,
+                "disk_free_gb": hb.capacity.disk_free_gb,
+                "gpu_available": hb.capacity.gpu_available,
+            },
+        }
+    )
 
 
 async def _handle_heartbeat_peers(args: dict) -> list[TextContent]:
@@ -120,24 +120,24 @@ async def _handle_heartbeat_peers(args: dict) -> list[TextContent]:
 
     home = _home()
     agent_name = _get_agent_name(home)
-    shared = _shared_root()
-    beacon = HeartbeatBeacon(home, agent_name=agent_name,
-                             heartbeats_dir=shared / "heartbeats")
+    beacon = HeartbeatBeacon(home, agent_name=agent_name)
     beacon.initialize()
 
     peers = beacon.discover_peers(include_self=args.get("include_self", False))
-    return _json_response([
-        {
-            "agent_name": p.agent_name,
-            "status": p.status,
-            "alive": p.alive,
-            "age_seconds": p.age_seconds,
-            "hostname": p.hostname,
-            "capabilities": p.capabilities,
-            "claimed_tasks": p.claimed_tasks,
-        }
-        for p in peers
-    ])
+    return _json_response(
+        [
+            {
+                "agent_name": p.agent_name,
+                "status": p.status,
+                "alive": p.alive,
+                "age_seconds": p.age_seconds,
+                "hostname": p.hostname,
+                "capabilities": p.capabilities,
+                "claimed_tasks": p.claimed_tasks,
+            }
+            for p in peers
+        ]
+    )
 
 
 async def _handle_heartbeat_health(_args: dict) -> list[TextContent]:
@@ -146,23 +146,23 @@ async def _handle_heartbeat_health(_args: dict) -> list[TextContent]:
 
     home = _home()
     agent_name = _get_agent_name(home)
-    shared = _shared_root()
-    beacon = HeartbeatBeacon(home, agent_name=agent_name,
-                             heartbeats_dir=shared / "heartbeats")
+    beacon = HeartbeatBeacon(home, agent_name=agent_name)
     beacon.initialize()
 
     health = beacon.mesh_health()
-    return _json_response({
-        "total_peers": health.total_peers,
-        "alive_peers": health.alive_peers,
-        "offline_peers": health.offline_peers,
-        "busy_peers": health.busy_peers,
-        "total_capabilities": health.total_capabilities,
-        "peers": [
-            {"agent_name": p.agent_name, "status": p.status, "alive": p.alive}
-            for p in health.peers
-        ],
-    })
+    return _json_response(
+        {
+            "total_peers": health.total_peers,
+            "alive_peers": health.alive_peers,
+            "offline_peers": health.offline_peers,
+            "busy_peers": health.busy_peers,
+            "total_capabilities": health.total_capabilities,
+            "peers": [
+                {"agent_name": p.agent_name, "status": p.status, "alive": p.alive}
+                for p in health.peers
+            ],
+        }
+    )
 
 
 async def _handle_heartbeat_find_capable(args: dict) -> list[TextContent]:
@@ -171,20 +171,20 @@ async def _handle_heartbeat_find_capable(args: dict) -> list[TextContent]:
 
     home = _home()
     agent_name = _get_agent_name(home)
-    shared = _shared_root()
-    beacon = HeartbeatBeacon(home, agent_name=agent_name,
-                             heartbeats_dir=shared / "heartbeats")
+    beacon = HeartbeatBeacon(home, agent_name=agent_name)
     beacon.initialize()
 
     capability = args["capability"]
     peers = beacon.find_capable(capability)
-    return _json_response({
-        "capability": capability,
-        "peers": [
-            {"agent_name": p.agent_name, "status": p.status, "capabilities": p.capabilities}
-            for p in peers
-        ],
-    })
+    return _json_response(
+        {
+            "capability": capability,
+            "peers": [
+                {"agent_name": p.agent_name, "status": p.status, "capabilities": p.capabilities}
+                for p in peers
+            ],
+        }
+    )
 
 
 HANDLERS: dict = {

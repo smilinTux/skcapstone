@@ -1,4 +1,4 @@
-"""Tests for SKSecurity KMS — sovereign key management.
+"""Tests for SKSecurity KMS - sovereign key management.
 
 Tests the skcapstone KMS wrapper which delegates crypto operations
 to sksecurity.kms (AES-256-GCM key wrapping, HKDF-SHA256 derivation).
@@ -421,6 +421,7 @@ class TestBackendIntegration:
     def test_backend_property_available(self, store: KeyStore) -> None:
         """Backend property returns KMS when sksecurity is installed."""
         from skcapstone.kms import _HAS_BACKEND
+
         if _HAS_BACKEND:
             assert store.backend is not None
             assert store.backend.is_unsealed
@@ -436,6 +437,7 @@ class TestBackendIntegration:
     def test_backend_4_tier_operations(self, store: KeyStore) -> None:
         """When backend is available, 4-tier operations work."""
         from skcapstone.kms import _HAS_BACKEND
+
         if not _HAS_BACKEND:
             pytest.skip("sksecurity not installed")
 

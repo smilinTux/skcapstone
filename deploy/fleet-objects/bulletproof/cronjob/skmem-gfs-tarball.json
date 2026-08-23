@@ -1,0 +1,21 @@
+{
+  "kind": "cronjob",
+  "labels": {
+    "epic": "CR-7.3"
+  },
+  "name": "skmem-gfs-tarball",
+  "spec": {
+    "command": "deploy/ops/skmem-gfs-tarball.sh",
+    "conditions": [
+      "MissedRun",
+      "BackupFresh"
+    ],
+    "nodeSelector": {
+      "always-on": "true"
+    },
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "schedule": "@daily",
+    "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md",
+    "window": "02:45"
+  }
+}

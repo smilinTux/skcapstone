@@ -1,5 +1,5 @@
 """
-mDNS peer discovery for SKCapstone — Zeroconf-based LAN peer detection.
+mDNS peer discovery for SKCapstone - Zeroconf-based LAN peer detection.
 
 Registers ``_skcapstone._tcp`` on daemon start and browses for other
 instances on the local network.  Discovered peers are written as synthetic
@@ -7,7 +7,7 @@ heartbeat files (``metadata.source = "mdns"``) so
 ``HeartbeatBeacon.discover_peers()`` picks them up through the normal flow.
 
 Gracefully disabled at import time if the ``zeroconf`` package is not
-installed — no hard dependency.
+installed - no hard dependency.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ class MDNSDiscovery:
     marked offline (TTL=0) so it immediately ages out.
 
     Args:
-        agent_name: Local agent name — used as the mDNS service instance name
+        agent_name: Local agent name - used as the mDNS service instance name
             and written into the synthetic heartbeat ``agent_name`` field.
         port: Local HTTP API port advertised in the TXT record.
         heartbeats_dir: Directory that ``HeartbeatBeacon`` reads heartbeat
@@ -65,9 +65,9 @@ class MDNSDiscovery:
         self._port = port
         self._heartbeats_dir = heartbeats_dir
 
-        self._zc: Optional[object] = None       # Zeroconf instance
+        self._zc: Optional[object] = None  # Zeroconf instance
         self._browser: Optional[object] = None  # ServiceBrowser
-        self._info: Optional[object] = None     # ServiceInfo
+        self._info: Optional[object] = None  # ServiceInfo
 
         self._lock = threading.Lock()
         # Maps raw mDNS service name → agent_name for peers we track
@@ -84,7 +84,7 @@ class MDNSDiscovery:
         """
         if not _ZEROCONF_AVAILABLE:
             logger.warning(
-                "zeroconf not installed — mDNS peer discovery disabled. "
+                "zeroconf not installed - mDNS peer discovery disabled. "
                 "Install with: pip install 'skcapstone[mdns]'"
             )
             return
@@ -111,9 +111,7 @@ class MDNSDiscovery:
 
         try:
             zc.register_service(self._info)
-            logger.info(
-                "mDNS: registered '%s' on port %d", instance_name, self._port
-            )
+            logger.info("mDNS: registered '%s' on port %d", instance_name, self._port)
         except Exception as exc:
             logger.warning("mDNS: service registration failed: %s", exc)
 
@@ -174,13 +172,12 @@ class MDNSDiscovery:
 
             agent_name = props.get("agent", name.split(".")[0])
 
-            # Skip ourselves — our own registration fires the browser too
+            # Skip ourselves - our own registration fires the browser too
             if agent_name == self._agent_name:
                 return
 
             addresses = [
-                socket.inet_ntoa(a) if len(a) == 4 else a.hex()
-                for a in (info.addresses or [])
+                socket.inet_ntoa(a) if len(a) == 4 else a.hex() for a in (info.addresses or [])
             ]
 
             logger.info(
@@ -233,13 +230,15 @@ class MDNSDiscovery:
                 existing = json.loads(path.read_text(encoding="utf-8"))
                 if existing.get("metadata", {}).get("source") != "mdns":
                     logger.debug(
-                        "mDNS: skipping heartbeat write for '%s' — "
+                        "mDNS: skipping heartbeat write for '%s' - "
                         "a non-mDNS heartbeat already exists",
                         agent_name,
                     )
                     return
             except Exception as exc:
-                logger.warning("Failed to read existing mDNS heartbeat for %s: %s", agent_name, exc)
+                logger.warning(
+                    "Failed to read existing mDNS heartbeat for %s: %s", agent_name, exc
+                )
 
         heartbeat = {
             "agent_name": agent_name,
@@ -282,9 +281,7 @@ class MDNSDiscovery:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(heartbeat, indent=2), encoding="utf-8")
         tmp.rename(path)
-        logger.debug(
-            "mDNS: wrote heartbeat for '%s' (offline=%s)", agent_name, offline
-        )
+        logger.debug("mDNS: wrote heartbeat for '%s' (offline=%s)", agent_name, offline)
 
     @staticmethod
     def _local_addresses() -> list[bytes]:

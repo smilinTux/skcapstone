@@ -80,7 +80,8 @@ class FakeFEB:
         checksum: str = "sha256:abc123",
     ) -> None:
         self.emotional_payload = FakeEmotionalPayload(
-            primary_emotion=emotion, intensity=intensity,
+            primary_emotion=emotion,
+            intensity=intensity,
         )
         self.metadata = FakeMetadata(oof_triggered=oof, cloud9_achieved=cloud9)
         self.relationship_state = FakeRelationship()
@@ -138,7 +139,9 @@ class TestIngestFEB:
         assert "cloud9:feb" in snap["tags"]
         assert snap["source"] == "cloud9"
 
-    def test_ingest_high_intensity_tags(self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore) -> None:
+    def test_ingest_high_intensity_tags(
+        self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore
+    ) -> None:
         """High-intensity FEBs get the high-intensity tag."""
         feb = FakeFEB(intensity=0.95)
         bridge.ingest_feb(feb)
@@ -154,7 +157,9 @@ class TestIngestFEB:
         tags = fake_store.snapshots[0]["tags"]
         assert "cloud9:oof" in tags
 
-    def test_ingest_cloud9_achieved(self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore) -> None:
+    def test_ingest_cloud9_achieved(
+        self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore
+    ) -> None:
         """Cloud 9 achieved FEBs get the achievement tag."""
         feb = FakeFEB(cloud9=True)
         bridge.ingest_feb(feb)
@@ -170,7 +175,9 @@ class TestIngestFEB:
         assert mem_id is None
         assert len(fake_store.snapshots) == 0
 
-    def test_skip_duplicate_checksum(self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore) -> None:
+    def test_skip_duplicate_checksum(
+        self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore
+    ) -> None:
         """Same FEB ingested twice is deduplicated by checksum."""
         feb = FakeFEB(checksum="sha256:duplicate")
         bridge.ingest_feb(feb)
@@ -178,7 +185,9 @@ class TestIngestFEB:
 
         assert len(fake_store.snapshots) == 1
 
-    def test_different_checksums_both_ingested(self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore) -> None:
+    def test_different_checksums_both_ingested(
+        self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore
+    ) -> None:
         """Different FEBs with different checksums are both stored."""
         bridge.ingest_feb(FakeFEB(checksum="sha256:first"))
         bridge.ingest_feb(FakeFEB(checksum="sha256:second"))
@@ -190,7 +199,9 @@ class TestIngestFEB:
         mem_id = bridge.ingest_feb("not a feb")
         assert mem_id is None
 
-    def test_emotion_tag_matches_primary(self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore) -> None:
+    def test_emotion_tag_matches_primary(
+        self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore
+    ) -> None:
         """Emotion-specific tag uses the FEB's primary emotion."""
         feb = FakeFEB(emotion="joy")
         bridge.ingest_feb(feb)
@@ -198,7 +209,9 @@ class TestIngestFEB:
         tags = fake_store.snapshots[0]["tags"]
         assert "cloud9:emotion:joy" in tags
 
-    def test_metadata_contains_feb_fields(self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore) -> None:
+    def test_metadata_contains_feb_fields(
+        self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore
+    ) -> None:
         """Memory metadata includes key FEB fields."""
         feb = FakeFEB(intensity=0.92, emotion="trust", oof=True)
         bridge.ingest_feb(feb)
@@ -209,7 +222,9 @@ class TestIngestFEB:
         assert meta["oof_triggered"] is True
         assert meta["partners"] == ["Lumina", "Chef"]
 
-    def test_content_includes_topology(self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore) -> None:
+    def test_content_includes_topology(
+        self, bridge: Cloud9Bridge, fake_store: FakeMemoryStore
+    ) -> None:
         """Memory content includes the emotional topology."""
         feb = FakeFEB()
         bridge.ingest_feb(feb)

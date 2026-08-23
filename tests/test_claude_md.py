@@ -1,4 +1,4 @@
-"""Tests for skcapstone.claude_md — CLAUDE.md auto-regeneration.
+"""Tests for skcapstone.claude_md - CLAUDE.md auto-regeneration.
 
 Covers:
   - generate_claude_md() produces correct markdown structure
@@ -15,17 +15,17 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
+import click.testing
 import yaml
 from click.testing import CliRunner
 
 from skcapstone.claude_md import generate_claude_md, write_claude_md
 from skcapstone.cli import main
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _init_agent(home: Path, name: str = "md-test") -> None:
     """Minimal agent init needed for context gathering."""
@@ -55,6 +55,7 @@ def _init_agent(home: Path, name: str = "md-test") -> None:
 # ---------------------------------------------------------------------------
 # generate_claude_md()
 # ---------------------------------------------------------------------------
+
 
 class TestGenerateClaudeMd:
     """Tests for generate_claude_md()."""
@@ -111,6 +112,7 @@ class TestGenerateClaudeMd:
         """Memories stored before generation appear in the output."""
         _init_agent(tmp_agent_home)
         from skcapstone.memory_engine import store
+
         store(tmp_agent_home, "Penguin test memory for claude-md", tags=["pengu"])
 
         result = generate_claude_md(tmp_agent_home, memory_limit=5)
@@ -121,6 +123,7 @@ class TestGenerateClaudeMd:
         """memory_limit=1 produces output shorter than memory_limit=10."""
         _init_agent(tmp_agent_home)
         from skcapstone.memory_engine import store
+
         for i in range(8):
             store(tmp_agent_home, f"Memory item {i}", tags=["bulk"])
 
@@ -132,12 +135,13 @@ class TestGenerateClaudeMd:
     def test_consciousness_section_absent_when_disabled(self, tmp_agent_home: Path):
         """When consciousness is disabled, status shows INACTIVE."""
         import urllib.error
+
         with patch(
             "urllib.request.urlopen",
             side_effect=urllib.error.URLError("connection refused"),
         ):
             result = generate_claude_md(tmp_agent_home)
-        # Section may be omitted or show INACTIVE — either is fine
+        # Section may be omitted or show INACTIVE - either is fine
         if "## Consciousness" in result:
             assert "INACTIVE" in result
 
@@ -147,6 +151,7 @@ class TestGenerateClaudeMd:
         soul_dir = tmp_agent_home / "soul"
         soul_dir.mkdir(exist_ok=True)
         import json as _json
+
         (soul_dir / "active.json").write_text(
             _json.dumps({"active_soul": "lumina", "base_soul": "default"}),
             encoding="utf-8",
@@ -159,6 +164,7 @@ class TestGenerateClaudeMd:
 # ---------------------------------------------------------------------------
 # write_claude_md()
 # ---------------------------------------------------------------------------
+
 
 class TestWriteClaudeMd:
     """Tests for write_claude_md()."""
@@ -206,6 +212,7 @@ class TestWriteClaudeMd:
 # ---------------------------------------------------------------------------
 # refresh-context CLI
 # ---------------------------------------------------------------------------
+
 
 class TestRefreshContextCli:
     """Tests for `skcapstone refresh-context` CLI command."""

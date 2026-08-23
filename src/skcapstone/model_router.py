@@ -1,5 +1,5 @@
 """
-Model Router — automatic model selection based on task requirements.
+Model Router - automatic model selection based on task requirements.
 
 Reads a TaskSignal (description, tags, privacy flags, token estimate) and
 returns a RouteDecision that identifies the optimal model tier and a concrete
@@ -21,6 +21,71 @@ import yaml
 from pydantic import BaseModel, Field
 
 from skcapstone.blueprints.schema import ModelTier
+
+# ---------------------------------------------------------------------------
+# Registry-backed resolution (CR-5.1: skmodels registry roles are the source)
+# ---------------------------------------------------------------------------
+#
+# model_router's job is to classify a task into a TIER. The CONCRETE model for a
+# tier is NOT owned here: it is a skmodels registry ROLE (``sk-default``,
+# ``sk-code``, …), the SAME registry the gateway routes from. So this module is a
+# thin resolver over ``skos.models``: there is no second model table to drift.
+#
+# The tier -> role map below is the single knob. Every tier currently unifies on
+# ``sk-default`` (the SKGateway auto-router role that reaches ornith-big/35B via
+# SKC_LOCAL_OPENAI_URL -> :18780, with 3-box failover), matching the live
+# 2026-08-01 behaviour; per-request DIFFICULTY tiering is done fleet-side by the
+# registry ``sk-auto`` role in the gateway. Point a tier at a different role here
+# (or in the registry) to fold real per-tier routing back in (one edit, no new
+# table). ``_LOCAL_FALLBACK`` is a genuinely-pulled Ollama model appended after
+# the role so a role that cannot resolve still cascades to something servable.
+
+_TIER_ROLE: Dict[str, str] = {
+    ModelTier.FAST.value: "sk-default",
+    ModelTier.CODE.value: "sk-default",
+    ModelTier.REASON.value: "sk-default",
+    ModelTier.NUANCE.value: "sk-default",
+    ModelTier.LOCAL.value: "sk-default",
+}
+
+_LOCAL_FALLBACK = "gemma3:1b"
+
+
+def resolve_role(
+    role: Optional[str] = None,
+    *,
+    context: Optional[str] = None,
+    path: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve a registry ROLE (or an ``agent:<name>`` context) to a concrete
+    backend model via ``skos.models`` (the single source of truth the gateway
+    also routes from).
+
+    This is the thin resolver the CR-5.1 fold leaves in place of a private model
+    table. It NEVER raises:
+
+    - ``skos.models`` not importable / registry unreadable -> ``None``;
+    - an unknown role safe-degrades to the registry default role (``skos.models``
+      already does this) and the ``sk-auto`` marker degrades to ``sk-default``
+      for direct callers, so a Python caller never gets the un-routable ``auto``.
+
+    Args:
+        role: A registry role name (e.g. ``"sk-default"``, ``"sk-code"``).
+        context: A context key (e.g. ``"agent:lumina"``); wins over *role*.
+        path: Optional registry path override (tests).
+
+    Returns:
+        The concrete model id (e.g. ``"ornith-1.0-35b"``) or ``None``.
+    """
+    try:
+        import skos.models as _skm
+    except Exception:
+        return None
+    try:
+        backend = _skm.resolve(role=role, context=context, path=path)
+    except Exception:
+        return None
+    return getattr(backend, "model", None) or None
 
 
 # ---------------------------------------------------------------------------
@@ -54,15 +119,9 @@ class TaskSignal(BaseModel):
 
     description: str = Field(description="What the task is about")
     tags: List[str] = Field(default_factory=list, description="Classification tags")
-    requires_localhost: bool = Field(
-        default=False, description="Must run on the originating node"
-    )
-    privacy_sensitive: bool = Field(
-        default=False, description="Forces LOCAL tier"
-    )
-    estimated_tokens: int = Field(
-        default=0, description="Estimated token usage hint"
-    )
+    requires_localhost: bool = Field(default=False, description="Must run on the originating node")
+    privacy_sensitive: bool = Field(default=False, description="Forces LOCAL tier")
+    estimated_tokens: int = Field(default=0, description="Estimated token usage hint")
 
 
 class RouteDecision(BaseModel):
@@ -78,9 +137,7 @@ class RouteDecision(BaseModel):
     tier: ModelTier
     model_name: str
     reasoning: str
-    preferred_node: Optional[str] = Field(
-        default=None, description="Specific node if required"
-    )
+    preferred_node: Optional[str] = Field(default=None, description="Specific node if required")
 
 
 class ModelRouterConfig(BaseModel):
@@ -103,19 +160,47 @@ class ModelRouterConfig(BaseModel):
 
     @classmethod
     def default(cls) -> "ModelRouterConfig":
-        """Return the default configuration with NVIDIA-aligned model assignments.
+        """Return the default configuration with real, backend-resolvable models.
+
+        Every tier's preferred (first) model is a model that actually exists on
+        a configured backend, verified against the live fleet on 2026-07-24:
+
+        - Ollama-routed names (``qwen``/``llama``/``deepseek``/``devstral``/
+          ``mistral``/``nemotron``/``codestral`` patterns; see
+          :data:`skcapstone.consciousness_loop._OLLAMA_MODEL_PATTERNS`) must be
+          actually pulled. The local Ollama daemons (localhost and .100:11434)
+          only serve ``qwen3.5:4b``, ``gemma3:1b`` and ``gemma3:270m`` today,
+          so those are the only Ollama-routed names used here. The previous
+          defaults referenced ``devstral``, ``qwen3-coder``, ``deepseek-r1:8b``
+          and ``llama3.1`` - none of which are pulled - so every request on the
+          CODE, REASON and LOCAL tiers hit a 404 from Ollama.
+        - Cloud-routed names resolve to real provider model ids: Anthropic
+          (``claude-sonnet-4-6``, ``claude-haiku-4-5``, ``claude-opus-4-8`` -
+          all served by SKGateway :18780), xAI (``grok-3``) and Moonshot
+          (``kimi-k2.5``, ``moonshot-v1-128k``).
 
         Returns:
             ModelRouterConfig: Sensible defaults covering all five tiers and
             the four primary tag-rule groups.
         """
         return cls(
+            # CR-5.1: tier -> model is folded onto the skmodels registry ROLES
+            # (``_TIER_ROLE``, the single knob), NOT a private table here. Every
+            # tier resolves through its registry role, then falls back to a local
+            # ``gemma3:1b`` only if the role/gateway is unreachable. The role name
+            # is emitted verbatim (not pre-resolved) so it reaches SKGateway via
+            # the _local_callback OpenAI path (SKC_LOCAL_OPENAI_URL -> :18780),
+            # where ``sk-auto`` does per-request difficulty tiering fleet-side;
+            # "sk-default" is in _OLLAMA_MODEL_PATTERNS so it routes there.
             tier_models={
-                ModelTier.FAST.value: ["qwen3.5:4b", "qwen3-coder", "grok-3-mini"],
-                ModelTier.CODE.value: ["devstral", "qwen3-coder", "grok-3"],
-                ModelTier.REASON.value: ["deepseek-r1:8b", "llama3.1", "grok-3"],
-                ModelTier.NUANCE.value: ["moonshot-v1-128k", "claude-sonnet-4-5", "kimi-k2.5"],
-                ModelTier.LOCAL.value: ["qwen3.5:4b", "devstral"],
+                tier: [_TIER_ROLE[tier], _LOCAL_FALLBACK]
+                for tier in (
+                    ModelTier.FAST.value,
+                    ModelTier.CODE.value,
+                    ModelTier.REASON.value,
+                    ModelTier.NUANCE.value,
+                    ModelTier.LOCAL.value,
+                )
             },
             tag_rules=[
                 TagRule(
@@ -147,7 +232,30 @@ class ModelRouterConfig(BaseModel):
                     priority=10,
                 ),
                 TagRule(
-                    keywords=["format", "rename", "lint", "simple", "trivial"],
+                    keywords=[
+                        "format",
+                        "rename",
+                        "lint",
+                        "simple",
+                        "trivial",
+                        # Real-caller alignment (2026-07-09 model-router audit):
+                        # these are the exact tags emotion_tracker.py,
+                        # context_window.py, conversation_summarizer.py, and
+                        # memory_compressor.py pass today. All four are cheap
+                        # background/housekeeping calls (sentiment
+                        # classification, context compression, conversation
+                        # summarization, memory compression) that belong on
+                        # the cheapest tier - this rule previously never fired
+                        # for any of them, silently falling through to the
+                        # token-count fallback instead.
+                        "fast",
+                        "classification",
+                        "summary",
+                        "context",
+                        "conversation",
+                        "compression",
+                        "memory",
+                    ],
                     tier=ModelTier.FAST,
                     priority=10,
                 ),
@@ -234,9 +342,7 @@ class ModelRouter:
 
         return self._decide(
             tier=ModelTier.FAST,
-            reasoning=(
-                "No tag rule matched and token budget is small; defaulting to FAST tier."
-            ),
+            reasoning=("No tag rule matched and token budget is small; defaulting to FAST tier."),
             preferred_node=None,
         )
 
@@ -249,8 +355,8 @@ class ModelRouter:
         .. code-block:: yaml
 
             tier_models:
-              fast: [nemotron-49b]
-              code: [devstral]
+              fast: [qwen3.5:4b]
+              code: [claude-sonnet-4-6]
             tag_rules:
               - keywords: [code]
                 tier: code

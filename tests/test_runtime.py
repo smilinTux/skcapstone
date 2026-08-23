@@ -39,11 +39,15 @@ class TestAgentRuntime:
         (shared_root / "config").mkdir(parents=True)
         (shared_root / "config" / "config.yaml").write_text("agent_name: Jarvis\n")
         (agent_home / "manifest.json").write_text(json.dumps({"name": "aster"}))
-        (agent_home / "identity" / "identity.json").write_text(json.dumps({
-            "name": "Aster",
-            "fingerprint": "A" * 40,
-            "capauth_managed": True,
-        }))
+        (agent_home / "identity" / "identity.json").write_text(
+            json.dumps(
+                {
+                    "name": "Aster",
+                    "fingerprint": "A" * 40,
+                    "capauth_managed": True,
+                }
+            )
+        )
 
         runtime = AgentRuntime(home=agent_home)
         manifest = runtime.awaken()
@@ -136,5 +140,5 @@ class TestAgentRuntime:
             loader = runtime.load_skills(agent="global")
 
         if loader is not None:
-            # SKSkills is installed — verify the skill was loaded
+            # SKSkills is installed - verify the skill was loaded
             assert runtime.manifest.skills.loaded >= 0

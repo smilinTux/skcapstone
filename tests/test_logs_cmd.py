@@ -49,8 +49,9 @@ def log_home(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — _parse_level
+# Unit tests - _parse_level
 # ---------------------------------------------------------------------------
+
 
 class TestParseLevel:
     def test_info(self):
@@ -76,8 +77,9 @@ class TestParseLevel:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — _matches_filters
+# Unit tests - _matches_filters
 # ---------------------------------------------------------------------------
+
 
 class TestMatchesFilters:
     def test_no_filters_accepts_all(self):
@@ -128,8 +130,9 @@ class TestMatchesFilters:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — _tail
+# Unit tests - _tail
 # ---------------------------------------------------------------------------
+
 
 class TestTail:
     def test_returns_last_n_lines(self, tmp_path):
@@ -156,6 +159,7 @@ class TestTail:
 # ---------------------------------------------------------------------------
 # CLI integration tests
 # ---------------------------------------------------------------------------
+
 
 class TestLogsCLI:
     def test_help_shows_all_options(self):
@@ -185,30 +189,24 @@ class TestLogsCLI:
 
     def test_level_filter_hides_lower_levels(self, log_home):
         """``--level WARNING`` hides DEBUG and INFO lines."""
-        result = runner.invoke(
-            main, ["logs", "--home", str(log_home), "--level", "WARNING"]
-        )
+        result = runner.invoke(main, ["logs", "--home", str(log_home), "--level", "WARNING"])
         assert result.exit_code == 0
         assert "debug message" not in result.output
         assert "started up" not in result.output
         assert "heartbeat ok" not in result.output
-        assert "peer opus slow" in result.output   # WARNING
+        assert "peer opus slow" in result.output  # WARNING
         assert "transport failed" in result.output  # ERROR
 
     def test_level_filter_case_insensitive(self, log_home):
         """``--level warning`` (lowercase) works identically."""
-        result = runner.invoke(
-            main, ["logs", "--home", str(log_home), "--level", "warning"]
-        )
+        result = runner.invoke(main, ["logs", "--home", str(log_home), "--level", "warning"])
         assert result.exit_code == 0
         assert "peer opus slow" in result.output
         assert "debug message" not in result.output
 
     def test_peer_filter_only_matching_lines(self, log_home):
         """``--peer opus`` shows only lines containing 'opus'."""
-        result = runner.invoke(
-            main, ["logs", "--home", str(log_home), "--peer", "opus"]
-        )
+        result = runner.invoke(main, ["logs", "--home", str(log_home), "--peer", "opus"])
         assert result.exit_code == 0
         assert "peer opus slow" in result.output
         # Lines without 'opus' must be absent
@@ -231,9 +229,7 @@ class TestLogsCLI:
             raise KeyboardInterrupt()
 
         with patch("skcapstone.cli.logs_cmd.time.sleep", fake_sleep):
-            result = runner.invoke(
-                main, ["logs", "--home", str(log_home), "--follow", "-n", "3"]
-            )
+            result = runner.invoke(main, ["logs", "--home", str(log_home), "--follow", "-n", "3"])
 
         assert result.exit_code == 0
         # Last 3 lines of fixture
@@ -279,9 +275,7 @@ class TestLogsCLI:
                 raise KeyboardInterrupt()
 
         with patch("skcapstone.cli.logs_cmd.time.sleep", fake_sleep):
-            result = runner.invoke(
-                main, ["logs", "--home", str(log_home), "--follow"]
-            )
+            result = runner.invoke(main, ["logs", "--home", str(log_home), "--follow"])
 
         assert result.exit_code == 0
         assert "new entry" in result.output

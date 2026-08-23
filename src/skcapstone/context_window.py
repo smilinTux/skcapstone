@@ -1,5 +1,5 @@
 """
-ContextWindowManager — per-sender token tracking and history compression.
+ContextWindowManager - per-sender token tracking and history compression.
 
 Tracks cumulative token usage for each sender's conversation history.
 When a sender's history reaches 80% of ``max_context_tokens``, the oldest
@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .conversation_store import ConversationStore
@@ -67,6 +67,7 @@ def count_tokens(text: str) -> int:
     """
     try:
         import tiktoken  # optional dep
+
         enc = tiktoken.get_encoding("cl100k_base")
         return max(1, len(enc.encode(text)))
     except ImportError:
@@ -157,7 +158,7 @@ class ContextWindowManager:
 
         if bridge is None:
             logger.warning(
-                "Context window at %.1f%% for %s but no bridge — skipping compression",
+                "Context window at %.1f%% for %s but no bridge - skipping compression",
                 self._stats[peer]["pct_used"],
                 peer,
             )
@@ -165,7 +166,7 @@ class ContextWindowManager:
 
         if len(history) <= _KEEP_RECENT:
             logger.debug(
-                "Context window at %.1f%% for %s but only %d messages — skipping",
+                "Context window at %.1f%% for %s but only %d messages - skipping",
                 self._stats[peer]["pct_used"],
                 peer,
                 len(history),
@@ -176,7 +177,7 @@ class ContextWindowManager:
         recent = history[-_KEEP_RECENT:]
 
         logger.info(
-            "Context window %.1f%% for %s — compressing %d older messages",
+            "Context window %.1f%% for %s - compressing %d older messages",
             self._stats[peer]["pct_used"],
             peer,
             len(to_summarize),
@@ -184,14 +185,14 @@ class ContextWindowManager:
 
         summary_text = self._call_llm_summarize(peer, to_summarize, bridge)
         if not summary_text:
-            logger.warning("LLM summarization returned empty result for %s — skipping", peer)
+            logger.warning("LLM summarization returned empty result for %s - skipping", peer)
             return False
 
         now = datetime.now(timezone.utc).isoformat()
         summary_entry: dict = {
             "role": "system",
             "content": (
-                f"[Earlier context — {len(to_summarize)} messages summarized]: {summary_text}"
+                f"[Earlier context - {len(to_summarize)} messages summarized]: {summary_text}"
             ),
             "timestamp": now,
             "is_summary": True,
@@ -242,9 +243,7 @@ class ContextWindowManager:
         }
         return self._stats[peer]
 
-    def get_all_stats(
-        self, store: Optional["ConversationStore"] = None
-    ) -> dict[str, dict]:
+    def get_all_stats(self, store: Optional["ConversationStore"] = None) -> dict[str, dict]:
         """Return current stats for all tracked senders.
 
         When *store* is provided any peers that have on-disk history but are
@@ -268,9 +267,7 @@ class ContextWindowManager:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _call_llm_summarize(
-        self, peer: str, messages: list[dict], bridge
-    ) -> str:
+    def _call_llm_summarize(self, peer: str, messages: list[dict], bridge) -> str:
         """Call *bridge* to produce a one-paragraph summary of *messages*.
 
         Args:

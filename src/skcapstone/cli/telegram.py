@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
 
 import click
-
-from ._common import AGENT_HOME, console
-
 from rich.panel import Panel
 from rich.table import Table
+
+from ._common import AGENT_HOME, console
 
 
 def register_telegram_commands(main: click.Group) -> None:
@@ -21,7 +19,7 @@ def register_telegram_commands(main: click.Group) -> None:
 
     @main.group()
     def telegram():
-        """Telegram integration — send, poll, list chats, check setup.
+        """Telegram integration - send, poll, list chats, check setup.
 
         Requires TELEGRAM_API_ID and TELEGRAM_API_HASH environment variables.
         Install Telethon with: pip install skmemory[telegram]
@@ -37,16 +35,24 @@ def register_telegram_commands(main: click.Group) -> None:
         try:
             from skmemory.importers.telegram_api import check_setup
         except ImportError:
-            console.print("[red]skmemory not available.[/] Install with: pip install skmemory[telegram]")
+            console.print(
+                "[red]skmemory not available.[/] Install with: pip install skmemory[telegram]"
+            )
             raise SystemExit(1)
 
         result = check_setup()
 
         status_icon = "[green]READY[/]" if result["ready"] else "[red]NOT READY[/]"
         lines = [f"Status: {status_icon}"]
-        lines.append(f"Telethon installed: {'[green]yes[/]' if result['telethon'] else '[red]no[/]'}")
-        lines.append(f"Credentials set:    {'[green]yes[/]' if result['credentials'] else '[red]no[/]'}")
-        lines.append(f"Session file:       {'[green]yes[/]' if result['session'] else '[yellow]no (first run will prompt)[/]'}")
+        lines.append(
+            f"Telethon installed: {'[green]yes[/]' if result['telethon'] else '[red]no[/]'}"
+        )
+        lines.append(
+            f"Credentials set:    {'[green]yes[/]' if result['credentials'] else '[red]no[/]'}"
+        )
+        lines.append(
+            f"Session file:       {'[green]yes[/]' if result['session'] else '[yellow]no (first run will prompt)[/]'}"  # noqa: E501
+        )
 
         if result["messages"]:
             lines.append("")
@@ -59,8 +65,9 @@ def register_telegram_commands(main: click.Group) -> None:
     @telegram.command("send")
     @click.argument("chat")
     @click.argument("message")
-    @click.option("--parse-mode", "-p", type=click.Choice(["html", "markdown"]),
-                  help="Message parse mode.")
+    @click.option(
+        "--parse-mode", "-p", type=click.Choice(["html", "markdown"]), help="Message parse mode."
+    )
     def telegram_send(chat, message, parse_mode):
         """Send a message to a Telegram chat.
 
@@ -69,19 +76,23 @@ def register_telegram_commands(main: click.Group) -> None:
         try:
             from skmemory.importers.telegram_api import send_message
         except ImportError:
-            console.print("[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]")
+            console.print(
+                "[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]"  # noqa: E501
+            )
             raise SystemExit(1)
 
         try:
             result = asyncio.run(send_message(chat, message, parse_mode))
-            console.print(Panel(
-                f"[green]Sent![/]\n"
-                f"Chat: [cyan]{result['chat']}[/]\n"
-                f"Message ID: [dim]{result['message_id']}[/]\n"
-                f"Date: {result['date']}",
-                title="Telegram Send",
-                border_style="green",
-            ))
+            console.print(
+                Panel(
+                    f"[green]Sent![/]\n"
+                    f"Chat: [cyan]{result['chat']}[/]\n"
+                    f"Message ID: [dim]{result['message_id']}[/]\n"
+                    f"Date: {result['date']}",
+                    title="Telegram Send",
+                    border_style="green",
+                )
+            )
         except Exception as e:
             console.print(f"[red]Error:[/] {e}")
             raise SystemExit(1)
@@ -89,7 +100,9 @@ def register_telegram_commands(main: click.Group) -> None:
     @telegram.command("poll")
     @click.argument("chat")
     @click.option("--limit", "-l", default=20, type=int, help="Max messages to fetch.")
-    @click.option("--since", "-s", default=None, help="Only messages after this date (YYYY-MM-DD).")
+    @click.option(
+        "--since", "-s", default=None, help="Only messages after this date (YYYY-MM-DD)."
+    )
     def telegram_poll(chat, limit, since):
         """Fetch recent messages from a Telegram chat.
 
@@ -98,7 +111,9 @@ def register_telegram_commands(main: click.Group) -> None:
         try:
             from skmemory.importers.telegram_api import poll_messages
         except ImportError:
-            console.print("[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]")
+            console.print(
+                "[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]"  # noqa: E501
+            )
             raise SystemExit(1)
 
         try:
@@ -131,8 +146,12 @@ def register_telegram_commands(main: click.Group) -> None:
     @telegram.command("catchup")
     @click.argument("chat")
     @click.option("--limit", "-l", default=2000, type=int, help="Max messages to fetch.")
-    @click.option("--since", "-s", default=None, help="Only messages after this date (YYYY-MM-DD).")
-    @click.option("--min-length", "-m", default=20, type=int, help="Skip messages shorter than this.")
+    @click.option(
+        "--since", "-s", default=None, help="Only messages after this date (YYYY-MM-DD)."
+    )
+    @click.option(
+        "--min-length", "-m", default=20, type=int, help="Skip messages shorter than this."
+    )
     @click.option("--tags", "-t", default=None, help="Extra comma-separated tags.")
     def telegram_catchup(chat, limit, since, min_length, tags):
         """Full catch-up import from a Telegram group into all memory tiers.
@@ -146,7 +165,9 @@ def register_telegram_commands(main: click.Group) -> None:
             from skmemory.importers.telegram_api import import_telegram_api
             from skmemory.store import MemoryStore
         except ImportError:
-            console.print("[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]")
+            console.print(
+                "[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]"  # noqa: E501
+            )
             raise SystemExit(1)
 
         try:
@@ -162,7 +183,7 @@ def register_telegram_commands(main: click.Group) -> None:
                 tags=tags_list,
             )
 
-            lines = [f"[green]Catch-up complete![/]"]
+            lines = ["[green]Catch-up complete![/]"]
             for key, val in stats.items():
                 lines.append(f"  {key}: [cyan]{val}[/]")
 
@@ -176,6 +197,7 @@ def register_telegram_commands(main: click.Group) -> None:
             )
             if os.path.isfile(_auto_tag_script):
                 import subprocess as _subprocess
+
                 _tag_result = _subprocess.run(
                     [sys.executable, _auto_tag_script, "--hours", "0.1", "--quiet"],
                     capture_output=True,
@@ -183,7 +205,7 @@ def register_telegram_commands(main: click.Group) -> None:
                 )
                 if _tag_result.returncode != 0:
                     console.print(
-                        f"[yellow]auto-tag-hallucinations warning:[/] {_tag_result.stderr.strip() or 'non-zero exit'}"
+                        f"[yellow]auto-tag-hallucinations warning:[/] {_tag_result.stderr.strip() or 'non-zero exit'}"  # noqa: E501
                     )
                 elif _tag_result.stdout.strip():
                     console.print(f"[dim]auto-tag:[/] {_tag_result.stdout.strip()}")
@@ -201,7 +223,9 @@ def register_telegram_commands(main: click.Group) -> None:
         try:
             from skmemory.importers.telegram_api import list_chats
         except ImportError:
-            console.print("[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]")
+            console.print(
+                "[red]skmemory[telegram] not available.[/] Install with: pip install skmemory[telegram]"  # noqa: E501
+            )
             raise SystemExit(1)
 
         try:
@@ -265,21 +289,25 @@ def register_telegram_commands(main: click.Group) -> None:
             from skmemory.importers.telegram_api import send_message
         except ImportError:
             console.print(f"[green]Soul swapped:[/] {from_soul} -> {to_soul}")
-            console.print("[red]skmemory[telegram] not available.[/] Swap succeeded but notification not sent.")
+            console.print(
+                "[red]skmemory[telegram] not available.[/] Swap succeeded but notification not sent."  # noqa: E501
+            )
             raise SystemExit(1)
 
         message = f"Soul swap: {from_soul} -> {to_soul} ({display})"
         try:
             result = asyncio.run(send_message(chat, message))
-            console.print(Panel(
-                f"[green]Soul swapped and announced![/]\n"
-                f"From: [yellow]{from_soul}[/]\n"
-                f"To: [bold cyan]{to_soul}[/] ({display})\n"
-                f"Chat: [cyan]{result['chat']}[/]\n"
-                f"Message ID: [dim]{result['message_id']}[/]",
-                title="Telegram Soul Swap",
-                border_style="green",
-            ))
+            console.print(
+                Panel(
+                    f"[green]Soul swapped and announced![/]\n"
+                    f"From: [yellow]{from_soul}[/]\n"
+                    f"To: [bold cyan]{to_soul}[/] ({display})\n"
+                    f"Chat: [cyan]{result['chat']}[/]\n"
+                    f"Message ID: [dim]{result['message_id']}[/]",
+                    title="Telegram Soul Swap",
+                    border_style="green",
+                )
+            )
         except Exception as e:
             console.print(f"[green]Soul swapped:[/] {from_soul} -> {to_soul}")
             console.print(f"[red]Telegram notification failed:[/] {e}")

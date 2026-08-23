@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 import click
-
-from ._common import AGENT_HOME, console
-
 from rich.panel import Panel
 from rich.table import Table
+
+from ._common import console
 
 
 def register_gtd_commands(main: click.Group) -> None:
@@ -28,44 +26,83 @@ def register_gtd_commands(main: click.Group) -> None:
 
     @gtd.command("capture")
     @click.argument("text")
-    @click.option("--source", "-s", default="manual",
-                  type=click.Choice(["manual", "telegram", "email", "voice"]),
-                  help="Where this item came from.")
-    @click.option("--privacy", "-p", default="private",
-                  type=click.Choice(["private", "team", "community", "public"]),
-                  help="Privacy level.")
-    @click.option("--context", "-c", default=None,
-                  help="GTD context tag, e.g. @computer, @phone, @home.")
-    def gtd_capture(text, source, privacy, context):
+    @click.option(
+        "--source",
+        "-s",
+        default="manual",
+        type=click.Choice(["manual", "telegram", "email", "voice"]),
+        help="Where this item came from.",
+    )
+    @click.option(
+        "--privacy",
+        "-p",
+        default="private",
+        type=click.Choice(["private", "team", "community", "public"]),
+        help="Privacy level.",
+    )
+    @click.option(
+        "--context", "-c", default=None, help="GTD context tag, e.g. @computer, @phone, @home."
+    )
+    @click.option(
+        "--source-ref",
+        default=None,
+        help="Stable de-duplication key for this source, e.g. a mail thread id.",
+    )
+    def gtd_capture(text, source, privacy, context, source_ref):
         """Capture an item to the GTD inbox.
 
         Example: skcapstone gtd capture "Buy milk" --context @errands
-        """
-        from ..mcp_tools.gtd_tools import _make_item, _load_list, _save_list
 
-        item = _make_item(
-            text=text,
-            source=source,
-            privacy=privacy,
-            context=context,
+        SPE P1.5 (card 4082d990): this used to inline its own
+        load-append-save, taking no store lock and doing no dedupe, so two
+        concurrent captures could lose one. It now goes through the same
+        handler the MCP tool uses, which is the locked, atomic, deduped sink.
+        """
+        from ..mcp_tools.gtd_tools import _handle_gtd_capture
+
+        payload = json.loads(
+            asyncio.run(
+                _handle_gtd_capture(
+                    {
+                        "text": text,
+                        "source": source,
+                        "privacy": privacy,
+                        "context": context,
+                        "source_ref": source_ref or "",
+                    }
+                )
+            )[0].text
         )
-        inbox = _load_list("inbox")
-        inbox.append(item)
-        _save_list("inbox", inbox)
+
+        if payload.get("error"):
+            raise click.ClickException(payload["error"])
+
+        if payload.get("duplicate"):
+            console.print()
+            console.print(
+                f"  [yellow]Duplicate[/] - ({payload.get('source')}, "
+                f"{payload.get('source_ref')}) is already in the store. Nothing captured."
+            )
+            console.print(f"  Inbox has [bold]{payload.get('inbox_count', 0)}[/] item(s).\n")
+            return
 
         console.print()
-        console.print(Panel(
-            f"[bold green]Captured![/] ID: [cyan]{item['id']}[/]\n"
-            f"[dim]{item['text']}[/]\n"
-            f"Source: {item['source']}  Privacy: {item['privacy']}"
-            + (f"  Context: {item['context']}" if item['context'] else ""),
-            title="GTD Inbox", border_style="green",
-        ))
-        console.print(f"  Inbox now has [bold]{len(inbox)}[/] item(s).\n")
+        console.print(
+            Panel(
+                f"[bold green]Captured![/] ID: [cyan]{payload['id']}[/]\n"
+                f"[dim]{payload['text']}[/]\n"
+                f"Source: {payload['source']}  Privacy: {payload['privacy']}"
+                + (f"  Context: {payload['context']}" if payload.get("context") else ""),
+                title="GTD Inbox",
+                border_style="green",
+            )
+        )
+        console.print(f"  Inbox now has [bold]{payload.get('inbox_count', 0)}[/] item(s).\n")
 
     @gtd.command("inbox")
-    @click.option("--limit", "-n", default=20, type=int,
-                  help="Maximum items to show (default: 20).")
+    @click.option(
+        "--limit", "-n", default=20, type=int, help="Maximum items to show (default: 20)."
+    )
     def gtd_inbox(limit):
         """List current GTD inbox items (newest first)."""
         from ..mcp_tools.gtd_tools import _load_list
@@ -76,13 +113,15 @@ def register_gtd_commands(main: click.Group) -> None:
 
         if not items:
             console.print("\n  [dim]Inbox is empty. Capture items with:[/]")
-            console.print("  [cyan]skcapstone gtd capture \"Your item text\"[/]\n")
+            console.print('  [cyan]skcapstone gtd capture "Your item text"[/]\n')
             return
 
         console.print()
         table = Table(
-            show_header=True, header_style="bold",
-            box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("ID", style="cyan", max_width=14)
         table.add_column("Text", style="bold")
@@ -100,19 +139,62 @@ def register_gtd_commands(main: click.Group) -> None:
                 created,
             )
 
-        console.print(Panel(
-            f"[bold]Inbox:[/] {len(inbox)} total, showing {len(items)}",
-            title="GTD Inbox", border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Inbox:[/] {len(inbox)} total, showing {len(items)}",
+                title="GTD Inbox",
+                border_style="bright_blue",
+            )
+        )
         console.print(table)
         console.print()
 
+    @gtd.command("verify")
+    @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+    def gtd_verify(as_json: bool):
+        """Report provenance coverage over the GTD journal.
+
+        Counts what actually landed, per state, so a degradation is visible
+        instead of silent: verified, unsigned, invalid, unverifiable (no local
+        trust roster, which is NOT the same as a bad signature), and pre-spe
+        (events written before attribution existed).
+        """
+        from ..gtd_journal import verify
+
+        report = verify()
+        if as_json:
+            click.echo(json.dumps(report, indent=2))
+            return
+
+        counts = report["counts"]
+        console.print()
+        console.print(f"  [bold]GTD journal provenance[/] · {report['total']} event(s)")
+        styles = {
+            "verified": "green",
+            "unsigned": "yellow",
+            "invalid": "bold red",
+            "unverifiable": "cyan",
+            "pre-spe": "dim",
+        }
+        for state, n in counts.items():
+            console.print(f"    [{styles.get(state, 'white')}]{state:<13}[/] {n}")
+        if not report["verifier_available"]:
+            console.print(
+                "\n  [dim]No local trust roster, so signatures could not be judged."
+                " Nothing here is a failure.[/]"
+            )
+        for p in report["problems"][:10]:
+            console.print(
+                f"  [red]invalid[/] {p['event_id'][:8]} {p['action']} {p['item_id']} "
+                f"by {p['writer']} at {p['ts']}"
+            )
+        console.print()
+
     @gtd.command("status")
-    @click.option("--brief", is_flag=True,
-                  help="One-line summary (for hooks / session start).")
+    @click.option("--brief", is_flag=True, help="One-line summary (for hooks / session start).")
     def gtd_status(brief: bool):
         """Summary of all GTD lists."""
-        from ..mcp_tools.gtd_tools import _load_list, _GTD_LISTS
+        from ..mcp_tools.gtd_tools import _GTD_LISTS, _load_list
 
         if brief:
             from datetime import datetime, timezone
@@ -147,8 +229,10 @@ def register_gtd_commands(main: click.Group) -> None:
             rows.append((list_name, count))
 
         table = Table(
-            show_header=True, header_style="bold",
-            box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("List", style="bold")
         table.add_column("Count", style="cyan", justify="right")
@@ -157,47 +241,69 @@ def register_gtd_commands(main: click.Group) -> None:
             style = "bold yellow" if count > 0 else "dim"
             table.add_row(name, f"[{style}]{count}[/]")
 
-        console.print(Panel(
-            f"[bold]GTD Lists:[/] {total} total items across {len(rows)} lists",
-            title="GTD Status", border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                f"[bold]GTD Lists:[/] {total} total items across {len(rows)} lists",
+                title="GTD Status",
+                border_style="bright_blue",
+            )
+        )
         console.print(table)
         console.print()
 
     @gtd.command("clarify")
     @click.argument("item_id")
-    @click.option("--actionable/--not-actionable", default=True,
-                  help="Is this item actionable?")
-    @click.option("--steps", "-s", default="single",
-                  type=click.Choice(["single", "multi"]),
-                  help="Single action or multi-step project.")
-    @click.option("--priority", "-p", default="medium",
-                  type=click.Choice(["critical", "high", "medium", "low"]),
-                  help="Priority level.")
-    @click.option("--energy", "-e", default="medium",
-                  type=click.Choice(["high", "medium", "low"]),
-                  help="Energy level required.")
-    @click.option("--context", "-c", default=None,
-                  help="GTD context tag, e.g. @computer, @phone, @home.")
-    @click.option("--delegate-to", "-d", default=None,
-                  help="Person or agent to delegate to (routes to waiting-for).")
+    @click.option("--actionable/--not-actionable", default=True, help="Is this item actionable?")
+    @click.option(
+        "--steps",
+        "-s",
+        default="single",
+        type=click.Choice(["single", "multi"]),
+        help="Single action or multi-step project.",
+    )
+    @click.option(
+        "--priority",
+        "-p",
+        default="medium",
+        type=click.Choice(["critical", "high", "medium", "low"]),
+        help="Priority level.",
+    )
+    @click.option(
+        "--energy",
+        "-e",
+        default="medium",
+        type=click.Choice(["high", "medium", "low"]),
+        help="Energy level required.",
+    )
+    @click.option(
+        "--context", "-c", default=None, help="GTD context tag, e.g. @computer, @phone, @home."
+    )
+    @click.option(
+        "--delegate-to",
+        "-d",
+        default=None,
+        help="Person or agent to delegate to (routes to waiting-for).",
+    )
     def gtd_clarify(item_id, actionable, steps, priority, energy, context, delegate_to):
         """Clarify an inbox item and route it to the appropriate list.
 
-        Example: skcapstone gtd clarify abc123 --actionable --steps single --priority high --context @computer
+        Example: skcapstone gtd clarify abc123 --actionable --steps single
+            --priority high --context @computer
         """
         from ..mcp_tools.gtd_tools import _handle_gtd_clarify
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handle_gtd_clarify({
-                "item_id": item_id,
-                "actionable": actionable,
-                "steps": steps,
-                "priority": priority,
-                "energy": energy,
-                "context": context,
-                "delegate_to": delegate_to,
-            })
+            _handle_gtd_clarify(
+                {
+                    "item_id": item_id,
+                    "actionable": actionable,
+                    "steps": steps,
+                    "priority": priority,
+                    "energy": energy,
+                    "context": context,
+                    "delegate_to": delegate_to,
+                }
+            )
         )
         data = json.loads(result[0].text)
 
@@ -206,23 +312,30 @@ def register_gtd_commands(main: click.Group) -> None:
             return
 
         console.print()
-        console.print(Panel(
-            f"[bold green]Clarified![/] ID: [cyan]{data['id']}[/]\n"
-            f"[dim]{data['text']}[/]\n"
-            f"Destination: [bold]{data['destination']}[/]  "
-            f"Status: {data['status']}  Priority: {data.get('priority', '-')}  "
-            f"Energy: {data.get('energy', '-')}"
-            + (f"\nContext: {data['context']}" if data.get('context') else "")
-            + (f"\nDelegated to: {data['delegate_to']}" if data.get('delegate_to') else ""),
-            title="GTD Clarify", border_style="green",
-        ))
+        console.print(
+            Panel(
+                f"[bold green]Clarified![/] ID: [cyan]{data['id']}[/]\n"
+                f"[dim]{data['text']}[/]\n"
+                f"Destination: [bold]{data['destination']}[/]  "
+                f"Status: {data['status']}  Priority: {data.get('priority', '-')}  "
+                f"Energy: {data.get('energy', '-')}"
+                + (f"\nContext: {data['context']}" if data.get("context") else "")
+                + (f"\nDelegated to: {data['delegate_to']}" if data.get("delegate_to") else ""),
+                title="GTD Clarify",
+                border_style="green",
+            )
+        )
         console.print()
 
     @gtd.command("move")
     @click.argument("item_id")
-    @click.option("--to", "destination", required=True,
-                  type=click.Choice(["next", "project", "waiting", "someday", "reference", "done"]),
-                  help="Destination list.")
+    @click.option(
+        "--to",
+        "destination",
+        required=True,
+        type=click.Choice(["next", "project", "waiting", "someday", "reference", "done"]),
+        help="Destination list.",
+    )
     def gtd_move(item_id, destination):
         """Move a GTD item to a different list.
 
@@ -231,10 +344,12 @@ def register_gtd_commands(main: click.Group) -> None:
         from ..mcp_tools.gtd_tools import _handle_gtd_move
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handle_gtd_move({
-                "item_id": item_id,
-                "destination": destination,
-            })
+            _handle_gtd_move(
+                {
+                    "item_id": item_id,
+                    "destination": destination,
+                }
+            )
         )
         data = json.loads(result[0].text)
 
@@ -243,12 +358,56 @@ def register_gtd_commands(main: click.Group) -> None:
             return
 
         console.print()
-        console.print(Panel(
-            f"[bold green]Moved![/] ID: [cyan]{data['id']}[/]\n"
-            f"[dim]{data['text']}[/]\n"
-            f"From: [bold]{data['from']}[/] -> To: [bold]{data['to']}[/]",
-            title="GTD Move", border_style="green",
-        ))
+        console.print(
+            Panel(
+                f"[bold green]Moved![/] ID: [cyan]{data['id']}[/]\n"
+                f"[dim]{data['text']}[/]\n"
+                f"From: [bold]{data['from']}[/] -> To: [bold]{data['to']}[/]",
+                title="GTD Move",
+                border_style="green",
+            )
+        )
+        console.print()
+
+    @gtd.command("reopen")
+    @click.argument("item_id")
+    @click.option(
+        "--to",
+        "destination",
+        default=None,
+        type=click.Choice(["next", "project", "waiting", "someday", "reference"]),
+        help="Where to restore it. Defaults to the list it was archived from.",
+    )
+    def gtd_reopen(item_id, destination):
+        """Reopen an archived item under its ORIGINAL id.
+
+        The undo for `gtd done`. Restores the item to the list it came from
+        (per the journal) and records the reversal as one more event, so the
+        item's history stays intact instead of being recaptured under a new id.
+
+        Example: skcapstone gtd reopen abc123
+        """
+        from ..mcp_tools.gtd_tools import _handle_gtd_reopen
+
+        data = json.loads(
+            asyncio.run(
+                _handle_gtd_reopen({"item_id": item_id, "destination": destination or ""})
+            )[0].text
+        )
+
+        if "error" in data:
+            raise click.ClickException(data["error"])
+
+        console.print()
+        console.print(
+            Panel(
+                f"[bold green]Reopened![/] ID: [cyan]{data['id']}[/]\n"
+                f"[dim]{data['text']}[/]\n"
+                f"Restored to: {data['to']}  Status: {data['status']}",
+                title="GTD Reopen",
+                border_style="green",
+            )
+        )
         console.print()
 
     @gtd.command("done")
@@ -261,9 +420,11 @@ def register_gtd_commands(main: click.Group) -> None:
         from ..mcp_tools.gtd_tools import _handle_gtd_done
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handle_gtd_done({
-                "item_id": item_id,
-            })
+            _handle_gtd_done(
+                {
+                    "item_id": item_id,
+                }
+            )
         )
         data = json.loads(result[0].text)
 
@@ -272,26 +433,42 @@ def register_gtd_commands(main: click.Group) -> None:
             return
 
         console.print()
-        console.print(Panel(
-            f"[bold green]Done![/] ID: [cyan]{data['id']}[/]\n"
-            f"[dim]{data['text']}[/]\n"
-            f"Completed: {data['completed_at'][:19].replace('T', ' ')}\n"
-            f"Archive now has [bold]{data['archive_count']}[/] item(s).",
-            title="GTD Done", border_style="green",
-        ))
+        console.print(
+            Panel(
+                f"[bold green]Done![/] ID: [cyan]{data['id']}[/]\n"
+                f"[dim]{data['text']}[/]\n"
+                f"Completed: {data['completed_at'][:19].replace('T', ' ')}\n"
+                f"Archive now has [bold]{data['archive_count']}[/] item(s).",
+                title="GTD Done",
+                border_style="green",
+            )
+        )
         console.print()
 
     @gtd.command("next")
-    @click.option("--context", "-c", default=None,
-                  help="Filter by GTD context tag, e.g. @computer, @phone, @home.")
-    @click.option("--energy", "-e", default=None,
-                  type=click.Choice(["high", "medium", "low"]),
-                  help="Filter by energy level required.")
-    @click.option("--priority", "-p", default=None,
-                  type=click.Choice(["critical", "high", "medium", "low"]),
-                  help="Filter by priority level.")
-    @click.option("--limit", "-n", default=10, type=int,
-                  help="Maximum items to show (default: 10).")
+    @click.option(
+        "--context",
+        "-c",
+        default=None,
+        help="Filter by GTD context tag, e.g. @computer, @phone, @home.",
+    )
+    @click.option(
+        "--energy",
+        "-e",
+        default=None,
+        type=click.Choice(["high", "medium", "low"]),
+        help="Filter by energy level required.",
+    )
+    @click.option(
+        "--priority",
+        "-p",
+        default=None,
+        type=click.Choice(["critical", "high", "medium", "low"]),
+        help="Filter by priority level.",
+    )
+    @click.option(
+        "--limit", "-n", default=10, type=int, help="Maximum items to show (default: 10)."
+    )
     def gtd_next(context, energy, priority, limit):
         """View next actions filtered by context, energy, and/or priority.
 
@@ -300,12 +477,14 @@ def register_gtd_commands(main: click.Group) -> None:
         from ..mcp_tools.gtd_tools import _handle_gtd_next
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handle_gtd_next({
-                "context": context,
-                "energy": energy,
-                "priority": priority,
-                "limit": limit,
-            })
+            _handle_gtd_next(
+                {
+                    "context": context,
+                    "energy": energy,
+                    "priority": priority,
+                    "limit": limit,
+                }
+            )
         )
         data = json.loads(result[0].text)
 
@@ -326,8 +505,10 @@ def register_gtd_commands(main: click.Group) -> None:
 
         console.print()
         table = Table(
-            show_header=True, header_style="bold",
-            box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("ID", style="cyan", max_width=14)
         table.add_column("Text", style="bold")
@@ -354,19 +535,27 @@ def register_gtd_commands(main: click.Group) -> None:
                 created,
             )
 
-        console.print(Panel(
-            f"[bold]Next Actions:[/] {data['total']} total, showing {data['showing']}",
-            title="GTD Next Actions", border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Next Actions:[/] {data['total']} total, showing {data['showing']}",
+                title="GTD Next Actions",
+                border_style="bright_blue",
+            )
+        )
         console.print(table)
         console.print()
 
     @gtd.command("projects")
-    @click.option("--status", "-s", default="all",
-                  type=click.Choice(["active", "stale", "all"]),
-                  help="Filter by project status (default: all).")
-    @click.option("--limit", "-n", default=10, type=int,
-                  help="Maximum items to show (default: 10).")
+    @click.option(
+        "--status",
+        "-s",
+        default="all",
+        type=click.Choice(["active", "stale", "all"]),
+        help="Filter by project status (default: all).",
+    )
+    @click.option(
+        "--limit", "-n", default=10, type=int, help="Maximum items to show (default: 10)."
+    )
     def gtd_projects(status, limit):
         """View GTD projects with status and activity info.
 
@@ -375,10 +564,12 @@ def register_gtd_commands(main: click.Group) -> None:
         from ..mcp_tools.gtd_tools import _handle_gtd_projects
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handle_gtd_projects({
-                "status": status,
-                "limit": limit,
-            })
+            _handle_gtd_projects(
+                {
+                    "status": status,
+                    "limit": limit,
+                }
+            )
         )
         data = json.loads(result[0].text)
 
@@ -388,13 +579,17 @@ def register_gtd_commands(main: click.Group) -> None:
 
         projects = data.get("projects", [])
         if not projects:
-            console.print(f"\n  [dim]No projects found (filter: {data.get('filter', 'all')}).[/]\n")
+            console.print(
+                f"\n  [dim]No projects found (filter: {data.get('filter', 'all')}).[/]\n"
+            )
             return
 
         console.print()
         table = Table(
-            show_header=True, header_style="bold",
-            box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("ID", style="cyan", max_width=14)
         table.add_column("Text", style="bold")
@@ -417,16 +612,20 @@ def register_gtd_commands(main: click.Group) -> None:
                 proj.get("context", "") or "",
             )
 
-        console.print(Panel(
-            f"[bold]Projects:[/] {data['total']} total, showing {data['showing']} (filter: {data.get('filter', 'all')})",
-            title="GTD Projects", border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Projects:[/] {data['total']} total, showing {data['showing']} (filter: {data.get('filter', 'all')})",  # noqa: E501
+                title="GTD Projects",
+                border_style="bright_blue",
+            )
+        )
         console.print(table)
         console.print()
 
     @gtd.command("waiting")
-    @click.option("--limit", "-n", default=10, type=int,
-                  help="Maximum items to show (default: 10).")
+    @click.option(
+        "--limit", "-n", default=10, type=int, help="Maximum items to show (default: 10)."
+    )
     def gtd_waiting(limit):
         """View waiting-for items sorted by longest waiting.
 
@@ -435,9 +634,11 @@ def register_gtd_commands(main: click.Group) -> None:
         from ..mcp_tools.gtd_tools import _handle_gtd_waiting
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handle_gtd_waiting({
-                "limit": limit,
-            })
+            _handle_gtd_waiting(
+                {
+                    "limit": limit,
+                }
+            )
         )
         data = json.loads(result[0].text)
 
@@ -452,8 +653,10 @@ def register_gtd_commands(main: click.Group) -> None:
 
         console.print()
         table = Table(
-            show_header=True, header_style="bold",
-            box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("ID", style="cyan", max_width=14)
         table.add_column("Text", style="bold")
@@ -465,8 +668,10 @@ def register_gtd_commands(main: click.Group) -> None:
             created = it.get("created_at", "")[:10]
             days = it.get("waiting_days")
             days_str = str(days) if days is not None else "?"
-            days_style = "bold red" if days is not None and days >= 14 else (
-                "bold yellow" if days is not None and days >= 7 else ""
+            days_style = (
+                "bold red"
+                if days is not None and days >= 14
+                else ("bold yellow" if days is not None and days >= 7 else "")
             )
             table.add_row(
                 it.get("id", ""),
@@ -476,10 +681,13 @@ def register_gtd_commands(main: click.Group) -> None:
                 f"[{days_style}]{days_str}[/]" if days_style else days_str,
             )
 
-        console.print(Panel(
-            f"[bold]Waiting For:[/] {data['total']} total, showing {data['showing']}",
-            title="GTD Waiting For", border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Waiting For:[/] {data['total']} total, showing {data['showing']}",
+                title="GTD Waiting For",
+                border_style="bright_blue",
+            )
+        )
         console.print(table)
         console.print()
 
@@ -492,17 +700,17 @@ def register_gtd_commands(main: click.Group) -> None:
         """
         from ..mcp_tools.gtd_tools import _handle_gtd_review
 
-        result = asyncio.get_event_loop().run_until_complete(
-            _handle_gtd_review({})
-        )
+        result = asyncio.get_event_loop().run_until_complete(_handle_gtd_review({}))
         data = json.loads(result[0].text)
 
         console.print()
 
         # Counts table
         counts_table = Table(
-            show_header=True, header_style="bold",
-            box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         counts_table.add_column("List", style="bold")
         counts_table.add_column("Count", style="cyan", justify="right")
@@ -511,11 +719,14 @@ def register_gtd_commands(main: click.Group) -> None:
             style = "bold yellow" if count > 0 else "dim"
             counts_table.add_row(name, f"[{style}]{count}[/]")
 
-        console.print(Panel(
-            f"[bold]Weekly Review[/] - {data['total']} active items  |  "
-            f"{data.get('inbox_needs_clarify', 0)} inbox items need clarifying",
-            title="GTD Review", border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Weekly Review[/] - {data['total']} active items  |  "
+                f"{data.get('inbox_needs_clarify', 0)} inbox items need clarifying",
+                title="GTD Review",
+                border_style="bright_blue",
+            )
+        )
         console.print(counts_table)
 
         # Oldest items
@@ -552,3 +763,71 @@ def register_gtd_commands(main: click.Group) -> None:
                 )
 
         console.print()
+
+    @gtd.command("suggest")
+    @click.argument("item_id")
+    @click.option("--no-llm", is_flag=True, help="Heuristics only (skip the model).")
+    def gtd_suggest(item_id, no_llm):
+        """Show AI next-step options for a GTD item.
+
+        Materializes a shadow card (gtd-<id>) and asks the suggestion engine,
+        the same one behind the kanban 'Suggest next steps' button.
+
+        Example: skcapstone gtd suggest 8f2c1a
+        """
+        from ..agent_run import suggest_next_steps
+        from ..mcp_tools._helpers import _shared_root
+
+        home = _shared_root()
+        card_id = item_id if item_id.startswith("gtd-") else f"gtd-{item_id}"
+        out = suggest_next_steps(home, card_id, use_llm=not no_llm)
+        if out.get("error"):
+            console.print(f"  [red]{out['error']}[/]  (unknown GTD item id?)")
+            return
+        console.print(
+            f"\n  [bold]Next steps for[/] [cyan]{card_id}[/] "
+            f"[dim](source: {out.get('source')})[/]\n"
+        )
+        colors = {"propose": "green", "dry-run": "yellow", "execute": "red"}
+        for i, s in enumerate(out.get("suggestions", []), 1):
+            mode = s.get("mode", "propose")
+            c = colors.get(mode, "white")
+            console.print(f"  [bold]{i}.[/] {s['text']}  [{c}]\\[{mode}][/]")
+        console.print(
+            f"\n  [dim]Queue one:[/] skcapstone gtd queue {item_id} "
+            f'--instruction "..." --mode <mode>\n'
+        )
+
+    @gtd.command("queue")
+    @click.argument("item_id")
+    @click.option("--instruction", "-i", required=True, help="What the agent should do.")
+    @click.option(
+        "--mode",
+        "-m",
+        default="propose",
+        type=click.Choice(["propose", "dry-run", "execute"]),
+        help="propose (analyse) / dry-run (draft) / execute (draft PR).",
+    )
+    @click.option("--agent", "-a", default="lumina", help="Agent to dispatch.")
+    def gtd_queue(item_id, instruction, mode, agent):
+        """Queue an AI agent to work a GTD item (the terminal push-button).
+
+        The runner is plan-only unless SKAI_RUNNER_LIVE=1, so this records the
+        request and moves the shadow card to review. For GTD items, execute is
+        clamped to draft-only: the agent prepares a draft, a human sends it.
+
+        Example: skcapstone gtd queue 8f2c1a -i "Draft the reply" -m dry-run
+        """
+        from ..agent_run import request_run
+        from ..mcp_tools._helpers import _shared_root
+
+        home = _shared_root()
+        card_id = item_id if item_id.startswith("gtd-") else f"gtd-{item_id}"
+        r = request_run(home, card_id, instruction, agent=agent, mode=mode, requester="operator")
+        if r.get("error"):
+            console.print(f"  [red]{r['error']}[/]")
+            return
+        console.print(
+            f"  [green]Queued[/] run [cyan]{r['run_id']}[/] on [cyan]{card_id}[/]  "
+            f"[dim](mode: {mode}, agent: {agent}, state: {r['state']})[/]"
+        )

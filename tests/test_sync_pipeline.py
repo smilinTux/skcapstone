@@ -9,9 +9,9 @@ Pipeline under test:
     → {shared_root}/sync/comms/outbox/{peer}/*.skc.json ← Syncthing syncs this out
 
 Three test classes:
-    TestInboxToOutboxFlow      — mock LLM, drop inbox file, verify skcomms.send called
-    TestOutboxEnvelopeFormat   — verify envelope spec compliance and path layout
-    TestSyncStatusInHealth     — verify health snapshot includes sync_pipeline key
+    TestInboxToOutboxFlow      - mock LLM, drop inbox file, verify skcomms.send called
+    TestOutboxEnvelopeFormat   - verify envelope spec compliance and path layout
+    TestSyncStatusInHealth     - verify health snapshot includes sync_pipeline key
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ from skcapstone.sync_engine import (
     verify_pipeline_paths,
     write_outbox_envelope,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -82,13 +81,13 @@ class TestInboxToOutboxFlow:
 
         config = ConsciousnessConfig(
             enabled=True,
-            use_inotify=False,       # manual trigger in tests
+            use_inotify=False,  # manual trigger in tests
             auto_ack=False,
             auto_memory=False,
             desktop_notifications=False,
         )
 
-        with patch("skcapstone.consciousness_loop.LLMBridge") as MockBridge:
+        with patch("skcapstone.consciousness_loop.LLMBridge") as MockBridge:  # noqa: N806
             bridge = MagicMock()
             bridge.generate.return_value = "Hello back from TestAgent"
             bridge.available_backends = {"passthrough": True}
@@ -177,13 +176,14 @@ class TestInboxToOutboxFlow:
 
         # Recreate the loop's executor for a second submission attempt
         from concurrent.futures import ThreadPoolExecutor
+
         loop._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="consciousness")
 
         # Second call with the same file (same envelope_id)
         loop._on_inbox_file(inbox_file)
         loop._executor.shutdown(wait=True)
 
-        # Exactly the same number of sends — second call was deduped
+        # Exactly the same number of sends - second call was deduped
         assert mock_skcomms.send.call_count == first_count
 
 
@@ -219,7 +219,10 @@ class TestOutboxEnvelopeFormat:
 
     def test_file_placed_in_outbox_subdirectory(self, shared_root: Path):
         """Envelope file lives under outbox/{recipient}/."""
-        envelope = {"envelope_id": "dir-test", "payload": {"content": "hi", "content_type": "text"}}
+        envelope = {
+            "envelope_id": "dir-test",
+            "payload": {"content": "hi", "content_type": "text"},
+        }
         written = write_outbox_envelope(shared_root, "bob", envelope)
 
         expected_parent = get_outbox_dir(shared_root) / "bob"
@@ -227,7 +230,10 @@ class TestOutboxEnvelopeFormat:
 
     def test_file_has_skc_json_suffix(self, shared_root: Path):
         """Written file ends with .skc.json."""
-        envelope = {"envelope_id": "suffix-test", "payload": {"content": "x", "content_type": "text"}}
+        envelope = {
+            "envelope_id": "suffix-test",
+            "payload": {"content": "x", "content_type": "text"},
+        }
         written = write_outbox_envelope(shared_root, "carol", envelope)
         assert written.name.endswith(ENVELOPE_SUFFIX)
 

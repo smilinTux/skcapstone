@@ -12,7 +12,6 @@ from typing import Any
 
 from .context_loader import format_text, gather_context
 
-
 DEFAULT_HAMMERTIME_ROOT = Path("/mnt/cloud/onedrive/projects/DAVE AI/hammerTime")
 
 
@@ -93,14 +92,14 @@ def format_session_briefing_text(payload: dict[str, Any]) -> str:
         if top:
             lines.extend(
                 [
-                    f"- do_this_now_incident: {top.get('incident_id')} ({top.get('problem_slug')})",
+                    f"- do_this_now_incident: {top.get('incident_id')} ({top.get('problem_slug')})",  # noqa: E501
                     f"- do_this_now_action: {top.get('action')}",
                     f"- do_this_now_status: {top.get('status')}",
                 ]
             )
         for item in (briefing.get("focus_items") or [])[:3]:
             lines.append(
-                f"- focus: {item.get('incident_id')} -> {item.get('action')} [{item.get('status')}]"
+                f"- focus: {item.get('incident_id')} -> {item.get('action')} [{item.get('status')}]"  # noqa: E501
             )
     else:
         lines.extend(["", "## hammertime briefing", "- unavailable"])

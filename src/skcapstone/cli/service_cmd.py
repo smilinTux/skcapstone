@@ -1,4 +1,4 @@
-"""CLI command: skcapstone service check — service health checks."""
+"""CLI command: skcapstone service check - service health checks."""
 
 from __future__ import annotations
 
@@ -48,7 +48,10 @@ def register_service_commands(main: click.Group) -> None:
         console.print()
 
         table = Table(
-            show_header=True, header_style="bold", box=None, padding=(0, 2),
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
         )
         table.add_column("Service", style="cyan", no_wrap=True)
         table.add_column("URL", style="dim", no_wrap=True)
@@ -69,8 +72,12 @@ def register_service_commands(main: click.Group) -> None:
             version_str = str(r["version"]) if r["version"] else "-"
             error_str = r["error"][:50] if r["error"] else "-"
             table.add_row(
-                r["name"], r["url"], status_str,
-                latency_str, version_str, error_str,
+                r["name"],
+                r["url"],
+                status_str,
+                latency_str,
+                version_str,
+                error_str,
             )
 
         console.print(table)

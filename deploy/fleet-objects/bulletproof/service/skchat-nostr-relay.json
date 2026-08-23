@@ -1,0 +1,31 @@
+{
+  "kind": "service",
+  "labels": {
+    "epic": "CR-7.3",
+    "tier": "app"
+  },
+  "name": "skchat-nostr-relay",
+  "spec": {
+    "conditions": [
+      "Ready",
+      "CrashLooping"
+    ],
+    "failover": "manual",
+    "healthCheck": {
+      "port": 7447
+    },
+    "nodeSelector": {
+      "always-on": "true"
+    },
+    "note": "coturn/nostr durability was a Phase-2 skchat gap.",
+    "resources": {
+      "cores": 1,
+      "ram_gb": 0.5
+    },
+    "restartPolicy": "on-failure",
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "runtime": "systemd-user",
+    "source": "skchat/docs/deploy-plan/skchat-bulletproof-deploy.md",
+    "unit": "nostr-relay.service"
+  }
+}

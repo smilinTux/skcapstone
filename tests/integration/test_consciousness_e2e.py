@@ -15,8 +15,8 @@ Pipeline under test
 
 Related coordination tasks
 --------------------------
-    [8fbd0130] — Full E2E integration test (this file)
-    [c9e7b9d8] — End-to-end consciousness test: send SKComms message,
+    [8fbd0130] - Full E2E integration test (this file)
+    [c9e7b9d8] - End-to-end consciousness test: send SKComms message,
                  verify autonomous response
 
 Running
@@ -39,7 +39,7 @@ Known daemon startup issues
       first watch.  Tests sleep 0.5 s after loop.start() before dropping files.
     * Daemon HTTP port: _start_api_server() is called last in start().  Tests
       poll the port with a timeout instead of using a fixed sleep.
-    * signal handlers: _setup_signals() registers SIGTERM/SIGINT — patched in
+    * signal handlers: _setup_signals() registers SIGTERM/SIGINT - patched in
       DaemonService tests to avoid interfering with pytest's own signal handler.
 """
 
@@ -49,8 +49,8 @@ import json
 import socket
 import threading
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -58,10 +58,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# Module-level skip guard — skip if watchdog is unavailable
+# Module-level skip guard - skip if watchdog is unavailable
 # ---------------------------------------------------------------------------
 
-watchdog = pytest.importorskip("watchdog", reason="watchdog not installed — skipping integration tests")
+watchdog = pytest.importorskip(
+    "watchdog", reason="watchdog not installed - skipping integration tests"
+)
 
 pytestmark = pytest.mark.integration
 
@@ -71,9 +73,9 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 _PEER = "e2e-test-peer"
-_TOTAL_TIMEOUT = 60   # seconds — whole pipeline must complete within this
-_INOTIFY_TIMEOUT = 5  # seconds — file pickup (inotify trigger) must happen within this
-_RESPONSE_TIMEOUT = 30  # seconds — response generation after pickup
+_TOTAL_TIMEOUT = 60  # seconds - whole pipeline must complete within this
+_INOTIFY_TIMEOUT = 5  # seconds - file pickup (inotify trigger) must happen within this
+_RESPONSE_TIMEOUT = 30  # seconds - response generation after pickup
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +93,7 @@ def _make_envelope_json(
         msg_id = f"e2e-{int(time.time() * 1000)}"
     envelope = {
         "sender": peer,
-        "recipient": "",          # empty → accepted by all agents
+        "recipient": "",  # empty → accepted by all agents
         "payload": {
             "content": content,
             "content_type": "text",
@@ -202,8 +204,9 @@ class TestInboxFileTrigger:
 
     def test_inotify_callback_fires_within_5s(self, tmp_path: Path) -> None:
         """Happy path: watchdog calls the callback within INOTIFY_TIMEOUT seconds."""
-        from skcapstone.consciousness_loop import _WatchdogAdapter
         from watchdog.observers import Observer
+
+        from skcapstone.consciousness_loop import _WatchdogAdapter
 
         inbox_dir = tmp_path / "inbox"
         inbox_dir.mkdir()
@@ -227,18 +230,17 @@ class TestInboxFileTrigger:
             observer.stop()
             observer.join(timeout=5)
 
-        assert triggered, (
-            f"Inotify callback did not fire within {_INOTIFY_TIMEOUT}s after writing {msg_path}"
-        )
+        assert (
+            triggered
+        ), f"Inotify callback did not fire within {_INOTIFY_TIMEOUT}s after writing {msg_path}"
         assert len(called) >= 1, "Callback list is empty despite event being set"
-        assert called[0].name.endswith(".skc.json"), (
-            f"Unexpected file in callback: {called[0]}"
-        )
+        assert called[0].name.endswith(".skc.json"), f"Unexpected file in callback: {called[0]}"
 
     def test_non_skc_files_are_ignored(self, tmp_path: Path) -> None:
         """Edge case: .txt and .json files do NOT trigger the callback."""
-        from skcapstone.consciousness_loop import _WatchdogAdapter
         from watchdog.observers import Observer
+
+        from skcapstone.consciousness_loop import _WatchdogAdapter
 
         inbox_dir = tmp_path / "inbox2"
         inbox_dir.mkdir()
@@ -259,18 +261,15 @@ class TestInboxFileTrigger:
             # Write files that should be ignored
             (inbox_dir / "message.txt").write_text("not an envelope")
             (inbox_dir / "data.json").write_text("{}")
-            gate.wait(timeout=1.0)  # short wait — should NOT fire
+            gate.wait(timeout=1.0)  # short wait - should NOT fire
         finally:
             observer.stop()
             observer.join(timeout=5)
 
-        assert called == [], (
-            f"Callback was invoked for non-.skc.json file: {called}"
-        )
+        assert called == [], f"Callback was invoked for non-.skc.json file: {called}"
 
     def test_on_inbox_file_processes_valid_envelope(self, tmp_path: Path) -> None:
         """_on_inbox_file submits a valid .skc.json for async processing."""
-        from skcapstone.consciousness_loop import SystemPromptBuilder
 
         loop, mock_skcomms, inbox_dir = _make_loop(
             tmp_path, use_inotify=False, mock_generate="pong"
@@ -294,7 +293,7 @@ class TestInboxFileTrigger:
         # disk / service latency (prompt build can take 4-6s on a cold start).
         with patch.object(loop._prompt_builder, "build", return_value="test system prompt"):
             loop._on_inbox_file(msg_path)
-            # Executor is async — wait up to 10s for the response
+            # Executor is async - wait up to 10s for the response
             got_response = response_event.wait(timeout=10.0)
 
         assert got_response, (
@@ -324,18 +323,20 @@ class TestLLMClassifyAndGenerate:
 
         loop._bridge.generate.side_effect = _capturing_generate
 
-        envelope = _SimpleEnvelope({
-            "sender": "tester",
-            "payload": {"content": "debug this function for me", "content_type": "text"},
-        })
+        envelope = _SimpleEnvelope(
+            {
+                "sender": "tester",
+                "payload": {"content": "debug this function for me", "content_type": "text"},
+            }
+        )
         result = loop.process_envelope(envelope)
 
         assert result == "classified response"
         assert len(captured_signals) == 1
         signal = captured_signals[0]
-        assert "code" in signal.tags, (
-            f"Expected 'code' tag from message with 'debug', got: {signal.tags}"
-        )
+        assert (
+            "code" in signal.tags
+        ), f"Expected 'code' tag from message with 'debug', got: {signal.tags}"
 
     def test_generate_receives_correct_user_message(self, tmp_path: Path) -> None:
         """LLMBridge.generate() receives the exact message content from the envelope."""
@@ -349,18 +350,20 @@ class TestLLMClassifyAndGenerate:
         )
 
         test_content = "What is 2 + 2?"
-        envelope = _SimpleEnvelope({
-            "sender": "questioner",
-            "payload": {"content": test_content, "content_type": "text"},
-        })
+        envelope = _SimpleEnvelope(
+            {
+                "sender": "questioner",
+                "payload": {"content": test_content, "content_type": "text"},
+            }
+        )
         loop.process_envelope(envelope)
 
-        assert received_user_messages == [test_content], (
-            f"LLM did not receive expected message; got {received_user_messages}"
-        )
+        assert received_user_messages == [
+            test_content
+        ], f"LLM did not receive expected message; got {received_user_messages}"
 
     def test_generate_failure_does_not_crash_pipeline(self, tmp_path: Path) -> None:
-        """If LLMBridge.generate() raises, process_envelope() returns None and increments errors."""
+        """If LLMBridge.generate() raises, process_envelope() returns None and increments errors."""  # noqa: E501
         from skcapstone.consciousness_loop import _SimpleEnvelope
 
         loop, _, _ = _make_loop(tmp_path, use_inotify=False)
@@ -368,10 +371,14 @@ class TestLLMClassifyAndGenerate:
         loop._bridge.available_backends = {}
 
         assert loop.stats["errors"] == 0
-        result = loop.process_envelope(_SimpleEnvelope({
-            "sender": "s",
-            "payload": {"content": "test", "content_type": "text"},
-        }))
+        result = loop.process_envelope(
+            _SimpleEnvelope(
+                {
+                    "sender": "s",
+                    "payload": {"content": "test", "content_type": "text"},
+                }
+            )
+        )
         assert result is None
         assert loop.stats["errors"] == 1
 
@@ -392,25 +399,28 @@ class TestResponseDeliveredViaSkcomm:
             tmp_path, use_inotify=False, mock_generate="Hello from the agent!"
         )
 
-        envelope = _SimpleEnvelope({
-            "sender": "alice",
-            "payload": {"content": "hi there", "content_type": "text"},
-        })
+        envelope = _SimpleEnvelope(
+            {
+                "sender": "alice",
+                "payload": {"content": "hi there", "content_type": "text"},
+            }
+        )
         result = loop.process_envelope(envelope)
 
         assert result == "Hello from the agent!"
         # Verify SKComms.send was called with the response
         response_calls = [
-            call for call in mock_skcomms.send.call_args_list
+            call
+            for call in mock_skcomms.send.call_args_list
             if len(call.args) >= 2 and call.args[1] == "Hello from the agent!"
         ]
         assert response_calls, (
             f"SKComms.send() was not called with the LLM response. "
             f"All calls: {mock_skcomms.send.call_args_list}"
         )
-        assert response_calls[0].args[0] == "alice", (
-            f"Response sent to wrong peer: {response_calls[0].args[0]}"
-        )
+        assert (
+            response_calls[0].args[0] == "alice"
+        ), f"Response sent to wrong peer: {response_calls[0].args[0]}"
 
     def test_responses_sent_counter_increments(self, tmp_path: Path) -> None:
         """stats['responses_sent'] increments each time SKComms.send() succeeds."""
@@ -420,43 +430,58 @@ class TestResponseDeliveredViaSkcomm:
 
         assert loop.stats["responses_sent"] == 0
         for i in range(3):
-            loop.process_envelope(_SimpleEnvelope({
-                "sender": f"peer{i}",
-                "payload": {"content": f"message {i}", "content_type": "text"},
-            }))
+            loop.process_envelope(
+                _SimpleEnvelope(
+                    {
+                        "sender": f"peer{i}",
+                        "payload": {"content": f"message {i}", "content_type": "text"},
+                    }
+                )
+            )
 
         assert loop.stats["responses_sent"] == 3
 
     def test_skcomms_none_does_not_crash(self, tmp_path: Path) -> None:
         """Loop processes correctly even when no SKComms is set (responses dropped silently)."""
         from skcapstone.consciousness_loop import (
-            ConsciousnessConfig, ConsciousnessLoop, LLMBridge, _SimpleEnvelope,
+            ConsciousnessConfig,
+            ConsciousnessLoop,
+            LLMBridge,
+            _SimpleEnvelope,
         )
 
         home = tmp_path / "h"
         shared = tmp_path / "s"
-        home.mkdir(); shared.mkdir()
+        home.mkdir()
+        shared.mkdir()
         config = ConsciousnessConfig(
-            auto_memory=False, auto_ack=False, use_inotify=False, desktop_notifications=False,
+            auto_memory=False,
+            auto_ack=False,
+            use_inotify=False,
+            desktop_notifications=False,
         )
         with patch.object(LLMBridge, "_probe_ollama", return_value=False):
             loop = ConsciousnessLoop(config, home=home, shared_root=shared)
 
-        # No SKComms set — _skcomms stays None
+        # No SKComms set - _skcomms stays None
         loop._bridge = MagicMock()
         loop._bridge.generate.return_value = "silent reply"
         loop._bridge.available_backends = {"passthrough": True}
 
-        result = loop.process_envelope(_SimpleEnvelope({
-            "sender": "bob",
-            "payload": {"content": "hello", "content_type": "text"},
-        }))
+        result = loop.process_envelope(
+            _SimpleEnvelope(
+                {
+                    "sender": "bob",
+                    "payload": {"content": "hello", "content_type": "text"},
+                }
+            )
+        )
         assert result == "silent reply"
         assert loop.stats["responses_sent"] == 0  # no SKComms → not counted
 
 
 # ===========================================================================
-# Test Class 4: Full E2E pipeline — file drop to response within 60 s
+# Test Class 4: Full E2E pipeline - file drop to response within 60 s
 # ===========================================================================
 
 
@@ -473,13 +498,13 @@ class TestFullE2EPipeline:
         the mock SKComms.send() is called with a response within TOTAL_TIMEOUT.
 
         Two-phase assertion:
-            Phase 1 — Inotify pickup:  _on_inbox_file fires within INOTIFY_TIMEOUT (5 s)
-            Phase 2 — Full pipeline:   response is sent within TOTAL_TIMEOUT (60 s)
+            Phase 1 - Inotify pickup:  _on_inbox_file fires within INOTIFY_TIMEOUT (5 s)
+            Phase 2 - Full pipeline:   response is sent within TOTAL_TIMEOUT (60 s)
         """
         loop, mock_skcomms, inbox_dir = _make_loop(
             tmp_path,
             use_inotify=True,
-            mock_generate="E2E test response — pipeline complete.",
+            mock_generate="E2E test response - pipeline complete.",
         )
 
         # Phase-1: track inotify pickup separately from Phase-2 response
@@ -550,8 +575,7 @@ class TestFullE2EPipeline:
 
         # Assertions
         assert picked_up, (
-            f"Inotify did not pick up the file within {_INOTIFY_TIMEOUT}s. "
-            f"Inbox: {inbox_dir}"
+            f"Inotify did not pick up the file within {_INOTIFY_TIMEOUT}s. " f"Inbox: {inbox_dir}"
         )
         assert got_response, (
             f"No response captured within {_TOTAL_TIMEOUT}s. "
@@ -559,15 +583,15 @@ class TestFullE2EPipeline:
             f"SKComms calls: {mock_skcomms.send.call_args_list}"
         )
         assert response_captured, "response_captured list is empty"
-        assert "E2E test response" in response_captured[0], (
-            f"Unexpected response content: {response_captured[0]!r}"
-        )
-        assert loop.stats["messages_processed"] >= 1, (
-            f"messages_processed is 0 after pipeline ran: {loop.stats}"
-        )
-        assert total_elapsed <= _TOTAL_TIMEOUT, (
-            f"Full pipeline took {total_elapsed:.1f}s — exceeds {_TOTAL_TIMEOUT}s budget"
-        )
+        assert (
+            "E2E test response" in response_captured[0]
+        ), f"Unexpected response content: {response_captured[0]!r}"
+        assert (
+            loop.stats["messages_processed"] >= 1
+        ), f"messages_processed is 0 after pipeline ran: {loop.stats}"
+        assert (
+            total_elapsed <= _TOTAL_TIMEOUT
+        ), f"Full pipeline took {total_elapsed:.1f}s - exceeds {_TOTAL_TIMEOUT}s budget"
 
     def test_inotify_pickup_within_5s(self, tmp_path: Path) -> None:
         """Assert the inotify watcher detects the inbox file within INOTIFY_TIMEOUT seconds."""
@@ -606,9 +630,7 @@ class TestFullE2EPipeline:
 
     def test_deduplication_prevents_double_processing(self, tmp_path: Path) -> None:
         """Dropping the same message_id twice only processes it once."""
-        loop, _, inbox_dir = _make_loop(
-            tmp_path, use_inotify=False, mock_generate="unique reply"
-        )
+        loop, _, inbox_dir = _make_loop(tmp_path, use_inotify=False, mock_generate="unique reply")
 
         processed_event = threading.Event()
         process_count: list[int] = []
@@ -624,11 +646,9 @@ class TestFullE2EPipeline:
 
         loop.process_envelope = _tracking
 
-        # Two files, same message_id — dedup should drop the second
+        # Two files, same message_id - dedup should drop the second
         msg_id = "dedup-test-001"
-        envelope_json = _make_envelope_json(
-            content="unique message", peer=_PEER, msg_id=msg_id
-        )
+        envelope_json = _make_envelope_json(content="unique message", peer=_PEER, msg_id=msg_id)
         path1 = inbox_dir / f"{msg_id}-a.skc.json"
         path2 = inbox_dir / f"{msg_id}-b.skc.json"
         path1.write_text(envelope_json)
@@ -642,9 +662,7 @@ class TestFullE2EPipeline:
         processed_event.wait(timeout=_RESPONSE_TIMEOUT)
         time.sleep(0.5)  # extra drain time to catch any erroneous second processing
 
-        assert len(process_count) == 1, (
-            f"Expected 1 response (dedup), got {len(process_count)}"
-        )
+        assert len(process_count) == 1, f"Expected 1 response (dedup), got {len(process_count)}"
 
 
 # ===========================================================================
@@ -676,8 +694,8 @@ class TestDaemonServiceIntegration:
     @pytest.fixture
     def running_daemon(self, daemon_home: Path, free_port: int):
         """Start and yield a DaemonService; poll for readiness; tear down after test."""
-        from skcapstone.daemon import DaemonConfig, DaemonService
         from skcapstone.consciousness_loop import LLMBridge
+        from skcapstone.daemon import DaemonConfig, DaemonService
 
         config = DaemonConfig(
             home=daemon_home,
@@ -741,8 +759,8 @@ class TestDaemonServiceIntegration:
 
     def test_daemon_stops_cleanly(self, daemon_home: Path, free_port: int) -> None:
         """DaemonService.stop() sets running=False and joins threads without hanging."""
-        from skcapstone.daemon import DaemonConfig, DaemonService
         from skcapstone.consciousness_loop import LLMBridge
+        from skcapstone.daemon import DaemonConfig, DaemonService
 
         config = DaemonConfig(
             home=daemon_home,
@@ -780,8 +798,8 @@ class TestDaemonServiceIntegration:
 
         This covers task [c9e7b9d8]: send SKComms message, verify autonomous response.
         """
-        from skcapstone.daemon import DaemonConfig, DaemonService
         from skcapstone.consciousness_loop import LLMBridge
+        from skcapstone.daemon import DaemonConfig, DaemonService
 
         shared_root = tmp_path / "shared"
         inbox_dir = shared_root / "sync" / "comms" / "inbox"
@@ -836,7 +854,7 @@ class TestDaemonServiceIntegration:
 
             # Replace bridge with fast mock so no real LLM is called
             mock_bridge = MagicMock()
-            mock_bridge.generate.return_value = "Autonomous response — consciousness is active."
+            mock_bridge.generate.return_value = "Autonomous response - consciousness is active."
             mock_bridge.available_backends = {"passthrough": True}
             consciousness._bridge = mock_bridge
             consciousness.set_skcomms(mock_skcomms)
@@ -846,7 +864,7 @@ class TestDaemonServiceIntegration:
             try:
                 msg_path, msg_id = _drop_message(
                     inbox_dir,
-                    content="Daemon integration test — please respond.",
+                    content="Daemon integration test - please respond.",
                     peer=_PEER,
                 )
 
@@ -857,9 +875,7 @@ class TestDaemonServiceIntegration:
                     # CI fallback: trigger directly
                     consciousness._on_inbox_file(msg_path)
                     remaining = _TOTAL_TIMEOUT - (time.monotonic() - t_start)
-                    got_response = response_event.wait(
-                        timeout=max(remaining, _RESPONSE_TIMEOUT)
-                    )
+                    got_response = response_event.wait(timeout=max(remaining, _RESPONSE_TIMEOUT))
 
             finally:
                 service.stop()
@@ -872,6 +888,6 @@ class TestDaemonServiceIntegration:
             f"Elapsed: {total_elapsed:.1f}s. SKComms calls: {mock_skcomms.send.call_args_list}"
         )
         assert captured_responses, "No response text captured from consciousness loop"
-        assert total_elapsed <= _TOTAL_TIMEOUT, (
-            f"Daemon E2E took {total_elapsed:.1f}s — exceeds {_TOTAL_TIMEOUT}s"
-        )
+        assert (
+            total_elapsed <= _TOTAL_TIMEOUT
+        ), f"Daemon E2E took {total_elapsed:.1f}s - exceeds {_TOTAL_TIMEOUT}s"

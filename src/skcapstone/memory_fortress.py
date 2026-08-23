@@ -1,5 +1,5 @@
 """
-Memory Fortress — integrity sealing, at-rest encryption, and tamper alerts.
+Memory Fortress - integrity sealing, at-rest encryption, and tamper alerts.
 
 Every memory gets an HMAC-SHA256 integrity seal on write. On read, the
 seal is verified and a tamper alert fires if it doesn't match. Optional
@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .models import MemoryEntry
 
@@ -124,10 +124,14 @@ class MemoryFortress:
         self._config = config
         self._save_config(config)
 
-        self._audit("FORTRESS_INIT", "Memory fortress initialized", metadata={
-            "encryption_enabled": config.encryption_enabled,
-            "seal_algorithm": config.seal_algorithm,
-        })
+        self._audit(
+            "FORTRESS_INIT",
+            "Memory fortress initialized",
+            metadata={
+                "encryption_enabled": config.encryption_enabled,
+                "seal_algorithm": config.seal_algorithm,
+            },
+        )
 
         return config
 
@@ -158,11 +162,15 @@ class MemoryFortress:
             data[_KEY_ID_FIELD] = self._kms_key_id
 
         if config.audit_events:
-            self._audit("MEMORY_SEALED", f"Memory {entry.memory_id} sealed", metadata={
-                "memory_id": entry.memory_id,
-                "layer": entry.layer.value,
-                "encrypted": config.encryption_enabled,
-            })
+            self._audit(
+                "MEMORY_SEALED",
+                f"Memory {entry.memory_id} sealed",
+                metadata={
+                    "memory_id": entry.memory_id,
+                    "layer": entry.layer.value,
+                    "encrypted": config.encryption_enabled,
+                },
+            )
 
         return data
 
@@ -192,7 +200,7 @@ class MemoryFortress:
         data.pop(_KEY_ID_FIELD, None)
 
         if stored_seal is None:
-            # Legacy unsealed memory — load without verification
+            # Legacy unsealed memory - load without verification
             try:
                 entry = MemoryEntry(**data)
                 return entry, SealResult(
@@ -210,18 +218,22 @@ class MemoryFortress:
         # Verify integrity
         expected_seal = self._compute_seal(data)
         if not hmac.compare_digest(stored_seal, expected_seal):
-            self._audit("MEMORY_TAMPER_ALERT", f"TAMPERED: Memory {memory_id} failed integrity check", metadata={
-                "memory_id": memory_id,
-                "expected_seal": expected_seal[:16] + "...",
-                "actual_seal": stored_seal[:16] + "...",
-                "path": str(path),
-            })
+            self._audit(
+                "MEMORY_TAMPER_ALERT",
+                f"TAMPERED: Memory {memory_id} failed integrity check",
+                metadata={
+                    "memory_id": memory_id,
+                    "expected_seal": expected_seal[:16] + "...",
+                    "actual_seal": stored_seal[:16] + "...",
+                    "path": str(path),
+                },
+            )
             return None, SealResult(
                 memory_id=memory_id,
                 sealed=True,
                 verified=False,
                 tampered=True,
-                error="Integrity seal mismatch — possible tampering",
+                error="Integrity seal mismatch - possible tampering",
             )
 
         # Decrypt if encrypted
@@ -241,9 +253,13 @@ class MemoryFortress:
 
         config = self._get_config()
         if config.audit_events:
-            self._audit("MEMORY_VERIFIED", f"Memory {memory_id} integrity verified", metadata={
-                "memory_id": memory_id,
-            })
+            self._audit(
+                "MEMORY_VERIFIED",
+                f"Memory {memory_id} integrity verified",
+                metadata={
+                    "memory_id": memory_id,
+                },
+            )
 
         return entry, SealResult(
             memory_id=memory_id,
@@ -312,12 +328,16 @@ class MemoryFortress:
                 elif not result.sealed:
                     unsealed_count += 1
 
-        self._audit("FORTRESS_SCAN", "Full memory integrity scan completed", metadata={
-            "total": len(results),
-            "verified": verified_count,
-            "tampered": tampered_count,
-            "unsealed": unsealed_count,
-        })
+        self._audit(
+            "FORTRESS_SCAN",
+            "Full memory integrity scan completed",
+            metadata={
+                "total": len(results),
+                "verified": verified_count,
+                "tampered": tampered_count,
+                "unsealed": unsealed_count,
+            },
+        )
 
         return results
 
@@ -361,9 +381,13 @@ class MemoryFortress:
                     logger.warning("Cannot seal %s: %s", f.name, exc)
 
         if sealed:
-            self._audit("FORTRESS_MIGRATION", f"Sealed {sealed} existing memories", metadata={
-                "sealed_count": sealed,
-            })
+            self._audit(
+                "FORTRESS_MIGRATION",
+                f"Sealed {sealed} existing memories",
+                metadata={
+                    "sealed_count": sealed,
+                },
+            )
 
         return sealed
 

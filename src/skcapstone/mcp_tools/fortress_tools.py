@@ -10,35 +10,37 @@ TOOLS: list[Tool] = [
     Tool(
         name="fortress_verify",
         description=(
-            "Verify integrity of all memories in a layer. "
-            "Checks HMAC-SHA256 seals to detect tampering."
+            "Verify integrity of all memories in a layer. Checks HMAC-SHA256 seals to detect "
+            "tampering."
         ),
         inputSchema={
-            "type": "object",
             "properties": {
                 "layer": {
+                    "description": (
+                        "Memory layer: short-term, mid-term, or long-term (omit for all)"
+                    ),
                     "type": "string",
-                    "description": "Memory layer: short-term, mid-term, or long-term (omit for all)",
-                },
+                }
             },
             "required": [],
+            "type": "object",
         },
     ),
     Tool(
         name="fortress_seal_existing",
         description=(
-            "Seal all unsealed memories with HMAC-SHA256 integrity seals. "
-            "Idempotent \u2014 already-sealed memories are skipped."
+            "Seal all unsealed memories with HMAC-SHA256 integrity seals. Idempotent - "
+            "already-sealed memories are skipped."
         ),
-        inputSchema={"type": "object", "properties": {}, "required": []},
+        inputSchema={"properties": {}, "required": [], "type": "object"},
     ),
     Tool(
         name="fortress_status",
         description=(
-            "Get Memory Fortress status: seal key source, "
-            "encryption enabled, total sealed/verified counts."
+            "Get Memory Fortress status: seal key source, encryption enabled, total "
+            "sealed/verified counts."
         ),
-        inputSchema={"type": "object", "properties": {}, "required": []},
+        inputSchema={"properties": {}, "required": [], "type": "object"},
     ),
 ]
 
@@ -59,12 +61,14 @@ async def _handle_fortress_verify(args: dict) -> list[TextContent]:
         results = []
         for f in sorted(layer_dir.glob("*.json")):
             _, seal_result = fortress.verify_and_load(f)
-            results.append({
-                "memory_id": seal_result.memory_id,
-                "verified": seal_result.verified,
-                "tampered": seal_result.tampered,
-                "sealed": seal_result.sealed,
-            })
+            results.append(
+                {
+                    "memory_id": seal_result.memory_id,
+                    "verified": seal_result.verified,
+                    "tampered": seal_result.tampered,
+                    "sealed": seal_result.sealed,
+                }
+            )
     else:
         seal_results = fortress.verify_all(home)
         results = [
@@ -79,13 +83,15 @@ async def _handle_fortress_verify(args: dict) -> list[TextContent]:
 
     tampered = sum(1 for r in results if r.get("tampered"))
     verified = sum(1 for r in results if r.get("verified"))
-    return _json_response({
-        "total": len(results),
-        "verified": verified,
-        "tampered": tampered,
-        "unsealed": len(results) - verified - tampered,
-        "details": results,
-    })
+    return _json_response(
+        {
+            "total": len(results),
+            "verified": verified,
+            "tampered": tampered,
+            "unsealed": len(results) - verified - tampered,
+            "details": results,
+        }
+    )
 
 
 async def _handle_fortress_seal_existing(_args: dict) -> list[TextContent]:
@@ -97,10 +103,12 @@ async def _handle_fortress_seal_existing(_args: dict) -> list[TextContent]:
     fortress.initialize()
 
     sealed_count = fortress.seal_existing(home)
-    return _json_response({
-        "sealed": sealed_count,
-        "message": f"Sealed {sealed_count} previously unsealed memories",
-    })
+    return _json_response(
+        {
+            "sealed": sealed_count,
+            "message": f"Sealed {sealed_count} previously unsealed memories",
+        }
+    )
 
 
 async def _handle_fortress_status(_args: dict) -> list[TextContent]:

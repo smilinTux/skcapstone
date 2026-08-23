@@ -1,0 +1,14 @@
+{
+  "kind": "syncfolder",
+  "labels": {
+    "epic": "3bbf39ea",
+    "card": "20a1d4d3"
+  },
+  "name": "skcapstone-sync",
+  "spec": {
+    "description": "The sovereign agent home, shared sendreceive across every node that joins it. The ignore ruleset lives HERE, with the folder, and not on any Profile: spec.syncFolders is role-keyed, so a ruleset kept there would be per-role, two roles joining this folder could disagree about what must never leave a node, and the no-secrets invariant would become per-node. Profiles reference this folder by id; this object says what the rules are. requiredIgnores below only ADD to the built-in floor in skcapstone.fleet.stignore_doctor, which no object can weaken. Verified 2026-08-16 on all three member nodes (.158, .41, .100): rules present, and .100 holds zero PGP PRIVATE KEY BLOCKs while .158 holds eleven private.asc files in the same folder.",
+    "root": "~/.skcapstone",
+    "requiredIgnores": [],
+    "recommendedIgnores": []
+  }
+}

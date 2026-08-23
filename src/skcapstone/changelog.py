@@ -1,5 +1,5 @@
 """
-Changelog Generator — auto-document the Kingdom's progress.
+Changelog Generator - auto-document the Kingdom's progress.
 
 Reads the coordination board's completed tasks and generates
 a structured CHANGELOG.md grouped by date and category. Every
@@ -10,7 +10,6 @@ The board IS the changelog. No separate tracking needed.
 
 from __future__ import annotations
 
-import json
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -18,7 +17,6 @@ from pathlib import Path
 from typing import Optional
 
 from .coordination import Board, TaskStatus
-
 
 TAG_CATEGORIES = {
     "feature": ["skcapstone", "skchat", "skcomms", "skmemory", "capauth", "cloud9", "skworld"],
@@ -107,19 +105,21 @@ def generate_changelog(
         category = _categorize(t.tags)
         who = completed_by_agent.get(t.id, [v.claimed_by] if v.claimed_by else ["unknown"])
 
-        by_date[date].append({
-            "id": t.id,
-            "title": t.title,
-            "category": category,
-            "tags": t.tags,
-            "agents": who,
-            "priority": t.priority.value,
-        })
+        by_date[date].append(
+            {
+                "id": t.id,
+                "title": t.title,
+                "category": category,
+                "tags": t.tags,
+                "agents": who,
+                "priority": t.priority.value,
+            }
+        )
 
     lines = [
         f"# {title}",
         "",
-        f"*Auto-generated from the coordination board — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*",
+        f"*Auto-generated from the coordination board - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*",  # noqa: E501
         "",
         f"**Total completed: {len(completed)}** across {len(set(a.agent for a in agents))} agents",
         "",
@@ -146,20 +146,34 @@ def generate_changelog(
         for task in tasks:
             by_cat[task["category"]].append(task)
 
-        for cat in ["feature", "security", "p2p", "emotional", "ux", "infrastructure", "testing", "documentation", "other"]:
+        for cat in [
+            "feature",
+            "security",
+            "p2p",
+            "emotional",
+            "ux",
+            "infrastructure",
+            "testing",
+            "documentation",
+            "other",
+        ]:
             if cat not in by_cat:
                 continue
             icon = category_icons.get(cat, "---")
             lines.append(f"### [{icon}] {cat.title()}")
             lines.append("")
             for task in by_cat[cat]:
-                agent_str = f" (@{', @'.join(task['agents'])})" if include_agents and task["agents"] else ""
+                agent_str = (
+                    f" (@{', @'.join(task['agents'])})"
+                    if include_agents and task["agents"]
+                    else ""
+                )
                 lines.append(f"- **{task['title']}**{agent_str}")
             lines.append("")
 
     lines.append("---")
     lines.append("")
-    lines.append("*Built by the Pengu Nation — staycuriousANDkeepsmilin*")
+    lines.append("*Built by the Pengu Nation - staycuriousANDkeepsmilin*")
 
     return "\n".join(lines)
 

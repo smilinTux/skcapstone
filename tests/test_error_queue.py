@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,9 +13,7 @@ from skcapstone.error_queue import (
     ErrorQueue,
     ErrorStatus,
     _backoff_ts,
-    _now_iso,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,11 +63,9 @@ class TestErrorEntry:
 
     def test_defaults(self) -> None:
         """entry_id and created_at are auto-generated when omitted."""
-        entry = ErrorEntry(
-            operation_type="sync", payload={}, error_message="network error"
-        )
-        assert len(entry.entry_id) == 32          # uuid4 hex
-        assert "T" in entry.created_at             # ISO-8601
+        entry = ErrorEntry(operation_type="sync", payload={}, error_message="network error")
+        assert len(entry.entry_id) == 32  # uuid4 hex
+        assert "T" in entry.created_at  # ISO-8601
         assert entry.retry_count == 0
         assert entry.status == ErrorStatus.PENDING
 
@@ -83,7 +78,7 @@ class TestErrorEntry:
 
 
 # ---------------------------------------------------------------------------
-# ErrorQueue — basic operations
+# ErrorQueue - basic operations
 # ---------------------------------------------------------------------------
 
 
@@ -118,7 +113,7 @@ class TestErrorQueueBasic:
 
     def test_list_excludes_resolved_by_default(self, queue: ErrorQueue) -> None:
         """list_entries() hides resolved entries unless include_resolved=True."""
-        entry = queue.enqueue("llm_call", {}, "err")
+        queue.enqueue("llm_call", {}, "err")
         # Force-resolve by marking directly in JSON
         entries = queue._load()
         entries[0].status = ErrorStatus.RESOLVED
@@ -160,7 +155,7 @@ class TestErrorQueueBasic:
 
 
 # ---------------------------------------------------------------------------
-# ErrorQueue — retry logic
+# ErrorQueue - retry logic
 # ---------------------------------------------------------------------------
 
 
@@ -250,7 +245,7 @@ class TestErrorQueueRetry:
 
 
 # ---------------------------------------------------------------------------
-# ErrorQueue — remove / clear
+# ErrorQueue - remove / clear
 # ---------------------------------------------------------------------------
 
 
@@ -297,7 +292,7 @@ class TestErrorQueueClear:
 
 
 # ---------------------------------------------------------------------------
-# ErrorQueue — stats
+# ErrorQueue - stats
 # ---------------------------------------------------------------------------
 
 
@@ -337,6 +332,7 @@ class TestErrorQueueCLI:
     def test_cli_list_empty(self, tmp_path: Path) -> None:
         """errors list on empty queue exits 0 and prints 'empty'."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         runner = CliRunner()
@@ -345,11 +341,16 @@ class TestErrorQueueCLI:
             ["errors", "list", "--path", str(tmp_path / "eq.json")],
         )
         assert result.exit_code == 0
-        assert "empty" in result.output.lower() or "0 total" in result.output.lower() or "Queue" in result.output
+        assert (
+            "empty" in result.output.lower()
+            or "0 total" in result.output.lower()
+            or "Queue" in result.output
+        )
 
     def test_cli_list_shows_entry(self, tmp_path: Path) -> None:
         """errors list shows an enqueued entry."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         q_path = tmp_path / "eq.json"
@@ -364,6 +365,7 @@ class TestErrorQueueCLI:
     def test_cli_stats(self, tmp_path: Path) -> None:
         """errors stats exits 0 and shows totals panel."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         q_path = tmp_path / "eq.json"
@@ -378,6 +380,7 @@ class TestErrorQueueCLI:
     def test_cli_clear_all_with_force(self, tmp_path: Path) -> None:
         """errors clear --all --force removes all entries."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         q_path = tmp_path / "eq.json"
@@ -395,10 +398,9 @@ class TestErrorQueueCLI:
     def test_cli_retry_no_args_fails(self, tmp_path: Path) -> None:
         """errors retry without ENTRY_ID and without --all exits non-zero."""
         from click.testing import CliRunner
+
         from skcapstone.cli import main
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, ["errors", "retry", "--path", str(tmp_path / "eq.json")]
-        )
+        result = runner.invoke(main, ["errors", "retry", "--path", str(tmp_path / "eq.json")])
         assert result.exit_code != 0 or "ENTRY_ID" in result.output or "all" in result.output

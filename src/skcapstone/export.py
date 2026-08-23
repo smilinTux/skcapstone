@@ -31,12 +31,12 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
 from . import __version__
-from .memory_engine import list_memories, store as memory_store
+from .memory_engine import list_memories
 from .models import MemoryLayer
 
 logger = logging.getLogger("skcapstone.export")
@@ -136,9 +136,7 @@ def import_bundle(
     if bundle.get("identity") and (overwrite_identity or not identity_path.exists()):
         try:
             identity_path.parent.mkdir(parents=True, exist_ok=True)
-            identity_path.write_text(
-                json.dumps(bundle["identity"], indent=2), encoding="utf-8"
-            )
+            identity_path.write_text(json.dumps(bundle["identity"], indent=2), encoding="utf-8")
             summary["identity_written"] = True
         except OSError as exc:
             errors.append(f"identity write failed: {exc}")
@@ -164,9 +162,7 @@ def import_bundle(
     if soul_section.get("base") and (overwrite_soul or not base_path.exists()):
         try:
             base_path.parent.mkdir(parents=True, exist_ok=True)
-            base_path.write_text(
-                json.dumps(soul_section["base"], indent=2), encoding="utf-8"
-            )
+            base_path.write_text(json.dumps(soul_section["base"], indent=2), encoding="utf-8")
             soul_written += 1
         except OSError as exc:
             errors.append(f"soul/base write failed: {exc}")
@@ -175,9 +171,7 @@ def import_bundle(
     if soul_section.get("active") and (overwrite_soul or not active_path.exists()):
         try:
             active_path.parent.mkdir(parents=True, exist_ok=True)
-            active_path.write_text(
-                json.dumps(soul_section["active"], indent=2), encoding="utf-8"
-            )
+            active_path.write_text(json.dumps(soul_section["active"], indent=2), encoding="utf-8")
             soul_written += 1
         except OSError as exc:
             errors.append(f"soul/active write failed: {exc}")
@@ -199,7 +193,6 @@ def import_bundle(
     imported_memories = _import_memories(home, bundle.get("memories") or [])
     summary["memories_imported"] = imported_memories
     if imported_memories:
-        errors_from_mem: list[str] = []  # import_memories logs but doesn't surface
         logger.info("Imported %d memories", imported_memories)
 
     # --- conversations ---
@@ -218,7 +211,7 @@ def import_bundle(
 
 
 # ---------------------------------------------------------------------------
-# Private helpers — export
+# Private helpers - export
 # ---------------------------------------------------------------------------
 
 
@@ -331,7 +324,7 @@ def _load_conversations(home: Path) -> dict[str, list[dict]]:
 
 
 # ---------------------------------------------------------------------------
-# Private helpers — import
+# Private helpers - import
 # ---------------------------------------------------------------------------
 
 
@@ -343,9 +336,7 @@ def _validate_bundle(bundle: dict[str, Any]) -> None:
     if version is None:
         raise ValueError("Missing bundle_version field")
     if version != BUNDLE_VERSION:
-        raise ValueError(
-            f"Unsupported bundle_version {version!r} (expected {BUNDLE_VERSION})"
-        )
+        raise ValueError(f"Unsupported bundle_version {version!r} (expected {BUNDLE_VERSION})")
 
 
 def _import_memories(home: Path, memory_list: list[dict]) -> int:
@@ -357,8 +348,8 @@ def _import_memories(home: Path, memory_list: list[dict]) -> int:
     if not memory_list:
         return 0
 
-    from .models import MemoryEntry
     from .memory_engine import _memory_dir, _update_index
+    from .models import MemoryEntry
 
     mem_dir = _memory_dir(home)  # creates layer subdirs
 
@@ -377,7 +368,9 @@ def _import_memories(home: Path, memory_list: list[dict]) -> int:
             continue
         try:
             layer_raw = mem_data.get("layer", "short-term")
-            layer = MemoryLayer(layer_raw) if isinstance(layer_raw, str) else MemoryLayer.SHORT_TERM
+            layer = (
+                MemoryLayer(layer_raw) if isinstance(layer_raw, str) else MemoryLayer.SHORT_TERM
+            )
             entry = MemoryEntry(
                 memory_id=mid,
                 content=mem_data["content"],
@@ -429,11 +422,11 @@ def _import_conversations(
 
         # Deduplicate by (role, content, timestamp) tuple
         existing_keys = {
-            (m.get("role"), m.get("content"), m.get("timestamp"))
-            for m in existing_messages
+            (m.get("role"), m.get("content"), m.get("timestamp")) for m in existing_messages
         }
         new_messages = [
-            m for m in messages
+            m
+            for m in messages
             if (m.get("role"), m.get("content"), m.get("timestamp")) not in existing_keys
         ]
 

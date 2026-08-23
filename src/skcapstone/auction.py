@@ -15,8 +15,8 @@ Auction state persists in:
     ~/.skcapstone/coordination/auctions/{task_id}.json
 
 Topics used:
-    coord.auction         — broadcast (auction_open / auction_resolved)
-    coord.auction.bids.*  — per-task bid topic (agent → bid payload)
+    coord.auction         - broadcast (auction_open / auction_resolved)
+    coord.auction.bids.*  - per-task bid topic (agent → bid payload)
 """
 
 from __future__ import annotations
@@ -52,9 +52,7 @@ class AuctionBid(BaseModel):
     agent: str
     claimed_tasks_count: int = 0
     cpu_percent: float = 0.0
-    bid_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    bid_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class AuctionRecord(BaseModel):
@@ -62,9 +60,7 @@ class AuctionRecord(BaseModel):
 
     task_id: str
     task_title: str
-    started_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     resolved_at: Optional[str] = None
     winner: Optional[str] = None
     bids: list[AuctionBid] = Field(default_factory=list)
@@ -127,7 +123,7 @@ def _collect_local_bid(task_id: str, agent_name: str, shared_root: Path) -> Auct
 class AuctionManager:
     """Manages task auctions in the skcapstone coordination system.
 
-    State is file-based and Syncthing-compatible — each auction is a
+    State is file-based and Syncthing-compatible - each auction is a
     single JSON file under coordination/auctions/.  Multiple agent
     processes on different machines will all write bids into the same
     file (via Syncthing sync); resolution reads the accumulated bids.
@@ -156,9 +152,7 @@ class AuctionManager:
         if not path.exists():
             return None
         try:
-            return AuctionRecord.model_validate(
-                json.loads(path.read_text(encoding="utf-8"))
-            )
+            return AuctionRecord.model_validate(json.loads(path.read_text(encoding="utf-8")))
         except Exception as exc:
             logger.warning("Failed to load auction record %s: %s", task_id, exc)
             return None
@@ -173,9 +167,7 @@ class AuctionManager:
     # Public API
     # ------------------------------------------------------------------
 
-    def start_auction(
-        self, task_id: str, task_title: str, pubsub: Any
-    ) -> AuctionRecord:
+    def start_auction(self, task_id: str, task_title: str, pubsub: Any) -> AuctionRecord:
         """Open a new auction and broadcast it on coord.auction.
 
         Args:
@@ -226,7 +218,7 @@ class AuctionManager:
         if record is None or record.status != "pending":
             return False
 
-        # Deduplicate by agent — keep the most recent bid
+        # Deduplicate by agent - keep the most recent bid
         record.bids = [b for b in record.bids if b.agent != bid.agent]
         record.bids.append(bid)
         self._save_record(record)
@@ -244,9 +236,7 @@ class AuctionManager:
         record = self._load_record(task_id)
         return record is not None and record.status == "pending"
 
-    async def resolve_auction(
-        self, task_id: str, pubsub: Any
-    ) -> Optional[str]:
+    async def resolve_auction(self, task_id: str, pubsub: Any) -> Optional[str]:
         """Wait for the bid window then assign the lowest-load bidder.
 
         Sleeps for AUCTION_WINDOW_SECS, then reads all accumulated bids
@@ -276,7 +266,7 @@ class AuctionManager:
             record.status = "no_bidders"
             record.resolved_at = now_iso
             self._save_record(record)
-            logger.info("Auction %s: no bids received — task remains open", task_id)
+            logger.info("Auction %s: no bids received - task remains open", task_id)
             try:
                 pubsub.publish(
                     AUCTION_TOPIC,
@@ -285,7 +275,9 @@ class AuctionManager:
                     tags=["auction", "no_bidders"],
                 )
             except Exception as exc:
-                logger.warning("Failed to publish auction_no_bidders event for %s: %s", task_id, exc)
+                logger.warning(
+                    "Failed to publish auction_no_bidders event for %s: %s", task_id, exc
+                )
             return None
 
         winner_bid = min(record.bids, key=_load_score)
@@ -298,15 +290,13 @@ class AuctionManager:
             board = Board(self.shared_root)
             board.claim_task(winner, task_id)
             logger.info(
-                "Auction %s: resolved — winner=%s (score=%.3f)",
+                "Auction %s: resolved - winner=%s (score=%.3f)",
                 task_id,
                 winner,
                 _load_score(winner_bid),
             )
         except Exception as exc:
-            logger.warning(
-                "Auction %s: claim failed for %s: %s", task_id, winner, exc
-            )
+            logger.warning("Auction %s: claim failed for %s: %s", task_id, winner, exc)
             # Still record the result even if claim failed
             winner = None
 
@@ -369,9 +359,7 @@ class AuctionManager:
         for path in paths:
             try:
                 records.append(
-                    AuctionRecord.model_validate(
-                        json.loads(path.read_text(encoding="utf-8"))
-                    )
+                    AuctionRecord.model_validate(json.loads(path.read_text(encoding="utf-8")))
                 )
             except Exception as e:
                 logger.warning("auction.py: %s", e)
@@ -436,7 +424,7 @@ async def run_auto_bidder(
     seen_task_ids: set[str] = set()
 
     # Initialise last_poll to now so we only pick up auctions opened
-    # after this agent started — avoids re-bidding on stale messages.
+    # after this agent started - avoids re-bidding on stale messages.
     last_poll: Optional[datetime] = datetime.now(timezone.utc)
 
     logger.info("Auto-bidder started for agent '%s'", agent_name)

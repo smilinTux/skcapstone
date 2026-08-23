@@ -1,0 +1,680 @@
+{
+  "node": "node-100",
+  "referenceNode": "node-noroc2027",
+  "role": "worker-gpu",
+  "unitCount": 96,
+  "units": [
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "apparmor.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "apport-autoreport.path"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "apport-autoreport.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "apport-forward.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "apport.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "apt-daily-upgrade.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "apt-daily.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "blk-availability.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "cloud-config.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "cloud-final.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "cloud-init-hotplugd.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "cloud-init-local.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "cloud-init.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "keeps comfyui models current",
+      "scope": "system",
+      "unit": "comfyui-model-update.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "console-setup.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "docker.service dependency",
+      "scope": "system",
+      "unit": "containerd.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "dm-event.socket"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "EVIDENCE-BACKED: docker ps shows the frigate NVR healthy and up 15 hours on :5000/:8554-8555/:8971. Out of SK scope but load-bearing for the household; not this epic's to remove",
+      "scope": "system",
+      "unit": "docker.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "docker.service dependency",
+      "scope": "system",
+      "unit": "docker.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "dpkg-db-backup.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "e2scrub_all.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "e2scrub_reap.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "finalrd.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "fsidd.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "fstrim.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "getty@.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "hardware and platform baseline",
+      "scope": "system",
+      "unit": "gpu-manager.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "grub-common.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "grub-initrd-fallback.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "iscsid.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "keyboard-setup.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "lvm2-lvmpolld.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "lvm2-monitor.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "lxd-installer.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "mdcheck_continue.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "mdcheck_start.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "mdmonitor-oneshot.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "motd-news.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "multipathd.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "multipathd.socket"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "mxbai-embed-large on the Vulkan iGPU, :11438",
+      "scope": "system",
+      "unit": "mxbai-arc.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "networkd-dispatcher.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "nfs-server dependency",
+      "scope": "system",
+      "unit": "nfs-blkmap.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "nfs-server dependency",
+      "scope": "system",
+      "unit": "nfs-client.target"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "EVIDENCE-BACKED: exportfs shows /srv/comfyui exported rw to 192.168.0.0/24 and comfyui writes to /mnt/comfyui-nfs/output. It is serving something real",
+      "scope": "system",
+      "unit": "nfs-server.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "hardware and platform baseline",
+      "scope": "system",
+      "unit": "nvidia-cdi-refresh.path"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "hardware and platform baseline",
+      "scope": "system",
+      "unit": "nvidia-cdi-refresh.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "hardware and platform baseline",
+      "scope": "system",
+      "unit": "nvidia-hibernate.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "hardware and platform baseline",
+      "scope": "system",
+      "unit": "nvidia-resume.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "hardware and platform baseline",
+      "scope": "system",
+      "unit": "nvidia-suspend.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "the fleet embedding endpoint on :11434",
+      "scope": "system",
+      "unit": "ollama.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "open-iscsi.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "pollinate.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "mounts /mnt/comfyui-nfs that comfyui writes into",
+      "scope": "system",
+      "unit": "remote-fs.target"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "nfs-server dependency",
+      "scope": "system",
+      "unit": "rpcbind.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "nfs-server dependency",
+      "scope": "system",
+      "unit": "rpcbind.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "setvtrgb.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.apparmor.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.autoimport.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.core-fixup.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.recovery-chooser-trigger.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.seeded.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.snap-repair.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "snapd.system-shutdown.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "ssh.socket"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "resumes syncthing after suspend",
+      "scope": "system",
+      "unit": "syncthing-resume.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "systemd-networkd-wait-online.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "systemd-networkd.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "no",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "systemd-networkd.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "systemd-pstore.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "systemd-resolved.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "systemd-timesyncd.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "the only reachable path to this node",
+      "scope": "system",
+      "unit": "tailscaled.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "hardware and platform baseline",
+      "scope": "system",
+      "unit": "thermald.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "ubuntu-fan.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "system",
+      "unit": "unattended-upgrades.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "image generation on :8188",
+      "scope": "user",
+      "unit": "comfyui.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "user",
+      "unit": "dirmngr.socket"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "voice synthesis on :18796",
+      "scope": "user",
+      "unit": "f5-tts.service"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "user",
+      "unit": "gpg-agent-browser.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "user",
+      "unit": "gpg-agent-extra.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "user",
+      "unit": "gpg-agent-ssh.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "user",
+      "unit": "gpg-agent.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "user",
+      "unit": "keyboxd.socket"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "user",
+      "unit": "launchpadlib-cache-clean.timer"
+    },
+    {
+      "disposition": "out-of-scope",
+      "present_on_control": "yes",
+      "rationale": "distro or desktop baseline",
+      "scope": "user",
+      "unit": "pk-debconf-helper.socket"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "qwen3.5:4b on :8085",
+      "scope": "user",
+      "unit": "qwen3-arc.service"
+    },
+    {
+      "disposition": "disable",
+      "present_on_control": "yes",
+      "rationale": "Ubuntu session migration one-shot; a headless worker has no desktop session to migrate",
+      "scope": "user",
+      "unit": "session-migration.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "keeps the sk-default server healthy",
+      "scope": "user",
+      "unit": "skai-beellama-restart.timer"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "serves ornith-1.0-9b on :8082, the fleet sk-default",
+      "scope": "user",
+      "unit": "skai-beellama.service"
+    },
+    {
+      "disposition": "disable",
+      "present_on_control": "yes",
+      "rationale": "EVIDENCE-BACKED: enabled but ActiveState=inactive, SubState=dead. An enabled unit that never runs is exactly the half-alive duplicate class behind the comms pileups. Retire it",
+      "scope": "user",
+      "unit": "skvoice.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "call orchestration on :18801",
+      "scope": "user",
+      "unit": "sovereign-orchestrator.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "yes",
+      "rationale": "STAYS, but its folder set shrinks to skfleet-control only (card ddb2a02f); it is also required to unshare the sovereign folder in an orderly way rather than by deletion",
+      "scope": "user",
+      "unit": "syncthing.service"
+    },
+    {
+      "disposition": "keep",
+      "present_on_control": "no",
+      "rationale": "speech to text on :18794",
+      "scope": "user",
+      "unit": "whisper-stt.service"
+    }
+  ]
+}

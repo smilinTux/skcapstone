@@ -1,80 +1,76 @@
 name: CI
 
+# NOTE (coord 62c567cb): the old masked `test` job (pytest with `|| true`)
+# was RETIRED from this workflow. The honest, required test check for main
+# is .github/workflows/pytest.yml (job `unit`), which runs the full suite
+# with all extras and NO masking. Configure branch protection to require
+# the pytest.yml `unit` jobs, not anything in this file.
+#
+# This workflow keeps:
+#   - lint: runs black and ruff HONESTLY (no `|| true`). The 2026-07-17 debt
+#     (~1019 ruff errors, ~369 files needing black) is now PAID: ruff is clean
+#     and black formats everything. Both tools are PINNED, because unpinned
+#     they re-red this job on every upstream release with no commit from us in
+#     between, which is exactly how it went red again after 2026-08-07.
+#   - build: wheel/sdist build + twine check (blocking).
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-      - name: Verify test collection
-        run: |
-          # All tests must collect without import errors
-          python -m pytest tests/ --collect-only -q 2>&1 | tee /tmp/collect.txt
-          # Check last line for "N errors during collection"
-          if tail -1 /tmp/collect.txt | grep -qP '\d+ errors? during collection'; then
-            echo "::error::Test collection errors detected"
-            tail -5 /tmp/collect.txt
-            exit 1
-          fi
-      - name: Run core tests
-        run: |
-          # Run tests that work with dev deps only (no optional packages)
-          # Skip tests requiring optional deps: skcomms, skseed, pgpy, fusepy, etc.
-          python -m pytest tests/ -v --tb=short \
-            --ignore=tests/test_e2e_automated.py \
-            --ignore=tests/test_snapshots.py \
-            --ignore=tests/test_memory_curator.py \
-            --ignore=tests/test_session_capture.py \
-            --ignore=tests/test_cli_test_cmd.py \
-            -k "not (skcomms or skseed or pgpy or fuse)" \
-            --cov=skcapstone --cov-report=xml --cov-report=term-missing \
-            || true
-      - name: Check for new test failures
-        run: |
-          # Run full suite but only fail on collection errors
-          # This ensures no NEW import/collection regressions
-          python -m pytest tests/ --collect-only -q 2>&1 | tail -3
-      - name: Upload coverage
-        if: matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage.xml
-          fail_ci_if_error: false
+permissions:
+  contents: read
 
+jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the git tag, so a
+          # shallow checkout would yield a placeholder like 0.1.dev1 and
+          # break dependency resolution against pinned siblings.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install lint tools
-        run: pip install black ruff
+        run: pip install "black==26.5.1" "ruff==0.15.4"
       - name: Check formatting
-        run: black --check src/ tests/ || true
+        run: black --check src/ tests/
       - name: Lint
-        run: |
-          # Report lint issues but don't fail CI (pre-existing debt)
-          # TODO: fix all lint errors then remove || true
-          ruff check src/ || true
+        run: ruff check src/
+
+  shim-imports:
+    # CR-3.6: blocking gate. The capauth re-export shims
+    # (skcapstone.tokens / trust_graph / trust_calibration) were retired;
+    # their implementations live in capauth. Any new import of the shim
+    # names fails the build. Import from capauth.* directly.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the git tag, so a
+          # shallow checkout would yield a placeholder like 0.1.dev1 and
+          # break dependency resolution against pinned siblings.
+          fetch-depth: 0
+          fetch-tags: true
+      - name: No retired capauth shim imports
+        run: bash scripts/check-no-shim-imports.sh
 
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the git tag, so a
+          # shallow checkout would yield a placeholder like 0.1.dev1 and
+          # break dependency resolution against pinned siblings.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

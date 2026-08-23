@@ -1,30 +1,25 @@
-"""Tests for Trustee Operations — restart, scale, rotate, health, logs."""
+"""Tests for Trustee Operations: restart, scale, rotate, health, logs."""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from skcapstone.blueprints.schema import (
-    AgentRole,
     AgentSpec,
     BlueprintManifest,
     ProviderType,
 )
 from skcapstone.team_engine import (
     AgentStatus,
-    DeployedAgent,
     ProviderBackend,
     TeamDeployment,
     TeamEngine,
 )
 from skcapstone.trustee_ops import TrusteeOps
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -65,7 +60,9 @@ class MockProvider(ProviderBackend):
         self.calls.append(("provision", agent_name))
         return {"host": "localhost", "pid": 1234}
 
-    def configure(self, agent_name: str, spec: AgentSpec, provision_result: Dict[str, Any]) -> bool:
+    def configure(
+        self, agent_name: str, spec: AgentSpec, provision_result: Dict[str, Any]
+    ) -> bool:
         self.calls.append(("configure", agent_name))
         return True
 
@@ -154,7 +151,10 @@ class TestRestart:
     """Tests for agent restart operations."""
 
     def test_restart_single_agent(
-        self, ops: TrusteeOps, deployment: TeamDeployment, provider: MockProvider,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
+        provider: MockProvider,
     ) -> None:
         """Restart a single agent."""
         provider.calls.clear()
@@ -166,7 +166,9 @@ class TestRestart:
         assert "start" in actions
 
     def test_restart_all_agents(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Restart all agents when no name specified."""
         results = ops.restart_agent(deployment.deployment_id)
@@ -179,14 +181,19 @@ class TestRestart:
             ops.restart_agent("ghost")
 
     def test_restart_nonexistent_agent(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Restarting nonexistent agent raises ValueError."""
         with pytest.raises(ValueError, match="not in deployment"):
             ops.restart_agent(deployment.deployment_id, agent_name="ghost")
 
     def test_restart_handles_failure(
-        self, ops: TrusteeOps, deployment: TeamDeployment, provider: MockProvider,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
+        provider: MockProvider,
     ) -> None:
         """Restart reports errors for failed agents."""
         agent_name = list(deployment.agents.keys())[0]
@@ -195,7 +202,10 @@ class TestRestart:
         assert "error" in results[agent_name]
 
     def test_restart_writes_audit(
-        self, ops: TrusteeOps, deployment: TeamDeployment, home: Path,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
+        home: Path,
     ) -> None:
         """Restart writes an audit entry."""
         ops.restart_agent(deployment.deployment_id)
@@ -203,7 +213,7 @@ class TestRestart:
         assert audit_log.exists()
         lines = audit_log.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) >= 1
-        import json
+
         entry = json.loads(lines[-1])
         assert entry["action"] == "restart_agent"
 
@@ -217,7 +227,9 @@ class TestScale:
     """Tests for agent scaling operations."""
 
     def test_scale_up(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Scale up adds new agent instances."""
         spec_key = list(deployment.agents.values())[0].agent_spec_key
@@ -231,7 +243,9 @@ class TestScale:
             ops.scale_agent("ghost", "worker", count=2)
 
     def test_scale_invalid_count(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Scale with count < 1 raises ValueError."""
         spec_key = list(deployment.agents.values())[0].agent_spec_key
@@ -248,7 +262,9 @@ class TestRotate:
     """Tests for agent rotation operations."""
 
     def test_rotate_agent(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Rotate snapshots and redeploys an agent."""
         agent_name = list(deployment.agents.keys())[0]
@@ -261,7 +277,9 @@ class TestRotate:
             ops.rotate_agent("ghost", "agent")
 
     def test_rotate_nonexistent_agent(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Rotating nonexistent agent raises ValueError."""
         with pytest.raises(ValueError, match="not"):
@@ -277,14 +295,18 @@ class TestHealthReport:
     """Tests for health report operations."""
 
     def test_health_report_all_agents(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Health report covers all agents."""
         report = ops.health_report(deployment.deployment_id)
         assert len(report) == len(deployment.agents)
 
     def test_health_report_structure(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Health report has expected fields."""
         report = ops.health_report(deployment.deployment_id)
@@ -294,7 +316,10 @@ class TestHealthReport:
             assert "healthy" in entry
 
     def test_health_report_calls_provider(
-        self, ops: TrusteeOps, deployment: TeamDeployment, provider: MockProvider,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
+        provider: MockProvider,
     ) -> None:
         """Health report uses provider.health_check."""
         provider.calls.clear()
@@ -308,7 +333,10 @@ class TestHealthReport:
             ops.health_report("ghost")
 
     def test_health_report_detects_failure(
-        self, ops: TrusteeOps, deployment: TeamDeployment, provider: MockProvider,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
+        provider: MockProvider,
     ) -> None:
         """Health report detects failed agents."""
         agent_name = list(deployment.agents.keys())[0]
@@ -320,6 +348,121 @@ class TestHealthReport:
 
 
 # ---------------------------------------------------------------------------
+# Focused single-agent (role) status surface
+# ---------------------------------------------------------------------------
+
+
+class TestAgentHealth:
+    """Tests for the focused Sentinel/role status surface (agent_health)."""
+
+    @staticmethod
+    def _sentinel_deployment(engine: TeamEngine) -> TeamDeployment:
+        """Deploy a team whose manager is the security ``sentinel`` role."""
+        bp = _make_blueprint(
+            agents={
+                "sentinel": {"role": "manager", "model": "reason"},
+                "worker": {"role": "worker", "model": "fast"},
+            }
+        )
+        return engine.deploy(bp)
+
+    def test_healthy_by_role(self, ops: TrusteeOps, engine: TeamEngine) -> None:
+        """A running Sentinel resolves as present and healthy by spec key."""
+        self._sentinel_deployment(engine)
+        result = ops.agent_health("sentinel")
+        assert result["present"] is True
+        assert result["healthy"] is True
+        assert result["status"] == "running"
+        assert result["spec_key"] == "sentinel"
+        assert result["name"] == "test-team-sentinel"
+
+    def test_resolves_by_instance_name(
+        self,
+        ops: TrusteeOps,
+        engine: TeamEngine,
+    ) -> None:
+        """The Sentinel also resolves by its full instance name."""
+        self._sentinel_deployment(engine)
+        result = ops.agent_health("test-team-sentinel")
+        assert result["present"] is True
+        assert result["spec_key"] == "sentinel"
+
+    def test_role_match_is_case_insensitive(
+        self,
+        ops: TrusteeOps,
+        engine: TeamEngine,
+    ) -> None:
+        """Role/name matching ignores case."""
+        self._sentinel_deployment(engine)
+        assert ops.agent_health("SENTINEL")["present"] is True
+
+    def test_unhealthy_sentinel_present_but_not_healthy(
+        self,
+        ops: TrusteeOps,
+        engine: TeamEngine,
+        provider: MockProvider,
+    ) -> None:
+        """A failing Sentinel is present but reported unhealthy."""
+        self._sentinel_deployment(engine)
+        provider.fail_on.add("test-team-sentinel")
+        result = ops.agent_health("sentinel")
+        assert result["present"] is True
+        assert result["healthy"] is False
+        assert result["status"] == "failed"
+
+    def test_absent_role_is_distinct_from_unhealthy(
+        self,
+        ops: TrusteeOps,
+        engine: TeamEngine,
+    ) -> None:
+        """A role that is not deployed reports absent, not unhealthy."""
+        self._sentinel_deployment(engine)  # deploys sentinel + worker only
+        result = ops.agent_health("scholar")
+        assert result["present"] is False
+        assert result["healthy"] is False
+        assert result["status"] == "absent"
+        assert result["deployment_id"] is None
+
+    def test_absent_when_no_deployments(self, ops: TrusteeOps) -> None:
+        """With nothing deployed at all, the Sentinel is absent."""
+        result = ops.agent_health("sentinel")
+        assert result["present"] is False
+        assert result["status"] == "absent"
+
+    def test_scoped_to_deployment(
+        self,
+        ops: TrusteeOps,
+        engine: TeamEngine,
+    ) -> None:
+        """Scoping the lookup to a deployment finds the Sentinel within it."""
+        dep = self._sentinel_deployment(engine)
+        result = ops.agent_health("sentinel", deployment_id=dep.deployment_id)
+        assert result["present"] is True
+        assert result["deployment_id"] == dep.deployment_id
+
+    def test_scoped_nonexistent_deployment_raises(
+        self,
+        ops: TrusteeOps,
+    ) -> None:
+        """A bad deployment_id raises ValueError."""
+        with pytest.raises(ValueError, match="not found"):
+            ops.agent_health("sentinel", deployment_id="ghost")
+
+    def test_uses_provider_health_check(
+        self,
+        ops: TrusteeOps,
+        engine: TeamEngine,
+        provider: MockProvider,
+    ) -> None:
+        """The focused surface runs a live provider health check."""
+        self._sentinel_deployment(engine)
+        provider.calls.clear()
+        ops.agent_health("sentinel")
+        actions = [action for action, _ in provider.calls]
+        assert "health_check" in actions
+
+
+# ---------------------------------------------------------------------------
 # Logs
 # ---------------------------------------------------------------------------
 
@@ -328,14 +471,18 @@ class TestLogs:
     """Tests for log retrieval."""
 
     def test_get_logs_returns_dict(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """get_logs returns a dict mapping agent names to log lists."""
         logs = ops.get_logs(deployment.deployment_id)
         assert isinstance(logs, dict)
 
     def test_get_logs_specific_agent(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """get_logs can filter to specific agent."""
         agent_name = list(deployment.agents.keys())[0]
@@ -348,7 +495,9 @@ class TestLogs:
             ops.get_logs("ghost")
 
     def test_get_logs_nonexistent_agent(
-        self, ops: TrusteeOps, deployment: TeamDeployment,
+        self,
+        ops: TrusteeOps,
+        deployment: TeamDeployment,
     ) -> None:
         """Logs for nonexistent agent raises ValueError."""
         with pytest.raises(ValueError):

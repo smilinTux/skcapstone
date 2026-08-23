@@ -1,5 +1,5 @@
 """
-Sovereign peer management — the other half of P2P discovery.
+Sovereign peer management - the other half of P2P discovery.
 
 whoami exports your identity card. This module imports someone
 else's card and registers them as a peer in the SKComms keystore.
@@ -12,8 +12,8 @@ Flow:
     4. Agent B can now send encrypted messages to Agent A
 
 Peer data is stored at:
-    ~/.skcomms/peers/<name>.yml     — SKComms peer config
-    ~/.skcapstone/peers/<name>.json — Extended peer metadata
+    ~/.skcomms/peers/<name>.yml     - SKComms peer config
+    ~/.skcapstone/peers/<name>.json - Extended peer metadata
 """
 
 from __future__ import annotations
@@ -59,9 +59,7 @@ class PeerRecord(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     contact_uris: list[str] = Field(default_factory=list)
     trust_level: str = "unknown"
-    added_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    added_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_seen: Optional[str] = None
     source: str = "manual"
 

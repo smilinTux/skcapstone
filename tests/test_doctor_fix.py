@@ -16,7 +16,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -25,7 +24,7 @@ try:
     from skcapstone.doctor import (
         Check,
         DiagnosticReport,
-        FixResult,
+        FixResult,  # noqa: F401
         run_diagnostics,
         run_fixes,
     )
@@ -168,13 +167,17 @@ class TestRunFixesMemory:
 
         # Write two memory files
         for mem_id in ["abc123", "def456"]:
-            (short_term / f"{mem_id}.json").write_text(json.dumps({
-                "memory_id": mem_id,
-                "content": f"Memory content for {mem_id}",
-                "tags": ["test"],
-                "importance": 0.8,
-                "created_at": "2026-01-01T00:00:00+00:00",
-            }))
+            (short_term / f"{mem_id}.json").write_text(
+                json.dumps(
+                    {
+                        "memory_id": mem_id,
+                        "content": f"Memory content for {mem_id}",
+                        "tags": ["test"],
+                        "importance": 0.8,
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                    }
+                )
+            )
 
         report = _make_report(_failing("memory:index", "memory"))
         results = run_fixes(report, home)
@@ -215,7 +218,7 @@ class TestRunFixesSkipsUnfixable:
         report = _make_report(_failing("pkg:skcapstone", "packages"))
         results = run_fixes(report, home)
 
-        # No fix attempted — empty results
+        # No fix attempted - empty results
         assert results == []
 
     def test_skips_identity_key_check(self, tmp_path):
@@ -328,9 +331,7 @@ class TestCLIDoctorFix:
         home.mkdir()
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, ["doctor", "--home", str(home), "--fix", "--json-out"]
-        )
+        result = runner.invoke(main, ["doctor", "--home", str(home), "--fix", "--json-out"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "fixes" in data
@@ -342,14 +343,30 @@ class TestCLIDoctorFix:
 
         # Build a fully populated home
         home = tmp_path / ".skcapstone"
-        for d in ["identity", "memory", "trust", "security", "sync", "config",
-                  "memory/short-term", "memory/mid-term", "memory/long-term",
-                  "sync/outbox", "sync/inbox"]:
+        for d in [
+            "identity",
+            "memory",
+            "trust",
+            "security",
+            "sync",
+            "config",
+            "memory/short-term",
+            "memory/mid-term",
+            "memory/long-term",
+            "sync/outbox",
+            "sync/inbox",
+        ]:
             (home / d).mkdir(parents=True, exist_ok=True)
         (home / "manifest.json").write_text(json.dumps({"name": "T", "version": "0.1.0"}))
-        (home / "identity" / "identity.json").write_text(json.dumps({
-            "name": "T", "fingerprint": "AABB1122", "capauth_managed": True,
-        }))
+        (home / "identity" / "identity.json").write_text(
+            json.dumps(
+                {
+                    "name": "T",
+                    "fingerprint": "AABB1122",
+                    "capauth_managed": True,
+                }
+            )
+        )
         (home / "memory" / "index.json").write_text("{}")
 
         runner = CliRunner()

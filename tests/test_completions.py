@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -87,9 +86,13 @@ class TestInstall:
 
     def test_install_bash(self, tmp_path):
         """Install creates bash completion file."""
-        with patch("skcapstone.completions.INSTALL_PATHS",
-                    {"bash": tmp_path / "skcapstone.bash-completion"}), \
-             patch("skcapstone.completions.RC_MARKERS", {}):
+        with (
+            patch(
+                "skcapstone.completions.INSTALL_PATHS",
+                {"bash": tmp_path / "skcapstone.bash-completion"},
+            ),
+            patch("skcapstone.completions.RC_MARKERS", {}),
+        ):
             result = install_completions(shell="bash")
 
         assert result["success"]
@@ -112,8 +115,7 @@ class TestUninstall:
         script = tmp_path / "skcapstone.bash-completion"
         script.write_text("# completion")
 
-        with patch("skcapstone.completions.INSTALL_PATHS",
-                    {"bash": script}):
+        with patch("skcapstone.completions.INSTALL_PATHS", {"bash": script}):
             result = uninstall_completions(shell="bash")
 
         assert not script.exists()
@@ -121,8 +123,7 @@ class TestUninstall:
 
     def test_uninstall_no_files(self, tmp_path):
         """Uninstall on empty is a no-op."""
-        with patch("skcapstone.completions.INSTALL_PATHS",
-                    {"bash": tmp_path / "nonexistent"}):
+        with patch("skcapstone.completions.INSTALL_PATHS", {"bash": tmp_path / "nonexistent"}):
             result = uninstall_completions(shell="bash")
 
         assert result["removed"] == []
@@ -134,6 +135,7 @@ class TestCLI:
     def test_completions_help(self):
         """completions --help works."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["completions", "--help"])
         assert result.exit_code == 0
@@ -144,6 +146,7 @@ class TestCLI:
     def test_show_bash(self):
         """completions show --shell bash prints script."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["completions", "show", "--shell", "bash"])
         assert result.exit_code == 0
@@ -152,6 +155,7 @@ class TestCLI:
     def test_show_zsh(self):
         """completions show --shell zsh prints script."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["completions", "show", "--shell", "zsh"])
         assert result.exit_code == 0

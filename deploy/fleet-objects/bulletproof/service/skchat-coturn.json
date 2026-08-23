@@ -1,0 +1,31 @@
+{
+  "kind": "service",
+  "labels": {
+    "epic": "CR-7.3",
+    "tier": "app"
+  },
+  "name": "skchat-coturn",
+  "spec": {
+    "compose": {
+      "service": "coturn"
+    },
+    "conditions": [
+      "Ready",
+      "CrashLooping"
+    ],
+    "failover": "manual",
+    "nodeSelector": {
+      "always-on": "true"
+    },
+    "note": "coturn split-brain resolved by systemd owning the docker container; modelled here as a docker-runtime Service.",
+    "resources": {
+      "cores": 1,
+      "ram_gb": 0.25
+    },
+    "restartPolicy": "on-failure",
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "runtime": "docker",
+    "source": "skchat/docs/deploy-plan/skchat-bulletproof-deploy.md",
+    "unit": "coturn"
+  }
+}

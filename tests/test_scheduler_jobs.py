@@ -1,17 +1,16 @@
-"""Tests for skcapstone.scheduler_jobs — JobSpec, YAML loading, node affinity,
+"""Tests for skcapstone.scheduler_jobs - JobSpec, YAML loading, node affinity,
 due-check, and host-alias discovery.
 
 Each group corresponds to one implementation commit:
-  A — JobSpec + load_jobs
-  B — job_runs_here (node affinity)
-  C — is_due (cron + interval with misfire catch-up)
-  D — current_host_aliases
+  A - JobSpec + load_jobs
+  B - job_runs_here (node affinity)
+  C - is_due (cron + interval with misfire catch-up)
+  D - current_host_aliases
 """
 
 # ---------------------------------------------------------------------------
-# Group A — JobSpec + load_jobs
+# Group A - JobSpec + load_jobs
 # ---------------------------------------------------------------------------
-import warnings
 from pathlib import Path
 
 import pytest
@@ -53,7 +52,7 @@ def test_load_jobs_missing_file_returns_empty(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Group B — node affinity
+# Group B - node affinity
 # ---------------------------------------------------------------------------
 from skcapstone.scheduler_jobs import job_runs_here  # noqa: E402
 
@@ -69,11 +68,9 @@ def test_job_runs_here_match_and_miss():
 
 
 # ---------------------------------------------------------------------------
-# Group C — due-check cron + interval with misfire catch-up
+# Group C - due-check cron + interval with misfire catch-up
 # ---------------------------------------------------------------------------
 from datetime import datetime, timedelta, timezone  # noqa: E402
-
-from skcapstone.scheduler_jobs import is_due  # noqa: E402
 
 
 def test_interval_due():
@@ -93,7 +90,7 @@ def test_cron_due_at_scheduled_minute():
 
 
 # ---------------------------------------------------------------------------
-# Group D — host alias discovery
+# Group D - host alias discovery
 # ---------------------------------------------------------------------------
 import socket  # noqa: E402
 
@@ -111,8 +108,9 @@ def test_current_host_aliases_includes_env_alias(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _parse_duration — validation (fix 2)
+# _parse_duration - validation (fix 2)
 # ---------------------------------------------------------------------------
+
 
 def test_parse_duration_rejects_negative():
     with pytest.raises(ValueError):
@@ -133,8 +131,9 @@ def test_parse_duration_valid_units():
 
 
 # ---------------------------------------------------------------------------
-# load_jobs — warn on unknown keys (fix 3)
+# load_jobs - warn on unknown keys (fix 3)
 # ---------------------------------------------------------------------------
+
 
 def test_load_jobs_warns_on_unknown_key(tmp_path):
     cfg = tmp_path / "jobs.yaml"
@@ -147,8 +146,9 @@ def test_load_jobs_warns_on_unknown_key(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# is_due — no-schedule never fires (fix 4)
+# is_due - no-schedule never fires (fix 4)
 # ---------------------------------------------------------------------------
+
 
 def test_is_due_no_schedule_never_fires():
     j = JobSpec(name="x")
