@@ -251,10 +251,7 @@ def app_verdict(cli_lane: dict, seat_lane: dict, conflicts: list[dict]) -> str:
     if all(lane.get("state") in _UNREACHABLE for lane in lanes):
         return "BLIND"
     classes = {
-        cond["class"]
-        for lane in lanes
-        if lane.get("state") == "ok"
-        for cond in lane["conditions"]
+        cond["class"] for lane in lanes if lane.get("state") == "ok" for cond in lane["conditions"]
     }
     if "firing" in classes:
         return "FIRING"
@@ -331,9 +328,7 @@ def correlate_itil(app_names: list[str], itil_home: Path) -> dict:
     return {
         "available": True,
         "open_incidents": status["incidents"]["open"],
-        "by_severity": {
-            k: v for k, v in status["incidents"]["by_severity"].items() if v
-        },
+        "by_severity": {k: v for k, v in status["incidents"]["by_severity"].items() if v},
         "active_problems": status["problems"]["active"],
         "pending_changes": status["changes"]["pending"],
         "kedb_entries": status["kedb"]["total"],
