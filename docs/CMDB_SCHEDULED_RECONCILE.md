@@ -23,7 +23,7 @@ been reviewed:
   "agent": "jarvis",
   "cadence_seconds": 900,
   "targets": ["chiap04"],
-  "credential_refs": {"chiap04": "skvault://fleet/chiap04"},
+  "credential_refs": {"chiap04": "skvault://ssh/cmdb-chiap04"},
   "global_concurrency": 4,
   "per_host_concurrency": 1,
   "timeout_seconds": 180,
@@ -38,7 +38,7 @@ been reviewed:
 }
 ```
 
-Every enabled target must have exactly one `skvault://` reference. The runtime
+Every enabled target must have exactly one `skvault://ssh/` reference. The runtime
 resolves protected SSH file metadata through SKVault. Inline passwords,
 private keys, and ambient SSH configuration are not accepted.
 

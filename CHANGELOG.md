@@ -44,6 +44,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   store flow before a seed reaches `MemoryStore.snapshot`, so malformed or
   oversized seeds are rejected with a clear error instead of being silently
   stored.
+- Added a bounded Syncthing guard for scheduled fleet reconciliation. It can
+  verify service state and CMDB coverage, attempt an approved service restart,
+  and retain checksummed evidence without exposing API credentials.
+
 - Added an opt-in, loopback-only Windows browser proxy through each
   workstation's canonical WSL Tailscale identity. The installer provides
   shared enable and disable desktop controls, preserves per-profile browser
@@ -84,6 +88,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `completeness.complete` only true for an actual `--apply` so a
   `--record-run`-only dry run cannot be mistaken for a fresh apply by
   `cmdb status`'s freshness SLO.
+- Updated the release gate and runtime dependency to require the Syncthing
+  discovery contract published by skcoord 0.1.32.
+
 - Reject blank legacy `MemoryEntry.memory_id` values at load, save, index,
   verification, and both promotion boundaries. This prevents the SKCapstone
   verifier/promoter from recreating unsafe `.json` files after SKMemory has

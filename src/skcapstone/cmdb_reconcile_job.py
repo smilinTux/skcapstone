@@ -147,6 +147,9 @@ def run_cmdb_reconcile_job(
             return {"outcome": "not_due", "cadence_seconds": config.cadence_seconds}
 
         factory = runner_factory or _runner_factory(config)
+        from .syncthing_guard import inspect_fleet, reconcile_incidents
+
+        syncthing_guard = inspect_fleet(config.targets, factory, artifacts)
         scan_result, attempts = _scan_with_retries(home, config, factory, sleep)
         mgr = CMDBManager(home)
         scope = scan_result.scope_fingerprint()
@@ -199,7 +202,18 @@ def run_cmdb_reconcile_job(
             "cadence_seconds": config.cadence_seconds,
             "outcome": "complete" if scan_result.complete else "partial",
         }
+        artifact["syncthing_guard"] = syncthing_guard
         incident_ids = route_reconcile_incidents(home, [artifact, *artifacts], config)
+        incident_ids.extend(
+            reconcile_incidents(
+                home,
+                syncthing_guard,
+                artifacts,
+                threshold=config.failure_alert_runs,
+                agent=config.agent,
+            )
+        )
+        incident_ids = sorted(set(incident_ids))
         artifact["itil"] = {"incident_ids": incident_ids}
         path, checksum = write_run_artifact(home, artifact)
         removed = prune_run_artifacts(home, config.retention_runs)

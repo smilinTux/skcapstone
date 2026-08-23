@@ -33,7 +33,7 @@ def _write_config(home: Path, **overrides) -> ScheduledReconcileConfig:
         "owner_node": "chiap04",
         "agent": "jarvis",
         "targets": ("chiap04",),
-        "credential_refs": {"chiap04": "skvault://fleet/chiap04"},
+        "credential_refs": {"chiap04": "skvault://ssh/cmdb-chiap04"},
         "retry_count": 0,
         "cadence_seconds": 900,
     }
