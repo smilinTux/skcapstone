@@ -15,6 +15,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added the ATLAS P3.2 fault-injection drill harness (card `b993eaaa`, epic
+  `fb3cc09d`): `skcapstone.operator_seat.fault_injection_drill` assembles the
+  already-merged safety mechanisms (`act_dispatch.py`'s injectable actuation
+  seam, `safety.ExecutionState` cooldown/circuit-breaker, `loop.py`'s
+  `performed=False` and post-action verification gates, typed rollback +
+  escalation, and the signed `action_ledger`) into one real end-to-end run
+  against an isolated, guarded fleet root, run via
+  `scripts/atlas_p32_fault_injection_drill.py`. The root guard delegates to
+  `skcapstone.fleet.drill.resolve_drill_root` (never SKFLEET_ROOT-trusting)
+  so the drill hard-refuses to run against production. 17 scenarios cover the
+  documented mechanisms plus gaps the existing unit tests don't reach:
+  duplicate observations, stale evidence, key revocation, a mid-run freeze
+  race, scheduler overlap, and (the most significant finding) that
+  `action_ledger.stable_intent_id()` has no time component, so once a
+  standing condition's ledger lineage reaches a terminal state
+  (VERIFIED/ROLLED_BACK/ESCALATED) every later, separate real-world
+  recurrence of that exact condition fails closed with an "invalid action
+  transition" ledger error instead of a genuine re-attempt.
 - Added priority-based context-window budgeting to
   `SystemPromptBuilder._build_prompt`: when the assembled system prompt would
   exceed the token budget, soul, identity, warmth, behavioral rules, and the
