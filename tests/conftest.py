@@ -203,6 +203,30 @@ def _isolate_agent_env(monkeypatch):
     monkeypatch.setattr(skcapstone, "_detect_active_agent", lambda root=None: None)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_joule_wallet(monkeypatch, tmp_path_factory):
+    """Point the default joule wallet root at a throwaway directory.
+
+    ``JouleWallet``/``JouleEngine`` fall back to ``skjoule.SHARED_ROOT`` when no
+    ``home`` is given, and mint/spend are WRITES to real economic state. A test
+    that forgets ``home=tmp_path`` therefore edits the operator's live ledger,
+    and the resulting entries are indistinguishable from real ones: the sibling
+    harness measured 1,366 fixture mints totalling 102,450 joules landing in a
+    live wallet before anybody noticed. Isolation is the default here rather
+    than something each test file has to remember to opt into.
+
+    Only ``skjoule``'s own binding is redirected, not ``skcapstone.SHARED_ROOT``
+    or the CLI's, because this fixture is about the wallet and nothing else. The
+    complementary half is ``skjoule.assert_not_production_wallet_in_test()``,
+    which raises when a test reaches a production root by some path this fixture
+    does not cover (an explicit ``home=``, for instance). The fixture keeps
+    honest tests safe; the assertion is what proves they were.
+    """
+    from skcapstone import skjoule
+
+    monkeypatch.setattr(skjoule, "SHARED_ROOT", str(tmp_path_factory.mktemp("joule-wallet-root")))
+
+
 @pytest.fixture
 def tmp_agent_home(tmp_path: Path) -> Path:
     """Provide a temporary agent home directory for testing."""

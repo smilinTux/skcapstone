@@ -179,6 +179,38 @@ class TestGenerateCard:
         card = generate_card(tmp_path / "nope")
         assert card.skcapstone_card == "1.0.0"
 
+    def test_binary_public_key_is_armored(self, agent_home, tmp_path, monkeypatch):
+        """A binary (non-armored) public.asc is converted to ASCII armor."""
+        pgpy = pytest.importorskip("pgpy")
+        from pgpy.constants import (
+            CompressionAlgorithm,
+            HashAlgorithm,
+            KeyFlags,
+            PubKeyAlgorithm,
+            SymmetricKeyAlgorithm,
+        )
+
+        fake_home = tmp_path / "home"
+        capauth_dir = fake_home / ".capauth" / "identity"
+        capauth_dir.mkdir(parents=True)
+
+        key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 2048)
+        uid = pgpy.PGPUID.new("TestAgent", email="test@skcapstone.local")
+        key.add_uid(
+            uid,
+            usage={KeyFlags.Sign},
+            hashes=[HashAlgorithm.SHA256],
+            ciphers=[SymmetricKeyAlgorithm.AES256],
+            compression=[CompressionAlgorithm.Uncompressed],
+        )
+        (capauth_dir / "public.asc").write_bytes(bytes(key.pubkey))
+
+        monkeypatch.setattr("skcapstone.whoami.Path.home", lambda: fake_home)
+
+        card = generate_card(agent_home)
+
+        assert card.public_key.startswith("-----BEGIN PGP PUBLIC KEY BLOCK-----")
+
 
 class TestExportImport:
     """Test card file export and import."""

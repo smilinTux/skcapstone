@@ -143,3 +143,37 @@ def test_a_matching_keypair_signs_and_verifies_round_trip(homes, monkeypatch):
     payload = b'{"action":"capture","item_id":"abc"}'
     assert verify(payload, sign(payload)) is True
     assert verify(b'{"action":"tampered"}', sign(payload)) is False
+
+
+def test_passphrase_reads_owner_only_systemd_credential(monkeypatch, tmp_path):
+    credential = tmp_path / signing.SYSTEMD_CREDENTIAL_NAME
+    credential.write_text("correct horse battery staple\n", encoding="utf-8")
+    credential.chmod(0o600)
+    monkeypatch.delenv("CAPAUTH_PASSPHRASE", raising=False)
+    monkeypatch.delenv(signing.PASSPHRASE_FILE_ENV, raising=False)
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+
+    assert signing._passphrase() == "correct horse battery staple"
+
+
+@pytest.mark.parametrize("mode", [0o640, 0o604])
+def test_passphrase_rejects_group_or_world_access(monkeypatch, tmp_path, mode):
+    credential = tmp_path / signing.SYSTEMD_CREDENTIAL_NAME
+    credential.write_text("must-not-load", encoding="utf-8")
+    credential.chmod(mode)
+    monkeypatch.delenv("CAPAUTH_PASSPHRASE", raising=False)
+    monkeypatch.setenv(signing.PASSPHRASE_FILE_ENV, str(credential))
+
+    assert signing._passphrase() == ""
+
+
+def test_passphrase_rejects_symlink(monkeypatch, tmp_path):
+    target = tmp_path / "target"
+    target.write_text("must-not-load", encoding="utf-8")
+    target.chmod(0o600)
+    credential = tmp_path / "credential"
+    credential.symlink_to(target)
+    monkeypatch.delenv("CAPAUTH_PASSPHRASE", raising=False)
+    monkeypatch.setenv(signing.PASSPHRASE_FILE_ENV, str(credential))
+
+    assert signing._passphrase() == ""

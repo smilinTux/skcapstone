@@ -24,10 +24,12 @@ The economic loop:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -39,6 +41,11 @@ from pydantic import BaseModel, Field
 
 from . import AGENT_HOME, SHARED_ROOT
 from .atomic_io import atomic_write_text
+
+try:  # POSIX only; the fallback in settle_lock() covers everything else.
+    import fcntl
+except ImportError:  # pragma: no cover - not reachable on this fleet
+    fcntl = None  # type: ignore[assignment]
 
 logger = logging.getLogger("skcapstone.skjoule")
 
@@ -185,6 +192,231 @@ class WalletCorruptionError(RuntimeError):
         super().__init__(message)
 
 
+class ProductionWalletInTestError(RuntimeError):
+    """A test run resolved a joule wallet to a production skcapstone root.
+
+    Deliberately loud. The failure this exists to prevent is silent by nature:
+    a suite that mints well formed joules into the operator's live ledger looks
+    exactly like a suite that passed, and a balance that is partly pytest output
+    looks exactly like a balance that is real. The sibling harness measured
+    1,366 fixture mints totalling 102,450 joules reaching a live wallet before
+    anyone noticed, which is the whole argument for asserting rather than
+    trusting each test file to isolate itself.
+    """
+
+
+def _freeze_production_wallet_roots() -> frozenset[Path]:
+    """Snapshot the roots holding real, operator-owned economic state."""
+    roots: set[Path] = set()
+    for cand in (SHARED_ROOT, AGENT_HOME, Path.home() / ".skcapstone"):
+        if not cand:
+            continue
+        try:
+            roots.add(Path(cand).expanduser().resolve())
+        except OSError:
+            continue
+    return frozenset(roots)
+
+
+#: Evaluated at import ON PURPOSE, so a test fixture that redirects the module's
+#: ``SHARED_ROOT`` cannot also redirect what counts as production. A guard whose
+#: definition of production moves with the thing it is guarding is not a guard.
+_PRODUCTION_WALLET_ROOTS: frozenset[Path] = _freeze_production_wallet_roots()
+
+
+def assert_not_production_wallet_in_test(wallet_root: Path) -> None:
+    """Fail loudly if a test run is about to open a production wallet.
+
+    A no-op outside a test run: production must never be refused a settlement.
+
+    Args:
+        wallet_root: The skcapstone root a wallet is being opened against.
+
+    Raises:
+        ProductionWalletInTestError: pytest is driving and *wallet_root* is a
+            root holding real economic state.
+    """
+    if not (os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules):
+        return
+    try:
+        resolved = Path(wallet_root).expanduser().resolve()
+    except OSError:
+        return
+    if resolved in _PRODUCTION_WALLET_ROOTS:
+        raise ProductionWalletInTestError(
+            f"refusing to open a PRODUCTION joule wallet from a test run: {resolved}. "
+            f"mint/spend are writes to real economic state, so a suite reaching this "
+            f"path writes fabricated history into the operator's ledger. Pass "
+            f"home=tmp_path (tests/conftest.py redirects the default for every test)."
+        )
+
+
+# ---------------------------------------------------------------------------
+# The settlement lock
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS AND WHY IT IS NOT A MUTEX.
+#
+# JouleWallet already carries a ``threading.Lock``, but it is an INSTANCE
+# attribute and the balance it guards is read once, in ``__init__``, into
+# ``self._snapshot``. Every writer builds its own wallet, so two writers hold
+# two different mutexes that never contend, each captures the same stale
+# balance, and the second ``_persist()`` overwrites the first. That is a plain
+# read-modify-write lost update, and it is not hypothetical: the live ``lumina``
+# wallet lost a 25 J credit and a 50 J credit this way, both of them entries
+# written by ``JouleEngine.auto_tokenize_task`` (description
+# ``[<card_id>] Task completed: <title>``).
+#
+# An in-process mutex would close only half of it anyway. Several sessions run
+# on one box, each in its own interpreter, so the contending writers are
+# frequently different PROCESSES. ``flock`` is the cheapest primitive that
+# covers both, because Linux associates the lock with the open file description
+# rather than the process, so two threads that each ``open()`` the file contend
+# exactly as two processes do.
+#
+# THE NAME AND PATH ARE A CROSS-REPO CONTRACT. skharness settles against the
+# SAME wallet files from its own process (``skharness.autocode.joules.settle``),
+# and two processes holding two DIFFERENT locks over one wallet protect
+# nothing: both would proceed. The constants and the resolution below therefore
+# mirror ``skharness.autocode.joules`` exactly, and
+# ``tests/test_skjoule_settle_lock.py`` asserts the two resolved paths are
+# byte-identical so a drift in either repo fails a test rather than silently
+# un-protecting the wallet.
+
+#: Lock file serialising settlements against one agent's wallet. It lives in the
+#: wallet directory, beside the state and journal it protects, so a lock can
+#: never end up guarding a different wallet than the one being written.
+#: MUST equal ``skharness.autocode.joules.SETTLE_LOCK_NAME``.
+SETTLE_LOCK_NAME = ".settle.lock"
+
+#: How long to queue for the lock before giving up and writing anyway. The
+#: critical section is a handful of small file writes, so this is orders of
+#: magnitude beyond a healthy wait; reaching it means something is wedged.
+#: MUST equal ``skharness.autocode.joules.SETTLE_LOCK_TIMEOUT``.
+SETTLE_LOCK_TIMEOUT = 30.0
+
+#: Fallback when fcntl is unavailable. Serialises threads within one process
+#: only, which is strictly worse than flock and is why it is a fallback.
+_fallback_locks: dict[str, threading.Lock] = {}
+_fallback_locks_guard = threading.Lock()
+
+#: Lock paths this THREAD already holds, so a nested acquisition is a pass
+#: through instead of a self-deadlock. flock is keyed on the open file
+#: description, not the process, so re-opening the same path in a call stack
+#: that already holds it would block against itself until the timeout and then
+#: proceed unlocked. Thread-local because the whole point of the lock is that
+#: two threads must NOT share the entry.
+_reentrancy = threading.local()
+
+
+def _settle_lock_path(agent: str, home: Optional[Path] = None) -> Path:
+    """Path of the lock file guarding *agent*'s wallet.
+
+    Resolved through exactly the inputs :class:`JouleWallet` resolves its own
+    directory through, so the lock follows the wallet wherever ``home`` sends
+    it. A lock pinned to a fixed path while the wallet moved would be the
+    fleet's oldest failure shape: a guard watching a different file than the
+    writer touches.
+
+    ``home is not None`` rather than a truthiness test, and the extra
+    ``expanduser()``, are deliberate: they match
+    ``skharness.autocode.joules._settle_lock_path`` character for character, and
+    a lock that agrees with skharness on every input except the odd ones is a
+    lock that protects the wallet except on the odd ones.
+    """
+    root = Path(home) if home is not None else Path(SHARED_ROOT).expanduser()
+    return Path(root).expanduser() / "agents" / agent / "wallet" / SETTLE_LOCK_NAME
+
+
+@contextlib.contextmanager
+def settle_lock(agent: str, home: Optional[Path] = None, timeout: float = SETTLE_LOCK_TIMEOUT):
+    """Hold exclusive write access to *agent*'s wallet, across processes.
+
+    Yields True when the lock is held and False when it could not be taken. The
+    caller proceeds either way; see the note on the timeout below.
+
+    WHY A TIMEOUT THAT PROCEEDS RATHER THAN RAISES. Minting is credit for work
+    that has already been verified, so refusing to mint DISCARDS the credit this
+    lock exists to protect. Since the journal-before-state fix the journal is
+    written first, so even an unlocked write leaves a durable transaction that
+    ``replay_balance()`` can reconstruct from; only the cached balance is at
+    risk. Waiting forever, by contrast, would hang a caller behind a stale lock
+    file. So a timeout logs loudly and continues degraded.
+
+    Args:
+        agent: Wallet owner.
+        home: Root skcapstone directory, or None for the SHARED_ROOT default.
+        timeout: Seconds to queue before proceeding unlocked.
+    """
+    path = _settle_lock_path(agent, home)
+    key = str(path)
+
+    held = getattr(_reentrancy, "held", None)
+    if held is None:
+        held = _reentrancy.held = set()
+    if key in held:
+        # Already inside the critical section on this thread.
+        yield True
+        return
+
+    if fcntl is None:  # pragma: no cover - POSIX everywhere on this fleet
+        with _fallback_locks_guard:
+            lock = _fallback_locks.setdefault(key, threading.Lock())
+        acquired = lock.acquire(timeout=timeout)
+        held.add(key)
+        try:
+            if not acquired:
+                logger.warning("Settle lock (in-process fallback) timed out for %s", agent)
+            yield acquired
+        finally:
+            held.discard(key)
+            if acquired:
+                lock.release()
+        return
+
+    handle = None
+    acquired = False
+    held.add(key)
+    try:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handle = path.open("a+")
+        except OSError as exc:
+            # An unopenable lock file must not cost a mint. Same reasoning as
+            # the timeout: the journal is the durable side.
+            logger.warning("Could not open settle lock %s (%s); writing unlocked", path, exc)
+            yield False
+            return
+
+        deadline = time.monotonic() + max(timeout, 0.0)
+        delay = 0.002
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    logger.warning(
+                        "Settle lock for %s still held after %.1fs; writing unlocked, "
+                        "the journal remains authoritative",
+                        agent,
+                        timeout,
+                    )
+                    break
+                time.sleep(delay)
+                delay = min(delay * 2, 0.05)
+        yield acquired
+    finally:
+        held.discard(key)
+        if handle is not None:
+            if acquired:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            with contextlib.suppress(OSError):
+                handle.close()
+
+
 # ---------------------------------------------------------------------------
 # JouleWallet
 # ---------------------------------------------------------------------------
@@ -207,6 +439,7 @@ class JouleWallet:
     def __init__(self, agent_name: str, home: Optional[Path] = None) -> None:
         self._agent = agent_name
         root = Path(home) if home else Path(SHARED_ROOT).expanduser()
+        assert_not_production_wallet_in_test(root)
         self._wallet_dir = root / "agents" / agent_name / "wallet"
         self._state_path = self._wallet_dir / "joules.json"
         self._log_path = self._wallet_dir / "transactions.jsonl"
@@ -239,6 +472,25 @@ class JouleWallet:
             return self._snapshot.total_spent
 
     # -- Mutations -----------------------------------------------------------
+
+    def reload(self) -> None:
+        """Re-read the on-disk snapshot, discarding the cached one.
+
+        ``__init__`` reads the balance once and every mutation works from that
+        cached copy, which is correct only while this process is the wallet's
+        sole writer. It is not: skharness settles the same files from its own
+        interpreter, and so does every other session on the box. A caller that
+        holds :func:`settle_lock` must call this immediately after taking the
+        lock, because the value it is about to modify may have been written by
+        somebody else since construction. Reloading OUTSIDE the lock buys
+        nothing: the refreshed balance can go stale again before the write.
+
+        Raises:
+            WalletCorruptionError: the on-disk snapshot exists but cannot be
+                parsed. Propagated deliberately, exactly as at construction.
+        """
+        with self._lock:
+            self._snapshot = self._load_or_create_snapshot()
 
     def mint(
         self,
@@ -1033,13 +1285,23 @@ class JouleEngine:
             proof_hash=proof_hash,
         )
 
-        # Mint into wallet
-        wallet = self.get_wallet(worker)
-        wallet.mint(
-            amount=joules,
-            description=description,
-            proof_hash=proof_hash,
-        )
+        # Mint into wallet.
+        #
+        # Everything that reads or writes the balance runs inside the lock, and
+        # that INCLUDES getting the wallet, because the read this protects is
+        # the snapshot load in JouleWallet.__init__ (or, for a wallet already in
+        # this engine's cache, whenever that load last happened). Taking the
+        # wallet outside and locking only the mutation would leave the identical
+        # bug: two writers would still capture the same stale balance and the
+        # second write would still erase the first.
+        with settle_lock(worker, home=self._home):
+            wallet = self.get_wallet(worker)
+            wallet.reload()
+            wallet.mint(
+                amount=joules,
+                description=description,
+                proof_hash=proof_hash,
+            )
 
         logger.info(
             "Recorded %dJ for %s (%s): %s",

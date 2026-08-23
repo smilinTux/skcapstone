@@ -32,6 +32,14 @@ _FALLBACK_STIGNORE = """\
 *.key
 *.pem
 **/private.*
+*.rev
+**/revocation*
+**/passphrase*
+*.pass
+.gnupg/secring.gpg
+.gnupg/private-keys-v1.d
+**/*.kbx
+security/tokens
 **/telegram.session
 
 // Derived / runtime state (never source of truth)

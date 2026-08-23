@@ -19,6 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
+from skcapstone import _detect_active_agent as detect_active_agent
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -90,6 +92,38 @@ class TestResolveAgentHome:
         assert opus_home != jarvis_home
         assert "opus" in str(opus_home)
         assert "jarvis" in str(jarvis_home)
+
+
+class TestActiveAgentDetection:
+    """The shared resolver must not guess between fleet identities."""
+
+    def test_explicit_environment_wins(self, tmp_path: Path, monkeypatch):
+        _make_agent_home(tmp_path, "jarvis")
+        _make_agent_home(tmp_path, "lumina")
+        monkeypatch.setenv("SKAGENT", "jarvis")
+
+        assert detect_active_agent(str(tmp_path)) == "jarvis"
+
+    def test_single_installed_agent_is_safe_fallback(self, tmp_path: Path, monkeypatch):
+        import skcapstone
+
+        _make_agent_home(tmp_path, "jarvis")
+        monkeypatch.delenv("SKAGENT", raising=False)
+        monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.setattr(skcapstone, "DEFAULT_AGENT", "")
+
+        assert detect_active_agent(str(tmp_path)) == "jarvis"
+
+    def test_multiple_agents_require_explicit_selection(self, tmp_path: Path, monkeypatch):
+        import skcapstone
+
+        _make_agent_home(tmp_path, "jarvis")
+        _make_agent_home(tmp_path, "lumina")
+        monkeypatch.delenv("SKAGENT", raising=False)
+        monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.setattr(skcapstone, "DEFAULT_AGENT", "")
+
+        assert detect_active_agent(str(tmp_path)) is None
 
 
 # ---------------------------------------------------------------------------

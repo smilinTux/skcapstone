@@ -66,39 +66,60 @@ def test_impact_links_incidents(home):
 
 
 def test_seed_from_inventory(home):
-    from skcapstone.itil import ITILManager
-
-    ITILManager(home).create_incident(
-        title="skmem-pg down", severity="sev1", created_by="lumina", affected_services=["skmem-pg"]
-    )
+    registry = home / "registry"
+    registry.mkdir()
+    (registry / "skmem-pg.json").write_text('{"name":"skmem-pg"}')
     mgr = CMDBManager(home)
     res = mgr.seed_from_inventory()
-    assert res["cis"] >= 4  # hosts + agents + the service
-    # the incident-affected service became a CI marked down (sev1)
+    assert res["schema"] == "skcoord.cmdb.compat-seed/v1"
+    assert res["deprecated"] is True
+    assert res["cis"] == 1
     svc = mgr.find_for_service("skmem-pg")
-    assert svc and svc.status == "down"
-    # and it runs_on a host
-    assert any(r.rel_type == "runs_on" for r in svc.relationships)
+    assert svc and svc.status == "operational"
+    assert svc.attributes["source_authority"] == "declared"
 
 
 def test_dashboard_cmdb_overview_and_detail(home):
-    dc.seed(home)
+    registry = home / "registry"
+    registry.mkdir()
+    (registry / "skmem-pg.json").write_text('{"name":"skmem-pg"}')
+    # Populate the isolated fixture through the compatibility importer.  The
+    # dashboard ``seed`` route now performs real local discovery and must not
+    # scan the CI runner from a unit test.
+    CMDBManager(home).seed_from_inventory()
     ov = dc.get_overview(home)
-    assert ov["total"] >= 4 and ov["types"]
-    # detail on a host includes dependents (services running on it)
-    hid = make_ci_id("host", "noroc2027")
-    detail = dc.get_ci(home, hid)
-    assert detail["ci"]["id"] == hid
+    assert ov["total"] == 1 and ov["types"]
+    sid = make_ci_id("service", "skmem-pg")
+    detail = dc.get_ci(home, sid)
+    assert detail["ci"]["id"] == sid
     assert "relationships" in detail and "dependents" in detail
 
 
-def test_dashboard_cmdb_routes(home):
+def test_dashboard_cmdb_routes(home, monkeypatch):
     from starlette.testclient import TestClient
 
     from skcapstone.dashboard import create_app
 
+    registry = home / "registry"
+    registry.mkdir()
+    (registry / "skmem-pg.json").write_text('{"name":"skmem-pg"}')
+
+    def _compat_reconcile(target_home, *, apply):
+        assert apply is True
+        return CMDBManager(target_home).seed_from_inventory()
+
+    monkeypatch.setattr(dc, "_local_reconcile", _compat_reconcile)
     client = TestClient(create_app(home))
-    assert client.post("/api/cmdb/seed").json()["cis"] >= 4
+    response = client.post("/api/cmdb/seed").json()
+    assert response["cis"] == 1
+    assert response["deprecated"] is True
     assert "types" in client.get("/api/cmdb/overview").json()
     r = client.get("/cmdb")
     assert r.status_code == 200 and "CMDB" in r.text
+
+
+def test_seed_never_invents_assets(home):
+    # An empty home has no declared sources: the reconciler must not fabricate any.
+    mgr = CMDBManager(home)
+    res = mgr.seed_from_inventory()
+    assert res["cis"] == 0 and res["touched"] == 0

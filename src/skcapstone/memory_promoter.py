@@ -43,6 +43,7 @@ from .memory_engine import (
     _load_entry,
     _memory_dir,
     _remove_from_index,
+    _require_memory_id,
     _save_entry,
     _update_index,
 )
@@ -667,6 +668,7 @@ class PromotionEngine:
         Returns:
             True if the memory advanced a tier, False otherwise.
         """
+        _require_memory_id(entry.memory_id)
         old_layer = entry.layer
 
         if entry.layer == MemoryLayer.SHORT_TERM:

@@ -4,12 +4,15 @@ tests/test_e2e_automated.py - Automated multi-agent E2E test via subprocess.
 Starts the real skcapstone daemon, injects a message into the inbox,
 and verifies that a response appears within the timeout window.
 
-Marks are applied so the test is automatically skipped in unit-test
-environments where the CLI is not installed or system requirements
-are not met.
+These tests require a live estate: they start the real daemon against the
+real agent home (~/.skcapstone), inject a message into the live inbox, and
+wait for the consciousness loop (LLM backend) to answer. They also conflict
+with any already-running daemon (the CLI refuses a second instance against
+the same home). They are therefore skipped by default and must be opted in
+explicitly.
 
 Run manually:
-    pytest tests/test_e2e_automated.py -v -s --timeout=360
+    SKCAPSTONE_E2E=1 pytest tests/test_e2e_automated.py -v -s --timeout=360
 """
 
 from __future__ import annotations
@@ -33,6 +36,13 @@ pytestmark = [
     pytest.mark.skipif(
         not shutil.which("skcapstone"),
         reason="skcapstone CLI not installed - skipping live E2E",
+    ),
+    pytest.mark.skipif(
+        os.environ.get("SKCAPSTONE_E2E") != "1",
+        reason=(
+            "live E2E disabled by default: requires a live estate, starts the "
+            "real daemon, and mutates the real agent home - set SKCAPSTONE_E2E=1 to opt in"
+        ),
     ),
     pytest.mark.e2e,
 ]

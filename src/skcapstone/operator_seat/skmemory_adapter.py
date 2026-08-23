@@ -51,8 +51,8 @@ def _default_probe() -> dict:
         )
         alive = r.returncode == 0
         return {"embed_serving": alive, "reconcile_fresh": alive}
-    except Exception:
-        return {"embed_serving": True, "reconcile_fresh": True}
+    except Exception as exc:
+        return {"_probe_error": type(exc).__name__}
 
 
 def skmemory_explain() -> dict:
@@ -67,16 +67,17 @@ def skmemory_explain() -> dict:
 def skmemory_observe(probe: Callable[[], dict] | None = None) -> dict:
     """Read-only skmemory health snapshot in the adapter-contract shape."""
     st = (probe or _default_probe)()
+    unknown = bool(st.get("_probe_error"))
     return {
         "conditions": [
             {
                 "type": "EmbedServing",
-                "status": _b(bool(st.get("embed_serving"))),
+                "status": "Unknown" if unknown else _b(bool(st.get("embed_serving"))),
                 "object": "embed-service",
             },
             {
                 "type": "ReconcileFresh",
-                "status": _b(bool(st.get("reconcile_fresh"))),
+                "status": "Unknown" if unknown else _b(bool(st.get("reconcile_fresh"))),
                 "object": "reconciler",
             },
         ]

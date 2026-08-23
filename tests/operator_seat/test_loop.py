@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from skcapstone.fleet import sknoded, store
 from skcapstone.fleet.paths import FleetPaths
-from skcapstone.operator_seat import loop
+from skcapstone.operator_seat import action_ledger, loop
 
 
 def _enroll(tmp_path, monkeypatch):
@@ -264,3 +264,145 @@ def test_loop_unresolvable_target_parks_instead_of_applying(tmp_path, monkeypatc
     assert applied == []  # never handed to the act verb
     assert res["outcomes"][0]["outcome"].startswith("escalated")
     assert decisions.list_pending(str(ddir))
+
+
+def test_verified_execution_requires_ratified_app_condition(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    applied = []
+    prop = {
+        "app": "skchat",
+        "condition": "DaemonReady",
+        "action": "restart-daemon",
+        "object": "daemon",
+    }
+    res = loop.run_once(
+        paths,
+        now_iso="2026-08-20T00:00:00Z",
+        propose=lambda b, r: [prop],
+        explain={"actions": [{"name": "restart-daemon", "standard": True, "reversible": True}]},
+        apply_fn=lambda p, c: applied.append(p) or {"performed": True},
+        execute=True,
+        require_verified_actions=True,
+        emit=lambda _s: None,
+    )
+    assert applied == []
+    assert res["planned"][0]["binding_denied"] is True
+
+
+def test_verified_execution_reobserves_and_requires_condition_clear(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    human = store.Writer(role="operator", node="node-158", identity="chef")
+    store.write_spec(
+        paths,
+        "operatorapp",
+        "demo",
+        {
+            "name": "demo",
+            "conditions": ["Ready"],
+            "proposedStandardActions": ["restart"],
+            "ratifiedStandardActions": ["restart"],
+        },
+        writer=human,
+    )
+    calls = {"observe": 0, "apply": 0}
+
+    def observe(paths_, now_):
+        calls["observe"] += 1
+        return {
+            "conditions": [
+                {
+                    "type": "Ready",
+                    "status": "False" if calls["observe"] == 1 else "True",
+                    "object": "svc",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(loop, "ADAPTERS", {"demo": observe})
+    prop = {"app": "demo", "condition": "Ready", "action": "restart", "object": "svc"}
+    ledger = action_ledger.ActionLedger(tmp_path / "action-ledger")
+    res = loop.run_once(
+        paths,
+        now_iso="2026-08-20T00:00:00Z",
+        propose=lambda b, r: [prop],
+        explain={"actions": [{"name": "restart", "standard": True, "reversible": True}]},
+        apply_fn=lambda p, c: calls.__setitem__("apply", 1) or {"performed": True},
+        execute=True,
+        require_verified_actions=True,
+        execution_state=loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=0),
+        lifecycle_ledger=ledger,
+        emit=lambda _s: None,
+    )
+    assert calls == {"observe": 2, "apply": 1}
+    assert res["outcomes"][0]["outcome"] == "verified"
+    intent_id = res["outcomes"][0]["intent_id"]
+    assert intent_id is not None
+    assert ledger.current_state(intent_id) is action_ledger.ActionState.VERIFIED
+    assert [event.state.value for event in ledger.events(intent_id)] == [
+        "observed",
+        "diagnosed",
+        "proposed",
+        "authorized",
+        "executing",
+        "verified",
+    ]
+
+
+def test_performed_false_is_a_failure(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    res = loop.run_once(
+        paths,
+        now_iso="2026-08-20T00:00:00Z",
+        propose=lambda b, r: [{"action": "restart_service", "object": "svc"}],
+        apply_fn=lambda p, c: {"performed": False, "reason": "systemd failed"},
+        execute=True,
+        emit=lambda _s: None,
+    )
+    assert res["outcomes"][0]["outcome"].startswith("failed:")
+
+
+def test_failed_verification_executes_typed_rollback(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    human = store.Writer(role="operator", node="node-158", identity="chef")
+    store.write_spec(
+        paths,
+        "operatorapp",
+        "demo",
+        {
+            "name": "demo",
+            "conditions": ["Ready"],
+            "proposedStandardActions": ["restart"],
+            "ratifiedStandardActions": ["restart"],
+        },
+        writer=human,
+    )
+    observer = lambda _p, _n: {  # noqa: E731
+        "conditions": [{"type": "Ready", "status": "False", "object": "svc"}]
+    }
+    monkeypatch.setattr(loop, "ADAPTERS", {"demo": observer})
+    ledger = action_ledger.ActionLedger(tmp_path / "ledger")
+    rollbacks = []
+    result = loop.run_once(
+        paths,
+        now_iso="2026-08-20T00:00:00Z",
+        propose=lambda _b, _r: [
+            {
+                "app": "demo",
+                "condition": "Ready",
+                "action": "restart",
+                "object": "svc",
+                "rollback": {"action": "restart"},
+            }
+        ],
+        explain={"actions": [{"name": "restart", "standard": True, "reversible": True}]},
+        apply_fn=lambda _p, _c: {"performed": True},
+        rollback_fn=lambda p, c, r: rollbacks.append((p, c, r)) or {"performed": True},
+        execute=True,
+        require_verified_actions=True,
+        lifecycle_ledger=ledger,
+        emit=lambda _s: None,
+    )
+
+    intent_id = result["outcomes"][0]["intent_id"]
+    assert len(rollbacks) == 1
+    assert ledger.current_state(intent_id) is action_ledger.ActionState.ROLLED_BACK

@@ -158,6 +158,26 @@ def _guard_human_only_fields(kind: str, spec: dict, existing: dict, writer: "Wri
             )
 
 
+#: Syncthing writes a sibling copy named `<stem>.sync-conflict-<ts>-<dev>.json`
+#: when two nodes edit the same file between syncs. It matches `*.json`, so a
+#: naive glob LOADS it, and because the readers key on the `name` field INSIDE
+#: each payload rather than on the filename, the conflict copy overwrites the
+#: real object in the result mapping. The effect is that the store serves the
+#: version Syncthing DISCARDED: a cordoned node reads as schedulable and a role
+#: reads as whatever the losing writer said.
+#:
+#: Skipping them here is deliberate and is not "hiding" the conflict. The Node
+#: kind already carries a SyncConflict condition whose whole job is to report
+#: these files, so they stay visible as a FINDING while ceasing to be obeyed as
+#: DATA. Reporting a conflict and acting on it are different jobs.
+_CONFLICT_MARKER = ".sync-conflict-"
+
+
+def _is_conflict_copy(path: Path) -> bool:
+    """True for a Syncthing conflict sibling, which must never be read as spec."""
+    return _CONFLICT_MARKER in path.name
+
+
 def write_spec(
     paths: FleetPaths,
     kind: str,
@@ -210,6 +230,8 @@ def list_specs(paths: FleetPaths, kind: str) -> list[dict]:
         return []
     out = []
     for p in sorted(kind_dir.glob("*.json")):
+        if _is_conflict_copy(p):
+            continue
         payload = _load(p)
         if payload is not None:
             out.append(payload)
@@ -449,6 +471,8 @@ def list_placements(paths: FleetPaths, kind: str | None = None) -> list[dict]:
         if not kind_dir.exists():
             continue
         for p in sorted(kind_dir.glob("*.json")):
+            if _is_conflict_copy(p):
+                continue
             payload = _load(p)
             if payload is not None:
                 out.append(payload)

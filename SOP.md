@@ -33,7 +33,7 @@ sync — behind one CLI and one MCP server.
   request shaping).
 - The shared **platform primitives** it hosts for the fleet: the Syncthing-synced
   **coord board**, the **skscheduler** job scheduler, the **sk-alert** bus, and the
-  **ITIL** ops tools (reused by [skops](https://github.com/smilinTux/skops)).
+  **ITIL** ops tools governed by ATLAS. The former `skops` consumer is archive-only.
 - The **pillar initializers** (`pillars/identity|memory|trust|security|sync`) that wire
   the sibling `sk*` packages into a single `~/.skcapstone/` home.
 - The `skcapstone` CLI command tree and the `skcapstone-mcp` server (130+ tools; §7
@@ -151,8 +151,52 @@ graph TB
   self-healing, daemon lifecycle) this SOP summarizes.
 - `src/skcapstone/context_window.py`: `ContextWindowManager`, per-sender token
   tracking + LLM history compression at 80% of the context budget.
+- `src/skcapstone/operator_seat/skcode_adapter.py`: Atlas's authenticated client for
+  skcode-hostd activity replay, live-stream discovery, steering submission, and
+  receipt lookup. Monitoring and control use separate scopes.
 
-**⚠️ coordination / ITIL / cards no longer live here.** `skcoord>=0.1.0` is a **hard
+### Atlas live SKHarness monitoring and steering
+
+SKHarness owns execution and serves the transport; Atlas consumes it through
+`operator_seat.skcode_adapter`. The adapter exposes:
+
+- `skcode_activity(...)`: cursor replay with session/run/agent/job/card/contract/
+  lease/role/kind filters;
+- `skcode_live_contract()`: the WebSocket activity URL plus exact monitor/control
+  scopes for a long-lived Atlas or dashboard client;
+- `skcode_control(...)`: an expiring idempotent command for a session, run, agent, or
+  job; and
+- `skcode_control_receipt(...)`: the latest owner receipt for that command.
+
+Set `SKCODE_HOSTD_URL` to the node's governed tailnet skcode-hostd origin (default
+`http://localhost:9394`). Callers supply a CapAuth `skcode`-audience token explicitly;
+the adapter never reads, stores, prints, or refreshes that credential. Monitoring needs
+`skcode.stream`. Message/needs-input steering needs `skcode.inject`; lifecycle actions
+need `skcode.dispatch`. Both pass hostd's corresponding PDP and audit gate. A `queued`
+receipt is durable intent only. Atlas must not report success or update
+a job/card from it; only `applied` means the target owner acted. Hostd applies supported
+interactive session commands itself. Swarm and scheduler/job commands remain queued
+until their long-lived owner composes the SKHarness control mailbox. The checked-in Pi
+swarm qualifier now composes the trusted cancellation owner; job controls and Pi
+mid-turn messages remain explicit queued/unsupported work until their owner adapters
+exist.
+
+Atlas retains the controller-owned lineage on every relevant activity row:
+card and snapshot hash; session/trajectory/run/attempt; stable parent and child agent;
+team; signed plan and contract hashes; lease; base commit; evidence and artifact
+digests. A unique agent ID is an address for attribution and routing, not a capability.
+CapAuth/PDP, parent-child A2A ACLs, the signed contract, and the live owner lease still
+decide whether communication is allowed. Atlas must target IDs learned from the
+authenticated activity/manifest contract, never infer identity from a display name.
+The live rail is bounded; SKHarness copies the same linkage into its durable Arena/A2A
+records, so Atlas can trace work after the visible window has rolled forward without
+creating a second store.
+
+The canonical event, redaction, cursor/gap, multi-node, and command-receipt design lives
+in SKHarness at `docs/architecture/live-agent-observation-and-control.md`. SKCapstone
+does not create a second activity or control store.
+
+**⚠️ coordination / ITIL / cards no longer live here.** `skcoord>=0.1.28` is a **hard
 runtime dependency** (`pyproject.toml`), and `skcapstone.coordination`,
 `skcapstone.card_store`, and `skcapstone.itil` are **transparent re-export shims** over
 `skcoord.*` (the CR-4.1 extraction). Each aliases the real module into `sys.modules`, so
@@ -165,6 +209,13 @@ all reach the same object. Consequences worth knowing before you debug:
 - `import skcapstone` succeeds without skcoord installed, but
   `from skcapstone.coordination import Board` does not. That asymmetry is why CI installs
   skcoord explicitly `--no-deps`.
+- The `0.1.28` floor is intentional. It retains the lifecycle and authoritative
+  criteria-fold contracts introduced in `0.1.18` and adds the scheduled CMDB
+  reconciliation policy, lease, incident-routing, and retention API.
+- Release skcoord before any skcapstone release that consumes a new skcoord symbol or
+  fold behavior. Verify the published skcoord artifact in a fresh environment without a
+  sibling checkout or `PYTHONPATH` overlay, then raise the skcapstone floor and release
+  skcapstone. Source-overlay tests are useful preflight evidence, not artifact evidence.
 - `ci.yml` runs `scripts/check-no-shim-imports.sh`, which fails the build on retired
   capauth shim imports. It is a lint gate, not a test.
 
@@ -183,6 +234,12 @@ all reach the same object. Consequences worth knowing before you debug:
   passes candidates through `memory_verifier.verify_before_promotion`. Blocked
   candidates stay in short-term. The gate is **fail-open**: when the verifier backend
   is unavailable, promotion proceeds so existing behavior is preserved.
+- **Memory identifier boundary.** Legacy `MemoryEntry` payloads with a blank or
+  whitespace-only `memory_id` are rejected before load, save, index update,
+  truth verification, or cross-tier promotion. Operators should run the
+  SKMemory reconciliation path to place any existing `.json` payload in the
+  content-addressed invalid-record quarantine; do not rename it into an active
+  tier.
 
 ---
 
@@ -270,7 +327,8 @@ repo has **no `package.json`** to mirror it into. The **tag is** the version.
 1. Add a dated `CHANGELOG.md` entry (Keep-a-Changelog).
 2. `pytest.yml` green + `ci.yml` lint clean (§4).
 3. Merge to `main`. `.github/workflows/publish.yml` **cuts the next patch tag itself**
-   when HEAD is not already tagged, then builds and publishes on the `v*` tag. It
+   when HEAD is not already tagged, then builds and publishes that tagged version in
+   the same GitHub run. A manually pushed `v*` tag builds and publishes directly. It
    refuses to publish a tag that is not on `main`, and refuses a non-release version
    string. To pick the number yourself, tag before merging.
 4. Verify the published version **on PyPI**, not from a green workflow run: a skipped
@@ -317,6 +375,62 @@ for a in $(systemctl --user list-units 'skcapstone@*' --no-legend | awk '{print 
 done
 ```
 Verify a template edit before deploy with `systemd-analyze verify systemd/skcapstone@.service`.
+
+**Governed CMDB network apply.** ATLAS owns the cognitive scheduling and CAB
+workflow; it does not receive a generic privileged shell. The write-free shadow
+unit and the apply unit are deliberately distinct. The packaged apply unit is
+`src/skcapstone/data/systemd/skcapstone-cmdb-reconcile-network.service`; its
+`ConditionPathExists` gate requires an owner-reviewed launcher at
+`~/.config/skcapstone/cmdb-network-apply`. The launcher is mode `0700`, contains
+only exact fleet targets and `skvault://` references, and ends in:
+
+```bash
+exec "$HOME/.skenv/bin/skcapstone" cmdb apply --network \
+  --credential HOST=skvault://REFERENCE  # repeated for every exact target
+```
+
+Never put credential values in the launcher, unit, change record, or artifact.
+Before start, `skcapstone cmdb operator act apply-cmdb-reconcile --change-id ID`
+rechecks: canonical approved/scheduled ITIL state, authenticated human CAB
+provenance, three distinct checksum-valid complete same-scope shadows, clean
+relationship audit, and freeze immediately before actuation. The legacy
+`skcapstone-cmdb-reconcile.service` runs `--local --apply`; it is rollback-only
+during cutover and is not an ATLAS apply target. Deploy the network unit from a
+tagged GitHub checkout, run `systemd-analyze verify`, copy it to the user-unit
+directory, reload, and compare `systemctl --user cat` with the tagged source.
+Do not disable the legacy timer until the governed network oneshot succeeds and
+its artifact/audit readback is accepted.
+
+For interactive work, use `skcapstone cmdb plan` first and retain the JSON
+output or checksummed network shadow artifact. The plan reports creates,
+updates, relationship changes, stale candidates, retirements, validation
+failures, and secret-redaction findings. `skcapstone cmdb apply` is the explicit
+write verb; `cmdb reconcile [--apply]` remains supported only for existing
+timers. `skcapstone cmdb status` reads checksum-verified artifacts, inventory
+counts, and relationship-audit state without writing.
+
+**Two-node CMDB package rollout.** Source is promoted through GitHub; never copy
+individual CMDB modules between `.158` and `.41`. On each node, fast-forward the
+three canonical checkouts, reinstall them into the fleet environment, and restart
+the dashboard because it imports both packages in-process:
+
+```bash
+for repo in skcoord skdashboard skcapstone; do
+  git -C "$HOME/clawd/skcapstone-repos/$repo" pull --ff-only origin main
+done
+"$HOME/.skenv/bin/pip" install -e "$HOME/clawd/skcapstone-repos/skcoord"
+"$HOME/.skenv/bin/pip" install -e "$HOME/clawd/skcapstone-repos/skdashboard"
+"$HOME/.skenv/bin/pip" install -e "$HOME/clawd/skcapstone-repos/skcapstone"
+systemctl --user restart skcapstone-dashboard.service
+curl -fsS http://127.0.0.1:7778/api/cmdb/overview
+curl -fsS 'http://127.0.0.1:7778/api/cmdb/search?q=service&limit=1'
+curl -fsS http://127.0.0.1:7778/api/cmdb/status
+curl -fsS http://127.0.0.1:7778/api/cmdb/plan
+```
+
+If a node does not run `skcapstone-dashboard.service`, reinstall the packages but do
+not invent a service to restart. Verify imports and versions with that node's
+`~/.skenv/bin/python`, and restart only CMDB-consuming units already installed there.
 
 > **Gotcha (orphan/stale pidfile).** `~/.skcapstone/daemon.pid` (per-agent home) is the
 > liveness source `read_pid` / `is_running` read. A hard-killed daemon (or an OOM-kill
@@ -384,10 +498,20 @@ aliases while the real home stays put, which looks like it worked and is not. Se
 
 Multi-agent mode: `SKAGENT` (checked first) or `SKCAPSTONE_AGENT` → an agent home at
 `~/.skcapstone/agents/<name>/` (private) over the shared root (coord, heartbeats,
-peers). With neither set, the active agent falls back to `SK_DEFAULT_AGENT` if that
-directory exists, else the first non-`*-template` directory under `agents/`
-alphabetically. That fallback means **an unset `SKAGENT` does not mean "no agent"**;
-it can silently select one, which in turn selects a different daemon port (§5).
+peers). With neither set, the resolver uses an explicitly configured
+`SK_DEFAULT_AGENT` when its directory exists, or the sole non-template installed
+agent. If several agents exist and none is selected, resolution fails instead of
+guessing. Fleet/node profiles must therefore set the identity explicitly (for example,
+Casey's cluster sets Jarvis); generic source and service definitions stay identity-free.
+
+**Coding-agent harnesses and default MCP topology.** `skcapstone register` supports
+Codex and Pi alongside the other detected clients. Their generated context loaders
+prepend `~/.skenv/bin`, export the resolved SK profile, and default
+`SK_CODEX_YOLO=1` for Codex. Pi uses `pi-mcp-extension` plus
+`~/.pi/agent/mcp.json`. The default MCP set is deliberately only `skcapstone-mcp` and
+`skmemory-mcp`: CapAuth operations are already exposed through SKCapstone, while
+SKWhisper remains a background context producer rather than a duplicate stdio server.
+See [`docs/MCP_TOPOLOGY.md`](./docs/MCP_TOPOLOGY.md).
 
 **Config files** (`{home}/config/`, resolved first-wins over built-in defaults):
 
@@ -405,6 +529,8 @@ it can silently select one, which in turn selects a different daemon port (§5).
 | `SKCAPSTONE_HOME` | **the real home override** (default `~/.skcapstone`) |
 | `SKCAPSTONE_ROOT` / `SKCAPSTONE_SHARED_ROOT` | backwards-compatible aliases; both default to `SKCAPSTONE_HOME`, neither moves the home on its own |
 | `SKAGENT` / `SKCAPSTONE_AGENT` | agent name (`SKAGENT` wins); enables the multi-agent household layout **and selects the daemon port** (§5) |
+| `SK_DEFAULT_AGENT` | explicit node/profile fallback used only when no active-agent variable is set |
+| `SK_CODEX_YOLO` | Codex permission-mode flag; generated SK loaders default it to `1` unless explicitly overridden |
 | `SKCAPSTONE_PORT` | overrides the package `DEFAULT_PORT` (default `9383`) |
 | `OLLAMA_HOST` | Ollama API base (default `http://localhost:11434`) |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY` / `MOONSHOT_API_KEY` / `NVIDIA_API_KEY` | enable the corresponding cloud backend (presence = availability) |
@@ -450,6 +576,19 @@ skcapstone mcp           # run the MCP server (skcapstone-mcp)
 | `alerts` / `notify` | sk-alert bus + desktop notifications |
 | `doctor` / `preflight` / `metrics` / `logs` | health + observability |
 | `agents` / `agent` | team blueprints + per-agent capability manifest |
+
+**Dashboard listener (`:7778`).** The dashboard remains loopback-only by default.
+Use the supported bind option when a governed fleet deployment needs another
+interface:
+
+```bash
+skcapstone dashboard --host 127.0.0.1 --port 7778
+skcapstone dashboard --host 100.x.y.z --port 7778 --no-open  # tailnet example
+```
+
+`--host 0.0.0.0` deliberately exposes every interface. Pair it with host firewall or
+tailnet controls and dashboard authorization; do not widen the bind accidentally in a
+unit file. The CLI passes the address to `skdashboard.start_dashboard()`.
 
 **Daemon HTTP endpoints** (bind `127.0.0.1:<port>`, per agent; **9383 for `lumina`**,
 not 7777; see §5; JSON unless noted):
@@ -574,7 +713,7 @@ skcapstone coord parity --check         # re-verify (exit non-zero on any residu
   a property of capauth / sk_pgp, not this repo.
 
 <!-- docs-evidence
-verified: 2026-08-15
+verified: 2026-08-20
 checks:
   - name: all five console scripts exist and there are still exactly five (section 3)
     run: test $(grep -cE '^[a-z-]+ = "skcapstone\.' pyproject.toml) -eq 5 && grep -qxF 'skcapstone = "skcapstone.cli:main"' pyproject.toml && grep -qxF 'skfleet = "skcapstone.fleet.cli:main"' pyproject.toml && grep -qxF 'skoperator = "skcapstone.operator_seat.cli:main"' pyproject.toml
@@ -597,8 +736,11 @@ checks:
   - name: ci.yml still runs NO tests, as section 4 warns
     run: ! grep -qE '^\s+run:.*pytest' .github/workflows/ci.yml
   - name: skcoord is still a hard dep and coordination is still a shim over it
-    run: grep -qE '^\s+"skcoord>=' pyproject.toml && grep -qxF 'import skcoord.coordination as _src' src/skcapstone/coordination.py && grep -qxF 'sys.modules[__name__] = _src' src/skcapstone/coordination.py
+    run: grep -qxF '    "skcoord>=0.1.28",' pyproject.toml && grep -qxF 'import skcoord.coordination as _src' src/skcapstone/coordination.py && grep -qxF 'sys.modules[__name__] = _src' src/skcapstone/coordination.py
   - name: SKCAPSTONE_HOME is still the real home override, per section 6
     run: grep -qxF 'AGENT_HOME = os.environ.get("SKCAPSTONE_HOME", _default_home())' src/skcapstone/__init__.py
+  - name: Codex and Pi loaders still export skenv and default Codex YOLO mode
+    run: grep -qF 'export PATH="$HOME/.skenv/bin:$PATH"' src/skcapstone/codex_setup.py && grep -qF 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' src/skcapstone/codex_setup.py && grep -qF 'def ensure_pi_setup(' src/skcapstone/codex_setup.py
+  - name: ambiguous multi-agent installs are never resolved alphabetically
+    run: grep -qF 'return candidates[0] if len(candidates) == 1 else None' src/skcapstone/__init__.py && ! grep -qF 'DEFAULT_AGENT = (os.environ.get("SK_DEFAULT_AGENT") or "lumina")' src/skcapstone/__init__.py
 -->
-

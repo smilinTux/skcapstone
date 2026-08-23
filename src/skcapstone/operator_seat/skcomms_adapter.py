@@ -53,8 +53,8 @@ def _default_probe() -> dict:
         )
         healthy = r.returncode == 0
         return {"path_healthy": healthy, "queue_depth": 0, "queue_limit": _QUEUE_LIMIT}
-    except Exception:
-        return {"path_healthy": True, "queue_depth": 0, "queue_limit": _QUEUE_LIMIT}
+    except Exception as exc:
+        return {"_probe_error": type(exc).__name__}
 
 
 def skcomms_explain() -> dict:
@@ -69,16 +69,21 @@ def skcomms_explain() -> dict:
 def skcomms_observe(probe: Callable[[], dict] | None = None) -> dict:
     """Read-only skcomms health snapshot in the adapter-contract shape."""
     st = (probe or _default_probe)()
+    unknown = bool(st.get("_probe_error"))
     depth = int(st.get("queue_depth", 0))
     limit = int(st.get("queue_limit", _QUEUE_LIMIT))
     return {
         "conditions": [
             {
                 "type": "PathHealthy",
-                "status": _b(bool(st.get("path_healthy"))),
+                "status": "Unknown" if unknown else _b(bool(st.get("path_healthy"))),
                 "object": "discovery-path",
             },
-            {"type": "QueueDrained", "status": _b(depth <= limit), "object": "queue"},
+            {
+                "type": "QueueDrained",
+                "status": "Unknown" if unknown else _b(depth <= limit),
+                "object": "queue",
+            },
         ]
     }
 

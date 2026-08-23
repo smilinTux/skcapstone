@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from skcapstone.memory_engine import (
+    _load_entry,
+    _save_entry,
     delete,
     export_for_seed,
     gc_expired,
@@ -85,6 +87,47 @@ class TestStore:
         store(agent_home, "First memory")
         for layer in MemoryLayer:
             assert (agent_home / "memory" / layer.value).exists()
+
+    def test_load_rejects_legacy_blank_memory_id(self, agent_home: Path):
+        """A legacy blank-ID payload is never admitted to promotion paths."""
+        path = agent_home / "memory" / "short-term" / ".json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"memory_id": "", "content": "legacy", "layer": "short-term"}),
+            encoding="utf-8",
+        )
+
+        assert _load_entry(path) is None
+
+    def test_load_silently_routes_unified_record_away_from_legacy_promoter(
+        self, agent_home: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Canonical SKMemory records are not misread as blank legacy entries."""
+        path = agent_home / "memory" / "short-term" / "unified-id.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "id": "unified-id",
+                    "title": "Unified record",
+                    "content": "owned by SKMemory",
+                    "layer": "short-term",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert _load_entry(path) is None
+        assert not [record for record in caplog.records if record.levelno >= 30]
+
+    def test_save_rejects_blank_memory_id_before_writing(self, agent_home: Path):
+        """The legacy writer cannot recreate the unsafe `.json` filename."""
+        entry = MemoryEntry(memory_id="", content="must not persist")
+
+        with pytest.raises(ValueError, match="memory_id must be a non-empty string"):
+            _save_entry(agent_home, entry)
+
+        assert not (agent_home / "memory" / "short-term" / ".json").exists()
 
 
 class TestRecall:

@@ -1,0 +1,25 @@
+{
+  "card_ids": [
+    "415aa5e1",
+    "82eabf0c"
+  ],
+  "change_id": "chg-fe7869b5",
+  "captured_at": "2026-08-22T23:37:55Z",
+  "host": "chiwk13",
+  "observed_peer": {
+    "id": "nUe9NkQWBj11CNTRL",
+    "ip": "100.126.35.15",
+    "os": "windows",
+    "online": false,
+    "last_seen": "2026-08-20T08:29:27.1Z"
+  },
+  "reachability": {
+    "tailscale_ping": "timeout",
+    "tcp_22": "timeout",
+    "tcp_2222": "timeout",
+    "ssh": "timeout"
+  },
+  "decision": "deferred",
+  "guard": "Do not change or retire the only known peer. Establish and validate a genuine WSL Tailscale peer and direct SSH first, then deploy the qualified proxy package.",
+  "host_changes_made": false
+}

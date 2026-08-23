@@ -64,19 +64,32 @@ def _json_tail(output: str):
 
 
 def _foreign_writes(before: dict, after: dict) -> dict:
-    """Differences that are NOT explainable by another node's heartbeat sync."""
+    """Differences that this harness could have caused.
+
+    The live tree is written continuously by daemons that have nothing to do
+    with the drill: every node's ``sknoded`` rewrites its own
+    ``heartbeat.json`` and ``node.json``, and ``skoperator.timer`` refreshes
+    ``objects/operatorapp/*.json`` and service specs on a 15-minute cycle.
+    Naming those paths one by one made this assertion flaky, because it failed
+    whenever a timer tick landed inside the test run rather than whenever the
+    harness misbehaved (card ``4c32df6f`` hit exactly that).
+
+    The rule below is both stricter about what matters and immune to that
+    noise. If this harness ever touched production it would **create** paths
+    (a tree, plus its ``.skfleet-drill`` marker) or **remove** them
+    (``teardown`` is a recursive delete), and any spec it wrote would change
+    that file's size, since ``write_spec`` bumps ``generation`` and rewrites
+    the whole document. A same-size, mtime-only change is the one shape the
+    drill cannot produce and the one shape another node's daemon produces
+    constantly, so it is the only difference forgiven here.
+    """
     out = {}
     for path in set(before) | set(after):
         old, new = before.get(path), after.get(path)
         if old == new:
             continue
-        if (
-            old is not None
-            and new is not None
-            and old[0] == new[0]
-            and path.endswith("heartbeat.json")
-        ):
-            continue  # same size, heartbeat: another node's sknoded, not us
+        if old is not None and new is not None and old[0] == new[0]:
+            continue  # same size, mtime only: another node's daemon, not us
         out[path] = (old, new)
     return out
 

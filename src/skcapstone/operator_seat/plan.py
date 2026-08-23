@@ -19,6 +19,7 @@ def plan_actions(
     *,
     author: str = "operator",
     target_known: Callable[[dict], bool] | None = None,
+    action_allowed: Callable[[dict], bool] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify and dispose each proposal.
 
@@ -54,12 +55,18 @@ def plan_actions(
         )
         if unresolved:
             disposition = "escalate"
+        binding_denied = bool(
+            disposition == "auto" and action_allowed is not None and not action_allowed(p)
+        )
+        if binding_denied:
+            disposition = "escalate"
         planned.append(
             {
                 "proposal": p,
                 "classification": classification,
                 "disposition": disposition,
                 "unresolved_target": unresolved,
+                "binding_denied": binding_denied,
             }
         )
     return planned

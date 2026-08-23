@@ -6,7 +6,9 @@ Available standalone as `skfleet` and as `skcapstone fleet ...`.
 from __future__ import annotations
 
 import json as jsonlib
+import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 
 import click
 
@@ -16,8 +18,11 @@ from . import (
     alerts,
     config_controller,
     cron_controller,
+    install_backends,
+    installer,
     modelserver_controller,
     node_controller,
+    seat_audit,
     service_controller,
     store,
 )
@@ -219,9 +224,7 @@ def services_cmd() -> None:
         return
     for r in rows:
         flags = "".join([" PAUSED" if r.paused else "", " STALE" if r.stale else ""])
-        click.echo(
-            f"{r.name}\t-> {r.node or 'unplaced'}\t" f"state={r.state}\tready={r.ready}{flags}"
-        )
+        click.echo(f"{r.name}\t-> {r.node or 'unplaced'}\tstate={r.state}\tready={r.ready}{flags}")
 
 
 def _nodes_by_role(paths_) -> dict[str, list[str]]:
@@ -410,6 +413,108 @@ def set_role_cmd(name: str, role: str) -> None:
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"{name} role={role} (generation {spec['generation']})")
+
+
+def _resolve_role(paths_, role: str | None) -> str:
+    """The role to install for: --role verbatim, or this node's spec.role.
+
+    Mirrors the resolution `_doctor_one` uses for `skfleet node doctor`
+    (card 76dad234): a node with no node object, or no bound role, cannot
+    be installed for and must say so plainly rather than pass a role of
+    None through to `installer.run_install`.
+    """
+    if role:
+        return role
+    target = self_node_name()
+    views = {v.name: v for v in node_controller.node_views(paths_)}
+    view = views.get(target)
+    if view is None:
+        raise click.ClickException(f"{target}: no such node object")
+    if not view.role:
+        raise click.ClickException(
+            f"{target}: no spec.role set (skfleet set-role {target} <profile>)"
+        )
+    return view.role
+
+
+@fleet.command("install")
+@click.option(
+    "--role", "role", default=None, help="Install profile role (default: this node's spec.role)."
+)
+@click.option("--check", "check_flag", is_flag=True, help="Report drift only (default mode).")
+@click.option(
+    "--apply", "apply_flag", is_flag=True, help="Actuate: install missing_required items."
+)
+@click.option(
+    "--dry-run", "dry_run", is_flag=True, help="Apply mode: report what would run, run nothing."
+)
+@click.option("--enable", is_flag=True, help="Enable installed units.")
+@click.option("--start", is_flag=True, help="Start installed units.")
+@click.option("--only", "only", multiple=True, help="Limit to this item name (repeatable).")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def install_cmd(
+    role: str | None,
+    check_flag: bool,
+    apply_flag: bool,
+    dry_run: bool,
+    enable: bool,
+    start: bool,
+    only: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    """Diff (--check, default) or actuate (--apply) this node's install profile.
+
+    Resolves --role from the node's bound spec.role when omitted. `check`
+    always just reports (never gated); `apply` is gated by the fleet-wide
+    freeze and this node's actuation opt-in (see `skfleet freeze` /
+    `skfleet actuation`), and is refused cleanly rather than actuating
+    partway.
+    """
+    if check_flag and apply_flag:
+        raise click.ClickException("--check and --apply are mutually exclusive")
+    mode = "apply" if apply_flag else "check"
+
+    paths_ = default_paths()
+    resolved_role = _resolve_role(paths_, role)
+
+    try:
+        summary = installer.run_install(
+            paths_,
+            resolved_role,
+            node=self_node_name(),
+            mode=mode,
+            dry_run=dry_run,
+            enable=enable,
+            start=start,
+            only=list(only) or None,
+            backends=install_backends.default_backends(),
+        )
+    except installer.ProfileNotApplied as exc:
+        raise click.ClickException(
+            f"no applied profile named {exc}: `skfleet apply -f <profile.json>` first"
+        ) from exc
+    except installer.Frozen as exc:
+        raise click.ClickException(
+            "fleet is FROZEN: actuation halted (skfleet unfreeze to resume)"
+        ) from exc
+    except installer.ActuationNotAllowed as exc:
+        raise click.ClickException(
+            f"actuation not enabled for {exc}: `skfleet actuation <name> --enable` first"
+        ) from exc
+
+    if as_json:
+        click.echo(jsonlib.dumps(summary, indent=2, sort_keys=True))
+    else:
+        click.echo(f"role={summary['role']}\tmode={summary['mode']}")
+        for r in summary["results"]:
+            if mode == "check":
+                click.echo(f"  {r['grade']:5} {r['category']:28} {r['name']}")
+            else:
+                click.echo(f"  {r['status']:12} {r['kind']:8} {r['name']}\t{r['detail']}")
+        click.echo(f"ok={summary['ok']}")
+
+    if not summary["ok"]:
+        raise SystemExit(1)
 
 
 @fleet.group("node")
@@ -620,6 +725,40 @@ def node_stignore_cmd(as_json: bool, strict: bool) -> None:
         raise SystemExit(1)
 
 
+@node_group.command("endpoint-audit")
+@click.option(
+    "--status-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Read a captured tailscale status JSON file instead of the local CLI.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option("--strict", is_flag=True, help="Exit 1 when endpoint routing is unsafe.")
+def node_endpoint_audit_cmd(status_file, as_json: bool, strict: bool) -> None:
+    """Reconcile fleet node endpoints with Tailscale peers. REPORT ONLY."""
+    from . import endpoint_audit
+
+    try:
+        report = endpoint_audit.audit(default_paths(), endpoint_audit.read_status(status_file))
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        click.echo(jsonlib.dumps(report, indent=2, sort_keys=True))
+    elif not report["reports"]:
+        click.echo("no Tailscale peers matched fleet node identities")
+    else:
+        for node in report["reports"]:
+            click.echo(
+                f"{node['node']}\t{node['severity'].upper()}\t"
+                f"safe_to_route={str(node['safe_to_route']).lower()}"
+            )
+            for finding in node["findings"]:
+                click.echo(f"  {finding['severity']:5} {finding['kind']}")
+            for peer_id in node["retirement_candidates"]:
+                click.echo(f"  plan  retirement_candidate        {peer_id}")
+    if strict and report["summary"]["unsafe"]:
+        raise SystemExit(1)
+
+
 def _parse_taint(spec: str) -> tuple[str, str, str]:
     """Split a KEY=VALUE:EFFECT taint argument, e.g. travel=true:NoSchedule."""
     key, sep, rest = spec.partition("=")
@@ -649,6 +788,76 @@ def taint_cmd(name: str, taint: str) -> None:
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"{name} tainted {key}={value}:{effect} (generation {spec['generation']})")
+
+
+@fleet.command("seat-audit")
+@click.option("--strict", is_flag=True, help="Exit 1 when more than one operator seat is found.")
+def seat_audit_cmd(strict: bool) -> None:
+    """Report how many operator seats have written to this store.
+
+    Catches the two-seat case the Syncthing conflict detector misses. Measured
+    in the promotion drill: two seats writing with a sync between them produced
+    10 writes and ZERO conflict files, so a quiet conflict directory is not
+    evidence of a single writer.
+
+    CURRENT-STATE ONLY. write_spec emits no event, so a second seat that wrote
+    and was later overwritten leaves no trace anywhere. A clean result means
+    "no second seat is represented in the objects as they stand", not "no
+    second seat has been writing".
+    """
+    audit = seat_audit.audit_seats(default_paths())
+    click.echo(audit.summary())
+    for node in audit.seats:
+        refs = audit.by_node[node]
+        click.echo(f"  {node}: {len(refs)} object(s)")
+        for ref in refs[:10]:
+            click.echo(f"    {ref}")
+        if len(refs) > 10:
+            click.echo(f"    ... and {len(refs) - 10} more")
+    if audit.unattributed:
+        click.echo(f"  unattributed (no writer block): {len(audit.unattributed)}")
+    if strict and not audit.ok:
+        raise SystemExit(1)
+
+
+@fleet.command("label")
+@click.argument("name")
+@click.argument("labels", nargs=-1)
+@click.option("--remove", "remove", multiple=True, help="Label KEY to drop (repeatable).")
+def label_cmd(name: str, labels: tuple[str, ...], remove: tuple[str, ...]) -> None:
+    """Add, change or drop labels on a node: KEY=VALUE ... [--remove KEY].
+
+    Merges. Every other field of the spec is preserved, which `skfleet apply`
+    does NOT do: apply replaces the whole spec from the document you hand it,
+    so a label-only apply drops taints, cordoned and address and exits 0.
+
+    Labels decide placement. `scheduler.feasible` filters on them and never
+    reads `spec.role`, so changing a role does not change what can be
+    scheduled on a node; changing its labels does.
+    """
+    if not labels and not remove:
+        raise click.ClickException("nothing to do: pass KEY=VALUE and/or --remove KEY")
+    add: dict[str, str] = {}
+    for item in labels:
+        if "=" not in item:
+            raise click.ClickException(f"malformed label {item!r}: want KEY=VALUE, e.g. gpu=true")
+        key, _, value = item.partition("=")
+        add[key] = value
+    paths_ = default_paths()
+    before = store.read_spec(paths_, "node", name)
+    try:
+        spec = node_controller.set_labels(
+            paths_, name, add=add, remove=tuple(remove), writer=_operator()
+        )
+    except LookupError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if before is not None and spec["labels"] == before.get("labels", {}):
+        click.echo(f"{name} labels already as requested (nothing to do)")
+        return
+    shown = ",".join(f"{k}={v}" for k, v in sorted(spec["labels"].items())) or "(none)"
+    click.echo(f"{name} labels [{shown}] (generation {spec['generation']})")
 
 
 @fleet.command("untaint")

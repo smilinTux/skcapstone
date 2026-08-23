@@ -7,7 +7,417 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- Recorded the GitHub-first, two-node CMDB package deployment and verification
+  procedure used by card `3799733b`, including the dashboard restart required
+  after updating the in-process `skcoord`/`skdashboard` dependencies.
+
+### Added
+
+- Added an opt-in, loopback-only Windows browser proxy through each
+  workstation's canonical WSL Tailscale identity. The installer provides
+  shared enable and disable desktop controls, preserves per-profile browser
+  settings for rollback, and denies resolved destinations outside the
+  Tailscale overlay ranges.
+- Added read-only `skfleet node endpoint-audit` reconciliation between
+  canonical fleet node identities and live or captured Tailscale status. It
+  flags duplicate, stale, mismatched, offline, and ambiguous registrations,
+  names exact retirement candidates, and only marks routing safe when one
+  active peer matches the declared endpoint or every active Windows and
+  Linux/WSL runtime has a unique role-scoped endpoint with matching OS
+  evidence.
+- Added fail-closed per-node Tailscale policy checks for allowed peer operating
+  systems and maximum active peer count, including WSL-only workstation
+  enforcement.
+
+- Added a single-fire CMDB reconciliation job pinned to `chiap04` and
+  `jarvis`. The bundled scheduler tick remains inert until reviewed JSON
+  configuration enables it with exact targets and `skvault://` references.
+  Enabled runs use bounded collection, configurable retries and stale grace,
+  safe positive reconciliation, retained checksummed summaries, and
+  deduplicated CI-linked ITIL escalation.
+
+- Added explicit `skcapstone cmdb plan`, `cmdb apply`, and `cmdb status`
+  operations. Apply validates the evidence batch before writes and delays
+  retirement lifecycle updates until validation succeeds; the existing
+  `cmdb reconcile` command remains compatible with deployed timers.
+
 ### Fixed
+
+- Fixed `cmdb reconcile --local`/`--host` silently dropping `--record-run`
+  and `--apply` evidence: `write_run_artifact()` was only ever wired into
+  the `--network` branch, so the 3-hourly `skcapstone-cmdb-reconcile.service`
+  timer (`--local --apply`) was mutating the live CMDB with zero auditable
+  artifact. The local/host branch now builds the same checksummed run
+  envelope (scan id, timing, scope, reconcile report) as the network branch
+  and persists it via the existing `orch.write_run_artifact()`, with
+  `completeness.complete` only true for an actual `--apply` so a
+  `--record-run`-only dry run cannot be mistaken for a fresh apply by
+  `cmdb status`'s freshness SLO.
+- Reject blank legacy `MemoryEntry.memory_id` values at load, save, index,
+  verification, and both promotion boundaries. This prevents the SKCapstone
+  verifier/promoter from recreating unsafe `.json` files after SKMemory has
+  quarantined them. Canonical unified SKMemory records (`id`, not
+  `memory_id`) are now routed away from the legacy loader at debug level, so a
+  promotion sweep neither mutates them nor emits one warning per valid record.
+- Restored the enforced Black/Ruff gate after the new coordination-amendment
+  and qualification VCS-audit modules landed with formatting drift.
+- Updated the legacy CMDB seed tests to the schema-driven discovery contract
+  shipped by current `skcoord`, preventing dependency upgrades from breaking
+  the otherwise clean unit-test gate.
+- Warm the Ollama model selected by the validated consciousness configuration
+  instead of a hard-coded default, and query canonical PyPI distribution names
+  (`skcomms`, `skchat-sovereign`, and `cloud9-protocol`) during version checks.
+- Added a fail-closed systemd credential-file path for protected CapAuth
+  signing keys. ATLAS can now sign noninteractively without exposing its
+  passphrase in a unit environment or command line; symlinked, foreign-owned,
+  overlarge, and group/world-accessible credential files are rejected.
+- Restored the `main` push trigger for `publish.yml`, making its existing
+  GitHub-owned patch-tag job reachable and bringing the release workflow back
+  into agreement with this SOP. The main run publishes the version it tags;
+  manually pushed release tags build and publish directly.
+- Cleared the repository-wide Ruff gate by normalizing legacy test names and
+  imports, removing unused test imports, and replacing an ambiguous local name;
+  these are test-only cleanups with no runtime behavior change.
+- Restored the packaged `skcapstone-cmdb-reconcile-network.service` contract
+  used by ATLAS for governed credentialed CMDB applies. The unit fails closed
+  unless the owner-reviewed exact-target/SKVault launcher exists; the legacy
+  local-only reconcile service is no longer misdocumented as the ATLAS target.
+
+### Added
+
+- Added `skcapstone init --non-interactive --name X --role ROLE`, a scriptable
+  provisioning path for lightweight fleet role agents (workers, reviewers). It
+  scaffolds `<home>/agents/<slug>/` with `identity/identity.json`,
+  `profile.yaml`, and an optional `MANDATE.md` role template - no prompts, no
+  PGP/capauth, memory, trust, soul, security, or sync pillars. The
+  lightweight-vs-sovereign capability delta and the upgrade path are documented
+  in `docs/LIGHTWEIGHT_AGENTS.md`.
+- Extended Atlas's skcode operator adapter with authenticated SKHarness activity
+  replay/live-stream discovery and expiring idempotent steering commands plus receipt
+  lookup. Monitor and control scopes remain separate, and queued commands are never
+  presented as applied work. Replay filters now include job/card/contract/lease IDs so
+  Atlas can preserve the controller-owned cross-agent lineage back to an immutable card,
+  signed contract, source commit, attempt, and evidence rather than treating a display
+  name as identity or authority.
+- Added the ChatGPT/Codex SK client deployment runbook for Linux and Windows
+  with WSL2, including MCP registration, current Codex skill paths, global
+  Jarvis/soul bootstrap, SKWhisper, acceptance, safe restart, and rollback.
+- Added `skcapstone dashboard --host ADDRESS` and propagated the selected bind
+  address to SKDashboard. The default remains `127.0.0.1`; the SOP documents
+  deliberate tailnet or all-interface exposure.
+- Added `skcapstone qualify` commands for exact source checkpoints, independent
+  review dispositions, evidence-only completion inventories, durable
+  content-addressed review artifacts, and split exact-Git dependency audits that
+  preserve hash enforcement for registry packages.
+- Added `coord reconcile-agents`, a read-only-by-default audit with explicit,
+  serialized repair receipts for card lifecycle versus mutable agent claims.
+
+### Changed
+
+- Raised the `skcoord` runtime floor to 0.1.18, delegated acceptance-criteria
+  reads to the authoritative `CardStore.fold`, and added a registry-only CI
+  gate that enforces the `skcoord`-first release order.
+- `coord move` and the matching MCP tool now use `skcoord` lifecycle transitions so
+  Review stops active execution while preserving accountable ownership, Done clears
+  live claims and records history, and reopen transitions remove stale completion
+  state before returning.
+
+## [0.15.17] - 2026-08-20
+
+### Added
+
+- Added Pi coding-agent harness integration: the shared agent picker now wraps `pi`,
+  registration installs Pi's managed `AGENTS.md`/context loader, and Pi receives the
+  default `skcapstone` and `skmemory` MCP servers from `~/.skenv/bin`.
+- Added `skcapstone cmdb retire` for append-only, idempotent CI retirement by explicit
+  ID or discovery orphan set. Retirement preserves attributes, relationships, and
+  history instead of deleting records.
+
+### Fixed
+
+- Codex bootstrap now exports the shared SK environment and enables the profile's
+  unrestricted (`SK_CODEX_YOLO=1`) mode by default.
+- Agent resolution no longer silently chooses a named or alphabetically-first identity
+  when several profiles are installed. Explicit environment selection wins; otherwise
+  only a sole installed agent is an acceptable fallback.
+
+### Verification
+
+- `pytest tests/test_doctor.py tests/test_multi_agent.py tests/test_register_paths.py tests/test_register_plugins.py -q`
+- `pytest tests/test_cli_cmdb.py -q`
+- `ruff check` on every changed Python source and test file; `bash -n` on the picker.
+
+### Added
+- **`skcapstone cmdb`: a CLI over the CMDB.** The CMDB held 48 CIs and had only
+  a dashboard surface, so the only way to see or populate assets was the web
+  UI. It also left the skbrain pack shipping
+  `cronjob-skbrain-cmdb-reconcile.json`, whose command is
+  `sk-cron-run skcapstone cmdb reconcile` -- a verb that did not exist, so the
+  job has never run.
+
+  Six verbs: `list`, `show`, `scan`, `reconcile`, `drift`, `impact`, each read
+  verb taking `--json` so this composes into the operator and Atlas paths
+  instead of only printing for a human. `scan` and `reconcile` are read-only
+  unless `--apply` is passed. Observation is opt-in per host (`--local`,
+  `--host NAME[=ssh-target]`, repeatable) and `scan` says out loud when no
+  runner was given, because a scan that quietly read only specs looks identical
+  to a scan that found a clean fleet.
+
+  Requires the `skcoord.discovery` collectors; an older skcoord gets a message
+  naming the package to upgrade rather than a bare `ImportError`.
+### Security
+- **The .100 smoke probe certified cloud-served models as sovereign, because it
+  matched a model NAME** (card `16af7915`). `dot100-inference-smoke.sh` carried
+  `SOVEREIGN_MODELS="ornith qwen llama mxbai beellama"` and matched it as a
+  SUBSTRING against the `model` field of the gateway's response body. Measured
+  against the live gateway ledger (`skgateway/data/metrics.db`, `energy_log`,
+  opened read-only) on 2026-08-17: **76 rows** carry one of those tokens while
+  running on `backend=nvidia`, `basis=imputed_cloud`, including
+  `meta/llama-3.3-70b-instruct`, `nvidia/llama-3.3-nemotron-super-49b-v1` and
+  `qwen3.8-27b-huihui-abliterated-q4_k_m`. Reproduced end to end against a stub
+  gateway: the old probe printed
+  `PASS gateway-sovereignty  sk-default served by meta/llama-3.3-70b-instruct`
+  for a call whose serving backend was `nvidia`. The probe existed to catch
+  silent cloud failover and it was the thing announcing the failover as healthy.
+- **The probe now reads WHO SERVED, from skgateway's own attribution headers**
+  (`x-sk-backend`, `x-sk-energy-basis`, `x-sk-energy-node`), which the gateway
+  already emits for the serving attempt. Sovereignty is a claim about hardware
+  and jurisdiction, so the discriminator is the backend plus the energy basis,
+  never the model name: `ornith-1.0-9b` served by `nvidia` is a violation and
+  the same weights served by `reg:ornith` are not. The weights are not the
+  variable.
+- **One definition, called rather than mirrored.** The rule lives in skharness
+  (`skharness/autocode/sovereignty.py`) and this script shells out to
+  `python3 -m skharness.autocode.sovereignty`. A bash copy of the rule would
+  become a second definition the moment either side was edited, with nothing to
+  report the drift; calling across the seam costs one subprocess and makes
+  drift impossible. Requires the matching skharness change to be installed.
+- **Fails closed, in three distinct states.** `sovereign` passes; `violated`
+  fails naming the backend; `unobserved` (a gateway that emits no attribution)
+  ALSO fails, because unknown is not sovereign and reading "nothing" as a pass
+  is what made the old allowlist look healthy. A classifier that will not run at
+  all is reported as "cannot classify" rather than as a violation: the probe
+  branches on the state word and cross-checks the exit code, since
+  `python3 -m some.missing.module` also exits 1 and an exit-code-only reader
+  would point an operator at the routing when the real problem is the install.
+
+
+### Fixed
+- **`admit --preset` silently applied nothing on the GPU node.** `PRESETS` was keyed
+  `node-100`, but `paths.self_node_name()` derives from the hostname and produces
+  `node-ollama`, so the lookup missed and the box got no labels, no role and no
+  taint while the command exited 0. This is the SAME defect that was fixed for the
+  control node (`node-158` to `node-noroc2027`) and it survived that fix because
+  only one of the two address-style keys was rekeyed. Rekeyed to `node-ollama`,
+  with `node-100` kept as an alias so a runbook that says
+  `admit node-100 --preset` still does what it reads like it does.
+  Pinned by tests rather than by care: every live node name must resolve a preset,
+  every legacy spelling must resolve to the same object, and every canonical key
+  must be a name a node can actually have. That last invariant was stated wrongly
+  on the first attempt (it flagged any key ending in digits, which wrongly
+  condemns `node-41`, a real hostname-derived name); the defect was never "looks
+  like an address" but "matches no live node", so the test asserts membership.
+  Negative-controlled: 3 of 8 fail against the old table.
+
+- **Concurrent joule settlements no longer lose updates** (card `b2bd1cad`).
+  `JouleEngine.record_work` read the balance (`JouleWallet.__init__` loading the
+  snapshot), added to it and wrote it back, with nothing serialising that
+  sequence. Two writers therefore captured the same balance and the second write
+  erased the first. This is measured, not theoretical: the live `lumina` wallet
+  lost a 25 J credit and a 50 J credit exactly this way, both of them
+  `auto_tokenize_task` entries (`[<card_id>] Task completed: <title>`).
+  `record_work` now holds a cross-process `flock` across the WHOLE
+  read-modify-write, wallet acquisition included, and reloads the snapshot inside
+  the lock so a cached balance written by somebody else since construction cannot
+  be carried into the mutation.
+
+  The lock file name and its resolution are a cross-repo contract, not a local
+  detail. skharness settles against the same wallet files from its own process,
+  and two processes holding two DIFFERENT locks over one wallet protect nothing,
+  so `SETTLE_LOCK_NAME`, `SETTLE_LOCK_TIMEOUT` and `_settle_lock_path()` mirror
+  `skharness.autocode.joules` exactly. skharness is deliberately not a dependency
+  here (the arrow runs the other way), so the constants are mirrored rather than
+  imported and `tests/test_skjoule_settle_lock.py` asserts both that the two
+  resolved paths are byte-identical and that the two locks actually exclude each
+  other in both directions. A drift in either repo now fails a test instead of
+  silently un-protecting the wallet.
+
+  Evidence: the race tests are deterministic, not opportunistic. Each writer is
+  held at a rendezvous placed immediately after it has read the balance and
+  before it writes, so neither can write until both have read. Against
+  unmodified `origin/main` the thread race lost an update in 5 of 5 runs and the
+  two-process race lost one in 5 of 5 runs (balance 125 where 150 was owed); on
+  this branch, 0 of 5 and 0 of 5. A positive control covers the other half of the
+  argument, since a lock that turned every settlement after the first into a
+  silent no-op would pass a race test too: sequential settlements from separate
+  engines both land, five settlements on one engine all land, and a write from
+  outside the process is picked up rather than clobbered.
+
+  The lost 25 J and 50 J are deliberately NOT restored here. That is a separate
+  reconciliation decision; this change stops the bleeding.
+
+- **`coord reconcile` now reports the cards it refused to un-complete.** Pairs
+  with the skcoord guard that skips cards which are `done` in the store but not
+  yet in legacy, instead of dragging them backward to match a lagging legacy
+  projection. Those cards keep failing parity, so the CLI has to say why: an
+  operator otherwise sees a gate that will not go green with no explanation and
+  reaches for a bigger hammer. Printed loud rather than dimmed, unlike the
+  informational priority/swimlane bucket, because this is a real divergence a
+  human must resolve on the legacy side rather than noise to filter out. Adds
+  `--allow-uncomplete` (off by default, documented as MOVES THEM OUT OF DONE).
+
+- **The packaged systemd unit tree now includes `skmeter.service`.** The drift
+  guard `test_packaged_tree_matches_canonical` had been red on `main` for five
+  consecutive commits because `scripts/sync-systemd-units.py` was not re-run when
+  the canonical unit was added. Regenerated, no hand-editing. The guard exists
+  precisely to catch this, and it did: what it could not do is stop the resulting
+  red from making every other pull request's gate unreadable.
+- **The execute-mux idempotency guard compared truthiness where it meant identity,
+  so the code leg was never wired against a mocked dispatcher.**
+  `_maybe_wire_execute_mux` read `if getattr(d, "_is_execute_mux", False)`, and any
+  object with a permissive `__getattr__` satisfies that. `unittest.mock.Mock`
+  auto-creates the attribute as a truthy child mock, so the function returned early
+  and left the existing dispatcher unwrapped. `build_execute_mux` stamps exactly
+  `True`, so the guard now compares with `is True`. This was one of three failures
+  keeping `main` red. A regression test asserts both directions: a truthy-but-not-True
+  marker does NOT count as already-muxed, and a real `True` marker still does, so the
+  fix cannot be mistaken for disabling idempotency.
+
+- **`black --check` no longer fails on `main`.** `src/skcapstone/cli/coord.py` was
+  unformatted, so every open pull request inherited a red lint. A permanently red
+  gate stops being a signal: it cannot distinguish a change that broke something
+  from one that inherited the breakage, and the honest reading of any red becomes
+  "probably pre-existing". Formatting only, one file, no behaviour change.
+
+### Added
+
+- **The test suite isolates the joule wallet by default, and asserts that it
+  did.** `JouleWallet`/`JouleEngine` fall back to `skjoule.SHARED_ROOT` when no
+  `home` is given, and mint/spend are writes to real economic state, so a test
+  that forgot `home=tmp_path` edited the operator's live ledger and the entries
+  it left were indistinguishable from real ones. The sibling harness measured
+  1,366 fixture mints totalling 102,450 joules reaching a live wallet before
+  anybody noticed. An autouse `_isolate_joule_wallet` fixture now redirects the
+  default wallet root for every test, and `assert_not_production_wallet_in_test()`
+  raises `ProductionWalletInTestError` when a test reaches a production root by
+  some path the fixture does not cover (an explicit `home=`, for instance). The
+  fixture keeps honest tests safe; the assertion is what proves they were. The
+  set of production roots is frozen at import, because a guard whose definition
+  of production moves with the thing it is guarding is not a guard.
+
+- **`skfleet seat-audit`: two-seat detection by provenance, not by collision**
+  (card `4c32df6f`, gap G2). The only existing detector was the Syncthing conflict
+  file, and the drill measured what it actually catches: two seats writing inside
+  one sync interval produce 1 conflict file, but the same two seats with a sync
+  between the writes produce 10 writes and **zero** conflict files. The interleaved
+  case is the likely one (a 368K folder converges in seconds against a 15-minute
+  timer), and the promotion runbook's own advice to wait one full timer cycle names
+  precisely the interval that guarantees no collision is raised. So a quiet conflict
+  directory was being read as evidence of a single writer when it is nothing of the
+  kind. The audit groups every spec by the `writer` block it already carries.
+  Verified against the live store: one operator seat, 39 objects. A discarded
+  conflict copy cannot inflate the count, and objects with no writer block are
+  reported separately rather than counted as clean.
+  Its limit is documented in the module and repeated in `--help`, because it decides
+  how much a clean result is worth: this is CURRENT-STATE only. `write_spec` emits no
+  event, so a second seat that wrote and was later overwritten leaves no trace at all.
+  Closing that needs an event on `write_spec` (card `27aa2d4d`), not a better reader.
+
+- **`skfleet label`, because there was no safe way to change a label.** Labels are
+  what the scheduler actually filters on: `scheduler.feasible` reads them and never
+  reads `spec.role`, so a node's labels decide whether anything can be placed on it.
+  The only tool for changing one was `skfleet apply`, which replaces the whole spec
+  from the document handed to it. During the promotion drill (card `4c32df6f`) a
+  label-only apply silently dropped `taints`, `cordoned` and `address`, un-cordoning
+  the node, and exited 0, so the documented way to fix a label corrupted the spec it
+  was fixing. `skfleet label NODE key=value ... [--remove key]` merges instead:
+  every other spec field survives and the generation bumps by exactly one. Removing
+  an absent key is a silent no-op, so a revert is safe to run twice and safe to run
+  when you do not know how far a promotion got. Setting and unsetting the same key
+  in one call is refused rather than resolved, since either resolution would make
+  the outcome depend on argument order.
+  The promotion runbook's Step 2.2b is now one line instead of a copy-the-whole-
+  document dance. A test asserts the end-to-end property the card is really about:
+  `set-role node-41 control` alone leaves the seat INFEASIBLE for a
+  `control-plane`-selecting workload, and labelling is what makes it schedulable.
+
+### Fixed
+- **The operator seat rewrote 7 unchanged specs every 15 minutes, forever.**
+  `skoperator.timer` refreshes all operatorapp objects on a 15-minute cycle, and
+  `_write_preserving_ratifications` called `write_spec` unconditionally.
+  `write_spec` has no no-op short-circuit of its own, so every refresh bumped the
+  generation and rewrote the file. Measured on the live control node: those objects
+  had reached generation **1674**, and watching one across a tick caught the write
+  directly, generation 1674 to 1675 with a **byte-identical body** (sha
+  `3abb1b3523529136` on both sides). That is roughly **672 no-op writes a day** into
+  `~/.skcapstone`, a Syncthing folder shared to four machines, which is the same
+  shape as the outbox floods.
+  The helper now compares before writing. The guard is deliberately in this caller
+  rather than in `write_spec`: fourteen call sites rely on that primitive bumping
+  the generation, and `set_role`, `set_taint` and `set_labels` each have a test
+  asserting a bump of exactly one, so making the primitive conditional would change
+  all of them to fix one caller. `write_placement` already returns
+  `(existing, False)` on unchanged content, so the store's own precedent for this is
+  per-writer rather than global.
+  Four tests, negative-controlled (two fail against the old code). One covers the
+  subtle case: the helper injects prior ratifications into the spec it compares, so
+  a ratified object has to settle too, rather than differing from the incoming spec
+  on every pass and rewriting forever.
+  Downstream impact was checked rather than assumed and is currently nil:
+  `store.py` flags a status stale when `observedGeneration < generation` and
+  `service_controller` acts on that, but only three live statuses carry
+  `observedGeneration` and all three are `node.json`. Nothing observes operatorapp
+  objects, so the bumps marked nothing stale. That changes the moment anything does.
+
+- **The drill's containment guard could be relocated by the caller** (card `4c32df6f`,
+  gap G0). `drill.sovereign_home()` expanded `~` through `os.path.expanduser`, which
+  prefers the `HOME` environment variable, so the definition of "production" moved
+  whenever `HOME` moved. Drilled: under a rewritten `HOME` the guard computed a
+  different forbidden prefix and ACCEPTED the real production tree as a drill root.
+  No write was performed, but the refusal that is the entire point of the guard did
+  not fire, and 10 of the other 11 refusal probes had passed, so the suite looked
+  healthy. The leading `~` is now expanded against the password database, which the
+  protected process cannot set. Negative-controlled: the new tests fail against the
+  old code and pass against the fix, with a positive control asserting a legitimate
+  scratch root is still accepted, since a guard that refused everything would satisfy
+  the other assertions while being useless.
+
+- **A test asserted the CAB self-approval bypass that skcoord had just closed, and it
+  held `main` red.** skcoord `941570f` ("a raw `status` event can no longer grant CAB
+  approval") stopped `update_change(..., new_status="approved")` from being the thing
+  that grants approval, because `agent` there is free text: without the guard, any
+  caller (the MCP tool and CLI included) could approve its own change around
+  `submit_cab_vote()` and its no-self-approval fold guard.
+  `test_process_one_execute_blocked_once_approved` built its fixture with exactly that
+  shortcut, so it began asserting `approved` against a change the guard correctly left
+  at `proposed`. The guard is right and the test was wrong, so the fixture now reaches
+  approval the way a real CAB approval happens: a `human` APPROVE vote via
+  `submit_cab_vote()`, with a voter that differs from the drafter so the fold's
+  no-self-approval filter keeps it. No test helper force-sets the status, since that
+  would rebuild the bypass inside the suite and leave it unable to notice a regression.
+  A negative control was added alongside (`test_raw_status_event_cannot_grant_cab_approval`)
+  that asserts the raw-status route still folds to `proposed`, so the guard now has a
+  test that fails if it is ever removed. This was the only raw-status approval shortcut
+  in the tree; it kept every open PR inheriting a red on `main`, which is how a red gate
+  stops being a signal.
+
+- **A Syncthing conflict copy silently overrode the real fleet object.**
+  `store.list_specs` and `store.list_placements` globbed `*.json`, which also matches
+  `<stem>.sync-conflict-<timestamp>-<device>.json`, and both readers key on the `name`
+  field inside each payload rather than on the filename. The conflict copy therefore
+  replaced the real object in the result mapping, so the store served the version
+  Syncthing had discarded. Reproduced against a scratch fleet: with the object on disk
+  at `role=builder-standby cordoned=true`, `skfleet nodes` reported `role=control` and
+  showed no CORDONED flag, meaning a node an operator had explicitly cordoned read as
+  schedulable to the scheduler. Found by running the promotion runbook end to end
+  (card `4c32df6f`), where this is exactly the artifact a two-seat write produces: the
+  conflict file meant to be the alarm had quietly become the corruption. Conflict
+  copies are now skipped on read. They are not hidden, since the `SyncConflict`
+  condition still reports them, so they remain visible as a finding while no longer
+  being obeyed as data.
+
 - **Six tests depended on a security bug and broke when it was fixed.** capauth PR #38 made
   `issue_token` refuse to store an unsigned capability token instead of downgrading the
   signing failure to a warning, which means every "signed" token this fleet issued through
@@ -17,6 +427,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   so the property is guarded rather than merely no longer violated.
 
 ### Added
+- **Atlas can see when the watchdog stops narrating** (card `f0786ba6`, cross-repo follow-up
+  to WD-11). The skos operator adapter declared two conditions and now declares four.
+  `WatchdogDigestFresh` reads the published `digests/latest/digest.json` and fires when it is
+  older than 26h. This is the signal nobody raises on their own: a missing morning digest
+  reads to a human as "nothing happened", not as "the thing that tells me what happened is
+  broken". `GradingBacklog` fires only when the latest digest carries a `GradingGap` event
+  whose `meta.budget_exhausted` is true, meaning `GRADE_RUN_BUDGET_S` ran out mid-list.
+  That flag is the whole point of the condition. The same `GradingGap` kind is also emitted
+  when the grader was unreachable or a reply did not parse, which is grader availability and
+  not backlog, so the check stays narrow on purpose: widening it to any `GradingGap` would
+  make every skgateway blip look like a backlog and retire the real signal.
+  Two properties are held by tests rather than by intent. Observation is read-only: the
+  watchdog root is resolved by mirroring `skos.watchdog.cursor.watchdog_home()`'s precedence
+  instead of calling it, because that helper (and `publish.digests_dir` / `latest_dir`)
+  mkdirs, and a probe that creates the store it looks at manufactures the state it reports.
+  A test asserts nothing exists under the root after a full observe pass. And the two
+  watchdog probes fail to `Unknown`, never to healthy, so a missing or unreadable digest can
+  never report "fresh" and silence the exact case the condition exists to catch.
+  `GradingBacklog` is the first problem-when-true condition owned by an app adapter, so
+  `loop.PROBLEM_WHEN_TRUE` now unions each adapter's own declaration onto the fleet's set;
+  without that the brief would have read the backlog upside down and fired when grading was
+  healthy. skos' `skworld_manifest` mirrors this adapter's `CONDITIONS` and the drift guard
+  lives in this repo, so the manifest needs the same two entries in the same order.
 - **`.100` holds a node-class capauth identity, and the PDP ceiling is proven rather than
   asserted** (epic `3bbf39ea`, card `5ee6510f`). The key was generated on `.100` and its
   private half never left the box. The class assignment denies `token:issue`,
@@ -94,6 +527,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   two paths cannot drift apart again.
 
 ### Added
+- **`skfleet install`: profile-aware stack installer (the actuation half of the
+  node-roles-install-profiles epic `3bbf39ea`).** Reads the applied profile from the
+  synced fleet store, reports drift (`--check`), and closes `missing_required`
+  packages/units (`--apply`) by driving the per-repo installers as backends. Freeze +
+  per-node actuation-opt-in gated; only ever adds `missing_required`, never removes;
+  `--json` is the contract the AI/GUI install wizard wraps. `fleet/installer.py` +
+  `fleet/install_backends.py` + the `skfleet install` verb.
 - **Fleet install profiles: a node can now say what it is, and be checked against
   it** (epic `3bbf39ea`, waves 1 and 2). The fleet could already schedule work onto
   nodes; nothing said what a node of a given role was *supposed to have installed*.

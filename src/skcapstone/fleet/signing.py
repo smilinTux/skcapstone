@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from pathlib import Path
 from typing import Callable
+
+from ..key_io import read_armored_public_key
 
 MODES = frozenset({"off", "permissive", "enforce"})
 
@@ -50,6 +53,9 @@ def _default_suite_id() -> str:
 #: one. Carried inside the writer block, so it is covered by the signature.
 SUITE_ID = _default_suite_id()
 SIGNING_ENV = "SKFLEET_SIGNING"
+PASSPHRASE_FILE_ENV = "CAPAUTH_PASSPHRASE_FILE"
+SYSTEMD_CREDENTIAL_NAME = "capauth-passphrase"
+MAX_PASSPHRASE_BYTES = 4096
 
 
 def signing_mode() -> str:
@@ -169,11 +175,48 @@ def _keypair_matches(home: Path) -> bool:
     return priv_fpr == pub_fpr
 
 
+def _passphrase() -> str:
+    """Resolve a protected signer passphrase without requiring an env secret.
+
+    The legacy direct environment value remains supported for interactive and
+    test callers. Services should use ``CAPAUTH_PASSPHRASE_FILE`` or systemd's
+    ``CREDENTIALS_DIRECTORY/capauth-passphrase``. Credential files fail closed
+    unless they are regular, non-symlink, owned by this uid, owner-only, and
+    bounded in size.
+    """
+    direct = os.environ.get("CAPAUTH_PASSPHRASE")
+    if direct is not None:
+        return direct
+
+    configured = os.environ.get(PASSPHRASE_FILE_ENV)
+    credentials_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+    path = (
+        Path(configured).expanduser()
+        if configured
+        else Path(credentials_dir) / SYSTEMD_CREDENTIAL_NAME if credentials_dir else None
+    )
+    if path is None:
+        return ""
+
+    try:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            return ""
+        if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+            return ""
+        if metadata.st_size <= 0 or metadata.st_size > MAX_PASSPHRASE_BYTES:
+            return ""
+        return path.read_text(encoding="utf-8").rstrip("\r\n")
+    except (OSError, UnicodeError):
+        return ""
+
+
 def capauth_signer() -> Callable[[bytes], str] | None:
     """A signer over this seat's capauth identity key, or None.
 
-    Reads <capauth_home>/identity/private.asc; passphrase from the
-    CAPAUTH_PASSPHRASE env var (empty default). Any failure returns None:
+    Reads <capauth_home>/identity/private.asc; passphrase from a direct legacy
+    environment value or a protected credential file (empty default). Any
+    failure returns None:
     signing is best-effort at write time, and enforcement lives at the
     actuation boundary, not here.
     """
@@ -194,7 +237,7 @@ def capauth_signer() -> Callable[[bytes], str] | None:
         from capauth.crypto import get_backend
 
         armor = key_path.read_text(encoding="utf-8")
-        passphrase = os.environ.get("CAPAUTH_PASSPHRASE", "")
+        passphrase = _passphrase()
         backend = get_backend()
 
         def _sign(data: bytes) -> str:
@@ -226,11 +269,15 @@ def load_roster() -> list[str]:
     keys: list[str] = []
     own = home / "identity" / "public.asc"
     if own.exists():
-        keys.append(own.read_text(encoding="utf-8"))
+        own_armored = read_armored_public_key(own)
+        if own_armored:
+            keys.append(own_armored)
     trust_dir = home / "fleet-trust"
     if trust_dir.exists():
         for path in sorted(trust_dir.glob("*.asc")):
-            keys.append(path.read_text(encoding="utf-8"))
+            armored = read_armored_public_key(path)
+            if armored:
+                keys.append(armored)
     return keys
 
 

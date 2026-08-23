@@ -135,6 +135,68 @@ def set_role(paths: FleetPaths, name: str, role: str, *, writer: store.Writer) -
     )
 
 
+def set_labels(
+    paths: FleetPaths,
+    name: str,
+    *,
+    add: dict[str, str] | None = None,
+    remove: tuple[str, ...] = (),
+    writer: store.Writer,
+) -> dict:
+    """Merge labels on a node spec, leaving every other field alone.
+
+    This exists because there was no way to change one label without risking
+    the rest of the object. The only tool available was ``skfleet apply``,
+    which REPLACES the whole spec from the supplied document: during the
+    promotion drill (card ``4c32df6f``) a label-only apply silently dropped
+    ``taints``, ``cordoned`` and ``address``, thereby un-cordoning the node,
+    and exited 0. So the documented way to fix a label corrupted the spec it
+    was fixing.
+
+    Labels are load-bearing, not decoration. ``scheduler.feasible`` filters on
+    them and never reads ``spec.role``, so a node's labels are what decides
+    whether anything can be placed on it at all.
+
+    Merge semantics, mirroring set_role: read, overlay, rewrite through
+    store.write_spec preserving the rest of the spec. Adds win over existing
+    values of the same key; removes drop a key entirely and are silent when
+    the key was already absent, so the call is idempotent in both directions.
+
+    Raises:
+        LookupError: no node object of that name.
+        ValueError: a key is in both add and remove, or a key/value is not a
+            valid name.
+    """
+    add = dict(add or {})
+    overlap = sorted(set(add) & set(remove))
+    if overlap:
+        raise ValueError(
+            f"label key(s) in both --add and --remove: {overlap}; "
+            "one call cannot both set and unset a key"
+        )
+    for key, value in add.items():
+        if not valid_name(key):
+            raise ValueError(f"invalid label key: {key!r}")
+        if not valid_name(value):
+            raise ValueError(f"invalid label value: {value!r}")
+    for key in remove:
+        if not valid_name(key):
+            raise ValueError(f"invalid label key: {key!r}")
+
+    current = store.read_spec(paths, "node", name)
+    if current is None:
+        raise LookupError(f"no such node object: {name!r}")
+
+    labels = dict(current.get("labels", {}))
+    labels.update(add)
+    for key in remove:
+        labels.pop(key, None)
+
+    return store.write_spec(
+        paths, "node", name, dict(current.get("spec", {})), writer=writer, labels=labels
+    )
+
+
 def set_taint(
     paths: FleetPaths,
     name: str,

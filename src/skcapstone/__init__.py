@@ -72,7 +72,7 @@ __author__ = "smilinTux"
 # propagated to the shell picker + child processes via `skcapstone shell-init`
 # (which emits `export SK_DEFAULT_AGENT=<this>`). Override with the
 # SK_DEFAULT_AGENT environment variable.
-DEFAULT_AGENT = (os.environ.get("SK_DEFAULT_AGENT") or "lumina").strip() or "lumina"
+DEFAULT_AGENT = os.environ.get("SK_DEFAULT_AGENT", "").strip()
 
 
 def _default_home() -> str:
@@ -90,8 +90,8 @@ def _detect_active_agent(root: str | None = None) -> str | None:
 
     Resolution order:
     1. Explicit SKAGENT / SKCAPSTONE_AGENT environment variable
-    2. SK_DEFAULT_AGENT (defaults to "lumina") if that agent dir exists
-    3. First non-template directory under ~/.skcapstone/agents (alphabetical)
+    2. Explicit SK_DEFAULT_AGENT if that agent directory exists
+    3. The sole installed non-template agent (never guess when several exist)
 
     Returns:
         The active agent name if one can be resolved, else None.
@@ -112,7 +112,9 @@ def _detect_active_agent(root: str | None = None) -> str | None:
     )
     if not candidates:
         return None
-    return DEFAULT_AGENT if DEFAULT_AGENT in candidates else candidates[0]
+    if DEFAULT_AGENT in candidates:
+        return DEFAULT_AGENT
+    return candidates[0] if len(candidates) == 1 else None
 
 
 # Root of the skcapstone tree (shared infra lives here)

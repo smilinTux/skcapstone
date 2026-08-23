@@ -79,3 +79,11 @@ def test_unresolvable_target_does_not_rescue_an_escalation():
     # A target that resolves must never upgrade an escalation to auto.
     out = plan.plan_actions([_proposal("delete_object")], _EXPLAIN, target_known=lambda p: True)
     assert out[0]["disposition"] == "escalate"
+
+
+def test_unratified_app_condition_binding_escalates():
+    out = plan.plan_actions(
+        [_proposal("restart_service")], _EXPLAIN, action_allowed=lambda proposal: False
+    )
+    assert out[0]["disposition"] == "escalate"
+    assert out[0]["binding_denied"] is True

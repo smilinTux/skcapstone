@@ -43,12 +43,15 @@ def test_stale_reconcile_fires():
     assert by_type["ReconcileFresh"] == "False"  # health condition fires when False
 
 
-def test_default_probe_fails_safe(monkeypatch):
+def test_default_probe_failure_is_unknown(monkeypatch):
     # An unreachable skmemory must not raise or false-alarm.
     def _boom(*a, **k):
         raise OSError("skmemory down")
 
     monkeypatch.setattr("subprocess.run", _boom)
     st = skmemory_adapter._default_probe()
-    assert st["embed_serving"] is True  # fail safe
-    assert st["reconcile_fresh"] is True  # fail safe
+    assert st["_probe_error"] == "OSError"
+    assert all(
+        item["status"] == "Unknown"
+        for item in skmemory_adapter.skmemory_observe(lambda: st)["conditions"]
+    )

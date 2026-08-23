@@ -72,6 +72,20 @@ class TestScoring:
         candidate = engine.score(entry)
         assert candidate.signals["importance"] == 0.95
 
+    def test_promotion_rejects_blank_id_before_removing_source(
+        self, engine: PromotionEngine, home: Path
+    ) -> None:
+        """Cross-tier promotion fails closed without deleting invalid evidence."""
+        entry = MemoryEntry(memory_id="", content="legacy", importance=1.0)
+        source = home / "memory" / "short-term" / ".json"
+        source.write_text(entry.model_dump_json(indent=2), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="memory_id must be a non-empty string"):
+            engine._promote(entry, source)
+
+        assert source.exists()
+        assert not (home / "memory" / "mid-term" / ".json").exists()
+
     def test_low_importance_scores_low(self, engine: PromotionEngine, home: Path) -> None:
         """Low importance memories score lower."""
         entry = _write_memory(home, "imp-low", importance=0.1, age_hours=48)

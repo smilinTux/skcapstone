@@ -106,5 +106,5 @@ def test_itil_routes(home):
     assert "cab_queue" in client.get("/api/itil/changes").json()
     assert "results" in client.get("/api/itil/kedb?q=conflict").json()
     r = client.get("/cockpit")
-    assert r.status_code == 200 and "ITIL Cockpit" in r.text
+    assert r.status_code == 200 and "Operator Cockpit" in r.text
     assert client.get("/static/js/cockpit.js").status_code == 200

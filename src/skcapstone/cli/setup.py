@@ -148,16 +148,89 @@ def register_setup_commands(main: click.Group) -> None:
     @click.option(
         "--home",
         default=AGENT_HOME,
-        help="Agent home directory.",
+        help="Agent home directory (interactive) or shared root (non-interactive).",
         type=click.Path(),
     )
-    def init(home: str):
+    @click.option(
+        "--non-interactive",
+        is_flag=True,
+        help="Provision a lightweight fleet agent with no prompts (scriptable).",
+    )
+    @click.option(
+        "--name",
+        default=None,
+        help="Agent name (required with --non-interactive).",
+    )
+    @click.option(
+        "--role",
+        default="worker",
+        show_default=True,
+        help="Lightweight agent role: worker, reviewer, or a custom slug.",
+    )
+    @click.option(
+        "--mandate",
+        default=None,
+        help="Custom mandate text (default: role template).",
+    )
+    @click.option(
+        "--no-mandate",
+        is_flag=True,
+        help="Skip writing MANDATE.md.",
+    )
+    @click.option(
+        "--force",
+        is_flag=True,
+        help="Overwrite an existing lightweight profile.",
+    )
+    def init(
+        home: str,
+        non_interactive: bool,
+        name: str | None,
+        role: str,
+        mandate: str | None,
+        no_mandate: bool,
+        force: bool,
+    ):
         """Initialize a sovereign agent (interactive wizard).
 
         Alias for 'skcapstone onboard' - runs the full 13-step setup wizard.
         Creates ~/.skcapstone/ with identity, memory, trust, security, soul,
         and connects to the mesh. Zero to sovereign in under 5 minutes.
+
+        With --non-interactive, provisions a LIGHTWEIGHT fleet role agent
+        (worker/reviewer) instead: <home>/agents/<name>/ with identity.json,
+        profile.yaml, and an optional MANDATE.md - no prompts, no PGP, no
+        memory/trust pillars. See docs/LIGHTWEIGHT_AGENTS.md.
         """
+        if non_interactive:
+            from ..lightweight import provision_lightweight_agent, slugify_name
+
+            if not name:
+                raise click.ClickException("--name is required with --non-interactive")
+            try:
+                agent_home = Path(home).expanduser() / "agents" / slugify_name(name)
+                result = provision_lightweight_agent(
+                    name=name,
+                    role=role,
+                    home=agent_home,
+                    mandate=mandate,
+                    write_mandate=not no_mandate,
+                    force=force,
+                )
+            except (FileExistsError, ValueError) as exc:
+                raise click.ClickException(str(exc)) from exc
+            console.print(
+                f"[green]Provisioned lightweight agent[/] [cyan]{result.agent}[/] "
+                f"(role: {result.role})"
+            )
+            for f in result.files:
+                console.print(f"  [dim]{f}[/]")
+            console.print(
+                "[dim]Lightweight profiles have no PGP/capauth, memory, or trust "
+                "pillars - see docs/LIGHTWEIGHT_AGENTS.md for the delta.[/]"
+            )
+            return
+
         from ..onboard import run_onboard
 
         run_onboard(home)

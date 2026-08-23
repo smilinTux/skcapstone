@@ -18,6 +18,8 @@ from typing import Callable
 
 from ..fleet import operatorapp, store
 from . import (
+    adapter,
+    cmdb_adapter,
     skchat_adapter,
     skcode_adapter,
     skcomms_adapter,
@@ -31,6 +33,11 @@ from . import (
 #: home repos. The fleet itself is NOT here: it is the reference the apps plug
 #: into, not an Operatorapp.
 APP_REGISTRY: dict[str, dict] = {
+    "cmdb": {
+        "explain": cmdb_adapter.cmdb_explain,
+        "cli": "skcapstone cmdb operator",
+        "repos": ["skcapstone", "skcoord", "skvault"],
+    },
     "skchat": {
         "explain": skchat_adapter.skchat_explain,
         "cli": "skchat operator",
@@ -69,6 +76,42 @@ APP_REGISTRY: dict[str, dict] = {
 }
 
 
+def adapter_catalog(
+    *, registry: dict[str, dict] | None = None, discovered: list[dict] | None = None
+) -> dict[str, dict]:
+    """Return one collision-safe catalog for built-in and manifest adapters.
+
+    Built-ins and signed-manifest specs pass through the same normalized entry
+    shape. Built-ins retain precedence, and action contracts gain canonical
+    ``<app>.<action>`` identifiers without changing existing local action names.
+    """
+    source = registry if registry is not None else APP_REGISTRY
+    catalog: dict[str, dict] = {}
+    for name, meta in source.items():
+        explain = meta["explain"]()
+        catalog[name] = {
+            "name": name,
+            "source": "builtin",
+            "spec": derive_operatorapp_spec(
+                name, explain, cli=meta.get("cli"), repos=meta.get("repos")
+            ),
+            "actions": [
+                {**item, "id": adapter.action_contract_id(name, item["name"])}
+                for item in explain.get("actions", [])
+            ],
+        }
+    for spec in discovered or []:
+        name = spec.get("name")
+        if isinstance(name, str) and name and name not in catalog:
+            catalog[name] = {
+                "name": name,
+                "source": "signed-manifest",
+                "spec": dict(spec),
+                "actions": [],
+            }
+    return catalog
+
+
 def derive_operatorapp_spec(
     name: str,
     explain_payload: dict,
@@ -102,11 +145,32 @@ def _write_preserving_ratifications(paths, name: str, spec: dict, *, writer: sto
     A refresh must never blank a human's ratifiedStandardActions (the store's
     human-only field guard would also reject the seat writing them), so the prior
     ratified list is carried over onto the fresh spec before the write.
+
+    Writes only when the spec actually changed. This used to write
+    unconditionally, and `write_spec` has no no-op short-circuit of its own, so
+    every refresh bumped the generation and rewrote the file.
+
+    Measured on the live control node on 2026-08-17: `skoperator.timer` fires
+    every 15 minutes and refreshes all 7 operatorapp objects together, which had
+    carried them to generation 1674. Watching one across a tick caught the write
+    directly: generation 1674 -> 1675 with a byte-identical body (sha
+    3abb1b3523529136 both sides). That is ~672 no-op writes a day into
+    `~/.skcapstone`, a Syncthing folder shared to four machines, and it is the
+    same shape as the outbox floods.
+
+    The guard is deliberately here rather than inside `write_spec`. Fourteen
+    call sites rely on that primitive bumping the generation, and `set_role`,
+    `set_taint` and `set_labels` each have a test asserting a bump of exactly
+    one. Making the primitive conditional would change all of them to fix one
+    caller. `write_placement` already returns `(existing, False)` on unchanged
+    content, so the store's precedent is per-writer, not global.
     """
     existing = store.read_spec(paths, "operatorapp", name)
     prior = ((existing or {}).get("spec") or {}).get("ratifiedStandardActions", [])
     spec = dict(spec)
     spec["ratifiedStandardActions"] = list(prior)
+    if existing is not None and (existing.get("spec") or {}) == spec:
+        return
     store.write_spec(paths, "operatorapp", name, spec, writer=writer)
 
 
@@ -176,6 +240,7 @@ def ratify(paths, app: str, action: str, *, writer: store.Writer) -> dict:
 
 __all__ = [
     "APP_REGISTRY",
+    "adapter_catalog",
     "derive_operatorapp_spec",
     "register_all",
     "ratify",

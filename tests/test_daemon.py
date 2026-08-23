@@ -425,6 +425,56 @@ class TestHeartbeatBeaconWiring:
         finally:
             dreaming_job.set_consciousness_loop(None)
 
+    def test_load_components_warms_configured_ollama_model(self, daemon_home):
+        """Warmup uses the validated consciousness config, not a hard-coded model."""
+        import sys
+
+        config = DaemonConfig(home=daemon_home, port=0, consciousness_enabled=True)
+        svc = DaemonService(config)
+
+        mock_runtime = MagicMock()
+        mock_runtime.manifest.name = "test-agent"
+        mock_runtime_mod = MagicMock()
+        mock_runtime_mod.get_runtime.return_value = mock_runtime
+
+        consciousness_config = MagicMock(enabled=True, ollama_model="qwen3.5:9b")
+        mock_cfg_mod = MagicMock()
+        mock_cfg_mod.load_consciousness_config.return_value = consciousness_config
+        mock_loop_mod = MagicMock()
+        mock_loop_mod.ConsciousnessLoop.return_value = MagicMock()
+
+        callback = MagicMock()
+        mock_llm_mod = MagicMock()
+        mock_llm_mod.ollama_callback.return_value = callback
+        mock_thread = MagicMock()
+
+        patched = {
+            "skcomms": MagicMock(),
+            "skcomms.core": MagicMock(),
+            "skcapstone.runtime": mock_runtime_mod,
+            "skcapstone.heartbeat": MagicMock(),
+            "skcapstone.consciousness_config": mock_cfg_mod,
+            "skcapstone.consciousness_loop": mock_loop_mod,
+            "skcapstone.self_healing": MagicMock(),
+            "skseed": MagicMock(),
+            "skseed.llm": mock_llm_mod,
+        }
+        with (
+            patch.dict(sys.modules, patched),
+            patch("skcapstone.daemon.threading.Thread", return_value=mock_thread) as thread_cls,
+        ):
+            svc._load_components()
+            thread_cls.call_args.kwargs["target"]()
+
+        thread_cls.assert_called_once_with(
+            target=thread_cls.call_args.kwargs["target"],
+            name="daemon-ollama-warmup",
+            daemon=True,
+        )
+        mock_thread.start.assert_called_once_with()
+        mock_llm_mod.ollama_callback.assert_called_once_with(model="qwen3.5:9b")
+        callback.assert_called_once_with("warmup")
+
 
 class TestHouseholdAPI:
     """Tests for the household and conversation HTTP endpoints."""

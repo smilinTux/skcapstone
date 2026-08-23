@@ -117,8 +117,8 @@ def test_count_outbox_missing_dir_is_zero(tmp_path):
     assert skchat_adapter._count_outbox(tmp_path / "nope") == 0
 
 
-def test_default_probe_fails_safe(monkeypatch, tmp_path):
-    # An unreachable skchat must not raise and must report healthy.
+def test_default_probe_failure_is_unknown(monkeypatch, tmp_path):
+    # An unreachable skchat must not raise or fabricate healthy evidence.
     def _boom_urlopen(*a, **k):
         raise OSError("skchat down")
 
@@ -130,11 +130,11 @@ def test_default_probe_fails_safe(monkeypatch, tmp_path):
     # PersistentOutbox, not the legacy ~/.skcomms/outbox spool).
     monkeypatch.setenv("SKCOMMS_OUTBOX_DIR", str(tmp_path / "empty-outbox"))
     st = skchat_adapter._default_probe()
-    assert st["daemon_ready"] is True
-    assert st["bridge_alive"] is True
-    assert st["auth_enforced"] is True
+    assert st["daemon_ready"] is None
+    assert st["bridge_alive"] is None
+    assert st["auth_enforced"] is None
     assert st["outbox_depth"] == 0
-    assert st["calling_ready"] is True
+    assert st["calling_ready"] is None
 
 
 def test_default_probe_depth_reflects_unified_outbox(monkeypatch, tmp_path):

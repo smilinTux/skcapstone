@@ -22,6 +22,20 @@
 *.key
 *.pem
 **/private.*
+// Revocation certificates, passphrases, and secret keyrings are the same
+// class as the keys above: a folder that could sync them is a leak path even
+// when none exist yet (private-material sync policy, card 85fc7df1).
+*.rev
+**/revocation*
+**/passphrase*
+*.pass
+.gnupg/secring.gpg
+.gnupg/private-keys-v1.d
+**/*.kbx
+// security/tokens is the PDP token store: capability tokens are per-host
+// operational credentials and must not replicate, same as the capauth home
+// token store below (card 85fc7df1).
+security/tokens
 // Telegram session: machine-local, syncing it causes Telegram to boot sessions
 **/telegram.session
 // SKFed CoT PKI: private keys + keystores must never sync (secrets)

@@ -188,8 +188,9 @@ def find_skill_md(pkg_name: str, workspace: Optional[Path] = None) -> Optional[P
 
     Search order:
       1. Workspace skills directory (~/clawd/skills/<name>/SKILL.md)
-      2. Pillar repos directory (~/clawd/pillar-repos/<dir>/SKILL.md)
-      3. Installed package data (importlib.resources)
+      2. Current suite checkout (~/clawd/skcapstone-repos/<name>/SKILL.md)
+      3. Pillar repos directory (~/clawd/pillar-repos/<dir>/SKILL.md)
+      4. Installed package data (importlib.resources)
 
     Args:
         pkg_name: Package name.
@@ -206,20 +207,25 @@ def find_skill_md(pkg_name: str, workspace: Optional[Path] = None) -> Optional[P
     if skill_path.exists():
         return skill_path.resolve()
 
-    # 2. Check pillar repos
+    # 2. Check the current suite checkout layout.
+    suite_path = workspace / "skcapstone-repos" / pkg_name / "SKILL.md"
+    if suite_path.exists():
+        return suite_path
+
+    # 3. Check pillar repos
     pillar_dir = _PILLAR_DIR_MAP.get(pkg_name)
     if pillar_dir:
         pillar_path = workspace / "pillar-repos" / pillar_dir / "SKILL.md"
         if pillar_path.exists():
             return pillar_path
 
-    # 2b. Special case: skcapstone lives in workspace root
+    # 3b. Legacy special case: skcapstone in workspace/skcapstone.
     if pkg_name == "skcapstone":
         capstone_path = workspace / "skcapstone" / "SKILL.md"
         if capstone_path.exists():
             return capstone_path
 
-    # 3. Check installed package data
+    # 4. Check installed package data
     try:
         pkg_module = pkg_name.replace("-", "_")
         ref = importlib.resources.files(pkg_module) / "SKILL.md"
@@ -311,9 +317,44 @@ def register_all(
         "packages": {},
     }
 
+    # Wire the Codex AGENTS.md bootstrap (agent context loader + profile)
+    # whenever Codex is a registered environment, so a fresh install gets the
+    # SK agent context setup out of the box.
+    results["codex_setup"] = {"action": "skip", "reason": "codex not detected"}
+    if "codex" in environments:
+        from .codex_setup import check_codex_setup, ensure_codex_setup
+
+        if dry_run:
+            results["codex_setup"] = {"action": "dry-run"}
+        else:
+            _, detail = check_codex_setup()
+            actions = ensure_codex_setup()
+            status = "created" if "missing" in detail else "exists"
+            results["codex_setup"] = {
+                "action": "updated" if actions else status,
+                "detail": detail,
+                "actions": actions,
+            }
+
+    results["pi_setup"] = {"action": "skip", "reason": "pi not detected"}
+    if "pi" in environments:
+        from .codex_setup import ensure_pi_setup
+
+        if dry_run:
+            results["pi_setup"] = {"action": "dry-run"}
+        else:
+            actions = ensure_pi_setup()
+            results["pi_setup"] = {
+                "action": "updated" if actions else "exists",
+                "actions": actions,
+            }
+
     for pkg in packages:
         name = pkg["name"]
         skill_md = find_skill_md(name, workspace)
+        package_environments = environments
+        if "pi" in environments and name not in {"skcapstone", "skmemory"}:
+            package_environments = [env for env in environments if env != "pi"]
 
         if skill_md is None and not dry_run:
             results["packages"][name] = {
@@ -341,13 +382,13 @@ def register_all(
             mcp_env=mcp_env,
             openclaw_plugin_path=plugin_path,
             workspace=workspace,
-            environments=environments,
+            environments=package_environments,
             dry_run=dry_run,
         )
 
     results["plugins"] = {}
     for srv in _discover_plugin_servers(workspace):
-        key = f'{srv["plugin"]}:{srv["name"]}'
+        key = f"{srv['plugin']}:{srv['name']}"
         if srv["transport"] == "stdio":
             if dry_run:
                 results["plugins"][key] = {"action": "would-register", "transport": "stdio"}

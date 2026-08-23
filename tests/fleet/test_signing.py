@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+
 from skcapstone.fleet import signing, store
 
 
@@ -116,3 +118,42 @@ def test_load_roster_reads_local_key_files(monkeypatch, tmp_path) -> None:
     (home / "fleet-trust" / "chef.asc").write_text("KEY-CHEF")
     monkeypatch.setenv("CAPAUTH_HOME", str(home))
     assert sorted(signing.load_roster()) == ["KEY-CHEF", "KEY-SELF"]
+
+
+def test_load_roster_handles_binary_and_unparseable_keys(monkeypatch, tmp_path) -> None:
+    """Binary OpenPGP .asc files join the roster; unparseable ones are skipped."""
+    pgpy = pytest.importorskip("pgpy")
+    from pgpy.constants import (
+        CompressionAlgorithm,
+        HashAlgorithm,
+        KeyFlags,
+        PubKeyAlgorithm,
+        SymmetricKeyAlgorithm,
+    )
+
+    key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 2048)
+    uid = pgpy.PGPUID.new("RosterTest", email="roster@skcapstone.local")
+    key.add_uid(
+        uid,
+        usage={KeyFlags.Sign},
+        hashes=[HashAlgorithm.SHA256],
+        ciphers=[SymmetricKeyAlgorithm.AES256],
+        compression=[CompressionAlgorithm.Uncompressed],
+    )
+
+    home = tmp_path / "capauth"
+    (home / "identity").mkdir(parents=True)
+    (home / "identity" / "public.asc").write_bytes(bytes(key.pubkey))
+    (home / "fleet-trust").mkdir()
+    (home / "fleet-trust" / "garbage.asc").write_bytes(b"\xff\x00not-a-key")
+    (home / "fleet-trust" / "chef.asc").write_text("KEY-CHEF")
+    monkeypatch.setenv("CAPAUTH_HOME", str(home))
+
+    roster = signing.load_roster()
+
+    assert "KEY-CHEF" in roster
+    armored = [entry for entry in roster if entry.startswith("-----BEGIN PGP")]
+    assert len(armored) == 1
+    parsed, _ = pgpy.PGPKey.from_blob(armored[0])
+    assert parsed.fingerprint == key.fingerprint
+    assert not any("not-a-key" in entry for entry in roster)

@@ -747,9 +747,17 @@ def _maybe_wire_execute_mux() -> None:
     Idempotent: if ``_execute_dispatcher`` is already a mux (recognized by
     the marker ``build_execute_mux`` stamps on its return value), this is a
     no-op, so calling it every job tick never double-wraps.
+
+    The marker is compared with ``is True``, not for truthiness. ``build_execute_mux``
+    sets it to exactly ``True`` (see execute_mux.py), while a truthiness test silently
+    treats ANY object with a permissive ``__getattr__`` as already-muxed and skips the
+    wrap. ``unittest.mock.Mock`` is exactly that: it auto-creates ``_is_execute_mux``
+    as a truthy child mock, so a truthiness check made this function a no-op against
+    every mocked dispatcher, and the code leg was never wired. Identity is what the
+    marker actually means.
     """
     global _execute_dispatcher
-    if getattr(_execute_dispatcher, "_is_execute_mux", False):
+    if getattr(_execute_dispatcher, "_is_execute_mux", False) is True:
         return
     from . import SHARED_ROOT
     from .comms_executor import CommsExecutor

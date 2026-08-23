@@ -2,17 +2,70 @@
 
 from __future__ import annotations
 
+import json
+import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import click
 
+from ..key_io import read_armored_public_key
 from ._common import SHARED_ROOT, console
 
 # Default grace window for an ASAP schedule (CM P1.2 / design doc section
 # 4.3), mirrored from mcp_tools/itil_tools.py so the CLI and MCP surfaces
 # compute the identical window for the identical input.
 _SCHEDULE_GRACE_HOURS = 4
+
+
+def _human_profile():
+    """Load the local CapAuth human profile and its key paths."""
+    from capauth import resolve_capauth_home
+    from capauth.profile import load_profile
+
+    home = resolve_capauth_home()
+    profile = load_profile(base_dir=home)
+    if str(profile.entity.entity_type).lower() not in {"human", "entitytype.human"}:
+        raise click.ClickException("the active CapAuth profile is not human")
+    return home, profile
+
+
+def _verified_cab_authorization(
+    path: Path, change_id: str, decision: str, target: str, scope: str
+):
+    """Verify and single-use consume one Chef/owner CAB authorization."""
+    from capauth.crypto import get_backend
+
+    from ..operator_authorization import (
+        AuthorizationError,
+        consume_authorization,
+        load_authorization,
+        verify_authorization,
+    )
+
+    home, profile = _human_profile()
+    pub_key_path = home / "identity" / "public.asc"
+    public_armor = read_armored_public_key(pub_key_path)
+    if not public_armor:
+        raise click.ClickException(f"cannot read a usable public key from {pub_key_path}")
+    envelope = load_authorization(path)
+    if envelope.issuer_fingerprint != profile.key_info.fingerprint:
+        raise click.ClickException("authorization signer does not match the human profile")
+    backend = get_backend(profile.crypto_backend)
+    try:
+        verify_authorization(
+            envelope,
+            public_key_armor=public_armor,
+            verifier=backend.verify,
+            expected_action=f"itil.cab.vote.{decision}",
+            expected_target=target,
+            expected_change_id=change_id,
+            expected_scope=scope,
+        )
+        consume_authorization(envelope, home / "operator" / "used-authorizations")
+    except AuthorizationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return envelope
 
 
 def _resolve_cab_vote_subject() -> str | None:
@@ -610,7 +663,10 @@ def register_itil_commands(main: click.Group) -> None:
         help="Vote decision",
     )
     @click.option("--conditions", default="", help="Approval conditions")
-    def cab_vote(change_id, agent, decision, conditions):
+    @click.option("--authorization", type=click.Path(path_type=Path), help="Signed human grant")
+    @click.option("--target", default="", help="Exact governed mutation target")
+    @click.option("--scope", default="", help="Exact governed mutation scope fingerprint")
+    def cab_vote(change_id, agent, decision, conditions, authorization, target, scope):
         """Submit a CAB vote for a change.
 
         CR change-mgmt P1.4: the recorded voter is the caller's
@@ -622,17 +678,82 @@ def register_itil_commands(main: click.Group) -> None:
 
         mgr = ITILManager(Path(SHARED_ROOT).expanduser())
         subject = _resolve_cab_vote_subject()
+        role = fingerprint = authorization_id = ""
+        if authorization:
+            if not target or not scope:
+                raise click.ClickException(
+                    "--target and --scope are required with --authorization"
+                )
+            envelope = _verified_cab_authorization(
+                authorization, change_id, decision, target, scope
+            )
+            subject = envelope.issuer
+            role = envelope.issuer_role
+            fingerprint = envelope.issuer_fingerprint
+            authorization_id = envelope.authorization_id
+        elif subject is None and decision in {"approved", "rejected"}:
+            raise click.ClickException(
+                "a signed --authorization is required when no authenticated subject is available"
+            )
         vote = mgr.submit_cab_vote(
             change_id=change_id,
             agent=agent,
             decision=decision,
             conditions=conditions,
             subject=subject,
+            subject_role=role,
+            subject_fingerprint=fingerprint,
+            authorization_id=authorization_id,
         )
         console.print(
             f"\n  [green]Voted:[/green] {vote.agent} -> {vote.decision.value} "
             f"on {vote.change_id}\n"
         )
+
+    @cab.command("authorize")
+    @click.argument("change_id")
+    @click.option("--decision", type=click.Choice(["approved", "rejected"]), required=True)
+    @click.option("--target", required=True)
+    @click.option("--scope", required=True)
+    @click.option("--role", type=click.Choice(["owner", "approver"]), default="owner")
+    @click.option("--ttl-minutes", type=click.IntRange(1, 60), default=10)
+    @click.option("--output", type=click.Path(path_type=Path), required=True)
+    def cab_authorize(change_id, decision, target, scope, role, ttl_minutes, output):
+        """Create a short-lived, PGP-signed human CAB authorization."""
+        from capauth.crypto import get_backend
+
+        from ..operator_authorization import AuthorizationEnvelope, authorization_id
+
+        home, profile = _human_profile()
+        private_path = home / "identity" / "private.asc"
+        if not private_path.is_file():
+            raise click.ClickException(
+                "human private key is not installed; restore it through the "
+                "CapAuth custody ceremony"
+            )
+        now = datetime.now(timezone.utc)
+        envelope = AuthorizationEnvelope(
+            authorization_id="pending",
+            issuer=(profile.entity.handle or profile.entity.name).split("@")[0].lower(),
+            issuer_role=role,
+            issuer_fingerprint=profile.key_info.fingerprint,
+            action=f"itil.cab.vote.{decision}",
+            target=target,
+            change_id=change_id,
+            scope=scope,
+            issued_at=now.isoformat(),
+            expires_at=(now + timedelta(minutes=ttl_minutes)).isoformat(),
+            nonce=secrets.token_urlsafe(24),
+        )
+        envelope.authorization_id = authorization_id(envelope)
+        passphrase = click.prompt("CapAuth key passphrase", hide_input=True, default="")
+        envelope.signature = get_backend(profile.crypto_backend).sign(
+            envelope.signing_bytes(), private_path.read_text(encoding="utf-8"), passphrase
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(envelope.model_dump(), indent=2) + "\n", encoding="utf-8")
+        output.chmod(0o600)
+        console.print(f"[green]Authorization written:[/green] {output}")
 
     # ── itil kedb ─────────────────────────────────────────────────────
 

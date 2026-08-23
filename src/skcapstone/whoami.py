@@ -25,6 +25,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from .key_io import read_armored_public_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,10 +179,7 @@ def _load_capauth(card: IdentityCard) -> None:
 
     pub_key_path = capauth_dir / "public.asc"
     if pub_key_path.exists():
-        try:
-            card.public_key = pub_key_path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            logger.warning("Failed to read public key from %s: %s", pub_key_path, exc)
+        card.public_key = read_armored_public_key(pub_key_path)
 
 
 def _load_runtime(home: Path, card: IdentityCard) -> None:

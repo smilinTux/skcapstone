@@ -123,6 +123,31 @@ class DrillStep:
         return {"action": self.action, "detail": self.detail, "revert": self.revert}
 
 
+def _real_home() -> Path:
+    """The invoking user's home from the password database, NOT ``$HOME``.
+
+    ``os.path.expanduser`` prefers the ``HOME`` environment variable, so every
+    guard built on it moves when ``HOME`` moves. Drilled (card ``4c32df6f``,
+    gap G0): running the drill under a rewritten ``HOME`` made the guard
+    compute a different forbidden prefix, and it ACCEPTED the real production
+    tree as a drill root. No write was performed, but the refusal that is the
+    entire point of the guard did not fire.
+
+    A guard whose definition of "production" is supplied by the caller is not
+    a guard. The password database is not settable by the process it is
+    protecting against, which is the property that matters here.
+    """
+    try:
+        import pwd
+
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (KeyError, ImportError, AttributeError):
+        # Non-POSIX, or a uid with no passwd entry (some containers). Falling
+        # back to $HOME is weaker, and is still better than crashing the
+        # guard: a guard that raises is a guard that gets removed.
+        return Path(os.path.expanduser("~"))
+
+
 def sovereign_home() -> Path:
     """The resolved live sovereign tree, i.e. the one place drills may not go.
 
@@ -130,8 +155,15 @@ def sovereign_home() -> Path:
     is compared against on its real path. Otherwise a candidate root that
     resolves through the symlink would compare unequal to the forbidden
     prefix and pass.
+
+    The leading ``~`` is expanded against :func:`_real_home` rather than
+    ``$HOME`` so the forbidden prefix cannot be relocated by the environment.
     """
-    return Path(SOVEREIGN_HOME).expanduser().resolve()
+    raw = str(SOVEREIGN_HOME)
+    if raw == "~" or raw.startswith("~/"):
+        raw = str(_real_home()) + raw[1:]
+        return Path(raw).resolve()
+    return Path(raw).expanduser().resolve()
 
 
 def resolve_drill_root(root: Path | str | None) -> Path:

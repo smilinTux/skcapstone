@@ -69,7 +69,9 @@ async def _handle_comm_notify(args: dict) -> list[TextContent]:
         report = comm.send(recipient, message)
         return _json_response(
             {
-                "sent": report.success,
+                "sent": report.delivered,
+                "confirmed": report.confirmed,
+                "transport": report.successful_transport,
                 "recipient": recipient,
                 "urgency": args.get("urgency", "normal"),
                 "attempts": [

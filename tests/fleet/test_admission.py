@@ -66,10 +66,10 @@ def test_presets_cover_the_four_nodes() -> None:
     assert set(admission.PRESETS) == {
         "node-noroc2027",
         "node-41",
-        "node-100",
+        "node-ollama",
         "node-local",
     }
-    assert admission.PRESETS["node-100"]["taints"][0]["effect"] == "NoSchedule"
+    assert admission.PRESETS["node-ollama"]["taints"][0]["effect"] == "NoSchedule"
     assert admission.PRESETS["node-local"]["taints"][0]["effect"] == "PreferNoSchedule"
 
 

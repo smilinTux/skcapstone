@@ -31,7 +31,8 @@ card R2.14). Every probe fails SAFE (reports healthy) when hostd is unreachable.
 from __future__ import annotations
 
 import os
-from typing import Callable
+from typing import Any, Callable
+from urllib.parse import urlencode
 
 from ..fleet import store
 from . import actuator
@@ -42,6 +43,11 @@ CONDITIONS = ["HostdReady", "SessionsHealthy", "RegistryConsistent", "AuthEnforc
 _SESSION_STALE_S = 900
 _HOSTD_UNIT = "skcode-hostd.service"
 _HOSTD_HEALTH_URL = "http://localhost:9394/api/v1/hosts/self"
+_HOSTD_URL = "http://localhost:9394"
+_TARGET_KINDS = frozenset({"session", "run", "agent", "job"})
+_CONTROL_ACTIONS = frozenset(
+    {"message", "needs_input_response", "cancel", "pause", "resume", "retry"}
+)
 
 _ACTIONS = [
     {
@@ -128,13 +134,165 @@ def _probe_hostd() -> dict:
             "registry_consistent": _registry_consistent(registry_ids, live_ids),
             "auth_enforced": True if auth is None else bool(auth),
         }
-    except Exception:
-        return {
-            "hostd_ready": True,
-            "sessions_healthy": True,
-            "registry_consistent": True,
-            "auth_enforced": True,
-        }
+    except Exception as exc:
+        return {"_probe_error": type(exc).__name__}
+
+
+def _base_url() -> str:
+    return os.environ.get("SKCODE_HOSTD_URL", _HOSTD_URL).rstrip("/")
+
+
+def _request_json(
+    request,
+    *,
+    opener: Callable[..., object] | None = None,
+    timeout: float = 8,
+) -> dict[str, Any]:
+    import json
+    import urllib.request
+
+    with (opener or urllib.request.urlopen)(request, timeout=timeout) as response:
+        value = json.loads(response.read())
+    if not isinstance(value, dict):
+        raise ValueError("skcode-hostd returned a non-object response")
+    return value
+
+
+def _bearer(token: str) -> dict[str, str]:
+    if not isinstance(token, str) or not token.strip():
+        raise ValueError("a skcode audience token is required")
+    return {"Authorization": f"Bearer {token.strip()}", "Accept": "application/json"}
+
+
+def skcode_activity(
+    *,
+    token: str,
+    after: int = 0,
+    limit: int = 200,
+    filters: dict[str, str] | None = None,
+    opener: Callable[..., object] | None = None,
+) -> dict[str, Any]:
+    """Replay Atlas activity from a durable cursor; this method never actuates."""
+
+    import urllib.request
+
+    if after < 0 or not 1 <= limit <= 500:
+        raise ValueError("invalid activity cursor or limit")
+    allowed = {
+        "session_id",
+        "run_id",
+        "agent_id",
+        "job_id",
+        "card_id",
+        "contract_id",
+        "lease_id",
+        "role",
+        "kind",
+    }
+    supplied = filters or {}
+    if set(supplied) - allowed:
+        raise ValueError("unknown activity filter")
+    query = urlencode({"after": after, "limit": limit, **supplied})
+    request = urllib.request.Request(
+        f"{_base_url()}/api/v1/activity?{query}",
+        headers=_bearer(token),
+        method="GET",
+    )
+    return _request_json(request, opener=opener)
+
+
+def skcode_control(
+    *,
+    token: str,
+    idempotency_key: str,
+    target_kind: str,
+    target_id: str,
+    action: str,
+    payload: dict[str, Any] | None = None,
+    expected_state: str = "",
+    ttl_s: int = 300,
+    opener: Callable[..., object] | None = None,
+) -> dict[str, Any]:
+    """Submit one explicit Atlas command; callers must inspect its receipt."""
+
+    import json
+    import urllib.request
+
+    if target_kind not in _TARGET_KINDS or action not in _CONTROL_ACTIONS:
+        raise ValueError("unknown skcode control target or action")
+    if not idempotency_key or not target_id:
+        raise ValueError("control idempotency_key and target_id are required")
+    body = json.dumps(
+        {
+            "idempotency_key": idempotency_key,
+            "target_kind": target_kind,
+            "target_id": target_id,
+            "action": action,
+            "expected_state": expected_state,
+            "payload": payload or {},
+            "ttl_s": ttl_s,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    headers = _bearer(token)
+    headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        f"{_base_url()}/api/v1/control", headers=headers, data=body, method="POST"
+    )
+    return _request_json(request, opener=opener)
+
+
+def skcode_control_receipt(
+    command_id: str,
+    *,
+    token: str,
+    opener: Callable[..., object] | None = None,
+) -> dict[str, Any]:
+    """Read the latest receipt; queued is intentionally not treated as applied."""
+
+    import urllib.parse
+    import urllib.request
+
+    if not command_id:
+        raise ValueError("command_id is required")
+    encoded = urllib.parse.quote(command_id, safe="")
+    request = urllib.request.Request(
+        f"{_base_url()}/api/v1/control/{encoded}",
+        headers=_bearer(token),
+        method="GET",
+    )
+    return _request_json(request, opener=opener)
+
+
+def skcode_live_contract() -> dict[str, Any]:
+    """Return the transport contract used by Atlas/UI websocket clients."""
+
+    base = _base_url()
+    ws = ("wss:" if base.startswith("https:") else "ws:") + base.split(":", 1)[1]
+    return {
+        "activity_replay": f"{base}/api/v1/activity",
+        "activity_stream": f"{ws}/api/v1/activity/stream",
+        "control_submit": f"{base}/api/v1/control",
+        "control_receipt": f"{base}/api/v1/control/{{command_id}}",
+        "monitor_scope": "skcode.stream",
+        "message_scope": "skcode.inject",
+        "action_scope": "skcode.dispatch",
+        "lineage_fields": (
+            "card_id",
+            "card_hash",
+            "trajectory_id",
+            "team_id",
+            "parent_agent_id",
+            "contract_id",
+            "contract_hash",
+            "plan_hash",
+            "lease_id",
+            "attempt_id",
+            "base_commit",
+            "evidence_id",
+        ),
+    }
 
 
 # --- contract verbs ----------------------------------------------------------
@@ -143,7 +301,7 @@ def _probe_hostd() -> dict:
 def skcode_explain() -> dict:
     """skcode-hostd's self-description in the adapter-contract shape."""
     return {
-        "kinds": ["hostd", "session", "registry", "dispatch"],
+        "kinds": ["hostd", "session", "registry", "dispatch", "activity", "control"],
         "conditions": list(CONDITIONS),
         "actions": [dict(a) for a in _ACTIONS],
     }
@@ -152,26 +310,27 @@ def skcode_explain() -> dict:
 def skcode_observe(probe: Callable[[], dict] | None = None) -> dict:
     """Read-only skcode-hostd health snapshot in the adapter-contract shape."""
     st = (probe or _probe_hostd)()
+    unknown = bool(st.get("_probe_error"))
     return {
         "conditions": [
             {
                 "type": "HostdReady",
-                "status": _b(bool(st.get("hostd_ready", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("hostd_ready", True))),
                 "object": "skcode-hostd",
             },
             {
                 "type": "SessionsHealthy",
-                "status": _b(bool(st.get("sessions_healthy", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("sessions_healthy", True))),
                 "object": "sessions",
             },
             {
                 "type": "RegistryConsistent",
-                "status": _b(bool(st.get("registry_consistent", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("registry_consistent", True))),
                 "object": "registry",
             },
             {
                 "type": "AuthEnforced",
-                "status": _b(bool(st.get("auth_enforced", True))),
+                "status": "Unknown" if unknown else _b(bool(st.get("auth_enforced", True))),
                 "object": "verifier",
             },
         ]
@@ -228,4 +387,8 @@ __all__ = [
     "skcode_act",
     "observe",
     "CONDITIONS",
+    "skcode_activity",
+    "skcode_control",
+    "skcode_control_receipt",
+    "skcode_live_contract",
 ]

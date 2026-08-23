@@ -29,7 +29,7 @@ def admitted(paths, operator):
     store.write_spec(
         paths,
         "node",
-        "node-100",
+        "node-ollama",
         {
             "taints": [{"key": "dedicated", "value": "model-serving", "effect": "NoSchedule"}],
             "cordoned": True,
@@ -47,11 +47,11 @@ def admitted(paths, operator):
 
 
 def test_set_role_preserves_every_other_field(admitted, operator) -> None:
-    before = store.read_spec(admitted, "node", "node-100")
+    before = store.read_spec(admitted, "node", "node-ollama")
 
-    node_controller.set_role(admitted, "node-100", "worker-gpu", writer=operator)
+    node_controller.set_role(admitted, "node-ollama", "worker-gpu", writer=operator)
 
-    after = store.read_spec(admitted, "node", "node-100")
+    after = store.read_spec(admitted, "node", "node-ollama")
     assert after["spec"]["role"] == "worker-gpu"
     for field in ("taints", "cordoned", "address", "identity", "actuate"):
         assert after["spec"][field] == before["spec"][field], f"set_role clobbered {field}"
@@ -59,16 +59,16 @@ def test_set_role_preserves_every_other_field(admitted, operator) -> None:
 
 
 def test_set_role_bumps_generation_by_exactly_one(admitted, operator) -> None:
-    before = store.read_spec(admitted, "node", "node-100")["generation"]
-    node_controller.set_role(admitted, "node-100", "worker-gpu", writer=operator)
-    after = store.read_spec(admitted, "node", "node-100")["generation"]
+    before = store.read_spec(admitted, "node", "node-ollama")["generation"]
+    node_controller.set_role(admitted, "node-ollama", "worker-gpu", writer=operator)
+    after = store.read_spec(admitted, "node", "node-ollama")["generation"]
     assert after == before + 1
 
 
 def test_set_role_is_reassignable(admitted, operator) -> None:
-    node_controller.set_role(admitted, "node-100", "worker-gpu", writer=operator)
-    node_controller.set_role(admitted, "node-100", "observer", writer=operator)
-    assert store.read_spec(admitted, "node", "node-100")["spec"]["role"] == "observer"
+    node_controller.set_role(admitted, "node-ollama", "worker-gpu", writer=operator)
+    node_controller.set_role(admitted, "node-ollama", "observer", writer=operator)
+    assert store.read_spec(admitted, "node", "node-ollama")["spec"]["role"] == "observer"
 
 
 def test_set_role_on_an_unknown_node_raises(paths, operator) -> None:
@@ -79,22 +79,22 @@ def test_set_role_on_an_unknown_node_raises(paths, operator) -> None:
 @pytest.mark.parametrize("bad", ["../escape", "Worker", "/abs", "_hidden", ""])
 def test_set_role_rejects_unsafe_names(admitted, operator, bad: str) -> None:
     with pytest.raises(ValueError, match="invalid role name"):
-        node_controller.set_role(admitted, "node-100", bad, writer=operator)
+        node_controller.set_role(admitted, "node-ollama", bad, writer=operator)
 
 
 def test_set_role_does_not_require_the_profile_to_exist(admitted, operator) -> None:
     """Deliberate: requiring the manifest first would deadlock this card
     against the one that authors the manifests."""
-    node_controller.set_role(admitted, "node-100", "not-authored-yet", writer=operator)
-    assert store.read_spec(admitted, "node", "node-100")["spec"]["role"] == "not-authored-yet"
+    node_controller.set_role(admitted, "node-ollama", "not-authored-yet", writer=operator)
+    assert store.read_spec(admitted, "node", "node-ollama")["spec"]["role"] == "not-authored-yet"
 
 
 # ------------------------------------------------------------- NodeView ---
 
 
 def test_node_view_round_trips_the_role(admitted, operator) -> None:
-    node_controller.set_role(admitted, "node-100", "worker-gpu", writer=operator)
-    view = {v.name: v for v in node_controller.node_views(admitted)}["node-100"]
+    node_controller.set_role(admitted, "node-ollama", "worker-gpu", writer=operator)
+    view = {v.name: v for v in node_controller.node_views(admitted)}["node-ollama"]
     assert view.role == "worker-gpu"
 
 
@@ -106,7 +106,7 @@ def test_a_node_without_a_role_reads_as_unbound_not_an_error(paths, operator) ->
 
 def test_skfleet_nodes_still_renders_with_and_without_a_role(admitted, operator) -> None:
     store.write_spec(admitted, "node", "node-legacy", {"cordoned": False}, writer=operator)
-    node_controller.set_role(admitted, "node-100", "worker-gpu", writer=operator)
+    node_controller.set_role(admitted, "node-ollama", "worker-gpu", writer=operator)
 
     result = CliRunner().invoke(fleet, ["nodes"], env=_env(admitted))
     assert result.exit_code == 0, result.output
@@ -141,14 +141,14 @@ def test_every_preset_carries_a_role() -> None:
 def test_only_the_gpu_node_preset_claims_a_gpu() -> None:
     """node-41 was carrying gpu=true in the live store; the GPU box is .100."""
     gpu_nodes = {n for n, p in admission.PRESETS.items() if p["labels"].get("gpu") == "true"}
-    assert gpu_nodes == {"node-100"}
+    assert gpu_nodes == {"node-ollama"}
 
 
 # ------------------------------------------------------------- admission ---
 
 
 def test_admit_with_preset_applies_the_role(paths, operator) -> None:
-    spec = admission.admit(paths, "node-100", writer=operator, preset=True, bootstrap=True)
+    spec = admission.admit(paths, "node-ollama", writer=operator, preset=True, bootstrap=True)
     assert spec["spec"]["role"] == "worker-gpu"
     assert spec["labels"]["gpu"] == "true"
 
@@ -165,7 +165,7 @@ def test_admit_with_preset_on_the_control_node_is_no_longer_a_silent_noop(paths,
 
 def test_explicit_role_wins_over_the_preset(paths, operator) -> None:
     spec = admission.admit(
-        paths, "node-100", writer=operator, role="observer", preset=True, bootstrap=True
+        paths, "node-ollama", writer=operator, role="observer", preset=True, bootstrap=True
     )
     assert spec["spec"]["role"] == "observer"
 
@@ -180,16 +180,16 @@ def test_admit_without_a_role_is_unbound(paths, operator) -> None:
 
 def test_cli_set_role_round_trips(admitted) -> None:
     runner = CliRunner()
-    result = runner.invoke(fleet, ["set-role", "node-100", "worker-gpu"], env=_env(admitted))
+    result = runner.invoke(fleet, ["set-role", "node-ollama", "worker-gpu"], env=_env(admitted))
     assert result.exit_code == 0, result.output
     assert "role=worker-gpu" in result.output
 
-    described = runner.invoke(fleet, ["describe", "node", "node-100"], env=_env(admitted))
+    described = runner.invoke(fleet, ["describe", "node", "node-ollama"], env=_env(admitted))
     assert json.loads(described.output)["spec"]["spec"]["role"] == "worker-gpu"
 
 
 def test_cli_set_role_rejects_an_unsafe_name(admitted) -> None:
-    result = CliRunner().invoke(fleet, ["set-role", "node-100", "../evil"], env=_env(admitted))
+    result = CliRunner().invoke(fleet, ["set-role", "node-ollama", "../evil"], env=_env(admitted))
     assert result.exit_code != 0
     assert "invalid role name" in result.output
 
@@ -202,7 +202,7 @@ def test_cli_set_role_on_a_missing_node_is_a_clean_error(paths) -> None:
 
 def test_cli_admit_reports_the_bound_role(paths) -> None:
     result = CliRunner().invoke(
-        fleet, ["admit", "node-100", "--preset", "--bootstrap"], env=_env(paths)
+        fleet, ["admit", "node-ollama", "--preset", "--bootstrap"], env=_env(paths)
     )
     assert result.exit_code == 0, result.output
     assert "role=worker-gpu" in result.output
@@ -249,7 +249,7 @@ def test_admit_without_a_role_is_allowed_when_the_gate_is_off(
 
 def test_the_gate_accepts_a_role_from_preset(paths, operator, monkeypatch) -> None:
     monkeypatch.setenv("SKFLEET_REQUIRE_ROLE", "1")
-    spec = admission.admit(paths, "node-100", writer=operator, preset=True, bootstrap=True)
+    spec = admission.admit(paths, "node-ollama", writer=operator, preset=True, bootstrap=True)
     assert spec["spec"]["role"] == "worker-gpu"
 
 

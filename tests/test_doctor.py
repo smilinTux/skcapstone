@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,7 +20,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from skcapstone.codex_setup import ensure_codex_setup
+from skcapstone.codex_setup import ensure_codex_setup, ensure_pi_setup
 from skcapstone.doctor import (
     Check,
     DiagnosticReport,
@@ -277,16 +278,20 @@ class TestCheckCodex:
         agents = codex_home / "AGENTS.md"
         assert loader.exists()
         assert loader.stat().st_mode & 0o100
+        loader_text = loader.read_text(encoding="utf-8")
+        assert 'export PATH="$HOME/.skenv/bin:$PATH"' in loader_text
+        assert 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' in loader_text
         agents_text = agents.read_text(encoding="utf-8")
         assert "SKCAPSTONE_CODEX_AGENT_CONTEXT_START" in agents_text
         assert "jarvis" in agents_text
-        assert str(loader) in agents_text
+        assert '"${CODEX_HOME:-$HOME/.codex}/bin/load-sk-agent-context.sh"' in agents_text
+        assert str(loader) not in agents_text
 
         checks = _check_codex()
         assert next(c for c in checks if c.name == "codex:agent_context").passed
 
-    def test_codex_fix_preserves_functional_custom_loader(self, tmp_path, monkeypatch):
-        """Existing working loader scripts are not overwritten."""
+    def test_codex_fix_repairs_loader_without_yolo_default(self, tmp_path, monkeypatch):
+        """Existing loaders are upgraded with the Codex YOLO default."""
         codex_home = tmp_path / ".codex"
         loader = codex_home / "bin" / "load-sk-agent-context.sh"
         loader.parent.mkdir(parents=True)
@@ -296,7 +301,49 @@ class TestCheckCodex:
         monkeypatch.setenv("CODEX_HOME", str(codex_home))
         ensure_codex_setup()
 
-        assert loader.read_text(encoding="utf-8") == custom_loader
+        updated = loader.read_text(encoding="utf-8")
+        assert updated != custom_loader
+        assert 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' in updated
+
+    def test_pi_setup_creates_global_context_and_loader(self, tmp_path, monkeypatch):
+        pi_home = tmp_path / ".pi" / "agent"
+        monkeypatch.setenv("SKAGENT", "lumina")
+
+        actions = ensure_pi_setup(home=pi_home)
+
+        assert actions
+        loader = pi_home / "bin" / "load-sk-agent-context.sh"
+        agents = pi_home / "AGENTS.md"
+        assert loader.stat().st_mode & 0o100
+        assert 'export PATH="$HOME/.skenv/bin:$PATH"' in loader.read_text()
+        text = agents.read_text()
+        assert "SKCAPSTONE_PI_AGENT_CONTEXT_START" in text
+        assert "lumina" in text
+        assert '"${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/bin/load-sk-agent-context.sh"' in text
+        assert str(loader) not in text
+
+    def test_context_loader_refuses_to_guess_between_agents(self, tmp_path):
+        pi_home = tmp_path / ".pi" / "agent"
+        sk_home = tmp_path / ".skcapstone"
+        (sk_home / "agents" / "jarvis").mkdir(parents=True)
+        (sk_home / "agents" / "lumina").mkdir(parents=True)
+        ensure_pi_setup(home=pi_home, agent_name="")
+
+        env = {
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin",
+            "SKCAPSTONE_HOME": str(sk_home),
+        }
+        result = subprocess.run(
+            [str(pi_home / "bin" / "load-sk-agent-context.sh")],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode == 1
+        assert "without guessing" in result.stderr
 
 
 class TestRunDiagnostics:

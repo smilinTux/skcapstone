@@ -70,9 +70,17 @@ def _memory_dir(home: Path) -> Path:
     return mem
 
 
+def _require_memory_id(value: object) -> str:
+    """Return a normalized memory ID or fail before a filesystem mutation."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("memory_id must be a non-empty string")
+    return value.strip()
+
+
 def _entry_path(home: Path, entry: MemoryEntry) -> Path:
     """File path for a memory entry."""
-    return _memory_dir(home) / entry.layer.value / f"{entry.memory_id}.json"
+    memory_id = _require_memory_id(entry.memory_id)
+    return _memory_dir(home) / entry.layer.value / f"{memory_id}.json"
 
 
 def _load_entry(path: Path) -> Optional[MemoryEntry]:
@@ -98,7 +106,18 @@ def _load_entry(path: Path) -> Optional[MemoryEntry]:
         pass
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return MemoryEntry(**data)
+        # The active tiers are shared with the unified SKMemory backend. Its
+        # canonical schema uses ``id`` rather than the legacy engine's
+        # ``memory_id``. Treat those records as owned by SKMemory instead of
+        # constructing a legacy entry with the old model's blank default; the
+        # latter used to feed thousands of valid unified records into the
+        # legacy promoter as the unsafe ``.json`` candidate.
+        if isinstance(data, dict) and "id" in data and "memory_id" not in data:
+            logger.debug("Skipping unified SKMemory record in legacy loader: %s", path)
+            return None
+        entry = MemoryEntry(**data)
+        _require_memory_id(entry.memory_id)
+        return entry
     except (json.JSONDecodeError, Exception) as exc:
         logger.warning("Failed to load memory %s: %s", path, exc)
         return None
@@ -540,6 +559,10 @@ def import_from_seed(home: Path, seed_memories: list[dict]) -> int:
 
 def _find_by_id(home: Path, memory_id: str) -> Optional[MemoryEntry]:
     """Find a memory entry by ID across all layers."""
+    try:
+        memory_id = _require_memory_id(memory_id)
+    except ValueError:
+        return None
     for lyr in MemoryLayer:
         path = _memory_dir(home) / lyr.value / f"{memory_id}.json"
         if path.exists():
@@ -560,6 +583,7 @@ def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> bool:
     Returns:
         True if the memory advanced a tier, False otherwise.
     """
+    _require_memory_id(entry.memory_id)
     if entry.layer == MemoryLayer.SHORT_TERM:
         # Local import so tests can patch memory_verifier.verify_before_promotion.
         from .memory_verifier import verify_before_promotion
@@ -583,6 +607,7 @@ def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> bool:
 
 def _update_index(home: Path, entry: MemoryEntry) -> None:
     """Add or update an entry in the search index."""
+    _require_memory_id(entry.memory_id)
     index = _load_index(home)
     index[entry.memory_id] = {
         "content_preview": entry.content[:200],

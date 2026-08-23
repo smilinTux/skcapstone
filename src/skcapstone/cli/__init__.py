@@ -54,6 +54,7 @@ from .benchmark import register_benchmark_commands  # noqa: E402
 from .capabilities_cmd import register_capabilities_commands  # noqa: E402
 from .card import register_card_commands  # noqa: E402
 from .chat import register_chat_commands  # noqa: E402
+from .cmdb import register_cmdb_commands  # noqa: E402
 from .completions import register_completions_commands  # noqa: E402
 from .config_cmd import register_config_commands  # noqa: E402
 from .consciousness import register_consciousness_commands  # noqa: E402
@@ -80,6 +81,7 @@ from .peer import register_peer_commands  # noqa: E402
 from .peers_dir import register_peers_dir_commands  # noqa: E402
 from .preflight_cmd import register_preflight_commands  # noqa: E402
 from .profile_cmd import register_profile_commands  # noqa: E402
+from .qualification import register_qualification_commands  # noqa: E402
 from .record_cmd import register_record_commands  # noqa: E402
 from .register_cmd import register_register_commands  # noqa: E402
 from .scheduler_cmd import register_scheduler_commands  # noqa: E402
@@ -145,6 +147,7 @@ register_upgrade_commands(main)
 register_test_connection_commands(main)
 register_version_commands(main)
 register_profile_commands(main)
+register_qualification_commands(main)
 register_errors_commands(main)
 register_archive_commands(main)
 register_autopilot_cost_commands(main)
@@ -154,6 +157,7 @@ register_mood_commands(main)
 register_register_commands(main)
 register_gtd_commands(main)
 register_itil_commands(main)
+register_cmdb_commands(main)
 register_skseed_commands(main)
 register_service_commands(main)
 register_telegram_commands(main)
