@@ -1,0 +1,2 @@
+# Preserve the exact failed-review artifact bytes, including Markdown hard breaks.
+docs/reviews/artifacts/2026-08-23-portfolio-steward-architecture-failed-f3bb3b0e.md whitespace=-trailing-space
