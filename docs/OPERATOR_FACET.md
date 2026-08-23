@@ -62,6 +62,21 @@ class, so an app can be written in any language and still conform. The allowed
 (`low`, `medium`, `delete`, `drain_always_on`, `fleet_restart`); the allowed
 observe statuses in `OBSERVE_STATUSES` (`True`, `False`, `Unknown`).
 
+A condition's POLARITY decides what "firing" means. Most conditions are health
+types and fire when their status is `False` (`SchedulerAlive`, `Ready`). A
+problem type fires when its status is `True` (`CrashLooping`, and skos'
+`GradingBacklog`, the first one an app adapter owns rather than the fleet). The
+fleet's set lives in `fleet_adapter.PROBLEM_WHEN_TRUE`; an app adapter declares
+its own module-level `PROBLEM_WHEN_TRUE`, and `loop.PROBLEM_WHEN_TRUE` unions
+them for `brief.build_brief`. Getting this wrong does not fail loudly, it
+inverts the alarm: the condition goes quiet exactly when it should fire.
+
+`Unknown` is not a failure of the contract, it is an answer: `build_brief` files
+it under `stale` rather than `firing`, so the pass is not quiet. An observe that
+cannot read its signal should prefer `Unknown` over inventing health whenever
+"healthy" would silence the very case the condition exists to catch (skos'
+`WatchdogDigestFresh` on an unreadable digest is the worked example).
+
 ### 1.1 Two places, one vocabulary
 
 The contract lives in two seams that must not drift apart:
@@ -97,7 +112,7 @@ vocabulary, two validators: `operator_seat/adapter.py` (Python) and
 
 ### 1.2 The registered apps and their contracts
 
-The six subapps Atlas operates, from the adapters live in the tree today. The
+The first-class subapps Atlas operates, from the adapters live in the tree today. The
 fleet itself is the reference the apps plug into, not an Operatorapp.
 
 | App | Operator CLI | Conditions | Standard + reversible actions | Escalating action |
@@ -107,7 +122,15 @@ fleet itself is the reference the apps plug into, not an Operatorapp.
 | skcomms | `skcomms operator` | PathHealthy, QueueDrained | restart_service, failover_discovery | - |
 | skmemory | `skmemory operator` | EmbedServing, ReconcileFresh | restart_service, reindex | - |
 | skgateway | `skgateway operator` | UpstreamServing, PoolHealthy | restart_service, quarantine_dead_alias, raise_pool_limit | - |
-| skos | `skos operator` | SchedulerAlive, GtdSinkDraining | restart_service, replay_errors | - |
+| skos | `skos operator` | SchedulerAlive, GtdSinkDraining, WatchdogDigestFresh, GradingBacklog | restart_service, replay_errors | - |
+| cmdb | `skcapstone cmdb operator` | CmdbReconcileFresh, CmdbLastScanComplete, CmdbAuditClean | run-cmdb-shadow | apply-cmdb-reconcile |
+
+The CMDB adapter is intentionally observe-first. `run-cmdb-shadow` starts only
+the write-free shadow oneshot. `apply-cmdb-reconcile` is non-standard and
+irreversible, so Atlas policy forces it to a human CAB decision. It is not in
+the autonomous HONOR catalog. This preserves the three-complete-shadow-run gate
+and prevents a stale-condition alarm from silently becoming a production CMDB
+write.
 
 (CLI names and repos come from `APP_REGISTRY` in
 [`operator_seat/registration.py`](../src/skcapstone/operator_seat/registration.py);

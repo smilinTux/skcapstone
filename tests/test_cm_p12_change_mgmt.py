@@ -418,7 +418,7 @@ def test_cli_cab_vote_binds_authenticated_subject_not_free_text_agent(tmp_path):
     assert votes[0].agent == "lumina"
 
 
-def test_cli_cab_vote_falls_back_to_free_text_when_resolver_unavailable(tmp_path):
+def test_cli_cab_vote_fails_closed_when_resolver_unavailable(tmp_path):
     mgr = ITILManager(tmp_path)
     chg = mgr.propose_change(title="cli vote legacy", managed_by="lumina")
 
@@ -430,6 +430,6 @@ def test_cli_cab_vote_falls_back_to_free_text_when_resolver_unavailable(tmp_path
             _cli(),
             ["itil", "cab", "vote", chg.id, "--agent", "human", "--decision", "approved"],
         )
-    assert result.exit_code == 0, result.output
-    votes = mgr.get_cab_votes(chg.id)
-    assert votes[0].agent == "human"
+    assert result.exit_code != 0
+    assert "signed --authorization is required" in result.output
+    assert mgr.get_cab_votes(chg.id) == []

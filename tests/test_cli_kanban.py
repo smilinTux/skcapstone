@@ -52,12 +52,37 @@ def test_coord_move_appends_event(tmp_path):
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="mv1", title="move me", created_by="opus"))
+    board.claim_task("opus", "mv1")
     result = CliRunner().invoke(
         main, ["coord", "move", "mv1", "review", "--home", str(tmp_path), "--order", "2"]
     )
     assert result.exit_code == 0, result.output
     card = next(c for c in KanbanBoard(tmp_path).cards() if c.id == "mv1")
     assert card.status.value == "review"
+    agent = board.load_agent("opus")
+    assert agent is not None
+    assert agent.current_task is None
+    assert agent.claimed_tasks == ["mv1"]
+
+
+def test_coord_reconcile_agents_audits_then_repairs_stale_done_claim(tmp_path):
+    from skcapstone.card_store import CardStore
+
+    board = Board(tmp_path)
+    board.create_task(Task(id="rc1", title="reconcile me", created_by="opus"))
+    board.claim_task("opus", "rc1")
+    CardStore(tmp_path).append_event("rc1", "move", "operator", column="done")
+
+    audit = CliRunner().invoke(main, ["coord", "reconcile-agents", "--home", str(tmp_path)])
+    assert audit.exit_code != 0
+    assert "done_still_claimed" in audit.output
+
+    repaired = CliRunner().invoke(
+        main,
+        ["coord", "reconcile-agents", "--home", str(tmp_path), "--repair"],
+    )
+    assert repaired.exit_code == 0, repaired.output
+    assert '"clean": true' in repaired.output
 
 
 def test_coord_move_rejects_bad_column(tmp_path):
@@ -68,6 +93,17 @@ def test_coord_move_rejects_bad_column(tmp_path):
         main, ["coord", "move", "mv2", "nonsense", "--home", str(tmp_path)]
     )
     assert result.exit_code != 0
+
+
+def test_coord_move_missing_task_is_a_normalized_cli_error(tmp_path):
+    result = CliRunner().invoke(
+        main, ["coord", "move", "missing", "review", "--home", str(tmp_path)]
+    )
+
+    assert result.exit_code == 1
+    assert "Error: Task missing not found" in result.output
+    assert result.exception is not None
+    assert result.exception.__class__.__name__ == "SystemExit"
 
 
 def test_coord_age_backlog_dry_run(tmp_path):

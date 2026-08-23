@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 from rich.panel import Panel
 
+from ..key_io import read_armored_public_key
 from ..runtime import get_runtime
 from ._common import AGENT_HOME, console
 
@@ -55,7 +56,7 @@ def register_card_commands(main: click.Group) -> None:
             pub_key = ""
             pub_path = Path(capauth_home).expanduser() / "identity" / "public.asc"
             if pub_path.exists():
-                pub_key = pub_path.read_text(encoding="utf-8")
+                pub_key = read_armored_public_key(pub_path)
             agent_card = AgentCard.generate(
                 name=m.name,
                 fingerprint=m.identity.fingerprint or "unknown",

@@ -107,6 +107,22 @@ def register_register_commands(main: click.Group) -> None:
             except Exception:
                 pass
 
+        # Show Codex AGENTS.md bootstrap result
+        codex_setup = results.get("codex_setup", {})
+        if codex_setup:
+            action = codex_setup.get("action")
+            if action == "dry-run":
+                console.print("  [yellow]Codex AGENTS.md bootstrap: would configure[/]")
+            elif action == "updated":
+                console.print("  [green]Codex AGENTS.md bootstrap configured[/]")
+            elif action == "created":
+                console.print("  [green]Codex AGENTS.md bootstrap created[/]")
+            elif action == "exists":
+                console.print("  [dim]Codex AGENTS.md bootstrap present[/]")
+            else:
+                console.print(f"  [dim]Codex AGENTS.md bootstrap: {action or 'skipped'}[/]")
+            console.print()
+
         # Display results
         from rich.table import Table
 

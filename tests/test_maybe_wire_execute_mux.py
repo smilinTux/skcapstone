@@ -98,3 +98,34 @@ def test_end_to_end_repo_labeled_execute_still_gates_without_bridge(tmp_path, mo
 
     run = ar.current_run(tmp_path, "t1")
     assert run["state"] == ar.NEEDS_REVIEW
+
+
+def test_the_idempotency_marker_is_identity_not_truthiness():
+    """A truthy-but-not-True marker must NOT count as already-muxed.
+
+    Regression control for the bug this file's wrapping test caught: the guard
+    used to read `if getattr(d, "_is_execute_mux", False)`, and any object with a
+    permissive __getattr__ satisfies that. `unittest.mock.Mock` auto-creates the
+    attribute as a truthy child mock, so the wrap silently became a no-op against
+    every mocked dispatcher. `build_execute_mux` stamps exactly True, so identity
+    is what the marker means.
+
+    Asserted from both sides so neither direction can regress alone.
+    """
+    truthy_not_true = mock.Mock(return_value={"summary": "x", "activity": [], "links": {}})
+    assert getattr(truthy_not_true, "_is_execute_mux", False)  # truthy
+    assert getattr(truthy_not_true, "_is_execute_mux", False) is not True  # but not True
+
+    ar.set_execute_dispatcher(truthy_not_true)
+    ar._maybe_wire_execute_mux()
+    assert ar._execute_dispatcher is not truthy_not_true, (
+        "a truthy-but-not-True marker was treated as already-muxed, so the code "
+        "leg was never wired"
+    )
+
+    # Positive control: a real marker (exactly True) IS honoured, so the fix did
+    # not simply disable idempotency.
+    already = ar._execute_dispatcher
+    assert getattr(already, "_is_execute_mux", False) is True
+    ar._maybe_wire_execute_mux()
+    assert ar._execute_dispatcher is already

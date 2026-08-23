@@ -128,6 +128,13 @@ def build_apply_fn(
                 unit,
                 runner=runner,
             )
+        if not isinstance(actuation, dict) or actuation.get("performed") is not True:
+            reason = (
+                actuation.get("reason", "actuator did not perform action")
+                if isinstance(actuation, dict)
+                else "invalid actuator response"
+            )
+            raise RuntimeError(f"actuation failed: {reason}")
         emit(f"honor: {adapter_name} {action!r} -> {actuation}")
         return {
             "adapter": adapter_name,
@@ -139,4 +146,47 @@ def build_apply_fn(
     return apply_fn
 
 
-__all__ = ["HONOR_ADAPTERS", "route_action", "merged_explain", "build_apply_fn"]
+def build_rollback_fn(
+    paths,
+    *,
+    runner=None,
+) -> Callable[[dict, dict, Any], dict]:
+    """Build the explicit rollback executor used after failed verification.
+
+    Rollback is never inferred from prose. The proposal must carry a typed
+    ``rollback`` object with an action from the same ratified adapter catalog.
+    The dispatcher then uses the normal adapter boundary and requires its
+    ``performed=True`` proof in the operator loop.
+    """
+
+    def rollback_fn(proposal: dict, classification: dict, _result: Any) -> dict:
+        rollback = proposal.get("rollback")
+        if not isinstance(rollback, dict) or not rollback.get("action"):
+            raise ValueError("typed rollback.action is required")
+        rollback_proposal = {**proposal, **rollback}
+        action = rollback_proposal["action"]
+        adapter_name = route_action(action)
+        if adapter_name == "skchat":
+            return skchat_adapter.skchat_act(
+                paths, rollback_proposal, classification, runner=runner
+            )
+        if adapter_name == "fleet":
+            unit = rollback_proposal.get("unit") or rollback_proposal.get("object")
+            return actuator.honor(
+                paths,
+                {"action": action, "ts": rollback_proposal.get("ts")},
+                unit,
+                runner=runner,
+            )
+        raise ValueError(f"no rollback adapter for action {action!r}")
+
+    return rollback_fn
+
+
+__all__ = [
+    "HONOR_ADAPTERS",
+    "route_action",
+    "merged_explain",
+    "build_apply_fn",
+    "build_rollback_fn",
+]

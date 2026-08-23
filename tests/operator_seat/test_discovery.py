@@ -75,6 +75,18 @@ def _write_manifest(home, manifest: dict, name: str = "skbrain") -> None:
     (modules_dir / f"{name}.skworld-module.json").write_text(json.dumps(manifest))
 
 
+def _healthy_skbrain(cli, verb, **kwargs):
+    """A complete healthy SKBrain observation for discovery-gate tests."""
+    assert verb == "observe"
+    return {
+        "conditions": [
+            {"type": "OpsSchemaPresent", "status": "True"},
+            {"type": "ProjectorFresh", "status": "True"},
+            {"type": "KedbCanonCovered", "status": "True"},
+        ]
+    }
+
+
 @pytest.fixture
 def on(monkeypatch):
     """Turn the master discovery flag ON for a test."""
@@ -114,7 +126,7 @@ def test_verified_manifest_is_discovered(tmp_path, on):
         home=tmp_path,
         builtin_ids=frozenset({"skchat", "skos"}),
         verified_ids_fn=lambda h: {"skbrain"},
-        runner=lambda cli, verb, **kw: None,
+        runner=_healthy_skbrain,
     )
     assert [a.name for a in apps] == ["skbrain"]
     app = apps[0]
@@ -131,11 +143,12 @@ def test_discovery_unions_with_builtins_in_register_all(tmp_path, on):
     specs = discovery.discover_operatorapp_specs(
         home=tmp_path,
         verified_ids_fn=lambda h: {"skbrain"},
-        runner=lambda *a, **k: None,
+        runner=_healthy_skbrain,
     )
     written = registration.register_all(paths, writer=_seat(), discovered=specs)
     # The seven built-ins stay exactly as-is; skbrain is registered ALONGSIDE.
     assert written == [
+        "cmdb",
         "skbrain",
         "skchat",
         "skcode",
@@ -162,7 +175,7 @@ def test_unverified_manifest_is_skipped(tmp_path, on):
         home=tmp_path,
         builtin_ids=frozenset(),
         verified_ids_fn=lambda h: set(),  # nothing verified
-        runner=lambda *a, **k: None,
+        runner=_healthy_skbrain,
     )
     assert apps == []
 
@@ -261,8 +274,29 @@ def test_discovered_app_observe_never_raises_on_timeout(tmp_path, on):
         verified_ids_fn=lambda h: {"skbrain"},
         timeout=0.1,
     )
-    out = apps[0].observe(None, "2026-07-31T00:00:00Z")
-    assert all(c["status"] == "Unknown" for c in out["conditions"])
+    assert apps == []
+
+
+def test_unhealthy_skbrain_is_not_exposed(tmp_path, on):
+    _write_manifest(tmp_path, _skbrain_manifest())
+    apps = discovery.discover_apps(
+        home=tmp_path,
+        builtin_ids=frozenset(),
+        verified_ids_fn=lambda h: {"skbrain"},
+        runner=lambda *a, **k: None,
+    )
+    assert apps == []
+
+
+def test_partial_skbrain_health_is_not_exposed(tmp_path, on):
+    _write_manifest(tmp_path, _skbrain_manifest())
+    apps = discovery.discover_apps(
+        home=tmp_path,
+        builtin_ids=frozenset(),
+        verified_ids_fn=lambda h: {"skbrain"},
+        runner=lambda *a, **k: {"conditions": [{"type": "OpsSchemaPresent", "status": "True"}]},
+    )
+    assert apps == []
 
 
 # --- the real subprocess boundary (_run_operator_json) -----------------------
@@ -305,7 +339,7 @@ def test_discovered_app_is_not_auto_ratified(tmp_path, on):
     _write_manifest(tmp_path, _skbrain_manifest())
     paths = _paths(tmp_path)
     specs = discovery.discover_operatorapp_specs(
-        home=tmp_path, verified_ids_fn=lambda h: {"skbrain"}, runner=lambda *a, **k: None
+        home=tmp_path, verified_ids_fn=lambda h: {"skbrain"}, runner=_healthy_skbrain
     )
     registration.register_all(paths, writer=_seat(), discovered=specs)
     row = {r.name: r for r in operatorapp_rows(paths, "2026-07-31T00:00:00Z")}["skbrain"]
@@ -319,7 +353,7 @@ def test_seat_cannot_ratify_a_discovered_app(tmp_path, on):
     _write_manifest(tmp_path, _skbrain_manifest())
     paths = _paths(tmp_path)
     specs = discovery.discover_operatorapp_specs(
-        home=tmp_path, verified_ids_fn=lambda h: {"skbrain"}, runner=lambda *a, **k: None
+        home=tmp_path, verified_ids_fn=lambda h: {"skbrain"}, runner=_healthy_skbrain
     )
     registration.register_all(paths, writer=_seat(), discovered=specs)
     # The store's human-only guard blocks the seat from ratifying, discovered or not.
@@ -331,7 +365,7 @@ def test_human_can_ratify_a_discovered_app(tmp_path, on):
     _write_manifest(tmp_path, _skbrain_manifest())
     paths = _paths(tmp_path)
     specs = discovery.discover_operatorapp_specs(
-        home=tmp_path, verified_ids_fn=lambda h: {"skbrain"}, runner=lambda *a, **k: None
+        home=tmp_path, verified_ids_fn=lambda h: {"skbrain"}, runner=_healthy_skbrain
     )
     registration.register_all(paths, writer=_seat(), discovered=specs)
     registration.ratify(paths, "skbrain", "run-skbrain-sync", writer=_human())
@@ -345,7 +379,7 @@ def test_refresh_preserves_discovered_app_ratification(tmp_path, on):
 
     def _specs():
         return discovery.discover_operatorapp_specs(
-            home=tmp_path, verified_ids_fn=lambda h: {"skbrain"}, runner=lambda *a, **k: None
+            home=tmp_path, verified_ids_fn=lambda h: {"skbrain"}, runner=_healthy_skbrain
         )
 
     registration.register_all(paths, writer=_seat(), discovered=_specs())
@@ -388,7 +422,7 @@ def test_unreadable_file_is_skipped_others_survive(tmp_path, on):
         home=tmp_path,
         builtin_ids=frozenset(),
         verified_ids_fn=lambda h: {"skbrain"},
-        runner=lambda *a, **k: None,
+        runner=_healthy_skbrain,
     )
     assert [a.name for a in apps] == ["skbrain"]  # the good one still loads
 
@@ -492,7 +526,7 @@ def test_discovered_app_notes_rag_availability(tmp_path, on, monkeypatch):
         home=tmp_path,
         builtin_ids=frozenset(),
         verified_ids_fn=lambda h: {"skbrain"},
-        runner=lambda *a, **k: None,
+        runner=_healthy_skbrain,
     )
     app = apps[0]
     assert app.knowledge is not None

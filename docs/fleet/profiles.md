@@ -241,6 +241,45 @@ $ skfleet explain profile --json
 returns the same field set described above, so an operator who has never read
 this file can still find the schema from the CLI.
 
+## What this layer does NOT see
+
+The profile layer observes **systemd units and installed SK packages, and nothing
+else**. `fleet/nodeinventory.py` runs exactly two commands, `systemctl --user
+list-unit-files --state=enabled` and its system-scope equivalent, plus a read of
+installed distribution metadata. Anything not started by systemd is invisible to
+it, and therefore invisible to `skfleet node doctor`.
+
+This is not hypothetical. On `.100` today:
+
+```console
+$ docker ps --format "{{.Names}}  {{.Image}}"
+frigate  ghcr.io/blakeblackshear/frigate:stable
+
+$ systemctl --user list-unit-files --state=enabled | grep -ci frigate   # 0
+$ systemctl        list-unit-files --state=enabled | grep -ci frigate   # 0
+```
+
+Frigate is healthy, has been up for months, and exposes ports 5000, 8554-8555 and
+8971. The profile layer cannot see any of it. A `.41` investigation found the same
+shape with ingress: a `cloudflared` deployment running as k3s pods, owned by no
+unit, positioned to reach services the systemd tunnel could not.
+
+**Why this matters more than a missing feature.** A drift report that says nothing
+about containers reads exactly like a drift report that found nothing wrong. The
+silence currently means "no systemd drift" while looking like "no drift". A public
+ingress or a network-exposed workload is precisely the class of thing a
+`worker-gpu` or `builder-standby` profile would want to forbid, and it is the class
+this layer is blind to.
+
+So read a clean `node doctor` as: **this node's systemd units and SK packages match
+its profile.** It is not a statement about containers, k3s workloads, or anything
+else started by another supervisor.
+
+Card `7892e416` holds the decision on whether to extend the observation surface to
+workload-managed units or to keep this scope and rely on this paragraph. Documenting
+the limit is the cheap half and is done here; widening the surface is the expensive
+half and is not.
+
 ## See also
 
 - [control-bus-folder.md](control-bus-folder.md): the Syncthing folder split

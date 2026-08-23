@@ -129,7 +129,13 @@ def test_process_one_execute_not_gated_while_reviewing(home):
 def test_process_one_execute_blocked_once_approved(home):
     mgr = ITILManager(home)
     chg = mgr.propose_change(title="Cutover skgateway", created_by="lumina")
-    mgr.update_change(chg.id, "human", new_status="approved", note="CAB approved")
+    # Approval is reached the way a real CAB approval happens: a `human`
+    # APPROVE vote through submit_cab_vote(), whose voter differs from the
+    # drafter ("lumina"), so the fold's no-self-approval filter keeps it in
+    # the approvals pool. A raw update_change(..., new_status="approved")
+    # deliberately no longer reaches "approved" (skcoord 941570f closed that
+    # self-approval bypass); see the negative control below.
+    mgr.submit_cab_vote(chg.id, agent="human", decision="approved")
     assert mgr._fold_record(mgr.changes_dir, chg.id, Change).status.value == "approved"
 
     ar.request_run(home, chg.id, "implement it now", agent="lumina", mode="execute")
@@ -139,6 +145,30 @@ def test_process_one_execute_blocked_once_approved(home):
     out = ar.process_one(home, item)
     assert out.get("gated") is True
     assert out["reason"] == _BLOCKED_REASON
+
+
+def test_raw_status_event_cannot_grant_cab_approval(home):
+    """Negative control for the CAB bypass guard (skcoord 941570f).
+
+    A raw ``update_change(..., new_status="approved")`` is exactly the
+    self-approval route the guard closed: the ``agent`` string is free text, so
+    without the guard any caller (the MCP tool and CLI included) could approve
+    its own change around ``submit_cab_vote()`` and its no-self-approval fold
+    guard. It must fold as a conflict and leave the change at "proposed", even
+    when the caller spells itself "human". If this test ever goes green on an
+    "approved" status, the bypass is back.
+    """
+    mgr = ITILManager(home)
+    chg = mgr.propose_change(title="Cutover skgateway", created_by="lumina")
+    mgr.update_change(chg.id, "human", new_status="approved", note="CAB approved")
+    assert mgr._fold_record(mgr.changes_dir, chg.id, Change).status.value == "proposed"
+
+    # ...and because it never reached "approved", the draft-only carve-out is
+    # still the live decision: no bypass leaks into the agent_run gate either.
+    ar.request_run(home, chg.id, "implement it now", agent="lumina", mode="execute")
+    run = ar.current_run(home, chg.id)
+    out = ar.process_one(home, {"card_id": chg.id, "kind": "change", "run": run})
+    assert out.get("gated") is not True
 
 
 def test_process_one_execute_blocked_when_change_record_unfoldable(home):

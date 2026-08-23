@@ -812,6 +812,12 @@ def register_status_commands(main: click.Group) -> None:
 
     @main.command()
     @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--host",
+        default="127.0.0.1",
+        show_default=True,
+        help="Address or interface on which the dashboard listens.",
+    )
     @click.option("--port", default=7778, help="Port for the dashboard (default: 7778).")
     @click.option("--no-open", is_flag=True, help="Don't attempt to open a browser.")
     @click.option(
@@ -826,7 +832,9 @@ def register_status_commands(main: click.Group) -> None:
         show_default=True,
         help="Daemon HTTP API port (used with --json).",
     )
-    def dashboard(home: str, port: int, no_open: bool, json_mode: bool, daemon_port: int):
+    def dashboard(
+        home: str, host: str, port: int, no_open: bool, json_mode: bool, daemon_port: int
+    ):
         """Launch the sovereign agent web dashboard.
 
         With --json, prints a machine-readable JSON snapshot of daemon
@@ -847,7 +855,7 @@ def register_status_commands(main: click.Group) -> None:
             console.print("[bold red]No agent found.[/] Run skcapstone init first.")
             sys.exit(1)
 
-        url = f"http://127.0.0.1:{port}"
+        url = f"http://{host}:{port}"
         console.print("\n  [green]Sovereign Agent Dashboard[/]")
         console.print(f"  [cyan]{url}[/]")
         console.print("  [dim]Press Ctrl+C to stop[/]\n")
@@ -860,7 +868,7 @@ def register_status_commands(main: click.Group) -> None:
             except Exception as exc:
                 logger.warning("Failed to open browser for dashboard: %s", exc)
 
-        server = start_dashboard(home_path, port=port)
+        server = start_dashboard(home_path, host=host, port=port)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

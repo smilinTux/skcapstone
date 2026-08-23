@@ -23,6 +23,21 @@ def _isolate_cost_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("SKAI_COST_DIR", str(tmp_path / "autopilot-cost"))
 
 
+def _require_autopilot_cost():
+    """Skip when the optional skharness sibling is missing or too old to
+    ship ``skharness.autocode.autopilot_cost``.
+
+    skharness is deliberately NOT a declared dependency of skcapstone (the
+    command lazily imports it and degrades to a friendly message), so these
+    rendering tests can only run where the sibling is installed; CI installs
+    it from git main.
+    """
+    return pytest.importorskip(
+        "skharness.autocode.autopilot_cost",
+        reason="skharness with autocode.autopilot_cost is not installed here",
+    )
+
+
 def test_help():
     from skcapstone.cli import main
 
@@ -32,6 +47,8 @@ def test_help():
 
 
 def test_runs_clean_with_no_ledger_data():
+    _require_autopilot_cost()
+
     from skcapstone.cli import main
 
     result = CliRunner().invoke(main, ["autopilot-cost"])
@@ -45,7 +62,8 @@ def test_text_output_leads_with_joules():
     # overview must lead with the joule figure, USD following in parens.
     from datetime import datetime, timezone
 
-    from skharness.autocode.autopilot_cost import JOULE_PER_USD, record_run
+    apc = _require_autopilot_cost()
+    JOULE_PER_USD, record_run = apc.JOULE_PER_USD, apc.record_run
 
     from skcapstone.cli import main
 
@@ -71,7 +89,8 @@ def test_text_output_leads_with_joules():
 def test_json_out_reports_recorded_run():
     from datetime import datetime, timezone
 
-    from skharness.autocode.autopilot_cost import JOULE_PER_USD, record_run
+    apc = _require_autopilot_cost()
+    JOULE_PER_USD, record_run = apc.JOULE_PER_USD, apc.record_run
 
     from skcapstone.cli import main
 

@@ -34,11 +34,15 @@ def test_unhealthy_path_and_overfull_queue_fire():
     assert by_type["QueueDrained"] == "False"  # over the bound
 
 
-def test_default_probe_fails_safe(monkeypatch):
+def test_default_probe_failure_is_unknown(monkeypatch):
     # An unreachable skcomms must not raise or false-alarm.
     def _boom(*a, **k):
         raise OSError("skcomms down")
 
     monkeypatch.setattr("subprocess.run", _boom)
     st = skcomms_adapter._default_probe()
-    assert st["path_healthy"] is True  # fail safe
+    assert st["_probe_error"] == "OSError"
+    assert all(
+        item["status"] == "Unknown"
+        for item in skcomms_adapter.skcomms_observe(lambda: st)["conditions"]
+    )

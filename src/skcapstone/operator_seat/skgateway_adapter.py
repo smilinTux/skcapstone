@@ -61,8 +61,8 @@ def _default_probe() -> dict:
         up = all(b.get("status") == "up" for b in backends.values()) if backends else True
         saturated = any(b.get("quarantined") for b in backends.values())
         return {"upstream_serving": bool(up), "pool_healthy": not saturated}
-    except Exception:
-        return {"upstream_serving": True, "pool_healthy": True}
+    except Exception as exc:
+        return {"_probe_error": type(exc).__name__}
 
 
 def skgateway_explain() -> dict:
@@ -77,16 +77,17 @@ def skgateway_explain() -> dict:
 def skgateway_observe(probe: Callable[[], dict] | None = None) -> dict:
     """Read-only skgateway health snapshot in the adapter-contract shape."""
     st = (probe or _default_probe)()
+    unknown = bool(st.get("_probe_error"))
     return {
         "conditions": [
             {
                 "type": "UpstreamServing",
-                "status": _b(bool(st.get("upstream_serving"))),
+                "status": "Unknown" if unknown else _b(bool(st.get("upstream_serving"))),
                 "object": "upstreams",
             },
             {
                 "type": "PoolHealthy",
-                "status": _b(bool(st.get("pool_healthy"))),
+                "status": "Unknown" if unknown else _b(bool(st.get("pool_healthy"))),
                 "object": "connection-pool",
             },
         ]

@@ -33,7 +33,13 @@ PRESETS: dict[str, dict] = {
         # See docs/fleet/travel-taint-runbook.md.
         "taints": [],
     },
-    "node-100": {
+    "node-ollama": {
+        # Keyed by the LIVE name, which is `node-ollama`, NOT `node-100`. The
+        # address-style key never matched anything, so `admit --preset` on the
+        # GPU box silently applied no labels, no role and no taint. This is the
+        # same defect that was fixed for the control node (node-158 ->
+        # node-noroc2027) and it survived there because only one of the two
+        # dead keys was rekeyed. `node-100` lives on as an alias below.
         # NOT gpu=true on .41: the GPU box in this fleet is .100.
         "labels": {"gpu": "true"},
         "role": "worker-gpu",
@@ -50,6 +56,7 @@ PRESETS: dict[str, dict] = {
 #: `skfleet admit node-158 --preset` still does what it reads like it does.
 PRESET_ALIASES: dict[str, str] = {
     "node-158": "node-noroc2027",
+    "node-100": "node-ollama",
 }
 
 

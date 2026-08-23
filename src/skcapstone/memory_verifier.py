@@ -69,6 +69,10 @@ def verify_before_promotion(home: Path, entry) -> VerificationResult:
     Returns:
         VerificationResult - consult .should_promote before proceeding.
     """
+    from .memory_engine import _require_memory_id
+
+    _require_memory_id(entry.memory_id)
+
     # Only gate SHORT_TERM → MID_TERM transitions
     from .models import MemoryLayer
 

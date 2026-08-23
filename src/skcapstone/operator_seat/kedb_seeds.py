@@ -25,6 +25,25 @@ from ..itil import ITILManager
 #: workaround mirrors the runbook of the adapter action that names the id.
 OPERATOR_KEDB_SEEDS: list[dict] = [
     {
+        "id": "ke-cmdb-reconcile-stale",
+        "title": "CMDB reconciliation evidence stale or incomplete",
+        "symptoms": [
+            "CmdbReconcileFresh is False or Unknown",
+            "the latest CMDB reconciliation artifact is absent, incomplete, checksum-invalid, "
+            "or older than the configured freshness threshold",
+        ],
+        "root_cause": (
+            "the governed discovery/reconciliation job did not complete successfully, its "
+            "scope changed, or one or more authoritative targets were unreachable."
+        ),
+        "workaround": (
+            "run the ratified CMDB shadow reconciliation through Atlas, restore reachability "
+            "for every target, and require a complete checksum-valid artifact before any "
+            "network apply or retirement lifecycle advances."
+        ),
+        "tags": ["operator", "cmdb", "reconcile", "discovery"],
+    },
+    {
         "id": "ke-skchat-daemon-down",
         "title": "skchat receive daemon down",
         "symptoms": [

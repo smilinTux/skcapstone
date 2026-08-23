@@ -64,6 +64,7 @@ def test_register_all_writes_every_app(tmp_path):
     paths = _paths(tmp_path)
     written = registration.register_all(paths, writer=_seat())
     assert written == [
+        "cmdb",
         "skchat",
         "skcode",
         "skcomms",

@@ -227,6 +227,34 @@ def _unknown_conditions(conditions: list[str], now_iso: str) -> list[dict]:
     ]
 
 
+def _skbrain_is_healthy(
+    cli: str,
+    conditions: list[str],
+    *,
+    timeout: float,
+    runner: Callable[..., dict | None] | None,
+) -> bool:
+    """Return whether SKBrain is healthy enough to expose to Atlas.
+
+    SKBrain is a knowledge/control-plane dependency, not a decorative module.
+    A valid signature proves provenance but does not prove that its schema,
+    projector, or KEDB are usable.  Require one conformant observation in which
+    every declared condition is ``True`` before registration.  Missing
+    executables, timeouts, malformed responses, partial condition sets, and
+    False/Unknown conditions all fail closed.
+    """
+    run = runner or _run_operator_json
+    payload = run(cli, "observe", timeout=timeout)
+    if not isinstance(payload, dict) or adapter.validate_observe(payload):
+        return False
+    states = {
+        item.get("type"): item.get("status")
+        for item in payload.get("conditions", [])
+        if isinstance(item, dict)
+    }
+    return bool(conditions) and all(states.get(condition) == "True" for condition in conditions)
+
+
 def make_subprocess_observe(
     cli: str,
     conditions: list[str],
@@ -495,6 +523,17 @@ def _discover_one(
         logger.warning(
             "operator discovery: %r declares no operator.cli; cannot run out-of-process, skipping",
             mid,
+        )
+        return None
+
+    # A signed but absent/unhealthy SKBrain must not be advertised in the
+    # Operatorapp registry or UI.  Other apps retain Unknown-condition exposure;
+    # this strict gate is specific to the optional knowledge plane.
+    if mid == "skbrain" and not _skbrain_is_healthy(
+        cli, spec["conditions"], timeout=timeout, runner=runner
+    ):
+        logger.warning(
+            "operator discovery: %r failed its complete health gate; not exposing it", mid
         )
         return None
 

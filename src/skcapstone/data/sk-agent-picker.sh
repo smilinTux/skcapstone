@@ -2,7 +2,7 @@
 # sk-agent-picker.sh — Sovereign agent picker for AI coding tools
 #
 # Source this file in ~/.bashrc or ~/.zshrc.  It wraps `claude`, `codex`
-# (OpenAI Codex CLI), and `opencode` with an agent-aware launcher that
+# (OpenAI Codex CLI), `opencode`, and `pi` with an agent-aware launcher that
 # shows a numbered menu when multiple SK agents are configured.
 #
 # Also provides `skswitch` — a fast way to change the active agent for
@@ -15,7 +15,7 @@
 #   - SKAGENT/SKCAPSTONE_AGENT set & valid → honour it silently, no menu
 #   - Missing binary          → offer official install command for that tool
 #   - SK_CLAUDE_YOLO=1        → claude adds permission bypass globally (opt-in)
-#   - SK_CODEX_YOLO=1         → codex adds approval+sandbox bypass globally (opt-in)
+#   - SK_CODEX_YOLO=0         → keep Codex approvals+sandbox (default is YOLO)
 #   - SK_OPENCODE_YOLO=1      → opencode allows all tools without approval (opt-in)
 #   - Pass --agent <name>     → skip menu, use that agent directly
 #   - Print mode (-p / --print) → skip menu (non-interactive by definition)
@@ -80,13 +80,12 @@ _sk_pick_agent() {
         echo "${agents[0]}"; return 0
     fi
 
-    # Validate SKAGENT against actual agent list.
-    # If it's set but not in the list (stale env), fall back to first agent.
+    # Validate SKAGENT against the actual agent list.
     local env_agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
-    # Fallback default: SK_DEFAULT_AGENT (lumina) when it exists in the agent
-    # list, otherwise the first agent alphabetically.
-    local sk_default="${SK_DEFAULT_AGENT:-lumina}"
-    local default="${agents[0]}"
+    # SK_DEFAULT_AGENT is an explicit node/profile setting. Never silently
+    # prefer one identity merely because it sorts first or ships as a sample.
+    local sk_default="${SK_DEFAULT_AGENT:-}"
+    local default=""
     for agent in "${agents[@]}"; do
         if [[ "$agent" == "$sk_default" ]]; then
             default="$sk_default"
@@ -102,10 +101,21 @@ _sk_pick_agent() {
         fi
     done
 
-    # If env explicitly selected a real agent, skip the menu entirely.
-    # Same if stdin isn't a TTY (we'd hang waiting for input that can't come).
-    if [[ ! -t 0 ]] || { [[ $env_match -eq 1 ]] && [[ $force -eq 0 ]]; }; then
+    # An explicit valid environment selection is authoritative.
+    if [[ $env_match -eq 1 && $force -eq 0 ]]; then
         echo "$default"; return 0
+    fi
+
+    # Non-interactive callers cannot choose. Use only an explicit validated
+    # SK_DEFAULT_AGENT; otherwise launch unpinned instead of guessing.
+    if [[ ! -t 0 ]]; then
+        echo "$default"; return 0
+    fi
+
+    # Interactive menus may offer the first item as a UI default without
+    # persisting it as a fleet/node identity.
+    if [[ -z "$default" ]]; then
+        default="${agents[0]}"
     fi
 
     # Multi-agent menu
@@ -195,6 +205,12 @@ _sk_find_tool_path() {
             fallback_paths=(
                 "$HOME/.npm-global/bin/claude"
                 "$HOME/.local/bin/claude"
+            )
+            ;;
+        pi)
+            fallback_paths=(
+                "$HOME/.local/bin/pi"
+                "$HOME/bin/pi"
             )
             ;;
         codex)
@@ -381,6 +397,7 @@ function skswitch {
 unalias claude   2>/dev/null || true
 unalias codex    2>/dev/null || true
 unalias opencode 2>/dev/null || true
+unalias pi       2>/dev/null || true
 
 # claude (Claude Code CLI)
 function claude {
@@ -394,7 +411,7 @@ function claude {
 # codex (OpenAI Codex CLI — https://github.com/openai/codex)
 function codex {
     local extra_flags=""
-    if [[ "${SK_CODEX_YOLO:-0}" == "1" ]]; then
+    if [[ "${SK_CODEX_YOLO:-1}" == "1" ]]; then
         extra_flags="--dangerously-bypass-approvals-and-sandbox"
     fi
     _sk_launch codex "$extra_flags" "$@"
@@ -409,6 +426,11 @@ function opencode {
     fi
 }
 
+# pi coding agent
+function pi {
+    _sk_launch pi "" "$@"
+}
+
 # Export so sub-shells (tmux panes, etc.) inherit the functions
 export -f _sk_pick_agent 2>/dev/null || true
 export -f _sk_install_command 2>/dev/null || true
@@ -419,3 +441,4 @@ export -f skswitch       2>/dev/null || true
 export -f claude         2>/dev/null || true
 export -f codex          2>/dev/null || true
 export -f opencode       2>/dev/null || true
+export -f pi             2>/dev/null || true

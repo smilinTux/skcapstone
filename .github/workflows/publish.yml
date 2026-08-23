@@ -2,6 +2,7 @@ name: Publish to PyPI
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -83,7 +84,7 @@ jobs:
   build:
     needs: [tag]
     # `always()` is required because `needs` on a SKIPPED job would otherwise
-    # skip this one on the tag-push path.
+    # skip this one on a manually pushed tag path.
     if: >-
       always() && !cancelled() &&
       (needs.tag.result == 'skipped' || needs.tag.outputs.tagged == 'true')
@@ -149,11 +150,9 @@ jobs:
 
   pypi-publish:
     needs: build
-    # A job skip propagates THROUGH the graph, not one level. `tag` is skipped
-    # on the tag-push path, `build` survives it with always(), but a bare
-    # `needs: build` here still evaluates to skipped. With a tags-only trigger
-    # `tag` can never run, so this job could never run either and a tagged
-    # release would build cleanly and publish nothing (skcoord #6).
+    # Publish the artifact produced by either path: the main run that just cut
+    # the tag, or a manually pushed release tag. A bare dependency without the
+    # explicit result check once allowed job-skip propagation to hide a release.
     if: >-
       always() && !cancelled() && needs.build.result == 'success'
     runs-on: ubuntu-latest

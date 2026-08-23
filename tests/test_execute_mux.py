@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from unittest import mock
 
-from skcapstone import alert_store
 from skcapstone import agent_run as ar
+from skcapstone import alert_store
 from skcapstone.execute_mux import build_execute_mux
 
 

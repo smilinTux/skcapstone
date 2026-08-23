@@ -58,8 +58,8 @@ TOOLS: list[Tool] = [
     Tool(
         name="soul_show",
         description=(
-            "Display the current soul blueprint: name, title, personality traits, values, "
-            "relationships, core memories, and boot message."
+            "Display the current soul blueprint: name, vibe, core traits, communication "
+            "style, and emotional topology (active overlay or base soul)."
         ),
         inputSchema={"properties": {}, "required": [], "type": "object"},
     ),
@@ -205,44 +205,52 @@ async def _handle_ritual(_args: dict) -> list[TextContent]:
 
 async def _handle_soul_show(_args: dict) -> list[TextContent]:
     """Display the current soul blueprint."""
-    try:
-        from skmemory.soul import load_soul
+    import json
 
-        blueprint = load_soul()
-        if blueprint is None:
-            return _json_response({"loaded": False, "message": "No soul blueprint found"})
-        return _json_response(
-            {
-                "loaded": True,
-                "name": blueprint.name,
-                "title": blueprint.title,
-                "personality": blueprint.personality_traits,
-                "values": blueprint.values,
-                "community": blueprint.community,
-                "relationships": [
-                    {
-                        "name": r.name,
-                        "role": r.role,
-                        "bond_strength": r.bond_strength,
-                        "notes": r.notes,
-                    }
-                    for r in blueprint.relationships
-                ],
-                "core_memories": [
-                    {"title": m.title, "when": m.when, "why": m.why_it_matters}
-                    for m in blueprint.core_memories
-                ],
-                "boot_message": blueprint.boot_message,
-                "emotional_baseline": {
-                    "warmth": blueprint.emotional_baseline.get("default_warmth", 0),
-                    "trust": blueprint.emotional_baseline.get("trust_level", 0),
-                    "openness": blueprint.emotional_baseline.get("openness", 0),
-                },
-                "context_prompt": blueprint.to_context_prompt(),
-            }
-        )
-    except ImportError:
-        return _error_response("skmemory not installed. Run: pip install skmemory")
+    from ..soul import SoulBlueprint, SoulManager
+
+    home = _home()
+    mgr = SoulManager(home)
+    state = mgr.get_status()
+
+    # Prefer the active overlay, otherwise the base soul.
+    blueprint: SoulBlueprint | None = None
+    if state.active_soul:
+        blueprint = mgr.get_info(state.active_soul)
+    if blueprint is None:
+        base_path = mgr.soul_dir / "base.json"
+        if base_path.exists():
+            try:
+                blueprint = SoulBlueprint.model_validate(
+                    json.loads(base_path.read_text(encoding="utf-8"))
+                )
+            except Exception:
+                blueprint = None
+
+    if blueprint is None:
+        return _json_response({"loaded": False, "message": "No soul blueprint found"})
+    cs = blueprint.communication_style
+    return _json_response(
+        {
+            "loaded": True,
+            "name": blueprint.name,
+            "display_name": blueprint.display_name,
+            "category": blueprint.category,
+            "vibe": blueprint.vibe,
+            "philosophy": blueprint.philosophy,
+            "emoji": blueprint.emoji,
+            "core_traits": blueprint.core_traits,
+            "communication_style": {
+                "patterns": cs.patterns,
+                "tone_markers": cs.tone_markers,
+                "signature_phrases": cs.signature_phrases,
+            },
+            "decision_framework": blueprint.decision_framework,
+            "emotional_topology": blueprint.emotional_topology,
+            "active_overlay": state.active_soul,
+            "base_soul": state.base_soul,
+        }
+    )
 
 
 async def _handle_soul_list(args: dict) -> list[TextContent]:

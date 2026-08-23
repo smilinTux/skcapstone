@@ -26,9 +26,26 @@ def register_coord_commands(main: click.Group) -> None:
         and syncs via Syncthing. Conflict-free by design.
         """
 
+    from .coord_amend import register_coord_amend_commands
+
+    register_coord_amend_commands(coord)
+
     @coord.command("status")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_status(home):
+    @click.option("--tag", multiple=True, help="Only tasks carrying this tag (repeatable).")
+    @click.option(
+        "--parent",
+        default=None,
+        help="Only tasks tagged 'parent-<id>' (children of this epic/card).",
+    )
+    @click.option(
+        "--status",
+        "status_filter",
+        default=None,
+        type=click.Choice(["open", "claimed", "in_progress", "review", "done", "blocked"]),
+        help="Only tasks in this status.",
+    )
+    def coord_status(home, tag, parent, status_filter):
         """Show the coordination board overview."""
         from ..coordination import Board
 
@@ -36,6 +53,31 @@ def register_coord_commands(main: click.Group) -> None:
         board = Board(home_path)
         views = board.get_task_views()
         agents = board.load_agents()
+
+        # Open cards whose dependencies are not all done are blocked: the
+        # claim gate refuses them without --force, so status must say so.
+        done_ids = {v.task.id for v in views if v.status.value == "done"}
+
+        def _status_label(view) -> str:
+            if (
+                view.status.value == "open"
+                and view.task.dependencies
+                and not set(view.task.dependencies).issubset(done_ids)
+            ):
+                return "blocked"
+            return view.status.value
+
+        if parent:
+            tag = (*tag, f"parent-{parent}")
+        if tag:
+            wanted = {t.lower() for t in tag}
+            views = [v for v in views if wanted & {t.lower() for t in v.task.tags}]
+        if status_filter:
+            views = [v for v in views if _status_label(v) == status_filter]
+
+        if not views and (tag or status_filter):
+            console.print("\n  [dim]No tasks match the given filters.[/]\n")
+            return
 
         if not views and not agents:
             console.print("\n  [dim]Board is empty. Create tasks with:[/]")
@@ -78,16 +120,17 @@ def register_coord_commands(main: click.Group) -> None:
         }
 
         for v in views:
-            if v.status.value == "done":
+            if v.status.value == "done" and status_filter is None:
                 continue
             t = v.task
+            status_label = _status_label(v)
             p_style = priority_colors.get(t.priority.value, "dim")
-            s_style = status_colors.get(v.status.value, "dim")
+            s_style = status_colors.get(status_label, "dim")
             table.add_row(
                 t.id,
                 t.title,
                 Text(t.priority.value.upper(), style=p_style),
-                Text(v.status.value.upper(), style=s_style),
+                Text(status_label.upper(), style=s_style),
                 v.claimed_by or "",
                 ", ".join(t.tags),
             )
@@ -107,7 +150,12 @@ def register_coord_commands(main: click.Group) -> None:
     @coord.command("create")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--title", required=True, help="Task title.")
-    @click.option("--desc", default="", help="Task description.")
+    @click.option(
+        "--desc",
+        default="",
+        help="Task description. Reference repo-relative paths (e.g. src/foo.py), "
+        "never absolute ones - see 'coord rehome'.",
+    )
     @click.option(
         "--priority", type=click.Choice(["critical", "high", "medium", "low"]), default="medium"
     )
@@ -142,8 +190,18 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name claiming the task.")
-    def coord_claim(task_id, home, agent):
-        """Claim a task for an agent."""
+    @click.option(
+        "--force",
+        is_flag=True,
+        default=False,
+        help="Claim even when the task's dependencies are not all done.",
+    )
+    def coord_claim(task_id, home, agent, force):
+        """Claim a task for an agent.
+
+        A task whose dependencies are not all done is blocked: the claim is
+        refused unless --force is passed.
+        """
         from ..coordination import Board
 
         validate_task_id(task_id)
@@ -152,7 +210,7 @@ def register_coord_commands(main: click.Group) -> None:
         home_path = Path(home).expanduser()
         board = Board(home_path)
         try:
-            ag = board.claim_task(agent, task_id)
+            ag = board.claim_task(agent, task_id, force=force)
             console.print(f"\n  [green]Claimed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
@@ -389,6 +447,19 @@ def register_coord_commands(main: click.Group) -> None:
             console.print(f"    [yellow]{m['id']}[/]: {m['diff']}")
         if par["missing"][:show]:
             console.print(f"    [yellow]missing[/]: {par['missing'][:show]}")
+        # Informational diffs (priority/swimlane) are reported but never gate.
+        # The dashboard writes those store-only, so legacy is the stale side by
+        # design and `reconcile` deliberately will not converge them. Counting
+        # them as failures made the gate unsatisfiable, which is how a gate
+        # stops being read. Shown so drift stays visible, dimmed so it is
+        # obviously not the thing that failed.
+        info = par.get("informational") or []
+        if info:
+            console.print(
+                f"    [dim]informational (store-authoritative, not gating): {len(info)}[/]"
+            )
+            for m in info[:show]:
+                console.print(f"      [dim]{m['id']}: {m['diff']}[/]")
         console.print()
         if check and not ok:
             sys.exit(1)
@@ -402,17 +473,32 @@ def register_coord_commands(main: click.Group) -> None:
         default=False,
         help="Write corrective events (default is a dry-run report).",
     )
-    def coord_reconcile(home, apply_):
+    @click.option(
+        "--allow-uncomplete",
+        is_flag=True,
+        default=False,
+        help=(
+            "Also converge cards that are done in the store but not in legacy. "
+            "This MOVES THEM OUT OF DONE. Off by default."
+        ),
+    )
+    def coord_reconcile(home, apply_, allow_uncomplete):
         """Converge the CardStore on the authoritative legacy board.
 
         One-time repair for drift that predates the mirror (claims/completes
         recorded only in agents/*.json): appends corrective move/assign/
         archive events, writer 'reconcile'. Append-only and idempotent.
+
+        Never un-completes work: a card whose store state is 'done' is skipped
+        and reported rather than dragged backward to match a lagging legacy
+        projection. Use --allow-uncomplete to override.
         """
         from ..card_store import reconcile_from_legacy
 
         home_path = Path(home).expanduser()
-        res = reconcile_from_legacy(home_path, dry_run=not apply_)
+        res = reconcile_from_legacy(
+            home_path, dry_run=not apply_, allow_uncomplete=allow_uncomplete
+        )
         if apply_:
             console.print(f"\n  [green]Reconciled {res['fixed']} card(s) to legacy state.[/]\n")
         else:
@@ -420,16 +506,40 @@ def register_coord_commands(main: click.Group) -> None:
                 f"\n  [yellow]Would reconcile {res['would_fix']} card(s).[/] "
                 f"Re-run with --apply to write.\n"
             )
+        skipped = res.get("skipped_uncomplete") or []
+        if skipped:
+            # Loud, not dimmed: these are the cards the gate will keep failing
+            # on, and the reason is that converging them would destroy work.
+            console.print(
+                f"  [yellow]Skipped {len(skipped)} card(s) that are done in the "
+                f"store but not in legacy.[/]\n"
+                f"  Converging these would un-complete finished work, so parity "
+                f"will keep reporting them.\n"
+                f"  Legacy is the stale side here; fix it there, or pass "
+                f"--allow-uncomplete to override.\n"
+            )
+            for cid in skipped[:20]:
+                console.print(f"    [dim]{cid}[/]")
+            if len(skipped) > 20:
+                console.print(f"    [dim]... and {len(skipped) - 20} more[/]")
+            console.print()
 
     @coord.command("export-legacy")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
+        "--apply",
+        "apply_",
+        is_flag=True,
+        default=False,
+        help="Write the legacy projection (default is a dry-run report).",
+    )
+    @click.option(
         "--dry-run",
         is_flag=True,
         default=False,
-        help="Report what would be written without touching the board.",
+        help="Deprecated no-op: dry-run is now the default. Use --apply to write.",
     )
-    def coord_export_legacy(home, dry_run):
+    def coord_export_legacy(home, apply_, dry_run):
         """Rebuild a current legacy board (tasks/ + agents/) from the CardStore.
 
         The Phase 4e-retire rollback safety net (inverse of 'coord migrate').
@@ -438,16 +548,36 @@ def register_coord_commands(main: click.Group) -> None:
         set SKCOORD_CARD_STORE=0, run this, restart -- legacy is authoritative
         again. Existing (immutable) task files are preserved; only the agent
         status layer is recomputed.
+
+        DRY-RUN BY DEFAULT; pass --apply to write. This changed on 2026-08-16
+        after it wrote a live board unprompted: the operator read the sibling
+        'reconcile' command's --apply convention and reasonably assumed this one
+        matched. It did not, and it is the more dangerous of the two.
+
+        Two reasons this is not merely tidier. This command is the ROLLBACK
+        SAFETY NET for the irreversible Phase 4e-retire step, and a safety net
+        that writes by default is backwards. And "nobody runs it by accident" is
+        not a safety property on this fleet, because skoperator honor mode
+        actuates without a human, so the realistic trigger is automated rather
+        than careless.
+
+        The write is not destructive in the card sense (no card or status is
+        lost, and it improved parity when it fired), but it DOES recompute the
+        agent status layer, which collapsed per-agent completion attribution
+        into a synthetic 'legacy-export' agent for entries that predate
+        dual-write and therefore have no per-event owner anywhere.
         """
         from ..card_store import export_to_legacy
 
         home_path = Path(home).expanduser()
-        res = export_to_legacy(home_path, dry_run=dry_run)
-        verb = "Would write" if dry_run else "Wrote"
+        res = export_to_legacy(home_path, dry_run=not apply_)
+        verb = "Wrote" if apply_ else "Would write"
+        colour = "green" if apply_ else "yellow"
+        suffix = "" if apply_ else " Re-run with --apply to write."
         console.print(
-            f"\n  [green]{verb} {res['tasks_written']} new task file(s) + "
+            f"\n  [{colour}]{verb} {res['tasks_written']} new task file(s) + "
             f"{res['agents_written']} agent file(s) from {res['cards']} "
-            f"store card(s).[/]\n"
+            f"store card(s).[/]{suffix}\n"
         )
 
     @coord.command("maintain")
@@ -488,19 +618,54 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_move(task_id, column, home, order, agent):
         """Move a card to a kanban column (backlog/ready/doing/review/done)."""
-        from ..card import CardEvent, CardEventLog
-
         home_path = Path(home).expanduser()
-        event = CardEvent(
-            card_id=task_id, action="move", column=column, order=order, writer=agent or ""
-        )
-        CardEventLog(home_path).append(event)
-        from ..card_store import card_store_write_enabled, mirror_coord_move
+        from skcoord.lifecycle import transition_task
 
-        if card_store_write_enabled():
-            mirror_coord_move(home_path, task_id, column, agent or "", order=order)
+        try:
+            receipt = transition_task(
+                home_path,
+                task_id=task_id,
+                column=column,
+                actor=agent or "coord-move",
+                order=order,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
         pos = f" at order {order}" if order is not None else ""
         console.print(f"\n  [green]Moved {task_id} to '{column}'{pos}.[/]\n")
+        if receipt.actions:
+            console.print(
+                f"  [dim]Reconciled {len(receipt.actions)} agent projection change(s).[/]"
+            )
+
+    @coord.command("reconcile-agents")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--repair", is_flag=True, default=False)
+    @click.option("--agent", default="coord-reconcile", help="Receipt writer identity.")
+    @click.option("--stale-seconds", default=3600, type=click.IntRange(min=0))
+    def coord_reconcile_agents(home, repair, agent, stale_seconds):
+        """Audit agent projection drift and optionally repair it explicitly."""
+        import json
+
+        from skcoord.lifecycle import audit_lifecycle, repair_lifecycle
+
+        home_path = Path(home).expanduser()
+        try:
+            if repair:
+                receipt = repair_lifecycle(
+                    home_path,
+                    actor=agent,
+                    stale_after_seconds=stale_seconds,
+                )
+                payload = receipt.to_dict()
+                payload["receipt_path"] = str(receipt.receipt_path)
+            else:
+                payload = audit_lifecycle(home_path).to_dict()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(json.dumps(payload, indent=2))
+        if not payload.get("clean", payload.get("after", {}).get("clean", False)):
+            raise click.ClickException("coordination lifecycle is not reconciled")
 
     @coord.command("label")
     @click.argument("task_id")
@@ -558,6 +723,37 @@ def register_coord_commands(main: click.Group) -> None:
             k for k, v in (("title", title), ("description", description)) if v is not None
         )
         console.print(f"\n  [green]Described {task_id} ({changed}).[/]\n")
+
+    @coord.command("rehome")
+    @click.argument("old_prefix")
+    @click.argument("new_prefix")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name (defaults to coord-rehome).")
+    @click.option("--dry-run", is_flag=True, default=False, help="Report matches, write nothing.")
+    def coord_rehome(old_prefix, new_prefix, home, agent, dry_run):
+        """Rewrite a path prefix across every folded card description.
+
+        For each card whose description still mentions OLD_PREFIX, appends one
+        attributed describe event carrying the rewritten text - the established
+        fold pattern, so core.json stays write-once and the rewrite is
+        reversible by swapping the arguments. Use it after a repository move
+        instead of hand-editing dozens of cards.
+        """
+        from ..rehome import rehome_descriptions
+
+        home_path = Path(home).expanduser()
+        try:
+            report = rehome_descriptions(
+                home_path, old_prefix, new_prefix, agent=agent or "", dry_run=dry_run
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from None
+        verb = "Would rewrite" if dry_run else "Rewrote"
+        summary = f"{verb} {report['matched']} card(s): {old_prefix} -> {new_prefix}."
+        console.print(f"\n  [green]{summary}[/]")
+        for cid in report["cards"]:
+            console.print(f"    [dim]- {cid}[/]")
+        console.print()
 
     @coord.command("link")
     @click.argument("task_id")

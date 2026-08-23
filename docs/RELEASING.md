@@ -4,6 +4,29 @@ Written 2026-08-15 after nearly cutting a duplicate release by hand. The two
 repos in this family do NOT release the same way, and the difference is the
 kind of thing that only bites once you are already halfway through.
 
+## Cross-package order: release skcoord first
+
+skcoord owns the coordination lifecycle and authoritative card fold consumed
+by skcapstone. When skcapstone imports a new skcoord symbol or relies on new
+fold behavior, release order is strict:
+
+1. Merge and release the required skcoord change first.
+2. In a fresh environment, install the published skcoord artifact from the
+   registry, with no sibling checkout, editable install, VCS dependency, or
+   `PYTHONPATH` overlay.
+3. Verify every new import and behavior against that artifact. For the 0.1.28
+   floor, this includes the existing lifecycle and authoritative criteria-fold
+   contracts plus `skcoord.cmdb_scheduler`, its disabled default policy, lease,
+   incident routing, and retention helpers.
+4. Raise the skcapstone dependency floor to the verified skcoord version.
+5. Only then release skcapstone.
+
+The skcapstone test workflow installs skcoord from its moving Git default
+branch. That is source-compatibility evidence, but it does not prove that the
+registry artifact selected by a fresh install contains the required API. A
+local source overlay has the same limitation. Do not publish skcapstone while
+the minimum required skcoord artifact is unavailable or unverified.
+
 ## skcapstone: the tag is cut FOR you
 
 `.github/workflows/publish.yml` has a `tag` job gated on

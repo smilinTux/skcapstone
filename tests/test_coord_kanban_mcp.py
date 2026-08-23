@@ -57,3 +57,13 @@ async def test_coord_move_handler_rejects_bad_column(tmp_path, monkeypatch):
     result = await coord_tools._handle_coord_move({"task_id": "x", "column": "bogus"})
     data = _parse(result)
     assert "error" in data or data.get("moved") is not True
+
+
+@pytest.mark.asyncio
+async def test_coord_move_handler_normalizes_missing_task(tmp_path, monkeypatch):
+    monkeypatch.setattr(coord_tools, "_shared_root", lambda: tmp_path)
+
+    result = await coord_tools._handle_coord_move({"task_id": "missing", "column": "review"})
+
+    data = _parse(result)
+    assert data == {"error": "Task missing not found"}

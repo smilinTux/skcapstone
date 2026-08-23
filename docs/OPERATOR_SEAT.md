@@ -204,6 +204,13 @@ Atlas ships **report-only** and comes live in deliberate, reversible stages. You
 never lose the freeze card at any step.
 
 1. **Install:** `pip install -e .` puts `skoperator` on the path.
+   A protected operator identity should receive its passphrase through a
+   systemd credential named `capauth-passphrase`. Prefer
+   `LoadCredentialEncrypted=` with a host-bound blob created by
+   `systemd-creds encrypt`; the signer also accepts an explicit owner-only
+   `CAPAUTH_PASSPHRASE_FILE` for recovery. It refuses symlinks, foreign
+   ownership, files larger than 4096 bytes, and any group/world permission.
+   Never place the passphrase directly in a unit `Environment=` line.
 2. **Watch it think (report-only):** enable the timer. Atlas runs every 15
    minutes, observes the fleet, reasons, and reports. It writes nothing.
    ```
@@ -217,6 +224,35 @@ never lose the freeze card at any step.
    fixes apply themselves (signed, ITIL-recorded); majors still park.
 5. **The freeze is always yours:** `skoperator freeze` halts all actuation
    instantly, at any stage. Atlas cannot lift it.
+
+### CMDB scheduling through Atlas
+
+CMDB operations use the same seat, rather than a privileged AI side channel.
+`skcapstone cmdb operator observe` gives Atlas checksum-verified reconcile
+freshness, scan completeness, and append-only-store audit conditions. The
+regular `skoperator.timer` is the cognitive wake-up: stale or incomplete CMDB
+evidence appears in its brief.
+
+The rollout keeps two bounded oneshots and no independent apply timer:
+
+- `skcapstone-cmdb-reconcile-shadow.service` runs a credentialed network
+  reconcile without `--apply` and retains its artifact plus checksum.
+- `skcapstone-cmdb-reconcile-network.service` is the credentialed apply
+  oneshot. Its operator action
+  is non-standard and irreversible, so it requires a human CAB decision and the
+  three complete, same-scope shadow artifacts before use.
+
+The legacy `skcapstone-cmdb-reconcile.service` is local-only and must never be
+used as the target of `apply-cmdb-reconcile`. The network unit fails closed
+unless `%h/.config/skcapstone/cmdb-network-apply` exists. That owner-reviewed,
+mode-`0700` launcher contains exact targets and `skvault://` references (not
+secret values), and invokes `cmdb reconcile --network --apply --record-run`.
+
+Do not replace a live timer merely because the adapter exists. First restore
+all authoritative targets, collect the three shadow artifacts, ratify only the
+shadow action, and review the exact unit/configuration diff. Timer replacement
+is itself a Normal change with rollback to the prior unit. Atlas records and
+executes that approved intent; it does not own or bypass the freeze card.
 
 ## Status and rollout
 

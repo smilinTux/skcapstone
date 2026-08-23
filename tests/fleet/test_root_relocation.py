@@ -14,7 +14,7 @@ tree gained nothing.
 Companion audit (run in card 59f78375, result pasted in the PR):
 
     $ grep -rn '.skcapstone' src/skcapstone/fleet/
-    src/skcapstone/fleet/paths.py:77:    root = os.environ.get("SKFLEET_ROOT", "~/.skcapstone/fleet")
+    paths.py:77: root = os.environ.get("SKFLEET_ROOT", "~/.skcapstone/fleet")
 
 One hit, in the one module allowed to have it. The other home-anchored
 paths in the package (alerts.py finding the sk-alert binary, capacity.py

@@ -38,10 +38,26 @@ WHISPER_PORT="${SMOKE_WHISPER_PORT:-18794}"   # whisper-stt.service
 # test, it is a coincidence.
 GATEWAY_URL="${SMOKE_GATEWAY_URL:-http://localhost:18780}"
 
-# Models that mean "served by our own hardware". Anything else answering
-# sk-default is a silent substitution, which is the finding this probe exists
-# to catch. Extend this list when a new sovereign backend is added.
-SOVEREIGN_MODELS="${SMOKE_SOVEREIGN_MODELS:-ornith qwen llama mxbai beellama}"
+# SOVEREIGNTY IS NOT A MODEL NAME (card 16af7915). There used to be a
+# SMOKE_SOVEREIGN_MODELS allowlist here, matched as a SUBSTRING against the
+# `model` field of the response body. It is gone, and it must not come back.
+#
+# Measured against the live gateway ledger (skgateway/data/metrics.db,
+# energy_log, opened read-only) on 2026-08-17: 76 rows carry one of that old
+# list's tokens while running on backend=nvidia, basis=imputed_cloud. Examples
+# straight out of the table: meta/llama-3.3-70b-instruct,
+# nvidia/llama-3.3-nemotron-super-49b-v1, qwen3.8-27b-huihui-abliterated-q4_k_m.
+# The allowlist certified cloud-served open weights as sovereign, which is the
+# exact substitution this probe exists to catch. It answered PASS through the
+# whole thing.
+#
+# The one definition lives in skharness (`skharness/autocode/sovereignty.py`)
+# and this script CALLS it rather than mirroring it, so the two ends cannot
+# drift. Sovereignty is a claim about hardware and jurisdiction: the
+# discriminator is the backend that served plus the energy basis it reported.
+# ornith-1.0-9b served by `nvidia` is a violation; the same weights served by
+# `reg:ornith` are not. The weights are not the variable.
+SOVEREIGNTY_MODULE="${SMOKE_SOVEREIGNTY_MODULE:-skharness.autocode.sovereignty}"
 
 EMBED_MODEL="${SMOKE_EMBED_MODEL:-mxbai-embed-large}"
 EMBED_DIM="${SMOKE_EMBED_DIM:-1024}"
@@ -166,41 +182,97 @@ probe_http() {
   fi
 }
 
+# Read one header value out of a `curl -D` dump. Header names are case
+# insensitive on the wire, so the match is too.
+header_value() {
+    local dump="$1" name="$2"
+    printf '%s' "$dump" \
+        | tr -d '\r' \
+        | awk -v want="$(printf '%s' "$name" | tr 'A-Z' 'a-z')" '
+            { split($0, kv, ":");
+              k = tolower(kv[1]);
+              if (k == want) { sub(/^[^:]*:[ \t]*/, "", $0); print $0 } }' \
+        | tail -n 1
+}
+
 probe_gateway_sovereignty() {
-    # Assert sk-default is answered BY sovereign hardware, not merely that
-    # .100 is reachable.
-    local out served
-    out=$(curl -sS -m "$CHAT_TIMEOUT" \
+    # Assert sk-default is answered BY hardware we own, not merely that .100 is
+    # reachable and not merely that the answer is NAMED like something local.
+    #
+    # The observables are skgateway's attribution and energy headers, which it
+    # emits today for the SERVING attempt: x-sk-backend, x-sk-energy-basis,
+    # x-sk-energy-node (verified live against localhost:18780, which answered
+    # reg:ornith / measured_gpu / ollama). The body's `model` field is what was
+    # NAMED, and naming is what the old allowlist trusted.
+    local dump body backend basis node verdict state rc
+    dump=$(mktemp) || { fail "gateway-sovereignty" "cannot create a temp file"; return; }
+    body=$(curl -sS -m "$CHAT_TIMEOUT" -D "$dump" \
         "${GATEWAY_URL}/v1/chat/completions" \
         -H 'Content-Type: application/json' \
         -d "{\"model\":\"sk-default\",\"messages\":[{\"role\":\"user\",\"content\":\"say OK\"}],\"max_tokens\":${CHAT_MAX_TOKENS}}" \
         2>/dev/null)
-    if [ -z "$out" ]; then
+    if [ -z "$body" ]; then
         # No gateway here is not a failure of .100. This script also runs on
         # boxes that do not host one.
+        rm -f "$dump"
         pass "gateway-sovereignty" "no gateway at ${GATEWAY_URL} (skipped)"
         return
     fi
-    served=$(printf '%s' "$out" | python3 -c '
-import json, sys
-try:
-    print(json.load(sys.stdin).get("model") or "")
-except ValueError:
-    print("")
-' 2>/dev/null)
-    if [ -z "$served" ]; then
-        fail "gateway-sovereignty" "sk-default returned no model field"
-        return
-    fi
-    for token in $SOVEREIGN_MODELS; do
-        case "$served" in
-            *"$token"*)
-                pass "gateway-sovereignty" "sk-default served by ${served}"
-                return ;;
-        esac
-    done
-    fail "gateway-sovereignty" \
-        "sk-default served by ${served}, which is NOT sovereign hardware (silent cloud failover)"
+
+    local headers
+    headers=$(cat "$dump")
+    rm -f "$dump"
+    backend=$(header_value "$headers" "x-sk-backend")
+    basis=$(header_value "$headers" "x-sk-energy-basis")
+    node=$(header_value "$headers" "x-sk-energy-node")
+
+    # THE definition, called not copied. A mirrored rule in bash would be a
+    # second definition the moment either side is edited, and nothing would
+    # report the drift.
+    local errfile reason
+    errfile=$(mktemp) || { fail "gateway-sovereignty" "cannot create a temp file"; return; }
+    verdict=$(python3 -m "$SOVEREIGNTY_MODULE" \
+        --backend "$backend" --basis "$basis" --node "$node" 2>"$errfile")
+    rc=$?
+    state="${verdict%%	*}"
+    reason="${verdict#*	}"
+
+    # Branch on the STATE WORD and cross-check it against the exit code, never
+    # on the exit code alone. `python3 -m some.missing.module` also exits 1, so
+    # an exit-code-only reader would report a crashed classifier as "a cloud
+    # served it": still a failure, but a failure with the wrong diagnosis
+    # pointing an operator at the routing when the real problem is the install.
+    # A state word the classifier did not write means it did not classify.
+    case "$state" in
+        sovereign)
+            if [ "$rc" -ne 0 ]; then
+                fail "gateway-sovereignty" \
+                    "classifier contract broken: said 'sovereign' but exited ${rc}; not certifying"
+            else
+                pass "gateway-sovereignty" \
+                    "sk-default served by backend=${backend} basis=${basis} node=${node:-none}"
+            fi
+            ;;
+        violated)
+            fail "gateway-sovereignty" \
+                "sk-default served by backend=${backend} basis=${basis}: NOT our hardware (silent cloud failover). ${reason}"
+            ;;
+        unobserved)
+            # FAIL CLOSED. Unknown is not sovereign. A gateway too old to emit
+            # attribution headers has told us nothing, and "nothing" read as a
+            # pass is what made the old allowlist look healthy while it was not.
+            fail "gateway-sovereignty" \
+                "sk-default sovereignty UNOBSERVED (backend=${backend:-none} basis=${basis:-none}): ${reason}"
+            ;;
+        *)
+            # The classifier itself did not run: almost always skharness is not
+            # installed. Also fail closed, and say exactly what to install
+            # rather than certifying a call nobody classified.
+            fail "gateway-sovereignty" \
+                "cannot classify: python3 -m ${SOVEREIGNTY_MODULE} exited ${rc} and wrote no verdict ($(tr -d '\n' < "$errfile" | tail -c 160)). Install skharness; this script does not carry its own copy of the definition."
+            ;;
+    esac
+    rm -f "$errfile"
 }
 
 # ------------------------------------------------------------ timestamps ---

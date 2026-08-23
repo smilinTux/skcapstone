@@ -282,7 +282,7 @@ def test_a_node_publishing_a_genuinely_empty_inventory_is_still_graded(
     assert reports["node-bare"]["missing_required_units"] == ["skai-beellama.service"]
 
 
-def test_naming_another_node_uses_ITS_published_inventory_not_the_local_one(
+def test_naming_another_node_uses_its_published_inventory_not_the_local_one(
     fleet_tree, operator, monkeypatch
 ) -> None:
     """`node doctor <other-node>` must never grade THIS node's units against
@@ -327,7 +327,7 @@ def test_naming_a_node_that_published_nothing_is_a_skip_not_a_wrong_answer(
     assert "published no inventory yet" in result.output
 
 
-def test_the_named_form_and_all_agree_for_a_REMOTE_node(fleet_tree, operator) -> None:
+def test_the_named_form_and_all_agree_for_a_remote_node(fleet_tree, operator) -> None:
     """For a node that is not this one, both paths read what that node
     published, so they must produce identical reports. That divergence is
     what hid the bug.

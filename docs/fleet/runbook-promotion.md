@@ -1,11 +1,21 @@
 # Runbook: promote `.41` to control on loss of `.158`
 
 **Epic:** `3bbf39ea`. **Cards:** `591d2b1a` (the runbook and drill),
-`0afa9ffb` (a documented revert on every step). **Precondition sibling:**
-`6bcf1e4c` verifies `.41` actually holds a current replica.
+`0afa9ffb` (a documented revert on every step), `4c32df6f` (the drill run).
+**Precondition sibling:** `6bcf1e4c` verifies `.41` actually holds a current
+replica.
 **Companions:** [control-unit-set.md](control-unit-set.md) (what `.41` gains,
 unit by unit), [adr-node-role-model.md](adr-node-role-model.md) (why the SPOF
-is accepted and this is its mitigation).
+is accepted and this is its mitigation),
+[promotion-drill-2026-08-16.md](promotion-drill-2026-08-16.md) (the drill
+record: what was executed, what broke, and the evidence for every claim marked
+DRILLED below).
+
+**Status: DRILLED 2026-08-16** against a scratch fleet, both cases plus
+fail-back. Everything below marked **[drilled]** was executed, including its
+revert. Everything marked **[not drilled]** is systemd work that has no
+scratch-tree equivalent and is still reasoning, not capability. The drill
+changed this document in five places; they are marked **[added by the drill]**.
 
 ---
 
@@ -74,9 +84,9 @@ backup or the agents are re-keyed.
 
 Two consequences for this runbook:
 
-1. **Restoring the eight keys is a promotion step, not an afterthought.** It has
-   to come from the sealed vault or from the `agents/*/backups` tarballs, not from
-   Syncthing, which will never carry them.
+1. **Restoring the eight keys is a promotion step, not an afterthought.** The
+   source is the nightly off-site GFS tarball, which is already sitting on `.41`.
+   See the step below.
 2. **The operator key is not part of this problem.** `capauth/identity/` on `.158`
    holds `public.asc` only, so operator custody was never a Syncthing question and
    is not fixed or broken by a promotion.
@@ -84,6 +94,70 @@ Two consequences for this runbook:
 If you are promoting under time pressure and the eight agents are not needed
 immediately, promote first and restore keys after. Just do not believe the seat is
 whole until they are back.
+
+### Step K. Restore the keys, on `.41`, from `.41`'s own disk **[drilled, 15.3s]**
+
+**[added by the drill]** An earlier version of this runbook said the keys had to
+come "from the sealed vault or from the `agents/*/backups` tarballs". Both were
+wrong, and the drill found the source that works.
+
+- `agents/*/backups` exists for exactly one agent, `lumina`, which `.41` already
+  has. It covers **none** of the eight.
+- It could never have worked anyway: `~/.skcapstone/.stignore` ignores `backups`
+  (line 81) and `**/*.tar.gz` (line 106), so no tarball has ever replicated.
+- `skvault` may or may not hold them. Nobody has checked, and an incident is the
+  wrong time to find out.
+
+What actually works: `scripts/backup-gfs.sh` has an `OFFSITE_DEST` rsync push,
+it is configured, and it runs nightly. **`.41` already holds a same-day tarball
+containing every missing key.** rsync is not Syncthing, and the destination is
+outside `~/.skcapstone`, so the `.stignore` rules do not apply to it.
+
+```
+# on .41. no vault, no .158, no network beyond this box.
+ls -t ~/skcapstone-offsite/158/gfs/daily/*.tar.gz | head -1
+```
+
+Confirm it is current and complete before you rely on it:
+
+```
+L=$(ls -t ~/skcapstone-offsite/158/gfs/daily/*.tar.gz | head -1)
+sha256sum -c "$L.sha256"
+tar tzf "$L" | grep -c 'capauth/identity/private.asc'    # expect 11
+tar tzf "$L" | grep -E 'oidc_signing_key.pem|cot-pki/'   # expect the full set
+```
+
+Extract to a staging directory first, never straight over `~/.skcapstone`:
+
+```
+mkdir -p /tmp/keyrestore
+tar xzf "$L" -C /tmp/keyrestore \
+  $(for a in architect artisan ava coder herald scholar sentinel steward; do \
+      echo ".skcapstone/agents/$a/capauth/identity/private.asc"; done)
+
+for a in architect artisan ava coder herald scholar sentinel steward; do
+  gpg --show-keys /tmp/keyrestore/.skcapstone/agents/$a/capauth/identity/private.asc
+done
+```
+
+Only once all eight parse, copy them into place with mode 600 and restore
+`capauth/service/oidc_signing_key.pem` and `skcomms/cot-pki/` the same way.
+
+**Revert:** delete what you copied in. These are restores of files that were
+absent, so the revert is `rm` of the eight paths plus the two other classes, and
+`.41` is back to its pre-promotion identity state. Nothing was overwritten.
+
+**Verify:** `capauth doctor` per agent, and note that the eight keys are as of
+last night's 02:45 run. For long-lived PGP keys that is not staleness.
+
+**Timing, measured:** 15.3s to extract the eight from a 296MB artifact.
+
+**One catch, and it is the reason this needs watching.** The cronjob that
+produces this artifact, `skcapstone-backup-gfs`, carries
+`nodeSelector: {"control-plane": "true"}`, a label only `.158` holds. See the
+label warning in Step 2.2: after a promotion that job is schedulable on **no**
+node, so the rotation that just saved you stops advancing. Fix the label, or
+run the backup by hand while `.41` holds the seat.
 
 ## Preconditions
 
@@ -423,7 +497,7 @@ to within seconds.
 Stop. Fix Syncthing before you write anything, or accept the data-loss
 decision consciously (see below).
 
-### Step 2.2. Bind the role
+### Step 2.2. Bind the role **[drilled, 0.35s]**
 
 ```
 skfleet set-role node-41 control
@@ -458,6 +532,116 @@ of an outage.** Nothing enforces the identity class at write time today, so it
 does not block you. Do not try to fix it during the incident by editing
 identities; that is a much larger change than a promotion and it is how a
 one-hour outage becomes a one-day one. Record it and move on.
+
+### Step 2.2b. Move the labels, or the promoted seat gets no work **[added by the drill]**
+
+**Do not skip this. `set-role` is not the whole promotion.** This is the single
+biggest thing the drill found, and by design nothing in Step 2.2's verify
+catches it.
+
+`skfleet set-role` writes `spec.role` and deliberately preserves labels
+untouched. **The scheduler never reads `spec.role`.** `scheduler.feasible`
+filters on labels only:
+
+```python
+for key, value in sorted(workload.node_selector.items()):
+    if view.labels.get(key) != value:
+        return f"selector mismatch ({key}={value})"
+```
+
+Measured 2026-08-16:
+
+| node | labels | `spec.role` |
+|---|---|---|
+| `node-noroc2027` | `always-on`, `control-plane`, `dev-primary`, `pi-harness`, `skcode-harness` | `control` |
+| `node-41` | `heavy-build`, `pi-harness`, `skcode-harness` | `builder-standby` |
+
+`.41` has **neither** `always-on` nor `control-plane`. **26 fleet objects
+select on them**: 17 on `always-on` (`skgateway`, `skchat-daemon`, `skcomms`,
+`skmemory-daemon`, `skingest`, `skchat-coturn`, `skchat-piper-tts`,
+`skchat-nostr-relay`, the telegram and webui bridges, and 7 `skmem-*` /
+backup / housekeep cronjobs) and 9 on `control-plane` (`skcapstone-daemon`,
+`skos-scheduler`, `capauth-keystore`, `skgateway-claude-wrapper`,
+`autopilot-daily`, `capauth-custody-doctor`, `skcapstone-backup-gfs`,
+`skgateway-parity-check`, `skos-morning-brief`).
+
+After Step 2.2 alone, all 26 have exactly one candidate node and it is the dead
+one. Drilled, on a scratch fleet mirroring the `control-plane` selector:
+
+```
+node-drill-standby role=control (generation 6)
+  node-drill-control   phase=Dead   role=control         -> not Ready (phase=Dead)
+  node-drill-standby   phase=Ready  role=control         -> selector mismatch (control-plane=true)
+  feasible nodes: NONE
+```
+
+`skfleet nodes` prints `role=control` throughout and looks completely correct.
+
+**Use `skfleet label`. It merges.**
+
+```
+skfleet label node-41 control-plane=true always-on=true
+```
+
+That is the whole step. Every other field of the spec (`taints`, `cordoned`,
+`address`, `identity`, `role`) is preserved, and the generation bumps by one.
+
+**Do NOT use `skfleet apply` for this.** `apply` replaces the entire spec from
+the document you hand it, so a minimal label-only document silently drops
+`taints`, `cordoned` and `address`. Drilled: a label-only apply on a cordoned,
+tainted node dropped both and **exited 0 with no warning, un-cordoning it**.
+That is what this verb exists to prevent, and it is why the step above is one
+line instead of the copy-the-whole-document dance this runbook used to
+prescribe.
+
+**Revert:**
+
+```
+skfleet label node-41 --remove control-plane --remove always-on
+skfleet set-role node-41 builder-standby
+```
+
+Removing a label that is not set is a silent no-op, so the revert is safe to
+run twice, and safe to run when you are unsure how far the promotion got.
+
+**Verify, and this is the check that actually proves the promotion landed:**
+
+```
+skfleet describe node node-41 | jq '.spec.labels, .spec.spec'
+skfleet placements
+```
+
+`skfleet placements` is the real test. Every `control-plane` and `always-on`
+workload should now show `.41` as a feasible candidate. If placements still
+report the dead node or report nothing feasible, the labels did not move.
+
+**Should `.158` lose its labels?** In Case A, yes eventually, but not now: it
+costs a second spec write during the incident and the node is `Dead`, so the
+phase filter already excludes it. Do it during fail-back, or leave it. In Case B
+leave it alone, `.158` is alive and may take the seat back.
+
+**How urgent is this today?** The label gap is real but currently LATENT for
+cronjobs, and it is worth knowing which half is which so nobody relaxes about
+the wrong one.
+
+`cron_controller` does not place anything. Its module docstring says so
+outright: "skscheduler wiring for CronJob placement is a [later card]", and it
+reads "whatever placement record (if any) already exists". Measured on the live
+tree: 22 placement records exist and **all 22 are `job` kind**, none are
+`cronjob` or `service`. So `skcapstone-backup-gfs` is not being placed by the
+scheduler at all right now, and its `control-plane` selector is not currently
+gating anything.
+
+That makes this a latent bug, not a live outage, with one important
+consequence: the failure arrives on the day cron placement gets wired, not on
+the day of the promotion, so it will not look related to either change. Move
+the labels anyway. The step is one line and the cost of skipping it is a
+control seat that silently schedules nothing.
+
+Better still would be for `set-role` to move role-implied labels itself, so
+the two can never drift apart. That is card `1859466e`, and it is a design
+decision (labels are per-node facts, roles are shared manifests) rather than
+a missing line of code.
 
 ### Step 2.3. The gateway is an address handoff, not a systemd handoff
 
@@ -646,12 +830,127 @@ does not lock, does not order, and resolves divergence by writing a
    with it means the risky window is minutes of deliberate work, not hours of
    background timers.
 3. **Conflict-file detection, with a baseline.** P3 records the pre-existing
-   conflicts so a new one is visible. Steps B5, 2.5 and 2.6 re-check. This is
-   how you find out you were wrong, and it works because the alarm and the
-   damage are the same artifact.
+   conflicts so a new one is visible. Steps B5, 2.5 and 2.6 re-check. **Read
+   the next section before you trust this one.** The drill showed it catches
+   far less than this list implied.
 4. **The freeze, for everything except human authorship.** It stops the AI
    seat and the actuators cold. It does not stop `skfleet apply` from a
-   terminal. Do not lean on it for what it does not do.
+   terminal. Do not lean on it for what it does not do. **[drilled]**,
+   negative-controlled both ways: with the fleet frozen and a placement
+   deleted, `skfleet reconcile` refused to place it; unfrozen, the same command
+   placed it immediately. All five human write verbs succeeded while frozen.
+
+### The conflict-file check finds collisions, not second seats **[added by the drill]**
+
+A conflict file is produced only when **both** sides changed the same file
+since the last agreed version. That is a race, and a race is the *unlikely*
+shape of a two-seat incident.
+
+Two experiments, same two seats, same object:
+
+| | writes | conflict files found |
+|---|---|---|
+| both seats write inside one sync interval | 2 | **1**, detector fires |
+| Syncthing converges between the writes | **10** | **0** |
+
+Ten operator writes from two different machines and the runbook's detector
+reported nothing. Sequential generations, well-formed signed writer blocks, an
+internally consistent store, and no artifact anywhere that a second seat ever
+existed.
+
+The interleaved case is the likely one. The fleet tree is 368K, Syncthing
+converges on it in seconds, and `skoperator.timer` fires every 15 minutes.
+
+Which means the advice in Step 2.5 needs reading carefully:
+
+> Wait one full timer cycle, 15 minutes, and re-run the conflict check. A new
+> conflict file here means two operators.
+
+That sentence is **true**. Its converse is **false** and it is easy to read it
+as though it were: no new conflict file does *not* mean one operator. Keep the
+15-minute wait as a settling delay. Do not treat a clean `find` as an all-clear.
+
+**Use this instead, and run it at B5, at 2.5, and at F6.** Every spec carries
+`writer.node`. A spec written by a node that does not hold `spec.role: control`
+is a second seat, and it needs no collision to appear:
+
+```
+python3 - <<'PY'
+import json, pathlib, collections
+root = pathlib.Path.home() / ".skcapstone/fleet"
+seats = {p.stem for p in (root/"objects/node").glob("*.json")
+         if ".sync-conflict-" not in p.name
+         and json.loads(p.read_text()).get("spec", {}).get("role") == "control"}
+by, bad = collections.Counter(), []
+for p in sorted((root/"objects").rglob("*.json")):
+    if ".sync-conflict-" in p.name: continue
+    try: d = json.loads(p.read_text())
+    except Exception: continue
+    w = d.get("writer") or {}
+    if w.get("role") != "operator": continue
+    by[w.get("node")] += 1
+    if w.get("node") not in seats:
+        bad.append((str(p.relative_to(root)), w.get("node"), d.get("updatedAt")))
+print("control seats:", sorted(seats) or "NONE")
+print("operator writes by node:", dict(by))
+for f, n, t in bad: print(f"  FOREIGN WRITE {f} <- {n} @ {t}")
+print("clean" if not bad else f"*** {len(bad)} foreign operator write(s)")
+PY
+```
+
+Two honest caveats:
+
+- It reports the **current** writer per object. Each write overwrites the last
+  one, so a foreign write that the real seat later overwrote is invisible.
+  Better than the conflict check, still not proof.
+- `store.write_spec` emits no event, so there is no append-only write history
+  anywhere. After the fact, "were there two seats and for how long" cannot be
+  answered from the store. Plan on catching it live, not in forensics.
+
+### A conflict file in `objects/` is worse than an alarm **[added by the drill]**
+
+**If you find a `.sync-conflict-` file anywhere under `objects/`, move it out of
+the tree before you do anything else.**
+
+`store.list_specs` globs `*.json` and `node_controller.node_views` keys the
+result by the `name` field **inside** each file. A conflict file is a byte copy
+of the loser, so it carries the same `name`, sorts after the real file, and
+**wins the dictionary**. Drilled, with the conflict file removed and replaced as
+a control:
+
+```
+on disk, the object Syncthing KEPT:   role=builder-standby  cordoned=true
+skfleet describe (reads by path):     role=builder-standby  cordoned=true
+skfleet nodes    (reads via glob):    role=control          (no CORDONED flag)
+remove the conflict file:             role=builder-standby  CORDONED
+put it back:                          role=control
+```
+
+So:
+
+- `skfleet nodes` and `skfleet describe` will tell you different things about
+  the same node in the same second. **`describe` is the one telling the truth.**
+- Everything downstream of `node_views` reads the discarded version, including
+  `scheduler.feasible`. In the transcript above a **cordoned node appears
+  schedulable**.
+- It affects every kind, not only nodes. `list_specs` backs `skfleet get`,
+  `skfleet services`, and the controllers.
+
+The two pre-existing conflicts recorded in P3 are under
+`status/node-noroc2027/` and are **inert**, because the status tree is read by
+exact path. The exposure is only in `objects/`, and a promotion is the most
+likely way to create one.
+
+```
+# do this the moment you see one, before any further reads
+mkdir -p ~/incident-conflicts
+mv ~/.skcapstone/fleet/objects/**/*.sync-conflict-* ~/incident-conflicts/
+```
+
+Moving it out of the folder is enough. Read it there, decide which version
+should win, and re-assert that version with `skfleet apply`. Do not leave it in
+place "as evidence": while it is in `objects/` it is not evidence, it is the
+state.
 
 There is a fifth thing that is not a mechanism but is worth saying out loud:
 **only one person promotes.** Two humans in two terminals is the same
@@ -749,6 +1048,45 @@ no IPMI): boot it, then immediately ssh in and run the disables. Accept that
 `skoperator` may fire once during that gap. Check for conflict files
 afterwards and expect to find one. Knowing you took the risk beats discovering
 it.
+
+**[added by the drill] What that one firing actually costs: the promotion
+itself.** This was drilled and the result is worse than "a conflict file".
+
+`.158` boots without having synced, so it acts on its pre-outage view, in which
+it is still the seat and `node-41` is still `builder-standby`. It writes
+`node-41.json` at the **same generation number** `.41`'s promotion wrote,
+because it never saw that write. Syncthing then resolves on mtime, and `.158`
+just wrote, so `.158` wins:
+
+```
+### .158 powers back on, Persistent=true fires before Syncthing connects
+  .158 wrote 2 specs before Syncthing connected.
+### Syncthing connects:
+  CONFLICT   objects/node/node-drill-standby.json (SEATA158 won)
+### the state both boxes now share:
+  node-drill-standby: gen=2 role=builder-standby  writer=node-drill-control
+```
+
+**The promotion is silently reverted.** `.41` is a standby again and the only
+node claiming `role: control` is the box that just came back from an
+unexplained outage, with nobody having decided that.
+
+Generation does not save you: both writes are generation 2, both well formed,
+both signed. The only trace is the conflict file, and per the conflict-file
+section above that file is now **overriding** the object in `skfleet nodes`,
+which will cheerfully report `role=control` for the node that was just demoted.
+
+Therefore, if you could not boot `.158` offline:
+
+1. Move any `objects/` conflict file out of the tree immediately (see above).
+2. Re-check `skfleet describe node node-41`, not `skfleet nodes`.
+3. If `spec.role` came back as `builder-standby`, **the promotion was
+   overwritten**. Re-assert it with Step 2.2 and 2.2b before doing anything
+   else, or consciously decide to fail back now.
+
+This is the strongest argument in this runbook for taking the time to bring
+`.158` up with networking down. Ten minutes of console access buys you out of
+the entire failure mode.
 
 **In Case A this is where you catch the trap.** Case A never ran Step B1,
 because there was nothing to run it against. F1 is Case A's B1, delayed. Do
@@ -870,38 +1208,89 @@ fail-back finished, as opposed to appearing to.
 Wait one full 15-minute timer cycle and re-check the conflict lists one last
 time before you close.
 
+**[added by the drill] And run the `writer.node` audit, because the conflict
+list is not enough.** Ten writes from two seats produced zero conflict files in
+the drill. Paste the script from "The conflict-file check finds collisions, not
+second seats" and confirm:
+
+- `control seats:` lists exactly one node, and it is `node-noroc2027`.
+- `operator writes by node:` shows writes from that node only, or shows `.41`
+  writes you can account for from the promotion window.
+- no `FOREIGN WRITE` lines.
+
+Also confirm no `.sync-conflict-` file is sitting in `objects/` on either box.
+If one is, `skfleet nodes` is reading it in preference to the real object, and
+every check you just ran was against the wrong data.
+
 ---
 
 ## Drilling this
 
-Per card `591d2b1a` the drill runs **against a scratch fleet store, never
-against production**. `paths.default_paths()` honours `SKFLEET_ROOT`:
+**[rewritten by the drill]** The old version of this section told you to
+`cp -r ~/.skcapstone/fleet/* /tmp/drill-fleet/`. That command fails as written
+(nothing creates the target directory), and more importantly it is the wrong
+shape: it copies production into a scratch tree by hand, which is exactly the
+pattern `skfleet drill` was built to make unnecessary.
+
+Use the harness. It is structurally incapable of touching production: the root
+is resolved before it is judged, the forbidden prefix is the whole sovereign
+home, an ownership marker means it cannot adopt a tree it did not create, and
+`SKFLEET_ROOT` is never read as the target.
 
 ```
-export SKFLEET_ROOT=/tmp/drill-fleet
-cp -r ~/.skcapstone/fleet/* /tmp/drill-fleet/
+skfleet drill create --root /tmp/promo-drill        # 3 profiles, 3 nodes, 1 service, seeded drift
+export SKFLEET_ROOT=/tmp/promo-drill                # now every verb below is on the copy
+
 skfleet nodes
-skfleet set-role node-41 control
+skfleet node doctor --all
 skfleet freeze --reason drill
+skfleet drill kill-control --root /tmp/promo-drill  # ages the seat's heartbeat past DEAD_AFTER_S
+skfleet set-role node-drill-standby control
+skfleet unfreeze
+
+skfleet drill teardown --root /tmp/promo-drill      # deletes the whole tree
 ```
 
-Every `skfleet` verb in this runbook then operates on the copy. The systemd
-steps have no such override and must be reasoned about rather than executed,
-or executed on a scratch user account. **Until this has actually been run, the
-mitigation is a plan and not a capability**, which is the caveat the ADR
-attaches to its own acceptance of the SPOF.
+`skfleet drill promote --root ... [--revert]` runs and undoes the harness's own
+promotion, and it refuses to promote while the seat is still `Ready`, which is
+the reflex worth building.
 
-The most valuable thing to drill is not the happy path. It is P2 failing:
-practise deciding, with an incomplete replica in front of you, whether to
-promote and eat the loss or wait and eat the downtime. That decision is the
+**Budget:** the whole store-side sequence, all 21 commands with every revert
+executed, is about **6 seconds**. There is no reason not to run it before
+touching production, and no reason not to re-run it after any change to
+`store.py`, `node_controller.py` or `scheduler.py`.
+
+**Still not drillable in a scratch fleet.** Every `systemctl --user` step
+(B1-B4, 2.4, 2.5, 2.7, F1, F5). `SKFLEET_ROOT` has no systemd equivalent, so
+these remain reasoning rather than capability. Drilling them needs a scratch
+user account with its own `~/.config/systemd/user/` holding copies of the 21
+unit files with `ExecStart=/bin/true`, or a throwaway VM for the F1 reboot.
+That is an open follow-up.
+
+**The most valuable thing to drill is still not the happy path.** It is P2
+failing: practise deciding, with an incomplete replica in front of you, whether
+to promote and eat the loss or wait and eat the downtime. That decision is the
 hard part, and it is the one you do not want to be making for the first time.
+
+The second most valuable is the two-seat window, and the way to build it is two
+drill trees plus something that moves files between them with last-synced
+conflict semantics. That is how the conflict-file detector was shown to miss
+ten writes out of ten. See
+[promotion-drill-2026-08-16.md](promotion-drill-2026-08-16.md).
 
 ---
 
 ## Command index
 
 Every command in this runbook was verified to exist on 2026-08-16 by running
-its `--help`. Nothing below is plausible-looking invention.
+its `--help`. Nothing below is plausible-looking invention. The store-side ones
+were additionally **executed** in the drill on the same day, with their reverts,
+against a scratch fleet.
+
+**One verb that does not exist and that this runbook needs: `skfleet label`.**
+See Step 2.2b. Until it does, moving a label means `skfleet apply` with the full
+spec re-stated, because `apply` replaces the whole spec and silently drops
+anything the document omits.
 
 | command | verified | effect |
 |---|---|---|

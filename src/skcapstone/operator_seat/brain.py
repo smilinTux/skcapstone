@@ -44,17 +44,28 @@ def format_report(brief: dict[str, Any], proposals: list[dict[str, Any]]) -> str
     if brief.get("quiet") and not proposals:
         return "all quiet, no action"
 
-    conditions = brief.get("conditions") or []
-    default_app = brief.get("app", "unknown")
-    firing = [c for c in conditions if c.get("status") == "True"]
+    # ``build_brief`` exposes already polarity-aware ``firing`` and ``stale``
+    # lists.  Reading the old, nonexistent ``conditions`` field made reports
+    # print "none" while health conditions were actively firing.
+    firing = brief.get("firing")
+    if firing is None:  # backwards-compatible input for direct formatter callers
+        firing = [c for c in (brief.get("conditions") or []) if c.get("status") == "True"]
+    stale = brief.get("stale") or []
 
     lines: list[str] = []
 
     lines.append("firing conditions:")
     if firing:
         for condition in firing:
-            app = condition.get("app", default_app)
+            app = condition.get("app", "unknown")
             lines.append(f"  {app}: {condition.get('type')}={condition.get('status')}")
+    else:
+        lines.append("  none")
+
+    lines.append("stale conditions:")
+    if stale:
+        for condition in stale:
+            lines.append(f"  {condition.get('app', 'unknown')}: {condition.get('type')}=Unknown")
     else:
         lines.append("  none")
 

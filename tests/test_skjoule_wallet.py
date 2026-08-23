@@ -526,7 +526,7 @@ def test_reconcile_makes_replay_agree_without_moving_the_balance(tmp_path):
 
     # forge the live defect: snapshot ahead of the journal by 500
     log = tmp_path / "agents" / "drifty" / "wallet" / "transactions.jsonl"
-    rows = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+    rows = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
     rows[-1]["amount"] = 500
     log.write_text("".join(json.dumps(r) + "\n" for r in rows))
 

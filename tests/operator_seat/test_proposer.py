@@ -31,7 +31,8 @@ def test_firing_brief_returns_validated_proposals():
         "firing": [{"app": "fleet", "object": "web", "type": "Ready", "status": "False"}],
     }
     reply = (
-        'Here is my plan: [{"action": "restart_service", "object": "web", '
+        'Here is my plan: [{"app": "fleet", "condition": "Ready", '
+        '"action": "restart_service", "object": "web", '
         '"change_class": "normal", "rationale": "web Ready went False"}]'
     )
     out = proposer.propose(firing, _EXPLAIN, chat=lambda _p: reply)
@@ -45,9 +46,21 @@ def test_unknown_action_is_dropped():
         "quiet": False,
         "firing": [{"app": "fleet", "object": "x", "type": "Ready", "status": "False"}],
     }
-    reply = '[{"action": "nuke_everything", "object": "x"}, {"action": "rerun_cronjob"}]'
+    reply = (
+        '[{"app":"fleet","condition":"Ready","action":"nuke_everything","object":"x"},'
+        '{"app":"fleet","condition":"Ready","action":"rerun_cronjob","object":"x"}]'
+    )
     out = proposer.propose(firing, _EXPLAIN, chat=lambda _p: reply)
     assert [p["action"] for p in out] == ["rerun_cronjob"]  # unknown dropped
+
+
+def test_unbound_proposal_is_dropped_even_when_action_is_known():
+    firing = {
+        "quiet": False,
+        "firing": [{"app": "fleet", "object": "x", "type": "Ready", "status": "False"}],
+    }
+    reply = '[{"app":"skgateway","condition":"Ready","action":"restart_service","object":"x"}]'
+    assert proposer.propose(firing, _EXPLAIN, chat=lambda _p: reply) == []
 
 
 def test_malformed_reply_yields_no_proposals():
