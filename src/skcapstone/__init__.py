@@ -157,6 +157,7 @@ FLEET_RESERVED_PORTS: frozenset[int] = frozenset(
         9387,  # jarvis-heartbeat
         9388,  # skchat daemon (opus) health/metrics
         9390,  # skcomms signaling broker
+        9392,  # sknoded operator-plane HTTP surface (SKOPERATOR_HTTP, default off)
     }
 )
 

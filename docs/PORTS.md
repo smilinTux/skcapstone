@@ -39,6 +39,7 @@ daemon must never auto-assign onto one of these:
 | 9387 | jarvis-heartbeat |
 | 9388 | skchat daemon (opus) health/metrics |
 | 9390 | skcomms signaling broker |
+| 9392 | `sknoded` operator-plane HTTP surface (`/operator/v1/...`, tailnet-bind only, gated OFF by default via `SKOPERATOR_HTTP` -- see `docs/OPERATOR_PLANE_REMOTE_STANDARD.md`) |
 
 > The original bug (card 36d11ec3): `AGENT_PORTS` mapped opus, lumina, and
 > jarvis all to 9383, and the unknown-agent fallback handed out `max+1 = 9384`

@@ -1,8 +1,27 @@
+# sknoded.service: SKWorld fleet node agent (self-report, Phase 1 + 3).
+#
+# Phase P1 addition (docs/OPERATOR_PLANE_REMOTE_STANDARD.md, PR #179): sknoded
+# can ALSO serve a read-only /operator/v1/... HTTP surface on port 9392,
+# tailnet-bind only (never 0.0.0.0), so a remote ATLAS seat can observe apps
+# on this node without shelling a local spec.cli that may not even be on this
+# node's PATH. This is GATED OFF by default (unset SKOPERATOR_HTTP): a node
+# with no env file present, or one that omits SKOPERATOR_HTTP, behaves
+# byte-identically to before this surface existed.
+#
+# To opt in on a given node, drop these two keys into
+# ~/.config/sknoded/operator-http.env (created by the operator, not shipped):
+#   SKOPERATOR_HTTP=1
+#   SKOPERATOR_HTTP_BIND=<this node's Tailscale IP>
+# A blank/missing bind IP, or 0.0.0.0/::, refuses to start the surface (fails
+# closed) rather than listening on a public or loopback interface; the
+# self-report + converge loop this unit exists to run is unaffected either
+# way. EnvironmentFile is prefixed with "-" so a missing file is not fatal.
 [Unit]
 Description=SKWorld fleet node agent (self-report, Phase 1)
 After=network.target
 
 [Service]
+EnvironmentFile=-%h/.config/sknoded/operator-http.env
 ExecStart=%h/.skenv/bin/skfleet sknoded --interval 300
 Restart=on-failure
 RestartSec=10
