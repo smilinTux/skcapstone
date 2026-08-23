@@ -33,9 +33,11 @@ def _coverage(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
             {
                 "node": str(target.get("host") or "unknown"),
                 "complete": bool(target.get("complete")),
-                "coverage_percent": round(100 * node_complete / node_expected, 1)
-                if node_expected
-                else 0.0,
+                "coverage_percent": (
+                    round(100 * node_complete / node_expected, 1)
+                    if node_expected
+                    else 0.0
+                ),
                 "collectors_expected": node_expected,
                 "collectors_complete": node_complete,
                 "collectors": target.get("coverage") or [],
@@ -68,6 +70,63 @@ def _history(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _evidence_age_seconds(observed_at: object) -> int | None:
+    """Return bounded wall-clock evidence age, or None for invalid timestamps."""
+    try:
+        timestamp = datetime.fromisoformat(str(observed_at).replace("Z", "+00:00"))
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    return max(0, int((datetime.now(timezone.utc) - timestamp).total_seconds()))
+
+
+def _syncthing_summary(cis: list) -> dict[str, Any]:
+    """Project node-specific Syncthing evidence without exposing probe internals."""
+    from collections import Counter
+
+    from skcoord.discovery import ci_observation_state
+
+    nodes = []
+    for ci in cis:
+        attributes = ci.attributes if isinstance(ci.attributes, dict) else {}
+        if ci.ci_type != "service" or "sync-health" not in ci.tags:
+            continue
+        folders = attributes.get("sync_folders") or []
+        if not isinstance(folders, list):
+            folders = []
+        observed_at = str(attributes.get("observed_at") or "")
+        nodes.append(
+            {
+                "id": ci.id,
+                "node": ci.node or ci.name.removeprefix("syncthing@"),
+                "status": ci.status,
+                "health": str(attributes.get("sync_health_state") or "unknown"),
+                "version": str(attributes.get("sync_version") or ""),
+                "config_schema": int(attributes.get("sync_config_schema") or 0),
+                "folder_count": int(attributes.get("sync_folder_count") or 0),
+                "folders": folders,
+                "pending_items": int(attributes.get("sync_pending_items") or 0),
+                "pull_errors": int(attributes.get("sync_pull_errors") or 0),
+                "system_errors": int(attributes.get("sync_system_errors") or 0),
+                "connected_devices": int(attributes.get("sync_connected_devices") or 0),
+                "observed_at": observed_at,
+                "evidence_age_seconds": _evidence_age_seconds(observed_at),
+                "freshness": ci_observation_state(ci).value,
+            }
+        )
+    nodes.sort(key=lambda item: item["node"].casefold())
+    states = Counter(item["health"] for item in nodes)
+    return {
+        "total_nodes": len(nodes),
+        "states": dict(states),
+        "pending_items": sum(item["pending_items"] for item in nodes),
+        "pull_errors": sum(item["pull_errors"] for item in nodes),
+        "system_errors": sum(item["system_errors"] for item in nodes),
+        "nodes": nodes,
+    }
+
+
 def get_overview(home: Path) -> dict:
     """CIs grouped by type, with health counts."""
     from collections import Counter
@@ -91,7 +150,12 @@ def get_overview(home: Path) -> dict:
     freshness = Counter(ci_observation_state(ci).value for ci in cis)
     artifacts = _artifacts(home)
     successful = next(
-        (item for item in artifacts if (item.get("completeness") or {}).get("complete")), None
+        (
+            item
+            for item in artifacts
+            if (item.get("completeness") or {}).get("complete")
+        ),
+        None,
     )
     for lst in groups.values():
         lst.sort(key=lambda c: c["name"])
@@ -102,14 +166,20 @@ def get_overview(home: Path) -> dict:
             "fresh": freshness["fresh"],
             "stale": freshness["stale"],
             "unknown": freshness["unknown"],
-            "unreachable": sum(
-                bool((target.get("failures") or []))
-                for target in ((artifacts[0].get("collector_health") or {}).get("targets") or [])
-            )
-            if artifacts
-            else 0,
+            "unreachable": (
+                sum(
+                    bool((target.get("failures") or []))
+                    for target in (
+                        (artifacts[0].get("collector_health") or {}).get("targets")
+                        or []
+                    )
+                )
+                if artifacts
+                else 0
+            ),
         },
         "coverage": _coverage(artifacts),
+        "syncthing": _syncthing_summary(cis),
         "last_successful_reconciliation": (successful or {}).get("ended_at"),
         "reconciliation_history": _history(artifacts),
         "types": [{"type": t, "items": groups[t]} for t in sorted(groups)],
@@ -142,7 +212,9 @@ def get_ci(home: Path, ci_id: str) -> dict:
             "authority": r.get("authority", ""),
         }
         rels.append(relationship)
-        relationship_groups.get(r["rel_type"], relationship_groups["other"]).append(relationship)
+        relationship_groups.get(r["rel_type"], relationship_groups["other"]).append(
+            relationship
+        )
     events = mgr.migration_preview(ci_id)["events"]
     health_history = [
         {
@@ -182,7 +254,9 @@ def get_ci(home: Path, ci_id: str) -> dict:
         "owner": ci.get("owner") or "unassigned",
         "endpoints": endpoints,
         "provenance": provenance,
-        "last_seen": attrs.get("observed_at") or ci.get("updated_at") or ci.get("created_at"),
+        "last_seen": attrs.get("observed_at")
+        or ci.get("updated_at")
+        or ci.get("created_at"),
         "health_history": health_history,
         "event_history": events[-100:],
     }
@@ -233,7 +307,11 @@ def search(
             (filters["staleness"], observed_state),
             (filters["source"], source_authority),
         )
-        if any(wanted.casefold() != actual.casefold() for wanted, actual in checks if wanted):
+        if any(
+            wanted.casefold() != actual.casefold()
+            for wanted, actual in checks
+            if wanted
+        ):
             continue
         if filters["tag"] and filters["tag"].casefold() not in {
             item.casefold() for item in ci.tags
@@ -336,11 +414,15 @@ def _verified_run_artifacts(home: Path) -> list[dict]:
             payload = path.read_bytes()
             expected = path.with_suffix(".sha256").read_text().split()[0]
             value = json.loads(payload)
-            if hashlib.sha256(payload).hexdigest() == expected and isinstance(value, dict):
+            if hashlib.sha256(payload).hexdigest() == expected and isinstance(
+                value, dict
+            ):
                 verified.append((path.stat().st_mtime, value))
         except (OSError, ValueError, IndexError, json.JSONDecodeError):
             continue
-    return [value for _, value in sorted(verified, key=lambda item: item[0], reverse=True)]
+    return [
+        value for _, value in sorted(verified, key=lambda item: item[0], reverse=True)
+    ]
 
 
 def status(home: Path) -> dict[str, Any]:

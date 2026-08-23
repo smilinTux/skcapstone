@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trends, model and fleet breakdowns, collector freshness, coverage gaps, and
   strict rejection of raw harness content.
 
+- Added a dedicated Syncthing CMDB summary with fleet health, pending work,
+  error totals, peer connectivity, and per-node service state.
+
 - Added CMDB operator coverage by node and collector, verified reconciliation
   history, evidence freshness, provenance, last-seen and health history, grouped
   relationship impact, linked ITIL records, and filters for type, node, status,

@@ -14,7 +14,9 @@ from skdashboard.dashboard import create_app
 from skdashboard.dashboard_cmdb import apply, get_ci, get_overview, search
 
 
-def test_overview_reports_coverage_failures_and_reconcile_history(tmp_path: Path) -> None:
+def test_overview_reports_coverage_failures_and_reconcile_history(
+    tmp_path: Path,
+) -> None:
     mgr = CMDBManager(tmp_path)
     mgr.create_ci(
         "Inventory API",
@@ -67,7 +69,51 @@ def test_overview_reports_coverage_failures_and_reconcile_history(tmp_path: Path
     assert result["reconciliation_history"][0]["drift"] == 2
 
 
-def test_detail_exposes_provenance_endpoints_history_relations_and_itil(tmp_path: Path) -> None:
+def test_overview_projects_node_specific_syncthing_health(tmp_path: Path) -> None:
+    mgr = CMDBManager(tmp_path)
+    for node, health, pending, pull_errors in (
+        ("chiap01", "healthy", 0, 0),
+        ("chiap02", "syncing", 4, 0),
+        ("chiap03", "degraded", 0, 2),
+    ):
+        ci = mgr.create_ci(
+            f"syncthing@{node}",
+            "service",
+            node=node,
+            attributes={
+                "sync_health_state": health,
+                "sync_version": "v2.1.3",
+                "sync_config_schema": 52,
+                "sync_folder_count": 1,
+                "sync_folders": [{"folder_id": "skcapstone", "state": "idle"}],
+                "sync_pending_items": pending,
+                "sync_pull_errors": pull_errors,
+                "sync_system_errors": 0,
+                "sync_connected_devices": 9,
+                "observed_at": "2026-08-22T12:00:00+00:00",
+            },
+            tags=[DISCOVERED_TAG, "syncthing", "sync-health"],
+        )
+        if health == "degraded":
+            mgr.set_status(ci.id, "health", "degraded")
+
+    result = get_overview(tmp_path)["syncthing"]
+
+    assert result["total_nodes"] == 3
+    assert result["states"] == {"healthy": 1, "syncing": 1, "degraded": 1}
+    assert result["pending_items"] == 4
+    assert result["pull_errors"] == 2
+    assert [item["node"] for item in result["nodes"]] == [
+        "chiap01",
+        "chiap02",
+        "chiap03",
+    ]
+    assert result["nodes"][0]["evidence_age_seconds"] is not None
+
+
+def test_detail_exposes_provenance_endpoints_history_relations_and_itil(
+    tmp_path: Path,
+) -> None:
     mgr = CMDBManager(tmp_path)
     host = mgr.create_ci("chiap04", "host")
     service = mgr.create_ci(
@@ -175,7 +221,9 @@ def test_discovery_e2e_updates_drift_impact_and_deduplicates_rescan(
     assert third["counts"]["updated"] == 0
 
 
-def test_plan_api_reports_preview_authorization_and_execution_state(tmp_path: Path) -> None:
+def test_plan_api_reports_preview_authorization_and_execution_state(
+    tmp_path: Path,
+) -> None:
     result = TestClient(create_app(tmp_path)).get("/api/cmdb/plan").json()
 
     assert result["preview"] is True
@@ -207,4 +255,5 @@ def test_cmdb_page_ships_operator_filters_and_action_state(tmp_path: Path) -> No
     for control in ('name="type"', 'name="node"', 'name="staleness"', 'name="source"'):
         assert control in page.text
     assert 'id="cmdb-coverage"' in page.text
+    assert 'id="cmdb-syncthing"' in page.text
     assert 'id="cmdb-action-state"' in page.text

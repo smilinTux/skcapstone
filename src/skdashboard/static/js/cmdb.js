@@ -8,6 +8,7 @@ async function load() {
   try { d = await getJSON("/api/cmdb/overview"); }
   catch (e) { document.getElementById("cmdb-body").innerHTML = `<div class="emptymsg">${esc(e.message)}</div>`; return; }
   renderHealth(d);
+  renderSyncthing(d);
   renderCoverage(d);
   const body = document.getElementById("cmdb-body");
   if (!d.total) {
@@ -55,6 +56,27 @@ async function searchCMDB() {
         </div>`).join("")}</div></div>`;
     body.querySelectorAll(".ci").forEach((el) => el.addEventListener("click", () => openCI(el.dataset.ci)));
   } catch (e) { body.innerHTML = `<div class="emptymsg">${esc(e.message)}</div>`; }
+}
+
+function renderSyncthing(d) {
+  const el = document.getElementById("cmdb-syncthing");
+  const sync = d.syncthing || {};
+  const nodes = sync.nodes || [];
+  if (!nodes.length) {
+    el.innerHTML = `<div class="sync-empty">No current node-qualified Syncthing evidence is recorded.</div>`;
+    return;
+  }
+  const states = sync.states || {};
+  el.innerHTML = `<div class="sync-head"><div><strong>Syncthing fleet</strong><span>${nodes.length} nodes · ${states.healthy || 0} healthy · ${states.syncing || 0} syncing · ${states.degraded || 0} degraded · ${states.down || 0} down</span></div>
+    <div>${sync.pending_items || 0} pending · ${sync.pull_errors || 0} pull errors · ${sync.system_errors || 0} system errors</div></div>
+    <div class="sync-grid">${nodes.map((node) => `
+      <button class="sync-node state-${esc(node.health)}" type="button" data-ci="${esc(node.id)}">
+        <span class="sync-name">${esc(node.node)}</span><span class="sync-state">${esc(node.health)}</span>
+        <span>${node.folder_count} folders · ${node.connected_devices} peers</span>
+        <span>${node.pending_items} pending · ${node.pull_errors} errors</span>
+        <span class="sync-evidence">${esc(node.freshness)} evidence · ${node.evidence_age_seconds == null ? "age unknown" : `${node.evidence_age_seconds}s old`}</span>
+      </button>`).join("")}</div>`;
+  el.querySelectorAll("[data-ci]").forEach((node) => node.addEventListener("click", () => openCI(node.dataset.ci)));
 }
 
 function renderHealth(d) {
