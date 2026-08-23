@@ -16,7 +16,7 @@ def register_session_commands(main: click.Group) -> None:
 
     @main.group()
     def session():
-        """Session auto-capture — the agent never forgets.
+        """Session auto-capture - the agent never forgets.
 
         Capture AI conversation content as sovereign memories.
         Works with any tool: pipe from Claude Code, paste from
@@ -97,9 +97,7 @@ def register_session_commands(main: click.Group) -> None:
         console.print(f"\n  [green]Captured {len(entries)} moment(s):[/]\n")
         for e in entries:
             preview = e.content[:80] + ("..." if len(e.content) > 80 else "")
-            console.print(
-                f"    [{e.layer.value}] imp={e.importance:.1f}  {preview}"
-            )
+            console.print(f"    [{e.layer.value}] imp={e.importance:.1f}  {preview}")
             if e.tags:
                 console.print(f"    [dim]tags: {', '.join(e.tags)}[/]")
         console.print()

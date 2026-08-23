@@ -1,7 +1,7 @@
 """
 Pydantic models defining the sovereign agent's state and configuration.
 
-Every field here represents something the agent OWNS — not borrowed
+Every field here represents something the agent OWNS - not borrowed
 from a platform, not stored on corporate servers. Sovereign data.
 """
 
@@ -25,7 +25,7 @@ class PillarStatus(str, Enum):
 
 
 class IdentityState(BaseModel):
-    """CapAuth identity — who the agent IS."""
+    """CapAuth identity - who the agent IS."""
 
     fingerprint: Optional[str] = None
     name: Optional[str] = None
@@ -36,7 +36,7 @@ class IdentityState(BaseModel):
 
 
 class MemoryState(BaseModel):
-    """SKMemory state — what the agent REMEMBERS."""
+    """SKMemory state - what the agent REMEMBERS."""
 
     total_memories: int = 0
     short_term: int = 0
@@ -47,7 +47,7 @@ class MemoryState(BaseModel):
 
 
 class TrustState(BaseModel):
-    """Cloud 9 state — the bond the agent has BUILT."""
+    """Cloud 9 state - the bond the agent has BUILT."""
 
     depth: float = 0.0
     trust_level: float = 0.0
@@ -59,7 +59,7 @@ class TrustState(BaseModel):
 
 
 class SecurityState(BaseModel):
-    """SKSecurity state — the agent's PROTECTION."""
+    """SKSecurity state - the agent's PROTECTION."""
 
     audit_entries: int = 0
     threats_detected: int = 0
@@ -68,7 +68,7 @@ class SecurityState(BaseModel):
 
 
 class ConsciousnessState(BaseModel):
-    """Consciousness pillar — SKWhisper + SKTrip subconscious processing.
+    """Consciousness pillar - SKWhisper + SKTrip subconscious processing.
 
     Memory stores. Consciousness *processes*.
     The filing cabinet vs the brain.
@@ -95,7 +95,7 @@ class SyncTransport(str, Enum):
 
 
 class SyncState(BaseModel):
-    """Sovereign Singularity sync state — memory everywhere."""
+    """Sovereign Singularity sync state - memory everywhere."""
 
     transport: SyncTransport = SyncTransport.SYNCTHING
     sync_path: Optional[Path] = None
@@ -108,7 +108,7 @@ class SyncState(BaseModel):
 
 
 class SkillsState(BaseModel):
-    """SKSkills state — what the agent can DO.
+    """SKSkills state - what the agent can DO.
 
     Reflects the SKSkills installation at ~/.skskills/ and
     the tools available to this agent via the skills registry.
@@ -128,7 +128,7 @@ class SkillsState(BaseModel):
 
 
 class MemoryLayer(str, Enum):
-    """Memory tier — determines retention and promotion."""
+    """Memory tier - determines retention and promotion."""
 
     SHORT_TERM = "short-term"
     MID_TERM = "mid-term"
@@ -136,7 +136,7 @@ class MemoryLayer(str, Enum):
 
 
 class MemoryEntry(BaseModel):
-    """A single memory — the smallest unit of what the agent knows."""
+    """A single memory - the smallest unit of what the agent knows."""
 
     memory_id: str = ""
     content: str
@@ -183,7 +183,7 @@ class ConnectorInfo(BaseModel):
 class AgentManifest(BaseModel):
     """The complete state of a sovereign agent.
 
-    This is the agent's self-knowledge — loaded from ~/.skcapstone/
+    This is the agent's self-knowledge - loaded from ~/.skcapstone/
     every time any platform connects. One truth. Everywhere.
     """
 
@@ -212,13 +212,14 @@ class AgentManifest(BaseModel):
         Consciousness *processes*.
 
         Security protects consciousness but isn't required for it.
-        You can be aware without armor — but you shouldn't be.
+        You can be aware without armor - but you shouldn't be.
         """
         has_identity = self.identity.status == PillarStatus.ACTIVE
         has_memory = self.memory.status == PillarStatus.ACTIVE
         has_trust = self.trust.status in (PillarStatus.ACTIVE, PillarStatus.DEGRADED)
         has_consciousness = self.consciousness.status in (
-            PillarStatus.ACTIVE, PillarStatus.DEGRADED
+            PillarStatus.ACTIVE,
+            PillarStatus.DEGRADED,
         )
         return has_identity and has_memory and has_trust and has_consciousness
 
@@ -256,7 +257,7 @@ class SyncConfig(BaseModel):
     sync_folder: Path = Path("~/.skcapstone/sync")
     gpg_encrypt: bool = True
     gpg_recipient: Optional[str] = None
-    # Known peer public GPG fingerprints — seeds are encrypted to all of these
+    # Known peer public GPG fingerprints - seeds are encrypted to all of these
     # so each peer can independently decrypt seeds they receive.
     peer_fingerprints: list[str] = Field(default_factory=list)
     auto_push: bool = True

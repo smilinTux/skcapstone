@@ -23,13 +23,15 @@ def agent_home(tmp_path: Path) -> Path:
         pillar_dir.mkdir()
 
     (home / "identity" / "identity.json").write_text(
-        json.dumps({
-            "name": "TestAgent",
-            "email": "test@skcapstone.local",
-            "fingerprint": "AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "capauth_managed": False,
-        })
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "email": "test@skcapstone.local",
+                "fingerprint": "AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "capauth_managed": False,
+            }
+        )
     )
 
     (home / "trust" / "trust.json").write_text(
@@ -113,6 +115,7 @@ class TestVault:
     def test_list_vaults(self, agent_home: Path):
         """list_vaults should return metadata for all archives."""
         import time
+
         from skcapstone.sync.vault import Vault
 
         vault = Vault(agent_home)
@@ -192,7 +195,7 @@ class TestVaultHardening:
 
     def test_unpack_verifies_file_hashes(self, agent_home: Path, tmp_path: Path):
         """Unpack should detect tampered individual files."""
-        from skcapstone.sync.vault import Vault, VaultIntegrityError
+        from skcapstone.sync.vault import Vault
 
         vault = Vault(agent_home)
         archive_path = vault.pack(encrypt=False)
@@ -237,6 +240,7 @@ class TestVaultHardening:
         vault.pack(encrypt=False)
 
         import shutil
+
         if not shutil.which("gpg"):
             pytest.skip("gpg not available for rotation test")
 
@@ -415,16 +419,20 @@ class TestSyncEngine:
 
     def test_push_with_syncthing_backend(self, agent_home: Path):
         """Push with syncthing backend should pack and deliver vault."""
+        from unittest.mock import patch
+
         from skcapstone.sync.engine import SyncEngine
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
 
         engine = SyncEngine(agent_home)
         engine.config.encrypt = False
-        engine.add_backend(
-            SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING)
-        )
+        engine.add_backend(SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING))
 
-        results = engine.push(passphrase=None)
+        # SyncthingBackend.available() gates on the `syncthing` binary being on
+        # PATH; mock it present so this test exercises the actual push regardless
+        # of whether the host (e.g. CI) has syncthing installed.
+        with patch("shutil.which", return_value="/usr/bin/syncthing"):
+            results = engine.push(passphrase=None)
         assert "syncthing" in results
         assert results["syncthing"] is True
         assert engine.state.push_count == 1
@@ -497,9 +505,7 @@ class TestSyncEngine:
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
 
         engine = SyncEngine(agent_home)
-        engine.add_backend(
-            SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING)
-        )
+        engine.add_backend(SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING))
         engine.add_backend(
             SyncBackendConfig(
                 backend_type=SyncBackendType.LOCAL,
@@ -512,15 +518,18 @@ class TestSyncEngine:
 
     def test_state_persists_across_operations(self, agent_home: Path):
         """Push count and timestamps should persist to disk after push."""
+        from unittest.mock import patch
+
         from skcapstone.sync.engine import SyncEngine
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
 
         engine = SyncEngine(agent_home)
         engine.config.encrypt = False
-        engine.add_backend(
-            SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING)
-        )
-        engine.push(passphrase=None)
+        engine.add_backend(SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING))
+        # Mock the syncthing binary present so the push runs on any host (see
+        # SyncthingBackend.available / test_push_with_syncthing_backend).
+        with patch("shutil.which", return_value="/usr/bin/syncthing"):
+            engine.push(passphrase=None)
         assert engine.state.push_count == 1
         assert engine.state.last_push is not None
         assert engine.state.last_push_backend == "syncthing"
@@ -532,9 +541,7 @@ class TestSyncEngine:
 
         engine = SyncEngine(agent_home)
         engine.config.encrypt = False
-        engine.add_backend(
-            SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING)
-        )
+        engine.add_backend(SyncBackendConfig(backend_type=SyncBackendType.SYNCTHING))
         backup_dir = tmp_path / "local-backup"
         backup_dir.mkdir()
         engine.add_backend(
@@ -549,7 +556,7 @@ class TestSyncEngine:
         assert "syncthing" not in results
 
 
-class TestVaultHardening:
+class TestVaultHardening:  # noqa: F811
     """Tests for vault encryption hardening (sync01)."""
 
     def test_pack_includes_file_hashes(self, agent_home: Path):
@@ -631,9 +638,7 @@ class TestVaultHardening:
 
         restore_dir = tmp_path / "good-restore"
         restore_dir.mkdir()
-        result = vault.unpack(
-            archive_path, target=restore_dir, verify_signature=False
-        )
+        result = vault.unpack(archive_path, target=restore_dir, verify_signature=False)
         assert result == restore_dir
         assert (restore_dir / "identity" / "identity.json").exists()
 
@@ -808,7 +813,7 @@ class TestUnsupportedBackend:
     """Edge case: unsupported backend type."""
 
     def test_factory_rejects_gdrive(self, agent_home: Path):
-        """GDrive backend is now supported — factory returns a GDriveBackend instance."""
+        """GDrive backend is now supported - factory returns a GDriveBackend instance."""
         from skcapstone.sync.backends import GDriveBackend, create_backend
         from skcapstone.sync.models import SyncBackendConfig, SyncBackendType
 

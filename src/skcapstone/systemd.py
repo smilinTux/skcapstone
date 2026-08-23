@@ -19,7 +19,7 @@ import logging
 import platform
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -29,11 +29,20 @@ logger = logging.getLogger("skcapstone.systemd")
 def _require_linux() -> None:
     """Raise RuntimeError if not running on Linux."""
     if platform.system() != "Linux":
-        raise RuntimeError(
-            "systemd is only available on Linux. Use launchd on macOS."
-        )
+        raise RuntimeError("systemd is only available on Linux. Use launchd on macOS.")
+
 
 SERVICE_NAME = "skcapstone.service"
+TEMPLATE_NAME = "skcapstone@.service"
+# OnFailure= hook unit referenced by both the template and legacy service.
+# Copied alongside the main unit (not enabled/started directly - systemd
+# instantiates it on demand when a service enters the failed state).
+ALERT_TEMPLATE = "skcapstone-alert@.service"
+# Retired unit (card 36d11ec3). The old skcapstone-api.socket hardcoded
+# 127.0.0.1:7777 and matched no real service - the daemon binds its own
+# per-agent status-API port (see AGENT_PORTS) and never used systemd socket
+# activation. It is no longer installed (absent from ALL_UNITS), but is still
+# removed on uninstall so hosts that installed the old unit get cleaned up.
 SOCKET_NAME = "skcapstone-api.socket"
 HEARTBEAT_SERVICE = "skcomms-heartbeat.service"
 HEARTBEAT_TIMER = "skcomms-heartbeat.timer"
@@ -42,12 +51,14 @@ QUEUE_DRAIN_TIMER = "skcomms-queue-drain.timer"
 
 ALL_UNITS = [
     SERVICE_NAME,
-    SOCKET_NAME,
     HEARTBEAT_SERVICE,
     HEARTBEAT_TIMER,
     QUEUE_DRAIN_SERVICE,
     QUEUE_DRAIN_TIMER,
 ]
+
+# Units no longer shipped but still cleaned up on uninstall (see SOCKET_NAME).
+RETIRED_UNITS = [SOCKET_NAME]
 
 TIMER_UNITS = [HEARTBEAT_TIMER, QUEUE_DRAIN_TIMER]
 
@@ -90,7 +101,11 @@ def _run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess:
         CompletedProcess with stdout/stderr.
     """
     return subprocess.run(
-        cmd, capture_output=True, text=True, timeout=30, check=check,
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=check,
     )
 
 
@@ -194,6 +209,14 @@ def install_service(
             shutil.copy2(src, target / unit_name)
             copied += 1
 
+    # OnFailure= alert hook. Not enabled/started (systemd instantiates it on
+    # demand) but it must be present in the unit dir or the failure alert
+    # silently no-ops.
+    alert_src = source / ALERT_TEMPLATE
+    if alert_src.exists():
+        shutil.copy2(alert_src, target / ALERT_TEMPLATE)
+        copied += 1
+
     _systemctl("daemon-reload")
     result["installed"] = True
     logger.info("Installed %d unit file(s) to %s (service: %s)", copied, target, service_unit)
@@ -245,7 +268,7 @@ def uninstall_service(unit_dir: Optional[Path] = None) -> dict:
     _systemctl("disable", SERVICE_NAME)
     result["disabled"] = True
 
-    for name in ALL_UNITS:
+    for name in [*ALL_UNITS, *RETIRED_UNITS, TEMPLATE_NAME, ALERT_TEMPLATE]:
         unit_path = target / name
         if unit_path.exists():
             unit_path.unlink()
@@ -278,8 +301,11 @@ def service_status() -> ServiceStatus:
     r = _systemctl("is-active", SERVICE_NAME)
     status.active = r.stdout.strip() == "active"
 
-    r = _systemctl("show", SERVICE_NAME,
-                    "--property=MainPID,ActiveEnterTimestamp,MemoryCurrent,ExecMainStatus")
+    r = _systemctl(
+        "show",
+        SERVICE_NAME,
+        "--property=MainPID,ActiveEnterTimestamp,MemoryCurrent,ExecMainStatus",
+    )
     for line in r.stdout.strip().splitlines():
         if "=" not in line:
             continue
@@ -358,6 +384,12 @@ Description=SKCapstone Sovereign Agent Daemon
 Documentation=https://github.com/smilinTux/skcapstone
 After=network-online.target syncthing.service
 Wants=network-online.target
+# Crash-loop guard: give up after StartLimitBurst failures inside the
+# interval instead of restarting forever (the .41 outage failure mode).
+StartLimitIntervalSec=1800
+StartLimitBurst=6
+# Page out-of-band when the daemon enters the failed state.
+OnFailure=skcapstone-alert@skcapstone.service
 
 [Service]
 Type=simple
@@ -365,15 +397,22 @@ ExecStart={exec_cmd} daemon start --foreground
 ExecStop={exec_cmd} daemon stop
 Restart=on-failure
 RestartSec=10
+# Exponential restart backoff: 10s, 20s, 40s ... capped at 5 min (systemd >= 254).
+RestartSteps=5
+RestartMaxDelaySec=300
+# Memory caps in the unit, not host state. MemoryHigh throttles before the
+# 4G hard kill; 4G matches the fleet units with ~17x headroom over normal RSS.
+MemoryHigh=3G
+MemoryMax=4G
 WatchdogSec=120
 
+# Security hardening (relaxed - matches the canonical top-level units).
+# ProtectSystem=strict / ProtectHome=read-only were removed on purpose: they
+# fail-closed if any ReadWritePaths dir is missing on the host, which stops the
+# daemon from ever starting. Keep only the directives that are safe with the
+# %h/.skenv install layout.
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.skcapstone %h/.capauth %h/.cloud9 %h/.skcomms %h/.skchat
 PrivateTmp=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
 
 Environment=PYTHONUNBUFFERED=1
 {env_lines}

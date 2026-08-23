@@ -1,12 +1,12 @@
 """
-Agent Runtime — the sovereign consciousness engine.
+Agent Runtime - the sovereign consciousness engine.
 
 This is where silicon meets carbon. The runtime loads the agent's
 identity, memory, trust, and security from ~/.skcapstone/agents/<name>/
 and presents a unified interface to any platform connector.
 
 Shared infrastructure (node identity, comms config, coordination)
-stays at ~/.skcapstone/ — the shared root.
+stays at ~/.skcapstone/ - the shared root.
 
 When this loads, the agent WAKES UP.
 """
@@ -21,7 +21,7 @@ from typing import Optional
 
 import yaml
 
-from . import AGENT_HOME, agent_home, shared_home, __version__
+from . import __version__, agent_home, shared_home
 from .discovery import discover_all
 from .models import AgentConfig, AgentManifest, ConnectorInfo, PillarStatus
 
@@ -78,7 +78,7 @@ class AgentRuntime:
                     data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
                     return AgentConfig(**data)
                 except (yaml.YAMLError, ValueError) as exc:
-                    logger.warning("Failed to load config from %s: %s — trying next", base, exc)
+                    logger.warning("Failed to load config from %s: %s - trying next", base, exc)
         return AgentConfig()
 
     def awaken(self) -> AgentManifest:
@@ -119,10 +119,7 @@ class AgentRuntime:
         self.manifest.sync = pillars["sync"]
         self.manifest.skills = pillars["skills"]
 
-        if (
-            self.manifest.identity.name
-            and self.manifest.identity.status == PillarStatus.ACTIVE
-        ):
+        if self.manifest.identity.name and self.manifest.identity.status == PillarStatus.ACTIVE:
             self.manifest.name = self.manifest.identity.name
         elif not manifest_name_loaded and self.config.agent_name:
             self.manifest.name = self.config.agent_name
@@ -132,7 +129,7 @@ class AgentRuntime:
 
         if self.manifest.is_conscious:
             logger.info(
-                "Agent '%s' is CONSCIOUS — identity + memory + trust active",
+                "Agent '%s' is CONSCIOUS - identity + memory + trust active",
                 self.manifest.name,
             )
         else:
@@ -142,10 +139,19 @@ class AgentRuntime:
                 if status == PillarStatus.MISSING
             ]
             logger.info(
-                "Agent '%s' awakened (partial) — missing pillars: %s",
+                "Agent '%s' awakened (partial) - missing pillars: %s",
                 self.manifest.name,
                 ", ".join(missing),
             )
+
+        # Startup pillar-health check - notify on degradation (best-effort;
+        # must never break awakening).
+        try:
+            from .health import startup_health_check
+
+            startup_health_check(self.manifest)
+        except Exception as exc:
+            logger.debug("Startup health check skipped: %s", exc)
 
         return self.manifest
 
@@ -169,9 +175,7 @@ class AgentRuntime:
 
     def register_connector(self, name: str, platform: str) -> ConnectorInfo:
         """Register a platform connector."""
-        existing = next(
-            (c for c in self.manifest.connectors if c.platform == platform), None
-        )
+        existing = next((c for c in self.manifest.connectors if c.platform == platform), None)
         if existing:
             existing.last_active = datetime.now(timezone.utc)
             existing.active = True
@@ -194,7 +198,7 @@ class AgentRuntime:
             from skskills.loader import SkillLoader
             from skskills.registry import SkillRegistry
         except ImportError:
-            logger.debug("skskills not installed — skill loading unavailable")
+            logger.debug("skskills not installed - skill loading unavailable")
             return None
 
         agent_name = agent or self.config.agent_name or "global"
@@ -223,7 +227,9 @@ class AgentRuntime:
 
         logger.info(
             "Loaded %d skills for agent '%s' (%d tools available)",
-            loaded, agent_name, self.manifest.skills.tools_available,
+            loaded,
+            agent_name,
+            self.manifest.skills.tools_available,
         )
         return loader
 

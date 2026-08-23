@@ -1,4 +1,4 @@
-"""Tests for skcapstone.message_crypto — AES-256-GCM message encryption.
+"""Tests for skcapstone.message_crypto - AES-256-GCM message encryption.
 
 Covers:
 - encrypt_message / decrypt_message happy-path roundtrip
@@ -28,7 +28,6 @@ from skcapstone.message_crypto import (
     pack_encrypted,
     unpack_encrypted,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -77,7 +76,7 @@ def test_encrypt_produces_different_ciphertext_each_call(aes_key):
     msg = "repeat me"
     t1 = encrypt_message(msg, aes_key)
     t2 = encrypt_message(msg, aes_key)
-    assert t1 != t2, "Nonces must differ — ciphertexts should not be identical"
+    assert t1 != t2, "Nonces must differ - ciphertexts should not be identical"
 
 
 def test_wrong_key_raises_on_decrypt(aes_key):
@@ -93,6 +92,7 @@ def test_wrong_key_raises_on_decrypt(aes_key):
 def test_tampered_ciphertext_raises(aes_key):
     """Bit-flipping the ciphertext causes authentication to fail."""
     import base64
+
     from cryptography.exceptions import InvalidTag
 
     token = encrypt_message("tamper me", aes_key)

@@ -1,0 +1,20 @@
+{
+  "kind": "cronjob",
+  "labels": {
+    "epic": "CR-7.3"
+  },
+  "name": "skmem-health",
+  "spec": {
+    "command": "deploy/ops/skmem-health.sh",
+    "conditions": [
+      "MissedRun"
+    ],
+    "nodeSelector": {
+      "always-on": "true"
+    },
+    "note": "daily sk-alert health monitor for the memory stack.",
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "schedule": "@daily",
+    "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md"
+  }
+}

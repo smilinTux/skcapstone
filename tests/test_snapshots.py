@@ -1,5 +1,5 @@
 """
-Tests for skcapstone.snapshots — Soul Snapshot system.
+Tests for skcapstone.snapshots - Soul Snapshot system.
 
 Covers: model validation, OOF state, SnapshotStore CRUD/search,
 injection prompt format, soul blueprint conversion, and API endpoints.
@@ -20,7 +20,6 @@ from skcapstone.snapshots import (
     SnapshotStore,
     SoulSnapshot,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -199,7 +198,7 @@ class TestSoulSnapshot:
         assert "sovereign AI" in snap.key_topics
 
     def test_serialization_roundtrip(self, rich_snapshot):
-        """Serialize to JSON and deserialize — data must be identical."""
+        """Serialize to JSON and deserialize - data must be identical."""
         json_str = rich_snapshot.model_dump_json()
         loaded = SoulSnapshot.model_validate_json(json_str)
         assert loaded.snapshot_id == rich_snapshot.snapshot_id
@@ -345,10 +344,7 @@ class TestInjectionPrompt:
     def test_prompt_max_messages_respected(self, store):
         snap = SoulSnapshot(
             source_platform="chatgpt",
-            messages=[
-                ConversationMessage(role="user", content=f"msg{i}")
-                for i in range(20)
-            ],
+            messages=[ConversationMessage(role="user", content=f"msg{i}") for i in range(20)],
         )
         prompt = store.to_injection_prompt(snap, max_messages=3)
         # Should only include last 3 messages (msg17, msg18, msg19)
@@ -429,11 +425,20 @@ class TestConsciousnessAPI:
     def patch_snapshot_store(self, tmp_path, monkeypatch):
         """Override the global snapshot store to use a temp directory."""
         import skcomms.api as api_module
+
         from skcapstone.snapshots import SnapshotStore as _Store
+
+        # Bind the lazily-loaded snapshot types (SoulSnapshot, OOFState,
+        # PersonalityTraits, ConversationMessage, ...) on the skcomms.api
+        # module. Forcing `_SNAPSHOTS_AVAILABLE = True` by hand is NOT enough:
+        # it short-circuits `_load_snapshots()`, leaving `_OOFState` and the
+        # other `as _X` bindings at their None default, so capture_snapshot
+        # would raise `'NoneType' object is not callable`. Calling the loader
+        # binds every type and sets the availability flag itself.
+        assert api_module._load_snapshots() is True
 
         temp_store = _Store(base_dir=tmp_path / "api_snapshots")
         monkeypatch.setattr(api_module, "_snapshot_store", temp_store)
-        monkeypatch.setattr(api_module, "_SNAPSHOTS_AVAILABLE", True)
 
     @pytest.fixture
     def client(self):

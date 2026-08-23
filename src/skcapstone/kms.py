@@ -1,5 +1,5 @@
 """
-SKSecurity KMS — Sovereign Key Management Service.
+SKSecurity KMS - Sovereign Key Management Service.
 
 Wraps sksecurity.kms.KMS for cryptographic operations while providing
 agent-specific features: service key derivation, team member ACLs,
@@ -14,7 +14,7 @@ Key hierarchy:
         ├── Team keys (shared keys with member ACL)
         └── Subkeys (delegatable, revocable)
 
-Crypto backend: sksecurity.kms — AES-256-GCM key wrapping,
+Crypto backend: sksecurity.kms - AES-256-GCM key wrapping,
 HKDF-SHA256 derivation, scrypt master key sealing.
 
 Storage layout:
@@ -61,12 +61,21 @@ logger = logging.getLogger("skcapstone.kms")
 
 try:
     from sksecurity.kms import (
-        KMS as BackendKMS,
+        KMS as BackendKMS,  # noqa: N811
+    )
+    from sksecurity.kms import (
         FileKeyStore as BackendFileKeyStore,
-        _hkdf_derive as _backend_hkdf,
-        _aes_gcm_encrypt as _backend_encrypt,
+    )
+    from sksecurity.kms import (
         _aes_gcm_decrypt as _backend_decrypt,
     )
+    from sksecurity.kms import (
+        _aes_gcm_encrypt as _backend_encrypt,
+    )
+    from sksecurity.kms import (
+        _hkdf_derive as _backend_hkdf,
+    )
+
     _HAS_BACKEND = True
 except ImportError:
     _HAS_BACKEND = False
@@ -77,6 +86,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+
 
 class KeyType(str, Enum):
     """Types of managed keys."""
@@ -127,8 +137,9 @@ class RotationEntry(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Cryptographic helpers — delegates to sksecurity when available
+# Cryptographic helpers - delegates to sksecurity when available
 # ---------------------------------------------------------------------------
+
 
 def _derive_key(master_material: bytes, info: bytes, length: int = 32) -> bytes:
     """Derive a key using HKDF-SHA256.
@@ -234,7 +245,7 @@ def _fernet_decrypt(token: bytes, key: bytes) -> bytes:
 
     Args:
         token: Fernet token bytes produced by :func:`_fernet_encrypt`.
-        key: Raw key material (any length) — must match the key used to encrypt.
+        key: Raw key material (any length) - must match the key used to encrypt.
 
     Returns:
         Decrypted plaintext bytes.
@@ -262,6 +273,7 @@ def _key_id(label: str, key_type: KeyType, version: int = 1) -> str:
 # ---------------------------------------------------------------------------
 # KeyStore
 # ---------------------------------------------------------------------------
+
 
 class KeyStore:
     """Sovereign key management store.
@@ -534,7 +546,7 @@ class KeyStore:
         return record
 
     def rotate_key(self, key_id: str, reason: str = "") -> KeyRecord:
-        """Rotate a key — generate new material, increment version.
+        """Rotate a key - generate new material, increment version.
 
         The old key is marked ROTATED and a new active key replaces it.
 
@@ -606,7 +618,7 @@ class KeyStore:
         return new_record
 
     def revoke_key(self, key_id: str, reason: str = "") -> KeyRecord:
-        """Revoke a key — mark it unusable.
+        """Revoke a key - mark it unusable.
 
         Args:
             key_id: Key to revoke.
@@ -653,8 +665,10 @@ class KeyStore:
         """
         records = self._load_records()
         matches = [
-            r for r in records
-            if r.label == label and r.status == KeyStatus.ACTIVE
+            r
+            for r in records
+            if r.label == label
+            and r.status == KeyStatus.ACTIVE
             and (key_type is None or r.key_type == key_type)
         ]
         if not matches:
@@ -710,9 +724,7 @@ class KeyStore:
                     f"Agent '{agent_name}' denied access to team key '{record.label}'",
                     metadata={"key_id": key_id, "agent": agent_name},
                 )
-                raise PermissionError(
-                    f"Agent '{agent_name}' not in team '{record.label}' members"
-                )
+                raise PermissionError(f"Agent '{agent_name}' not in team '{record.label}' members")
 
         material = self._load_key_material(key_id)
         self._audit(
@@ -738,7 +750,8 @@ class KeyStore:
             by_type[r.key_type.value] = by_type.get(r.key_type.value, 0) + 1
 
         expiring_soon = [
-            r for r in active
+            r
+            for r in active
             if r.expires_at and r.expires_at < datetime.now(timezone.utc) + timedelta(days=7)
         ]
 
@@ -752,9 +765,7 @@ class KeyStore:
             "expiring_soon": [r.label for r in expiring_soon],
             "kms_dir": str(self._kms_dir),
             "backend_available": _HAS_BACKEND,
-            "backend_unsealed": (
-                self._backend_kms.is_unsealed if self._backend_kms else False
-            ),
+            "backend_unsealed": (self._backend_kms.is_unsealed if self._backend_kms else False),
         }
 
     # -------------------------------------------------------------------
@@ -774,9 +785,7 @@ class KeyStore:
                 store=store,
                 audit_path=backend_dir / "audit.log",
             )
-            passphrase = hashlib.sha256(
-                self._get_identity_material()
-            ).hexdigest()
+            passphrase = hashlib.sha256(self._get_identity_material()).hexdigest()
             self._backend_kms.unseal(passphrase)
             logger.debug("sksecurity KMS backend initialized and unsealed")
         except Exception as exc:
@@ -788,7 +797,10 @@ class KeyStore:
         if self._master_material is None:
             return self.initialize()
         records = self._load_records()
-        master = next((r for r in records if r.key_type == KeyType.MASTER and r.status == KeyStatus.ACTIVE), None)
+        master = next(
+            (r for r in records if r.key_type == KeyType.MASTER and r.status == KeyStatus.ACTIVE),
+            None,
+        )
         if master is None:
             return self.initialize()
         return master
@@ -851,7 +863,7 @@ class KeyStore:
             except (json.JSONDecodeError, OSError) as exc:
                 logger.warning("Failed to read identity file %s: %s", identity_file, exc)
 
-        logger.warning("No identity found for KMS — using random master seed")
+        logger.warning("No identity found for KMS - using random master seed")
         return secrets.token_bytes(64)
 
     def _load_records(self) -> list[KeyRecord]:
@@ -937,6 +949,7 @@ class KeyStore:
         """Log a KMS event to the security audit trail."""
         try:
             from .pillars.security import audit_event
+
             audit_event(self._home, event_type, detail, agent="kms", metadata=metadata)
         except Exception:
-            logger.debug("Audit log unavailable: %s — %s", event_type, detail)
+            logger.debug("Audit log unavailable: %s - %s", event_type, detail)

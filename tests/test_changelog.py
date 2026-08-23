@@ -5,16 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from skcapstone.changelog import (
-    TAG_CATEGORIES,
     _categorize,
     _parse_date,
     generate_changelog,
     write_changelog,
 )
-
 
 # ---------------------------------------------------------------------------
 # Categorization
@@ -122,11 +118,13 @@ def _setup_board(home: Path, tasks: list[dict]) -> None:
     if completed_ids:
         agent_file = agents_dir / "test-agent.json"
         agent_file.write_text(
-            json.dumps({
-                "agent": "test-agent",
-                "completed_tasks": completed_ids,
-                "claimed_tasks": completed_ids,
-            }),
+            json.dumps(
+                {
+                    "agent": "test-agent",
+                    "completed_tasks": completed_ids,
+                    "claimed_tasks": completed_ids,
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -145,54 +143,63 @@ class TestGenerateChangelog:
 
     def test_completed_tasks_appear(self, tmp_path: Path) -> None:
         """Completed tasks appear in the changelog."""
-        _setup_board(tmp_path, [
-            {
-                "id": "abc123",
-                "title": "Add encrypted messaging",
-                "status": "done",
-                "priority": "high",
-                "tags": ["skchat", "encryption"],
-                "created_at": "2026-02-24T12:00:00+00:00",
-            },
-        ])
+        _setup_board(
+            tmp_path,
+            [
+                {
+                    "id": "abc123",
+                    "title": "Add encrypted messaging",
+                    "status": "done",
+                    "priority": "high",
+                    "tags": ["skchat", "encryption"],
+                    "created_at": "2026-02-24T12:00:00+00:00",
+                },
+            ],
+        )
         result = generate_changelog(tmp_path)
         assert "Add encrypted messaging" in result
 
     def test_open_tasks_excluded(self, tmp_path: Path) -> None:
         """Open tasks do not appear in the changelog."""
-        _setup_board(tmp_path, [
-            {
-                "id": "abc123",
-                "title": "Pending feature",
-                "status": "open",
-                "priority": "medium",
-                "tags": ["skcapstone"],
-                "created_at": "2026-02-24T12:00:00+00:00",
-            },
-        ])
+        _setup_board(
+            tmp_path,
+            [
+                {
+                    "id": "abc123",
+                    "title": "Pending feature",
+                    "status": "open",
+                    "priority": "medium",
+                    "tags": ["skcapstone"],
+                    "created_at": "2026-02-24T12:00:00+00:00",
+                },
+            ],
+        )
         result = generate_changelog(tmp_path)
         assert "Pending feature" not in result
 
     def test_grouped_by_date(self, tmp_path: Path) -> None:
         """Tasks are grouped by date."""
-        _setup_board(tmp_path, [
-            {
-                "id": "t1",
-                "title": "Task One",
-                "status": "done",
-                "priority": "medium",
-                "tags": ["skcapstone"],
-                "created_at": "2026-02-24T12:00:00+00:00",
-            },
-            {
-                "id": "t2",
-                "title": "Task Two",
-                "status": "done",
-                "priority": "medium",
-                "tags": ["skcapstone"],
-                "created_at": "2026-02-25T12:00:00+00:00",
-            },
-        ])
+        _setup_board(
+            tmp_path,
+            [
+                {
+                    "id": "t1",
+                    "title": "Task One",
+                    "status": "done",
+                    "priority": "medium",
+                    "tags": ["skcapstone"],
+                    "created_at": "2026-02-24T12:00:00+00:00",
+                },
+                {
+                    "id": "t2",
+                    "title": "Task Two",
+                    "status": "done",
+                    "priority": "medium",
+                    "tags": ["skcapstone"],
+                    "created_at": "2026-02-25T12:00:00+00:00",
+                },
+            ],
+        )
         result = generate_changelog(tmp_path)
         assert "## 2026-02-24" in result
         assert "## 2026-02-25" in result
@@ -207,16 +214,19 @@ class TestGenerateChangelog:
 
     def test_without_agents(self, tmp_path: Path) -> None:
         """Agent attribution can be disabled."""
-        _setup_board(tmp_path, [
-            {
-                "id": "t1",
-                "title": "Some Task",
-                "status": "done",
-                "priority": "medium",
-                "tags": ["skcapstone"],
-                "created_at": "2026-02-24T12:00:00+00:00",
-            },
-        ])
+        _setup_board(
+            tmp_path,
+            [
+                {
+                    "id": "t1",
+                    "title": "Some Task",
+                    "status": "done",
+                    "priority": "medium",
+                    "tags": ["skcapstone"],
+                    "created_at": "2026-02-24T12:00:00+00:00",
+                },
+            ],
+        )
         result = generate_changelog(tmp_path, include_agents=False)
         assert "Some Task" in result
         assert "(@" not in result.split("Some Task")[1].split("\n")[0]

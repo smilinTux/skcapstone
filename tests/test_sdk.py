@@ -15,7 +15,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point skcapstone at an isolated temp home for the duration of a test."""
     monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
     # the facade resolves home via skcapstone.shared_home(), which reads the
-    # module-level AGENT_HOME captured at import — patch it directly too.
+    # module-level AGENT_HOME captured at import - patch it directly too.
     import skcapstone as pkg
 
     monkeypatch.setattr(pkg, "AGENT_HOME", str(tmp_path))
@@ -41,12 +41,16 @@ def test_alert_publishes_to_topic(home: Path):
 
 def test_alert_unknown_level_falls_back_to_info(home: Path):
     sdk.alert("svc.weird", {"x": 1}, level="bogus")
-    data = json.loads(next((home / "pubsub" / "topics" / "svc.weird").glob("msg-*.json")).read_text())
+    data = json.loads(
+        next((home / "pubsub" / "topics" / "svc.weird").glob("msg-*.json")).read_text()
+    )
     assert data["tags"] == ["info"]
 
 
 def test_register_and_unregister_job(home: Path):
-    path = sdk.register_job({"name": "svc_tick", "every": "10m", "type": "shell", "command": "echo hi"})
+    path = sdk.register_job(
+        {"name": "svc_tick", "every": "10m", "type": "shell", "command": "echo hi"}
+    )
     assert Path(path).exists()
     assert Path(path).name == "svc_tick.yaml"
     assert sdk.unregister_job("svc_tick") is True
@@ -63,7 +67,9 @@ def test_coord_create_writes_task(home: Path):
 
 
 def test_register_service_writes_registry(home: Path):
-    path = sdk.register_service("skvoice", health_url="http://localhost:9/health", pid_file="/tmp/x.pid")
+    path = sdk.register_service(
+        "skvoice", health_url="http://localhost:9/health", pid_file="/tmp/x.pid"
+    )
     entry = json.loads(Path(path).read_text())
     assert entry["name"] == "skvoice"
     assert entry["health_url"] == "http://localhost:9/health"

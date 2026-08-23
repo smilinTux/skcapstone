@@ -1,4 +1,4 @@
-"""Crush shim — daemon entry point that bridges the crush CLI interface to claude.
+"""Crush shim - daemon entry point that bridges the crush CLI interface to claude.
 
 Registered as the ``crush`` console_scripts entry point so that
 ``LocalProvider._find_crush_binary()`` discovers it on PATH.  When invoked
@@ -50,7 +50,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="crush",
-        description="Crush shim — bridges crush CLI interface to claude backend",
+        description="Crush shim - bridges crush CLI interface to claude backend",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -148,9 +148,7 @@ def write_state(state_file: str, state: Dict[str, Any]) -> None:
         state: State dictionary to persist.
     """
     try:
-        Path(state_file).write_text(
-            json.dumps(state, indent=2), encoding="utf-8"
-        )
+        Path(state_file).write_text(json.dumps(state, indent=2), encoding="utf-8")
     except OSError as exc:
         logger.warning("Failed to write state file %s: %s", state_file, exc)
 
@@ -233,8 +231,10 @@ def dispatch_to_claude(
     cmd = [
         claude_binary,
         "-p",
-        "--model", model,
-        "--system-prompt", system_prompt,
+        "--model",
+        model,
+        "--system-prompt",
+        system_prompt,
         "--dangerously-skip-permissions",
         prompt,
     ]
@@ -248,9 +248,7 @@ def dispatch_to_claude(
         )
         if result.returncode == 0:
             return result.stdout.strip()
-        logger.warning(
-            "Claude returned exit code %d: %s", result.returncode, result.stderr
-        )
+        logger.warning("Claude returned exit code %d: %s", result.returncode, result.stderr)
         return None
     except subprocess.TimeoutExpired:
         logger.warning("Claude call timed out for prompt: %s...", prompt[:80])
@@ -268,6 +266,7 @@ def dispatch_to_claude(
 def _comms_root() -> Path:
     """Return the skcapstone comms root directory."""
     from . import SHARED_ROOT
+
     return Path(SHARED_ROOT).expanduser() / "sync" / "comms"
 
 
@@ -298,9 +297,7 @@ def write_outbox(team_name: str, agent_name: str, message: Dict[str, Any]) -> No
     outbox = _comms_root() / team_name / agent_name / "outbox"
     outbox.mkdir(parents=True, exist_ok=True)
     filename = f"{_now_iso().replace(':', '-')}.json"
-    (outbox / filename).write_text(
-        json.dumps(message, indent=2), encoding="utf-8"
-    )
+    (outbox / filename).write_text(json.dumps(message, indent=2), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -354,11 +351,15 @@ def daemon_loop(
             if prompt:
                 response = dispatch_to_claude(prompt, model, system_prompt)
                 if response:
-                    write_outbox(team_name, agent_name, {
-                        "source": str(msg_path.name),
-                        "response": response,
-                        "timestamp": _now_iso(),
-                    })
+                    write_outbox(
+                        team_name,
+                        agent_name,
+                        {
+                            "source": str(msg_path.name),
+                            "response": response,
+                            "timestamp": _now_iso(),
+                        },
+                    )
 
             # Remove processed message
             try:
@@ -367,14 +368,17 @@ def daemon_loop(
                 pass
 
         # Update heartbeat
-        write_state(state_file, {
-            "status": "running",
-            "pid": os.getpid(),
-            "agent_name": agent_name,
-            "heartbeat": _now_iso(),
-            "iteration": iteration,
-            "binary": "crush-shim",
-        })
+        write_state(
+            state_file,
+            {
+                "status": "running",
+                "pid": os.getpid(),
+                "agent_name": agent_name,
+                "heartbeat": _now_iso(),
+                "iteration": iteration,
+                "binary": "crush-shim",
+            },
+        )
 
         # Sleep between polls
         for _ in range(int(_POLL_INTERVAL_SECONDS * 10)):
@@ -415,13 +419,16 @@ def main(argv: Optional[List[str]] = None) -> None:
     logger.info("Starting crush shim for agent %s", agent_name)
 
     # Write initial running state
-    write_state(args.state_file, {
-        "status": "running",
-        "pid": os.getpid(),
-        "agent_name": agent_name,
-        "started_at": _now_iso(),
-        "binary": "crush-shim",
-    })
+    write_state(
+        args.state_file,
+        {
+            "status": "running",
+            "pid": os.getpid(),
+            "agent_name": agent_name,
+            "started_at": _now_iso(),
+            "binary": "crush-shim",
+        },
+    )
 
     # Register signal handlers
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -431,22 +438,28 @@ def main(argv: Optional[List[str]] = None) -> None:
         daemon_loop(session_config, crush_config, args.state_file)
     except Exception:
         logger.exception("Daemon loop crashed")
-        write_state(args.state_file, {
-            "status": "error",
-            "pid": os.getpid(),
-            "agent_name": agent_name,
-            "error_at": _now_iso(),
-            "binary": "crush-shim",
-        })
+        write_state(
+            args.state_file,
+            {
+                "status": "error",
+                "pid": os.getpid(),
+                "agent_name": agent_name,
+                "error_at": _now_iso(),
+                "binary": "crush-shim",
+            },
+        )
         sys.exit(1)
 
     # Clean shutdown
-    write_state(args.state_file, {
-        "status": "stopped",
-        "agent_name": agent_name,
-        "stopped_at": _now_iso(),
-        "binary": "crush-shim",
-    })
+    write_state(
+        args.state_file,
+        {
+            "status": "stopped",
+            "agent_name": agent_name,
+            "stopped_at": _now_iso(),
+            "binary": "crush-shim",
+        },
+    )
     logger.info("Crush shim for %s stopped cleanly", agent_name)
 
 

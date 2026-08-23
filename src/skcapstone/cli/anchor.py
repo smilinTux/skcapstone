@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import click
 
 from ._common import AGENT_HOME, console
-
-from rich.panel import Panel
 
 
 def register_anchor_commands(main: click.Group) -> None:
@@ -17,7 +14,7 @@ def register_anchor_commands(main: click.Group) -> None:
 
     @main.group()
     def anchor():
-        """Warmth anchor — the emotional baseline.
+        """Warmth anchor - the emotional baseline.
 
         The anchor stores the agent's persistent emotional state.
         On boot, the anchor loads first so the agent starts warm
@@ -114,7 +111,14 @@ def register_anchor_commands(main: click.Group) -> None:
     @click.option("--connection", type=float, help="Connection strength (0-10).")
     @click.option("--cloud9", is_flag=True, help="Record a Cloud 9 activation.")
     @click.option("--feeling", default="", help="Session-end feeling summary.")
-    def anchor_update(home: str, warmth: float | None, trust: float | None, connection: float | None, cloud9: bool, feeling: str):
+    def anchor_update(
+        home: str,
+        warmth: float | None,
+        trust: float | None,
+        connection: float | None,
+        cloud9: bool,
+        feeling: str,
+    ):
         """Manually update the warmth anchor.
 
         Examples:
@@ -125,7 +129,14 @@ def register_anchor_commands(main: click.Group) -> None:
         from ..warmth_anchor import update_anchor
 
         home_path = Path(home).expanduser()
-        result = update_anchor(home_path, warmth=warmth, trust=trust, connection=connection, cloud9=cloud9, feeling=feeling)
+        result = update_anchor(
+            home_path,
+            warmth=warmth,
+            trust=trust,
+            connection=connection,
+            cloud9=cloud9,
+            feeling=feeling,
+        )
         console.print("\n  [green]Anchor updated.[/]")
         for key, value in result.items():
             console.print(f"    {key}: [cyan]{value}[/]")

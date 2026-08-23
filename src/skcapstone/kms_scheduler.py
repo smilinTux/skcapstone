@@ -6,8 +6,8 @@ Background daemon thread that checks daily for KMS keys whose
 automatically.
 
 Rotation policy (stored in key metadata):
-    service keys — every 30 days
-    team keys    — every 90 days
+    service keys - every 30 days
+    team keys    - every 90 days
 
 On each rotation the scheduler:
     1. Calls ``KeyStore.rotate_key`` with reason='scheduled-auto-rotation'
@@ -65,7 +65,7 @@ class KMSRotationScheduler:
     # ------------------------------------------------------------------
 
     def _loop(self) -> None:
-        """Main scheduler loop — runs until stop() is called."""
+        """Main scheduler loop - runs until stop() is called."""
         while not self._stop_event.is_set():
             try:
                 self._check_and_rotate()

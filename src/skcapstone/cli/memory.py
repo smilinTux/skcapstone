@@ -1,4 +1,4 @@
-"""Memory commands: store, search, list, recall, delete, stats, gc, curate, migrate, verify, reindex, rehydrate."""
+"""Memory commands: store, search, list, recall, delete, stats, gc, curate, migrate, verify, reindex, rehydrate."""  # noqa: E501
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ import click
 
 logger = logging.getLogger("skcapstone.cli.memory")
 
-from ._common import AGENT_HOME, console, status_icon
-from ._validators import validate_task_id
-from ..pillars.security import audit_event
+from rich.panel import Panel  # noqa: E402
+from rich.table import Table  # noqa: E402
+from rich.text import Text  # noqa: E402
 
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
+from ..pillars.security import audit_event  # noqa: E402
+from ._common import AGENT_HOME, console, status_icon  # noqa: E402
+from ._validators import validate_task_id  # noqa: E402
 
 
 def register_memory_commands(main: click.Group) -> None:
@@ -25,7 +25,7 @@ def register_memory_commands(main: click.Group) -> None:
 
     @main.group()
     def memory():
-        """Sovereign memory — your agent never forgets.
+        """Sovereign memory - your agent never forgets.
 
         Store, search, recall, and manage memories across
         sessions and platforms.
@@ -37,7 +37,9 @@ def register_memory_commands(main: click.Group) -> None:
     @click.option("--tag", "-t", multiple=True, help="Tags for categorization.")
     @click.option("--source", "-s", default="cli", help="Memory source.")
     @click.option("--importance", "-i", default=0.5, type=float, help="Importance 0.0-1.0.")
-    @click.option("--layer", "-l", type=click.Choice(["short-term", "mid-term", "long-term"]), default=None)
+    @click.option(
+        "--layer", "-l", type=click.Choice(["short-term", "mid-term", "long-term"]), default=None
+    )
     def memory_store(home, content, tag, source, importance, layer):
         """Store a new memory."""
         from ..memory_engine import store as mem_store
@@ -49,21 +51,31 @@ def register_memory_commands(main: click.Group) -> None:
             sys.exit(1)
 
         lyr = MemoryLayer(layer) if layer else None
-        entry = mem_store(home=home_path, content=content, tags=list(tag),
-                          source=source, importance=importance, layer=lyr)
+        entry = mem_store(
+            home=home_path,
+            content=content,
+            tags=list(tag),
+            source=source,
+            importance=importance,
+            layer=lyr,
+        )
 
         console.print(f"\n  [green]Stored:[/] {entry.memory_id}")
         console.print(f"  Layer: [cyan]{entry.layer.value}[/]")
         console.print(f"  Tags: {', '.join(entry.tags) if entry.tags else '[dim]none[/]'}")
         console.print(f"  Importance: {entry.importance}")
-        audit_event(home_path, "MEMORY_STORE", f"Memory {entry.memory_id} stored in {entry.layer.value}")
+        audit_event(
+            home_path, "MEMORY_STORE", f"Memory {entry.memory_id} stored in {entry.layer.value}"
+        )
         console.print()
 
     @memory.command("search")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.argument("query")
     @click.option("--tag", "-t", multiple=True, help="Filter by tag.")
-    @click.option("--layer", "-l", type=click.Choice(["short-term", "mid-term", "long-term"]), default=None)
+    @click.option(
+        "--layer", "-l", type=click.Choice(["short-term", "mid-term", "long-term"]), default=None
+    )
     @click.option("--limit", "-n", default=20, help="Max results.")
     @click.option("--json-out", is_flag=True, help="Output results as JSON.")
     def memory_search(home, query, tag, layer, limit, json_out):
@@ -102,7 +114,9 @@ def register_memory_commands(main: click.Group) -> None:
             console.print(f"\n  [dim]No memories match '[/]{query}[dim]'[/]\n")
             return
 
-        console.print(f"\n  [bold]{len(results)}[/] memor{'y' if len(results) == 1 else 'ies'} found:\n")
+        console.print(
+            f"\n  [bold]{len(results)}[/] memor{'y' if len(results) == 1 else 'ies'} found:\n"
+        )
 
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         table.add_column("ID", style="cyan", max_width=14)
@@ -113,15 +127,22 @@ def register_memory_commands(main: click.Group) -> None:
 
         for entry in results:
             preview = entry.content[:80] + ("..." if len(entry.content) > 80 else "")
-            table.add_row(entry.memory_id, entry.layer.value, preview,
-                          ", ".join(entry.tags) if entry.tags else "", f"{entry.importance:.1f}")
+            table.add_row(
+                entry.memory_id,
+                entry.layer.value,
+                preview,
+                ", ".join(entry.tags) if entry.tags else "",
+                f"{entry.importance:.1f}",
+            )
 
         console.print(table)
         console.print()
 
     @memory.command("list")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    @click.option("--layer", "-l", type=click.Choice(["short-term", "mid-term", "long-term"]), default=None)
+    @click.option(
+        "--layer", "-l", type=click.Choice(["short-term", "mid-term", "long-term"]), default=None
+    )
     @click.option("--tag", "-t", multiple=True, help="Filter by tag.")
     @click.option("--limit", "-n", default=50, help="Max results.")
     def memory_list(home, layer, tag, limit):
@@ -154,10 +175,17 @@ def register_memory_commands(main: click.Group) -> None:
 
         for entry in entries:
             preview = entry.content[:80] + ("..." if len(entry.content) > 80 else "")
-            layer_color = {"long-term": "green", "mid-term": "cyan", "short-term": "dim"}.get(entry.layer.value, "dim")
-            table.add_row(entry.memory_id, Text(entry.layer.value, style=layer_color), preview,
-                          ", ".join(entry.tags) if entry.tags else "", f"{entry.importance:.1f}",
-                          str(entry.access_count))
+            layer_color = {"long-term": "green", "mid-term": "cyan", "short-term": "dim"}.get(
+                entry.layer.value, "dim"
+            )
+            table.add_row(
+                entry.memory_id,
+                Text(entry.layer.value, style=layer_color),
+                preview,
+                ", ".join(entry.tags) if entry.tags else "",
+                f"{entry.importance:.1f}",
+                str(entry.access_count),
+            )
 
         console.print(table)
         console.print()
@@ -182,17 +210,21 @@ def register_memory_commands(main: click.Group) -> None:
             sys.exit(1)
 
         console.print()
-        console.print(Panel(
-            entry.content,
-            title=f"[cyan]{entry.memory_id}[/] — {entry.layer.value}",
-            subtitle=f"importance={entry.importance} accessed={entry.access_count} source={entry.source}",
-            border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                entry.content,
+                title=f"[cyan]{entry.memory_id}[/] - {entry.layer.value}",
+                subtitle=f"importance={entry.importance} accessed={entry.access_count} source={entry.source}",  # noqa: E501
+                border_style="bright_blue",
+            )
+        )
         if entry.tags:
             console.print(f"  Tags: {', '.join(entry.tags)}")
         if entry.metadata:
             console.print(f"  Metadata: {json.dumps(entry.metadata)}")
-        console.print(f"  Created: {entry.created_at.isoformat() if entry.created_at else 'unknown'}")
+        console.print(
+            f"  Created: {entry.created_at.isoformat() if entry.created_at else 'unknown'}"
+        )
         if entry.accessed_at:
             console.print(f"  Last accessed: {entry.accessed_at.isoformat()}")
         console.print()
@@ -232,15 +264,18 @@ def register_memory_commands(main: click.Group) -> None:
 
         stats = get_stats(home_path)
         console.print()
-        console.print(Panel(
-            f"Total: [bold]{stats.total_memories}[/] memories\n"
-            f"  [green]Long-term:[/]  {stats.long_term}\n"
-            f"  [cyan]Mid-term:[/]   {stats.mid_term}\n"
-            f"  [dim]Short-term:[/] {stats.short_term}\n\n"
-            f"Store: {stats.store_path}\n"
-            f"Status: {status_icon(stats.status)}",
-            title="SKMemory", border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                f"Total: [bold]{stats.total_memories}[/] memories\n"
+                f"  [green]Long-term:[/]  {stats.long_term}\n"
+                f"  [cyan]Mid-term:[/]   {stats.mid_term}\n"
+                f"  [dim]Short-term:[/] {stats.short_term}\n\n"
+                f"Store: {stats.store_path}\n"
+                f"Status: {status_icon(stats.status)}",
+                title="SKMemory",
+                border_style="bright_blue",
+            )
+        )
         console.print()
 
     @memory.command("gc")
@@ -252,7 +287,9 @@ def register_memory_commands(main: click.Group) -> None:
         home_path = Path(home).expanduser()
         removed = gc_expired(home_path)
         if removed:
-            console.print(f"\n  [yellow]Cleaned up {removed} expired memor{'y' if removed == 1 else 'ies'}.[/]\n")
+            console.print(
+                f"\n  [yellow]Cleaned up {removed} expired memor{'y' if removed == 1 else 'ies'}.[/]\n"  # noqa: E501
+            )
         else:
             console.print("\n  [green]Nothing to clean up.[/]\n")
 
@@ -296,11 +333,13 @@ def register_memory_commands(main: click.Group) -> None:
         if result.tagged:
             console.print(f"  [cyan]Tagged:[/] {len(result.tagged)} memories received new tags")
         if result.promoted:
-            console.print(f"  [green]Promoted:[/] {len(result.promoted)} memories moved to higher tier")
+            console.print(
+                f"  [green]Promoted:[/] {len(result.promoted)} memories moved to higher tier"
+            )
         if result.deduped:
             console.print(f"  [yellow]Deduped:[/] {len(result.deduped)} duplicate(s) removed")
         if not result.tagged and not result.promoted and not result.deduped:
-            console.print("  [dim]Nothing to curate — memories are clean.[/]")
+            console.print("  [dim]Nothing to curate - memories are clean.[/]")
         console.print()
 
     @memory.command("migrate")
@@ -319,16 +358,22 @@ def register_memory_commands(main: click.Group) -> None:
         result = migrate(home_path, dry_run=dry_run, verify=verify)
 
         if dry_run:
-            console.print(f"\n  [bold]DRY RUN:[/] Found {result['total_json']} JSON memories to migrate.\n")
+            console.print(
+                f"\n  [bold]DRY RUN:[/] Found {result['total_json']} JSON memories to migrate.\n"
+            )
             return
 
         if verify:
             verified = result.get("verified", 0)
             missing = result.get("missing", [])
             if not missing:
-                console.print(f"\n  [green]Verified:[/] All {verified} memories present in unified backend.\n")
+                console.print(
+                    f"\n  [green]Verified:[/] All {verified} memories present in unified backend.\n"  # noqa: E501
+                )
             else:
-                console.print(f"\n  [yellow]Verification:[/] {verified} present, {len(missing)} missing.")
+                console.print(
+                    f"\n  [yellow]Verification:[/] {verified} present, {len(missing)} missing."
+                )
                 for mid in missing[:10]:
                     console.print(f"    [red]Missing:[/] {mid}")
                 if len(missing) > 10:
@@ -336,7 +381,7 @@ def register_memory_commands(main: click.Group) -> None:
                 console.print()
             return
 
-        console.print(f"\n  [bold]Migration results:[/]")
+        console.print("\n  [bold]Migration results:[/]")
         console.print(f"    Total JSON memories: {result['total_json']}")
         console.print(f"    [green]Migrated:[/] {result['migrated']}")
         console.print(f"    [dim]Skipped (existing):[/] {result['skipped_existing']}")
@@ -390,7 +435,7 @@ def register_memory_commands(main: click.Group) -> None:
             console.print(f"    Vector: {result['vector_indexed']}")
             console.print(f"    Graph:  {result['graph_indexed']}")
         else:
-            console.print(f"  [red]Errors during reindex.[/]")
+            console.print("  [red]Errors during reindex.[/]")
             for err in result.get("errors", [])[:5]:
                 console.print(f"    {err}")
         console.print()
@@ -415,31 +460,34 @@ def register_memory_commands(main: click.Group) -> None:
         removed = engine.dedup_memories()
 
         if removed:
-            console.print(f"  [yellow]Deduped:[/] {removed} duplicate{'s' if removed != 1 else ''} archived.")
+            console.print(
+                f"  [yellow]Deduped:[/] {removed} duplicate{'s' if removed != 1 else ''} archived."
+            )
         else:
             console.print("  [green]No duplicates found.[/]")
         console.print()
 
     @memory.command("rehydrate")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    @click.option("--agent", "-a", default=None,
-                  help="Agent name (default: active agent).")
+    @click.option("--agent", "-a", default=None, help="Agent name (default: active agent).")
     @click.option("--febs-only", is_flag=True, help="Only ingest FEB files (trust rehydration).")
-    @click.option("--memories-only", is_flag=True, help="Only ingest flat-file memories into backends.")
+    @click.option(
+        "--memories-only", is_flag=True, help="Only ingest flat-file memories into backends."
+    )
     @click.option("--force", is_flag=True, help="Re-ingest even if already in backend.")
     def memory_rehydrate(home, agent, febs_only, memories_only, force):
         """Rehydrate agent memory from flat files and FEBs.
 
         Ingests flat-file JSON memories into SQLite (and optionally SKVector/SKGraph),
         then rehydrates trust state from FEB files. This is the agent's "wake up"
-        command — restoring who it IS across sessions.
+        command - restoring who it IS across sessions.
 
         Without flags, does both memory ingestion and FEB rehydration.
         """
         import os
-        from ..models import MemoryLayer
 
         from .. import active_agent_name
+        from ..models import MemoryLayer
 
         agent_name = agent or os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
         home_path = Path(home).expanduser()
@@ -463,10 +511,13 @@ def register_memory_commands(main: click.Group) -> None:
 
             unified = None
             try:
-                from ..memory_adapter import get_unified, entry_to_memory
+                from ..memory_adapter import entry_to_memory, get_unified
+
                 unified = get_unified()
             except Exception as exc:
-                logger.warning("Memory adapter unavailable, falling back to file-only mode: %s", exc)
+                logger.warning(
+                    "Memory adapter unavailable, falling back to file-only mode: %s", exc
+                )
 
             for layer in MemoryLayer:
                 layer_dir = mem_dir / layer.value
@@ -488,6 +539,7 @@ def register_memory_commands(main: click.Group) -> None:
 
                         if unified:
                             from ..models import MemoryEntry
+
                             if "content" not in data or "memory_id" not in data:
                                 skipped += 1
                                 continue
@@ -530,12 +582,14 @@ def register_memory_commands(main: click.Group) -> None:
                     console.print(f"  [cyan]Also updated:[/] {', '.join(backends)}")
             else:
                 total_files = ingested + skipped + errors
-                console.print(f"  [dim]Found {total_files} memory files (unified backend not available)[/]")
-                console.print(f"  [dim]Install skmemory for SQLite/SKVector/SKGraph ingestion[/]")
+                console.print(
+                    f"  [dim]Found {total_files} memory files (unified backend not available)[/]"
+                )
+                console.print("  [dim]Install skmemory for SQLite/SKVector/SKGraph ingestion[/]")
 
         # --- FEB rehydration: .feb files -> trust state ---
         if do_febs:
-            console.print(f"\n  [bold]Rehydrating trust from FEBs...[/]\n")
+            console.print("\n  [bold]Rehydrating trust from FEBs...[/]\n")
             from ..pillars.trust import rehydrate as trust_rehydrate
 
             state = trust_rehydrate(agent_home)
@@ -549,13 +603,18 @@ def register_memory_commands(main: click.Group) -> None:
             }
 
             if state.status.value == "active":
-                console.print(f"  [green]Trust restored:[/] depth={state.depth:.1f} trust={state.trust_level:.2f} love={state.love_intensity:.2f}")
-                console.print(f"  FEBs: {state.feb_count}  Entangled: {'yes' if state.entangled else 'no'}")
+                console.print(
+                    f"  [green]Trust restored:[/] depth={state.depth:.1f} trust={state.trust_level:.2f} love={state.love_intensity:.2f}"  # noqa: E501
+                )
+                console.print(
+                    f"  FEBs: {state.feb_count}  Entangled: {'yes' if state.entangled else 'no'}"
+                )
 
                 # Also ingest FEBs into memory via Cloud9Bridge
                 feb_ingested = 0
                 feb_skipped = 0
                 from ..cloud9_bridge import Cloud9Bridge
+
                 if unified:
                     bridge = Cloud9Bridge(unified)
                     # Suppress per-file warnings during bulk ingest
@@ -575,16 +634,25 @@ def register_memory_commands(main: click.Group) -> None:
                                 feb_skipped += 1
                     bridge_logger.setLevel(prev_level)
                     if feb_ingested:
-                        console.print(f"  [cyan]FEBs -> Memory:[/] {feb_ingested} emotional memories captured")
+                        console.print(
+                            f"  [cyan]FEBs -> Memory:[/] {feb_ingested} emotional memories captured"  # noqa: E501
+                        )
                     if feb_skipped:
-                        console.print(f"  [dim]FEBs skipped:[/]   {feb_skipped} (legacy format or already ingested)")
+                        console.print(
+                            f"  [dim]FEBs skipped:[/]   {feb_skipped} (legacy format or already ingested)"  # noqa: E501
+                        )
             else:
                 console.print(f"  [yellow]Trust status:[/] {state.status.value}")
-                console.print("  [dim]No FEB files found. Place .feb files in {agent_home}/trust/febs/[/]")
+                console.print(
+                    "  [dim]No FEB files found. Place .feb files in {agent_home}/trust/febs/[/]"
+                )
 
-            audit_event(agent_home, "MEMORY_REHYDRATE",
-                        f"Rehydrated agent={agent_name} memories={results.get('memories', {}).get('ingested', 0)} "
-                        f"trust_depth={state.depth}")
+            audit_event(
+                agent_home,
+                "MEMORY_REHYDRATE",
+                f"Rehydrated agent={agent_name} memories={results.get('memories', {}).get('ingested', 0)} "  # noqa: E501
+                f"trust_depth={state.depth}",
+            )
 
         console.print()
         console.print(f"  [bold green]Rehydration complete for {agent_name}.[/]")

@@ -5,11 +5,13 @@ Runs a single daemon thread that wakes up every TICK_INTERVAL seconds,
 checks which tasks are due, and fires their callbacks.
 
 Built-in recurring tasks:
-    - heartbeat_pulse        — every 30 seconds
-    - backend_reprobe        — every 5 minutes
-    - memory_promotion_sweep — every hour
-    - profile_freshness_check — every 24 hours
-    - dreaming_reflection    — every 15 minutes
+    - heartbeat_pulse        - every 30 seconds
+    - backend_reprobe        - every 5 minutes
+    - memory_promotion_sweep - every hour
+    - profile_freshness_check - every 24 hours
+
+Dreaming moved to a jobs.yaml config job (dreaming-reflection) on 2026-07-09 -
+see docs/superpowers/plans/2026-07-09-dreaming-skscheduler-migration.md.
 
 Usage:
     scheduler = build_scheduler(home, stop_event, consciousness_loop, beacon)
@@ -26,8 +28,8 @@ import shutil
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -70,7 +72,7 @@ class ScheduledTask:
         """Return True if the task interval has elapsed since last_run.
 
         A task with no prior run is always considered due, unless
-        ``delay_first_run`` is set — in that case the first run is
+        ``delay_first_run`` is set - in that case the first run is
         deferred by that many seconds from process start.
 
         Args:
@@ -167,7 +169,12 @@ class TaskScheduler:
         Returns:
             The created ScheduledTask (caller may inspect it at runtime).
         """
-        task = ScheduledTask(name=name, interval_seconds=interval_seconds, callback=callback, delay_first_run=delay_first_run)
+        task = ScheduledTask(
+            name=name,
+            interval_seconds=interval_seconds,
+            callback=callback,
+            delay_first_run=delay_first_run,
+        )
         with self._lock:
             self._tasks.append(task)
         logger.debug("Registered scheduled task '%s' every %.0fs", name, interval_seconds)
@@ -186,11 +193,30 @@ class TaskScheduler:
         )
         self._thread.start()
         logger.info(
-            "Task scheduler started — %d task(s), tick=%.0fs",
+            "Task scheduler started - %d task(s), tick=%.0fs",
             len(self._tasks),
             self._tick_interval,
         )
         return self._thread
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop the scheduler loop and join its thread (idempotent).
+
+        Sets the shared stop event so the tick loop exits, then waits up to
+        ``timeout`` seconds for the thread to finish.  Safe to call more than
+        once and safe to call when the scheduler was never started.
+
+        Args:
+            timeout: Maximum seconds to wait for the scheduler thread to exit.
+        """
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout)
+            if thread.is_alive():
+                logger.warning("Task scheduler thread did not stop within %.0fs", timeout)
+            else:
+                logger.debug("Task scheduler stopped")
 
     def status(self) -> list[dict]:
         """Return serializable status for all registered tasks.
@@ -245,12 +271,8 @@ class TaskScheduler:
         """
         self._host_aliases = host_aliases
         self._state = SchedulerState(root=state_root, hostname=hostname)
-        self._job_runner = JobRunner(
-            log_dir=state_root / "scheduler" / hostname / "logs"
-        )
-        self._config_jobs = [
-            j for j in jobs if j.enabled and job_runs_here(j, host_aliases)
-        ]
+        self._job_runner = JobRunner(log_dir=state_root / "scheduler" / hostname / "logs")
+        self._config_jobs = [j for j in jobs if j.enabled and job_runs_here(j, host_aliases)]
         logger.info(
             "Loaded %d config job(s) for host %s",
             len(self._config_jobs),
@@ -266,7 +288,7 @@ class TaskScheduler:
         Each due job is dispatched to its own short-lived daemon thread so
         the tick returns immediately.  Long-running jobs (e.g. ``agent``
         type, timeout up to 900 s) therefore never block the scheduler daemon
-        thread — which also drives heartbeats and all built-in tasks.
+        thread - which also drives heartbeats and all built-in tasks.
 
         The due-check is intentionally kept in the tick thread (it is cheap).
         The overlap lock is acquired *inside* the worker thread so it spans
@@ -275,7 +297,7 @@ class TaskScheduler:
         Note: because ``record_run`` is called asynchronously inside the
         worker, the next tick may evaluate the same job as "due" before
         ``record_run`` completes.  The per-job overlap lock prevents a second
-        concurrent execution in that window — the second worker acquires
+        concurrent execution in that window - the second worker acquires
         ``got=False`` and returns immediately.  :class:`SchedulerState` uses
         a ``threading.Lock`` so concurrent ``record_run`` calls are safe.
 
@@ -306,7 +328,7 @@ class TaskScheduler:
         :class:`~skcapstone.scheduler_state.SchedulerState`.
 
         If the lock cannot be obtained the method returns immediately without
-        running or recording — this is the safe path when the previous run is
+        running or recording - this is the safe path when the previous run is
         still in progress (which can happen if a job's execution time exceeds
         one tick interval).
 
@@ -319,7 +341,7 @@ class TaskScheduler:
         """
         with self._job_runner.lock(job) as got:
             if not got:
-                logger.debug("job '%s' still running — skip", job.name)
+                logger.debug("job '%s' still running - skip", job.name)
                 return
             # Jitter: random splay before dispatch so fleet nodes sharing a cron
             # slot don't stampede a shared resource (LLM endpoint, registry, etc).
@@ -334,19 +356,22 @@ class TaskScheduler:
                     break
                 if i < attempts - 1:
                     logger.warning(
-                        "job '%s' attempt %d/%d failed: %s — retrying",
-                        job.name, i + 1, attempts, result.error,
+                        "job '%s' attempt %d/%d failed: %s - retrying",
+                        job.name,
+                        i + 1,
+                        attempts,
+                        result.error,
                     )
                     backoff = float(getattr(job, "retry_backoff", 0.0))
                     if backoff > 0:
                         time.sleep(backoff)
-            self._state.record_run(
-                job.name, now=fire_time, ok=result.ok, error=result.error
-            )
+            self._state.record_run(job.name, now=fire_time, ok=result.ok, error=result.error)
             if not result.ok:
                 logger.warning(
                     "job '%s' failed after %d attempt(s): %s",
-                    job.name, attempts, result.error,
+                    job.name,
+                    attempts,
+                    result.error,
                 )
             self._maybe_notify(job, result, attempts)
 
@@ -357,7 +382,7 @@ class TaskScheduler:
         Policy values: ``off`` (default), ``on_failure``, ``on_success``,
         ``always``.  Sends the job name, status, attempt count, and a tail of
         the captured output to Chef's Telegram via the ``sk-alert`` primitive.
-        Never raises — notification failure must not break the scheduler.
+        Never raises - notification failure must not break the scheduler.
 
         Args:
             job: The job that ran.
@@ -384,7 +409,7 @@ class TaskScheduler:
         alert = shutil.which("sk-alert") or os.path.expanduser("~/.skenv/bin/sk-alert")
         try:
             subprocess.run([alert, "-l", level, msg], timeout=30, check=False)
-        except Exception as exc:  # noqa: BLE001 — notify must never break the loop
+        except Exception as exc:  # noqa: BLE001 - notify must never break the loop
             logger.warning("notify failed for job '%s': %s", job.name, exc)
 
     # ------------------------------------------------------------------
@@ -392,7 +417,7 @@ class TaskScheduler:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
-        """Main scheduler loop — ticks every TICK_INTERVAL seconds."""
+        """Main scheduler loop - ticks every TICK_INTERVAL seconds."""
         while not self._stop_event.is_set():
             now = datetime.now(timezone.utc)
             with self._lock:
@@ -450,7 +475,7 @@ def make_memory_promotion_task(home: Path) -> Callable[[], None]:
 
     def _run() -> None:
         if _running.is_set():
-            logger.debug("Memory promotion sweep already running — skipping")
+            logger.debug("Memory promotion sweep already running - skipping")
             return
         _running.set()
         t = threading.Thread(
@@ -498,7 +523,7 @@ def make_heartbeat_task(
 
     Args:
         beacon: HeartbeatBeacon instance (or None).
-        consciousness_active_fn: Zero-arg callable returning bool — whether
+        consciousness_active_fn: Zero-arg callable returning bool - whether
             the consciousness loop is currently active.
     """
 
@@ -538,7 +563,7 @@ def make_profile_freshness_task(home: Path, max_age_days: int = 7) -> Callable[[
             age_days = (now - mtime).days
             if age_days > max_age_days:
                 warnings.append(
-                    f"identity.json is {age_days}d old — consider re-running 'skcapstone init'"
+                    f"identity.json is {age_days}d old - consider re-running 'skcapstone init'"
                 )
 
         # Model profile files
@@ -548,56 +573,26 @@ def make_profile_freshness_task(home: Path, max_age_days: int = 7) -> Callable[[
                 mtime = datetime.fromtimestamp(profile.stat().st_mtime, tz=timezone.utc)
                 age_days = (now - mtime).days
                 if age_days > max_age_days:
-                    warnings.append(
-                        f"model profile '{profile.stem}' is {age_days}d old"
-                    )
+                    warnings.append(f"model profile '{profile.stem}' is {age_days}d old")
 
         if warnings:
             for msg in warnings:
                 logger.warning("Profile freshness: %s", msg)
         else:
-            logger.debug("Profile freshness check passed — all profiles current")
-
-    return _run
-
-
-def make_dreaming_task(
-    home: Path, consciousness_loop: object = None
-) -> Callable[[], None]:
-    """Return a callback that runs the dreaming engine every 15 minutes.
-
-    Instantiates DreamingEngine lazily (so import errors are deferred until
-    first run). The engine itself checks idle state and cooldown internally.
-
-    Args:
-        home: Agent home directory.
-        consciousness_loop: ConsciousnessLoop instance for idle detection.
-    """
-
-    def _run() -> None:
-        from .consciousness_config import load_dreaming_config
-        from .dreaming import DreamingEngine
-
-        config = load_dreaming_config(home)
-        if config is None or not config.enabled:
-            return
-        engine = DreamingEngine(
-            home=home, config=config, consciousness_loop=consciousness_loop
-        )
-        result = engine.dream()
-        if result and result.memories_created:
-            logger.info(
-                "Dreaming: %d memories created from reflection",
-                len(result.memories_created),
-            )
-        elif result and result.skipped_reason:
-            logger.debug("Dreaming skipped: %s", result.skipped_reason)
+            logger.debug("Profile freshness check passed - all profiles current")
 
     return _run
 
 
 def make_itil_auto_close_task(home: Path) -> Callable[[], None]:
     """Return a callback that auto-closes resolved incidents after 24h stable.
+
+    The close is now a plain append of a ``status:closed`` event to this node's
+    own ``auto-close@<host>.jsonl`` writer file (via
+    :meth:`ITILManager.auto_close_resolved` -> :meth:`update_incident`).
+    Concurrent closes from multiple nodes fold idempotently - the first valid
+    close wins - so this task no longer needs single-node pinning (pinning it
+    via jobs affinity remains harmless belt-and-suspenders).
 
     Args:
         home: Shared root directory.
@@ -612,6 +607,44 @@ def make_itil_auto_close_task(home: Path) -> Callable[[], None]:
             logger.info("ITIL auto-close: %d incident(s) closed: %s", len(closed), closed)
         else:
             logger.debug("ITIL auto-close: no incidents to close")
+
+    return _run
+
+
+def make_itil_gtd_reconcile_task(home: Path) -> Callable[[], None]:
+    """Return a callback that drains orphaned ITIL-linked GTD next-actions.
+
+    The read-side complement to the create-side guard in
+    :meth:`ITILManager.create_incident`. It reaps any ``[ITIL:...]`` GTD item whose
+    owning incident is not an open record (core never persisted, diverged across
+    synced nodes, or since closed) - the recurring cross-node "orphan storm" the
+    daily validator used to batch-close by hand.
+
+    Pinned to the incident-authority node (``health.incident_node``) so exactly one
+    node reaps the shared, Syncthing-synced GTD store and nodes do not race. When no
+    authority is configured the gate is open (any node may reconcile), matching the
+    create-side default.
+
+    Args:
+        home: Shared root directory.
+    """
+
+    def _run() -> None:
+        try:
+            from .service_health import _may_file_incidents
+        except Exception:
+            _may_file_incidents = None
+        if _may_file_incidents is not None and not _may_file_incidents():
+            logger.debug("Not the incident-authority node; skipping ITIL GTD reconcile")
+            return
+
+        from .itil import ITILManager
+
+        reaped = ITILManager(home).reconcile_gtd_orphans()
+        if reaped:
+            logger.info("ITIL GTD reconcile: drained %d orphan item(s)", len(reaped))
+        else:
+            logger.debug("ITIL GTD reconcile: nothing to drain")
 
     return _run
 
@@ -632,7 +665,10 @@ def make_itil_escalation_task(home: Path) -> Callable[[], None]:
             for b in breaches:
                 logger.warning(
                     "ITIL SLA breach: %s (%s) unacknowledged for %d min (limit: %d min)",
-                    b["id"], b["severity"], b["elapsed_minutes"], b["sla_minutes"],
+                    b["id"],
+                    b["severity"],
+                    b["elapsed_minutes"],
+                    b["sla_minutes"],
                 )
         else:
             logger.debug("ITIL escalation check: no SLA breaches")
@@ -654,7 +690,7 @@ def build_scheduler(
 ) -> TaskScheduler:
     """Build and register all standard scheduled tasks.
 
-    Tasks registered (in priority order — shortest interval first):
+    Tasks registered (in priority order - shortest interval first):
 
     +--------------------------+------------+
     | Task                     | Interval   |
@@ -671,12 +707,10 @@ def build_scheduler(
     +--------------------------+------------+
     | profile_freshness_check  | 24 hours   |
     +--------------------------+------------+
-    | dreaming_reflection      | 15 min     |
-    +--------------------------+------------+
 
     Args:
         home: Agent home directory.
-        stop_event: Daemon stop event — scheduler thread exits when set.
+        stop_event: Daemon stop event - scheduler thread exits when set.
         consciousness_loop: Optional ConsciousnessLoop for backend re-probe.
         beacon: Optional HeartbeatBeacon for heartbeat pulse.
         sync_watcher: Optional SyncWatcher for inbox polling fallback.
@@ -708,7 +742,7 @@ def build_scheduler(
             callback=make_sync_inbox_scan_task(sync_watcher),
         )
     except ImportError:
-        logger.debug("sync_watcher not available — sync_inbox_scan task skipped")
+        logger.debug("sync_watcher not available - sync_inbox_scan task skipped")
 
     scheduler.register(
         name="backend_reprobe",
@@ -729,14 +763,7 @@ def build_scheduler(
         callback=make_profile_freshness_task(home),
     )
 
-    # Dreaming — idle-time self-reflection via NVIDIA NIM
-    scheduler.register(
-        name="dreaming_reflection",
-        interval_seconds=900,  # 15 minutes
-        callback=make_dreaming_task(home, consciousness_loop),
-    )
-
-    # Service health check — pings Qdrant, FalkorDB, Syncthing, daemons
+    # Service health check - pings Qdrant, FalkorDB, Syncthing, daemons
     try:
         from .service_health import make_service_health_task
 
@@ -746,9 +773,9 @@ def build_scheduler(
             callback=make_service_health_task(),
         )
     except ImportError:
-        logger.debug("service_health not available — service_health_check task skipped")
+        logger.debug("service_health not available - service_health_check task skipped")
 
-    # ITIL escalation check — SLA breach detection every 5 minutes
+    # ITIL escalation check - SLA breach detection every 5 minutes
     try:
         from . import SHARED_ROOT
 
@@ -763,11 +790,18 @@ def build_scheduler(
             interval_seconds=1800,  # 30 minutes
             callback=make_itil_auto_close_task(shared),
         )
+        scheduler.register(
+            name="itil_gtd_reconcile",
+            interval_seconds=1800,  # 30 minutes
+            callback=make_itil_gtd_reconcile_task(shared),
+        )
     except Exception:
-        logger.debug("ITIL scheduled tasks not available — skipped")
+        logger.debug("ITIL scheduled tasks not available - skipped")
 
-    from .scheduler_jobs import load_jobs_with_dropins, current_host_aliases
     import socket
+
+    from .scheduler_jobs import current_host_aliases, load_jobs_with_dropins
+
     jobs_path = Path(home) / "config" / "jobs.yaml"
     jobs = load_jobs_with_dropins(jobs_path)
     if jobs:

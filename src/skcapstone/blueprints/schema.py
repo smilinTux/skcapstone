@@ -3,7 +3,7 @@ Pydantic models for Agent Team Blueprint definitions.
 
 A BlueprintManifest defines a complete deployable team of AI agents,
 including their roles, models, resource requirements, networking,
-memory, and coordination settings. Provider-agnostic by design —
+memory, and coordination settings. Provider-agnostic by design -
 the same blueprint deploys to local processes, Proxmox LXCs,
 Hetzner, AWS, GCP, or any future provider.
 
@@ -17,14 +17,14 @@ Architecture references:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
-
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
 
 class ModelTier(str, Enum):
     """Model selection tiers aligned with agent framework best practices."""
@@ -75,6 +75,7 @@ class AgentRole(str, Enum):
 # Sub-models
 # ---------------------------------------------------------------------------
 
+
 class ResourceSpec(BaseModel):
     """Compute resources allocated to an agent."""
 
@@ -114,7 +115,9 @@ class AgentSpec(BaseModel):
     )
     description: Optional[str] = Field(default=None, description="What this agent does")
     count: int = Field(
-        default=1, ge=1, le=50,
+        default=1,
+        ge=1,
+        le=50,
         description="Number of instances of this agent to spawn",
     )
 
@@ -137,7 +140,7 @@ class StorageConfig(BaseModel):
         description="Shared vault name for the team",
     )
     # Supported backends: "filesystem" (default, no deps) and "skvector" (via skmemory).
-    # "mem0" and "zep" are not yet implemented — no adapter classes exist.
+    # "mem0" and "zep" are not yet implemented - no adapter classes exist.
     memory_backend: str = Field(
         default="filesystem",
         description="Memory backend: filesystem, skvector",
@@ -169,6 +172,7 @@ class CoordinationConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Top-level Blueprint
 # ---------------------------------------------------------------------------
+
 
 class BlueprintManifest(BaseModel):
     """Complete definition of a deployable agent team.
@@ -208,10 +212,9 @@ class BlueprintManifest(BaseModel):
     def slug_must_be_clean(cls, v: str) -> str:
         """Ensure slug is filesystem/URL safe."""
         import re
+
         if not re.match(r"^[a-z0-9][a-z0-9\-]*[a-z0-9]$", v):
-            raise ValueError(
-                f"slug must be lowercase alphanumeric with hyphens: got '{v}'"
-            )
+            raise ValueError(f"slug must be lowercase alphanumeric with hyphens: got '{v}'")
         return v
 
     @property
@@ -222,8 +225,5 @@ class BlueprintManifest(BaseModel):
     @property
     def model_summary(self) -> str:
         """Comma-separated list of model tiers used."""
-        tiers = sorted({
-            spec.model_name or spec.model.value
-            for spec in self.agents.values()
-        })
+        tiers = sorted({spec.model_name or spec.model.value for spec in self.agents.values()})
         return ", ".join(tiers)

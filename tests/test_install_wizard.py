@@ -1,9 +1,8 @@
-"""Tests for the install wizard — path selection, confirmation, routing."""
+"""Tests for the install wizard - path selection, confirmation, routing."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -53,7 +52,7 @@ class TestWaitForSync:
 
 
 class TestPathUpdateExisting:
-    """Tests for path 3 — update existing node."""
+    """Tests for path 3 - update existing node."""
 
     def test_exits_if_no_home(self, tmp_path: Path) -> None:
         """Path 3 exits if agent home doesn't exist."""

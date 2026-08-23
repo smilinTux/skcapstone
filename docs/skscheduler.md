@@ -20,7 +20,7 @@ flowchart TD
     Y["~/.skcapstone/config/jobs.yaml<br/>(Syncthing-synced registry)"] -->|read by every node| D
     subgraph node["each fleet node (.158, .41, …)"]
       D["skcapstone daemon<br/>(systemd user service)"] --> TS["TaskScheduler<br/>tick loop (5s)"]
-      TS -->|interval callbacks| IC["heartbeat · memory_promotion<br/>dreaming_reflection · reprobe"]
+      TS -->|interval callbacks| IC["heartbeat · memory_promotion<br/>profile_freshness · reprobe"]
       TS -->|config jobs| DUE{"due? (cron|interval)<br/>AND node in affinity?"}
       DUE -->|yes| LK["per-job overlap lock<br/>(singleton; skip if running)"]
       LK --> JIT["jitter splay"] --> RUN["JobRunner.run + retries/backoff"]
@@ -149,6 +149,15 @@ skcapstone scheduler status                      # last run / ok / errors per jo
 - **systemd user timers** — keep for OS-level/boot jobs and as the process supervisor for the daemon itself; migrate *application* recurring jobs here.
 - **Claude-Code crons** — separate system (cloud agents); documented, not migrated.
 - **legacy crontab** — retire into `jobs.yaml`.
+
+## Migration
+- `dreaming_reflection` — migrated 2026-07-09 from a `scheduled_tasks.py` built-in
+  (hard-coded 900s) to the `dreaming-reflection` config job (`every: 15m`, `type: python`,
+  `callback: skcapstone.dreaming_job:run_dreaming_job`). See
+  [`docs/superpowers/plans/2026-07-09-dreaming-skscheduler-migration.md`](superpowers/plans/2026-07-09-dreaming-skscheduler-migration.md).
+  Known gap: `python`-type jobs get no per-run `logs/<job>-<ts>.log` file (only
+  `shell`/`agent` jobs do, via `_run_subprocess`) — use `skcapstone scheduler status`
+  for run history instead of `scheduler logs`.
 
 ## Roadmap (not yet implemented)
 job dependencies (`after:`), dead-man's-switch staleness alerts, per-job env/secrets injection,

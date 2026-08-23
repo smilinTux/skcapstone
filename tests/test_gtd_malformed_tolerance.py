@@ -1,4 +1,5 @@
 """GTD tools tolerate malformed (title/body, no 'text') items without crashing."""
+
 import asyncio
 import json
 from pathlib import Path
@@ -15,8 +16,14 @@ def test_gtd_done_tolerates_item_without_text(tmp_path: Path, monkeypatch):
     # reflection/improvement crons wrote and what used to KeyError gtd_done).
     (gtd / "inbox.json").write_text(
         json.dumps(
-            [{"id": "m1", "title": "Daily Reflection", "body": "noise",
-              "source": "daily-reflection-cron"}]
+            [
+                {
+                    "id": "m1",
+                    "title": "Daily Reflection",
+                    "body": "noise",
+                    "source": "daily-reflection-cron",
+                }
+            ]
         ),
         encoding="utf-8",
     )

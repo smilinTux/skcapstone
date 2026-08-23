@@ -1,14 +1,14 @@
-"""Archive command — manage conversation archival."""
+"""Archive command - manage conversation archival."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import click
-
-from ._common import AGENT_HOME, console
 from rich.panel import Panel
 from rich.table import Table
+
+from ._common import AGENT_HOME, console
 
 
 def register_archive_commands(main: click.Group) -> None:
@@ -16,7 +16,7 @@ def register_archive_commands(main: click.Group) -> None:
 
     @main.group()
     def archive():
-        """Conversation archival — compress old messages to save space.
+        """Conversation archival - compress old messages to save space.
 
         Archives peer conversation messages older than 30 days that are
         not in the most-recent 100, compressing them into gzip files
@@ -24,20 +24,20 @@ def register_archive_commands(main: click.Group) -> None:
         """
 
     @archive.command("run")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
     @click.option(
-        "--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory."
-    )
-    @click.option(
-        "--age-days", default=30, show_default=True,
+        "--age-days",
+        default=30,
+        show_default=True,
         help="Archive messages older than this many days.",
     )
     @click.option(
-        "--keep-recent", default=100, show_default=True,
+        "--keep-recent",
+        default=100,
+        show_default=True,
         help="Always keep this many recent messages per peer in the active file.",
     )
-    @click.option(
-        "--peer", default=None, help="Archive only this peer (omit to archive all)."
-    )
+    @click.option("--peer", default=None, help="Archive only this peer (omit to archive all).")
     @click.option(
         "--dry-run", is_flag=True, help="Show what would be archived without making changes."
     )
@@ -61,9 +61,7 @@ def register_archive_commands(main: click.Group) -> None:
         from ..archiver import ConversationArchiver
 
         home_path = Path(home).expanduser()
-        archiver = ConversationArchiver(
-            home_path, age_days=age_days, keep_recent=keep_recent
-        )
+        archiver = ConversationArchiver(home_path, age_days=age_days, keep_recent=keep_recent)
 
         if dry_run:
             _dry_run_report(archiver, peer)
@@ -74,19 +72,21 @@ def register_archive_commands(main: click.Group) -> None:
             if result.skipped:
                 console.print(f"\n[dim]Nothing to archive for peer [bold]{peer}[/].[/]\n")
             else:
-                console.print(Panel(
-                    f"[bold green]Archived {result.archived_count} message(s)[/]\n"
-                    f"Retained: {result.retained_count} message(s)\n"
-                    f"Archive: [cyan]{result.archive_path}[/]",
-                    title=f"Archive — {peer}",
-                    border_style="green",
-                ))
+                console.print(
+                    Panel(
+                        f"[bold green]Archived {result.archived_count} message(s)[/]\n"
+                        f"Retained: {result.retained_count} message(s)\n"
+                        f"Archive: [cyan]{result.archive_path}[/]",
+                        title=f"Archive - {peer}",
+                        border_style="green",
+                    )
+                )
             return
 
         summary = archiver.archive_all()
 
         if summary.total_archived == 0:
-            console.print("\n[dim]Nothing to archive — all conversations are current.[/]\n")
+            console.print("\n[dim]Nothing to archive - all conversations are current.[/]\n")
             return
 
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
@@ -102,18 +102,18 @@ def register_archive_commands(main: click.Group) -> None:
                 r.peer,
                 str(r.archived_count),
                 str(r.retained_count),
-                str(r.archive_path) if r.archive_path else "—",
+                str(r.archive_path) if r.archive_path else "-",
             )
 
-        console.print(f"\n[bold]Archived {summary.total_archived} message(s) across "
-                      f"{summary.peers_processed - summary.peers_skipped} peer(s):[/]\n")
+        console.print(
+            f"\n[bold]Archived {summary.total_archived} message(s) across "
+            f"{summary.peers_processed - summary.peers_skipped} peer(s):[/]\n"
+        )
         console.print(table)
         console.print()
 
     @archive.command("list")
-    @click.option(
-        "--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory."
-    )
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
     def archive_list(home: str):
         """List all conversation archive files.
 
@@ -152,8 +152,10 @@ def register_archive_commands(main: click.Group) -> None:
             total_msgs += a["message_count"]
             total_bytes += a["size_bytes"]
 
-        console.print(f"\n[bold]{len(archives)}[/] archive(s) — "
-                      f"{total_msgs} messages, {total_bytes / 1024:.1f} KB total:\n")
+        console.print(
+            f"\n[bold]{len(archives)}[/] archive(s) - "
+            f"{total_msgs} messages, {total_bytes / 1024:.1f} KB total:\n"
+        )
         console.print(table)
         console.print()
 
@@ -176,9 +178,7 @@ def _dry_run_report(archiver, peer: str | None) -> None:
         return
 
     files = (
-        [conversations_dir / f"{peer}.json"]
-        if peer
-        else sorted(conversations_dir.glob("*.json"))
+        [conversations_dir / f"{peer}.json"] if peer else sorted(conversations_dir.glob("*.json"))
     )
 
     rows = []

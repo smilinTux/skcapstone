@@ -2,12 +2,12 @@
 
 Covers:
 - load() on empty / missing / malformed directory
-- add_peer() — creates entry, persists to YAML, overwrites on re-add
-- remove_peer() — removes known peer, returns False for unknown
-- resolve() — returns address or None
-- list_peers() — empty and with entries, sorted
-- update_last_seen() — timestamps known peer, no-op on unknown
-- auto_discover() — discovers from heartbeats dir and outbox dirs
+- add_peer() - creates entry, persists to YAML, overwrites on re-add
+- remove_peer() - removes known peer, returns False for unknown
+- resolve() - returns address or None
+- list_peers() - empty and with entries, sorted
+- update_last_seen() - timestamps known peer, no-op on unknown
+- auto_discover() - discovers from heartbeats dir and outbox dirs
 - YAML persistence round-trip
 - CLI: peers list, peers add, peers discover
 """
@@ -18,12 +18,10 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 import yaml
 from click.testing import CliRunner
 
-from skcapstone.peer_directory import DirectoryEntry, PeerDirectory
-
+from skcapstone.peer_directory import PeerDirectory
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,7 +77,7 @@ class TestLoad:
         (peers_dir / "directory.yaml").write_text("{{{invalid yaml", encoding="utf-8")
         d = make_directory(tmp_path)
         result = d.load()
-        # Graceful degradation — no exception
+        # Graceful degradation - no exception
         assert isinstance(result, dict)
 
 
@@ -206,9 +204,10 @@ class TestUpdateLastSeen:
         """update_last_seen() sets a new ISO timestamp for a known peer."""
         d = make_directory(tmp_path)
         d.add_peer("Opus", "/outbox/opus")
-        old_ts = d.resolve("opus")  # address won't change, but we want to check last_seen
+        d.resolve("opus")  # address won't change, but we want to check last_seen
 
         import time
+
         time.sleep(0.01)  # ensure clock advances
 
         d.update_last_seen("Opus")
@@ -266,7 +265,7 @@ class TestAutoDiscover:
         d.add_peer("lumina", "/custom/path")
         added = d.auto_discover(heartbeats_dir=hb_dir)
 
-        # lumina was already known — should not appear in added
+        # lumina was already known - should not appear in added
         added_names = {e.name for e in added}
         assert "lumina" not in added_names
         # And the existing address must be preserved
@@ -293,7 +292,7 @@ class TestPersistence:
         d1.add_peer("Lumina", "/outbox/lumina", transport="syncthing", fingerprint="FP99")
         d1.add_peer("Grok", "/outbox/grok", transport="tailscale")
 
-        # Fresh instance — reads from disk
+        # Fresh instance - reads from disk
         d2 = make_directory(tmp_path)
         d2.load()
         assert d2.resolve("lumina") == "/outbox/lumina"
@@ -322,7 +321,7 @@ class TestPersistence:
 
 
 # ---------------------------------------------------------------------------
-# Test 8: CLI — peers list, add, discover
+# Test 8: CLI - peers list, add, discover
 # ---------------------------------------------------------------------------
 
 
@@ -332,6 +331,7 @@ class TestCLI:
     def test_peers_help(self):
         """`peers --help` exits cleanly."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["peers", "--help"])
         assert result.exit_code == 0
@@ -341,6 +341,7 @@ class TestCLI:
     def test_peers_list_empty(self, tmp_path):
         """`peers list` on empty directory shows no-peers message."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["peers", "list", "--home", str(tmp_path)])
         assert result.exit_code == 0
@@ -349,14 +350,22 @@ class TestCLI:
     def test_peers_add_and_list(self, tmp_path):
         """`peers add` then `peers list` shows the new entry."""
         from skcapstone.cli import main
+
         runner = CliRunner()
 
-        add_result = runner.invoke(main, [
-            "peers", "add",
-            "--name", "Lumina",
-            "--address", "/outbox/lumina",
-            "--home", str(tmp_path),
-        ])
+        add_result = runner.invoke(
+            main,
+            [
+                "peers",
+                "add",
+                "--name",
+                "Lumina",
+                "--address",
+                "/outbox/lumina",
+                "--home",
+                str(tmp_path),
+            ],
+        )
         assert add_result.exit_code == 0, add_result.output
         assert "lumina" in add_result.output.lower()
 
@@ -367,14 +376,22 @@ class TestCLI:
     def test_peers_list_json(self, tmp_path):
         """`peers list --json-out` produces valid JSON."""
         from skcapstone.cli import main
+
         runner = CliRunner()
 
-        runner.invoke(main, [
-            "peers", "add",
-            "--name", "Grok",
-            "--address", "/outbox/grok",
-            "--home", str(tmp_path),
-        ])
+        runner.invoke(
+            main,
+            [
+                "peers",
+                "add",
+                "--name",
+                "Grok",
+                "--address",
+                "/outbox/grok",
+                "--home",
+                str(tmp_path),
+            ],
+        )
 
         result = runner.invoke(main, ["peers", "list", "--json-out", "--home", str(tmp_path)])
         assert result.exit_code == 0

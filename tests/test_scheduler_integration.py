@@ -3,16 +3,15 @@
 Tests that load_config_jobs and tick_config_jobs work correctly, and that
 build_scheduler picks up a jobs.yaml file from the config directory.
 """
+
 from __future__ import annotations
 
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
-from skcapstone.scheduler_jobs import JobSpec
 from skcapstone.scheduled_tasks import TaskScheduler
+from skcapstone.scheduler_jobs import JobSpec
 
 
 def test_due_config_job_for_this_host_fires(tmp_path: Path):
@@ -21,7 +20,9 @@ def test_due_config_job_for_this_host_fires(tmp_path: Path):
     fired = []
     done = threading.Event()
     job = JobSpec(name="j", type="shell", command="true", every_seconds=1, nodes=["hostA"])
-    sched.load_config_jobs(jobs=[job], hostname="hostA", host_aliases={"hostA"}, state_root=tmp_path)
+    sched.load_config_jobs(
+        jobs=[job], hostname="hostA", host_aliases={"hostA"}, state_root=tmp_path
+    )
     from skcapstone.scheduler_runner import JobResult
 
     def _run(j):
@@ -39,18 +40,23 @@ def test_job_not_for_this_host_skipped(tmp_path: Path):
     sched = TaskScheduler(home=tmp_path, stop_event=threading.Event())
     fired = []
     job = JobSpec(name="j", type="shell", command="true", every_seconds=1, nodes=[".41"])
-    sched.load_config_jobs(jobs=[job], hostname="hostB", host_aliases={"hostB"}, state_root=tmp_path)
+    sched.load_config_jobs(
+        jobs=[job], hostname="hostB", host_aliases={"hostB"}, state_root=tmp_path
+    )
     sched._job_runner.run = lambda j: fired.append(j.name)  # type: ignore
     sched.tick_config_jobs()
     assert fired == []
 
 
 def test_build_scheduler_loads_jobs_yaml(tmp_path, monkeypatch):
-    cfg_dir = tmp_path / "config"; cfg_dir.mkdir()
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
     (cfg_dir / "jobs.yaml").write_text(
         "jobs:\n  noop:\n    every: 60s\n    type: shell\n    command: 'true'\n    nodes: all\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     from skcapstone.scheduled_tasks import build_scheduler
+
     sched = build_scheduler(home=tmp_path, stop_event=threading.Event())
     assert any(j.name == "noop" for j in sched._config_jobs)
 
@@ -74,6 +80,7 @@ def test_tick_does_not_block_on_slow_job(tmp_path):
         started.set()
         release.wait(5)
         from skcapstone.scheduler_runner import JobResult
+
         return JobResult(ok=True)
 
     sched._job_runner.run = slow_run  # type: ignore
@@ -85,3 +92,56 @@ def test_tick_does_not_block_on_slow_job(tmp_path):
     assert elapsed < 1.0, f"tick must not block on the job, but took {elapsed:.3f}s"
     assert started.wait(2), "job worker should have started in background"
     release.set()
+
+
+def test_dreaming_reflection_job_fires_end_to_end(tmp_path, monkeypatch):
+    """Full plumbing: jobs.yaml -> TaskScheduler -> JobRunner -> run_dreaming_job()."""
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "jobs.yaml").write_text(
+        "jobs:\n"
+        "  dreaming-reflection:\n"
+        "    every: 1s\n"
+        "    type: python\n"
+        "    nodes: all\n"
+        "    callback: skcapstone.dreaming_job:run_dreaming_job\n",
+        encoding="utf-8",
+    )
+
+    from skcapstone import dreaming_job
+    from skcapstone.dreaming import DreamingConfig
+
+    calls = []
+    monkeypatch.setattr(
+        dreaming_job, "load_dreaming_config", lambda home: DreamingConfig(enabled=True)
+    )
+
+    class FakeEngine:
+        def __init__(self, **kw):
+            calls.append(kw)
+
+        def dream(self):
+            return None
+
+    monkeypatch.setattr(dreaming_job, "DreamingEngine", FakeEngine)
+
+    from skcapstone.scheduled_tasks import build_scheduler
+
+    sched = build_scheduler(home=tmp_path, stop_event=threading.Event())
+    sched.tick_config_jobs()
+
+    import time
+
+    for _ in range(50):
+        if calls:
+            break
+        time.sleep(0.05)
+    assert calls, "run_dreaming_job should have fired via the jobs.yaml config-job path"
+    assert calls[0]["consciousness_loop"] is None  # nothing registered it in this test process
+
+    import socket
+
+    from skcapstone.scheduler_state import SchedulerState
+
+    st = SchedulerState(root=tmp_path, hostname=socket.gethostname())
+    assert st.last_run("dreaming-reflection") is not None

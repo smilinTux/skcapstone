@@ -10,7 +10,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 import yaml
@@ -23,25 +22,59 @@ from skcapstone.summary import gather_briefing
 def agent_home(tmp_path):
     """Create a minimal agent home for testing."""
     home = tmp_path / ".skcapstone"
-    for d in ["identity", "memory", "memory/short-term", "memory/mid-term",
-              "memory/long-term", "trust", "security", "sync", "sync/outbox",
-              "sync/inbox", "config", "coordination", "coordination/tasks",
-              "coordination/agents", "peers"]:
+    for d in [
+        "identity",
+        "memory",
+        "memory/short-term",
+        "memory/mid-term",
+        "memory/long-term",
+        "trust",
+        "security",
+        "sync",
+        "sync/outbox",
+        "sync/inbox",
+        "config",
+        "coordination",
+        "coordination/tasks",
+        "coordination/agents",
+        "peers",
+    ]:
         (home / d).mkdir(parents=True, exist_ok=True)
 
-    (home / "manifest.json").write_text(json.dumps({
-        "name": "BriefBot", "version": "0.1.0",
-    }))
-    (home / "identity" / "identity.json").write_text(json.dumps({
-        "name": "BriefBot", "fingerprint": "BRIEF1234", "capauth_managed": False,
-    }))
+    (home / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "BriefBot",
+                "version": "0.1.0",
+            }
+        )
+    )
+    (home / "identity" / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "BriefBot",
+                "fingerprint": "BRIEF1234",
+                "capauth_managed": False,
+            }
+        )
+    )
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "BriefBot"}))
     (home / "memory" / "index.json").write_text("{}")
     (home / "memory" / "short-term" / "m1.json").write_text(
-        json.dumps({"memory_id": "m1", "content": "Test memory content here",
-                     "tags": [], "source": "test", "importance": 0.5,
-                     "layer": "short-term", "created_at": "2026-02-24T00:00:00Z",
-                     "access_count": 0, "accessed_at": None, "metadata": {}})
+        json.dumps(
+            {
+                "memory_id": "m1",
+                "content": "Test memory content here",
+                "tags": [],
+                "source": "test",
+                "importance": 0.5,
+                "layer": "short-term",
+                "created_at": "2026-02-24T00:00:00Z",
+                "access_count": 0,
+                "accessed_at": None,
+                "metadata": {},
+            }
+        )
     )
 
     return home
@@ -110,6 +143,7 @@ class TestCLI:
     def test_summary_help(self):
         """summary --help works."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["summary", "--help"])
         assert result.exit_code == 0
@@ -118,6 +152,7 @@ class TestCLI:
     def test_summary_json(self, agent_home):
         """summary --json-out produces valid JSON."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["summary", "--home", str(agent_home), "--json-out"])
         assert result.exit_code == 0
@@ -128,6 +163,7 @@ class TestCLI:
     def test_summary_human(self, agent_home):
         """summary without flags shows Rich output."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["summary", "--home", str(agent_home)])
         assert result.exit_code == 0

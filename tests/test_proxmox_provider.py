@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -26,7 +26,6 @@ from skcapstone.providers.proxmox import (
     _parse_memory_mb,
 )
 from skcapstone.team_engine import AgentStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -159,7 +158,9 @@ class TestApiCall:
 
     def test_api_call_missing_requests(self, provider: ProxmoxProvider) -> None:
         """Raises RuntimeError if requests is not installed."""
-        with patch.dict("sys.modules", {"requests": None, "urllib3": None, "urllib3.exceptions": None}):
+        with patch.dict(
+            "sys.modules", {"requests": None, "urllib3": None, "urllib3.exceptions": None}
+        ):
             with pytest.raises((RuntimeError, ImportError)):
                 provider._api_call("GET", "/test")
 
@@ -354,9 +355,7 @@ class TestConfigure:
 
 class TestExecInContainer:
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_exec_success(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_exec_success(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = {}
         result = provider._exec_in_container(200, "echo hello")
         assert result is True
@@ -373,9 +372,7 @@ class TestExecInContainer:
         assert result is False
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_exec_fallback_to_config(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_exec_fallback_to_config(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         """When exec API fails, falls back to writing config via PUT."""
         call_count = 0
 
@@ -401,53 +398,37 @@ class TestExecInContainer:
 
 class TestLifecycle:
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_start(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_start(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = {}
         result = provider.start("agent", _provision_result())
         assert result is True
-        mock_api.assert_called_with(
-            "POST", "/nodes/pve/lxc/200/status/start"
-        )
+        mock_api.assert_called_with("POST", "/nodes/pve/lxc/200/status/start")
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_start_no_vmid(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_start_no_vmid(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         result = provider.start("agent", {})
         assert result is False
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_start_api_failure(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_start_api_failure(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.side_effect = RuntimeError("API error")
         result = provider.start("agent", _provision_result())
         assert result is False
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_stop(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_stop(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = {}
         result = provider.stop("agent", _provision_result())
         assert result is True
-        mock_api.assert_called_with(
-            "POST", "/nodes/pve/lxc/200/status/stop"
-        )
+        mock_api.assert_called_with("POST", "/nodes/pve/lxc/200/status/stop")
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_stop_no_vmid(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_stop_no_vmid(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         result = provider.stop("agent", {})
         assert result is False
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_stop_api_failure(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_stop_api_failure(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.side_effect = RuntimeError("API error")
         result = provider.stop("agent", _provision_result())
         assert result is False
@@ -470,9 +451,7 @@ class TestLifecycle:
         assert ("DELETE", "/nodes/pve/lxc/200") in calls
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_destroy_no_vmid(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_destroy_no_vmid(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         result = provider.destroy("agent", {})
         assert result is False
 
@@ -512,30 +491,22 @@ class TestLifecycle:
 
 class TestHealthCheck:
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_running(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_running(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = {"status": "running"}
         assert provider.health_check("agent", _provision_result()) == AgentStatus.RUNNING
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_stopped(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_stopped(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = {"status": "stopped"}
         assert provider.health_check("agent", _provision_result()) == AgentStatus.STOPPED
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_unknown_state(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_unknown_state(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = {"status": "suspended"}
         assert provider.health_check("agent", _provision_result()) == AgentStatus.DEGRADED
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_api_failure(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_api_failure(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.side_effect = RuntimeError("unreachable")
         assert provider.health_check("agent", _provision_result()) == AgentStatus.FAILED
 
@@ -550,22 +521,16 @@ class TestHealthCheck:
 
 class TestNextVmid:
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_returns_int(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_returns_int(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = "300"
         assert provider._next_vmid() == 300
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_returns_int_directly(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_returns_int_directly(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = 301
         assert provider._next_vmid() == 301
 
     @patch.object(ProxmoxProvider, "_api_call")
-    def test_fallback(
-        self, mock_api: MagicMock, provider: ProxmoxProvider
-    ) -> None:
+    def test_fallback(self, mock_api: MagicMock, provider: ProxmoxProvider) -> None:
         mock_api.return_value = {"some": "dict"}
         assert provider._next_vmid() == 200

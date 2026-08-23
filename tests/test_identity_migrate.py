@@ -2,7 +2,7 @@
 
 The walker backfills realm/operator/fqid/pgp_fingerprint into every
 provisioned agent's identity.json. These tests use a tmp ``~/.skcapstone`` home
-with fixture agents + cluster.json — they NEVER touch the real home. The
+with fixture agents + cluster.json - they NEVER touch the real home. The
 canonical resolver (``capauth.resolve_agent_identity``) is patched so fqid and
 fingerprint are deterministic and no real profile/cluster is read.
 
@@ -18,7 +18,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -57,13 +56,23 @@ def home_with_cluster(tmp_path):
     """A tmp shared root with cluster.json + one bare-identity provisioned agent."""
     home = tmp_path / ".skcapstone"
     home.mkdir(parents=True)
-    (home / "cluster.json").write_text(json.dumps({
-        "realm": "skworld", "operator": "chef",
-    }))
-    _mk_agent(home, "lumina", identity_payload={
-        "name": "Lumina", "capauth_managed": True,
-        "capauth_uri": "capauth:lumina@skworld.io",
-    })
+    (home / "cluster.json").write_text(
+        json.dumps(
+            {
+                "realm": "skworld",
+                "operator": "chef",
+            }
+        )
+    )
+    _mk_agent(
+        home,
+        "lumina",
+        identity_payload={
+            "name": "Lumina",
+            "capauth_managed": True,
+            "capauth_uri": "capauth:lumina@skworld.io",
+        },
+    )
     return home
 
 
@@ -96,21 +105,30 @@ class TestMigrateWalker:
         """A complete identity is reported unchanged and not rewritten."""
         home = tmp_path / ".skcapstone"
         home.mkdir(parents=True)
-        (home / "cluster.json").write_text(json.dumps({
-            "realm": "skworld", "operator": "chef",
-        }))
+        (home / "cluster.json").write_text(
+            json.dumps(
+                {
+                    "realm": "skworld",
+                    "operator": "chef",
+                }
+            )
+        )
         payload = {
-            "name": "Opus", "capauth_managed": True,
-            "realm": "skworld", "operator": "chef",
-            "fqid": "opus@chef.skworld", "pgp_fingerprint": "B" * 40,
+            "name": "Opus",
+            "capauth_managed": True,
+            "realm": "skworld",
+            "operator": "chef",
+            "fqid": "opus@chef.skworld",
+            "pgp_fingerprint": "B" * 40,
         }
         adir = _mk_agent(home, "opus", identity_payload=payload)
         ident_path = adir / "identity" / "identity.json"
         mtime_before = ident_path.stat().st_mtime
 
-        with patch(_RESOLVER, side_effect=lambda a: _fake_ident(
-            a, fqid="opus@chef.skworld", fingerprint="B" * 40
-        )):
+        with patch(
+            _RESOLVER,
+            side_effect=lambda a: _fake_ident(a, fqid="opus@chef.skworld", fingerprint="B" * 40),
+        ):
             plan = migrate_identities(home, apply=True)
 
         ap = plan.agents[0]
@@ -129,8 +147,8 @@ class TestMigrateWalker:
 
         assert plan.dry_run is True
         ap = plan.agents[0]
-        assert ap.changed is True            # plan SHOWS the additions
-        assert ap.applied is False           # but did not write
+        assert ap.changed is True  # plan SHOWS the additions
+        assert ap.applied is False  # but did not write
         assert ident_path.read_text() == before
         # The would-be additions are still surfaced for the diff.
         assert "fqid" in ap.additions
@@ -153,9 +171,9 @@ class TestMigrateWalker:
         _mk_agent(home, "lumina", identity_payload={"name": "Lumina"})
 
         # Resolver returns no fqid (cluster-derived) but does have a fingerprint.
-        with patch(_RESOLVER, side_effect=lambda a: _fake_ident(
-            a, fqid=None, fingerprint="C" * 40
-        )):
+        with patch(
+            _RESOLVER, side_effect=lambda a: _fake_ident(a, fqid=None, fingerprint="C" * 40)
+        ):
             plan = migrate_identities(home, apply=True)
 
         assert plan.cluster_found is False

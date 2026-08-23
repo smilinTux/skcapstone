@@ -1,0 +1,23 @@
+[
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 128,
+  "EndLine": 128,
+  "StartColumn": 10,
+  "EndColumn": 41,
+  "Match": "key = \"REDACTED\"",
+  "Secret": "REDACTED",
+  "File": "tests/test_ws.py",
+  "SymlinkFile": "",
+  "Commit": "f97e3c524c4c1210e4eb67b9dba944d2b0680194",
+  "Link": "https://github.com/smilinTux/skcapstone/blob/f97e3c524c4c1210e4eb67b9dba944d2b0680194/tests/test_ws.py#L128",
+  "Entropy": 4.168296,
+  "Author": "chefboyrdave2.1",
+  "Email": "chefboyrdave2.1@douno.it",
+  "Date": "2026-03-02T12:10:38Z",
+  "Message": "feat: sprints 18-19 + batch B — 30 agents, 13k+ LOC\n\nAdds: rate limiter, CORS, structured logging, WebSocket transport,\nconversation manager, doctor --fix, config reload/validate, priority\nqueue, export/import, connection pooling, benchmark, threading, scheduler,\nlogs CLI, graceful shutdown, typing indicators, capabilities, preflight,\npeer directory, notifications, install scripts, health loop, sync engine,\nmulti-agent migration, and 20 new test suites.\n\nCo-Authored-By: Claude Sonnet 4.6 \u003cnoreply@anthropic.com\u003e",
+  "Tags": [],
+  "Fingerprint": "f97e3c524c4c1210e4eb67b9dba944d2b0680194:tests/test_ws.py:generic-api-key:128"
+ }
+]

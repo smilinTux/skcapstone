@@ -1,5 +1,5 @@
 """
-State Diff — show what changed since the last sync/snapshot.
+State Diff - show what changed since the last sync/snapshot.
 
 Compares the current agent state to the most recent sync seed
 or saved snapshot, producing a clear diff of what's new, changed,
@@ -145,8 +145,12 @@ def compute_diff(home: Path) -> StateDiff:
     _diff_pillars(baseline, current, diff)
 
     diff.has_changes = bool(
-        diff.new_memories or diff.removed_memories or diff.trust_changes
-        or diff.new_tasks or diff.completed_tasks or diff.pillar_changes
+        diff.new_memories
+        or diff.removed_memories
+        or diff.trust_changes
+        or diff.new_tasks
+        or diff.completed_tasks
+        or diff.pillar_changes
     )
 
     return diff
@@ -165,9 +169,7 @@ def format_text(diff: StateDiff) -> str:
 
     if diff.snapshot_time:
         lines.append(f"Since: {diff.snapshot_time}")
-    lines.append(
-        f"Memories: {diff.memory_count_before} -> {diff.memory_count_now}"
-    )
+    lines.append(f"Memories: {diff.memory_count_before} -> {diff.memory_count_now}")
     lines.append("")
 
     if not diff.has_changes:
@@ -175,12 +177,16 @@ def format_text(diff: StateDiff) -> str:
         return "\n".join(lines)
 
     if diff.new_memories:
-        lines.append(f"+ {len(diff.new_memories)} new memor{'y' if len(diff.new_memories) == 1 else 'ies'}:")
+        lines.append(
+            f"+ {len(diff.new_memories)} new memor{'y' if len(diff.new_memories) == 1 else 'ies'}:"
+        )
         for m in diff.new_memories[:10]:
             lines.append(f"    + {m['content'][:70]}")
 
     if diff.removed_memories:
-        lines.append(f"- {len(diff.removed_memories)} removed memor{'y' if len(diff.removed_memories) == 1 else 'ies'}")
+        lines.append(
+            f"- {len(diff.removed_memories)} removed memor{'y' if len(diff.removed_memories) == 1 else 'ies'}"  # noqa: E501
+        )
 
     if diff.trust_changes:
         lines.append("")
@@ -219,23 +225,27 @@ def format_json(diff: StateDiff) -> str:
     Returns:
         JSON string.
     """
-    return json.dumps({
-        "has_changes": diff.has_changes,
-        "snapshot_time": diff.snapshot_time,
-        "memories": {
-            "before": diff.memory_count_before,
-            "now": diff.memory_count_now,
-            "new": len(diff.new_memories),
-            "removed": len(diff.removed_memories),
-            "new_entries": diff.new_memories[:20],
+    return json.dumps(
+        {
+            "has_changes": diff.has_changes,
+            "snapshot_time": diff.snapshot_time,
+            "memories": {
+                "before": diff.memory_count_before,
+                "now": diff.memory_count_now,
+                "new": len(diff.new_memories),
+                "removed": len(diff.removed_memories),
+                "new_entries": diff.new_memories[:20],
+            },
+            "trust_changes": diff.trust_changes,
+            "tasks": {
+                "new": diff.new_tasks,
+                "completed": diff.completed_tasks,
+            },
+            "pillar_changes": diff.pillar_changes,
         },
-        "trust_changes": diff.trust_changes,
-        "tasks": {
-            "new": diff.new_tasks,
-            "completed": diff.completed_tasks,
-        },
-        "pillar_changes": diff.pillar_changes,
-    }, indent=2, default=str)
+        indent=2,
+        default=str,
+    )
 
 
 FORMATTERS = {"text": format_text, "json": format_json}
@@ -249,6 +259,7 @@ FORMATTERS = {"text": format_text, "json": format_json}
 def _snapshot_memories(home: Path) -> dict[str, Any]:
     """Capture memory state."""
     from .memory_engine import list_memories
+
     try:
         entries = list_memories(home, limit=10000)
         return {
@@ -278,6 +289,7 @@ def _snapshot_trust(home: Path) -> dict[str, Any]:
 def _snapshot_tasks(home: Path) -> dict[str, Any]:
     """Capture coordination board state."""
     from .coordination import Board
+
     try:
         board = Board(home)
         views = board.get_task_views()
@@ -286,8 +298,7 @@ def _snapshot_tasks(home: Path) -> dict[str, Any]:
             "done_ids": [v.task.id for v in views if v.status.value == "done"],
             "all_ids": [v.task.id for v in views],
             "tasks": [
-                {"id": v.task.id, "title": v.task.title, "status": v.status.value}
-                for v in views
+                {"id": v.task.id, "title": v.task.title, "status": v.status.value} for v in views
             ],
         }
     except Exception as exc:
@@ -298,6 +309,7 @@ def _snapshot_tasks(home: Path) -> dict[str, Any]:
 def _snapshot_pillars(home: Path) -> dict[str, str]:
     """Capture pillar statuses."""
     from .discovery import discover_all
+
     try:
         states = discover_all(home)
         return {name: state.status.value for name, state in states.items()}
@@ -353,10 +365,7 @@ def _diff_memories(baseline: dict, current: dict, diff: StateDiff) -> None:
     diff.removed_memories = list(old_ids - new_ids)
 
     entries_by_id = {e["id"]: e for e in new_mem.get("entries", [])}
-    diff.new_memories = [
-        entries_by_id.get(mid, {"id": mid, "content": ""})
-        for mid in added_ids
-    ]
+    diff.new_memories = [entries_by_id.get(mid, {"id": mid, "content": ""}) for mid in added_ids]
 
 
 def _diff_trust(baseline: dict, current: dict, diff: StateDiff) -> None:

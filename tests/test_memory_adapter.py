@@ -1,11 +1,8 @@
-"""Tests for the Memory Adapter — bridge between skcapstone and skmemory."""
+"""Tests for the Memory Adapter - bridge between skcapstone and skmemory."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from skcapstone.memory_adapter import (
     _LAYER_FROM_SKMEMORY,
@@ -13,11 +10,10 @@ from skcapstone.memory_adapter import (
     entry_to_memory,
     get_unified,
     memory_to_entry,
-    verify_sync,
     reindex_all,
+    verify_sync,
 )
 from skcapstone.models import MemoryEntry, MemoryLayer
-
 
 # ---------------------------------------------------------------------------
 # Layer mapping
@@ -147,7 +143,8 @@ class TestMemoryToEntry:
 
     def test_importance_clamped(self) -> None:
         """Importance is clamped to [0.0, 1.0]."""
-        from skmemory.models import EmotionalSnapshot, Memory, MemoryLayer as SKLayer
+        from skmemory.models import EmotionalSnapshot, Memory
+        from skmemory.models import MemoryLayer as SKLayer
 
         mem = Memory(
             id="test",

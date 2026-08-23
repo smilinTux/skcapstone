@@ -1,0 +1,70 @@
+name: providers
+
+# Dedicated CI coverage for the OPTIONAL cloud / container provider backends
+# (coord 17c02209).
+#
+# Why this exists separately from pytest.yml:
+#   pytest.yml's `unit` job installs `.[all,dev]` and runs the whole suite. That
+#   catches provider breakage only as long as the big all-extras install keeps
+#   resolving. This workflow installs EACH provider optional group ON ITS OWN
+#   (`.[cloud,dev]`, `.[docker,dev]`) and runs only that provider's tests, so:
+#     - a code path confined to an optional cloud/provider backend is exercised
+#       even if the all-extras install drifts, and
+#     - a missing/incorrect dependency in a single extra is caught (the extra is
+#       proven sufficient to import + construct its backend on its own).
+#
+# Everything here is mocked (unittest.mock): no live cloud credentials, no
+# Docker daemon, no network. tests/test_provider_smoke.py additionally
+# guarantees every provider module imports and every backend constructs, and
+# exercises both the SDK-present and SDK-missing branches of each lazy import.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  providers:
+    name: provider tests (${{ matrix.extra }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - extra: cloud
+            tests: >-
+              tests/test_cloud_providers.py
+              tests/test_cloud_provider.py
+              tests/test_provider_smoke.py
+          - extra: docker
+            tests: >-
+              tests/test_docker_provider.py
+              tests/test_provider_smoke.py
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the git tag, so a
+          # shallow checkout would yield a placeholder like 0.1.dev1 and
+          # break dependency resolution against pinned siblings.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package with the ${{ matrix.extra }} extra + dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[${{ matrix.extra }},dev]"
+
+      - name: Run ${{ matrix.extra }} provider tests (SDKs mocked, no creds)
+        run: |
+          python -m pytest ${{ matrix.tests }} \
+            --strict-markers \
+            -m "not integration and not e2e"

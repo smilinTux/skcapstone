@@ -1,8 +1,8 @@
 """CapAuth identity verification and status tools.
 
 Exposes two tools:
-    capauth_status — Show CapAuth profile and key status
-    capauth_verify — Verify a CapAuth identity or capability token
+    capauth_status - Show CapAuth profile and key status
+    capauth_verify - Verify a CapAuth identity or capability token
 """
 
 from __future__ import annotations
@@ -165,14 +165,16 @@ async def _handle_capauth_verify(args: dict) -> list[TextContent]:
             from capauth.tokens import verify_token  # type: ignore[import]
 
             verification = verify_token(token)
-            return _json_response({
-                "token_valid": verification.get("valid", False),
-                "issuer": verification.get("issuer"),
-                "subject": verification.get("subject"),
-                "capabilities": verification.get("capabilities", []),
-                "expires": verification.get("expires"),
-                "detail": verification.get("detail"),
-            })
+            return _json_response(
+                {
+                    "token_valid": verification.get("valid", False),
+                    "issuer": verification.get("issuer"),
+                    "subject": verification.get("subject"),
+                    "capabilities": verification.get("capabilities", []),
+                    "expires": verification.get("expires"),
+                    "detail": verification.get("detail"),
+                }
+            )
         except ImportError:
             return _error_response(
                 "capauth.tokens not available. Install capauth for token verification."

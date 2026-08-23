@@ -1,5 +1,5 @@
 """
-SKCapstone Session Recorder — capture MCP tool calls + responses as JSONL.
+SKCapstone Session Recorder - capture MCP tool calls + responses as JSONL.
 
 Each MCP session is auto-saved to ~/.skcapstone/sessions/ and rotated to
 keep the last 5.  An explicit output path can be set via SKCAPSTONE_RECORD_FILE
@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -120,9 +119,7 @@ class SessionRecorder:
 
         if self._auto_path:
             _auto_rotate(_sessions_dir(self._home), keep=_SESSIONS_KEEP)
-        logger.info(
-            "Session recorder closed: %d tool call(s) recorded", self._count
-        )
+        logger.info("Session recorder closed: %d tool call(s) recorded", self._count)
 
     # ------------------------------------------------------------------
     # Recording

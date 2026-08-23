@@ -12,7 +12,6 @@ from rich.text import Text
 
 from ._common import AGENT_HOME, console
 
-
 # Source icons shown in the table
 _SOURCE_ICON = {
     "memory": "🧠",
@@ -50,7 +49,8 @@ def register_search_commands(main: click.Group) -> None:
         help="Agent home directory.",
     )
     @click.option(
-        "--type", "-t",
+        "--type",
+        "-t",
         "source_types",
         multiple=True,
         type=click.Choice(_VALID_SOURCES),
@@ -60,7 +60,8 @@ def register_search_commands(main: click.Group) -> None:
         ),
     )
     @click.option(
-        "--limit", "-n",
+        "--limit",
+        "-n",
         default=20,
         show_default=True,
         help="Maximum number of results.",
@@ -82,16 +83,15 @@ def register_search_commands(main: click.Group) -> None:
           skcapstone search "trust" -t memory -t journal -n 10\n
           skcapstone search "sprint" --json-out | jq .[].preview
         """
-        from ..unified_search import search as unified_search, SOURCE_ALL
+        from ..unified_search import SOURCE_ALL
+        from ..unified_search import search as unified_search
 
         home_path = Path(home).expanduser()
         if not home_path.exists():
             if json_out:
                 print(json.dumps([]))
                 return
-            console.print(
-                "[bold red]No agent found.[/] Run [cyan]skcapstone init[/] first."
-            )
+            console.print("[bold red]No agent found.[/] Run [cyan]skcapstone init[/] first.")
             sys.exit(1)
 
         sources = frozenset(source_types) if source_types else SOURCE_ALL
@@ -122,9 +122,7 @@ def register_search_commands(main: click.Group) -> None:
             return
 
         source_label = (
-            ", ".join(sorted(sources))
-            if len(sources) < len(SOURCE_ALL)
-            else "all sources"
+            ", ".join(sorted(sources)) if len(sources) < len(SOURCE_ALL) else "all sources"
         )
         console.print(
             f"\n  [bold]{len(results)}[/] result"

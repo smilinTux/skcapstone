@@ -1,5 +1,5 @@
 """
-Security pillar — SKSecurity integration.
+Security pillar - SKSecurity integration.
 
 Audit everything. Detect threats. Protect the sovereign.
 
@@ -29,9 +29,7 @@ class AuditEntry(BaseModel):
     Each entry is serialised as one JSON line in the append-only log.
     """
 
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     event_type: str
     detail: str
     host: str = Field(default_factory=socket.gethostname)
@@ -64,7 +62,9 @@ def initialize_security(home: Path) -> SecurityState:
             "note": "Install sksecurity (pip install sksecurity) for full security",
             "audit_enabled": True,
         }
-        (security_dir / "security.json").write_text(json.dumps(security_config, indent=2), encoding="utf-8")
+        (security_dir / "security.json").write_text(
+            json.dumps(security_config, indent=2), encoding="utf-8"
+        )
         state.status = PillarStatus.DEGRADED
         _init_audit_log(security_dir)
         return state
@@ -144,7 +144,7 @@ def read_audit_log(home: Path, limit: int = 0) -> list[AuditEntry]:
     """Read and parse the audit log.
 
     Handles both legacy plain-text entries and new JSONL entries
-    gracefully — old lines are wrapped in an AuditEntry with
+    gracefully - old lines are wrapped in an AuditEntry with
     event_type="LEGACY".
 
     Args:

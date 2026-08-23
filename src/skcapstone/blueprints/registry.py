@@ -1,5 +1,5 @@
 """
-Blueprint Registry — discovers, validates, and loads team blueprints.
+Blueprint Registry - discovers, validates, and loads team blueprints.
 
 Searches three locations in priority order:
 1. User blueprints:  ~/.skcapstone/blueprints/teams/

@@ -17,7 +17,6 @@ from skcapstone.mood import (
     _compute_summary,
 )
 
-
 # ---------------------------------------------------------------------------
 # Axis classifier unit tests
 # ---------------------------------------------------------------------------
@@ -33,12 +32,12 @@ class TestClassifySuccess:
         assert _classify_success(0.9) == "happy"
 
     def test_moderate_rate_is_content(self) -> None:
-        """70–89% maps to 'content'."""
+        """70-89% maps to 'content'."""
         assert _classify_success(0.80) == "content"
         assert _classify_success(0.70) == "content"
 
     def test_borderline_rate_is_neutral(self) -> None:
-        """50–69% maps to 'neutral'."""
+        """50-69% maps to 'neutral'."""
         assert _classify_success(0.60) == "neutral"
         assert _classify_success(0.50) == "neutral"
 
@@ -57,12 +56,12 @@ class TestClassifySocial:
         assert _classify_social(20.0) == "social"
 
     def test_medium_frequency_is_active(self) -> None:
-        """3–9 msgs/hr maps to 'active'."""
+        """3-9 msgs/hr maps to 'active'."""
         assert _classify_social(5.0) == "active"
         assert _classify_social(3.0) == "active"
 
     def test_low_frequency_is_quiet(self) -> None:
-        """0.5–2 msgs/hr maps to 'quiet'."""
+        """0.5-2 msgs/hr maps to 'quiet'."""
         assert _classify_social(1.0) == "quiet"
         assert _classify_social(0.5) == "quiet"
 
@@ -81,12 +80,12 @@ class TestClassifyStress:
         assert _classify_stress(0.04) == "calm"
 
     def test_low_errors_are_relaxed(self) -> None:
-        """5–14% maps to 'relaxed'."""
+        """5-14% maps to 'relaxed'."""
         assert _classify_stress(0.10) == "relaxed"
         assert _classify_stress(0.05) == "relaxed"
 
     def test_moderate_errors_are_tense(self) -> None:
-        """15–29% maps to 'tense'."""
+        """15-29% maps to 'tense'."""
         assert _classify_stress(0.20) == "tense"
         assert _classify_stress(0.15) == "tense"
 

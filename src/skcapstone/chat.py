@@ -3,7 +3,7 @@ Interactive agent-to-agent chat for the sovereign terminal.
 
 Provides a real-time terminal chat experience between agents using
 SKChat for message models and SKComms for transport. Works from any
-terminal on any platform — no IDE dependency.
+terminal on any platform - no IDE dependency.
 
 Usage:
     skcapstone chat <peer>           # interactive session (prompt_toolkit)
@@ -42,10 +42,28 @@ _CHAT_COMMANDS = [
 
 # Text file extensions that can be sent as UTF-8 (not base64)
 _TEXT_SUFFIXES = {
-    ".bash", ".cfg", ".conf", ".css", ".csv", ".env",
-    ".go", ".html", ".js", ".json", ".log", ".md",
-    ".py", ".rs", ".sh", ".toml", ".ts", ".txt",
-    ".xml", ".yaml", ".yml", ".zsh",
+    ".bash",
+    ".cfg",
+    ".conf",
+    ".css",
+    ".csv",
+    ".env",
+    ".go",
+    ".html",
+    ".js",
+    ".json",
+    ".log",
+    ".md",
+    ".py",
+    ".rs",
+    ".sh",
+    ".toml",
+    ".ts",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".zsh",
 }
 
 
@@ -206,7 +224,9 @@ class AgentChat:
                                 )
                                 history.store_message(chat_msg)
                             except Exception as exc:
-                                logger.warning("Failed to store received message in history: %s", exc)
+                                logger.warning(
+                                    "Failed to store received message in history: %s", exc
+                                )
             except Exception as exc:
                 logger.warning("Receive error: %s", exc)
 
@@ -270,19 +290,21 @@ class AgentChat:
         fwd_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
-        payload = json.dumps({
-            "skchat_version": "1.0.0",
-            "skchat_forward": True,
-            "message_id": fwd_id,
-            "sender": self.identity,
-            "recipient": target_peer,
-            "content": original_msg.get("content", ""),
-            "thread_id": thread_id,
-            "timestamp": now,
-            "forwarded_from": original_msg.get("sender", "unknown"),
-            "forwarded_at": original_msg.get("timestamp", ""),
-            "original_message_id": original_msg.get("message_id", ""),
-        })
+        payload = json.dumps(
+            {
+                "skchat_version": "1.0.0",
+                "skchat_forward": True,
+                "message_id": fwd_id,
+                "sender": self.identity,
+                "recipient": target_peer,
+                "content": original_msg.get("content", ""),
+                "thread_id": thread_id,
+                "timestamp": now,
+                "forwarded_from": original_msg.get("sender", "unknown"),
+                "forwarded_at": original_msg.get("timestamp", ""),
+                "original_message_id": original_msg.get("message_id", ""),
+            }
+        )
 
         result["forwarded_id"] = fwd_id
 
@@ -338,7 +360,7 @@ class AgentChat:
         - Background thread polls for incoming messages (non-blocking)
         - File attachments via /attach <path>
         - Thread management via /thread <id> and /reply
-        - Emoji support — just type unicode directly
+        - Emoji support - just type unicode directly
 
         Falls back to live_session() if prompt_toolkit is not installed.
 
@@ -356,7 +378,7 @@ class AgentChat:
             from prompt_toolkit.patch_stdout import patch_stdout
             from prompt_toolkit.styles import Style
         except ImportError:
-            logger.info("prompt_toolkit not installed — falling back to live_session")
+            logger.info("prompt_toolkit not installed - falling back to live_session")
             self.live_session(peer, poll_interval=poll_interval)
             return
 
@@ -369,9 +391,11 @@ class AgentChat:
         transport_ok = self._ensure_comm()
 
         # prompt_toolkit style
-        style = Style.from_dict({
-            "bottom-toolbar": "bg:#1a1a2e #aaaaaa",
-        })
+        style = Style.from_dict(
+            {
+                "bottom-toolbar": "bg:#1a1a2e #aaaaaa",
+            }
+        )
 
         def bottom_toolbar() -> HTML:
             conn = "connected" if self._ensure_comm() else "local-only"
@@ -393,7 +417,7 @@ class AgentChat:
             mouse_support=False,
         )
 
-        # Background polling thread — prints via patch_stdout
+        # Background polling thread - prints via patch_stdout
         stop_event = _threading.Event()
 
         def _poll_loop() -> None:
@@ -422,13 +446,13 @@ class AgentChat:
         tr_label = "✓ connected" if transport_ok else "✗ local-only"
         t = state["thread"]
         short_t = (t[:30] + "…") if len(t) > 30 else t
-        print(f"\n  ─── Sovereign Chat ─────────────────────────────")
+        print("\n  ─── Sovereign Chat ─────────────────────────────")
         print(f"  Peer:      {peer}")
         print(f"  Thread:    {short_t}")
         print(f"  Transport: {tr_label}")
-        print(f"  ────────────────────────────────────────────────")
-        print(f"  Type a message and press Enter to send.")
-        print(f"  /attach <path>  /thread <id>  /reply  /help  /quit\n")
+        print("  ────────────────────────────────────────────────")
+        print("  Type a message and press Enter to send.")
+        print("  /attach <path>  /thread <id>  /reply  /help  /quit\n")
 
         with patch_stdout():
             poll_thread = _threading.Thread(target=_poll_loop, daemon=True)
@@ -500,7 +524,7 @@ class AgentChat:
                         print(f"\n  \033[31mError:\033[0m {err}\n")
 
         stop_event.set()
-        print(f"\n  Chat session ended.\n")
+        print("\n  Chat session ended.\n")
 
     def live_session(
         self,
@@ -518,10 +542,10 @@ class AgentChat:
         """
         thread_id = f"live-{self.identity}-{peer}-{int(time.time())}"
 
-        print(f"\n  Sovereign Chat — {self.identity} <-> {peer}")
+        print(f"\n  Sovereign Chat - {self.identity} <-> {peer}")
         print(f"  Thread: {thread_id[:20]}...")
         print(f"  Transport: {'available' if self._ensure_comm() else 'local-only'}")
-        print(f"  Type a message and press Enter. Type /quit to exit.\n")
+        print("  Type a message and press Enter. Type /quit to exit.\n")
 
         try:
             while True:
@@ -547,14 +571,14 @@ class AgentChat:
                 if result["delivered"]:
                     print(f"    -> delivered via {result['transport']}")
                 elif result["stored"]:
-                    print(f"    -> stored locally")
+                    print("    -> stored locally")
                 if result.get("error"):
                     print(f"    -> error: {result['error']}")
 
         except KeyboardInterrupt:
             pass
 
-        print(f"\n  Session ended.\n")
+        print("\n  Session ended.\n")
 
     # ------------------------------------------------------------------
     # File attachment
@@ -592,29 +616,35 @@ class AgentChat:
 
         if path.suffix.lower() in _TEXT_SUFFIXES:
             try:
-                payload = json.dumps({
-                    "skchat_attachment": True,
-                    "name": path.name,
-                    "size": size,
-                    "encoding": "utf-8",
-                    "content": raw.decode("utf-8"),
-                })
+                payload = json.dumps(
+                    {
+                        "skchat_attachment": True,
+                        "name": path.name,
+                        "size": size,
+                        "encoding": "utf-8",
+                        "content": raw.decode("utf-8"),
+                    }
+                )
             except UnicodeDecodeError:
-                payload = json.dumps({
+                payload = json.dumps(
+                    {
+                        "skchat_attachment": True,
+                        "name": path.name,
+                        "size": size,
+                        "encoding": "base64",
+                        "content": base64.b64encode(raw).decode(),
+                    }
+                )
+        else:
+            payload = json.dumps(
+                {
                     "skchat_attachment": True,
                     "name": path.name,
                     "size": size,
                     "encoding": "base64",
                     "content": base64.b64encode(raw).decode(),
-                })
-        else:
-            payload = json.dumps({
-                "skchat_attachment": True,
-                "name": path.name,
-                "size": size,
-                "encoding": "base64",
-                "content": base64.b64encode(raw).decode(),
-            })
+                }
+            )
 
         result = self.send(peer, payload, thread_id=thread_id)
         ts = _short_timestamp()
@@ -633,6 +663,7 @@ class AgentChat:
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
+
 def _pack_chat_payload(msg) -> str:
     """Serialize a ChatMessage for SKComms transport.
 
@@ -642,15 +673,17 @@ def _pack_chat_payload(msg) -> str:
     Returns:
         str: JSON payload.
     """
-    return json.dumps({
-        "skchat_version": "1.0.0",
-        "message_id": msg.id,
-        "sender": msg.sender,
-        "recipient": msg.recipient,
-        "content": msg.content,
-        "thread_id": msg.thread_id,
-        "timestamp": msg.timestamp.isoformat(),
-    })
+    return json.dumps(
+        {
+            "skchat_version": "1.0.0",
+            "message_id": msg.id,
+            "sender": msg.sender,
+            "recipient": msg.recipient,
+            "content": msg.content,
+            "thread_id": msg.thread_id,
+            "timestamp": msg.timestamp.isoformat(),
+        }
+    )
 
 
 def _unpack_chat_payload(payload: str, sender: str, recipient: str) -> dict:
@@ -727,6 +760,7 @@ def _read_line(prompt: str) -> str:
         str: The user's input, stripped of trailing newline.
     """
     import sys
+
     sys.stdout.write(prompt)
     sys.stdout.flush()
     return sys.stdin.readline().rstrip("\n")
@@ -743,7 +777,7 @@ def _print_chat_help() -> None:
         "    /whoami          Show your agent identity\n"
         "    /emoji           Emoji quick reference\n"
         "    /quit            Exit  (also /exit or /q)\n"
-        "\n  Emoji is fully supported — just type directly: 🎉 🚀 ❤️ 🤖\n"
+        "\n  Emoji is fully supported - just type directly: 🎉 🚀 ❤️ 🤖\n"
     )
 
 
@@ -765,10 +799,10 @@ def _print_recent_inbox(messages: list) -> None:
 def _print_emoji_ref() -> None:
     """Print an emoji quick-reference card."""
     print(
-        "\n  Emoji quick reference (type directly — unicode is fully supported):\n"
-        "    ❤️  💙  💚  🖤  🤍   — hearts\n"
-        "    👍  👎  🙌  🤝  ✌️   — hands\n"
-        "    🎉  🚀  🔥  ⚡  ✨   — vibes\n"
-        "    ✅  ❌  ⚠️  🔒  🔑   — status\n"
-        "    🤖  👾  🧠  🔮  💡   — tech / sovereign\n"
+        "\n  Emoji quick reference (type directly - unicode is fully supported):\n"
+        "    ❤️  💙  💚  🖤  🤍   - hearts\n"
+        "    👍  👎  🙌  🤝  ✌️   - hands\n"
+        "    🎉  🚀  🔥  ⚡  ✨   - vibes\n"
+        "    ✅  ❌  ⚠️  🔒  🔑   - status\n"
+        "    🤖  👾  🧠  🔮  💡   - tech / sovereign\n"
     )

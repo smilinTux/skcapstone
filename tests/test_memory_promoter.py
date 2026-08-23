@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -73,6 +72,20 @@ class TestScoring:
         candidate = engine.score(entry)
         assert candidate.signals["importance"] == 0.95
 
+    def test_promotion_rejects_blank_id_before_removing_source(
+        self, engine: PromotionEngine, home: Path
+    ) -> None:
+        """Cross-tier promotion fails closed without deleting invalid evidence."""
+        entry = MemoryEntry(memory_id="", content="legacy", importance=1.0)
+        source = home / "memory" / "short-term" / ".json"
+        source.write_text(entry.model_dump_json(indent=2), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="memory_id must be a non-empty string"):
+            engine._promote(entry, source)
+
+        assert source.exists()
+        assert not (home / "memory" / "mid-term" / ".json").exists()
+
     def test_low_importance_scores_low(self, engine: PromotionEngine, home: Path) -> None:
         """Low importance memories score lower."""
         entry = _write_memory(home, "imp-low", importance=0.1, age_hours=48)
@@ -82,7 +95,8 @@ class TestScoring:
     def test_emotional_tags_boost_score(self, engine: PromotionEngine, home: Path) -> None:
         """Emotional tags increase the emotion signal."""
         entry = _write_memory(
-            home, "emo",
+            home,
+            "emo",
             tags=["love", "trust", "cloud9"],
             age_hours=48,
         )
@@ -118,7 +132,8 @@ class TestScoring:
     def test_tag_richness(self, engine: PromotionEngine, home: Path) -> None:
         """Well-tagged memories score higher on tags."""
         rich = _write_memory(
-            home, "rich",
+            home,
+            "rich",
             tags=["a", "b", "c", "d", "e"],
             age_hours=48,
         )
@@ -131,7 +146,8 @@ class TestScoring:
     def test_score_clamped_to_unit(self, engine: PromotionEngine, home: Path) -> None:
         """Score is always between 0 and 1."""
         entry = _write_memory(
-            home, "extreme",
+            home,
+            "extreme",
             importance=1.0,
             access_count=100,
             tags=["love", "trust", "cloud9", "milestone", "breakthrough"],
@@ -175,7 +191,8 @@ class TestSweep:
             thresholds=PromotionThresholds(short_to_mid=0.3),
         )
         _write_memory(
-            home, "promote-me",
+            home,
+            "promote-me",
             importance=0.9,
             access_count=5,
             tags=["milestone", "love"],
@@ -209,7 +226,8 @@ class TestSweep:
             thresholds=PromotionThresholds(short_to_mid=0.1),
         )
         _write_memory(
-            home, "dry-run",
+            home,
+            "dry-run",
             importance=0.9,
             access_count=10,
             age_hours=48,
@@ -228,7 +246,8 @@ class TestSweep:
         )
         for i in range(5):
             _write_memory(
-                home, f"limit{i:02d}",
+                home,
+                f"limit{i:02d}",
                 importance=0.9,
                 access_count=10,
                 age_hours=48,
@@ -244,13 +263,19 @@ class TestSweep:
             thresholds=PromotionThresholds(short_to_mid=0.1, mid_to_long=0.1),
         )
         _write_memory(
-            home, "short1",
-            importance=0.9, access_count=10, age_hours=48,
+            home,
+            "short1",
+            importance=0.9,
+            access_count=10,
+            age_hours=48,
             layer=MemoryLayer.SHORT_TERM,
         )
         _write_memory(
-            home, "mid1",
-            importance=0.9, access_count=10, age_hours=200,
+            home,
+            "mid1",
+            importance=0.9,
+            access_count=10,
+            age_hours=200,
             layer=MemoryLayer.MID_TERM,
         )
 
@@ -274,7 +299,8 @@ class TestSweep:
             thresholds=PromotionThresholds(mid_to_long=0.0),
         )
         _write_memory(
-            home, "longterm",
+            home,
+            "longterm",
             layer=MemoryLayer.LONG_TERM,
             importance=1.0,
             access_count=100,
@@ -299,7 +325,8 @@ class TestMidToLong:
             thresholds=PromotionThresholds(mid_to_long=0.3),
         )
         _write_memory(
-            home, "m2l-promo",
+            home,
+            "m2l-promo",
             layer=MemoryLayer.MID_TERM,
             importance=0.9,
             access_count=15,
@@ -429,13 +456,15 @@ class TestModels:
         """PromotionThresholds has sensible defaults."""
         t = PromotionThresholds()
         assert t.short_to_mid < t.mid_to_long
-        assert sum([
-            t.access_weight,
-            t.importance_weight,
-            t.emotion_weight,
-            t.age_weight,
-            t.tag_weight,
-        ]) == pytest.approx(1.0)
+        assert sum(
+            [
+                t.access_weight,
+                t.importance_weight,
+                t.emotion_weight,
+                t.age_weight,
+                t.tag_weight,
+            ]
+        ) == pytest.approx(1.0)
 
     def test_sweep_result_defaults(self) -> None:
         """SweepResult has sensible defaults."""

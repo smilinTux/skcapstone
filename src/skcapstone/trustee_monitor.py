@@ -1,4 +1,4 @@
-"""Autonomous agent monitoring — heartbeat detection, auto-remediation, escalation.
+"""Autonomous agent monitoring - heartbeat detection, auto-remediation, escalation.
 
 The TrusteeMonitor watches deployed agent teams and takes autonomous
 action when issues are detected:
@@ -9,7 +9,7 @@ action when issues are detected:
 - Context fill detection → auto-rotate before degradation
 
 All actions are logged to the audit trail. The monitor follows the
-Trustee Oath: "I escalate when uncertain — never guess with sovereignty."
+Trustee Oath: "I escalate when uncertain - never guess with sovereignty."
 """
 
 from __future__ import annotations
@@ -169,7 +169,8 @@ class TrusteeMonitor:
                 incident.last_restart = time.time()
                 logger.warning(
                     "Restart failed for %s (attempt %d/%d)",
-                    agent_name, incident.restart_attempts,
+                    agent_name,
+                    incident.restart_attempts,
                     self._config.max_restart_attempts,
                 )
             return success
@@ -204,7 +205,9 @@ class TrusteeMonitor:
             incident.restart_attempts = 0
             logger.info(
                 "Auto-rotated %s in %s (snapshot: %s)",
-                agent_name, deployment_id, result.get("snapshot_path"),
+                agent_name,
+                deployment_id,
+                result.get("snapshot_path"),
             )
             return result.get("redeployed", False)
         except Exception as exc:
@@ -231,6 +234,7 @@ class TrusteeMonitor:
 
         try:
             from .mcp_server import _send_message_impl
+
             _send_message_impl(
                 recipient="chef",
                 message=f"[TRUSTEE ESCALATION] {message}",
@@ -356,9 +360,11 @@ class TrusteeMonitor:
                 iteration += 1
                 report = self.check_all()
 
-                if (report.restarts_triggered or
-                        report.rotations_triggered or
-                        report.escalations_sent):
+                if (
+                    report.restarts_triggered
+                    or report.rotations_triggered
+                    or report.escalations_sent
+                ):
                     logger.info(
                         "Monitor pass %d: %d healthy, %d degraded, "
                         "%d restarts, %d rotations, %d escalations",

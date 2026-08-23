@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from skcapstone.memory_engine import (
+    _load_entry,
+    _save_entry,
     delete,
     export_for_seed,
     gc_expired,
@@ -85,6 +87,47 @@ class TestStore:
         store(agent_home, "First memory")
         for layer in MemoryLayer:
             assert (agent_home / "memory" / layer.value).exists()
+
+    def test_load_rejects_legacy_blank_memory_id(self, agent_home: Path):
+        """A legacy blank-ID payload is never admitted to promotion paths."""
+        path = agent_home / "memory" / "short-term" / ".json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"memory_id": "", "content": "legacy", "layer": "short-term"}),
+            encoding="utf-8",
+        )
+
+        assert _load_entry(path) is None
+
+    def test_load_silently_routes_unified_record_away_from_legacy_promoter(
+        self, agent_home: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Canonical SKMemory records are not misread as blank legacy entries."""
+        path = agent_home / "memory" / "short-term" / "unified-id.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "id": "unified-id",
+                    "title": "Unified record",
+                    "content": "owned by SKMemory",
+                    "layer": "short-term",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert _load_entry(path) is None
+        assert not [record for record in caplog.records if record.levelno >= 30]
+
+    def test_save_rejects_blank_memory_id_before_writing(self, agent_home: Path):
+        """The legacy writer cannot recreate the unsafe `.json` filename."""
+        entry = MemoryEntry(memory_id="", content="must not persist")
+
+        with pytest.raises(ValueError, match="memory_id must be a non-empty string"):
+            _save_entry(agent_home, entry)
+
+        assert not (agent_home / "memory" / "short-term" / ".json").exists()
 
 
 class TestRecall:
@@ -218,7 +261,7 @@ class TestListMemories:
 
     def test_list_newest_first(self, agent_home: Path):
         """List should return newest memories first."""
-        e1 = store(agent_home, "First")
+        store(agent_home, "First")
         e2 = store(agent_home, "Second")
 
         entries = list_memories(agent_home)
@@ -395,3 +438,53 @@ class TestMemoryEntryModel:
             importance=1.0,
         )
         assert not entry.should_promote
+
+
+class TestIndexShapeTolerance:
+    """The search index must survive being rewritten as a list by repair paths.
+
+    Regression: ``self_healing._check_memory_index`` (and external per-node
+    reconcilers) rewrite ``index.json`` as a ``[{"memory_id": ...}, ...]`` list.
+    Loading that verbatim crashed every ``store()`` at ``index[memory_id] = ...``
+    with ``TypeError: list indices must be integers or slices, not str`` - which
+    silently killed dream-insight persistence (mem_created dropped to 0).
+    """
+
+    def test_store_survives_list_shaped_index(self, agent_home: Path):
+        from skcapstone.memory_engine import _load_index, _memory_dir
+
+        mem_dir = _memory_dir(agent_home)
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        # Pre-seed the index in the list shape a healer would write.
+        (mem_dir / "index.json").write_text(
+            json.dumps(
+                [
+                    {"memory_id": "aaaa1111", "layer": "short-term", "tags": ["x"]},
+                    {"memory_id": "bbbb2222", "layer": "mid-term", "tags": ["y"]},
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        # Must not raise, and the new entry must be indexed.
+        entry = store(
+            home=agent_home, content="[Dream insight] coherence has mass", tags=["dream"]
+        )
+
+        index = _load_index(agent_home)
+        assert isinstance(index, dict), "index normalizes to a dict"
+        assert entry.memory_id in index, "new store is indexed"
+        assert "aaaa1111" in index and "bbbb2222" in index, "pre-existing list entries preserved"
+
+    def test_load_index_normalizes_list_to_dict(self, agent_home: Path):
+        from skcapstone.memory_engine import _load_index, _memory_dir
+
+        mem_dir = _memory_dir(agent_home)
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        (mem_dir / "index.json").write_text(
+            json.dumps([{"memory_id": "cccc3333", "layer": "long-term", "tags": ["z"]}]),
+            encoding="utf-8",
+        )
+
+        index = _load_index(agent_home)
+        assert index == {"cccc3333": {"layer": "long-term", "tags": ["z"]}}

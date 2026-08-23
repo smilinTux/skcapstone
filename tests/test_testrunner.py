@@ -7,19 +7,14 @@ and run_all_tests with mocked subprocess calls.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from skcapstone.testrunner import (
-    ECOSYSTEM_PACKAGES,
     PackageResult,
     TestReport,
     _parse_pytest_summary,
     _tail,
     run_all_tests,
 )
-
 
 # ── TestPackageResult ────────────────────────────────────────────
 
@@ -97,43 +92,53 @@ class TestTestReport:
 
     def test_total_passed_aggregation(self):
         """total_passed sums passed across all packages."""
-        report = TestReport(results=[
-            PackageResult(name="a", passed=3, exit_code=0),
-            PackageResult(name="b", passed=7, exit_code=0),
-        ])
+        report = TestReport(
+            results=[
+                PackageResult(name="a", passed=3, exit_code=0),
+                PackageResult(name="b", passed=7, exit_code=0),
+            ]
+        )
         assert report.total_passed == 10
 
     def test_total_failed_aggregation(self):
         """total_failed sums failed across all packages."""
-        report = TestReport(results=[
-            PackageResult(name="a", failed=1, exit_code=1),
-            PackageResult(name="b", failed=4, exit_code=1),
-        ])
+        report = TestReport(
+            results=[
+                PackageResult(name="a", failed=1, exit_code=1),
+                PackageResult(name="b", failed=4, exit_code=1),
+            ]
+        )
         assert report.total_failed == 5
 
     def test_all_passed_when_all_succeed(self):
         """all_passed is True when every available package succeeds."""
-        report = TestReport(results=[
-            PackageResult(name="a", passed=5, exit_code=0),
-            PackageResult(name="b", passed=3, exit_code=0),
-        ])
+        report = TestReport(
+            results=[
+                PackageResult(name="a", passed=5, exit_code=0),
+                PackageResult(name="b", passed=3, exit_code=0),
+            ]
+        )
         assert report.all_passed is True
 
     def test_all_passed_false_when_one_fails(self):
         """all_passed is False when at least one package fails."""
-        report = TestReport(results=[
-            PackageResult(name="a", passed=5, exit_code=0),
-            PackageResult(name="b", passed=2, failed=1, exit_code=1),
-        ])
+        report = TestReport(
+            results=[
+                PackageResult(name="a", passed=5, exit_code=0),
+                PackageResult(name="b", passed=2, failed=1, exit_code=1),
+            ]
+        )
         assert report.all_passed is False
 
     def test_packages_tested_counts_only_available(self):
         """packages_tested counts only packages with available=True."""
-        report = TestReport(results=[
-            PackageResult(name="a", passed=5, exit_code=0, available=True),
-            PackageResult(name="b", available=False),
-            PackageResult(name="c", passed=2, exit_code=0, available=True),
-        ])
+        report = TestReport(
+            results=[
+                PackageResult(name="a", passed=5, exit_code=0, available=True),
+                PackageResult(name="b", available=False),
+                PackageResult(name="c", passed=2, exit_code=0, available=True),
+            ]
+        )
         assert report.packages_tested == 2
 
     def test_to_dict_serialization(self):

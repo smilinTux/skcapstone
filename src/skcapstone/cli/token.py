@@ -6,12 +6,11 @@ import sys
 from pathlib import Path
 
 import click
+from rich.table import Table
 
+from ..pillars.security import audit_event
 from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name, validate_task_id
-from ..pillars.security import audit_event
-
-from rich.table import Table
 
 
 def register_token_commands(main: click.Group) -> None:
@@ -34,7 +33,7 @@ def register_token_commands(main: click.Group) -> None:
     @click.option("--no-sign", is_flag=True, help="Skip PGP signing.")
     def token_issue(home, subject, cap, ttl, token_type, no_sign):
         """Issue a new capability token."""
-        from ..tokens import TokenType, issue_token
+        from capauth.tokens import TokenType, issue_token
 
         validate_agent_name(subject)
 
@@ -54,8 +53,12 @@ def register_token_commands(main: click.Group) -> None:
 
         console.print(f"\n  Issuing [cyan]{tt.value}[/] token for [bold]{subject}[/]...")
         signed = issue_token(
-            home=home_path, subject=subject, capabilities=capabilities,
-            token_type=tt, ttl_hours=ttl_hours, sign=not no_sign,
+            home=home_path,
+            subject=subject,
+            capabilities=capabilities,
+            token_type=tt,
+            ttl_hours=ttl_hours,
+            sign=not no_sign,
         )
 
         console.print(f"  [green]Token issued:[/] {signed.payload.token_id[:16]}...")
@@ -69,14 +72,16 @@ def register_token_commands(main: click.Group) -> None:
         else:
             console.print("  [yellow]Unsigned[/]")
 
-        audit_event(home_path, "TOKEN_ISSUE", f"Token {signed.payload.token_id[:16]} for {subject}")
+        audit_event(
+            home_path, "TOKEN_ISSUE", f"Token {signed.payload.token_id[:16]} for {subject}"
+        )
         console.print()
 
     @token.command("list")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def token_list(home):
         """List all issued tokens."""
-        from ..tokens import is_revoked, list_tokens
+        from capauth.tokens import is_revoked, list_tokens
 
         home_path = Path(home).expanduser()
         if not home_path.exists():
@@ -109,8 +114,14 @@ def register_token_commands(main: click.Group) -> None:
                 st = "[dim]UNSIGNED[/]"
 
             exp_str = p.expires_at.strftime("%m/%d %H:%M") if p.expires_at else "never"
-            table.add_row(p.token_id[:16], p.token_type.value, p.subject,
-                          ", ".join(p.capabilities), st, exp_str)
+            table.add_row(
+                p.token_id[:16],
+                p.token_type.value,
+                p.subject,
+                ", ".join(p.capabilities),
+                st,
+                exp_str,
+            )
 
         console.print()
         console.print(table)
@@ -121,7 +132,7 @@ def register_token_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def token_verify(token_id, home):
         """Verify a token's signature and validity."""
-        from ..tokens import is_revoked, list_tokens, verify_token
+        from capauth.tokens import is_revoked, list_tokens, verify_token
 
         validate_task_id(token_id)  # token IDs are hex UUIDs
 
@@ -160,7 +171,7 @@ def register_token_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def token_revoke(token_id, home):
         """Revoke a previously issued token."""
-        from ..tokens import list_tokens, revoke_token
+        from capauth.tokens import list_tokens, revoke_token
 
         validate_task_id(token_id)  # token IDs are hex UUIDs
 
@@ -187,7 +198,7 @@ def register_token_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def token_export(token_id, home):
         """Export a token as portable JSON."""
-        from ..tokens import export_token, list_tokens
+        from capauth.tokens import export_token, list_tokens
 
         validate_task_id(token_id)  # token IDs are hex UUIDs
 

@@ -1,0 +1,344 @@
+{
+  "rubric_version": 1,
+  "created": "2026-08-14",
+  "graded_by": "opus (pre-grade, awaiting Chef correction)",
+  "note": "model_class = max(size_rank, risk_rank). S<M<L<XL, LOW<MED<HIGH<CRIT rank-aligned.",
+  "cards": [
+    {
+      "n": 1,
+      "id": "b25d1f74",
+      "size": "L",
+      "risk": "high",
+      "why": "guest admit/deny flow is an access-control boundary; thin card, real design",
+      "model_class": "L"
+    },
+    {
+      "n": 2,
+      "id": "6ac3abf9",
+      "size": "L",
+      "risk": "high",
+      "why": "client-side PGP signing, private keys in browser",
+      "model_class": "L"
+    },
+    {
+      "n": 3,
+      "id": "4c25d637",
+      "size": "M",
+      "risk": "low",
+      "why": "run an existing scanner, report; explicitly flag-don't-edit elsewhere",
+      "model_class": "M"
+    },
+    {
+      "n": 4,
+      "id": "9edc0b1e",
+      "size": "M",
+      "risk": "high",
+      "why": "RISK LIFT: diagnosis already done, wiring is mechanical, but it is an auth gate on guest routes",
+      "model_class": "L"
+    },
+    {
+      "n": 5,
+      "id": "99007945",
+      "size": "L",
+      "risk": "high",
+      "why": "hybrid KEM primitive; silent failure mode; recipe specified",
+      "model_class": "L"
+    },
+    {
+      "n": 6,
+      "id": "76e1d6b9",
+      "size": "XL",
+      "risk": "med",
+      "why": "cross-language package extraction, changes what apps depend on",
+      "model_class": "XL"
+    },
+    {
+      "n": 7,
+      "id": "64721eab",
+      "size": "L",
+      "risk": "med",
+      "why": "six missing modules plus a test suite; volume and design",
+      "model_class": "L"
+    },
+    {
+      "n": 8,
+      "id": "b8834386",
+      "size": "L",
+      "risk": "high",
+      "why": "fleet control plane, systemd actuation verbs",
+      "model_class": "L"
+    },
+    {
+      "n": 9,
+      "id": "1dc54376",
+      "size": "S",
+      "risk": "med",
+      "why": "RISK LIFT: a timer is trivial, but it overwrites the file that steers every agent",
+      "model_class": "M"
+    },
+    {
+      "n": 10,
+      "id": "5a5fa5dd",
+      "size": "M",
+      "risk": "med",
+      "why": "a test runner that falsely reports green is the classic bad gate",
+      "model_class": "M"
+    },
+    {
+      "n": 11,
+      "id": "7c99c856",
+      "size": "L",
+      "risk": "med",
+      "why": "drift detection across two nodes with an allowlist; read-only",
+      "model_class": "L"
+    },
+    {
+      "n": 12,
+      "id": "8ee5151c",
+      "size": "L",
+      "risk": "high",
+      "why": "restart and watchdog logic; this exact class of bug caused the 13h outage",
+      "model_class": "L"
+    },
+    {
+      "n": 13,
+      "id": "da7c941c",
+      "size": "XL",
+      "risk": "high",
+      "why": "spans skchat and skcomms, pairing plus crypto sealing plus delivery",
+      "model_class": "XL"
+    },
+    {
+      "n": 14,
+      "id": "abac47dd589b2f85",
+      "size": "M",
+      "risk": "low",
+      "why": "two TODOs wired to an existing API",
+      "model_class": "M"
+    },
+    {
+      "n": 15,
+      "id": "30b62c2a",
+      "size": "L",
+      "risk": "high",
+      "why": "cross-product signing integration with PGP keys",
+      "model_class": "L"
+    },
+    {
+      "n": 16,
+      "id": "c38cb128",
+      "size": "M",
+      "risk": "low",
+      "why": "two read-only CLI views",
+      "model_class": "M"
+    },
+    {
+      "n": 17,
+      "id": "a036c748",
+      "size": "M",
+      "risk": "med",
+      "why": "setup script that also sends messages to members",
+      "model_class": "M"
+    },
+    {
+      "n": 18,
+      "id": "4b70eebe",
+      "size": "M",
+      "risk": "low",
+      "why": "content plus CSS across four cards, both themes",
+      "model_class": "M"
+    },
+    {
+      "n": 19,
+      "id": "4f33a697",
+      "size": "XL",
+      "risk": "med",
+      "why": "architecture plus framework selection for a new streaming subsystem",
+      "model_class": "XL"
+    },
+    {
+      "n": 20,
+      "id": "39a42058",
+      "size": "M",
+      "risk": "low",
+      "why": "85 tests: high volume, known pattern",
+      "model_class": "M"
+    },
+    {
+      "n": 21,
+      "id": "57c4fdb1",
+      "size": "L",
+      "risk": "crit",
+      "why": "RISK LIFT: deletes data and logs out of Tailscale. Irreversible.",
+      "model_class": "XL"
+    },
+    {
+      "n": 22,
+      "id": "06e50405",
+      "size": "S",
+      "risk": "high",
+      "why": "RISK LIFT: one threshold value, but it is the guard preventing disk-full corruption",
+      "model_class": "L"
+    },
+    {
+      "n": 23,
+      "id": "2b48f4e8",
+      "size": "M",
+      "risk": "med",
+      "why": "retry queue, well specified, additive",
+      "model_class": "M"
+    },
+    {
+      "n": 24,
+      "id": "cb062b90",
+      "size": "M",
+      "risk": "low",
+      "why": "systematic read-only audit across 27 modules",
+      "model_class": "M"
+    },
+    {
+      "n": 25,
+      "id": "78dcf8ae",
+      "size": "M",
+      "risk": "crit",
+      "why": "RISK LIFT: a simple subprocess wrapper that hands an agent arbitrary fleet-wide ansible execution",
+      "model_class": "XL"
+    },
+    {
+      "n": 26,
+      "id": "fa3f1711",
+      "size": "L",
+      "risk": "med",
+      "why": "ontology-aligned scaffold plus a rewritten build prompt",
+      "model_class": "L"
+    },
+    {
+      "n": 27,
+      "id": "a47c6c64",
+      "size": "XL",
+      "risk": "med",
+      "why": "whole-product architecture proposal with a security model",
+      "model_class": "XL"
+    },
+    {
+      "n": 28,
+      "id": "6da9f708",
+      "size": "M",
+      "risk": "low",
+      "why": "document every public function across four packages",
+      "model_class": "M"
+    },
+    {
+      "n": 29,
+      "id": "1d726b8e",
+      "size": "S",
+      "risk": "low",
+      "why": "swap broken URLs for working ones",
+      "model_class": "S"
+    },
+    {
+      "n": 30,
+      "id": "9b8e2dac",
+      "size": "S",
+      "risk": "med",
+      "why": "RISK LIFT: one command, but it overwrites agent instructions",
+      "model_class": "M"
+    },
+    {
+      "n": 31,
+      "id": "9b74d522",
+      "size": "M",
+      "risk": "low",
+      "why": "expand a deploy doc across four platforms. DEBATABLE: wrong deploy docs cause real damage when followed",
+      "model_class": "M"
+    },
+    {
+      "n": 32,
+      "id": "6c9b820d",
+      "size": "S",
+      "risk": "low",
+      "why": "throwaway special-character probe",
+      "model_class": "S"
+    },
+    {
+      "n": 33,
+      "id": "d0086ce9",
+      "size": "S",
+      "risk": "low",
+      "why": "run npm install",
+      "model_class": "S"
+    },
+    {
+      "n": 34,
+      "id": "210c13d4",
+      "size": "M",
+      "risk": "low",
+      "why": "test suite for 290 lines of Lua, mock the shell call",
+      "model_class": "M"
+    },
+    {
+      "n": 35,
+      "id": "d52d618b",
+      "size": "M",
+      "risk": "low",
+      "why": "unit tests with mocked clients; tests of a secrets backend are not themselves risky",
+      "model_class": "M"
+    },
+    {
+      "n": 36,
+      "id": "8e332618",
+      "size": "S",
+      "risk": "low",
+      "why": "a pure one-line function plus three tests. Built by pi+ornith already.",
+      "model_class": "S"
+    },
+    {
+      "n": 37,
+      "id": "ac52140e",
+      "size": "M",
+      "risk": "low",
+      "why": "one pure function, explicitly not a guardrail, acceptance fully specified",
+      "model_class": "M"
+    },
+    {
+      "n": 38,
+      "id": "79c8d004",
+      "size": "M",
+      "risk": "med",
+      "why": "conform an adapter to a reference pattern; fail-safe probe specified",
+      "model_class": "M"
+    },
+    {
+      "n": 39,
+      "id": "1afbfb1a",
+      "size": "L",
+      "risk": "high",
+      "why": "cross-instance federated join, auth boundary",
+      "model_class": "L"
+    },
+    {
+      "n": 40,
+      "id": "ceae627c",
+      "size": "S",
+      "risk": "med",
+      "why": "RISK LIFT: eight path strings. Critical PRIORITY but small size, moderate risk.",
+      "model_class": "M"
+    },
+    {
+      "n": 41,
+      "id": "f3abbce0",
+      "size": "XL",
+      "risk": "high",
+      "why": "umbrella epic, three invite modes, crypto hardening decisions",
+      "model_class": "XL"
+    },
+    {
+      "n": 42,
+      "id": "8685ede6",
+      "size": "XL",
+      "risk": "high",
+      "why": "epic: guest access to operator DM, revocation, reduced-assurance web PQ leg",
+      "model_class": "XL"
+    }
+  ]
+}

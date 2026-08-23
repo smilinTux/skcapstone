@@ -26,10 +26,10 @@ BASE_BACKOFF_SECONDS = 60
 class ErrorStatus(str, Enum):
     """Life-cycle status of a queued error entry."""
 
-    PENDING = "pending"       # Waiting for next retry attempt
-    RETRYING = "retrying"     # Retry in progress (transient; set during retry)
-    EXHAUSTED = "exhausted"   # Max retries reached
-    RESOLVED = "resolved"     # Successfully retried and recovered
+    PENDING = "pending"  # Waiting for next retry attempt
+    RETRYING = "retrying"  # Retry in progress (transient; set during retry)
+    EXHAUSTED = "exhausted"  # Max retries reached
+    RESOLVED = "resolved"  # Successfully retried and recovered
 
 
 class ErrorEntry:
@@ -272,7 +272,7 @@ class ErrorQueue:
         entries = self._load()
         target = next((e for e in entries if e.entry_id == entry_id), None)
         if target is None:
-            logger.warning("error_queue: retry — entry %s not found", entry_id)
+            logger.warning("error_queue: retry - entry %s not found", entry_id)
             return False
 
         if target.status == ErrorStatus.EXHAUSTED:
@@ -381,6 +381,7 @@ class ErrorQueue:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _now_iso() -> str:
     """Return current UTC time as ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
@@ -398,8 +399,7 @@ def _backoff_ts(attempt: int, base: int) -> str:
     Returns:
         ISO-8601 UTC timestamp string.
     """
-    import math
     from datetime import timedelta
 
-    delay = base * (2 ** attempt)
+    delay = base * (2**attempt)
     return (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()

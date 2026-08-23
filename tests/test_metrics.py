@@ -4,20 +4,15 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 
 import pytest
 
 from skcapstone.metrics import (
     ConsciousnessMetrics,
+    KmsMetrics,
     MetricsCollector,
     MetricsReport,
-    FortressMetrics,
-    KmsMetrics,
-    PubSubMetrics,
-    SecurityMetrics,
-    SyncMetrics,
     TrustMetrics,
 )
 
@@ -28,11 +23,16 @@ def home(tmp_path: Path) -> Path:
     # Identity
     identity_dir = tmp_path / "identity"
     identity_dir.mkdir()
-    (identity_dir / "identity.json").write_text(json.dumps({
-        "name": "test-agent",
-        "email": "test@skcapstone.local",
-        "fingerprint": "ABCD1234567890ABCDEF1234567890ABCDEF1234",
-    }), encoding="utf-8")
+    (identity_dir / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "test-agent",
+                "email": "test@skcapstone.local",
+                "fingerprint": "ABCD1234567890ABCDEF1234567890ABCDEF1234",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     # Memory
     mem_dir = tmp_path / "memory"
@@ -84,7 +84,8 @@ class TestBasicCollection:
     def test_collect_has_agent_name(self, home: Path) -> None:
         """Report reads agent name from manifest."""
         (home / "manifest.json").write_text(
-            json.dumps({"name": "test-opus"}), encoding="utf-8",
+            json.dumps({"name": "test-opus"}),
+            encoding="utf-8",
         )
         collector = MetricsCollector(home)
         report = collector.collect()
@@ -110,13 +111,18 @@ class TestTrustMetrics:
         """Trust metrics read from trust.json."""
         trust_dir = home / "trust"
         trust_dir.mkdir()
-        (trust_dir / "trust.json").write_text(json.dumps({
-            "depth": 7.0,
-            "trust_level": 0.92,
-            "love_intensity": 0.88,
-            "entangled": True,
-            "last_rehydration": "2026-02-27T10:00:00Z",
-        }), encoding="utf-8")
+        (trust_dir / "trust.json").write_text(
+            json.dumps(
+                {
+                    "depth": 7.0,
+                    "trust_level": 0.92,
+                    "love_intensity": 0.88,
+                    "entangled": True,
+                    "last_rehydration": "2026-02-27T10:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
 
         febs_dir = trust_dir / "febs"
         febs_dir.mkdir()
@@ -221,14 +227,20 @@ class TestPubSubMetrics:
 
         for i in range(3):
             (topics_dir / "system.health" / f"msg-{i}.json").write_text(
-                "{}", encoding="utf-8",
+                "{}",
+                encoding="utf-8",
             )
         (topics_dir / "team.dev" / "msg-0.json").write_text("{}", encoding="utf-8")
 
-        (pubsub_dir / "subscriptions.json").write_text(json.dumps({
-            "system.*": {"pattern": "system.*"},
-            "team.dev": {"pattern": "team.dev"},
-        }), encoding="utf-8")
+        (pubsub_dir / "subscriptions.json").write_text(
+            json.dumps(
+                {
+                    "system.*": {"pattern": "system.*"},
+                    "team.dev": {"pattern": "team.dev"},
+                }
+            ),
+            encoding="utf-8",
+        )
 
         collector = MetricsCollector(home)
         report = collector.collect()
@@ -256,14 +268,19 @@ class TestKmsMetrics:
         """KMS metrics count keys by type and status."""
         kms_dir = home / "security" / "kms"
         kms_dir.mkdir(parents=True)
-        (kms_dir / "keystore.json").write_text(json.dumps({
-            "keys": {
-                "k1": {"key_type": "master", "status": "active"},
-                "k2": {"key_type": "service", "status": "active"},
-                "k3": {"key_type": "service", "status": "rotated"},
-                "k4": {"key_type": "team", "status": "active"},
-            },
-        }), encoding="utf-8")
+        (kms_dir / "keystore.json").write_text(
+            json.dumps(
+                {
+                    "keys": {
+                        "k1": {"key_type": "master", "status": "active"},
+                        "k2": {"key_type": "service", "status": "active"},
+                        "k3": {"key_type": "service", "status": "rotated"},
+                        "k4": {"key_type": "team", "status": "active"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
 
         collector = MetricsCollector(home)
         report = collector.collect()
@@ -277,10 +294,15 @@ class TestKmsMetrics:
         kms_dir = home / "security" / "kms"
         kms_dir.mkdir(parents=True)
         (kms_dir / "keystore.json").write_text(json.dumps({"keys": {}}), encoding="utf-8")
-        (kms_dir / "rotation-log.json").write_text(json.dumps([
-            {"key_id": "k1", "old_version": 1, "new_version": 2},
-            {"key_id": "k1", "old_version": 2, "new_version": 3},
-        ]), encoding="utf-8")
+        (kms_dir / "rotation-log.json").write_text(
+            json.dumps(
+                [
+                    {"key_id": "k1", "old_version": 1, "new_version": 2},
+                    {"key_id": "k1", "old_version": 2, "new_version": 3},
+                ]
+            ),
+            encoding="utf-8",
+        )
 
         collector = MetricsCollector(home)
         report = collector.collect()
@@ -303,11 +325,16 @@ class TestFortressMetrics:
 
     def test_fortress_config(self, home: Path) -> None:
         """Fortress metrics read from config."""
-        (home / "memory" / "fortress.json").write_text(json.dumps({
-            "enabled": True,
-            "encryption_enabled": True,
-            "seal_algorithm": "hmac-sha256",
-        }), encoding="utf-8")
+        (home / "memory" / "fortress.json").write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "encryption_enabled": True,
+                    "seal_algorithm": "hmac-sha256",
+                }
+            ),
+            encoding="utf-8",
+        )
 
         collector = MetricsCollector(home)
         report = collector.collect()
@@ -334,12 +361,26 @@ class TestCoordinationMetrics:
         """Coordination metrics count tasks by status."""
         tasks_dir = home / "coordination" / "tasks"
         for i in range(3):
-            (tasks_dir / f"task{i}.json").write_text(json.dumps({
-                "id": f"task{i}", "status": "open", "title": f"Task {i}",
-            }), encoding="utf-8")
-        (tasks_dir / "done1.json").write_text(json.dumps({
-            "id": "done1", "status": "done", "title": "Done",
-        }), encoding="utf-8")
+            (tasks_dir / f"task{i}.json").write_text(
+                json.dumps(
+                    {
+                        "id": f"task{i}",
+                        "status": "open",
+                        "title": f"Task {i}",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        (tasks_dir / "done1.json").write_text(
+            json.dumps(
+                {
+                    "id": "done1",
+                    "status": "done",
+                    "title": "Done",
+                }
+            ),
+            encoding="utf-8",
+        )
 
         collector = MetricsCollector(home)
         report = collector.collect()
@@ -375,9 +416,15 @@ class TestErrorResilience:
         """One failing section doesn't prevent others."""
         (home / "security" / "audit.log").write_text("not json\n", encoding="utf-8")
         (home / "trust").mkdir(exist_ok=True)
-        (home / "trust" / "trust.json").write_text(json.dumps({
-            "depth": 5.0, "trust_level": 0.8,
-        }), encoding="utf-8")
+        (home / "trust" / "trust.json").write_text(
+            json.dumps(
+                {
+                    "depth": 5.0,
+                    "trust_level": 0.8,
+                }
+            ),
+            encoding="utf-8",
+        )
 
         collector = MetricsCollector(home)
         report = collector.collect()
@@ -467,6 +514,35 @@ class TestConsciousnessMetrics:
         cm.record_error()
         assert cm.to_dict()["errors"] == 2
 
+    def test_record_classification_counts_tags(self, cm: ConsciousnessMetrics) -> None:
+        """record_classification counts each tag independently."""
+        cm.record_classification(["code", "analyze"])
+        cm.record_classification(["code"])
+        cm.record_classification(["general"])
+        usage = cm.to_dict()["classification_usage"]
+        assert usage["code"] == 2
+        assert usage["analyze"] == 1
+        assert usage["general"] == 1
+
+    def test_record_classification_empty_falls_back_general(
+        self, cm: ConsciousnessMetrics
+    ) -> None:
+        """Empty tags are recorded as 'general'."""
+        cm.record_classification([])
+        assert cm.to_dict()["classification_usage"]["general"] == 1
+
+    def test_classification_usage_persists(self, tmp_path: Path) -> None:
+        """classification_usage survives save() + reload."""
+        cm1 = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        cm1.record_classification(["creative"])
+        cm1.record_classification(["creative", "code"])
+        cm1.save()
+
+        cm2 = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
+        usage = cm2.to_dict()["classification_usage"]
+        assert usage["creative"] == 2
+        assert usage["code"] == 1
+
     # ------------------------------------------------------------------
     # Histogram
     # ------------------------------------------------------------------
@@ -533,6 +609,7 @@ class TestConsciousnessMetrics:
     def test_save_creates_daily_file(self, tmp_path: Path) -> None:
         """save() creates the daily JSON file under metrics/daily/."""
         from datetime import datetime, timezone
+
         cm = ConsciousnessMetrics(home=tmp_path, persist_interval=0)
         cm.record_message("x")
         cm.save()
@@ -551,6 +628,7 @@ class TestConsciousnessMetrics:
     def test_load_corrupt_file_doesnt_crash(self, tmp_path: Path) -> None:
         """Corrupt daily JSON is silently ignored."""
         from datetime import datetime, timezone
+
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         daily = tmp_path / "metrics" / "daily" / f"{date_str}.json"
         daily.parent.mkdir(parents=True)
@@ -606,8 +684,14 @@ class TestConsciousnessMetrics:
         """to_dict returns all required keys."""
         d = cm.to_dict()
         required = {
-            "date", "session_start", "messages_processed", "responses_sent",
-            "errors", "response_time_ms", "backend_usage", "tier_usage",
+            "date",
+            "session_start",
+            "messages_processed",
+            "responses_sent",
+            "errors",
+            "response_time_ms",
+            "backend_usage",
+            "tier_usage",
             "messages_per_peer",
         }
         assert required.issubset(d.keys())

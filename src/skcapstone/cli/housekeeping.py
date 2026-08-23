@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import click
+from rich.table import Table
 
 from ._common import AGENT_HOME, console
-
-from rich.table import Table
 
 
 def register_housekeeping_commands(main: click.Group) -> None:
@@ -14,9 +13,14 @@ def register_housekeeping_commands(main: click.Group) -> None:
 
     @main.command("housekeeping")
     @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
-    @click.option("--skcomms-home", default="~/.skcomms", type=click.Path(), help="SKComms home directory.")
+    @click.option(
+        "--skcomms-home",
+        default=None,
+        type=click.Path(),
+        help="SKComms home directory. Default: {home}/skcomms (honors SKCOMMS_HOME).",
+    )
     @click.option("--dry-run", is_flag=True, help="Report what would be deleted without deleting.")
-    def housekeeping(home: str, skcomms_home: str, dry_run: bool):
+    def housekeeping(home: str, skcomms_home: str | None, dry_run: bool):
         """Prune stale ACKs, delivered envelopes, and old seeds.
 
         Reclaims disk space from files that accumulate in the agent
@@ -29,16 +33,17 @@ def register_housekeeping_commands(main: click.Group) -> None:
             skcapstone housekeeping
         """
         from pathlib import Path
+
         from ..housekeeping import run_housekeeping
 
         results = run_housekeeping(
             skcapstone_home=Path(home).expanduser(),
-            skcomms_home=Path(skcomms_home).expanduser(),
+            skcomms_home=Path(skcomms_home).expanduser() if skcomms_home else None,
             dry_run=dry_run,
         )
 
         if dry_run:
-            console.print("[bold yellow]DRY RUN[/] — no files deleted\n")
+            console.print("[bold yellow]DRY RUN[/] - no files deleted\n")
 
         table = Table(title="Housekeeping Results")
         table.add_column("Target", style="cyan")
@@ -46,7 +51,19 @@ def register_housekeeping_commands(main: click.Group) -> None:
         table.add_column("Size Before", justify="right")
         table.add_column("Action", justify="right", style="green")
 
-        for key in ("acks", "comms_outbox", "seed_outbox", "legacy_comms"):
+        keys = (
+            "acks",
+            "comms_outbox",
+            "seed_outbox",
+            "legacy_comms",
+            "inbox",
+            "deadletter",
+            "skcomms_inbox",
+            "comms_archive",
+            "comms_outbox_flat",
+            "derived_junk",
+        )
+        for key in keys:
             info = results.get(key, {})
             path = info.get("path", "?")
             size_before = _fmt_size(info.get("size_before", 0))

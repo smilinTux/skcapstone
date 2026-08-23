@@ -1,17 +1,13 @@
-"""Tests for the Team Engine — deployment orchestration for agent teams."""
+"""Tests for the Team Engine - deployment orchestration for agent teams."""
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import MagicMock
 
 import pytest
 
 from skcapstone.blueprints.schema import (
-    AgentRole,
     AgentSpec,
     BlueprintManifest,
     ProviderType,
@@ -23,7 +19,6 @@ from skcapstone.team_engine import (
     TeamDeployment,
     TeamEngine,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -67,7 +62,9 @@ class MockProvider(ProviderBackend):
             raise RuntimeError(f"provision failed for {agent_name}")
         return {"host": "localhost", "pid": 1234}
 
-    def configure(self, agent_name: str, spec: AgentSpec, provision_result: Dict[str, Any]) -> bool:
+    def configure(
+        self, agent_name: str, spec: AgentSpec, provision_result: Dict[str, Any]
+    ) -> bool:
         self.calls.append(("configure", agent_name))
         if agent_name in self.fail_on:
             raise RuntimeError(f"configure failed for {agent_name}")
@@ -206,20 +203,24 @@ class TestDeployOrder:
 
     def test_no_dependencies(self) -> None:
         """Agents without dependencies deploy in one wave."""
-        bp = _make_blueprint({
-            "a": {"role": "worker", "model": "fast"},
-            "b": {"role": "worker", "model": "fast"},
-        })
+        bp = _make_blueprint(
+            {
+                "a": {"role": "worker", "model": "fast"},
+                "b": {"role": "worker", "model": "fast"},
+            }
+        )
         waves = TeamEngine.resolve_deploy_order(bp)
         assert len(waves) == 1
         assert set(waves[0]) == {"a", "b"}
 
     def test_simple_dependency(self) -> None:
         """Agent with dependency deploys after its dependency."""
-        bp = _make_blueprint({
-            "leader": {"role": "manager", "model": "reason"},
-            "worker": {"role": "worker", "model": "fast", "depends_on": ["leader"]},
-        })
+        bp = _make_blueprint(
+            {
+                "leader": {"role": "manager", "model": "reason"},
+                "worker": {"role": "worker", "model": "fast", "depends_on": ["leader"]},
+            }
+        )
         waves = TeamEngine.resolve_deploy_order(bp)
         assert len(waves) == 2
         assert "leader" in waves[0]
@@ -227,12 +228,14 @@ class TestDeployOrder:
 
     def test_diamond_dependency(self) -> None:
         """Diamond dependency graph resolves correctly."""
-        bp = _make_blueprint({
-            "base": {"role": "manager", "model": "reason"},
-            "mid-a": {"role": "worker", "model": "fast", "depends_on": ["base"]},
-            "mid-b": {"role": "worker", "model": "fast", "depends_on": ["base"]},
-            "top": {"role": "worker", "model": "fast", "depends_on": ["mid-a", "mid-b"]},
-        })
+        bp = _make_blueprint(
+            {
+                "base": {"role": "manager", "model": "reason"},
+                "mid-a": {"role": "worker", "model": "fast", "depends_on": ["base"]},
+                "mid-b": {"role": "worker", "model": "fast", "depends_on": ["base"]},
+                "top": {"role": "worker", "model": "fast", "depends_on": ["mid-a", "mid-b"]},
+            }
+        )
         waves = TeamEngine.resolve_deploy_order(bp)
         assert len(waves) == 3
         assert "base" in waves[0]
@@ -249,7 +252,9 @@ class TestDeploy:
     """Tests for deployment orchestration."""
 
     def test_deploy_creates_agents(
-        self, engine: TeamEngine, blueprint: BlueprintManifest,
+        self,
+        engine: TeamEngine,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Deploy creates agents for each spec in blueprint."""
         dep = engine.deploy(blueprint)
@@ -259,7 +264,10 @@ class TestDeploy:
         )
 
     def test_deploy_calls_provider(
-        self, engine: TeamEngine, provider: MockProvider, blueprint: BlueprintManifest,
+        self,
+        engine: TeamEngine,
+        provider: MockProvider,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Deploy calls provision/configure/start on provider."""
         engine.deploy(blueprint)
@@ -269,7 +277,10 @@ class TestDeploy:
         assert "start" in actions
 
     def test_deploy_saves_state(
-        self, engine: TeamEngine, blueprint: BlueprintManifest, home: Path,
+        self,
+        engine: TeamEngine,
+        blueprint: BlueprintManifest,
+        home: Path,
     ) -> None:
         """Deploy persists state to disk."""
         dep = engine.deploy(blueprint)
@@ -277,7 +288,9 @@ class TestDeploy:
         assert state_file.exists()
 
     def test_deploy_returns_deployment(
-        self, engine: TeamEngine, blueprint: BlueprintManifest,
+        self,
+        engine: TeamEngine,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Deploy returns a TeamDeployment."""
         dep = engine.deploy(blueprint)
@@ -285,14 +298,18 @@ class TestDeploy:
         assert dep.blueprint_slug == "test-team"
 
     def test_deploy_custom_name(
-        self, engine: TeamEngine, blueprint: BlueprintManifest,
+        self,
+        engine: TeamEngine,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Deploy accepts custom deployment name."""
         dep = engine.deploy(blueprint, name="my-team")
         assert dep.team_name == "my-team"
 
     def test_deploy_without_provider(
-        self, home: Path, blueprint: BlueprintManifest,
+        self,
+        home: Path,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Deploy works in dry-run mode without a provider."""
         engine = TeamEngine(home=home, provider=None)
@@ -301,14 +318,18 @@ class TestDeploy:
         assert len(dep.agents) >= 1
 
     def test_deploy_handles_agent_failure(
-        self, engine: TeamEngine, provider: MockProvider,
+        self,
+        engine: TeamEngine,
+        provider: MockProvider,
     ) -> None:
         """Deploy continues even if one agent fails."""
         provider.fail_on.add("worker")
-        bp = _make_blueprint({
-            "leader": {"role": "manager", "model": "reason"},
-            "worker": {"role": "worker", "model": "fast"},
-        })
+        bp = _make_blueprint(
+            {
+                "leader": {"role": "manager", "model": "reason"},
+                "worker": {"role": "worker", "model": "fast"},
+            }
+        )
         dep = engine.deploy(bp)
         # Deployment should still complete
         assert len(dep.agents) >= 1
@@ -327,7 +348,9 @@ class TestLifecycle:
         assert engine.list_deployments() == []
 
     def test_list_after_deploy(
-        self, engine: TeamEngine, blueprint: BlueprintManifest,
+        self,
+        engine: TeamEngine,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Deployed teams appear in listing."""
         engine.deploy(blueprint)
@@ -335,7 +358,9 @@ class TestLifecycle:
         assert len(deps) == 1
 
     def test_get_deployment(
-        self, engine: TeamEngine, blueprint: BlueprintManifest,
+        self,
+        engine: TeamEngine,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Can retrieve a deployment by ID."""
         dep = engine.deploy(blueprint)
@@ -348,7 +373,10 @@ class TestLifecycle:
         assert engine.get_deployment("ghost") is None
 
     def test_destroy_deployment(
-        self, engine: TeamEngine, provider: MockProvider, blueprint: BlueprintManifest,
+        self,
+        engine: TeamEngine,
+        provider: MockProvider,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Destroy removes deployment state."""
         dep = engine.deploy(blueprint)
@@ -357,7 +385,10 @@ class TestLifecycle:
         assert engine.get_deployment(dep.deployment_id) is None
 
     def test_destroy_calls_provider(
-        self, engine: TeamEngine, provider: MockProvider, blueprint: BlueprintManifest,
+        self,
+        engine: TeamEngine,
+        provider: MockProvider,
+        blueprint: BlueprintManifest,
     ) -> None:
         """Destroy calls provider.destroy on agents."""
         dep = engine.deploy(blueprint)
@@ -392,6 +423,6 @@ class TestProviderBackend:
     """Tests for the abstract provider interface."""
 
     def test_abstract_methods_raise(self) -> None:
-        """ProviderBackend is an ABC — cannot be instantiated directly."""
+        """ProviderBackend is an ABC - cannot be instantiated directly."""
         with pytest.raises(TypeError):
             ProviderBackend()  # type: ignore[abstract]

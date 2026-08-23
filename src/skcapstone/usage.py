@@ -1,5 +1,5 @@
 """
-LLM token usage tracking — input/output tokens per model per day.
+LLM token usage tracking - input/output tokens per model per day.
 
 Records are stored in ~/.skcapstone/usage/tokens-{date}.json, one file
 per calendar day (UTC).  Each file accumulates calls to record_usage()
@@ -43,7 +43,7 @@ _COST_TABLE: list[tuple[str, float, float]] = [
     ("claude-opus", 15.0, 75.0),
     ("claude-sonnet", 3.0, 15.0),
     ("claude-haiku", 0.25, 1.25),
-    ("claude", 3.0, 15.0),              # generic claude fallback
+    ("claude", 3.0, 15.0),  # generic claude fallback
     # OpenAI
     ("gpt-4o-mini", 0.15, 0.60),
     ("gpt-4o", 2.50, 10.0),
@@ -82,7 +82,7 @@ def _cost_per_million(model: str) -> tuple[float, float]:
     for prefix, inp, out in _COST_TABLE:
         if lower.startswith(prefix.lower()):
             return inp, out
-    # Unknown model — use a conservative estimate
+    # Unknown model - use a conservative estimate
     return 1.0, 4.0
 
 
@@ -98,9 +98,7 @@ class ModelUsageSummary(BaseModel):
     calls: int = Field(default=0, description="Number of API calls recorded")
     input_tokens: int = Field(default=0, description="Total prompt/input tokens")
     output_tokens: int = Field(default=0, description="Total completion/output tokens")
-    estimated_cost_usd: float = Field(
-        default=0.0, description="Estimated cost in USD"
-    )
+    estimated_cost_usd: float = Field(default=0.0, description="Estimated cost in USD")
 
     @property
     def total_tokens(self) -> int:
@@ -260,9 +258,7 @@ class UsageTracker:
                 m.calls += summary.calls
                 m.input_tokens += summary.input_tokens
                 m.output_tokens += summary.output_tokens
-                m.estimated_cost_usd = round(
-                    m.estimated_cost_usd + summary.estimated_cost_usd, 8
-                )
+                m.estimated_cost_usd = round(m.estimated_cost_usd + summary.estimated_cost_usd, 8)
         date_label = f"{reports[0].date}..{reports[-1].date}"
         return DailyUsageReport(date=date_label, models=merged)
 
@@ -270,9 +266,7 @@ class UsageTracker:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _range_reports(
-        self, days: int, anchor: Optional[str]
-    ) -> list[DailyUsageReport]:
+    def _range_reports(self, days: int, anchor: Optional[str]) -> list[DailyUsageReport]:
         """Return reports for the last *days* calendar days up to anchor."""
         end = _parse_date(anchor) if anchor else date.today()
         reports = []
@@ -282,7 +276,7 @@ class UsageTracker:
         return reports
 
     def _load_raw(self, date_str: str) -> dict:
-        """Load raw usage dict from disk (no lock — caller must hold lock)."""
+        """Load raw usage dict from disk (no lock - caller must hold lock)."""
         path = self._usage_dir / f"tokens-{date_str}.json"
         if not path.exists():
             return {"date": date_str, "models": {}}
@@ -293,7 +287,7 @@ class UsageTracker:
             return {"date": date_str, "models": {}}
 
     def _save_raw(self, date_str: str, data: dict) -> None:
-        """Persist raw usage dict to disk (no lock — caller must hold lock)."""
+        """Persist raw usage dict to disk (no lock - caller must hold lock)."""
         self._usage_dir.mkdir(parents=True, exist_ok=True)
         path = self._usage_dir / f"tokens-{date_str}.json"
         try:

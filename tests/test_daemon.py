@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 import urllib.request
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Import dreaming_job at module load so it is resident in sys.modules before any
+# test enters a ``patch.dict(sys.modules, ...)`` block. Otherwise the first test
+# that triggers ``_load_components`` (which lazily imports skcapstone.dreaming_job)
+# does so *inside* a patch.dict context; on exit patch.dict wipes the newly-added
+# key, and later tests re-import a fresh module whose ``_consciousness_loop``
+# global is a different object than the one _load_components writes to - making
+# TestHeartbeatBeaconWiring order-dependent.
+import skcapstone.dreaming_job  # noqa: F401
 from skcapstone.daemon import (
     DaemonConfig,
     DaemonService,
@@ -19,6 +25,22 @@ from skcapstone.daemon import (
     is_running,
     read_pid,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_daemon_shared_root(monkeypatch, tmp_path):
+    """Keep read_pid/is_running from falling back to the live ~/.skcapstone.
+
+    read_pid checks the passed home first, then falls back to the module-level
+    AGENT_HOME (real ~/.skcapstone) where a running daemon's PID file may live.
+    Point that fallback at an isolated empty tmp dir so PID assertions depend
+    only on the per-test home, not on whether a real daemon is running.
+    """
+    import skcapstone.daemon as daemon_mod
+
+    isolated_root = tmp_path / "isolated-shared-root"
+    isolated_root.mkdir()
+    monkeypatch.setattr(daemon_mod, "AGENT_HOME", str(isolated_root))
 
 
 @pytest.fixture
@@ -264,7 +286,7 @@ class TestHeartbeatBeaconWiring:
         assert kwargs["consciousness_active"] is True
 
     def test_health_loop_pulses_beacon_consciousness_inactive(self, daemon_home):
-        """_health_loop calls beacon.pulse(consciousness_active=False) when consciousness is None."""
+        """_health_loop calls beacon.pulse(consciousness_active=False) when consciousness is None."""  # noqa: E501
         config = DaemonConfig(home=daemon_home, port=0, health_interval=60)
         svc = DaemonService(config)
 
@@ -328,9 +350,130 @@ class TestHeartbeatBeaconWiring:
             svc._load_components()
 
         assert svc._beacon is mock_beacon_instance
-        mock_heartbeat_mod.HeartbeatBeacon.assert_called_once_with(
-            config.home, "test-agent"
+        mock_heartbeat_mod.HeartbeatBeacon.assert_called_once_with(config.home, "test-agent")
+
+    def test_load_components_wires_none_consciousness_loop_when_disabled(self, daemon_home):
+        """Critical constraint: --no-consciousness must still register (a None) loop ref."""
+        import sys
+
+        from skcapstone import dreaming_job
+
+        config = DaemonConfig(home=daemon_home, port=0, consciousness_enabled=False)
+        svc = DaemonService(config)
+
+        mock_runtime = MagicMock()
+        mock_runtime.manifest.name = "test-agent"
+        mock_runtime.is_initialized = True
+        mock_runtime_mod = MagicMock()
+        mock_runtime_mod.get_runtime.return_value = mock_runtime
+
+        patched = {
+            "skcomms": MagicMock(),
+            "skcomms.core": MagicMock(),
+            "skcapstone.runtime": mock_runtime_mod,
+            "skcapstone.heartbeat": MagicMock(),
+            "skcapstone.consciousness_config": MagicMock(),
+            "skcapstone.consciousness_loop": MagicMock(),
+            "skcapstone.self_healing": MagicMock(),
+        }
+        dreaming_job.set_consciousness_loop("stale-from-a-previous-agent")
+        try:
+            with patch.dict(sys.modules, patched):
+                svc._load_components()
+            assert svc._consciousness is None
+            assert dreaming_job.get_consciousness_loop() is None
+        finally:
+            dreaming_job.set_consciousness_loop(None)
+
+    def test_load_components_wires_active_consciousness_loop_when_enabled(self, daemon_home):
+        import sys
+
+        from skcapstone import dreaming_job
+
+        config = DaemonConfig(home=daemon_home, port=0, consciousness_enabled=True)
+        svc = DaemonService(config)
+
+        mock_runtime = MagicMock()
+        mock_runtime.manifest.name = "test-agent"
+        mock_runtime.is_initialized = True
+        mock_runtime_mod = MagicMock()
+        mock_runtime_mod.get_runtime.return_value = mock_runtime
+
+        mock_loop_instance = MagicMock()
+        mock_loop_cls = MagicMock(return_value=mock_loop_instance)
+        mock_loop_instance._config.enabled = True
+
+        mock_cfg_mod = MagicMock()
+        mock_cfg_mod.load_consciousness_config.return_value = MagicMock(enabled=True)
+        mock_loop_mod = MagicMock()
+        mock_loop_mod.ConsciousnessLoop = mock_loop_cls
+
+        patched = {
+            "skcomms": MagicMock(),
+            "skcomms.core": MagicMock(),
+            "skcapstone.runtime": mock_runtime_mod,
+            "skcapstone.heartbeat": MagicMock(),
+            "skcapstone.consciousness_config": mock_cfg_mod,
+            "skcapstone.consciousness_loop": mock_loop_mod,
+            "skcapstone.self_healing": MagicMock(),
+        }
+        try:
+            with patch.dict(sys.modules, patched):
+                svc._load_components()
+            assert svc._consciousness is mock_loop_instance
+            assert dreaming_job.get_consciousness_loop() is mock_loop_instance
+        finally:
+            dreaming_job.set_consciousness_loop(None)
+
+    def test_load_components_warms_configured_ollama_model(self, daemon_home):
+        """Warmup uses the validated consciousness config, not a hard-coded model."""
+        import sys
+
+        config = DaemonConfig(home=daemon_home, port=0, consciousness_enabled=True)
+        svc = DaemonService(config)
+
+        mock_runtime = MagicMock()
+        mock_runtime.manifest.name = "test-agent"
+        mock_runtime_mod = MagicMock()
+        mock_runtime_mod.get_runtime.return_value = mock_runtime
+
+        consciousness_config = MagicMock(enabled=True, ollama_model="qwen3.5:9b")
+        mock_cfg_mod = MagicMock()
+        mock_cfg_mod.load_consciousness_config.return_value = consciousness_config
+        mock_loop_mod = MagicMock()
+        mock_loop_mod.ConsciousnessLoop.return_value = MagicMock()
+
+        callback = MagicMock()
+        mock_llm_mod = MagicMock()
+        mock_llm_mod.ollama_callback.return_value = callback
+        mock_thread = MagicMock()
+
+        patched = {
+            "skcomms": MagicMock(),
+            "skcomms.core": MagicMock(),
+            "skcapstone.runtime": mock_runtime_mod,
+            "skcapstone.heartbeat": MagicMock(),
+            "skcapstone.consciousness_config": mock_cfg_mod,
+            "skcapstone.consciousness_loop": mock_loop_mod,
+            "skcapstone.self_healing": MagicMock(),
+            "skseed": MagicMock(),
+            "skseed.llm": mock_llm_mod,
+        }
+        with (
+            patch.dict(sys.modules, patched),
+            patch("skcapstone.daemon.threading.Thread", return_value=mock_thread) as thread_cls,
+        ):
+            svc._load_components()
+            thread_cls.call_args.kwargs["target"]()
+
+        thread_cls.assert_called_once_with(
+            target=thread_cls.call_args.kwargs["target"],
+            name="daemon-ollama-warmup",
+            daemon=True,
         )
+        mock_thread.start.assert_called_once_with()
+        mock_llm_mod.ollama_callback.assert_called_once_with(model="qwen3.5:9b")
+        callback.assert_called_once_with("warmup")
 
 
 class TestHouseholdAPI:
@@ -355,6 +498,7 @@ class TestHouseholdAPI:
 
     def _get_404(self, port, path):
         import urllib.error
+
         url = f"http://127.0.0.1:{port}{path}"
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
@@ -392,19 +536,22 @@ class TestHouseholdAPI:
 
     def test_household_agents_with_fresh_heartbeat(self, daemon_home):
         from datetime import datetime, timezone
+
         agent_dir = daemon_home / "agents" / "alivebot"
         (agent_dir / "identity").mkdir(parents=True)
-        (agent_dir / "identity" / "identity.json").write_text(
-            json.dumps({"name": "Alivebot"})
-        )
+        (agent_dir / "identity" / "identity.json").write_text(json.dumps({"name": "Alivebot"}))
         hb_dir = daemon_home / "heartbeats"
         hb_dir.mkdir(parents=True, exist_ok=True)
-        (hb_dir / "alivebot.json").write_text(json.dumps({
-            "agent_name": "Alivebot",
-            "status": "alive",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "ttl_seconds": 300,
-        }))
+        (hb_dir / "alivebot.json").write_text(
+            json.dumps(
+                {
+                    "agent_name": "Alivebot",
+                    "status": "alive",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "ttl_seconds": 300,
+                }
+            )
+        )
         svc = self._start_server(daemon_home)
         try:
             _, data = self._get(svc.config.port, "/api/v1/household/agents")
@@ -420,12 +567,16 @@ class TestHouseholdAPI:
         (agent_dir / "identity" / "identity.json").write_text(json.dumps({"name": "Stalebot"}))
         hb_dir = daemon_home / "heartbeats"
         hb_dir.mkdir(parents=True, exist_ok=True)
-        (hb_dir / "stalebot.json").write_text(json.dumps({
-            "agent_name": "Stalebot",
-            "status": "alive",
-            "timestamp": "2020-01-01T00:00:00+00:00",
-            "ttl_seconds": 300,
-        }))
+        (hb_dir / "stalebot.json").write_text(
+            json.dumps(
+                {
+                    "agent_name": "Stalebot",
+                    "status": "alive",
+                    "timestamp": "2020-01-01T00:00:00+00:00",
+                    "ttl_seconds": 300,
+                }
+            )
+        )
         svc = self._start_server(daemon_home)
         try:
             _, data = self._get(svc.config.port, "/api/v1/household/agents")
@@ -534,9 +685,7 @@ class TestDashboardAPI:
 
     def _start_server(self, daemon_home, shared_root=None):
         root = shared_root or daemon_home
-        config = DaemonConfig(
-            home=daemon_home, shared_root=root, port=0, poll_interval=60
-        )
+        config = DaemonConfig(home=daemon_home, shared_root=root, port=0, poll_interval=60)
         svc = DaemonService(config)
         svc.state.running = True
         with patch.object(svc, "_load_components"):
@@ -599,7 +748,13 @@ class TestDashboardAPI:
         conv_dir = daemon_home / "conversations"
         conv_dir.mkdir(parents=True)
         for i in range(7):
-            msgs = [{"role": "user", "content": f"msg{i}", "timestamp": f"2026-03-0{i % 9 + 1}T10:00:00+00:00"}]
+            msgs = [
+                {
+                    "role": "user",
+                    "content": f"msg{i}",
+                    "timestamp": f"2026-03-0{i % 9 + 1}T10:00:00+00:00",
+                }
+            ]
             (conv_dir / f"peer{i}.json").write_text(json.dumps(msgs))
 
         svc = self._start_server(daemon_home, shared_root=daemon_home)
@@ -652,7 +807,7 @@ class TestDashboardAPI:
             _, body, _ = self._get(svc.config.port, "/")
             html = body.decode("utf-8")
             assert 'http-equiv="refresh"' in html
-            assert "content=\"30\"" in html
+            assert 'content="30"' in html
         finally:
             svc.stop()
 
@@ -715,6 +870,7 @@ class TestCORSHeaders:
 
     def _request(self, port, path, method="GET"):
         import urllib.error
+
         url = f"http://127.0.0.1:{port}{path}"
         req = urllib.request.Request(url, method=method)
         try:
@@ -776,6 +932,7 @@ class TestCORSHeaders:
 def _find_free_port() -> int:
     """Find an available port for testing."""
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]

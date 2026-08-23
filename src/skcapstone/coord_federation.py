@@ -1,5 +1,5 @@
 """
-SKCapstone Coordination Federation — Syncthing-based multi-instance task sync.
+SKCapstone Coordination Federation - Syncthing-based multi-instance task sync.
 
 Watches ~/.skcapstone/coordination/ for incoming task and agent files from
 peer instances. Handles last-writer-wins conflict resolution by mtime and
@@ -142,7 +142,7 @@ class CoordFederationWatcher:
             from watchdog.observers import Observer
         except ImportError:
             logger.warning(
-                "watchdog not installed — coord federation disabled. "
+                "watchdog not installed - coord federation disabled. "
                 "Install with: pip install watchdog"
             )
             return
@@ -209,7 +209,7 @@ class CoordFederationWatcher:
         canonical_path = conflict_path.parent / f"{canonical_stem}.json"
 
         if not canonical_path.exists():
-            # No canonical version — promote conflict to canonical
+            # No canonical version - promote conflict to canonical
             try:
                 conflict_path.rename(canonical_path)
                 logger.info("Promoted conflict to canonical: %s", canonical_path.name)
@@ -226,17 +226,15 @@ class CoordFederationWatcher:
             return
 
         if conflict_mtime > canonical_mtime:
-            # Conflict is newer — replace canonical
+            # Conflict is newer - replace canonical
             try:
                 conflict_path.replace(canonical_path)
-                logger.info(
-                    "Conflict newer — replaced canonical: %s", canonical_path.name
-                )
+                logger.info("Conflict newer - replaced canonical: %s", canonical_path.name)
                 await self._announce(canonical_path, event="conflict_resolved")
             except OSError as exc:
                 logger.warning("Could not replace canonical with conflict: %s", exc)
         else:
-            # Canonical is newer (or same age) — drop conflict
+            # Canonical is newer (or same age) - drop conflict
             try:
                 conflict_path.unlink(missing_ok=True)
                 logger.debug("Dropped older conflict: %s", conflict_path.name)
@@ -247,13 +245,13 @@ class CoordFederationWatcher:
         """Publish a coord.sync message for a changed coordination file.
 
         Payload schema:
-            event       — "synced" | "conflict_resolved"
-            kind        — "tasks" | "agents" | "other"
-            file        — filename (not full path)
-            task_id     — (tasks only) task id from JSON
-            title       — (tasks only) task title
-            agent       — (agents only) agent name from JSON
-            source      — announcing agent name
+            event       - "synced" | "conflict_resolved"
+            kind        - "tasks" | "agents" | "other"
+            file        - filename (not full path)
+            task_id     - (tasks only) task id from JSON
+            title       - (tasks only) task title
+            agent       - (agents only) agent name from JSON
+            source      - announcing agent name
 
         Args:
             path: The canonical file that changed.

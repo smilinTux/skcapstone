@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 import yaml
 
 from skcapstone.coordination import Board, Task
@@ -17,7 +16,6 @@ from skcapstone.pillars.sync import initialize_sync
 from skcapstone.pillars.trust import initialize_trust, record_trust_state
 from skcapstone.state_diff import (
     FORMATTERS,
-    StateDiff,
     compute_diff,
     format_json,
     format_text,
@@ -34,7 +32,12 @@ def _init_agent(home: Path, name: str = "diff-test") -> None:
     initialize_trust(home)
     initialize_security(home)
     initialize_sync(home)
-    manifest = {"name": name, "version": "0.1.0", "created_at": "2026-01-01T00:00:00Z", "connectors": []}
+    manifest = {
+        "name": name,
+        "version": "0.1.0",
+        "created_at": "2026-01-01T00:00:00Z",
+        "connectors": [],
+    }
     (home / "manifest.json").write_text(json.dumps(manifest))
     (home / "config").mkdir(exist_ok=True)
     (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": name}))
@@ -125,7 +128,9 @@ class TestComputeDiff:
         _init_agent(tmp_agent_home)
         record_trust_state(tmp_agent_home, depth=5.0, trust_level=0.5, love_intensity=0.5)
         save_snapshot(tmp_agent_home)
-        record_trust_state(tmp_agent_home, depth=9.0, trust_level=0.95, love_intensity=0.9, entangled=True)
+        record_trust_state(
+            tmp_agent_home, depth=9.0, trust_level=0.95, love_intensity=0.9, entangled=True
+        )
         diff = compute_diff(tmp_agent_home)
         assert diff.has_changes
         assert "depth" in diff.trust_changes or "trust_level" in diff.trust_changes

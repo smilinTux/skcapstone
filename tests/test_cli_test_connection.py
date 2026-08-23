@@ -11,8 +11,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,7 +23,6 @@ from skcapstone.cli.test_connection import (
     _make_pong_payload,
     ping_peer,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,14 +41,10 @@ def agent_home(tmp_path):
         "capauth_managed": False,
     }
     (home / "identity" / "identity.json").write_text(json.dumps(identity))
-    (home / "manifest.json").write_text(
-        json.dumps({"name": "TestAgent", "version": "0.1.0"})
-    )
+    (home / "manifest.json").write_text(json.dumps({"name": "TestAgent", "version": "0.1.0"}))
     import yaml
 
-    (home / "config" / "config.yaml").write_text(
-        yaml.dump({"agent_name": "TestAgent"})
-    )
+    (home / "config" / "config.yaml").write_text(yaml.dump({"agent_name": "TestAgent"}))
     return home
 
 
@@ -77,9 +70,7 @@ def _make_mock_chat(delivered: bool, pong_nonce: str | None = None, peer: str = 
 
     if pong_nonce is not None:
         pong_payload = _make_pong_payload(pong_nonce, peer)
-        mock_chat.receive.return_value = [
-            {"sender": peer, "content": pong_payload}
-        ]
+        mock_chat.receive.return_value = [{"sender": peer, "content": pong_payload}]
     else:
         mock_chat.receive.return_value = []
 
@@ -87,7 +78,7 @@ def _make_mock_chat(delivered: bool, pong_nonce: str | None = None, peer: str = 
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — payload helpers
+# Unit tests - payload helpers
 # ---------------------------------------------------------------------------
 
 
@@ -137,7 +128,7 @@ class TestPayloadHelpers:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — ping_peer()
+# Unit tests - ping_peer()
 # ---------------------------------------------------------------------------
 
 
@@ -168,9 +159,7 @@ class TestPingPeer:
         mock_chat.send.side_effect = fake_send
         mock_chat.receive.side_effect = fake_receive
 
-        with patch(
-            "skcapstone.cli.test_connection.AgentChat", return_value=mock_chat
-        ):
+        with patch("skcapstone.cli.test_connection.AgentChat", return_value=mock_chat):
             result = ping_peer("lumina", agent_home, "TestAgent", timeout=2.0)
 
         assert result["reachable"] is True
@@ -181,9 +170,7 @@ class TestPingPeer:
         """ping_peer returns reachable=False when pong never arrives."""
         mock_chat = _make_mock_chat(delivered=True, pong_nonce=None)
 
-        with patch(
-            "skcapstone.cli.test_connection.AgentChat", return_value=mock_chat
-        ):
+        with patch("skcapstone.cli.test_connection.AgentChat", return_value=mock_chat):
             # Use a very short timeout so the test runs quickly
             result = ping_peer("lumina", agent_home, "TestAgent", timeout=0.3)
 
@@ -201,9 +188,7 @@ class TestPingPeer:
             "error": None,
         }
 
-        with patch(
-            "skcapstone.cli.test_connection.AgentChat", return_value=mock_chat
-        ):
+        with patch("skcapstone.cli.test_connection.AgentChat", return_value=mock_chat):
             result = ping_peer("lumina", agent_home, "TestAgent", timeout=2.0)
 
         assert result["reachable"] is False
@@ -219,9 +204,7 @@ class TestPingPeer:
             "error": "connection refused",
         }
 
-        with patch(
-            "skcapstone.cli.test_connection.AgentChat", return_value=mock_chat
-        ):
+        with patch("skcapstone.cli.test_connection.AgentChat", return_value=mock_chat):
             result = ping_peer("lumina", agent_home, "TestAgent", timeout=2.0)
 
         assert result["reachable"] is False
@@ -229,7 +212,7 @@ class TestPingPeer:
 
 
 # ---------------------------------------------------------------------------
-# CLI integration tests — skcapstone test-connection
+# CLI integration tests - skcapstone test-connection
 # ---------------------------------------------------------------------------
 
 
@@ -274,9 +257,7 @@ class TestTestConnectionCLI:
         mock_chat.receive.side_effect = fake_receive
 
         with patch("skcapstone.cli.test_connection.AgentChat", return_value=mock_chat):
-            result = self._run(
-                ["test-connection", "lumina", "--home", str(agent_home)]
-            )
+            result = self._run(["test-connection", "lumina", "--home", str(agent_home)])
 
         assert result.exit_code == 0, result.output
         assert "REACHABLE" in result.output
@@ -289,9 +270,12 @@ class TestTestConnectionCLI:
             # Very short timeout so the test completes fast
             result = self._run(
                 [
-                    "test-connection", "lumina",
-                    "--home", str(agent_home),
-                    "--timeout", "0.3",
+                    "test-connection",
+                    "lumina",
+                    "--home",
+                    str(agent_home),
+                    "--timeout",
+                    "0.3",
                 ]
             )
 
@@ -309,9 +293,7 @@ class TestTestConnectionCLI:
         }
 
         with patch("skcapstone.cli.test_connection.AgentChat", return_value=mock_chat):
-            result = self._run(
-                ["test-connection", "lumina", "--home", str(agent_home)]
-            )
+            result = self._run(["test-connection", "lumina", "--home", str(agent_home)])
 
         assert result.exit_code == 1, result.output
         assert "UNREACHABLE" in result.output
@@ -351,9 +333,12 @@ class TestTestConnectionCLI:
         with patch("skcapstone.cli.test_connection.AgentChat", return_value=mock_chat):
             result = self._run(
                 [
-                    "test-connection", "lumina",
-                    "--home", str(agent_home),
-                    "--count", "3",
+                    "test-connection",
+                    "lumina",
+                    "--home",
+                    str(agent_home),
+                    "--count",
+                    "3",
                 ]
             )
 

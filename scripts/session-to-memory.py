@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-session-to-memory.py — Extract an OpenClaw session jsonl and save a digest to skmemory.
+session-to-memory.py - Extract an OpenClaw session jsonl and save a digest to skmemory.
 
 Usage:
   python3 session-to-memory.py <session.jsonl> [--agent lumina] [--dry-run]
@@ -26,7 +26,7 @@ SKIP_PREFIXES = (
     "--- SKWHISPER",
 )
 
-MAX_CONTENT_CHARS = 12000  # ~3k tokens — enough for a solid digest without blowing budget
+MAX_CONTENT_CHARS = 12000  # ~3k tokens - enough for a solid digest without blowing budget
 CLAUDE_MODEL = "claude-haiku-4-5"  # fast + cheap for digest work
 
 
@@ -165,13 +165,13 @@ def process_session(path: Path, agent: str = "lumina", dry_run: bool = False) ->
 
     turns = extract_turns(path)
     if not turns:
-        print(f"  No usable turns in {path.name} — skipping.")
+        print(f"  No usable turns in {path.name} - skipping.")
         return False
 
     print(f"  {len(turns)} turns extracted from {path.name}")
 
     date_str = session_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    title = f"Session Digest — {date_str} ({session_id})"
+    title = f"Session Digest - {date_str} ({session_id})"
 
     if dry_run:
         conv = turns_to_prompt(turns)

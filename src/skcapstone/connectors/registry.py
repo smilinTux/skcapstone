@@ -1,5 +1,5 @@
 """
-ConnectorRegistry — discover and instantiate platform connectors.
+ConnectorRegistry - discover and instantiate platform connectors.
 
 Maintains a catalogue of every known ConnectorBackend class and can
 probe each one to report which platforms are currently reachable.
@@ -107,7 +107,7 @@ class ConnectorRegistry:
         """Probe all registered connectors and return their status snapshots.
 
         Each probe instantiates the connector with default args and calls
-        health_check() — no persistent connection is established.
+        health_check() - no persistent connection is established.
 
         Returns:
             List of ConnectorInfo objects sorted by connector name.
@@ -191,7 +191,7 @@ class ConnectorRegistry:
         """Instantiate and connect every registered connector.
 
         Already-running connectors (present in the internal running table)
-        are skipped — call ``stop_all()`` first to restart them.
+        are skipped - call ``stop_all()`` first to restart them.
 
         Args:
             **kwargs: Forwarded to each connector's ``__init__`` where accepted.
@@ -205,7 +205,7 @@ class ConnectorRegistry:
         results: List[Tuple[str, bool]] = []
         for name, cls in sorted(self._registry.items()):
             if name in self._running:
-                logger.debug("start_all: %s is already running — skipping", name)
+                logger.debug("start_all: %s is already running - skipping", name)
                 results.append((name, True))
                 continue
             try:

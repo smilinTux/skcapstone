@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,7 +17,6 @@ from skcapstone._trustee_helpers import write_audit as _write_audit
 from skcapstone.blueprints.schema import ProviderType
 from skcapstone.team_engine import AgentStatus, DeployedAgent, TeamDeployment, TeamEngine
 from skcapstone.trustee_ops import TrusteeOps
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -235,17 +234,13 @@ class TestScaleAgent:
         assert result["added"] == []
         assert result["removed"] == []
 
-    def test_scale_persists_to_disk(
-        self, engine_with_deployment: tuple, tmp_home: Path
-    ) -> None:
+    def test_scale_persists_to_disk(self, engine_with_deployment: tuple, tmp_home: Path) -> None:
         """Scale operation persists new state."""
         engine, _ = engine_with_deployment
         ops = TrusteeOps(engine=engine, home=tmp_home)
         ops.scale_agent("test-team-1000", "alpha", count=2)
         reloaded = engine.get_deployment("test-team-1000")
-        alpha_instances = [
-            a for a in reloaded.agents.values() if a.agent_spec_key == "alpha"
-        ]
+        alpha_instances = [a for a in reloaded.agents.values() if a.agent_spec_key == "alpha"]
         assert len(alpha_instances) == 2
 
 

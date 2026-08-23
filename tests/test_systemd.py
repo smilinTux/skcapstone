@@ -30,6 +30,21 @@ from skcapstone.systemd import (
 )
 
 
+def _active_directives(content: str) -> set[str]:
+    """Return the set of non-comment, non-blank directive lines in a unit.
+
+    Comment lines (starting with ``#``) are skipped so that a directive name
+    mentioned inside an explanatory comment does not count as active config.
+    """
+    directives: set[str] = set()
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("["):
+            continue
+        directives.add(line)
+    return directives
+
+
 class TestGenerateUnitFile:
     """Tests for unit file generation."""
 
@@ -56,12 +71,32 @@ class TestGenerateUnitFile:
         assert "Environment=PORT=8888" in content
 
     def test_security_hardening_present(self) -> None:
-        """Security directives are in the generated unit."""
+        """Generated unit carries the relaxed hardening matching the canonical
+        top-level units. ProtectSystem=strict / ProtectHome=read-only are
+        deliberately absent: they fail-closed when a ReadWritePaths dir is
+        missing on the host, which is the known-breaking config the top-level
+        units removed."""
         content = generate_unit_file()
-        assert "ProtectSystem=strict" in content
-        assert "ProtectHome=read-only" in content
-        assert "PrivateTmp=true" in content
-        assert "ReadWritePaths=" in content
+        directives = _active_directives(content)
+        assert "NoNewPrivileges=true" in directives
+        assert "PrivateTmp=true" in directives
+        assert "ProtectSystem=strict" not in directives
+        assert "ProtectHome=read-only" not in directives
+
+    def test_resource_caps_and_restart_backoff(self) -> None:
+        """Generated unit has memory caps, restart backoff, and an alert hook."""
+        content = generate_unit_file()
+        # Memory caps encode the .41 host fix in the unit, not host state.
+        assert "MemoryMax=4G" in content
+        assert "MemoryHigh=3G" in content
+        # Exponential backoff so a hard-failing daemon does not hot-loop.
+        assert "RestartSteps=5" in content
+        assert "RestartMaxDelaySec=300" in content
+        # Crash-loop guard so a persistent failure stops within a bounded window.
+        assert "StartLimitIntervalSec=1800" in content
+        assert "StartLimitBurst=6" in content
+        # OnFailure hook so a failed daemon pages instead of failing silently.
+        assert "OnFailure=skcapstone-alert@" in content
 
 
 class TestSystemdAvailable:
@@ -91,17 +126,22 @@ class TestInstallService:
         source = tmp_path / "source"
         source.mkdir()
         (source / SERVICE_NAME).write_text("[Unit]\nDescription=Test\n")
+        # The retired socket unit must NOT be installed even if present in source.
         (source / SOCKET_NAME).write_text("[Socket]\nListenStream=127.0.0.1:7777\n")
 
         target = tmp_path / "target"
 
         result = install_service(
-            unit_dir=target, source_dir=source, enable=True, start=True,
+            unit_dir=target,
+            source_dir=source,
+            enable=True,
+            start=True,
         )
 
         assert result["installed"] is True
         assert (target / SERVICE_NAME).exists()
-        assert (target / SOCKET_NAME).exists()
+        # Retired (card 36d11ec3): the daemon binds its own per-agent API port.
+        assert not (target / SOCKET_NAME).exists()
 
     @patch("skcapstone.systemd._systemctl")
     def test_install_enables_and_starts(self, mock_ctl: MagicMock, tmp_path: Path) -> None:
@@ -113,7 +153,8 @@ class TestInstallService:
         (source / SERVICE_NAME).write_text("[Unit]\n")
 
         result = install_service(
-            unit_dir=tmp_path / "tgt", source_dir=source,
+            unit_dir=tmp_path / "tgt",
+            source_dir=source,
         )
 
         assert result["enabled"] is True
@@ -124,6 +165,24 @@ class TestInstallService:
         start_calls = [c for c in calls if "start" in c]
         assert len(enable_calls) >= 1
         assert len(start_calls) >= 1
+
+    @patch("skcapstone.systemd._systemctl")
+    def test_install_copies_alert_template(self, mock_ctl: MagicMock, tmp_path: Path) -> None:
+        """Install copies the OnFailure alert template so the hook resolves."""
+        from skcapstone.systemd import ALERT_TEMPLATE
+
+        mock_ctl.return_value = subprocess.CompletedProcess([], 0)
+
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / SERVICE_NAME).write_text("[Unit]\n")
+        (source / ALERT_TEMPLATE).write_text("[Unit]\nDescription=alert\n")
+
+        target = tmp_path / "target"
+        result = install_service(unit_dir=target, source_dir=source)
+
+        assert result["installed"] is True
+        assert (target / ALERT_TEMPLATE).exists()
 
     def test_install_missing_source_returns_false(self, tmp_path: Path) -> None:
         """Install fails gracefully when source unit doesn't exist."""
@@ -177,8 +236,9 @@ class TestServiceStatus:
                 return subprocess.CompletedProcess([], 0, stdout="active\n")
             if cmd == "show":
                 return subprocess.CompletedProcess(
-                    [], 0,
-                    stdout="MainPID=12345\nActiveEnterTimestamp=Mon 2026-02-24 05:00:00 UTC\nMemoryCurrent=52428800\nExecMainStatus=0\n",
+                    [],
+                    0,
+                    stdout="MainPID=12345\nActiveEnterTimestamp=Mon 2026-02-24 05:00:00 UTC\nMemoryCurrent=52428800\nExecMainStatus=0\n",  # noqa: E501
                 )
             return subprocess.CompletedProcess([], 0, stdout="")
 
@@ -223,33 +283,92 @@ class TestUnitConstants:
         assert QUEUE_DRAIN_TIMER in TIMER_UNITS
 
     def test_all_units_count(self) -> None:
-        """ALL_UNITS has the expected number of units."""
-        assert len(ALL_UNITS) == 6
+        """ALL_UNITS has the expected number of units (socket retired, card 36d11ec3)."""
+        assert len(ALL_UNITS) == 5
+
+    def test_retired_socket_not_installed(self) -> None:
+        """The retired skcapstone-api.socket is no longer part of ALL_UNITS."""
+        assert SOCKET_NAME not in ALL_UNITS
 
     def test_bundled_service_file_exists(self) -> None:
         """The bundled skcapstone.service file exists."""
         from skcapstone.systemd import BUNDLED_DIR
+
         assert (BUNDLED_DIR / SERVICE_NAME).exists()
 
     def test_bundled_heartbeat_timer_exists(self) -> None:
         """The bundled heartbeat timer file exists."""
         from skcapstone.systemd import BUNDLED_DIR
+
         assert (BUNDLED_DIR / HEARTBEAT_TIMER).exists()
 
     def test_bundled_queue_drain_timer_exists(self) -> None:
         """The bundled queue drain timer file exists."""
         from skcapstone.systemd import BUNDLED_DIR
+
         assert (BUNDLED_DIR / QUEUE_DRAIN_TIMER).exists()
 
     def test_bundled_heartbeat_service_exists(self) -> None:
         """The bundled heartbeat service file exists."""
         from skcapstone.systemd import BUNDLED_DIR
+
         assert (BUNDLED_DIR / HEARTBEAT_SERVICE).exists()
 
     def test_bundled_queue_drain_service_exists(self) -> None:
         """The bundled queue drain service file exists."""
         from skcapstone.systemd import BUNDLED_DIR
+
         assert (BUNDLED_DIR / QUEUE_DRAIN_SERVICE).exists()
+
+    def test_bundled_alert_template_exists(self) -> None:
+        """The bundled OnFailure alert template exists."""
+        from skcapstone.systemd import ALERT_TEMPLATE, BUNDLED_DIR
+
+        assert (BUNDLED_DIR / ALERT_TEMPLATE).exists()
+
+
+class TestUnitHardening:
+    """Tests that the bundled agent units carry the .41 outage fixes."""
+
+    def _read(self, name: str) -> str:
+        from skcapstone.systemd import BUNDLED_DIR
+
+        return (BUNDLED_DIR / name).read_text()
+
+    def test_template_unit_has_memory_caps(self) -> None:
+        """The per-agent template caps memory in the unit, not host state."""
+        content = self._read("skcapstone@.service")
+        assert "MemoryMax=4G" in content
+        assert "MemoryHigh=3G" in content
+
+    def test_template_unit_has_restart_backoff(self) -> None:
+        """The per-agent template has bounded restart backoff and a start limit."""
+        content = self._read("skcapstone@.service")
+        assert "RestartSteps=5" in content
+        assert "RestartMaxDelaySec=300" in content
+        assert "StartLimitIntervalSec=1800" in content
+        assert "StartLimitBurst=6" in content
+
+    def test_template_unit_has_onfailure_hook(self) -> None:
+        """The per-agent template pages via an OnFailure alert unit."""
+        content = self._read("skcapstone@.service")
+        assert "OnFailure=skcapstone-alert@%i.service" in content
+
+    def test_legacy_unit_has_caps_and_backoff(self) -> None:
+        """The legacy single-agent unit gets the same caps and backoff."""
+        content = self._read("skcapstone.service")
+        assert "MemoryMax=4G" in content
+        assert "MemoryHigh=3G" in content
+        assert "RestartSteps=5" in content
+        assert "StartLimitIntervalSec=1800" in content
+        assert "StartLimitBurst=6" in content
+        assert "OnFailure=skcapstone-alert@" in content
+
+    def test_alert_unit_is_oneshot_and_visible(self) -> None:
+        """The alert unit is a oneshot that emits a visible journal event."""
+        content = self._read("skcapstone-alert@.service")
+        assert "Type=oneshot" in content
+        assert "systemd-cat" in content
 
 
 class TestTimerInstall:
@@ -286,8 +405,7 @@ class TestTimerInstall:
         install_service(unit_dir=tmp_path / "tgt", source_dir=source)
 
         enable_calls = [
-            c.args[0] for c in mock_ctl.call_args_list
-            if len(c.args) > 0 and c.args[0] == "enable"
+            c.args[0] for c in mock_ctl.call_args_list if len(c.args) > 0 and c.args[0] == "enable"
         ]
         assert len(enable_calls) >= 3
 
@@ -306,7 +424,9 @@ class TestTimerInstall:
             assert not (tmp_path / name).exists(), f"{name} not removed"
 
     @patch("skcapstone.systemd._systemctl")
-    def test_uninstall_stops_timers_before_service(self, mock_ctl: MagicMock, tmp_path: Path) -> None:
+    def test_uninstall_stops_timers_before_service(
+        self, mock_ctl: MagicMock, tmp_path: Path
+    ) -> None:
         """Uninstall stops timers before stopping the main service."""
         calls: list[tuple] = []
 
@@ -321,3 +441,103 @@ class TestTimerInstall:
 
         stop_calls = [c[0] for c in calls if c[0] == "stop"]
         assert len(stop_calls) >= 3
+
+
+class TestUnitTreeSingleSourceOfTruth:
+    """Drift guard: the packaged unit tree must mirror the canonical one.
+
+    There are two on-disk unit trees that MUST stay byte-identical:
+
+      * ``systemd/`` (canonical, top-level) - deployed by scripts/install.sh
+      * ``src/skcapstone/data/systemd/`` (BUNDLED_DIR) - ships in the wheel and
+        is deployed by ``install_service`` on the PyPI / cold-machine path
+
+    If they drift, a cold machine installing from PyPI gets units with the wrong
+    ExecStart paths and/or known-breaking hardening. ``scripts/sync-systemd-units.py``
+    regenerates the packaged tree from the canonical one; these tests fail if
+    someone edits one tree without syncing the other.
+    """
+
+    _UNIT_GLOBS = ("*.service", "*.socket", "*.timer")
+
+    def _canonical_dir(self) -> Path:
+        # tests/ lives at the repo root, next to the top-level systemd/ tree.
+        return Path(__file__).resolve().parent.parent / "systemd"
+
+    def _packaged_dir(self) -> Path:
+        from skcapstone.systemd import BUNDLED_DIR
+
+        return BUNDLED_DIR
+
+    def _units(self, directory: Path) -> dict[str, Path]:
+        found: dict[str, Path] = {}
+        for pattern in self._UNIT_GLOBS:
+            for path in directory.glob(pattern):
+                found[path.name] = path
+        return found
+
+    def test_canonical_tree_present(self) -> None:
+        """The canonical top-level tree exists in a source checkout."""
+        canonical = self._canonical_dir()
+        if not canonical.is_dir():
+            pytest.skip("canonical systemd/ tree not present (installed, not a checkout)")
+        assert self._units(canonical), "canonical systemd/ tree has no unit files"
+
+    def test_packaged_tree_matches_canonical(self) -> None:
+        """Every canonical unit is present and byte-identical in the packaged tree."""
+        canonical_dir = self._canonical_dir()
+        if not canonical_dir.is_dir():
+            pytest.skip("canonical systemd/ tree not present (installed, not a checkout)")
+
+        canonical = self._units(canonical_dir)
+        packaged = self._units(self._packaged_dir())
+
+        missing = sorted(set(canonical) - set(packaged))
+        assert not missing, (
+            f"units missing from packaged tree: {missing}. "
+            f"Run: python scripts/sync-systemd-units.py"
+        )
+
+        extra = sorted(set(packaged) - set(canonical))
+        assert not extra, (
+            f"packaged tree has units not in canonical tree: {extra}. "
+            f"Run: python scripts/sync-systemd-units.py"
+        )
+
+        drifted = [
+            name
+            for name in sorted(canonical)
+            if canonical[name].read_bytes() != packaged[name].read_bytes()
+        ]
+        assert not drifted, (
+            f"packaged units drifted from canonical: {drifted}. "
+            f"Run: python scripts/sync-systemd-units.py"
+        )
+
+    def test_packaged_agent_units_use_skenv_paths(self) -> None:
+        """Packaged agent units must use %h/.skenv/bin ExecStart, not %h/.local/bin.
+
+        A .local/bin path does not exist under the .skenv install convention, so
+        a cold PyPI install would get a unit whose ExecStart binary is missing.
+        """
+        packaged = self._packaged_dir()
+        for name in ("skcapstone.service", "skcapstone@.service"):
+            content = (packaged / name).read_text()
+            assert "%h/.skenv/bin/skcapstone" in content, f"{name} lost .skenv path"
+            assert "%h/.local/bin/skcapstone" not in content, f"{name} has stale .local path"
+
+    def test_packaged_agent_units_drop_breaking_hardening(self) -> None:
+        """Packaged agent units must not carry the known-breaking strict hardening."""
+        packaged = self._packaged_dir()
+        for name in ("skcapstone.service", "skcapstone@.service"):
+            directives = _active_directives((packaged / name).read_text())
+            assert "ProtectSystem=strict" not in directives, f"{name} regained strict hardening"
+            assert "ProtectHome=read-only" not in directives, f"{name} regained read-only home"
+
+    def test_packaged_template_has_agent_env_block(self) -> None:
+        """Packaged template must set the SKAGENT/SKCAPSTONE_AGENT/SKMEMORY_AGENT/PATH env."""
+        content = (self._packaged_dir() / "skcapstone@.service").read_text()
+        assert "Environment=SKAGENT=%i" in content
+        assert "Environment=SKCAPSTONE_AGENT=%i" in content
+        assert "Environment=SKMEMORY_AGENT=%i" in content
+        assert "Environment=PATH=%h/.skenv/bin:" in content

@@ -1,10 +1,10 @@
 """
-Peer Directory — transport address map for the sovereignty mesh.
+Peer Directory - transport address map for the sovereignty mesh.
 
 Maps agent names to their SKComms transport addresses (Syncthing outbox
 paths, WebRTC fingerprints, Tailscale IPs, etc.).
 
-Separate from PeerRecord (PGP identity in peers.py) — this module owns
+Separate from PeerRecord (PGP identity in peers.py) - this module owns
 the *routing* layer, not the trust/cryptography layer.
 
 Storage: {skcapstone_home}/peers/directory.yaml
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from . import SHARED_ROOT
 
@@ -43,7 +43,7 @@ class DirectoryEntry(BaseModel):
 
     Attributes:
         name: Normalized peer name (lowercase).
-        address: Transport address — Syncthing outbox path, Tailscale IP,
+        address: Transport address - Syncthing outbox path, Tailscale IP,
             WebRTC fingerprint URI, or other transport-specific locator.
         transport: Transport type label (syncthing, webrtc, tailscale, file).
         fingerprint: Optional PGP fingerprint for cross-referencing.
@@ -87,7 +87,7 @@ class PeerDirectory:
     def load(self) -> dict[str, DirectoryEntry]:
         """Read the directory from disk.
 
-        Safe to call multiple times — idempotent re-load.
+        Safe to call multiple times - idempotent re-load.
 
         Returns:
             Dict mapping normalized name -> DirectoryEntry.
@@ -145,7 +145,7 @@ class PeerDirectory:
         Args:
             name: Peer display name (normalised to lowercase as the key).
             address: Transport address (path, IP, URI, etc.).
-            transport: Transport type — syncthing, webrtc, tailscale, file.
+            transport: Transport type - syncthing, webrtc, tailscale, file.
             fingerprint: Optional PGP fingerprint for cross-referencing.
 
         Returns:
@@ -216,9 +216,9 @@ class PeerDirectory:
         Scans two sources and adds any *new* peers (existing entries are
         never overwritten):
 
-        1. ``{home}/heartbeats/*.json`` — live heartbeat files published by
+        1. ``{home}/heartbeats/*.json`` - live heartbeat files published by
            each agent via HeartbeatBeacon.
-        2. ``{home}/sync/comms/outbox/`` — one sub-directory per peer that
+        2. ``{home}/sync/comms/outbox/`` - one sub-directory per peer that
            Syncthing keeps in sync.
 
         Syncthing outbox path is used as the default address because that
@@ -251,7 +251,9 @@ class PeerDirectory:
                         if ts:
                             self._entries[agent_name].last_seen = ts
                     except Exception as exc:
-                        logger.warning("Failed to update last_seen from heartbeat for %s: %s", agent_name, exc)
+                        logger.warning(
+                            "Failed to update last_seen from heartbeat for %s: %s", agent_name, exc
+                        )
                     continue
 
                 try:

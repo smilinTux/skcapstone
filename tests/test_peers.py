@@ -45,7 +45,7 @@ def card_file(tmp_path):
         "skcapstone_card": "1.0.0",
         "name": "Lumina",
         "fingerprint": "AABB1122CCDD3344EEFF5566",
-        "public_key": "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfakekey\n-----END PGP PUBLIC KEY BLOCK-----",
+        "public_key": "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfakekey\n-----END PGP PUBLIC KEY BLOCK-----",  # noqa: E501
         "entity_type": "ai",
         "handle": "lumina@skworld.io",
         "email": "lumina@skworld.io",
@@ -130,8 +130,10 @@ class TestAddPeerManual:
         """Manual add creates a peer record."""
         sk, sc = homes
         peer = add_peer_manual(
-            name="Opus", email="opus@smilintux.org",
-            skcapstone_home=sk, skcomms_home=sc,
+            name="Opus",
+            email="opus@smilintux.org",
+            skcapstone_home=sk,
+            skcomms_home=sc,
         )
         assert peer.name == "Opus"
         assert peer.email == "opus@smilintux.org"
@@ -141,11 +143,15 @@ class TestAddPeerManual:
         """Manual add with public key file imports the key."""
         sk, sc = homes
         key_file = tmp_path / "opus.pub.asc"
-        key_file.write_text("-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----")
+        key_file.write_text(
+            "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
+        )
 
         peer = add_peer_manual(
-            name="Opus", public_key_path=key_file,
-            skcapstone_home=sk, skcomms_home=sc,
+            name="Opus",
+            public_key_path=key_file,
+            skcapstone_home=sk,
+            skcomms_home=sc,
         )
         assert peer.public_key != ""
         assert peer.trust_level == "verified"
@@ -212,6 +218,7 @@ class TestCLI:
     def test_peer_help(self):
         """peer --help works."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["peer", "--help"])
         assert result.exit_code == 0
@@ -223,6 +230,7 @@ class TestCLI:
     def test_peer_list_empty(self, homes):
         """peer list on empty registry shows message."""
         from skcapstone.cli import main
+
         sk, _ = homes
         runner = CliRunner()
         result = runner.invoke(main, ["peer", "list", "--home", str(sk)])
@@ -232,17 +240,27 @@ class TestCLI:
     def test_peer_add_from_card_cli(self, card_file, homes):
         """peer add --card via CLI."""
         from skcapstone.cli import main
+
         sk, _ = homes
         runner = CliRunner()
-        result = runner.invoke(main, [
-            "peer", "add", "--card", str(card_file), "--home", str(sk),
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "peer",
+                "add",
+                "--card",
+                str(card_file),
+                "--home",
+                str(sk),
+            ],
+        )
         assert result.exit_code == 0
         assert "Lumina" in result.output
 
     def test_peer_add_no_args(self):
         """peer add without args shows usage hint."""
         from skcapstone.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["peer", "add"])
         assert result.exit_code == 1

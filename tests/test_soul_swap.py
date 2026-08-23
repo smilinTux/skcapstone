@@ -8,14 +8,12 @@ soul prompt injection via SystemPromptBuilder._load_soul.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from skcapstone.soul import SoulBlueprint, SoulManager, SoulState
-
+from skcapstone.soul import SoulManager, SoulState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,8 +28,7 @@ def _make_casey_base_json() -> dict:
         "category": "professional",
         "vibe": "Precision meets persuasion",
         "philosophy": (
-            "Justice is best served through meticulous preparation "
-            "and unwavering advocacy."
+            "Justice is best served through meticulous preparation " "and unwavering advocacy."
         ),
         "emoji": None,
         "core_traits": [
@@ -253,9 +250,13 @@ class TestSoulListDiscovery:
         manager = SoulManager(home=tmp_path, agent_name="test")
         _install_soul(manager, _make_casey_base_json())
 
-        # Point to a nonexistent repo path
+        # Point to a nonexistent repo path. When the local repo is absent,
+        # list_available falls back to the GitHub blueprint API; stub it to
+        # empty so the test stays offline/deterministic and only the installed
+        # soul is returned.
         fake_repo = tmp_path / "nonexistent-repo" / "blueprints"
-        available = manager.list_available(repo_path=fake_repo)
+        with patch("skcapstone.blueprint_registry._fetch_github_blueprints", return_value=[]):
+            available = manager.list_available(repo_path=fake_repo)
 
         # Should still find installed soul
         assert any(e["name"] == "casey" for e in available)
@@ -325,9 +326,7 @@ class TestConsciousnessLoopSoulPrompt:
 
         # Write active.json pointing to casey
         active_state = {"active_soul": "casey", "base_soul": "base"}
-        (soul_dir / "active.json").write_text(
-            json.dumps(active_state), encoding="utf-8"
-        )
+        (soul_dir / "active.json").write_text(json.dumps(active_state), encoding="utf-8")
 
         # Write the installed blueprint with personality structure
         # that _load_soul expects (personality.traits, personality.communication_style)
@@ -337,9 +336,7 @@ class TestConsciousnessLoopSoulPrompt:
                 "communication_style": "Clear, direct, and professional",
             }
         }
-        (installed_dir / "casey.json").write_text(
-            json.dumps(blueprint), encoding="utf-8"
-        )
+        (installed_dir / "casey.json").write_text(json.dumps(blueprint), encoding="utf-8")
 
         # Patch out soul_switch so System A path is exercised
         with patch(
@@ -355,9 +352,7 @@ class TestConsciousnessLoopSoulPrompt:
         assert "client-advocate" in result
         assert "Clear, direct, and professional" in result
 
-    def test_load_soul_returns_empty_when_no_soul_active(
-        self, tmp_path: Path
-    ) -> None:
+    def test_load_soul_returns_empty_when_no_soul_active(self, tmp_path: Path) -> None:
         """_load_soul returns empty string when no soul overlay is active."""
         from skcapstone.consciousness_loop import SystemPromptBuilder
 
@@ -367,9 +362,7 @@ class TestConsciousnessLoopSoulPrompt:
 
         # active.json with no active soul
         active_state = {"active_soul": "", "base_soul": "base"}
-        (soul_dir / "active.json").write_text(
-            json.dumps(active_state), encoding="utf-8"
-        )
+        (soul_dir / "active.json").write_text(json.dumps(active_state), encoding="utf-8")
 
         with patch(
             "skcapstone.soul_switch.get_active_switch_blueprint",
@@ -380,9 +373,7 @@ class TestConsciousnessLoopSoulPrompt:
 
         assert result == ""
 
-    def test_load_soul_uses_soul_switch_system_prompt(
-        self, tmp_path: Path
-    ) -> None:
+    def test_load_soul_uses_soul_switch_system_prompt(self, tmp_path: Path) -> None:
         """When soul_switch returns a blueprint with system_prompt, it is used directly."""
         from skcapstone.consciousness_loop import SystemPromptBuilder
         from skcapstone.soul_switch import SoulSwitchBlueprint

@@ -4,13 +4,13 @@ The ``skcapstone identity migrate`` command backfills every provisioned
 agent's ``identity/identity.json`` with the explicit sovereign-identity
 fields the unified layer expects (skcomms T2 / epic ``2b264064``):
 
-  * ``realm`` + ``operator`` — mirrored from ``cluster.json``.
-  * ``fqid`` — the three-tier ``<agent>@<operator>.<realm>`` label, sourced
+  * ``realm`` + ``operator`` - mirrored from ``cluster.json``.
+  * ``fqid`` - the three-tier ``<agent>@<operator>.<realm>`` label, sourced
     from :func:`capauth.resolve_agent_identity` (the canonical resolver).
-  * ``pgp_fingerprint`` — the agent's 40-char PGP fingerprint, also from the
+  * ``pgp_fingerprint`` - the agent's 40-char PGP fingerprint, also from the
     resolver / the agent's CapAuth profile.
 
-This command does **not** reimplement identity logic — it delegates to
+This command does **not** reimplement identity logic - it delegates to
 ``capauth.resolve_agent_identity`` for the per-agent identity and only mirrors
 ``realm``/``operator`` from cluster.json directly (those are cluster facts, not
 agent facts). It is a *walker*: it finds every provisioned agent (one with a
@@ -19,7 +19,7 @@ identity.json without clobbering unrelated keys.
 
 Safety: these are LIVE identity files, so the command defaults to a dry-run
 (it prints a plan and writes nothing). Pass ``--apply`` (alias ``--write``) to
-actually modify files. The operation is idempotent — a second run on an
+actually modify files. The operation is idempotent - a second run on an
 already-complete home reports every agent as unchanged.
 """
 
@@ -198,7 +198,7 @@ def _plan_agent(home: Path, agent: str, cluster: Optional[dict]) -> AgentPlan:
         desired["realm"] = cluster.get("realm")
         desired["operator"] = cluster.get("operator")
 
-    # fqid + pgp_fingerprint come from the canonical resolver — never
+    # fqid + pgp_fingerprint come from the canonical resolver - never
     # reimplemented here (epic 2b264064; capauth is the source of truth).
     try:
         from capauth import resolve_agent_identity
@@ -206,7 +206,7 @@ def _plan_agent(home: Path, agent: str, cluster: Optional[dict]) -> AgentPlan:
         ident = resolve_agent_identity(agent)
         desired["fqid"] = getattr(ident, "fqid", None)
         desired["pgp_fingerprint"] = getattr(ident, "fingerprint", None)
-    except Exception:  # noqa: BLE001 — resolver failure must not crash the walk
+    except Exception:  # noqa: BLE001 - resolver failure must not crash the walk
         pass
 
     for key in _MANAGED_FIELDS:
@@ -230,7 +230,7 @@ def migrate_identities(home: Path, *, apply: bool = False) -> MigrationPlan:
     Args:
         home: Shared root directory (``~/.skcapstone``).
         apply: When ``True``, write the changes to disk. When ``False`` (the
-            default — these are live files), nothing is written and the
+            default - these are live files), nothing is written and the
             returned plan is a preview only.
 
     Returns:
@@ -293,19 +293,25 @@ def register_identity_commands(main: click.Group) -> None:
 
     @main.group()
     def identity():
-        """Identity management — migrate per-agent identity.json files."""
+        """Identity management - migrate per-agent identity.json files."""
 
     @identity.command("migrate")
     @click.option(
-        "--home", default=SHARED_ROOT, type=click.Path(),
+        "--home",
+        default=SHARED_ROOT,
+        type=click.Path(),
         help="Shared root directory (~/.skcapstone).",
     )
     @click.option(
-        "--apply", "--write", "apply_", is_flag=True,
+        "--apply",
+        "--write",
+        "apply_",
+        is_flag=True,
         help="Actually write changes. Default is a dry-run (writes nothing).",
     )
     @click.option(
-        "--dry-run", is_flag=True,
+        "--dry-run",
+        is_flag=True,
         help="Explicitly preview only (the default). Overrides --apply if both given.",
     )
     @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
@@ -320,7 +326,7 @@ def register_identity_commands(main: click.Group) -> None:
 
         SAFETY: defaults to a dry-run (prints a plan, writes nothing). Pass
         ``--apply`` (or ``--write``) to actually modify the live identity
-        files. Idempotent — re-running on a complete home changes nothing.
+        files. Idempotent - re-running on a complete home changes nothing.
         """
         home_path = Path(home).expanduser()
         do_apply = apply_ and not dry_run
@@ -337,14 +343,17 @@ def register_identity_commands(main: click.Group) -> None:
 
 def _render_plan(plan: MigrationPlan) -> None:
     """Render a migration plan as human-readable Rich output."""
-    mode = "[yellow]DRY-RUN[/] (no files written — pass --apply to write)" \
-        if plan.dry_run else "[green]APPLY[/] (files written)"
+    mode = (
+        "[yellow]DRY-RUN[/] (no files written - pass --apply to write)"
+        if plan.dry_run
+        else "[green]APPLY[/] (files written)"
+    )
     console.print()
     console.print(f"  [bold]identity migrate[/]  {mode}")
     console.print(f"  [dim]{plan.home}[/]")
     if not plan.cluster_found:
         console.print(
-            "  [yellow]~ cluster.json not found — realm/operator unavailable, "
+            "  [yellow]~ cluster.json not found - realm/operator unavailable, "
             "fqid may be incomplete[/]"
         )
     console.print()

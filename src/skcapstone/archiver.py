@@ -1,4 +1,4 @@
-"""Conversation archiver — moves old peer messages to compressed archives.
+"""Conversation archiver - moves old peer messages to compressed archives.
 
 Reads active conversation files from {home}/conversations/{peer}.json,
 archives messages older than ``age_days`` days (default 30) that are
@@ -14,7 +14,7 @@ import gzip
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -285,14 +285,20 @@ class ConversationArchiver:
 
         archives = []
         for gz_file in sorted(self._archive_dir.glob("*.json.gz")):
-            peer = gz_file.stem.removesuffix(".json") if gz_file.stem.endswith(".json") else gz_file.stem
+            peer = (
+                gz_file.stem.removesuffix(".json")
+                if gz_file.stem.endswith(".json")
+                else gz_file.stem
+            )
             messages = _load_archive(gz_file)
-            archives.append({
-                "peer": peer,
-                "path": gz_file,
-                "size_bytes": gz_file.stat().st_size,
-                "message_count": len(messages),
-            })
+            archives.append(
+                {
+                    "peer": peer,
+                    "path": gz_file,
+                    "size_bytes": gz_file.stat().st_size,
+                    "message_count": len(messages),
+                }
+            )
         return archives
 
     # ------------------------------------------------------------------
@@ -332,7 +338,7 @@ class ConversationArchiver:
                 continue
             ts = _parse_ts(msg.get("timestamp"))
             if ts is None or ts >= cutoff:
-                # Can't determine age, or not old enough — keep it
+                # Can't determine age, or not old enough - keep it
                 retain.append(msg)
             else:
                 to_archive.append(msg)

@@ -1,5 +1,5 @@
 """
-Self-Healing Doctor — auto-diagnosing, auto-remediating agent health.
+Self-Healing Doctor - auto-diagnosing, auto-remediating agent health.
 
 Extends the existing doctor.py diagnostics with auto-fix capabilities.
 Follows the TrusteeMonitor escalation pattern:
@@ -22,7 +22,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("skcapstone.self_healing")
 
@@ -86,11 +86,13 @@ class SelfHealingDoctor:
             except Exception as exc:
                 checks_run += 1
                 still_broken += 1
-                details.append({
-                    "name": check_fn.__name__,
-                    "status": "error",
-                    "error": str(exc),
-                })
+                details.append(
+                    {
+                        "name": check_fn.__name__,
+                        "status": "error",
+                        "error": str(exc),
+                    }
+                )
 
         report = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -115,14 +117,20 @@ class SelfHealingDoctor:
         return self._last_report
 
     # -------------------------------------------------------------------
-    # Check methods — each returns {"name", "status", "message"}
+    # Check methods - each returns {"name", "status", "message"}
     # -------------------------------------------------------------------
 
     def _check_home_dirs(self) -> dict[str, Any]:
         """Ensure all required home subdirectories exist."""
         required = [
-            "identity", "memory", "trust", "security", "sync", "config",
-            "soul", "logs",
+            "identity",
+            "memory",
+            "trust",
+            "security",
+            "sync",
+            "config",
+            "soul",
+            "logs",
         ]
         missing = []
         for subdir in required:
@@ -168,18 +176,18 @@ class SelfHealingDoctor:
                 for f in layer_path.glob("*.json"):
                     try:
                         entry = json.loads(f.read_text(encoding="utf-8"))
-                        entries.append({
-                            "memory_id": entry.get("memory_id", f.stem),
-                            "layer": layer_dir,
-                            "tags": entry.get("tags", []),
-                        })
+                        entries.append(
+                            {
+                                "memory_id": entry.get("memory_id", f.stem),
+                                "layer": layer_dir,
+                                "tags": entry.get("tags", []),
+                            }
+                        )
                     except Exception as exc:
                         logger.debug("Skipping malformed memory file %s: %s", f, exc)
                         continue
 
-        index_path.write_text(
-            json.dumps(entries, indent=2), encoding="utf-8"
-        )
+        index_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
         logger.info("Rebuilt memory index with %d entries", len(entries))
 
         return {
@@ -207,9 +215,7 @@ class SelfHealingDoctor:
             "auto_pull": True,
         }
         sync_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(
-            json.dumps(default_manifest, indent=2), encoding="utf-8"
-        )
+        manifest_path.write_text(json.dumps(default_manifest, indent=2), encoding="utf-8")
         logger.info("Wrote default sync-manifest.json")
 
         return {
@@ -236,8 +242,10 @@ class SelfHealingDoctor:
             self._consciousness._bridge._probe_available_backends()
             backends = self._consciousness._bridge.available_backends
             if any(backends.values()):
-                logger.info("Re-probed backends — found available: %s",
-                            [k for k, v in backends.items() if v])
+                logger.info(
+                    "Re-probed backends - found available: %s",
+                    [k for k, v in backends.items() if v],
+                )
             else:
                 issues.append("No LLM backends reachable")
 
@@ -250,7 +258,7 @@ class SelfHealingDoctor:
                 logger.info("Restarted inotify observer")
             except Exception as exc:
                 logger.debug("Inotify restart failed: %s", exc)
-                issues.append("Inotify thread dead — restart failed")
+                issues.append("Inotify thread dead - restart failed")
 
         if issues:
             return {
@@ -269,6 +277,7 @@ class SelfHealingDoctor:
         """Flag model profiles older than 90 days as needing review."""
         try:
             from skcapstone.prompt_adapter import PromptAdapter
+
             adapter = PromptAdapter()
             stale: list[str] = []
             now = datetime.now(timezone.utc)
@@ -323,6 +332,7 @@ class SelfHealingDoctor:
         """
         try:
             from skcapstone.mcp_tools._helpers import _get_agent_name
+
             agent_name = _get_agent_name(self._home)
             message = (
                 f"Self-healing alert from {agent_name}: "
@@ -333,6 +343,7 @@ class SelfHealingDoctor:
             # Try to send via SKChat if available
             try:
                 from skchat.messenger import AgentMessenger
+
                 messenger = AgentMessenger.from_config()
                 messenger.send("chef", message)
             except Exception as exc:

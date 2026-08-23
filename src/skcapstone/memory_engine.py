@@ -1,5 +1,5 @@
 """
-Memory Engine — the sovereign agent's persistent mind.
+Memory Engine - the sovereign agent's persistent mind.
 
 Store, search, recall, and manage memories across sessions and platforms.
 Every memory is a JSON file in ~/.skcapstone/memory/<layer>/. Memories
@@ -8,9 +8,9 @@ patterns and importance scores.
 
 Architecture:
     memory/
-    ├── short-term/   # Ephemeral — auto-expire after 72h if unused
-    ├── mid-term/     # Promoted — accessed 3+ times or importance >= 0.7
-    ├── long-term/    # Permanent — accessed 10+ times or importance >= 0.9
+    ├── short-term/   # Ephemeral - auto-expire after 72h if unused
+    ├── mid-term/     # Promoted - accessed 3+ times or importance >= 0.7
+    ├── long-term/    # Permanent - accessed 10+ times or importance >= 0.9
     └── index.json    # Full-text search index
 """
 
@@ -31,6 +31,12 @@ from .models import MemoryEntry, MemoryLayer, MemoryState, PillarStatus
 logger = logging.getLogger("skcapstone.memory")
 
 SHORT_TERM_TTL_HOURS = 72
+
+# Sidecar JSON files that live inside a memory tier dir but are NOT MemoryEntry
+# objects (e.g. the render-rating rollup written by skchat.rating). They share
+# the tier directory for sync convenience but must be skipped by the loader so
+# they don't spam "Failed to load memory" warnings every cycle.
+_NON_MEMORY_SIDECARS = frozenset({"render_scores.json"})
 
 
 def _get_unified():
@@ -64,9 +70,17 @@ def _memory_dir(home: Path) -> Path:
     return mem
 
 
+def _require_memory_id(value: object) -> str:
+    """Return a normalized memory ID or fail before a filesystem mutation."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("memory_id must be a non-empty string")
+    return value.strip()
+
+
 def _entry_path(home: Path, entry: MemoryEntry) -> Path:
     """File path for a memory entry."""
-    return _memory_dir(home) / entry.layer.value / f"{entry.memory_id}.json"
+    memory_id = _require_memory_id(entry.memory_id)
+    return _memory_dir(home) / entry.layer.value / f"{memory_id}.json"
 
 
 def _load_entry(path: Path) -> Optional[MemoryEntry]:
@@ -78,9 +92,32 @@ def _load_entry(path: Path) -> Optional[MemoryEntry]:
     Returns:
         MemoryEntry or None if the file is invalid.
     """
+    # Known non-memory sidecars (e.g. render_scores.json) live in the tier dir
+    # but aren't MemoryEntry objects - skip them silently.
+    if path.name in _NON_MEMORY_SIDECARS:
+        return None
+    # Empty/truncated files (0 bytes) carry no recoverable memory - skip quietly
+    # at debug level rather than warning on every load cycle.
+    try:
+        if path.stat().st_size == 0:
+            logger.debug("Skipping empty memory file %s", path)
+            return None
+    except OSError:
+        pass
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return MemoryEntry(**data)
+        # The active tiers are shared with the unified SKMemory backend. Its
+        # canonical schema uses ``id`` rather than the legacy engine's
+        # ``memory_id``. Treat those records as owned by SKMemory instead of
+        # constructing a legacy entry with the old model's blank default; the
+        # latter used to feed thousands of valid unified records into the
+        # legacy promoter as the unsafe ``.json`` candidate.
+        if isinstance(data, dict) and "id" in data and "memory_id" not in data:
+            logger.debug("Skipping unified SKMemory record in legacy loader: %s", path)
+            return None
+        entry = MemoryEntry(**data)
+        _require_memory_id(entry.memory_id)
+        return entry
     except (json.JSONDecodeError, Exception) as exc:
         logger.warning("Failed to load memory %s: %s", path, exc)
         return None
@@ -164,9 +201,14 @@ def store(
         soul_context=soul_context,
     )
 
-    # Reason: high-importance memories skip straight to mid-term
+    # Reason: high-importance memories skip straight to mid-term, but only
+    # after clearing the truth-check gate (fail-open when unavailable). A
+    # blocked candidate stays in short-term (tagged conflicting by the gate).
     if entry.importance >= 0.7 and entry.layer == MemoryLayer.SHORT_TERM:
-        entry.layer = MemoryLayer.MID_TERM
+        from .memory_verifier import verify_before_promotion
+
+        if verify_before_promotion(home, entry).should_promote:
+            entry.layer = MemoryLayer.MID_TERM
 
     _save_entry(home, entry)
     _update_index(home, entry)
@@ -517,6 +559,10 @@ def import_from_seed(home: Path, seed_memories: list[dict]) -> int:
 
 def _find_by_id(home: Path, memory_id: str) -> Optional[MemoryEntry]:
     """Find a memory entry by ID across all layers."""
+    try:
+        memory_id = _require_memory_id(memory_id)
+    except ValueError:
+        return None
     for lyr in MemoryLayer:
         path = _memory_dir(home) / lyr.value / f"{memory_id}.json"
         if path.exists():
@@ -524,25 +570,44 @@ def _find_by_id(home: Path, memory_id: str) -> Optional[MemoryEntry]:
     return None
 
 
-def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> None:
-    """Promote a memory to the next tier."""
+def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> bool:
+    """Promote a memory to the next tier.
+
+    SHORT_TERM -> MID_TERM transitions pass through the truth-check gate
+    (``memory_verifier.verify_before_promotion``). When the gate blocks the
+    promotion the entry stays in short-term (the verifier tags it as
+    conflicting) and this returns False. The gate is fail-open: when the
+    truth-check backend is unavailable it allows promotion, preserving the
+    prior behavior.
+
+    Returns:
+        True if the memory advanced a tier, False otherwise.
+    """
+    _require_memory_id(entry.memory_id)
     if entry.layer == MemoryLayer.SHORT_TERM:
+        # Local import so tests can patch memory_verifier.verify_before_promotion.
+        from .memory_verifier import verify_before_promotion
+
+        if not verify_before_promotion(home, entry).should_promote:
+            return False
         entry.layer = MemoryLayer.MID_TERM
     elif entry.layer == MemoryLayer.MID_TERM:
         entry.layer = MemoryLayer.LONG_TERM
     else:
         _save_entry(home, entry)
-        return
+        return False
 
     if old_path.exists():
         old_path.unlink()
     _save_entry(home, entry)
     _update_index(home, entry)
     logger.info("Promoted memory %s to %s", entry.memory_id, entry.layer.value)
+    return True
 
 
 def _update_index(home: Path, entry: MemoryEntry) -> None:
     """Add or update an entry in the search index."""
+    _require_memory_id(entry.memory_id)
     index = _load_index(home)
     index[entry.memory_id] = {
         "content_preview": entry.content[:200],
@@ -555,20 +620,67 @@ def _update_index(home: Path, entry: MemoryEntry) -> None:
 
 
 def _remove_from_index(home: Path, memory_id: str) -> None:
-    """Remove an entry from the search index."""
+    """Remove an entry from both search indexes.
+
+    Removes the entry from the plain-JSON ``index.json`` used by this engine and
+    from skmemory's SQLite ``index.db`` when present. Keeping index.db in step is
+    what prevents "skmemory drift": archiving a memory moves its flat file out of
+    the active tiers, so a lingering SQLite row would be reported as a phantom
+    orphan by ``skmemory health``/drift checks. Best-effort - a missing db, a
+    missing table, or a lock never blocks archival (the flat file is truth).
+    """
     index = _load_index(home)
     index.pop(memory_id, None)
     _save_index(home, index)
+    _remove_from_sqlite_index(home, memory_id)
+
+
+def _remove_from_sqlite_index(home: Path, memory_id: str) -> None:
+    """Delete a memory's row from skmemory's SQLite index.db, if it exists."""
+    db_path = _memory_dir(home) / "index.db"
+    if not db_path.exists():
+        return
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path), timeout=8)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000;")
+            conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # pragma: no cover - defensive, never blocks archival
+        logger.debug("index.db prune skipped for %s: %s", memory_id, exc)
 
 
 def _load_index(home: Path) -> dict:
-    """Load the memory index from disk."""
+    """Load the memory index from disk, normalized to a ``{memory_id: {...}}`` dict.
+
+    This engine owns the index as a dict keyed by ``memory_id``, but sibling repair
+    paths (``self_healing._check_memory_index``, external per-node reconcilers) may
+    rewrite ``index.json`` as a ``[{"memory_id": ...}, ...]`` list. Loading that list
+    verbatim used to crash every :func:`store` at ``index[entry.memory_id] = ...``
+    (``TypeError: list indices must be integers or slices, not str``) - which is what
+    silently killed dream-insight persistence. Normalizing either shape here keeps
+    stores working and, via :func:`_save_index`, converts the file back to the dict
+    form the rest of the engine (and ``doctor``) expects.
+    """
     index_path = _memory_dir(home) / "index.json"
-    if index_path.exists():
-        try:
-            return json.loads(index_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {}
+    if not index_path.exists():
+        return {}
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        normalized: dict = {}
+        for item in data:
+            if isinstance(item, dict) and item.get("memory_id"):
+                normalized[item["memory_id"]] = {k: v for k, v in item.items() if k != "memory_id"}
+        return normalized
     return {}
 
 

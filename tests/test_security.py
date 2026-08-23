@@ -11,10 +11,8 @@ These map to the findings from the sprint-14 security audit.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,7 +22,6 @@ from skcapstone.consciousness_loop import (
     SystemPromptBuilder,
     _sanitize_peer_name,
 )
-
 
 # ---------------------------------------------------------------------------
 # _sanitize_peer_name unit tests
@@ -167,7 +164,7 @@ class TestLargeMessageRejected:
         loop = self._make_loop(tmp_path)
 
         inbox_file = tmp_path / "big.skc.json"
-        # Write 1.1 MB of data — exceeds the 1_000_000 byte cap
+        # Write 1.1 MB of data - exceeds the 1_000_000 byte cap
         inbox_file.write_bytes(b"x" * 1_100_000)
 
         submitted = []
@@ -178,7 +175,7 @@ class TestLargeMessageRejected:
         assert submitted == [], "Oversized file should have been dropped without submitting"
 
     def test_1mb_minus_one_byte_is_processed(self, tmp_path):
-        """A file just below the cap should be attempted (may fail on parse — that's fine)."""
+        """A file just below the cap should be attempted (may fail on parse - that's fine)."""
         loop = self._make_loop(tmp_path)
 
         inbox_file = tmp_path / "ok.skc.json"
@@ -187,7 +184,6 @@ class TestLargeMessageRejected:
         inbox_file.write_text(payload, encoding="utf-8")
 
         submitted = []
-        original_submit = loop._executor.submit
 
         def capture_submit(fn, *a, **kw):
             submitted.append((fn, a))

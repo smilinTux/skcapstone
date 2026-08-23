@@ -1,0 +1,13 @@
+{
+  "kind": "service",
+  "name": "nostr-relay",
+  "labels": {"tier": "comms"},
+  "spec": {
+    "runtime": "systemd-user",
+    "unit": "nostr-relay.service",
+    "nodeSelector": {"always-on": "true"},
+    "healthCheck": {"port": 7447},
+    "restartPolicy": "on-failure",
+    "failover": "manual"
+  }
+}

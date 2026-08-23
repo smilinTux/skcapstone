@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 
-from ._common import AGENT_HOME, SKCAPSTONE_AGENT, console, resolve_agent_home
+from ._common import SKCAPSTONE_AGENT, console, resolve_agent_home
 from ._validators import validate_file_path
 
 
@@ -53,9 +53,11 @@ def register_context_commands(main: click.Group) -> None:
         home_path = Path(home).expanduser()
         if fmt == "claude-md":
             from ..claude_md import generate_claude_md
+
             click.echo(generate_claude_md(home_path, memory_limit=memories))
         else:
             from ..context_loader import FORMATTERS, gather_context
+
             ctx = gather_context(home_path, memory_limit=memories)
             click.echo(FORMATTERS[fmt](ctx))
 
@@ -116,7 +118,12 @@ def register_context_commands(main: click.Group) -> None:
         type=click.Path(),
         help="Destination path for CLAUDE.md (default: repo root or cwd).",
     )
-    @click.option("--backup", is_flag=True, default=False, help="Rename existing CLAUDE.md to .bak before writing.")
+    @click.option(
+        "--backup",
+        is_flag=True,
+        default=False,
+        help="Rename existing CLAUDE.md to .bak before writing.",
+    )
     def refresh_context(home: str, memories: int, dest: str | None, backup: bool):
         """Regenerate CLAUDE.md from current agent state.
 

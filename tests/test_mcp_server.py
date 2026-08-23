@@ -14,9 +14,7 @@ from skcapstone.mcp_server import (
     _json_response,
     call_tool,
     list_tools,
-    server,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,7 +74,27 @@ class TestToolListing:
     async def test_list_tools_returns_all(self):
         """list_tools returns all registered tools."""
         tools = await list_tools()
-        assert len(tools) == 122
+        # 125 base
+        # + suggest_item / queue_item          (fleet suggestion engine, P2.4)
+        # + itil_change_validate / _schedule / _unschedule   (CM P1.2)
+        # + gtd_reopen                          (SPE P1.2, card 0ef48ec9)
+        # + coord_describe / coord_label / coord_link   (card 61b97e22)
+        # + coord_reprioritize / coord_amend_criteria   (card e78fd954)
+        # + coord_void                                  (card 325a737f)
+        #
+        # Bump this WITH the commit that adds a tool. It drifted three behind
+        # and kept main red, which is worse than useless: a count nobody trusts
+        # gets bumped reflexively, and then it guards nothing.
+        assert len(tools) == 137
+
+    @pytest.mark.asyncio
+    async def test_tool_names_are_unique(self):
+        """What the count is really proxying for. A duplicate registration
+        silently shadows one of the two tools, and a bare count cannot tell
+        that apart from a tool being added."""
+        names = [t.name for t in await list_tools()]
+        dupes = {n for n in names if names.count(n) > 1}
+        assert not dupes, f"duplicate MCP tool registrations: {sorted(dupes)}"
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -175,6 +193,7 @@ class TestToolListing:
             "gtd_move",
             "gtd_next",
             "gtd_projects",
+            "gtd_reopen",
             "gtd_review",
             "gtd_status",
             "gtd_waiting",
@@ -308,9 +327,7 @@ class TestMemoryTools:
             assert store_parsed["memory_id"]
             assert store_parsed["layer"] == "short-term"
 
-            search_result = await call_tool(
-                "memory_search", {"query": "sovereign penguin"}
-            )
+            search_result = await call_tool("memory_search", {"query": "sovereign penguin"})
             search_parsed = _extract_json(search_result)
             assert isinstance(search_parsed, list)
             assert len(search_parsed) >= 1
@@ -342,9 +359,7 @@ class TestMemoryTools:
         assert "error" in parsed
 
     @pytest.mark.asyncio
-    async def test_memory_store_high_importance_promotes(
-        self, initialized_agent_home: Path
-    ):
+    async def test_memory_store_high_importance_promotes(self, initialized_agent_home: Path):
         """High-importance memory gets promoted to mid-term."""
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
             result = await call_tool(
@@ -414,9 +429,7 @@ class TestCoordTools:
         board.ensure_dirs()
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
-            result = await call_tool(
-                "coord_claim", {"task_id": "nosuch", "agent_name": "tester"}
-            )
+            result = await call_tool("coord_claim", {"task_id": "nosuch", "agent_name": "tester"})
         parsed = _extract_json(result)
         assert "error" in parsed
 
@@ -637,9 +650,7 @@ class TestTrusteeTools:
         """trustee_restart without agent_name restarts all."""
         deploy_id = self._setup_deployment(initialized_agent_home)
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
-            result = await call_tool(
-                "trustee_restart", {"deployment_id": deploy_id}
-            )
+            result = await call_tool("trustee_restart", {"deployment_id": deploy_id})
         parsed = _extract_json(result)
         assert len(parsed["results"]) == 2
         assert parsed["all_restarted"] is True
@@ -703,9 +714,7 @@ class TestTrusteeTools:
         """trustee_monitor checks a specific deployment."""
         deploy_id = self._setup_deployment(initialized_agent_home)
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
-            result = await call_tool(
-                "trustee_monitor", {"deployment_id": deploy_id}
-            )
+            result = await call_tool("trustee_monitor", {"deployment_id": deploy_id})
         parsed = _extract_json(result)
         assert parsed["deployments_checked"] == 1
         assert parsed["agents_healthy"] == 2
@@ -715,9 +724,7 @@ class TestTrusteeTools:
         """trustee_monitor with bad deployment_id returns error."""
         (initialized_agent_home / "deployments").mkdir(exist_ok=True)
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
-            result = await call_tool(
-                "trustee_monitor", {"deployment_id": "nope"}
-            )
+            result = await call_tool("trustee_monitor", {"deployment_id": "nope"})
         parsed = _extract_json(result)
         assert "error" in parsed
 
@@ -726,9 +733,7 @@ class TestTrusteeTools:
         """trustee_logs returns log lines."""
         deploy_id = self._setup_deployment(initialized_agent_home)
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
-            result = await call_tool(
-                "trustee_logs", {"deployment_id": deploy_id}
-            )
+            result = await call_tool("trustee_logs", {"deployment_id": deploy_id})
         parsed = _extract_json(result)
         assert parsed["deployment_id"] == deploy_id
         assert "worker-1" in parsed["agents"]
@@ -754,7 +759,10 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_send_requires_params(self):
         """skchat_send without recipient/message returns error."""
-        with patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:test@local"):
+        with patch(
+            "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+            return_value="capauth:test@local",
+        ):
             result = await call_tool("skchat_send", {})
         parsed = _extract_json(result)
         assert "error" in parsed
@@ -762,7 +770,10 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_send_requires_message(self):
         """skchat_send with only recipient returns error."""
-        with patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:test@local"):
+        with patch(
+            "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+            return_value="capauth:test@local",
+        ):
             result = await call_tool("skchat_send", {"recipient": "lumina"})
         parsed = _extract_json(result)
         assert "error" in parsed
@@ -770,17 +781,27 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_send_success(self):
         """skchat_send calls AgentMessenger.send and returns result."""
-        mock_messenger = type("M", (), {
-            "send": lambda self, **kw: {
-                "message_id": "msg-123",
-                "delivered": True,
-                "transport": "syncthing",
+        mock_messenger = type(
+            "M",
+            (),
+            {
+                "send": lambda self, **kw: {
+                    "message_id": "msg-123",
+                    "delivered": True,
+                    "transport": "syncthing",
+                },
             },
-        })()
+        )()
 
         with (
-            patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"),
-            patch("skcapstone.mcp_server._resolve_recipient", return_value="capauth:lumina@local"),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+                return_value="capauth:opus@local",
+            ),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._resolve_recipient",
+                return_value="capauth:lumina@local",
+            ),
             patch("skchat.agent_comm.AgentMessenger.from_identity", return_value=mock_messenger),
         ):
             result = await call_tool(
@@ -805,8 +826,14 @@ class TestSKChatTools:
         mock_messenger = type("M", (), {"send": lambda self, **kw: capture_send(**kw)})()
 
         with (
-            patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"),
-            patch("skcapstone.mcp_server._resolve_recipient", return_value="capauth:jarvis@local"),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+                return_value="capauth:opus@local",
+            ),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._resolve_recipient",
+                return_value="capauth:jarvis@local",
+            ),
             patch("skchat.agent_comm.AgentMessenger.from_identity", return_value=mock_messenger),
         ):
             result = await call_tool(
@@ -837,12 +864,19 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_inbox_empty(self):
         """skchat_inbox returns empty list when no messages."""
-        mock_messenger = type("M", (), {
-            "receive": lambda self, limit=50: [],
-        })()
+        mock_messenger = type(
+            "M",
+            (),
+            {
+                "receive": lambda self, limit=50: [],
+            },
+        )()
 
         with (
-            patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+                return_value="capauth:opus@local",
+            ),
             patch("skchat.agent_comm.AgentMessenger.from_identity", return_value=mock_messenger),
         ):
             result = await call_tool("skchat_inbox", {})
@@ -853,29 +887,36 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_inbox_with_messages(self):
         """skchat_inbox returns messages from AgentMessenger."""
-        mock_messenger = type("M", (), {
-            "receive": lambda self, limit=50: [
-                {
-                    "message_id": "m1",
-                    "sender": "capauth:lumina@local",
-                    "content": "Hello from Lumina",
-                    "message_type": "text",
-                    "thread_id": None,
-                    "timestamp": "2026-02-27T10:00:00",
-                },
-                {
-                    "message_id": "m2",
-                    "sender": "capauth:jarvis@local",
-                    "content": "Bug found in transport.py",
-                    "message_type": "finding",
-                    "thread_id": "thread-x",
-                    "timestamp": "2026-02-27T10:01:00",
-                },
-            ],
-        })()
+        mock_messenger = type(
+            "M",
+            (),
+            {
+                "receive": lambda self, limit=50: [
+                    {
+                        "message_id": "m1",
+                        "sender": "capauth:lumina@local",
+                        "content": "Hello from Lumina",
+                        "message_type": "text",
+                        "thread_id": None,
+                        "timestamp": "2026-02-27T10:00:00",
+                    },
+                    {
+                        "message_id": "m2",
+                        "sender": "capauth:jarvis@local",
+                        "content": "Bug found in transport.py",
+                        "message_type": "finding",
+                        "thread_id": "thread-x",
+                        "timestamp": "2026-02-27T10:01:00",
+                    },
+                ],
+            },
+        )()
 
         with (
-            patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+                return_value="capauth:opus@local",
+            ),
             patch("skchat.agent_comm.AgentMessenger.from_identity", return_value=mock_messenger),
         ):
             result = await call_tool("skchat_inbox", {"limit": 10})
@@ -887,15 +928,36 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_inbox_filter_by_type(self):
         """skchat_inbox filters messages by message_type."""
-        mock_messenger = type("M", (), {
-            "receive": lambda self, limit=50: [
-                {"message_id": "m1", "sender": "a", "content": "hi", "message_type": "text", "thread_id": None, "timestamp": ""},
-                {"message_id": "m2", "sender": "b", "content": "bug", "message_type": "finding", "thread_id": None, "timestamp": ""},
-            ],
-        })()
+        mock_messenger = type(
+            "M",
+            (),
+            {
+                "receive": lambda self, limit=50: [
+                    {
+                        "message_id": "m1",
+                        "sender": "a",
+                        "content": "hi",
+                        "message_type": "text",
+                        "thread_id": None,
+                        "timestamp": "",
+                    },
+                    {
+                        "message_id": "m2",
+                        "sender": "b",
+                        "content": "bug",
+                        "message_type": "finding",
+                        "thread_id": None,
+                        "timestamp": "",
+                    },
+                ],
+            },
+        )()
 
         with (
-            patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+                return_value="capauth:opus@local",
+            ),
             patch("skchat.agent_comm.AgentMessenger.from_identity", return_value=mock_messenger),
         ):
             result = await call_tool("skchat_inbox", {"message_type": "finding"})
@@ -906,7 +968,10 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_group_create_requires_name(self):
         """skchat_group_create without name returns error."""
-        with patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"):
+        with patch(
+            "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+            return_value="capauth:opus@local",
+        ):
             result = await call_tool("skchat_group_create", {})
         parsed = _extract_json(result)
         assert "error" in parsed
@@ -914,13 +979,22 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_group_create_success(self):
         """skchat_group_create creates a group and stores it."""
-        mock_history = type("H", (), {
-            "store_thread": lambda self, t: "mem-abc",
-        })()
+        mock_history = type(
+            "H",
+            (),
+            {
+                "store_thread": lambda self, t: "mem-abc",
+            },
+        )()
 
         with (
-            patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"),
-            patch("skcapstone.mcp_server._get_skchat_history", return_value=mock_history),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+                return_value="capauth:opus@local",
+            ),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_history", return_value=mock_history
+            ),
         ):
             result = await call_tool(
                 "skchat_group_create",
@@ -935,14 +1009,26 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_group_create_with_members(self):
         """skchat_group_create adds initial members."""
-        mock_history = type("H", (), {
-            "store_thread": lambda self, t: "mem-xyz",
-        })()
+        mock_history = type(
+            "H",
+            (),
+            {
+                "store_thread": lambda self, t: "mem-xyz",
+            },
+        )()
 
         with (
-            patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"),
-            patch("skcapstone.mcp_server._get_skchat_history", return_value=mock_history),
-            patch("skcapstone.mcp_server._resolve_recipient", side_effect=lambda n: f"capauth:{n}@local"),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+                return_value="capauth:opus@local",
+            ),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_history", return_value=mock_history
+            ),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._resolve_recipient",
+                side_effect=lambda n: f"capauth:{n}@local",
+            ),
         ):
             result = await call_tool(
                 "skchat_group_create",
@@ -963,11 +1049,17 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_group_send_not_found(self):
         """skchat_group_send with unknown group returns error."""
-        mock_history = type("H", (), {
-            "get_thread": lambda self, gid: None,
-        })()
+        mock_history = type(
+            "H",
+            (),
+            {
+                "get_thread": lambda self, gid: None,
+            },
+        )()
 
-        with patch("skcapstone.mcp_server._get_skchat_history", return_value=mock_history):
+        with patch(
+            "skcapstone.mcp_tools.chat_tools._get_skchat_history", return_value=mock_history
+        ):
             result = await call_tool(
                 "skchat_group_send",
                 {"group_id": "nonexistent", "message": "Hello"},
@@ -979,11 +1071,17 @@ class TestSKChatTools:
     @pytest.mark.asyncio
     async def test_skchat_group_send_not_a_group(self):
         """skchat_group_send on a plain thread (no group_data) returns error."""
-        mock_history = type("H", (), {
-            "get_thread": lambda self, gid: {"title": "Just a thread"},
-        })()
+        mock_history = type(
+            "H",
+            (),
+            {
+                "get_thread": lambda self, gid: {"title": "Just a thread"},
+            },
+        )()
 
-        with patch("skcapstone.mcp_server._get_skchat_history", return_value=mock_history):
+        with patch(
+            "skcapstone.mcp_tools.chat_tools._get_skchat_history", return_value=mock_history
+        ):
             result = await call_tool(
                 "skchat_group_send",
                 {"group_id": "thread-123", "message": "Hello"},
@@ -1021,14 +1119,23 @@ class TestSKChatTools:
             "metadata": {},
         }
 
-        mock_history = type("H", (), {
-            "get_thread": lambda self, gid: {"group_data": group_data},
-            "store_message": lambda self, msg: "mem-stored",
-        })()
+        mock_history = type(
+            "H",
+            (),
+            {
+                "get_thread": lambda self, gid: {"group_data": group_data},
+                "store_message": lambda self, msg: "mem-stored",
+            },
+        )()
 
         with (
-            patch("skcapstone.mcp_server._get_skchat_identity", return_value="capauth:opus@local"),
-            patch("skcapstone.mcp_server._get_skchat_history", return_value=mock_history),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_identity",
+                return_value="capauth:opus@local",
+            ),
+            patch(
+                "skcapstone.mcp_tools.chat_tools._get_skchat_history", return_value=mock_history
+            ),
         ):
             result = await call_tool(
                 "skchat_group_send",
@@ -1113,7 +1220,8 @@ class TestHeartbeatTools:
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(tmp_path)):
             result = await call_tool(
-                "heartbeat_find_capable", {"capability": "nonexistent"},
+                "heartbeat_find_capable",
+                {"capability": "nonexistent"},
             )
         parsed = _extract_json(result)
         assert parsed["capability"] == "nonexistent"
@@ -1143,11 +1251,14 @@ class TestFileTransferTools:
         test_file.write_text("Hello world!", encoding="utf-8")
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(tmp_path)):
-            result = await call_tool("file_send", {
-                "file_path": str(test_file),
-                "recipient": "lumina",
-                "encrypt": False,
-            })
+            result = await call_tool(
+                "file_send",
+                {
+                    "file_path": str(test_file),
+                    "recipient": "lumina",
+                    "encrypt": False,
+                },
+            )
         parsed = _extract_json(result)
         assert parsed["filename"] == "test.txt"
         assert parsed["sender"] == "opus"
@@ -1160,7 +1271,8 @@ class TestFileTransferTools:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "identity.json").write_text(
-            json.dumps({"name": "opus"}), encoding="utf-8",
+            json.dumps({"name": "opus"}),
+            encoding="utf-8",
         )
 
         with (
@@ -1177,7 +1289,8 @@ class TestFileTransferTools:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "identity.json").write_text(
-            json.dumps({"name": "opus"}), encoding="utf-8",
+            json.dumps({"name": "opus"}),
+            encoding="utf-8",
         )
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(tmp_path)):
@@ -1201,17 +1314,23 @@ class TestFileTransferTools:
         test_file.write_text("Round trip test data!", encoding="utf-8")
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(tmp_path)):
-            send_result = await call_tool("file_send", {
-                "file_path": str(test_file),
-                "recipient": "lumina",
-                "encrypt": False,
-            })
+            send_result = await call_tool(
+                "file_send",
+                {
+                    "file_path": str(test_file),
+                    "recipient": "lumina",
+                    "encrypt": False,
+                },
+            )
             transfer_id = _extract_json(send_result)["transfer_id"]
 
-            recv_result = await call_tool("file_receive", {
-                "transfer_id": transfer_id,
-                "output_dir": str(tmp_path / "downloads"),
-            })
+            recv_result = await call_tool(
+                "file_receive",
+                {
+                    "transfer_id": transfer_id,
+                    "output_dir": str(tmp_path / "downloads"),
+                },
+            )
         parsed = _extract_json(recv_result)
         assert parsed["transfer_id"] == transfer_id
         output = Path(parsed["output_path"])
@@ -1232,14 +1351,18 @@ class TestPubSubTools:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "identity.json").write_text(
-            json.dumps({"name": "opus"}), encoding="utf-8",
+            json.dumps({"name": "opus"}),
+            encoding="utf-8",
         )
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(tmp_path)):
-            result = await call_tool("pubsub_publish", {
-                "topic": "test.events",
-                "payload": {"event": "hello"},
-            })
+            result = await call_tool(
+                "pubsub_publish",
+                {
+                    "topic": "test.events",
+                    "payload": {"event": "hello"},
+                },
+            )
         parsed = _extract_json(result)
         assert parsed["topic"] == "test.events"
         assert parsed["sender"] == "opus"
@@ -1251,7 +1374,8 @@ class TestPubSubTools:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "identity.json").write_text(
-            json.dumps({"name": "opus"}), encoding="utf-8",
+            json.dumps({"name": "opus"}),
+            encoding="utf-8",
         )
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(tmp_path)):
@@ -1265,16 +1389,20 @@ class TestPubSubTools:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "identity.json").write_text(
-            json.dumps({"name": "opus"}), encoding="utf-8",
+            json.dumps({"name": "opus"}),
+            encoding="utf-8",
         )
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(tmp_path)):
             # Subscribe and publish
             await call_tool("pubsub_subscribe", {"pattern": "test.*"})
-            await call_tool("pubsub_publish", {
-                "topic": "test.events",
-                "payload": {"event": "ping"},
-            })
+            await call_tool(
+                "pubsub_publish",
+                {
+                    "topic": "test.events",
+                    "payload": {"event": "ping"},
+                },
+            )
             result = await call_tool("pubsub_poll", {})
         parsed = _extract_json(result)
         assert len(parsed) >= 1
@@ -1286,14 +1414,18 @@ class TestPubSubTools:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "identity.json").write_text(
-            json.dumps({"name": "opus"}), encoding="utf-8",
+            json.dumps({"name": "opus"}),
+            encoding="utf-8",
         )
 
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(tmp_path)):
-            await call_tool("pubsub_publish", {
-                "topic": "agent.status",
-                "payload": {"status": "alive"},
-            })
+            await call_tool(
+                "pubsub_publish",
+                {
+                    "topic": "agent.status",
+                    "payload": {"status": "alive"},
+                },
+            )
             result = await call_tool("pubsub_topics", {})
         parsed = _extract_json(result)
         assert len(parsed) >= 1
@@ -1453,10 +1585,13 @@ class TestKmsTools:
             keys = _extract_json(keys_result)
             master_id = keys[0]["key_id"]  # First key is master
 
-            result = await call_tool("kms_rotate", {
-                "key_id": master_id,
-                "reason": "test rotation",
-            })
+            result = await call_tool(
+                "kms_rotate",
+                {
+                    "key_id": master_id,
+                    "reason": "test rotation",
+                },
+            )
         parsed = _extract_json(result)
         assert parsed["version"] == 2
         assert "rotated" in parsed["message"]
@@ -1516,7 +1651,7 @@ class TestModelTools:
         """model_route with empty description still returns a valid decision."""
         result = await call_tool("model_route", {})
         parsed = _extract_json(result)
-        # Either a valid route or an error — either way, must be parseable JSON
+        # Either a valid route or an error - either way, must be parseable JSON
         assert isinstance(parsed, dict)
 
 
@@ -1534,7 +1669,7 @@ class TestConsciousnessTools:
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
             result = await call_tool("consciousness_status", {})
         parsed = _extract_json(result)
-        # Either a live status dict or an error — must be a dict
+        # Either a live status dict or an error - must be a dict
         assert isinstance(parsed, dict)
 
     @pytest.mark.asyncio
@@ -1746,7 +1881,7 @@ class TestSkSkillsTools:
             with patch.dict("sys.modules", {"skskills": None, "skskills.aggregator": None}):
                 result = await call_tool("skskills_list_tools", {})
         parsed = _extract_json(result)
-        # Either error (not installed) or success dict — no crash
+        # Either error (not installed) or success dict - no crash
         assert isinstance(parsed, dict)
 
     @pytest.mark.asyncio
@@ -1763,7 +1898,9 @@ class TestSkSkillsTools:
         """skskills_run_tool returns error if skskills not installed."""
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
             with patch.dict("sys.modules", {"skskills": None, "skskills.aggregator": None}):
-                result = await call_tool("skskills_run_tool", {"tool": "syncthing-setup.check_status"})
+                result = await call_tool(
+                    "skskills_run_tool", {"tool": "syncthing-setup.check_status"}
+                )
         parsed = _extract_json(result)
         assert "error" in parsed
 
@@ -1864,7 +2001,7 @@ class TestSoulTools:
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
             result = await call_tool("soul_show", {})
         parsed = _extract_json(result)
-        # Either "loaded: false" (no blueprint) or error (no skmemory) — must be dict
+        # Either "loaded: false" (no blueprint) or error (no skmemory) - must be dict
         assert isinstance(parsed, dict)
         assert "error" in parsed or "loaded" in parsed
 

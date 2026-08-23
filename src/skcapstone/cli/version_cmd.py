@@ -35,14 +35,15 @@ def _probe_ollama() -> dict:
     """Probe the local Ollama server.
 
     Hits /api/tags with a 2-second timeout and returns a dict with:
-      - ``running``: bool — whether Ollama responded.
-      - ``models``: list[str] — model names (empty on failure).
-      - ``host``: str — the URL that was probed.
+      - ``running``: bool - whether Ollama responded.
+      - ``models``: list[str] - model names (empty on failure).
+      - ``host``: str - the URL that was probed.
 
     Returns:
         Dict with keys ``running``, ``models``, ``host``.
     """
     import os
+
     host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
     try:
         req = urllib.request.Request(f"{host}/api/tags")
@@ -65,6 +66,7 @@ def _get_daemon_pid(home: Path) -> Optional[int]:
     """
     try:
         from ..daemon import read_pid
+
         return read_pid(home)
     except Exception:
         return None
@@ -103,8 +105,7 @@ def register_version_commands(main: click.Group) -> None:
     """Register the ``version`` command on the main CLI group."""
 
     @main.command("version")
-    @click.option("--home", default=AGENT_HOME, type=click.Path(),
-                  help="Agent home directory.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
     @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
     def version_cmd(home: str, json_out: bool) -> None:
         """Show package version, runtime info, optional deps, Ollama status, and daemon PID."""
@@ -119,10 +120,7 @@ def register_version_commands(main: click.Group) -> None:
 
         console.print()
         console.print(f"  [bold cyan]skcapstone[/] [bold]{__version__}[/]")
-        console.print(
-            f"  [dim]Python {info['python_version']}  ·  "
-            f"{info['platform']}[/]"
-        )
+        console.print(f"  [dim]Python {info['python_version']}  ·  " f"{info['platform']}[/]")
         console.print()
 
         # ── Optional dependencies ──────────────────────────────────────────
@@ -139,18 +137,16 @@ def register_version_commands(main: click.Group) -> None:
         if ollama["running"]:
             model_count = len(ollama["models"])
             model_str = (
-                ", ".join(ollama["models"][:5])
-                + (" …" if model_count > 5 else "")
-            ) if ollama["models"] else "no models"
+                (", ".join(ollama["models"][:5]) + (" …" if model_count > 5 else ""))
+                if ollama["models"]
+                else "no models"
+            )
             console.print(
                 f"  [bold]Ollama:[/] [green]running[/]  "
                 f"[dim]{ollama['host']}  {model_count} model(s): {model_str}[/]"
             )
         else:
-            console.print(
-                f"  [bold]Ollama:[/] [red]not running[/]  "
-                f"[dim]{ollama['host']}[/]"
-            )
+            console.print(f"  [bold]Ollama:[/] [red]not running[/]  " f"[dim]{ollama['host']}[/]")
 
         # ── Daemon PID ─────────────────────────────────────────────────────
         pid = info["daemon_pid"]

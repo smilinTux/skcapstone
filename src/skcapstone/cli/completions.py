@@ -14,14 +14,16 @@ def register_completions_commands(main: click.Group) -> None:
 
     @main.group()
     def completions():
-        """Shell tab completion — sovereign autocomplete.
+        """Shell tab completion - sovereign autocomplete.
 
         Install, show, or remove tab completion scripts for
         bash, zsh, and fish.
         """
 
     @completions.command("install")
-    @click.option("--shell", "shell_name", default=None, type=click.Choice(["bash", "zsh", "fish"]))
+    @click.option(
+        "--shell", "shell_name", default=None, type=click.Choice(["bash", "zsh", "fish"])
+    )
     def completions_install(shell_name):
         """Install tab completion for your shell."""
         from ..completions import install_completions
@@ -39,7 +41,9 @@ def register_completions_commands(main: click.Group) -> None:
         console.print(f"  [dim]Restart your shell or run: source {result['script_path']}[/]\n")
 
     @completions.command("show")
-    @click.option("--shell", "shell_name", default=None, type=click.Choice(["bash", "zsh", "fish"]))
+    @click.option(
+        "--shell", "shell_name", default=None, type=click.Choice(["bash", "zsh", "fish"])
+    )
     def completions_show(shell_name):
         """Print the completion script to stdout."""
         from ..completions import detect_shell, generate_script
@@ -48,7 +52,9 @@ def register_completions_commands(main: click.Group) -> None:
         click.echo(generate_script(shell))
 
     @completions.command("uninstall")
-    @click.option("--shell", "shell_name", default=None, type=click.Choice(["bash", "zsh", "fish"]))
+    @click.option(
+        "--shell", "shell_name", default=None, type=click.Choice(["bash", "zsh", "fish"])
+    )
     def completions_uninstall(shell_name):
         """Remove installed completion scripts."""
         from ..completions import uninstall_completions

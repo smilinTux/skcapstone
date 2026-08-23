@@ -1,18 +1,24 @@
-"""Tests for CloudProvider — Hetzner adapter and provider_type property.
+"""Tests for CloudProvider - Hetzner adapter and provider_type property.
 
 Focuses on HetznerAdapter (full lifecycle) and CloudProvider.provider_type
 which are not covered in test_cloud_providers.py.  All Hetzner API calls
-are mocked via requests — no real cloud account required.
+are mocked via requests - no real cloud account required.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from skcapstone.blueprints.schema import AgentRole, AgentSpec, ModelTier, ProviderType, ResourceSpec
+from skcapstone.blueprints.schema import (
+    AgentRole,
+    AgentSpec,
+    ModelTier,
+    ProviderType,
+    ResourceSpec,
+)
 from skcapstone.providers.cloud import (
     CloudProvider,
     HetznerAdapter,
@@ -20,7 +26,6 @@ from skcapstone.providers.cloud import (
     _memory_to_hetzner_type,
 )
 from skcapstone.team_engine import AgentStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -418,15 +423,13 @@ class TestCloudProviderHetznerDelegation:
         assert ok is True
 
     def test_health_check_delegates_to_hetzner(self, provider):
-        with patch.object(
-            provider._adapter, "health_check", return_value=AgentStatus.RUNNING
-        ):
+        with patch.object(provider._adapter, "health_check", return_value=AgentStatus.RUNNING):
             status = provider.health_check("a", {"server_id": 1})
         assert status == AgentStatus.RUNNING
 
 
 # ---------------------------------------------------------------------------
-# _build_cloud_init — Hetzner-specific tailscale authkey
+# _build_cloud_init - Hetzner-specific tailscale authkey
 # ---------------------------------------------------------------------------
 
 

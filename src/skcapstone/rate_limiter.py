@@ -55,7 +55,7 @@ class TokenBucket:
 
     @property
     def tokens(self) -> float:
-        """Current token level (approximate — does not acquire the lock)."""
+        """Current token level (approximate - does not acquire the lock)."""
         return self._tokens
 
     # ------------------------------------------------------------------

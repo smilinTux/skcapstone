@@ -23,7 +23,7 @@ TOOLS: list[Tool] = [
                 "action": {
                     "type": "string",
                     "enum": ["show", "recommend", "set", "reset"],
-                    "description": "Action: show current, recommend changes, set a value, or reset (default: show)",
+                    "description": "Action: show current, recommend changes, set a value, or reset (default: show)",  # noqa: E501
                 },
                 "key": {
                     "type": "string",
@@ -61,7 +61,7 @@ TOOLS: list[Tool] = [
 
 async def _handle_trust_calibrate(args: dict) -> list[TextContent]:
     """View, recommend, or update trust calibration."""
-    from ..trust_calibration import (
+    from capauth.trust.calibration import (
         TrustThresholds,
         apply_setting,
         load_calibration,
@@ -77,7 +77,9 @@ async def _handle_trust_calibrate(args: dict) -> list[TextContent]:
         return _json_response(cal.model_dump())
 
     if action == "recommend":
-        return _json_response(recommend_thresholds(home))
+        from ..pillars.trust import list_febs
+
+        return _json_response(recommend_thresholds(home, feb_provider=list_febs))
 
     if action == "set":
         key = args.get("key", "")
@@ -86,7 +88,9 @@ async def _handle_trust_calibrate(args: dict) -> list[TextContent]:
             return _error_response("key and value are required for action=set")
         try:
             updated = apply_setting(home, key, value)
-            return _json_response({"updated": True, "key": key, "value": value, "thresholds": updated.model_dump()})
+            return _json_response(
+                {"updated": True, "key": key, "value": value, "thresholds": updated.model_dump()}
+            )
         except ValueError as exc:
             return _error_response(str(exc))
 
@@ -99,8 +103,8 @@ async def _handle_trust_calibrate(args: dict) -> list[TextContent]:
 
 async def _handle_trust_graph(args: dict) -> list[TextContent]:
     """Return the trust web graph."""
-    from ..trust_graph import FORMATTERS as TG_FORMATTERS
-    from ..trust_graph import build_trust_graph
+    from capauth.trust.graph import FORMATTERS as TG_FORMATTERS
+    from capauth.trust.graph import build_trust_graph
 
     home = _home()
     graph = build_trust_graph(home)

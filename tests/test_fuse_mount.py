@@ -13,7 +13,7 @@ import stat
 import time
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -36,7 +36,6 @@ from skcapstone.fuse_mount import (
     _read_inbox_file,
     _send_via_skcomms,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -281,9 +280,7 @@ class TestFileHelpers:
     ) -> None:
         """A valid memory JSON loads and renders as Markdown bytes."""
         layer_dir = memory_dir / "short-term"
-        (layer_dir / "abc123.json").write_text(
-            json.dumps(sample_memory), encoding="utf-8"
-        )
+        (layer_dir / "abc123.json").write_text(json.dumps(sample_memory), encoding="utf-8")
         result = _load_memory_file(memory_dir, "short-term", "abc123")
         assert result is not None
         assert b"# Memory: abc123" in result
@@ -391,9 +388,7 @@ class TestFileHelpers:
             "identity": {"fingerprint": "DEADBEEF"},
             "created_at": "2026-01-01",
         }
-        (agent_home / "manifest.json").write_text(
-            json.dumps(manifest), encoding="utf-8"
-        )
+        (agent_home / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         # Ensure CapAuth profile path does not exist
         fake_capauth = agent_home / "no_capauth"
         with patch(
@@ -415,9 +410,7 @@ class TestFileHelpers:
     def test_build_fingerprint_txt_from_manifest(self, agent_home: Path) -> None:
         """Fingerprint is extracted from manifest.json."""
         manifest = {"identity": {"fingerprint": "AABBCCDD"}}
-        (agent_home / "manifest.json").write_text(
-            json.dumps(manifest), encoding="utf-8"
-        )
+        (agent_home / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         fake_capauth = agent_home / "no_capauth"
         with patch(
             "skcapstone.fuse_mount.Path.expanduser",
@@ -481,9 +474,7 @@ class TestSovereignFS:
             sovereign_fs.getattr("/does_not_exist")
         assert exc_info.value.errno == errno.ENOENT
 
-    def test_getattr_outbox_file_is_writable(
-        self, sovereign_fs: SovereignFS
-    ) -> None:
+    def test_getattr_outbox_file_is_writable(self, sovereign_fs: SovereignFS) -> None:
         """Outbox files have writable permission bits."""
         # Seed a buffer so the file exists in the virtual FS
         sovereign_fs._outbox_buffers["/outbox/jarvis.msg"] = b"hello"
@@ -516,9 +507,7 @@ class TestSovereignFS:
     ) -> None:
         """/memories/short lists .md files for each memory."""
         layer_dir = memory_dir / "short-term"
-        (layer_dir / "mem001.json").write_text(
-            json.dumps(sample_memory), encoding="utf-8"
-        )
+        (layer_dir / "mem001.json").write_text(json.dumps(sample_memory), encoding="utf-8")
         entries = sovereign_fs.readdir("/memories/short", fh=0)
         assert "mem001.md" in entries
 
@@ -574,9 +563,7 @@ class TestSovereignFS:
     ) -> None:
         """Reading a memory file returns its Markdown content."""
         layer_dir = memory_dir / "short-term"
-        (layer_dir / "abc123.json").write_text(
-            json.dumps(sample_memory), encoding="utf-8"
-        )
+        (layer_dir / "abc123.json").write_text(json.dumps(sample_memory), encoding="utf-8")
         content = sovereign_fs.read("/memories/short/abc123.md", size=4096, offset=0, fh=0)
         assert b"# Memory: abc123" in content
 
@@ -588,9 +575,7 @@ class TestSovereignFS:
     ) -> None:
         """Read respects offset and size arguments."""
         layer_dir = memory_dir / "short-term"
-        (layer_dir / "abc123.json").write_text(
-            json.dumps(sample_memory), encoding="utf-8"
-        )
+        (layer_dir / "abc123.json").write_text(json.dumps(sample_memory), encoding="utf-8")
         full = sovereign_fs.read("/memories/short/abc123.md", size=99999, offset=0, fh=0)
         partial = sovereign_fs.read("/memories/short/abc123.md", size=5, offset=2, fh=0)
         assert partial == full[2:7]
@@ -623,9 +608,7 @@ class TestSovereignFS:
             sovereign_fs.open("/identity/card.json", flags=os.O_WRONLY)
         assert exc_info.value.errno == errno.EACCES
 
-    def test_open_write_outbox_initialises_buffer(
-        self, sovereign_fs: SovereignFS
-    ) -> None:
+    def test_open_write_outbox_initialises_buffer(self, sovereign_fs: SovereignFS) -> None:
         """Opening an outbox file for write initialises the buffer."""
         sovereign_fs.open("/outbox/ava.msg", flags=os.O_WRONLY)
         assert "/outbox/ava.msg" in sovereign_fs._outbox_buffers
@@ -658,16 +641,12 @@ class TestSovereignFS:
             sovereign_fs.write("/memories/short/x.md", b"data", offset=0, fh=0)
         assert exc_info.value.errno == errno.EACCES
 
-    def test_flush_sends_via_skcomms(
-        self, sovereign_fs: SovereignFS
-    ) -> None:
+    def test_flush_sends_via_skcomms(self, sovereign_fs: SovereignFS) -> None:
         """Flushing an outbox file invokes _send_via_skcomms with correct args."""
         sovereign_fs._outbox_buffers["/outbox/jarvis.msg"] = b"Test message"
         with patch("skcapstone.fuse_mount._send_via_skcomms", return_value=True) as mock_send:
             sovereign_fs.flush("/outbox/jarvis.msg", fh=0)
-        mock_send.assert_called_once_with(
-            sovereign_fs._home, "jarvis", "Test message"
-        )
+        mock_send.assert_called_once_with(sovereign_fs._home, "jarvis", "Test message")
         # Buffer should be cleared after flush
         assert "/outbox/jarvis.msg" not in sovereign_fs._outbox_buffers
 

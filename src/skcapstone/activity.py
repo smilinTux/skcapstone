@@ -1,7 +1,7 @@
 """Lightweight in-process activity bus for the SKCapstone daemon.
 
 Stores the last 100 events in a thread-safe deque and fans out live
-events to registered SSE client queues.  No external dependencies —
+events to registered SSE client queues.  No external dependencies -
 stdlib only.
 
 Usage::
@@ -27,13 +27,13 @@ Usage::
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import threading
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
-import logging
 logger = logging.getLogger(__name__)
 
 _MAXLEN = 100
@@ -86,6 +86,7 @@ def unregister_client(q: queue.Queue) -> None:
 
 
 # ── internal helpers ──────────────────────────────────────────────────────────
+
 
 def _fan_out(event: dict) -> None:
     global _clients

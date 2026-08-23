@@ -1,5 +1,5 @@
 """
-SKCapstone Daemon — the always-on sovereign agent.
+SKCapstone Daemon - the always-on sovereign agent.
 
 Runs as a background process, continuously polling for
 incoming messages, scheduling vault sync, monitoring
@@ -12,6 +12,7 @@ This is what turns a CLI tool into a living agent.
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import json
 import logging
@@ -20,7 +21,6 @@ import queue
 import re
 import signal
 import struct
-import sys
 import threading
 import time
 import uuid
@@ -29,7 +29,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
-from . import AGENT_HOME, SHARED_ROOT
+from . import (
+    AGENT_HOME,
+    DYNAMIC_PORT_BASE,
+    DYNAMIC_PORT_SPAN,
+    FLEET_RESERVED_PORTS,
+    SHARED_ROOT,
+)
 from . import activity as _activity
 
 logger = logging.getLogger("skcapstone.daemon")
@@ -50,9 +56,172 @@ def _sanitize_peer(peer: str) -> str:
     sanitized = sanitized.strip(".")
     return sanitized[:64]
 
+
 DEFAULT_PORT = 7777
 PID_FILE = "daemon.pid"
 LOG_DIR = "logs"
+
+# Prometheus text exposition content type served by GET /metrics.
+PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+
+def _prom_escape_label(value: str) -> str:
+    """Escape a Prometheus label value per the text exposition format.
+
+    Backslashes, double quotes, and newlines must be escaped inside label
+    values.  Metric and label *names* are trusted literals here.
+
+    Args:
+        value: Raw label value.
+
+    Returns:
+        The escaped value, safe to embed inside double quotes.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _prom_line(name: str, value, labels: Optional[dict] = None) -> str:
+    """Render a single Prometheus sample line (no trailing newline).
+
+    Args:
+        name: Metric name.
+        value: Numeric sample value (integral floats rendered without a point).
+        labels: Optional label key→value mapping.
+
+    Returns:
+        One exposition line.
+    """
+    if labels:
+        label_str = ",".join(f'{k}="{_prom_escape_label(str(v))}"' for k, v in labels.items())
+        head = f"{name}{{{label_str}}}"
+    else:
+        head = name
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return f"{head} {value}"
+
+
+def _hb_is_alive(hb: dict) -> bool:
+    """Return True when a heartbeat dict is within its TTL.
+
+    Standalone twin of ``DaemonHandler._hb_alive`` so the Prometheus builder
+    can be exercised without instantiating the HTTP handler.
+
+    Args:
+        hb: Heartbeat dict with ``timestamp`` and optional ``ttl_seconds``.
+
+    Returns:
+        True when fresh, False when expired or unparseable.
+    """
+    ts_str = hb.get("timestamp", "")
+    ttl = hb.get("ttl_seconds", 300)
+    if not ts_str:
+        return False
+    try:
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) <= ts + timedelta(seconds=ttl)
+    except Exception:
+        return False
+
+
+def build_prometheus_metrics(config, consciousness=None) -> str:
+    """Assemble the Prometheus text exposition for the daemon.
+
+    Metrics are wired to real daemon sources where cheap; each source is
+    guarded independently so one failing collector never blanks the whole
+    scrape.  Exposes:
+
+      * ``consciousness_messages_total`` - consciousness metrics collector.
+      * ``memory_count{layer=...}`` - ``memory_engine.get_stats``.
+      * ``coord_tasks_total{status=...}`` - coordination ``Board`` task views.
+      * ``heartbeat_peers_alive`` - fresh heartbeats in the shared household.
+      * ``llm_errors_total`` - consciousness loop response/LLM error counter.
+
+    Args:
+        config: ``DaemonConfig`` (provides ``home`` and ``shared_root``).
+        consciousness: Optional consciousness loop with a ``.metrics`` collector.
+
+    Returns:
+        The full exposition text (ends with a trailing newline).
+    """
+    lines: list = []
+
+    # ── consciousness_messages_total (counter) - REAL ─────────────────────────
+    messages_total = 0
+    llm_errors_total = 0
+    if consciousness is not None:
+        try:
+            raw = consciousness.metrics.to_dict()
+            messages_total = int(raw.get("messages_processed", 0) or 0)
+            # The consciousness ``errors`` counter is incremented only in the
+            # response-generation path (LLM bridge call + response send), so it
+            # is the real, closest-available source for LLM errors.
+            llm_errors_total = int(raw.get("errors", 0) or 0)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Prometheus: failed to read consciousness metrics: %s", exc)
+    lines.append(
+        "# HELP consciousness_messages_total Messages processed by the consciousness loop."
+    )
+    lines.append("# TYPE consciousness_messages_total counter")
+    lines.append(_prom_line("consciousness_messages_total", messages_total))
+
+    # ── memory_count{layer=...} (gauge) - REAL ────────────────────────────────
+    lines.append("# HELP memory_count Number of memory entries by layer.")
+    lines.append("# TYPE memory_count gauge")
+    layer_counts = {"short_term": 0, "mid_term": 0, "long_term": 0}
+    try:
+        from .memory_engine import get_stats as _mem_stats
+
+        ms = _mem_stats(config.home)
+        layer_counts = {
+            "short_term": int(getattr(ms, "short_term", 0) or 0),
+            "mid_term": int(getattr(ms, "mid_term", 0) or 0),
+            "long_term": int(getattr(ms, "long_term", 0) or 0),
+        }
+    except Exception as exc:
+        logger.warning("Prometheus: failed to read memory stats: %s", exc)
+    for layer, count in layer_counts.items():
+        lines.append(_prom_line("memory_count", count, {"layer": layer}))
+
+    # ── coord_tasks_total{status=...} (gauge) - REAL ──────────────────────────
+    lines.append("# HELP coord_tasks_total Coordination board tasks by status.")
+    lines.append("# TYPE coord_tasks_total gauge")
+    status_counts = {"open": 0, "claimed": 0, "in_progress": 0, "done": 0}
+    try:
+        from .coordination import Board
+
+        for v in Board(config.home).get_task_views():
+            key = v.status.value
+            status_counts[key] = status_counts.get(key, 0) + 1
+    except Exception as exc:
+        logger.warning("Prometheus: failed to read coordination board: %s", exc)
+    for st, count in status_counts.items():
+        lines.append(_prom_line("coord_tasks_total", count, {"status": st}))
+
+    # ── heartbeat_peers_alive (gauge) - REAL ──────────────────────────────────
+    lines.append("# HELP heartbeat_peers_alive Household agents with a fresh heartbeat.")
+    lines.append("# TYPE heartbeat_peers_alive gauge")
+    peers_alive = 0
+    try:
+        heartbeats_dir = config.shared_root / "heartbeats"
+        if heartbeats_dir.exists():
+            for hb_path in heartbeats_dir.glob("*.json"):
+                try:
+                    hb = json.loads(hb_path.read_text(encoding="utf-8"))
+                    if _hb_is_alive(hb):
+                        peers_alive += 1
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.warning("Prometheus: failed to count alive heartbeats: %s", exc)
+    lines.append(_prom_line("heartbeat_peers_alive", peers_alive))
+
+    # ── llm_errors_total (counter) - REAL (consciousness response error path) ──
+    lines.append("# HELP llm_errors_total Errors in the consciousness LLM response path.")
+    lines.append("# TYPE llm_errors_total counter")
+    lines.append(_prom_line("llm_errors_total", llm_errors_total))
+
+    return "\n".join(lines) + "\n"
 
 
 def _sd_notify(state: str) -> bool:
@@ -63,14 +232,15 @@ def _sd_notify(state: str) -> bool:
     was sent, False if NOTIFY_SOCKET is not set (i.e. not running under systemd).
 
     Common states:
-        "READY=1"       — service startup complete
-        "WATCHDOG=1"    — watchdog keep-alive ping
-        "STOPPING=1"    — graceful shutdown in progress
+        "READY=1"       - service startup complete
+        "WATCHDOG=1"    - watchdog keep-alive ping
+        "STOPPING=1"    - graceful shutdown in progress
     """
     addr = os.environ.get("NOTIFY_SOCKET")
     if not addr:
         return False
     import socket as _socket
+
     try:
         sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_DGRAM)
         try:
@@ -83,6 +253,7 @@ def _sd_notify(state: str) -> bool:
     except OSError as exc:
         logger.debug("sd_notify(%r) failed: %s", state, exc)
         return False
+
 
 # ── WebSocket helpers (RFC 6455, stdlib-only) ─────────────────────────────────
 
@@ -191,6 +362,9 @@ class ComponentHealth:
         self.started_at: Optional[datetime] = None
         self.last_heartbeat: Optional[datetime] = None
         self.restart_count: int = 0
+        self.restart_times: list[datetime] = []
+        self.last_restart_at: Optional[datetime] = None
+        self.gave_up: bool = False
         self.last_error: Optional[str] = None
         self._lock = threading.Lock()
 
@@ -203,7 +377,7 @@ class ComponentHealth:
             self.last_heartbeat = now
 
     def pulse(self) -> None:
-        """Record a heartbeat — component is alive and working."""
+        """Record a heartbeat - component is alive and working."""
         with self._lock:
             self.last_heartbeat = datetime.now(timezone.utc)
             if self.status != "alive":
@@ -217,10 +391,42 @@ class ComponentHealth:
                 self.last_error = error
 
     def mark_restarting(self) -> None:
-        """Transition to restarting and increment the restart counter."""
+        """Transition to restarting and record the attempt.
+
+        Bumps the lifetime counter and appends a timestamp to the sliding
+        window used for restart-intensity checks.
+        """
         with self._lock:
             self.status = "restarting"
+            now = datetime.now(timezone.utc)
             self.restart_count += 1
+            self.restart_times.append(now)
+            self.last_restart_at = now
+
+    def recent_restarts(self, window_seconds: int) -> int:
+        """Count restart attempts inside the trailing window.
+
+        Prunes entries older than the window so the list cannot grow without
+        bound on a long-lived daemon.
+
+        Args:
+            window_seconds: Width of the trailing window, in seconds.
+
+        Returns:
+            Number of restart attempts recorded within the window.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        with self._lock:
+            self.restart_times = [t for t in self.restart_times if t >= cutoff]
+            return len(self.restart_times)
+
+    def mark_failed(self, error: str = "") -> None:
+        """Mark component as failed - restart budget exhausted, giving up."""
+        with self._lock:
+            self.status = "failed"
+            self.gave_up = True
+            if error:
+                self.last_error = error
 
     def mark_disabled(self) -> None:
         """Mark component as permanently disabled (not started)."""
@@ -244,9 +450,7 @@ class ComponentHealth:
         with self._lock:
             age: Optional[int] = None
             if self.last_heartbeat:
-                age = round(
-                    (datetime.now(timezone.utc) - self.last_heartbeat).total_seconds()
-                )
+                age = round((datetime.now(timezone.utc) - self.last_heartbeat).total_seconds())
             return {
                 "name": self.name,
                 "status": self.status,
@@ -257,6 +461,11 @@ class ComponentHealth:
                 ),
                 "heartbeat_age_seconds": age,
                 "restart_count": self.restart_count,
+                "recent_restarts": len(self.restart_times),
+                "last_restart_at": (
+                    self.last_restart_at.isoformat() if self.last_restart_at else None
+                ),
+                "gave_up": self.gave_up,
                 "last_error": self.last_error,
             }
 
@@ -269,11 +478,13 @@ class ComponentManager:
     has exited or whose heartbeat has timed out.
 
     Args:
-        stop_event: Shared stop event — when set the watchdog exits cleanly.
+        stop_event: Shared stop event - when set the watchdog exits cleanly.
     """
 
     WATCHDOG_INTERVAL = 30  # seconds between watchdog checks
-    MAX_RESTARTS = 5  # maximum auto-restart attempts per component
+    MAX_RESTARTS = 5  # max auto-restart attempts per RESTART_WINDOW (a rate, not a total)
+    RESTART_WINDOW = 3600  # seconds - sliding window the restart budget applies to
+    RESTART_BACKOFF = 5  # seconds to wait between consecutive restart attempts
 
     def __init__(self, stop_event: threading.Event):
         self._stop_event = stop_event
@@ -469,34 +680,48 @@ class ComponentManager:
                 comp.mark_dead("thread exited")
                 needs_restart = True
             elif comp.last_heartbeat:
-                age = (
-                    datetime.now(timezone.utc) - comp.last_heartbeat
-                ).total_seconds()
+                age = (datetime.now(timezone.utc) - comp.last_heartbeat).total_seconds()
                 if age > comp.heartbeat_timeout:
-                    logger.warning(
-                        "Component '%s' heartbeat timeout (%.0fs old)", name, age
-                    )
+                    logger.warning("Component '%s' heartbeat timeout (%.0fs old)", name, age)
                     comp.mark_dead("heartbeat timeout")
                     needs_restart = True
 
             if not needs_restart:
                 continue
 
-            if comp.restart_count >= self.MAX_RESTARTS:
-                logger.error(
-                    "Component '%s' exceeded max restarts (%d) — giving up",
-                    name,
-                    self.MAX_RESTARTS,
-                )
+            # Restart intensity is a *rate*: MAX_RESTARTS within RESTART_WINDOW.
+            # A component that blipped a few times over weeks is not crash-looping.
+            recent = comp.recent_restarts(self.RESTART_WINDOW)
+            if recent >= self.MAX_RESTARTS:
+                if not comp.gave_up:
+                    logger.error(
+                        "Component '%s' exceeded restart budget (%d in %ds) - giving up",
+                        name,
+                        recent,
+                        self.RESTART_WINDOW,
+                    )
+                    comp.mark_failed(
+                        f"restart budget exhausted ({recent} in {self.RESTART_WINDOW}s)"
+                    )
                 continue
+
+            if comp.gave_up:
+                logger.info("Component '%s' restart budget recovered - re-arming watchdog", name)
+                comp.gave_up = False
+
+            if comp.last_restart_at:
+                since = (datetime.now(timezone.utc) - comp.last_restart_at).total_seconds()
+                if since < self.RESTART_BACKOFF:
+                    continue
 
             target = factories.get(name)
             if target:
                 logger.warning(
-                    "Watchdog auto-restarting '%s' (attempt %d/%d)",
+                    "Watchdog auto-restarting '%s' (attempt %d/%d in %ds window)",
                     name,
-                    comp.restart_count + 1,
+                    recent + 1,
                     self.MAX_RESTARTS,
+                    self.RESTART_WINDOW,
                 )
                 comp.mark_restarting()
                 self._launch(name, target)
@@ -537,6 +762,9 @@ class DaemonConfig:
             ``SKCAPSTONE_TLS=true``).  A self-signed certificate is
             auto-generated under ``~/.skcapstone/tls/`` on first start.
         tls_dir: Directory for TLS certificate and key files.
+        shutdown_timeout: Upper bound in seconds for the graceful shutdown
+            sequence.  Thread joins and the API-server shutdown share this
+            budget so ``stop()`` can never block forever.
     """
 
     def __init__(
@@ -551,6 +779,7 @@ class DaemonConfig:
         consciousness_config_path: Optional[Path] = None,
         tls_enabled: Optional[bool] = None,
         tls_dir: Optional[Path] = None,
+        shutdown_timeout: float = 30.0,
     ):
         self.home = (home or Path(AGENT_HOME)).expanduser()
         self.shared_root = (shared_root or Path(SHARED_ROOT)).expanduser()
@@ -560,6 +789,9 @@ class DaemonConfig:
         self.port = port
         self.consciousness_enabled = consciousness_enabled
         self.consciousness_config_path = consciousness_config_path
+        # Upper bound (seconds) on the whole graceful-shutdown sequence so a
+        # wedged thread or blocking transport can never hang the process on exit.
+        self.shutdown_timeout = float(shutdown_timeout)
 
         # TLS: env var SKCAPSTONE_TLS=true overrides the constructor arg
         if tls_enabled is None:
@@ -595,6 +827,10 @@ class DaemonState:
         self.healing_history: list[dict] = []
         self.inflight_messages: dict[str, dict] = {}
         self.sync_pipeline_status: dict = {}
+        # Status-API server health. "pending" until the bind is attempted, then
+        # "ok" (bound on the intended port), "rebound" (had to move to a free
+        # port after a collision - degraded), or "down" (no API at all).
+        self.api_server: dict = {"status": "pending", "port": None, "detail": ""}
 
     def snapshot(self) -> dict:
         """Return a serializable snapshot of current state.
@@ -623,6 +859,7 @@ class DaemonState:
                 "sync_pipeline": self.sync_pipeline_status,
                 "recent_errors": self.errors[-10:],
                 "inflight_count": len(self.inflight_messages),
+                "api_server": dict(self.api_server),
                 "pid": os.getpid(),
             }
 
@@ -660,6 +897,28 @@ class DaemonState:
             self.errors.append(f"[{ts}] {error}")
             if len(self.errors) > 50:
                 self.errors = self.errors[-50:]
+
+    def record_api_server(self, status: str, port: Optional[int] = None, detail: str = "") -> None:
+        """Record the status-API server health.
+
+        Args:
+            status: One of "ok", "rebound" (degraded - bound on a fallback
+                port after a collision), or "down" (no API server running).
+            port: The port the server actually bound to, if any.
+            detail: Human-readable context (e.g. the bind error).
+        """
+        with self._lock:
+            self.api_server = {"status": status, "port": port, "detail": detail}
+
+    def is_degraded(self) -> bool:
+        """Return True if the daemon is running in a degraded state.
+
+        Currently driven by the status-API server: a "rebound" (collision
+        fallback) or "down" (no API) state means status/health monitoring is
+        impaired even though the core daemon loop is alive.
+        """
+        with self._lock:
+            return self.api_server.get("status") in ("rebound", "down")
 
     def record_healing_run(self, report: dict) -> None:
         """Record a self-healing run result, keeping the last 20 entries.
@@ -713,6 +972,10 @@ class DaemonService:
         self.config = config
         self.state = DaemonState()
         self._stop_event = threading.Event()
+        # Idempotency guard for stop(): the body runs exactly once even if
+        # SIGTERM/SIGINT fire repeatedly or run_forever's finally also calls it.
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_done = False
         self._threads: list[threading.Thread] = []
         self._server: Optional[HTTPServer] = None
         self._skcomms = None
@@ -724,7 +987,7 @@ class DaemonService:
         # WebSocket clients: set of raw sockets for connected /ws clients
         self._ws_clients: set = set()
         self._ws_lock = threading.Lock()
-        # Component health manager — populated in start()
+        # Component health manager - populated in start()
         self._component_mgr = ComponentManager(self._stop_event)
 
     def start(self) -> None:
@@ -741,7 +1004,7 @@ class DaemonService:
         self.state.started_at = datetime.now(timezone.utc)
 
         logger.info(
-            "Daemon starting — home=%s port=%d poll=%ds sync=%ds",
+            "Daemon starting - home=%s port=%d poll=%ds sync=%ds",
             self.config.home,
             self.config.port,
             self.config.poll_interval,
@@ -801,33 +1064,129 @@ class DaemonService:
         self._start_api_server()
 
         _sd_notify("READY=1")
-        logger.info("Daemon started — PID %d", os.getpid())
+        logger.info("Daemon started - PID %d", os.getpid())
 
     def stop(self) -> None:
-        """Gracefully stop the daemon and all workers."""
+        """Gracefully stop the daemon and all workers.
+
+        Runs a bounded, idempotent shutdown sequence:
+
+        1. Signal every loop to stop (``_stop_event``).
+        2. Publish a final ``offline`` heartbeat so peers see us leave.
+        3. Stop the consciousness loop and task scheduler.
+        4. Shut down the API server (drains in-flight HTTP requests).
+        5. Join background threads within the remaining time budget.
+        6. Flush in-flight messages + metrics to ``shutdown_state.json``.
+        7. Write a closing journal entry.
+        8. Remove the PID file so a restart never sees a stale one.
+
+        The whole sequence is capped at ``config.shutdown_timeout`` seconds so
+        a wedged thread or blocking transport can never hang the process.  The
+        method is idempotent: repeated SIGTERM/SIGINT (or a redundant call from
+        ``run_forever``'s ``finally``) run the body only once.  The PID file is
+        removed in a ``finally`` so it is cleared even if an earlier step raises.
+        """
+        # ── Idempotency guard ────────────────────────────────────────────────
+        with self._shutdown_lock:
+            if self._shutdown_done:
+                logger.debug("stop() already ran - ignoring duplicate call")
+                return
+            self._shutdown_done = True
+
+        deadline = time.monotonic() + self.config.shutdown_timeout
+
+        def _remaining(minimum: float = 0.0) -> float:
+            """Seconds left in the shutdown budget (never below ``minimum``)."""
+            return max(minimum, deadline - time.monotonic())
+
         _sd_notify("STOPPING=1")
-        logger.info("Daemon stopping...")
-        self._stop_event.set()
-        self.state.running = False
+        logger.info(
+            "Daemon stopping - graceful shutdown (budget %.0fs)...",
+            self.config.shutdown_timeout,
+        )
+        try:
+            # 1. Signal all loops to stop.
+            self._stop_event.set()
+            self.state.running = False
 
-        if self._consciousness:
-            try:
-                self._consciousness.stop()
-            except Exception as exc:
-                logger.warning("Consciousness stop error: %s", exc)
+            # 2. Announce offline so peers stop routing to us immediately.
+            if self._beacon:
+                try:
+                    self._beacon.mark_offline()
+                    logger.info("Shutdown: published offline heartbeat")
+                except Exception as exc:
+                    logger.warning("Shutdown: heartbeat offline failed: %s", exc)
 
-        if self._server:
-            try:
-                self._server.shutdown()
-            except Exception as exc:
-                logger.warning("API server shutdown error: %s", exc)
+            # 3a. Stop the consciousness loop.
+            if self._consciousness:
+                try:
+                    self._consciousness.stop()
+                    logger.info("Shutdown: consciousness loop stopped")
+                except Exception as exc:
+                    logger.warning("Consciousness stop error: %s", exc)
 
-        for t in self._threads:
-            t.join(timeout=5)
+            # 3b. Stop the task scheduler (thread also honours _stop_event).
+            if self._scheduler and hasattr(self._scheduler, "stop"):
+                try:
+                    self._scheduler.stop()
+                    logger.info("Shutdown: task scheduler stopped")
+                except Exception as exc:
+                    logger.warning("Scheduler stop error: %s", exc)
 
-        self._save_shutdown_state()
-        self._remove_pid()
-        logger.info("Daemon stopped.")
+            # 4. Shut down the API server, bounded so a stuck handler can't hang
+            #    us.  server.shutdown() blocks until serve_forever() returns, so
+            #    we run it on a helper thread and only wait the remaining budget.
+            if self._server:
+                shutdown_thread = threading.Thread(
+                    target=self._server.shutdown, name="daemon-server-shutdown", daemon=True
+                )
+                shutdown_thread.start()
+                shutdown_thread.join(timeout=_remaining(minimum=1.0))
+                if shutdown_thread.is_alive():
+                    logger.warning("Shutdown: API server did not stop within budget")
+                else:
+                    logger.info("Shutdown: API server stopped")
+
+            # 5. Join background threads, sharing what's left of the budget.
+            live_threads = [t for t in self._threads if t.is_alive()]
+            for t in live_threads:
+                t.join(timeout=_remaining(minimum=0.1))
+            still_alive = [t.name for t in self._threads if t.is_alive()]
+            if still_alive:
+                logger.warning(
+                    "Shutdown: %d thread(s) still running after budget: %s",
+                    len(still_alive),
+                    ", ".join(still_alive),
+                )
+            else:
+                logger.info("Shutdown: all background threads joined")
+
+            # 6. Flush in-flight state to disk (drain the retry queue).
+            self._save_shutdown_state()
+
+            # 7. Closing journal entry (best-effort).
+            self._journal_shutdown()
+        except Exception as exc:  # never let shutdown bookkeeping wedge exit
+            logger.error("Error during shutdown sequence: %s", exc)
+        finally:
+            # 8. Always clear the PID file so a restart never sees a stale one.
+            self._remove_pid()
+            logger.info("Daemon stopped.")
+
+    def _journal_shutdown(self) -> None:
+        """Write a closing journal entry on graceful shutdown (best-effort)."""
+        try:
+            from skmemory.journal import Journal, JournalEntry
+
+            entry = JournalEntry(
+                title="Daemon shutdown",
+                emotional_summary="peaceful",
+                moments=["Graceful shutdown - drained, flushed, and signed off."],
+            )
+            Journal().write_entry(entry)
+            logger.info("Shutdown: journal entry written")
+        except Exception as exc:
+            logger.debug("Shutdown journal write failed: %s", exc)
 
     def run_forever(self) -> None:
         """Block until stop is signaled.
@@ -851,7 +1210,7 @@ class DaemonService:
         try:
             from .preflight import PreflightChecker
         except ImportError:
-            logger.warning("PreflightChecker not available — skipping preflight")
+            logger.warning("PreflightChecker not available - skipping preflight")
             return
 
         checker = PreflightChecker(home=self.config.home)
@@ -862,55 +1221,61 @@ class DaemonService:
             status = check["status"]
             msg = check["message"]
             if status == "ok":
-                logger.info("preflight [%s] OK — %s", name, msg)
+                logger.info("preflight [%s] OK - %s", name, msg)
             elif status == "warn":
-                logger.warning("preflight [%s] WARN — %s", name, msg)
+                logger.warning("preflight [%s] WARN - %s", name, msg)
             else:
-                logger.error("preflight [%s] FAIL — %s", name, msg)
+                logger.error("preflight [%s] FAIL - %s", name, msg)
 
         if not summary["ok"]:
             failed = [c for c in summary["checks"] if c["status"] == "fail" and c["critical"]]
             msgs = "; ".join(c["message"] for c in failed)
-            logger.error("Preflight FAILED — aborting daemon startup: %s", msgs)
+            logger.error("Preflight FAILED - aborting daemon startup: %s", msgs)
             raise SystemExit(f"Daemon preflight failed: {msgs}")
 
         if summary["warnings"] or summary["failures"]:
             logger.warning(
-                "Preflight complete — %d warning(s), %d non-critical failure(s)",
+                "Preflight complete - %d warning(s), %d non-critical failure(s)",
                 summary["warnings"],
                 summary["failures"],
             )
         else:
-            logger.info("Preflight complete — all checks passed")
+            logger.info("Preflight complete - all checks passed")
 
     def _load_components(self) -> None:
         """Attempt to load SKComms, AgentRuntime, and ConsciousnessLoop."""
         try:
             from skcomms.core import SKComms
+
             from .sync_engine import ensure_comms_dirs, get_comms_root
+
             self._skcomms = SKComms.from_config()
             expected_comms_root = get_comms_root(self.config.shared_root)
             ensure_comms_dirs(self.config.shared_root)
             for transport in self._skcomms.router.transports:
-                if getattr(transport, "name", "") == "syncthing" and hasattr(transport, "configure"):
+                if getattr(transport, "name", "") == "syncthing" and hasattr(
+                    transport, "configure"
+                ):
                     transport.configure({"comms_root": str(expected_comms_root)})
-            logger.info("SKComms loaded — %d transports", len(self._skcomms.router.transports))
+            logger.info("SKComms loaded - %d transports", len(self._skcomms.router.transports))
         except ImportError:
-            logger.warning("SKComms not installed — inbox polling disabled")
+            logger.warning("SKComms not installed - inbox polling disabled")
         except Exception as exc:
             logger.warning("SKComms failed to load: %s", exc)
             self.state.record_error(f"SKComms load: {exc}")
 
         try:
             from .runtime import get_runtime
+
             self._runtime = get_runtime(self.config.home)
-            logger.info("Runtime loaded — agent '%s'", self._runtime.manifest.name)
+            logger.info("Runtime loaded - agent '%s'", self._runtime.manifest.name)
         except Exception as exc:
             logger.warning("Runtime failed to load: %s", exc)
             self.state.record_error(f"Runtime load: {exc}")
 
         try:
             from .heartbeat import HeartbeatBeacon
+
             agent_name = self._runtime.manifest.name if self._runtime else "anonymous"
             self._beacon = HeartbeatBeacon(self.config.home, agent_name)
             logger.info("HeartbeatBeacon initialized for '%s'", agent_name)
@@ -932,7 +1297,8 @@ class DaemonService:
                 )
                 if c_config.enabled:
                     self._consciousness = ConsciousnessLoop(
-                        c_config, self.state,
+                        c_config,
+                        self.state,
                         home=self.config.home,
                         shared_root=self.config.shared_root,
                     )
@@ -941,12 +1307,15 @@ class DaemonService:
                     logger.info("Consciousness loop loaded")
 
                     # Preload Ollama model into RAM so first real message is fast
+                    warm_model = c_config.ollama_model
+
                     def _ollama_warmup():
                         try:
                             from skseed.llm import ollama_callback
-                            cb = ollama_callback(model="llama3.2")
+
+                            cb = ollama_callback(model=warm_model)
                             cb("warmup")
-                            logger.info("Ollama warmup complete — llama3.2 loaded")
+                            logger.info("Ollama warmup complete - %s loaded", warm_model)
                         except Exception as exc:
                             logger.debug("Ollama warmup skipped: %s", exc)
 
@@ -964,13 +1333,28 @@ class DaemonService:
         # Load self-healing doctor
         try:
             from .self_healing import SelfHealingDoctor
+
             self._healer = SelfHealingDoctor(
-                self.config.home, consciousness_loop=self._consciousness,
+                self.config.home,
+                consciousness_loop=self._consciousness,
             )
             logger.info("Self-healing doctor loaded")
         except Exception as exc:
             logger.warning("Self-healing doctor failed to load: %s", exc)
             self.state.record_error(f"Self-healing load: {exc}")
+
+        # Register the consciousness-loop reference for the in-process
+        # dreaming-reflection jobs.yaml job. This is a hard constraint that must
+        # hold regardless of whether the task scheduler builds successfully -
+        # None under --no-consciousness, an active loop otherwise. Keeping it
+        # out of the scheduler try-block means a scheduler-build failure can no
+        # longer leave a stale loop reference registered.
+        try:
+            from .dreaming_job import set_consciousness_loop
+
+            set_consciousness_loop(self._consciousness)
+        except Exception as exc:
+            logger.warning("Failed to register consciousness loop reference: %s", exc)
 
         # Build task scheduler (beacon + consciousness must be ready first)
         try:
@@ -985,7 +1369,7 @@ class DaemonService:
                 beacon=self._beacon,
                 sync_watcher=_sync_watcher,
             )
-            logger.info("Task scheduler built — %d task(s)", len(self._scheduler._tasks))
+            logger.info("Task scheduler built - %d task(s)", len(self._scheduler._tasks))
         except Exception as exc:
             logger.warning("Task scheduler failed to build: %s", exc)
             self.state.record_error(f"Scheduler build: {exc}")
@@ -1042,18 +1426,22 @@ class DaemonService:
                         active_conversations=active_convs,
                         messages_processed_24h=c_stats.get("messages_processed_24h", 0),
                     )
-                    _activity.push("heartbeat.published", {
-                        "status": "alive",
-                        "consciousness_active": bool(self._consciousness),
-                        "active_conversations": active_convs,
-                        "messages_processed_24h": c_stats.get("messages_processed_24h", 0),
-                    })
+                    _activity.push(
+                        "heartbeat.published",
+                        {
+                            "status": "alive",
+                            "consciousness_active": bool(self._consciousness),
+                            "active_conversations": active_convs,
+                            "messages_processed_24h": c_stats.get("messages_processed_24h", 0),
+                        },
+                    )
                 except Exception as exc:
                     logger.warning("Heartbeat pulse failed: %s", exc)
 
-            # Sync pipeline status — inbox/outbox file counts and path alignment
+            # Sync pipeline status - inbox/outbox file counts and path alignment
             try:
                 from .sync_engine import get_sync_pipeline_status
+
                 sync_status = get_sync_pipeline_status(self.config.shared_root)
                 self.state.record_sync_pipeline(sync_status)
                 if sync_status.get("inbox_files", 0) > 0:
@@ -1077,6 +1465,7 @@ class DaemonService:
             if self._runtime and self._runtime.is_initialized:
                 try:
                     from .pillars.sync import push_seed
+
                     name = self._runtime.manifest.name
                     result = push_seed(self.config.home, name, encrypt=True)
                     if result:
@@ -1113,7 +1502,7 @@ class DaemonService:
                 self.state.record_error(f"Housekeeping: {exc}")
 
     def _process_messages(self, envelopes: list) -> None:
-        """Handle received messages — delegates to consciousness loop.
+        """Handle received messages - delegates to consciousness loop.
 
         Args:
             envelopes: List of received MessageEnvelope objects.
@@ -1129,13 +1518,16 @@ class DaemonService:
                     else str(env.payload.content_type)
                 )
                 sender = getattr(env, "sender", "unknown")
-                self.state.add_inflight(msg_id, {
-                    "message_id": msg_id,
-                    "sender": sender,
-                    "content": content,
-                    "content_type": content_type,
-                    "received_at": datetime.now(timezone.utc).isoformat(),
-                })
+                self.state.add_inflight(
+                    msg_id,
+                    {
+                        "message_id": msg_id,
+                        "sender": sender,
+                        "content": content,
+                        "content_type": content_type,
+                        "received_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
                 logger.info(
                     "Message from %s: %s [%s]",
                     sender,
@@ -1145,24 +1537,31 @@ class DaemonService:
                 if self._consciousness and self._consciousness._config.enabled:
                     self._consciousness.process_envelope(env)
                 # Activity bus: consciousness processed event
-                _activity.push("consciousness.processed", {
-                    "sender": sender,
-                    "content_type": content_type,
-                    "preview": content_preview,
-                })
+                _activity.push(
+                    "consciousness.processed",
+                    {
+                        "sender": sender,
+                        "content_type": content_type,
+                        "preview": content_preview,
+                    },
+                )
                 # Stream the new message to any connected WebSocket clients
-                self._ws_broadcast({
-                    "type": "message",
-                    "sender": sender,
-                    "content": content,
-                    "content_type": content_type,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                self._ws_broadcast(
+                    {
+                        "type": "message",
+                        "sender": sender,
+                        "content": content,
+                        "content_type": content_type,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
                 self._journal_incoming(sender, content_preview)
                 self.state.remove_inflight(msg_id)
             except Exception as exc:
                 self.state.remove_inflight(msg_id)
-                logger.warning("Failed to process message from %s: %s", getattr(env, "sender", "?"), exc)
+                logger.warning(
+                    "Failed to process message from %s: %s", getattr(env, "sender", "?"), exc
+                )
                 self.state.record_error(f"Process message: {exc}")
 
     def _journal_incoming(self, sender: str, preview: str) -> None:
@@ -1174,6 +1573,7 @@ class DaemonService:
         """
         try:
             from skmemory.journal import Journal, JournalEntry
+
             entry = JournalEntry(
                 title=f"From {sender}",
                 moments=[preview] if preview else [],
@@ -1310,17 +1710,19 @@ class DaemonService:
             def _get_system_stats() -> dict:
                 """Collect memory and disk usage statistics."""
                 import shutil
+
                 stats: dict = {}
                 try:
                     usage = shutil.disk_usage("/")
-                    stats["disk_total_gb"] = round(usage.total / (1024 ** 3), 1)
-                    stats["disk_used_gb"] = round(usage.used / (1024 ** 3), 1)
-                    stats["disk_free_gb"] = round(usage.free / (1024 ** 3), 1)
+                    stats["disk_total_gb"] = round(usage.total / (1024**3), 1)
+                    stats["disk_used_gb"] = round(usage.used / (1024**3), 1)
+                    stats["disk_free_gb"] = round(usage.free / (1024**3), 1)
                 except Exception as e:
                     logger.warning("Failed to collect disk stats: %s", e)
                     stats.update(disk_total_gb=0, disk_used_gb=0, disk_free_gb=0)
                 try:
                     import platform as _platform
+
                     if _platform.system() == "Linux":
                         meminfo: dict = {}
                         with open("/proc/meminfo") as fh:
@@ -1335,9 +1737,12 @@ class DaemonService:
                         stats["memory_free_mb"] = round(avail_kb / 1024)
                     else:
                         import psutil
+
                         mem = psutil.virtual_memory()
                         stats["memory_total_mb"] = round(mem.total / (1024 * 1024))
-                        stats["memory_used_mb"] = round((mem.total - mem.available) / (1024 * 1024))
+                        stats["memory_used_mb"] = round(
+                            (mem.total - mem.available) / (1024 * 1024)
+                        )
                         stats["memory_free_mb"] = round(mem.available / (1024 * 1024))
                 except Exception as e:
                     logger.warning("Failed to collect memory stats: %s", e)
@@ -1348,7 +1753,7 @@ class DaemonService:
                 """Assemble all dashboard data into a single dict."""
                 snap = state.snapshot()
 
-                # Agent identity — try runtime first, then identity.json
+                # Agent identity - try runtime first, then identity.json
                 agent_name = "unknown"
                 agent_fingerprint = ""
                 if runtime and hasattr(runtime, "manifest"):
@@ -1385,11 +1790,15 @@ class DaemonService:
                             try:
                                 msgs = json.loads(cf.read_text(encoding="utf-8"))
                                 if isinstance(msgs, list):
-                                    conversations.append({
-                                        "peer": cf.stem,
-                                        "message_count": len(msgs),
-                                        "last_message": msgs[-1].get("timestamp") if msgs else None,
-                                    })
+                                    conversations.append(
+                                        {
+                                            "peer": cf.stem,
+                                            "message_count": len(msgs),
+                                            "last_message": (
+                                                msgs[-1].get("timestamp") if msgs else None
+                                            ),
+                                        }
+                                    )
                             except Exception as exc:
                                 logger.warning("Failed to read conversation file %s: %s", cf, exc)
                     except Exception as exc:
@@ -1421,9 +1830,13 @@ class DaemonService:
                 summary + active tasks, and consciousness stats in one shot.
                 """
                 # ── Agent identity ────────────────────────────────────────
-                agent: dict = {"name": "unknown", "fingerprint": "",
-                               "consciousness": "AWAKENING",
-                               "is_conscious": False, "is_singular": False}
+                agent: dict = {
+                    "name": "unknown",
+                    "fingerprint": "",
+                    "consciousness": "AWAKENING",
+                    "is_conscious": False,
+                    "is_singular": False,
+                }
                 if runtime and hasattr(runtime, "manifest"):
                     try:
                         m = runtime.manifest
@@ -1436,7 +1849,9 @@ class DaemonService:
                         elif m.is_conscious:
                             agent["consciousness"] = "CONSCIOUS"
                     except Exception as exc:
-                        logger.warning("Failed to read agent identity from runtime manifest: %s", exc)
+                        logger.warning(
+                            "Failed to read agent identity from runtime manifest: %s", exc
+                        )
                 identity_file = config.home / "identity" / "identity.json"
                 if identity_file.exists():
                     try:
@@ -1444,16 +1859,15 @@ class DaemonService:
                         agent["name"] = ident.get("name", agent["name"])
                         agent["fingerprint"] = ident.get("fingerprint", agent["fingerprint"])
                     except Exception as exc:
-                        logger.warning("Failed to read identity.json for capstone dashboard: %s", exc)
+                        logger.warning(
+                            "Failed to read identity.json for capstone dashboard: %s", exc
+                        )
 
                 # ── Pillar status ─────────────────────────────────────────
                 pillars: dict = {}
                 if runtime and hasattr(runtime, "manifest"):
                     try:
-                        pillars = {
-                            k: v.value
-                            for k, v in runtime.manifest.pillar_summary.items()
-                        }
+                        pillars = {k: v.value for k, v in runtime.manifest.pillar_summary.items()}
                     except Exception as exc:
                         logger.warning("Failed to read pillar summary from manifest: %s", exc)
 
@@ -1461,6 +1875,7 @@ class DaemonService:
                 memory: dict = {}
                 try:
                     from .memory_engine import get_stats as _mem_stats
+
                     ms = _mem_stats(config.home)
                     memory = {
                         "total": ms.total_memories,
@@ -1476,6 +1891,7 @@ class DaemonService:
                 board: dict = {"summary": {}, "active": []}
                 try:
                     from .coordination import Board
+
                     brd = Board(config.home)
                     views = brd.get_task_views()
                     total = len(views)
@@ -1505,7 +1921,9 @@ class DaemonService:
                         "active": active_tasks,
                     }
                 except Exception as exc:
-                    logger.warning("Failed to collect coordination board data for dashboard: %s", exc)
+                    logger.warning(
+                        "Failed to collect coordination board data for dashboard: %s", exc
+                    )
 
                 # ── Consciousness stats ───────────────────────────────────
                 c_stats: dict = {}
@@ -1543,7 +1961,7 @@ class DaemonService:
                 else:
                     uptime_str = f"{int(secs // 3600)}h {int((secs % 3600) // 60)}m"
 
-                # Fingerprint — shorten for display
+                # Fingerprint - shorten for display
                 fp = agent.get("fingerprint", "")
                 fp_short = f"{fp[:8]}\u2026{fp[-8:]}" if len(fp) > 20 else fp
 
@@ -1556,7 +1974,7 @@ class DaemonService:
                 c_html = (
                     f'<div class="stat-row"><span class="stat-label">'
                     f'<span class="dot {c_dot}"></span>Status</span>'
-                    f'<span class="stat-value">{"active" if c_enabled else "disabled"}</span></div>'
+                    f'<span class="stat-value">{"active" if c_enabled else "disabled"}</span></div>'  # noqa: E501
                     f'<div class="stat-row"><span class="stat-label">Processed</span>'
                     f'<span class="stat-value">{cons.get("messages_processed", 0)}</span></div>'
                     f'<div class="stat-row"><span class="stat-label">Responses sent</span>'
@@ -1566,7 +1984,7 @@ class DaemonService:
                     f'<div class="stat-row"><span class="stat-label">iNotify</span>'
                     f'<span class="stat-value">{"yes" if c_inotify else "no"}</span></div>'
                     f'<div class="stat-row"><span class="stat-label">LLM backends</span>'
-                    f'<span class="stat-value" style="font-size:12px">{c_backends_str}</span></div>'
+                    f'<span class="stat-value" style="font-size:12px">{c_backends_str}</span></div>'  # noqa: E501
                 )
 
                 # Backend health card
@@ -1582,7 +2000,7 @@ class DaemonService:
                         )
                     b_html = "\n".join(b_rows)
                 else:
-                    b_html = '<div style="color:#484f58;padding:4px 0;font-size:13px">No transports configured</div>'
+                    b_html = '<div style="color:#484f58;padding:4px 0;font-size:13px">No transports configured</div>'  # noqa: E501
 
                 # Conversations card
                 if conversations:
@@ -1595,12 +2013,14 @@ class DaemonService:
                             f'<div class="peer-row">'
                             f'<span class="peer-name">{peer}</span>'
                             f'<div><span class="peer-count">{count}</span>'
-                            f'<span style="color:#484f58;font-size:11px;margin-left:6px">{last}</span>'
-                            f'</div></div>'
+                            f'<span style="color:#484f58;font-size:11px;margin-left:6px">{last}</span>'  # noqa: E501
+                            f"</div></div>"
                         )
                     conv_html = "\n".join(c_rows)
                 else:
-                    conv_html = '<div style="color:#484f58;padding:4px 0">No conversations yet</div>'
+                    conv_html = (
+                        '<div style="color:#484f58;padding:4px 0">No conversations yet</div>'
+                    )
 
                 # System stats card
                 mem_used = system.get("memory_used_mb", 0)
@@ -1608,21 +2028,22 @@ class DaemonService:
                 disk_free = system.get("disk_free_gb", 0)
                 disk_total = system.get("disk_total_gb", 0)
                 mem_pct = int(mem_used / mem_total * 100) if mem_total else 0
-                disk_used_pct = int((disk_total - disk_free) / disk_total * 100) if disk_total else 0
+                disk_used_pct = (
+                    int((disk_total - disk_free) / disk_total * 100) if disk_total else 0
+                )
                 sys_html = (
                     f'<div class="stat-row"><span class="stat-label">RAM used</span>'
-                    f'<span class="stat-value">{int(mem_used):,} / {int(mem_total):,} MB ({mem_pct}%)</span></div>'
+                    f'<span class="stat-value">{int(mem_used):,} / {int(mem_total):,} MB ({mem_pct}%)</span></div>'  # noqa: E501
                     f'<div class="stat-row"><span class="stat-label">Disk used</span>'
-                    f'<span class="stat-value">{disk_total - disk_free:.1f} / {disk_total:.1f} GB</span></div>'
+                    f'<span class="stat-value">{disk_total - disk_free:.1f} / {disk_total:.1f} GB</span></div>'  # noqa: E501
                     f'<div class="stat-row"><span class="stat-label">Disk free</span>'
-                    f'<span class="stat-value">{disk_free:.1f} GB ({100 - disk_used_pct}%)</span></div>'
+                    f'<span class="stat-value">{disk_free:.1f} GB ({100 - disk_used_pct}%)</span></div>'  # noqa: E501
                 )
 
                 # Errors card
                 if errors:
                     err_lines = "\n".join(
-                        f'<div class="error-line">{str(e)[-100:]}</div>'
-                        for e in errors[-5:]
+                        f'<div class="error-line">{str(e)[-100:]}</div>' for e in errors[-5:]
                     )
                     err_html = f'<div class="error-list">{err_lines}</div>'
                 else:
@@ -1637,7 +2058,7 @@ class DaemonService:
                 # CSS stored as plain string to avoid f-string brace escaping
                 css = (
                     "*{box-sizing:border-box;margin:0;padding:0}"
-                    "body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px}"
+                    "body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px}"  # noqa: E501
                     "h1{font-size:20px;font-weight:600;color:#58a6ff}"
                     "h2{font-size:11px;font-weight:600;color:#8b949e;text-transform:uppercase;"
                     "letter-spacing:.08em;margin-bottom:10px}"
@@ -1648,7 +2069,7 @@ class DaemonService:
                     ".badge.ok{border-color:#238636;color:#3fb950}"
                     "main{padding:20px 24px;display:grid;"
                     "grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}"
-                    ".card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:16px}"
+                    ".card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:16px}"  # noqa: E501
                     ".stat-row{display:flex;justify-content:space-between;align-items:center;"
                     "padding:5px 0;border-bottom:1px solid #21262d}"
                     ".stat-row:last-child{border-bottom:none}"
@@ -1666,32 +2087,33 @@ class DaemonService:
                     ".peer-count{background:#1f6feb22;color:#79c0ff;border-radius:10px;"
                     "padding:1px 7px;font-size:12px}"
                     ".error-list{font-family:monospace;font-size:11px;color:#f85149}"
-                    ".error-line{padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
+                    ".error-line{padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"  # noqa: E501
                     "footer{padding:10px 24px;border-top:1px solid #21262d;"
                     "color:#484f58;font-size:11px;text-align:center}"
                 )
 
                 fp_badge = (
-                    f'<span class="badge" style="font-size:10px;font-family:monospace">{fp_short}</span>'
-                    if fp_short else ""
+                    f'<span class="badge" style="font-size:10px;font-family:monospace">{fp_short}</span>'  # noqa: E501
+                    if fp_short
+                    else ""
                 )
 
                 return (
                     f'<!DOCTYPE html><html lang="en"><head>'
                     f'<meta charset="UTF-8">'
                     f'<meta name="viewport" content="width=device-width,initial-scale=1.0">'
-                    f'<title>SKCapstone \u2014 {agent_name}</title>'
+                    f"<title>SKCapstone \u2014 {agent_name}</title>"
                     f'<meta http-equiv="refresh" content="30">'
-                    f'<style>{css}</style>'
-                    f'</head><body>'
-                    f'<header>'
-                    f'<h1>&#9670; {agent_name}</h1>'
+                    f"<style>{css}</style>"
+                    f"</head><body>"
+                    f"<header>"
+                    f"<h1>&#9670; {agent_name}</h1>"
                     f'<span class="badge ok">DAEMON RUNNING</span>'
                     f'<span class="badge">PID {pid}</span>'
-                    f'{fp_badge}'
-                    f'<span style="margin-left:auto;color:#484f58;font-size:11px">auto-refresh 30s</span>'
-                    f'</header>'
-                    f'<main>'
+                    f"{fp_badge}"
+                    f'<span style="margin-left:auto;color:#484f58;font-size:11px">auto-refresh 30s</span>'  # noqa: E501
+                    f"</header>"
+                    f"<main>"
                     f'<div class="card"><h2>Daemon</h2>'
                     f'<div class="stat-row"><span class="stat-label">Uptime</span>'
                     f'<span class="stat-value">{uptime_str}</span></div>'
@@ -1699,15 +2121,15 @@ class DaemonService:
                     f'<span class="stat-value">{msg_count}</span></div>'
                     f'<div class="stat-row"><span class="stat-label">Syncs completed</span>'
                     f'<span class="stat-value">{syncs}</span></div>'
-                    f'</div>'
+                    f"</div>"
                     f'<div class="card"><h2>Consciousness</h2>{c_html}</div>'
                     f'<div class="card"><h2>Backends</h2>{b_html}</div>'
                     f'<div class="card"><h2>Recent Conversations</h2>{conv_html}</div>'
                     f'<div class="card"><h2>System</h2>{sys_html}</div>'
                     f'<div class="card"><h2>Recent Errors</h2>{err_html}</div>'
-                    f'</main>'
-                    f'<footer>SKCapstone Daemon \u00b7 {ts}</footer>'
-                    f'</body></html>'
+                    f"</main>"
+                    f"<footer>SKCapstone Daemon \u00b7 {ts}</footer>"
+                    f"</body></html>"
                 )
 
             def _check_rate_limit(self) -> bool:
@@ -1736,18 +2158,20 @@ class DaemonService:
                     c_enabled = False
                     if consciousness:
                         c_enabled = bool(consciousness.stats.get("enabled", False))
-                    self._json_response({
-                        "status": "ok" if snap["running"] else "stopped",
-                        "uptime_seconds": snap["uptime_seconds"],
-                        "daemon_pid": snap["pid"],
-                        "consciousness_enabled": c_enabled,
-                        "self_healing_last_run": healing.get("timestamp"),
-                        "self_healing_issues_found": healing.get("still_broken", 0),
-                        "self_healing_auto_fixed": healing.get("auto_fixed", 0),
-                        "backend_health": snap.get("transport_health", {}),
-                        "disk_free_gb": sys_stats.get("disk_free_gb", 0),
-                        "memory_usage_mb": sys_stats.get("memory_used_mb", 0),
-                    })
+                    self._json_response(
+                        {
+                            "status": "ok" if snap["running"] else "stopped",
+                            "uptime_seconds": snap["uptime_seconds"],
+                            "daemon_pid": snap["pid"],
+                            "consciousness_enabled": c_enabled,
+                            "self_healing_last_run": healing.get("timestamp"),
+                            "self_healing_issues_found": healing.get("still_broken", 0),
+                            "self_healing_auto_fixed": healing.get("auto_fixed", 0),
+                            "backend_health": snap.get("transport_health", {}),
+                            "disk_free_gb": sys_stats.get("disk_free_gb", 0),
+                            "memory_usage_mb": sys_stats.get("memory_used_mb", 0),
+                        }
+                    )
                 elif self.path == "/status":
                     snap = state.snapshot()
                     snap["components"] = service._component_mgr.snapshot()
@@ -1801,9 +2225,7 @@ class DaemonService:
                     if html_file.exists():
                         self._html_response(html_file.read_text(encoding="utf-8"))
                     else:
-                        self._html_response(
-                            "<h1>dashboard.html not found</h1>", status=404
-                        )
+                        self._html_response("<h1>dashboard.html not found</h1>", status=404)
 
                 # ── Capstone API (pillars + memory + board + consciousness) ─
                 elif self.path == "/api/v1/capstone":
@@ -1826,12 +2248,14 @@ class DaemonService:
                         return
                     # Send the 101 Switching Protocols response directly
                     try:
-                        self.request.sendall((
-                            "HTTP/1.1 101 Switching Protocols\r\n"
-                            "Upgrade: websocket\r\n"
-                            "Connection: Upgrade\r\n"
-                            f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
-                        ).encode("ascii"))
+                        self.request.sendall(
+                            (
+                                "HTTP/1.1 101 Switching Protocols\r\n"
+                                "Upgrade: websocket\r\n"
+                                "Connection: Upgrade\r\n"
+                                f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+                            ).encode("ascii")
+                        )
                     except OSError:
                         return
                     sock = self.request
@@ -1883,17 +2307,21 @@ class DaemonService:
 
                     # Validate CapAuth bearer token before upgrading
                     auth_header = self.headers.get("Authorization", "")
-                    token_str = auth_header[7:].strip() if auth_header.startswith("Bearer ") else None
+                    token_str = (
+                        auth_header[7:].strip() if auth_header.startswith("Bearer ") else None
+                    )
 
                     fingerprint: Optional[str] = None
                     try:
                         from skcomms.capauth_validator import CapAuthValidator
+
                         fingerprint = CapAuthValidator(require_auth=True).validate(token_str)
                     except ImportError:
-                        # skcomms not installed — fall back to skcapstone signed tokens
+                        # skcomms not installed - fall back to skcapstone signed tokens
                         if token_str:
                             try:
-                                from .tokens import import_token, verify_token
+                                from capauth.tokens import import_token, verify_token
+
                                 tok = import_token(token_str)
                                 if verify_token(tok, home=config.home):
                                     fingerprint = tok.payload.issuer
@@ -1916,12 +2344,14 @@ class DaemonService:
                     except OSError:
                         return
                     try:
-                        self.request.sendall((
-                            "HTTP/1.1 101 Switching Protocols\r\n"
-                            "Upgrade: websocket\r\n"
-                            "Connection: Upgrade\r\n"
-                            f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
-                        ).encode("ascii"))
+                        self.request.sendall(
+                            (
+                                "HTTP/1.1 101 Switching Protocols\r\n"
+                                "Upgrade: websocket\r\n"
+                                "Connection: Upgrade\r\n"
+                                f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+                            ).encode("ascii")
+                        )
                     except OSError:
                         return
 
@@ -1934,6 +2364,7 @@ class DaemonService:
                     try:
                         if log_file.exists():
                             from collections import deque as _deque
+
                             with open(log_file, encoding="utf-8", errors="replace") as _fh:
                                 tail_lines = list(_deque(_fh, maxlen=50))
                                 tail_offset = _fh.tell()
@@ -2007,7 +2438,7 @@ class DaemonService:
                                     pass
                                 break
                     finally:
-                        pass  # tail thread is daemon — exits when socket closes
+                        pass  # tail thread is daemon - exits when socket closes
 
                 # ── Household: list all agents ───────────────────────────
                 elif self.path == "/api/v1/household/agents":
@@ -2029,7 +2460,9 @@ class DaemonService:
                                         identity_path.read_text(encoding="utf-8")
                                     )
                                 except Exception as exc:
-                                    logger.warning("Failed to read identity for agent %s: %s", agent_name, exc)
+                                    logger.warning(
+                                        "Failed to read identity for agent %s: %s", agent_name, exc
+                                    )
 
                             hb_path = heartbeats_dir / f"{agent_name.lower()}.json"
                             if hb_path.exists():
@@ -2038,9 +2471,15 @@ class DaemonService:
                                     alive = self._hb_alive(hb)
                                     hb["alive"] = alive
                                     entry["heartbeat"] = hb
-                                    entry["status"] = hb.get("status", "unknown") if alive else "stale"
+                                    entry["status"] = (
+                                        hb.get("status", "unknown") if alive else "stale"
+                                    )
                                 except Exception as exc:
-                                    logger.warning("Failed to read heartbeat for agent %s: %s", agent_name, exc)
+                                    logger.warning(
+                                        "Failed to read heartbeat for agent %s: %s",
+                                        agent_name,
+                                        exc,
+                                    )
                                     entry["status"] = "unknown"
                             else:
                                 entry["status"] = "no_heartbeat"
@@ -2054,7 +2493,7 @@ class DaemonService:
 
                 # ── Household: single agent detail ───────────────────────
                 elif self.path.startswith("/api/v1/household/agent/"):
-                    name = self.path[len("/api/v1/household/agent/"):].split("?")[0].rstrip("/")
+                    name = self.path[len("/api/v1/household/agent/") :].split("?")[0].rstrip("/")
                     if not name:
                         self._json_response({"error": "agent name required"}, status=400)
                         return
@@ -2102,11 +2541,15 @@ class DaemonService:
                             try:
                                 msgs = json.loads(cf.read_text(encoding="utf-8"))
                                 if isinstance(msgs, list):
-                                    conv_list.append({
-                                        "peer": cf.stem,
-                                        "message_count": len(msgs),
-                                        "last_message": msgs[-1].get("timestamp") if msgs else None,
-                                    })
+                                    conv_list.append(
+                                        {
+                                            "peer": cf.stem,
+                                            "message_count": len(msgs),
+                                            "last_message": (
+                                                msgs[-1].get("timestamp") if msgs else None
+                                            ),
+                                        }
+                                    )
                             except Exception as exc:
                                 logger.warning("Failed to read conversation file %s: %s", cf, exc)
                     entry["recent_conversations"] = conv_list
@@ -2130,20 +2573,26 @@ class DaemonService:
                                 msgs = json.loads(cf.read_text(encoding="utf-8"))
                                 if isinstance(msgs, list):
                                     last_msg = msgs[-1] if msgs else {}
-                                    last_content = last_msg.get("content", last_msg.get("message", ""))
-                                    conversations.append({
-                                        "peer": cf.stem,
-                                        "message_count": len(msgs),
-                                        "last_message_time": last_msg.get("timestamp") if msgs else None,
-                                        "last_message_preview": (last_content or "")[:120],
-                                    })
+                                    last_content = last_msg.get(
+                                        "content", last_msg.get("message", "")
+                                    )
+                                    conversations.append(
+                                        {
+                                            "peer": cf.stem,
+                                            "message_count": len(msgs),
+                                            "last_message_time": (
+                                                last_msg.get("timestamp") if msgs else None
+                                            ),
+                                            "last_message_preview": (last_content or "")[:120],
+                                        }
+                                    )
                             except Exception as exc:
                                 logger.warning("Failed to read conversation file %s: %s", cf, exc)
                     self._json_response({"conversations": conversations})
 
                 # ── Conversations: single peer history ────────────────────
                 elif self.path.startswith("/api/v1/conversations/"):
-                    raw_peer = self.path[len("/api/v1/conversations/"):].split("?")[0].rstrip("/")
+                    raw_peer = self.path[len("/api/v1/conversations/") :].split("?")[0].rstrip("/")
                     # Strip trailing /send so GET on .../peer (not /send) is unambiguous
                     if raw_peer.endswith("/send"):
                         self._json_response({"error": "use POST for /send"}, status=405)
@@ -2155,7 +2604,9 @@ class DaemonService:
 
                     conv_file = config.shared_root / "conversations" / f"{peer}.json"
                     if not conv_file.exists():
-                        self._json_response({"error": f"no conversation with '{peer}'"}, status=404)
+                        self._json_response(
+                            {"error": f"no conversation with '{peer}'"}, status=404
+                        )
                         return
 
                     try:
@@ -2170,6 +2621,15 @@ class DaemonService:
                         self._json_response(consciousness.metrics.to_dict())
                     else:
                         self._json_response({"error": "consciousness not loaded"}, status=503)
+
+                elif self.path == "/metrics":
+                    # Prometheus text exposition (hand-rolled, no extra deps).
+                    try:
+                        body = build_prometheus_metrics(config, consciousness)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.warning("Failed to build Prometheus metrics: %s", exc)
+                        body = ""
+                    self._text_response(body, content_type=PROM_CONTENT_TYPE)
 
                 else:
                     self._json_response(
@@ -2193,6 +2653,7 @@ class DaemonService:
                                 "/api/v1/components",
                                 "/api/v1/activity (SSE activity stream)",
                                 "/api/v1/metrics",
+                                "/metrics (Prometheus text exposition)",
                                 "/ws (WebSocket streaming)",
                                 "/api/v1/logs (WebSocket log stream, CapAuth required)",
                             ]
@@ -2201,12 +2662,12 @@ class DaemonService:
                     )
 
             def do_POST(self):
-                """Handle POST requests — conversation send endpoint."""
+                """Handle POST requests - conversation send endpoint."""
                 if not self._check_rate_limit():
                     return
                 # ── POST /api/v1/conversations/{peer}/send ────────────────
                 if self.path.startswith("/api/v1/conversations/") and self.path.endswith("/send"):
-                    raw_peer = self.path[len("/api/v1/conversations/"):-len("/send")]
+                    raw_peer = self.path[len("/api/v1/conversations/") : -len("/send")]
                     peer = _sanitize_peer(raw_peer)
                     if not peer:
                         self._json_response({"error": "invalid peer name"}, status=400)
@@ -2256,6 +2717,7 @@ class DaemonService:
                     if consciousness and consciousness._config.enabled:
                         try:
                             from types import SimpleNamespace
+
                             fake_payload = SimpleNamespace(
                                 content=content,
                                 content_type=SimpleNamespace(value="text"),
@@ -2275,12 +2737,12 @@ class DaemonService:
                 self._json_response({"error": "not found"}, status=404)
 
             def do_DELETE(self):
-                """Handle DELETE requests — clear conversation history."""
+                """Handle DELETE requests - clear conversation history."""
                 if not self._check_rate_limit():
                     return
                 # ── DELETE /api/v1/conversations/{peer} ──────────────────
                 if self.path.startswith("/api/v1/conversations/"):
-                    raw_peer = self.path[len("/api/v1/conversations/"):].split("?")[0].rstrip("/")
+                    raw_peer = self.path[len("/api/v1/conversations/") :].split("?")[0].rstrip("/")
                     # Reject sub-paths like /send
                     if "/" in raw_peer:
                         self._json_response({"error": "invalid path"}, status=400)
@@ -2292,7 +2754,9 @@ class DaemonService:
 
                     conv_file = config.shared_root / "conversations" / f"{peer}.json"
                     if not conv_file.exists():
-                        self._json_response({"error": f"no conversation with '{peer}'"}, status=404)
+                        self._json_response(
+                            {"error": f"no conversation with '{peer}'"}, status=404
+                        )
                         return
 
                     try:
@@ -2332,23 +2796,35 @@ class DaemonService:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _text_response(
+                self,
+                text: str,
+                status: int = 200,
+                content_type: str = "text/plain; charset=utf-8",
+            ):
+                body = text.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self._add_cors_headers()
+                self.end_headers()
+                self.wfile.write(body)
+
             def log_message(self, format, *args):
                 logger.debug("API: %s", format % args)
 
         try:
-            self._server = ThreadingHTTPServer(("127.0.0.1", config.port), DaemonHandler)
+            self._server, bound_port = self._bind_api_server(config.port, DaemonHandler)
 
             if config.tls_enabled:
                 from .tls import build_ssl_context, cert_fingerprint_sha256, ensure_tls_cert
 
                 cert_path, key_path = ensure_tls_cert(config.tls_dir)
                 ssl_ctx = build_ssl_context(cert_path, key_path)
-                self._server.socket = ssl_ctx.wrap_socket(
-                    self._server.socket, server_side=True
-                )
+                self._server.socket = ssl_ctx.wrap_socket(self._server.socket, server_side=True)
                 fingerprint = cert_fingerprint_sha256(cert_path)
                 logger.info(
-                    "TLS enabled — certificate: %s  fingerprint(SHA-256): %s",
+                    "TLS enabled - certificate: %s  fingerprint(SHA-256): %s",
                     cert_path,
                     fingerprint,
                 )
@@ -2363,10 +2839,95 @@ class DaemonService:
             )
             t.start()
             self._threads.append(t)
-            logger.info("API server listening on %s://127.0.0.1:%d", scheme, config.port)
+            logger.info("API server listening on %s://127.0.0.1:%d", scheme, bound_port)
+            if bound_port == config.port:
+                self.state.record_api_server("ok", port=bound_port)
+            else:
+                # Bound, but not on the intended port - degraded. Loud, not silent.
+                detail = f"intended port {config.port} was in use; " f"rebound on {bound_port}"
+                self.state.record_api_server("rebound", port=bound_port, detail=detail)
+                self.state.record_error(f"ALERT: API server {detail}")
+                logger.warning("ALERT: API server %s", detail)
+                self._emit_api_alert("rebound", config.port, detail, bound_port=bound_port)
         except OSError as exc:
-            logger.error("Failed to start API server: %s", exc)
-            self.state.record_error(f"API server: {exc}")
+            # No API server at all - the daemon is running blind (no status /
+            # health monitoring). This must be loud: alert event + degraded
+            # health, never a lone log line.
+            detail = f"could not bind status API on port {config.port}: {exc}"
+            self.state.record_api_server("down", port=None, detail=detail)
+            self.state.record_error(f"ALERT: API server {detail}")
+            logger.error("ALERT: API server %s", detail)
+            self._emit_api_alert("down", config.port, detail)
+
+    def _bind_api_server(self, preferred_port: int, handler):
+        """Bind the status-API HTTP server, retrying on a port collision.
+
+        Tries *preferred_port* first. If it is already in use, scans the
+        dedicated dynamic range for the next free port that is not a documented
+        fleet port, so a collision degrades to a fallback port instead of
+        killing the API server outright. Any other bind error propagates.
+
+        Args:
+            preferred_port: The port the agent is supposed to use.
+            handler: The ``BaseHTTPRequestHandler`` subclass to serve.
+
+        Returns:
+            Tuple of (bound ``ThreadingHTTPServer``, actual port).
+
+        Raises:
+            OSError: If no port in the scan could be bound.
+        """
+        try:
+            return ThreadingHTTPServer(("127.0.0.1", preferred_port), handler), preferred_port
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+
+        # Preferred port taken - scan the dynamic range for a free, non-fleet port.
+        last_exc: Optional[OSError] = None
+        for offset in range(DYNAMIC_PORT_SPAN):
+            candidate = DYNAMIC_PORT_BASE + offset
+            if candidate == preferred_port or candidate in FLEET_RESERVED_PORTS:
+                continue
+            try:
+                return ThreadingHTTPServer(("127.0.0.1", candidate), handler), candidate
+            except OSError as exc:
+                if exc.errno != errno.EADDRINUSE:
+                    raise
+                last_exc = exc
+                continue
+        raise last_exc or OSError(
+            errno.EADDRINUSE,
+            f"no free port in dynamic range {DYNAMIC_PORT_BASE}-"
+            f"{DYNAMIC_PORT_BASE + DYNAMIC_PORT_SPAN}",
+        )
+
+    def _emit_api_alert(
+        self,
+        status: str,
+        intended_port: int,
+        detail: str,
+        bound_port: Optional[int] = None,
+    ) -> None:
+        """Emit an alert-severity activity event for an API-server bind problem.
+
+        Best-effort: a failure to publish the alert must never take down the
+        daemon (that would replace one silent failure with another).
+        """
+        try:
+            _activity.push(
+                "alert",
+                {
+                    "severity": "alert",
+                    "component": "api_server",
+                    "status": status,
+                    "intended_port": intended_port,
+                    "bound_port": bound_port,
+                    "detail": detail,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to emit API-server alert event: %s", exc)
 
     def _setup_logging(self) -> None:
         """Configure structured JSON file logging and console logging."""
@@ -2381,7 +2942,7 @@ class DaemonService:
 
     def _handle_signal(self, signum, frame):
         """Handle shutdown signals."""
-        logger.info("Received signal %s — stopping", signal.Signals(signum).name)
+        logger.info("Received signal %s - stopping", signal.Signals(signum).name)
         self._stop_event.set()
 
     def _save_shutdown_state(self) -> None:
@@ -2405,7 +2966,7 @@ class DaemonService:
             self.config.home.mkdir(parents=True, exist_ok=True)
             state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             logger.info(
-                "Shutdown state saved — %d in-flight message(s) persisted",
+                "Shutdown state saved - %d in-flight message(s) persisted",
                 len(inflight),
             )
         except Exception as exc:
@@ -2443,7 +3004,7 @@ class DaemonService:
             )
             self._resume_inflight_messages(inflight)
         else:
-            logger.info("Startup state loaded — no in-flight messages to resume")
+            logger.info("Startup state loaded - no in-flight messages to resume")
 
         try:
             state_path.unlink()
@@ -2462,7 +3023,7 @@ class DaemonService:
         """
         if not (self._consciousness and self._consciousness._config.enabled):
             logger.warning(
-                "Consciousness not available — dropping %d in-flight message(s)",
+                "Consciousness not available - dropping %d in-flight message(s)",
                 len(inflight),
             )
             for msg in inflight:
@@ -2515,9 +3076,10 @@ class DaemonService:
 def read_pid(home: Optional[Path] = None) -> Optional[int]:
     """Read the daemon PID from the PID file.
 
-    Checks the given home directory first, then falls back to the shared
-    root (AGENT_HOME / ~/.skcapstone) since the daemon writes its PID
-    to config.home which defaults to the shared root.
+    Checks the given home directory only. When ``home`` is not given (the
+    default/bare daemon, no ``--agent``), it resolves to the shared root
+    (AGENT_HOME / ~/.skcapstone), since that's where the default daemon
+    writes its PID.
 
     Args:
         home: Agent home directory (or shared root).
@@ -2528,8 +3090,17 @@ def read_pid(home: Optional[Path] = None) -> Optional[int]:
     home = (home or Path(AGENT_HOME)).expanduser()
     shared_root = Path(AGENT_HOME).expanduser()
 
-    # Check agent home first, then shared root
-    for candidate in (home, shared_root):
+    # 2026-08-04: named agents each get their own home + PID file so they can
+    # run simultaneously (see cli/daemon.py::daemon_start docstring). This
+    # used to also fall back to the shared root's PID file whenever the
+    # agent-specific one was absent (e.g. after a clean shutdown removed it),
+    # which meant a live *bare* `skcapstone.service` (no --agent) made every
+    # named agent's is_running()/read_pid() report a false positive and
+    # refuse to start. Only consult the shared root when the caller is
+    # actually asking about it (home == shared_root); a named agent's check
+    # is home-scoped only - no fallback.
+    candidates = (home,) if home != shared_root else (shared_root,)
+    for candidate in candidates:
         pid_path = candidate / PID_FILE
         if not pid_path.exists():
             continue
@@ -2564,8 +3135,8 @@ def get_daemon_status(home: Optional[Path] = None, port: int = DEFAULT_PORT) -> 
     Returns:
         Status dict from the daemon, or None if unreachable.
     """
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     try:
         url = f"http://127.0.0.1:{port}/status"

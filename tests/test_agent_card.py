@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,7 @@ from pgpy.constants import (  # noqa: E402
     SymmetricKeyAlgorithm,
 )
 
-from skcapstone.agent_card import AgentCapability, AgentCard, TransportEndpoint
+from skcapstone.agent_card import AgentCapability, AgentCard, TransportEndpoint  # noqa: E402
 
 PASSPHRASE = "test-card-key-2026"
 
@@ -95,9 +94,7 @@ class TestAgentCardGeneration:
 class TestCardSignVerify:
     """Tests for PGP signing and verification."""
 
-    def test_sign_and_verify(
-        self, test_keys: tuple[str, str], sample_card: AgentCard
-    ) -> None:
+    def test_sign_and_verify(self, test_keys: tuple[str, str], sample_card: AgentCard) -> None:
         """Happy path: sign card then verify signature."""
         priv, _ = test_keys
         sample_card.sign(priv, PASSPHRASE)

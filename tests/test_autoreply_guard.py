@@ -1,4 +1,4 @@
-"""Tests for the auto-reply loop guards — self-send guard + circuit breaker.
+"""Tests for the auto-reply loop guards - self-send guard + circuit breaker.
 
 These cover the runaway agent<->agent reply storm that flooded the desktop
 with thousands of notifications (opus and lumina daemons auto-replying to a
@@ -58,7 +58,7 @@ class TestAutoReplyGuard:
         g.allow("lumina", now=0.0)
         g.allow("lumina", now=1.0)
         assert g.allow("lumina", now=2.0) is False  # lumina tripped
-        assert g.allow("opus", now=2.0) is True      # opus unaffected
+        assert g.allow("opus", now=2.0) is True  # opus unaffected
 
     def test_slow_traffic_never_trips(self):
         # max 3 per 10s window; one every 5s stays under the limit forever.

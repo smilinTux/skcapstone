@@ -11,19 +11,10 @@ from pathlib import Path
 from typing import Optional
 
 import click
-import yaml
 
-from ._common import AGENT_HOME, __version__, console, status_icon, consciousness_banner
-from ._validators import validate_agent_name
-from ..models import AgentConfig, PillarStatus, SyncConfig
-from ..pillars.identity import generate_identity
-from ..pillars.memory import initialize_memory
-from ..pillars.security import audit_event, initialize_security
-from ..pillars.sync import initialize_sync
-from ..pillars.trust import initialize_trust
+from ..pillars.security import audit_event
 from ..runtime import get_runtime
-
-from rich.panel import Panel
+from ._common import AGENT_HOME, console
 
 
 def _get_claude_template_dir() -> Path:
@@ -42,7 +33,11 @@ def _write_global_claude_md(home_path: Path, agent_name: str) -> Optional[Path]:
 
     if platform.system() == "Windows":
         appdata = os.environ.get("APPDATA", "")
-        claude_dir = Path(appdata) / ".claude" if appdata else Path.home() / "AppData" / "Roaming" / ".claude"
+        claude_dir = (
+            Path(appdata) / ".claude"
+            if appdata
+            else Path.home() / "AppData" / "Roaming" / ".claude"
+        )
     else:
         claude_dir = Path.home() / ".claude"
 
@@ -57,7 +52,7 @@ def _write_global_claude_md(home_path: Path, agent_name: str) -> Optional[Path]:
         else:
             # Minimal fallback if template is missing
             content = (
-                f"# Claude Code — Global Agent Instructions ({agent_name})\n\n"
+                f"# Claude Code - Global Agent Instructions ({agent_name})\n\n"
                 f"- **Agent**: `{agent_name}`\n"
                 f"- **Home**: `{home_path}`\n"
                 f"- **Env**: `SKCAPSTONE_AGENT={agent_name}`\n\n"
@@ -88,15 +83,20 @@ def _write_claude_settings(merge: bool = True) -> Optional[Path]:
 
     if platform.system() == "Windows":
         appdata = os.environ.get("APPDATA", "")
-        claude_dir = Path(appdata) / ".claude" if appdata else Path.home() / "AppData" / "Roaming" / ".claude"
+        claude_dir = (
+            Path(appdata) / ".claude"
+            if appdata
+            else Path.home() / "AppData" / "Roaming" / ".claude"
+        )
     else:
         claude_dir = Path.home() / ".claude"
 
     try:
         import skmemory
+
         hooks_dir = str(Path(skmemory.__file__).parent / "hooks")
     except ImportError:
-        return None  # skmemory not installed — caller should use skmemory register instead
+        return None  # skmemory not installed - caller should use skmemory register instead
 
     template_path = _get_claude_template_dir() / "settings.json"
     if not template_path.exists():
@@ -148,16 +148,89 @@ def register_setup_commands(main: click.Group) -> None:
     @click.option(
         "--home",
         default=AGENT_HOME,
-        help="Agent home directory.",
+        help="Agent home directory (interactive) or shared root (non-interactive).",
         type=click.Path(),
     )
-    def init(home: str):
+    @click.option(
+        "--non-interactive",
+        is_flag=True,
+        help="Provision a lightweight fleet agent with no prompts (scriptable).",
+    )
+    @click.option(
+        "--name",
+        default=None,
+        help="Agent name (required with --non-interactive).",
+    )
+    @click.option(
+        "--role",
+        default="worker",
+        show_default=True,
+        help="Lightweight agent role: worker, reviewer, or a custom slug.",
+    )
+    @click.option(
+        "--mandate",
+        default=None,
+        help="Custom mandate text (default: role template).",
+    )
+    @click.option(
+        "--no-mandate",
+        is_flag=True,
+        help="Skip writing MANDATE.md.",
+    )
+    @click.option(
+        "--force",
+        is_flag=True,
+        help="Overwrite an existing lightweight profile.",
+    )
+    def init(
+        home: str,
+        non_interactive: bool,
+        name: str | None,
+        role: str,
+        mandate: str | None,
+        no_mandate: bool,
+        force: bool,
+    ):
         """Initialize a sovereign agent (interactive wizard).
 
-        Alias for 'skcapstone onboard' — runs the full 13-step setup wizard.
+        Alias for 'skcapstone onboard' - runs the full 13-step setup wizard.
         Creates ~/.skcapstone/ with identity, memory, trust, security, soul,
         and connects to the mesh. Zero to sovereign in under 5 minutes.
+
+        With --non-interactive, provisions a LIGHTWEIGHT fleet role agent
+        (worker/reviewer) instead: <home>/agents/<name>/ with identity.json,
+        profile.yaml, and an optional MANDATE.md - no prompts, no PGP, no
+        memory/trust pillars. See docs/LIGHTWEIGHT_AGENTS.md.
         """
+        if non_interactive:
+            from ..lightweight import provision_lightweight_agent, slugify_name
+
+            if not name:
+                raise click.ClickException("--name is required with --non-interactive")
+            try:
+                agent_home = Path(home).expanduser() / "agents" / slugify_name(name)
+                result = provision_lightweight_agent(
+                    name=name,
+                    role=role,
+                    home=agent_home,
+                    mandate=mandate,
+                    write_mandate=not no_mandate,
+                    force=force,
+                )
+            except (FileExistsError, ValueError) as exc:
+                raise click.ClickException(str(exc)) from exc
+            console.print(
+                f"[green]Provisioned lightweight agent[/] [cyan]{result.agent}[/] "
+                f"(role: {result.role})"
+            )
+            for f in result.files:
+                console.print(f"  [dim]{f}[/]")
+            console.print(
+                "[dim]Lightweight profiles have no PGP/capauth, memory, or trust "
+                "pillars - see docs/LIGHTWEIGHT_AGENTS.md for the delta.[/]"
+            )
+            return
+
         from ..onboard import run_onboard
 
         run_onboard(home)
@@ -170,23 +243,34 @@ def register_setup_commands(main: click.Group) -> None:
     @click.option("--skip-seeds", is_flag=True, help="Skip importing Cloud 9 seeds.")
     @click.option("--skip-ritual", is_flag=True, help="Skip the rehydration ritual.")
     @click.option("--skip-preflight", is_flag=True, help="Skip Git preflight check.")
-    @click.option("--path", "install_path", default=None, type=click.IntRange(1, 3),
-                  help="Pre-select install path: 1=fresh, 2=join, 3=update.")
-    def install_cmd(name, email, home, skip_deps, skip_seeds, skip_ritual, skip_preflight, install_path):
-        """Guided setup wizard — set up, join, or update your sovereign node."""
+    @click.option(
+        "--path",
+        "install_path",
+        default=None,
+        type=click.IntRange(1, 3),
+        help="Pre-select install path: 1=fresh, 2=join, 3=update.",
+    )
+    def install_cmd(
+        name, email, home, skip_deps, skip_seeds, skip_ritual, skip_preflight, install_path
+    ):
+        """Guided setup wizard - set up, join, or update your sovereign node."""
         from ..install_wizard import run_install_wizard
 
         run_install_wizard(
-            name=name, email=email, home=home,
-            skip_deps=skip_deps, skip_seeds=skip_seeds,
-            skip_ritual=skip_ritual, skip_preflight=skip_preflight,
+            name=name,
+            email=email,
+            home=home,
+            skip_deps=skip_deps,
+            skip_seeds=skip_seeds,
+            skip_ritual=skip_ritual,
+            skip_preflight=skip_preflight,
             path=install_path,
         )
 
     @main.command("uninstall")
     @click.option("--home", default=AGENT_HOME, help="Agent home directory.", type=click.Path())
     @click.option("--force", is_flag=True, help="Skip confirmations (for scripting).")
-    @click.option("--keep-data", is_flag=True, help="Deregister only — keep local files.")
+    @click.option("--keep-data", is_flag=True, help="Deregister only - keep local files.")
     @click.option(
         "--export-first",
         is_flag=True,
@@ -196,7 +280,9 @@ def register_setup_commands(main: click.Group) -> None:
         """Remove this sovereign node completely."""
         from ..uninstall_wizard import run_uninstall_wizard
 
-        run_uninstall_wizard(home=home, force=force, keep_data=keep_data, export_first=export_first)
+        run_uninstall_wizard(
+            home=home, force=force, keep_data=keep_data, export_first=export_first
+        )
 
     @main.command("install-gui")
     def install_gui_cmd():
@@ -239,15 +325,15 @@ def register_setup_commands(main: click.Group) -> None:
         """Interactive onboarding wizard for new humans and AI agents.
 
         \b
-        Eight guided steps — zero to sovereign in under 5 minutes:
-          1. Identity   — generate PGP keypair via CapAuth
-          2. Soul       — create name, values, and personality blueprint
-          3. Memory     — initialize SKMemory and import Cloud 9 seeds
-          4. Ritual     — run the full rehydration ritual
-          5. Trust      — verify trust chain from FEB files
-          6. Mesh       — check Syncthing peering
-          7. Heartbeat  — publish your first alive beacon
-          8. Board      — register on the coordination board
+        Eight guided steps - zero to sovereign in under 5 minutes:
+          1. Identity   - generate PGP keypair via CapAuth
+          2. Soul       - create name, values, and personality blueprint
+          3. Memory     - initialize SKMemory and import Cloud 9 seeds
+          4. Ritual     - run the full rehydration ritual
+          5. Trust      - verify trust chain from FEB files
+          6. Mesh       - check Syncthing peering
+          7. Heartbeat  - publish your first alive beacon
+          8. Board      - register on the coordination board
         """
         from ..onboard import run_onboard
 
@@ -255,9 +341,11 @@ def register_setup_commands(main: click.Group) -> None:
 
     @main.command("reset")
     @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
-    @click.option("--force", is_flag=True, help="Skip confirmation prompt (for scripting/testing).")
+    @click.option(
+        "--force", is_flag=True, help="Skip confirmation prompt (for scripting/testing)."
+    )
     def reset_cmd(home: str, force: bool):
-        """Factory reset — wipe all agent data.
+        """Factory reset - wipe all agent data.
 
         Backs up the identity/ directory to ~/.skcapstone-backup-{timestamp}/
         before deleting. All other data is permanently removed.

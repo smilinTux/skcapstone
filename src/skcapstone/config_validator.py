@@ -69,7 +69,7 @@ class FileValidationResult:
     def is_valid(self) -> bool:
         """True when there are no errors.
 
-        A missing file is considered valid — it simply falls back to
+        A missing file is considered valid - it simply falls back to
         built-in defaults and produces a warning, not an error.
         """
         return len(self.errors) == 0
@@ -151,7 +151,9 @@ def _yaml_seq_item_line(text: str, seq_key: str, idx: int, subkey: str) -> Optio
                                 return kk.start_mark.line + 1
                         return item.start_mark.line + 1
     except Exception as exc:
-        logger.debug("Failed to locate YAML seq item line for '%s[%d].%s': %s", seq_key, idx, subkey, exc)
+        logger.debug(
+            "Failed to locate YAML seq item line for '%s[%d].%s': %s", seq_key, idx, subkey, exc
+        )
     return None
 
 
@@ -159,21 +161,41 @@ def _yaml_seq_item_line(text: str, seq_key: str, idx: int, subkey: str) -> Optio
 # Allowed value sets
 # ---------------------------------------------------------------------------
 
-_VALID_FALLBACK_BACKENDS = frozenset([
-    "ollama", "grok", "kimi", "nvidia", "anthropic",
-    "openai", "passthrough", "groq", "mistral", "perplexity",
-])
+_VALID_FALLBACK_BACKENDS = frozenset(
+    [
+        "ollama",
+        "grok",
+        "kimi",
+        "nvidia",
+        "anthropic",
+        "openai",
+        "passthrough",
+        "groq",
+        "mistral",
+        "perplexity",
+    ]
+)
 _VALID_SYSTEM_PROMPT_MODES = frozenset(["standard", "separate_param", "omit"])
 _VALID_STRUCTURE_FORMATS = frozenset(["xml", "markdown", "plain"])
 _VALID_THINKING_MODES = frozenset(["none", "budget", "toggle", "auto"])
 _VALID_TOOL_FORMATS = frozenset(["openai", "anthropic", "mistral"])
 
-_CONSCIOUSNESS_KNOWN_KEYS = frozenset([
-    "enabled", "use_inotify", "inotify_debounce_ms", "response_timeout",
-    "max_context_tokens", "max_history_messages", "auto_memory", "auto_ack",
-    "privacy_default", "max_concurrent_requests", "fallback_chain",
-    "desktop_notifications",
-])
+_CONSCIOUSNESS_KNOWN_KEYS = frozenset(
+    [
+        "enabled",
+        "use_inotify",
+        "inotify_debounce_ms",
+        "response_timeout",
+        "max_context_tokens",
+        "max_history_messages",
+        "auto_memory",
+        "auto_ack",
+        "privacy_default",
+        "max_concurrent_requests",
+        "fallback_chain",
+        "desktop_notifications",
+    ]
+)
 
 _IDENTITY_FINGERPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 
@@ -198,10 +220,12 @@ def validate_consciousness_yaml(path: Path) -> FileValidationResult:
 
     if not path.exists():
         result.found = False
-        result.issues.append(ValidationIssue(
-            severity="warning",
-            message="File not found — defaults will be used",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="warning",
+                message="File not found - defaults will be used",
+            )
+        )
         return result
 
     text = path.read_text(encoding="utf-8")
@@ -212,34 +236,52 @@ def validate_consciousness_yaml(path: Path) -> FileValidationResult:
         line = None
         if hasattr(exc, "problem_mark") and exc.problem_mark:
             line = exc.problem_mark.line + 1
-        result.issues.append(ValidationIssue(
-            severity="error", message=f"YAML parse error: {exc}", line=line,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                message=f"YAML parse error: {exc}",
+                line=line,
+            )
+        )
         return result
 
     if not raw:
-        result.issues.append(ValidationIssue(
-            severity="warning", message="Empty file — defaults will be used",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="warning",
+                message="Empty file - defaults will be used",
+            )
+        )
         return result
 
     if not isinstance(raw, dict):
-        result.issues.append(ValidationIssue(
-            severity="error",
-            message="Top-level value must be a YAML mapping",
-            line=1,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                message="Top-level value must be a YAML mapping",
+                line=1,
+            )
+        )
         return result
 
     # ── Bool fields ──────────────────────────────────────────────────────
-    for bf in ("enabled", "use_inotify", "auto_memory", "auto_ack",
-               "privacy_default", "desktop_notifications"):
+    for bf in (
+        "enabled",
+        "use_inotify",
+        "auto_memory",
+        "auto_ack",
+        "privacy_default",
+        "desktop_notifications",
+    ):
         if bf in raw and not isinstance(raw[bf], bool):
-            result.issues.append(ValidationIssue(
-                severity="error", field=bf,
-                line=_yaml_key_line(text, bf),
-                message=f"Expected bool, got {type(raw[bf]).__name__}",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field=bf,
+                    line=_yaml_key_line(text, bf),
+                    message=f"Expected bool, got {type(raw[bf]).__name__}",
+                )
+            )
 
     # ── Positive-int fields ──────────────────────────────────────────────
     _pos_int: dict[str, int] = {
@@ -255,48 +297,67 @@ def validate_consciousness_yaml(path: Path) -> FileValidationResult:
         v = raw[fi]
         line = _yaml_key_line(text, fi)
         if not isinstance(v, int):
-            result.issues.append(ValidationIssue(
-                severity="error", field=fi, line=line,
-                message=f"Expected int, got {type(v).__name__}",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field=fi,
+                    line=line,
+                    message=f"Expected int, got {type(v).__name__}",
+                )
+            )
         elif v <= min_val:
-            result.issues.append(ValidationIssue(
-                severity="error", field=fi, line=line,
-                message=f"Must be > {min_val}, got {v}",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field=fi,
+                    line=line,
+                    message=f"Must be > {min_val}, got {v}",
+                )
+            )
 
     # ── fallback_chain ───────────────────────────────────────────────────
     if "fallback_chain" in raw:
         chain = raw["fallback_chain"]
         line = _yaml_key_line(text, "fallback_chain")
         if not isinstance(chain, list):
-            result.issues.append(ValidationIssue(
-                severity="error", field="fallback_chain", line=line,
-                message=f"Expected list, got {type(chain).__name__}",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field="fallback_chain",
+                    line=line,
+                    message=f"Expected list, got {type(chain).__name__}",
+                )
+            )
         else:
             for i, item in enumerate(chain):
                 if not isinstance(item, str):
-                    result.issues.append(ValidationIssue(
-                        severity="error",
-                        field=f"fallback_chain[{i}]",
-                        message=f"Expected string, got {type(item).__name__}",
-                    ))
+                    result.issues.append(
+                        ValidationIssue(
+                            severity="error",
+                            field=f"fallback_chain[{i}]",
+                            message=f"Expected string, got {type(item).__name__}",
+                        )
+                    )
                 elif item not in _VALID_FALLBACK_BACKENDS:
-                    result.issues.append(ValidationIssue(
-                        severity="warning",
-                        field=f"fallback_chain[{i}]",
-                        message=f"Unknown backend '{item}' (may be a custom provider)",
-                    ))
+                    result.issues.append(
+                        ValidationIssue(
+                            severity="warning",
+                            field=f"fallback_chain[{i}]",
+                            message=f"Unknown backend '{item}' (may be a custom provider)",
+                        )
+                    )
 
     # ── Unknown keys → warnings ──────────────────────────────────────────
     for key in raw:
         if key not in _CONSCIOUSNESS_KNOWN_KEYS:
-            result.issues.append(ValidationIssue(
-                severity="warning", field=key,
-                line=_yaml_key_line(text, key),
-                message=f"Unknown config key '{key}'",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="warning",
+                    field=key,
+                    line=_yaml_key_line(text, key),
+                    message=f"Unknown config key '{key}'",
+                )
+            )
 
     return result
 
@@ -319,10 +380,12 @@ def validate_model_profiles_yaml(path: Path) -> FileValidationResult:
 
     if not path.exists():
         result.found = False
-        result.issues.append(ValidationIssue(
-            severity="warning",
-            message="File not found — bundled defaults will be used",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="warning",
+                message="File not found - bundled defaults will be used",
+            )
+        )
         return result
 
     text = path.read_text(encoding="utf-8")
@@ -333,42 +396,59 @@ def validate_model_profiles_yaml(path: Path) -> FileValidationResult:
         line = None
         if hasattr(exc, "problem_mark") and exc.problem_mark:
             line = exc.problem_mark.line + 1
-        result.issues.append(ValidationIssue(
-            severity="error", message=f"YAML parse error: {exc}", line=line,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                message=f"YAML parse error: {exc}",
+                line=line,
+            )
+        )
         return result
 
     if not isinstance(raw, dict):
-        result.issues.append(ValidationIssue(
-            severity="error",
-            message="Top-level value must be a YAML mapping",
-            line=1,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                message="Top-level value must be a YAML mapping",
+                line=1,
+            )
+        )
         return result
 
     if "profiles" not in raw:
-        result.issues.append(ValidationIssue(
-            severity="error", field="profiles",
-            message="Required top-level key 'profiles' is missing",
-            line=1,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                field="profiles",
+                message="Required top-level key 'profiles' is missing",
+                line=1,
+            )
+        )
         return result
 
     profiles = raw["profiles"]
     profiles_line = _yaml_key_line(text, "profiles")
 
     if not isinstance(profiles, list):
-        result.issues.append(ValidationIssue(
-            severity="error", field="profiles", line=profiles_line,
-            message=f"'profiles' must be a list, got {type(profiles).__name__}",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                field="profiles",
+                line=profiles_line,
+                message=f"'profiles' must be a list, got {type(profiles).__name__}",
+            )
+        )
         return result
 
     if len(profiles) == 0:
-        result.issues.append(ValidationIssue(
-            severity="warning", field="profiles", line=profiles_line,
-            message="'profiles' list is empty",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="warning",
+                field="profiles",
+                line=profiles_line,
+                message="'profiles' list is empty",
+            )
+        )
         return result
 
     _enum_checks: list[tuple[str, frozenset[str]]] = [
@@ -383,28 +463,36 @@ def validate_model_profiles_yaml(path: Path) -> FileValidationResult:
         item_line = _yaml_seq_item_line(text, "profiles", i, "model_pattern")
 
         if not isinstance(profile, dict):
-            result.issues.append(ValidationIssue(
-                severity="error", field=prefix, line=item_line,
-                message=f"Each profile must be a mapping, got {type(profile).__name__}",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field=prefix,
+                    line=item_line,
+                    message=f"Each profile must be a mapping, got {type(profile).__name__}",
+                )
+            )
             continue
 
         # Required: model_pattern + family
         for req in ("model_pattern", "family"):
             if req not in profile:
-                result.issues.append(ValidationIssue(
-                    severity="error",
-                    field=f"{prefix}.{req}",
-                    line=item_line,
-                    message=f"Required field '{req}' is missing",
-                ))
+                result.issues.append(
+                    ValidationIssue(
+                        severity="error",
+                        field=f"{prefix}.{req}",
+                        line=item_line,
+                        message=f"Required field '{req}' is missing",
+                    )
+                )
             elif not isinstance(profile[req], str):
-                result.issues.append(ValidationIssue(
-                    severity="error",
-                    field=f"{prefix}.{req}",
-                    line=_yaml_seq_item_line(text, "profiles", i, req),
-                    message=f"Expected str, got {type(profile[req]).__name__}",
-                ))
+                result.issues.append(
+                    ValidationIssue(
+                        severity="error",
+                        field=f"{prefix}.{req}",
+                        line=_yaml_seq_item_line(text, "profiles", i, req),
+                        message=f"Expected str, got {type(profile[req]).__name__}",
+                    )
+                )
 
         # model_pattern must be a valid regex
         pat = profile.get("model_pattern")
@@ -412,38 +500,47 @@ def validate_model_profiles_yaml(path: Path) -> FileValidationResult:
             try:
                 re.compile(pat)
             except re.error as exc:
-                result.issues.append(ValidationIssue(
-                    severity="error",
-                    field=f"{prefix}.model_pattern",
-                    line=_yaml_seq_item_line(text, "profiles", i, "model_pattern"),
-                    message=f"Invalid regex: {exc}",
-                ))
+                result.issues.append(
+                    ValidationIssue(
+                        severity="error",
+                        field=f"{prefix}.model_pattern",
+                        line=_yaml_seq_item_line(text, "profiles", i, "model_pattern"),
+                        message=f"Invalid regex: {exc}",
+                    )
+                )
 
         # Enum fields
         for fname, valid_set in _enum_checks:
             if fname in profile:
                 val = profile[fname]
                 if isinstance(val, str) and val not in valid_set:
-                    result.issues.append(ValidationIssue(
-                        severity="error",
-                        field=f"{prefix}.{fname}",
-                        line=_yaml_seq_item_line(text, "profiles", i, fname),
-                        message=(
-                            f"Invalid value '{val}', "
-                            f"expected one of: {sorted(valid_set)}"
-                        ),
-                    ))
+                    result.issues.append(
+                        ValidationIssue(
+                            severity="error",
+                            field=f"{prefix}.{fname}",
+                            line=_yaml_seq_item_line(text, "profiles", i, fname),
+                            message=(
+                                f"Invalid value '{val}', " f"expected one of: {sorted(valid_set)}"
+                            ),
+                        )
+                    )
 
         # Bool fields
-        for bf in ("thinking_enabled", "no_few_shot",
-                   "no_cot_instructions", "supports_tool_calling"):
+        for bf in (
+            "thinking_enabled",
+            "no_few_shot",
+            "no_cot_instructions",
+            "supports_tool_calling",
+        ):
             if bf in profile and not isinstance(profile[bf], bool):
-                result.issues.append(ValidationIssue(
-                    severity="error",
-                    field=f"{prefix}.{bf}",
-                    line=_yaml_seq_item_line(text, "profiles", i, bf),
-                    message=f"Expected bool, got {type(profile[bf]).__name__}",
-                ))
+                result.issues.append(
+                    ValidationIssue(
+                        severity="error",
+                        field=f"{prefix}.{bf}",
+                        line=_yaml_seq_item_line(text, "profiles", i, bf),
+                        message=f"Expected bool, got {type(profile[bf]).__name__}",
+                    )
+                )
 
     return result
 
@@ -468,10 +565,12 @@ def validate_identity_json(path: Path) -> FileValidationResult:
 
     if not path.exists():
         result.found = False
-        result.issues.append(ValidationIssue(
-            severity="warning",
-            message="File not found — run 'skcapstone init' to create identity",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="warning",
+                message="File not found - run 'skcapstone init' to create identity",
+            )
+        )
         return result
 
     text = path.read_text(encoding="utf-8")
@@ -479,67 +578,92 @@ def validate_identity_json(path: Path) -> FileValidationResult:
     try:
         raw: Any = json.loads(text)
     except json.JSONDecodeError as exc:
-        result.issues.append(ValidationIssue(
-            severity="error",
-            message=f"JSON parse error: {exc.msg}",
-            line=exc.lineno,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                message=f"JSON parse error: {exc.msg}",
+                line=exc.lineno,
+            )
+        )
         return result
 
     if not isinstance(raw, dict):
-        result.issues.append(ValidationIssue(
-            severity="error",
-            message="Top-level value must be a JSON object",
-            line=1,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                message="Top-level value must be a JSON object",
+                line=1,
+            )
+        )
         return result
 
     # Required: name
     if "name" not in raw:
-        result.issues.append(ValidationIssue(
-            severity="error", field="name",
-            message="Required field 'name' is missing",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                field="name",
+                message="Required field 'name' is missing",
+            )
+        )
     elif not isinstance(raw["name"], str) or not raw["name"].strip():
-        result.issues.append(ValidationIssue(
-            severity="error", field="name",
-            message="'name' must be a non-empty string",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                field="name",
+                message="'name' must be a non-empty string",
+            )
+        )
 
     # Required: fingerprint
     if "fingerprint" not in raw:
-        result.issues.append(ValidationIssue(
-            severity="error", field="fingerprint",
-            message="Required field 'fingerprint' is missing",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                field="fingerprint",
+                message="Required field 'fingerprint' is missing",
+            )
+        )
     elif not isinstance(raw["fingerprint"], str):
-        result.issues.append(ValidationIssue(
-            severity="error", field="fingerprint",
-            message=f"Expected str, got {type(raw['fingerprint']).__name__}",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                field="fingerprint",
+                message=f"Expected str, got {type(raw['fingerprint']).__name__}",
+            )
+        )
     elif not _IDENTITY_FINGERPRINT_RE.match(raw["fingerprint"]):
-        result.issues.append(ValidationIssue(
-            severity="warning", field="fingerprint",
-            message=(
-                f"Fingerprint '{raw['fingerprint']}' does not look like a "
-                "PGP fingerprint (expected 40 hex characters)"
-            ),
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="warning",
+                field="fingerprint",
+                message=(
+                    f"Fingerprint '{raw['fingerprint']}' does not look like a "
+                    "PGP fingerprint (expected 40 hex characters)"
+                ),
+            )
+        )
 
     # Optional: email must be str if present
     if "email" in raw and raw["email"] is not None:
         if not isinstance(raw["email"], str):
-            result.issues.append(ValidationIssue(
-                severity="error", field="email",
-                message=f"Expected str, got {type(raw['email']).__name__}",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field="email",
+                    message=f"Expected str, got {type(raw['email']).__name__}",
+                )
+            )
 
     # Optional: capauth_managed must be bool if present
     if "capauth_managed" in raw and not isinstance(raw["capauth_managed"], bool):
-        result.issues.append(ValidationIssue(
-            severity="error", field="capauth_managed",
-            message=f"Expected bool, got {type(raw['capauth_managed']).__name__}",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                field="capauth_managed",
+                message=f"Expected bool, got {type(raw['capauth_managed']).__name__}",
+            )
+        )
 
     return result
 
@@ -566,9 +690,12 @@ def validate_soul_blueprint_json(path: Path) -> FileValidationResult:
 
     if not path.exists():
         result.found = False
-        result.issues.append(ValidationIssue(
-            severity="warning", message="File not found",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="warning",
+                message="File not found",
+            )
+        )
         return result
 
     text = path.read_text(encoding="utf-8")
@@ -576,55 +703,75 @@ def validate_soul_blueprint_json(path: Path) -> FileValidationResult:
     try:
         raw: Any = json.loads(text)
     except json.JSONDecodeError as exc:
-        result.issues.append(ValidationIssue(
-            severity="error",
-            message=f"JSON parse error: {exc.msg}",
-            line=exc.lineno,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                message=f"JSON parse error: {exc.msg}",
+                line=exc.lineno,
+            )
+        )
         return result
 
     if not isinstance(raw, dict):
-        result.issues.append(ValidationIssue(
-            severity="error", message="Expected a JSON object", line=1,
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                message="Expected a JSON object",
+                line=1,
+            )
+        )
         return result
 
     # Required: name + display_name
     for req in ("name", "display_name"):
         if req not in raw:
-            result.issues.append(ValidationIssue(
-                severity="error", field=req,
-                message=f"Required field '{req}' is missing",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field=req,
+                    message=f"Required field '{req}' is missing",
+                )
+            )
         elif not isinstance(raw[req], str) or not raw[req].strip():
-            result.issues.append(ValidationIssue(
-                severity="error", field=req,
-                message=f"'{req}' must be a non-empty string",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field=req,
+                    message=f"'{req}' must be a non-empty string",
+                )
+            )
 
     # core_traits: list
     if "core_traits" in raw and not isinstance(raw["core_traits"], list):
-        result.issues.append(ValidationIssue(
-            severity="error", field="core_traits",
-            message=f"Expected list, got {type(raw['core_traits']).__name__}",
-        ))
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                field="core_traits",
+                message=f"Expected list, got {type(raw['core_traits']).__name__}",
+            )
+        )
 
     # emotional_topology: dict[str, float|int]
     if "emotional_topology" in raw:
         et = raw["emotional_topology"]
         if not isinstance(et, dict):
-            result.issues.append(ValidationIssue(
-                severity="error", field="emotional_topology",
-                message=f"Expected dict, got {type(et).__name__}",
-            ))
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    field="emotional_topology",
+                    message=f"Expected dict, got {type(et).__name__}",
+                )
+            )
         else:
             for k, v in et.items():
                 if not isinstance(v, (int, float)):
-                    result.issues.append(ValidationIssue(
-                        severity="error",
-                        field=f"emotional_topology.{k}",
-                        message=f"Expected numeric value, got {type(v).__name__}",
-                    ))
+                    result.issues.append(
+                        ValidationIssue(
+                            severity="error",
+                            field=f"emotional_topology.{k}",
+                            message=f"Expected numeric value, got {type(v).__name__}",
+                        )
+                    )
 
     return result
 
@@ -656,15 +803,9 @@ def validate_all(home: Path) -> ConfigValidationReport:
     report = ConfigValidationReport()
     config_dir = home / "config"
 
-    report.results.append(
-        validate_consciousness_yaml(config_dir / "consciousness.yaml")
-    )
-    report.results.append(
-        validate_model_profiles_yaml(config_dir / "model_profiles.yaml")
-    )
-    report.results.append(
-        validate_identity_json(home / "identity" / "identity.json")
-    )
+    report.results.append(validate_consciousness_yaml(config_dir / "consciousness.yaml"))
+    report.results.append(validate_model_profiles_yaml(config_dir / "model_profiles.yaml"))
+    report.results.append(validate_identity_json(home / "identity" / "identity.json"))
 
     soul_dir = home / "soul"
     if soul_dir.exists():

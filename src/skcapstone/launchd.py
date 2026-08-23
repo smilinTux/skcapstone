@@ -1,6 +1,6 @@
 """LaunchD service management for the SKCapstone daemon (macOS).
 
-Installs, manages, and queries launchd user agents — the macOS
+Installs, manages, and queries launchd user agents - the macOS
 equivalent of systemd user services. No root required.
 
 Generates plist files dynamically with the correct agent name,
@@ -75,8 +75,15 @@ _SERVICE_DEFS: list[dict] = [
 _OPTIONAL_DEFS: list[dict] = [
     {
         "suffix": "skchat-daemon",
-        "args": ["{skenv}/skchat", "daemon", "start", "--interval", "5",
-                 "--log-file", "{home}/.skchat/daemon.log"],
+        "args": [
+            "{skenv}/skchat",
+            "daemon",
+            "start",
+            "--interval",
+            "5",
+            "--log-file",
+            "{home}/.skchat/daemon.log",
+        ],
         "env": {"SKCHAT_IDENTITY": "capauth:{agent}@skworld.io"},
         "keep_alive": True,
         "throttle": 5,
@@ -85,8 +92,18 @@ _OPTIONAL_DEFS: list[dict] = [
     },
     {
         "suffix": "skcomms-api",
-        "args": ["{skenv}/python3", "-m", "uvicorn", "skcomms.api:app",
-                 "--host", "127.0.0.1", "--port", "9384", "--log-level", "info"],
+        "args": [
+            "{skenv}/python3",
+            "-m",
+            "uvicorn",
+            "skcomms.api:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "9384",
+            "--log-level",
+            "info",
+        ],
         "env": {"SKCHAT_IDENTITY": "capauth:{agent}@skworld.io"},
         "keep_alive": True,
         "throttle": 5,
@@ -108,9 +125,7 @@ _OPTIONAL_DEFS: list[dict] = [
 def _require_macos() -> None:
     """Raise RuntimeError if not running on macOS."""
     if platform.system() != "Darwin":
-        raise RuntimeError(
-            "launchd is only available on macOS. Use systemd on Linux."
-        )
+        raise RuntimeError("launchd is only available on macOS. Use systemd on Linux.")
 
 
 def _skenv_bin() -> str:
@@ -140,15 +155,13 @@ def _build_plist(defn: dict, agent: str) -> dict:
     plist: dict = {
         "Label": label,
         "ProgramArguments": [_expand(a, agent) for a in defn["args"]],
-        "EnvironmentVariables": {
-            k: _expand(v, agent) for k, v in defn.get("env", {}).items()
-        },
+        "EnvironmentVariables": {k: _expand(v, agent) for k, v in defn.get("env", {}).items()},
     }
 
     # Ensure PATH includes skenv and Homebrew
-    plist["EnvironmentVariables"]["PATH"] = (
-        f"{skenv}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
-    )
+    plist["EnvironmentVariables"][
+        "PATH"
+    ] = f"{skenv}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
 
     if defn.get("keep_alive"):
         plist["RunAtLoad"] = True
@@ -186,21 +199,27 @@ def _launchctl_boot(label: str, plist_path: Path, load: bool = True) -> bool:
         # Unload
         r = subprocess.run(
             ["launchctl", "bootout", f"{domain}/{label}"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return r.returncode == 0
 
-    # Load — try modern bootstrap first, fall back to legacy load
+    # Load - try modern bootstrap first, fall back to legacy load
     r = subprocess.run(
         ["launchctl", "bootstrap", domain, str(plist_path)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     if r.returncode == 0:
         return True
 
     r = subprocess.run(
         ["launchctl", "load", str(plist_path)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     return r.returncode == 0
 
@@ -208,6 +227,7 @@ def _launchctl_boot(label: str, plist_path: Path, load: bool = True) -> bool:
 @dataclass
 class ServiceStatus:
     """Status of an SK launchd service."""
+
     installed: bool = False
     loaded: bool = False
     running: bool = False
@@ -234,22 +254,26 @@ def list_available_services(agent: str = "sovereign") -> list[dict]:
     services = []
 
     for defn in _SERVICE_DEFS:
-        services.append({
-            "suffix": defn["suffix"],
-            "label": _label(defn["suffix"]),
-            "available": True,
-            "description": defn["suffix"].replace("-", " ").title(),
-        })
+        services.append(
+            {
+                "suffix": defn["suffix"],
+                "label": _label(defn["suffix"]),
+                "available": True,
+                "description": defn["suffix"].replace("-", " ").title(),
+            }
+        )
 
     for defn in _OPTIONAL_DEFS:
         req_bin = defn.get("requires_bin")
         available = bool(shutil.which(req_bin, path=skenv)) if req_bin else True
-        services.append({
-            "suffix": defn["suffix"],
-            "label": _label(defn["suffix"]),
-            "available": available,
-            "description": defn["suffix"].replace("-", " ").title(),
-        })
+        services.append(
+            {
+                "suffix": defn["suffix"],
+                "label": _label(defn["suffix"]),
+                "available": available,
+                "description": defn["suffix"].replace("-", " ").title(),
+            }
+        )
 
     return services
 
@@ -300,7 +324,7 @@ def install_service(
         # Skip optional services whose binary isn't installed
         req_bin = defn.get("requires_bin")
         if req_bin and not shutil.which(req_bin, path=_skenv_bin()):
-            logger.debug("Skipping %s — %s not found", suffix, req_bin)
+            logger.debug("Skipping %s - %s not found", suffix, req_bin)
             continue
 
         plist_data = _build_plist(defn, agent_name)
@@ -371,7 +395,9 @@ def service_status(suffix: str = "daemon") -> ServiceStatus:
 
     r = subprocess.run(
         ["launchctl", "list"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     for line in r.stdout.splitlines():
         parts = line.split("\t")
@@ -416,7 +442,9 @@ def service_logs(suffix: str = "daemon", lines: int = 50) -> str:
             try:
                 r = subprocess.run(
                     ["tail", "-n", str(lines), str(log_path)],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 if r.stdout.strip():
                     output_parts.append(f"--- {log_path.name} ---\n{r.stdout}")

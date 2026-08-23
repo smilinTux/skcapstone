@@ -1,0 +1,21 @@
+# CR-9.1 autonomy step 1: STANDARD-catalog physical self-heal for the fleet +
+# skchat adapters. OFF by default: this file ships as an .example and is NOT
+# installed. Until it (or SKOPERATOR_HONOR=1) is set, --execute only writes
+# signed spec annotations (fleet_act); nothing is physically actuated.
+#
+# THE ONE-LINE FLIP (Chef, after the gameday + freeze drills pass):
+#   cp data/systemd/skoperator.service.d/honor.conf.example \
+#      ~/.config/systemd/user/skoperator.service.d/honor.conf
+#   systemctl --user daemon-reload
+#
+# It resets ExecStart and re-adds it with --honor. It applies AFTER execute.conf
+# (drop-ins load alphabetically; "honor" > "execute"), so it wins. Atlas then
+# physically actuates auto STANDARD-catalog fixes (fleet restart_service, skchat
+# restart-daemon / restart-telegram-bridge), each recorded as an ITIL change.
+# Majors still park, and freeze always wins.
+#
+# TO REVERT: rm ~/.config/systemd/user/skoperator.service.d/honor.conf
+#            systemctl --user daemon-reload
+[Service]
+ExecStart=
+ExecStart=%h/.skenv/bin/skoperator run --execute --honor

@@ -1,5 +1,5 @@
 """
-SKCapstone Shell — interactive REPL for sovereign agent operations.
+SKCapstone Shell - interactive REPL for sovereign agent operations.
 
 Tool-agnostic: works from any terminal (Claude Code, Cursor, Windsurf,
 SSH, plain bash). The sovereign agent cockpit.
@@ -31,6 +31,7 @@ Commands:
 from __future__ import annotations
 
 import json
+import logging
 import readline
 import shlex
 import sys
@@ -39,19 +40,30 @@ from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 from . import AGENT_HOME, __version__
 
-import logging
 logger = logging.getLogger(__name__)
 
 console = Console()
 
 COMMANDS = [
-    "status", "memory", "capture", "context", "trust",
-    "chat", "coord", "sync", "soul", "ritual",
-    "anchor", "journal", "diff", "help", "exit", "quit",
+    "status",
+    "memory",
+    "capture",
+    "context",
+    "trust",
+    "chat",
+    "coord",
+    "sync",
+    "soul",
+    "ritual",
+    "anchor",
+    "journal",
+    "diff",
+    "help",
+    "exit",
+    "quit",
 ]
 
 MEMORY_SUBCOMMANDS = ["store", "search", "list", "recall", "stats", "curate"]
@@ -99,6 +111,7 @@ def _agent_name() -> str:
     """Get the current agent name from the runtime."""
     try:
         from .runtime import get_runtime
+
         runtime = get_runtime(_home())
         return runtime.manifest.name or "unknown"
     except Exception as e:
@@ -146,12 +159,14 @@ def _handle_memory(args: list[str]) -> None:
 
     if sub == "store" and len(args) > 1:
         from .memory_engine import store
+
         content = " ".join(args[1:])
         entry = store(home=home, content=content, source="shell")
         console.print(f"  [green]Stored:[/] {entry.memory_id} ({entry.layer.value})")
 
     elif sub == "search" and len(args) > 1:
         from .memory_engine import search
+
         query = " ".join(args[1:])
         results = search(home=home, query=query, limit=10)
         if not results:
@@ -162,6 +177,7 @@ def _handle_memory(args: list[str]) -> None:
 
     elif sub == "list":
         from .memory_engine import list_memories
+
         entries = list_memories(home=home, limit=10)
         if not entries:
             console.print("  No memories found.")
@@ -171,6 +187,7 @@ def _handle_memory(args: list[str]) -> None:
 
     elif sub == "recall" and len(args) > 1:
         from .memory_engine import recall
+
         entry = recall(home=home, memory_id=args[1])
         if entry:
             console.print(Panel(entry.content, title=f"{entry.memory_id} ({entry.layer.value})"))
@@ -179,6 +196,7 @@ def _handle_memory(args: list[str]) -> None:
 
     elif sub == "stats":
         from .memory_engine import get_stats
+
         stats = get_stats(home)
         console.print(
             f"\n  Total: [bold]{stats.total_memories}[/]  "
@@ -188,15 +206,20 @@ def _handle_memory(args: list[str]) -> None:
 
     elif sub == "curate":
         from .memory_curator import MemoryCurator
+
         dry_run = "dry" in args or "preview" in args
         curator = MemoryCurator(home)
         if "stats" in args:
             s = curator.get_stats()
-            console.print(f"  {s['total']} memories, tag coverage {s['tag_coverage']:.0%}, {s['promotion_candidates']} promotion candidates")
+            console.print(
+                f"  {s['total']} memories, tag coverage {s['tag_coverage']:.0%}, {s['promotion_candidates']} promotion candidates"  # noqa: E501
+            )
         else:
             result = curator.curate(dry_run=dry_run)
             prefix = "[DRY] " if dry_run else ""
-            console.print(f"  {prefix}Scanned {result.total_scanned}: +{len(result.tagged)} tagged, +{len(result.promoted)} promoted, -{len(result.deduped)} deduped")
+            console.print(
+                f"  {prefix}Scanned {result.total_scanned}: +{len(result.tagged)} tagged, +{len(result.promoted)} promoted, -{len(result.deduped)} deduped"  # noqa: E501
+            )
     else:
         console.print("  Usage: memory <store|search|list|recall|stats|curate> [args]")
 
@@ -208,6 +231,7 @@ def _handle_capture(args: list[str]) -> None:
         return
 
     from .session_capture import SessionCapture
+
     content = " ".join(args)
     cap = SessionCapture(_home())
     entries = cap.capture(content, source="shell")
@@ -239,8 +263,9 @@ def _handle_trust(args: list[str]) -> None:
     sub = args[0] if args else "status"
 
     if sub == "graph":
-        from .trust_graph import FORMATTERS as TG_FORMATTERS
-        from .trust_graph import build_trust_graph
+        from capauth.trust.graph import FORMATTERS as TG_FORMATTERS
+        from capauth.trust.graph import build_trust_graph
+
         fmt = args[1] if len(args) > 1 else "table"
         graph = build_trust_graph(_home())
         formatter = TG_FORMATTERS.get(fmt, TG_FORMATTERS["table"])
@@ -259,9 +284,12 @@ def _handle_trust(args: list[str]) -> None:
         )
 
     elif sub == "calibrate":
-        from .trust_calibration import load_calibration, recommend_thresholds
+        from capauth.trust.calibration import load_calibration, recommend_thresholds
+
         if len(args) > 1 and args[1] == "recommend":
-            rec = recommend_thresholds(_home())
+            from .pillars.trust import list_febs
+
+            rec = recommend_thresholds(_home(), feb_provider=list_febs)
             if rec["changes"]:
                 for c in rec["changes"]:
                     console.print(f"  {c}")
@@ -301,9 +329,7 @@ def _handle_coord(args: list[str]) -> None:
             if v.status.value == "done":
                 continue
             assignee = f" @{v.claimed_by}" if v.claimed_by else ""
-            console.print(
-                f"  [{v.task.id[:8]}] {v.task.title[:50]}{assignee} ({v.status.value})"
-            )
+            console.print(f"  [{v.task.id[:8]}] {v.task.title[:50]}{assignee} ({v.status.value})")
         if agents:
             console.print()
             for a in agents:
@@ -327,6 +353,7 @@ def _handle_coord(args: list[str]) -> None:
 
     elif sub == "create" and len(args) > 1:
         from .coordination import Task
+
         title = " ".join(args[1:])
         task = Task(title=title, created_by=name)
         board.create_task(task)
@@ -346,6 +373,7 @@ def _handle_chat(args: list[str]) -> None:
     if sub == "send" and len(args) > 2:
         try:
             from .chat import AgentChat
+
             home = _home()
             agent_chat = AgentChat(home=home, identity=_agent_name())
             result = agent_chat.send(args[1], " ".join(args[2:]))
@@ -354,7 +382,7 @@ def _handle_chat(args: list[str]) -> None:
             elif result["stored"]:
                 console.print(f"  [yellow]Stored locally for {args[1]}[/]")
             else:
-                console.print(f"  [red]Failed[/]")
+                console.print("  [red]Failed[/]")
         except ImportError:
             console.print("  [yellow]Chat module not available[/]")
         except Exception as e:
@@ -364,6 +392,7 @@ def _handle_chat(args: list[str]) -> None:
     elif sub == "inbox":
         try:
             from .chat import AgentChat
+
             home = _home()
             agent_chat = AgentChat(home=home, identity=_agent_name())
             messages = agent_chat.get_inbox(limit=10)
@@ -387,6 +416,7 @@ def _handle_sync(args: list[str]) -> None:
 
     if sub == "push":
         from .pillars.sync import push_seed
+
         name = _agent_name()
         console.print(f"  Pushing seed for [cyan]{name}[/]...", end=" ")
         result = push_seed(home, name, encrypt=True)
@@ -402,6 +432,7 @@ def _handle_sync(args: list[str]) -> None:
 
     elif sub == "pull":
         from .pillars.sync import pull_seeds
+
         seeds = pull_seeds(home, decrypt=True)
         if seeds:
             console.print(f"  [green]{len(seeds)} seed(s) received[/]")
@@ -412,6 +443,7 @@ def _handle_sync(args: list[str]) -> None:
 
     elif sub == "status":
         from .pillars.sync import discover_sync
+
         state = discover_sync(home)
         console.print(
             f"\n  Transport: {state.transport.value}  Status: {state.status.value}  "
@@ -428,6 +460,7 @@ def _handle_journal(args: list[str]) -> None:
     if sub == "write" and len(args) > 1:
         try:
             from skmemory.journal import Journal, JournalEntry
+
             title = " ".join(args[1:])
             entry = JournalEntry(title=title)
             j = Journal()
@@ -439,6 +472,7 @@ def _handle_journal(args: list[str]) -> None:
     elif sub == "read":
         try:
             from skmemory.journal import Journal
+
             j = Journal()
             count = int(args[1]) if len(args) > 1 else 5
             content = j.read_latest(count)
@@ -456,6 +490,7 @@ def _handle_soul() -> None:
     """Show soul blueprint."""
     try:
         from skmemory.soul import load_soul
+
         bp = load_soul()
         if bp is None:
             console.print("  No soul blueprint found.")
@@ -469,6 +504,7 @@ def _handle_ritual() -> None:
     """Run the rehydration ritual."""
     try:
         from skmemory.ritual import perform_ritual
+
         result = perform_ritual()
         console.print(result.summary())
     except ImportError:
@@ -480,8 +516,8 @@ def _handle_diff(args: list[str]) -> None:
     from .state_diff import compute_diff, format_text, save_snapshot
 
     if args and args[0] == "save":
-        path = save_snapshot(_home())
-        console.print(f"  [green]Snapshot saved[/]")
+        save_snapshot(_home())
+        console.print("  [green]Snapshot saved[/]")
         return
 
     diff = compute_diff(_home())
@@ -494,16 +530,19 @@ def _handle_anchor(args: list[str]) -> None:
 
     if sub == "show":
         from .warmth_anchor import get_anchor
+
         data = get_anchor(_home())
         for key, value in data.items():
             console.print(f"  {key}: [cyan]{value}[/]")
 
     elif sub == "boot":
         from .warmth_anchor import get_boot_prompt
+
         console.print(get_boot_prompt(_home()))
 
     elif sub == "calibrate":
         from .warmth_anchor import calibrate_from_data
+
         cal = calibrate_from_data(_home())
         console.print(
             f"  Warmth: {cal.warmth:.1f}  Trust: {cal.trust:.1f}  "
@@ -634,7 +673,7 @@ _PT_COMPLETER_DICT: dict = {
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class _ExitShell(Exception):
+class _ExitShellError(Exception):
     """Raised by _dispatch_line when the user types exit/quit."""
 
 
@@ -649,7 +688,7 @@ def _print_banner(name: str) -> None:
 def _dispatch_line(line: str) -> None:
     """Parse *line* and invoke the matching handler.
 
-    Raises _ExitShell when the user types exit/quit so callers can
+    Raises _ExitShellError when the user types exit/quit so callers can
     print the goodbye message and clean up history.
     """
     line = line.strip()
@@ -665,13 +704,13 @@ def _dispatch_line(line: str) -> None:
     args = parts[1:]
 
     if cmd in ("exit", "quit"):
-        raise _ExitShell()
+        raise _ExitShellError()
 
     handler = DISPATCH.get(cmd)
     if handler:
         try:
             handler(args)
-        except _ExitShell:
+        except _ExitShellError:
             raise
         except Exception as exc:
             logger.warning("shell.py: %s", exc)
@@ -693,10 +732,12 @@ def _run_shell_pt(name: str, hist_file: Path) -> None:
     from prompt_toolkit.styles import Style
 
     completer = NestedCompleter.from_nested_dict(_PT_COMPLETER_DICT)
-    style = Style.from_dict({
-        "prompt": "ansicyan bold",
-        "": "",  # default text
-    })
+    style = Style.from_dict(
+        {
+            "prompt": "ansicyan bold",
+            "": "",  # default text
+        }
+    )
     session: PromptSession = PromptSession(
         completer=completer,
         history=FileHistory(str(hist_file)),
@@ -718,7 +759,7 @@ def _run_shell_pt(name: str, hist_file: Path) -> None:
 
         try:
             _dispatch_line(line)
-        except _ExitShell:
+        except _ExitShellError:
             console.print(_goodbye)
             break
 
@@ -745,7 +786,7 @@ def _run_shell_readline(name: str, hist_file: Path) -> None:
 
         try:
             _dispatch_line(line)
-        except _ExitShell:
+        except _ExitShellError:
             console.print(_goodbye)
             break
 

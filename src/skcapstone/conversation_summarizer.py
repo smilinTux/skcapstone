@@ -1,5 +1,5 @@
 """
-ConversationSummarizer — LLM-powered peer conversation summarization.
+ConversationSummarizer - LLM-powered peer conversation summarization.
 
 Reads the last N messages from a peer conversation file, sends them to
 the local LLM via LLMBridge, and stores the resulting 2-3 sentence
@@ -137,14 +137,13 @@ class ConversationSummarizer:
 
         try:
             from .model_router import TaskSignal
+
             signal = TaskSignal(
                 description="Summarize a peer conversation",
                 tags=["summary", "conversation"],
                 estimated_tokens=len(prompt_text) // 4,
             )
-            summary_text = llm_bridge.generate(
-                self._SYSTEM_PROMPT, prompt_text, signal
-            )
+            summary_text = llm_bridge.generate(self._SYSTEM_PROMPT, prompt_text, signal)
         except Exception as exc:
             logger.warning("LLM summarization failed: %s", exc)
             summary_text = f"[Summary unavailable: {exc}]"
@@ -231,6 +230,7 @@ class ConversationSummarizer:
             A configured :class:`LLMBridge` instance.
         """
         from .consciousness_loop import ConsciousnessConfig, LLMBridge
+
         config = ConsciousnessConfig()
         return LLMBridge(config)
 
@@ -246,7 +246,9 @@ class ConversationSummarizer:
             self._summaries_dir.mkdir(parents=True, exist_ok=True)
             target = self._summaries_dir / f"{summary.peer}.json"
             tmp = target.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(summary.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.write_text(
+                json.dumps(summary.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             tmp.replace(target)
         except Exception as exc:
             logger.warning("Failed to persist summary for %s: %s", summary.peer, exc)

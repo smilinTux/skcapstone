@@ -4,7 +4,7 @@ Documentation=https://github.com/smilinTux/skcomms
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=60s
+OnUnitActiveSec=300s
 RandomizedDelaySec=10s
 Persistent=true
 

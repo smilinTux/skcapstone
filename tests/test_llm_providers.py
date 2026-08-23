@@ -1,4 +1,4 @@
-"""Tests for skseed LLM provider callbacks — new grok/kimi/nvidia + AdaptedPrompt support."""
+"""Tests for skseed LLM provider callbacks - new grok/kimi/nvidia + AdaptedPrompt support."""
 
 from __future__ import annotations
 
@@ -33,9 +33,11 @@ class TestIsAdaptedPrompt:
 
     def test_adapted_prompt_duck_type(self):
         """Objects with messages and system_param attrs are detected."""
+
         class FakeAdapted:
             messages = [{"role": "user", "content": "hi"}]
             system_param = "system"
+
         assert _is_adapted_prompt(FakeAdapted()) is True
 
 
@@ -166,7 +168,9 @@ class TestOllamaCallback:
 
     def test_single_json_chat_response(self):
         """Parses a single JSON /api/chat response correctly."""
-        body = b'{"model":"llama3.2","message":{"role":"assistant","content":"Hello!"},"done":true}'
+        body = (
+            b'{"model":"llama3.2","message":{"role":"assistant","content":"Hello!"},"done":true}'
+        )
         cb = ollama_callback(model="llama3.2")
         with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)):
             result = cb("hi")
@@ -224,6 +228,7 @@ class TestOllamaCallback:
 
     def test_adapted_prompt_uses_chat_endpoint(self):
         """AdaptedPrompt routes to /api/chat."""
+
         class FakeAdapted:
             messages = [{"role": "user", "content": "hi"}]
             system_param = "You are helpful."
@@ -232,7 +237,9 @@ class TestOllamaCallback:
 
         body = b'{"message":{"role":"assistant","content":"Hi there!"},"done":true}'
         cb = ollama_callback(model="llama3.2")
-        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)) as mock_open:
+        with patch(
+            "urllib.request.urlopen", return_value=self._make_urlopen_cm(body)
+        ) as mock_open:
             result = cb(FakeAdapted())
         assert result == "Hi there!"
         req = mock_open.call_args[0][0]
@@ -242,7 +249,9 @@ class TestOllamaCallback:
         """Plain string routes to /api/generate."""
         body = b'{"response":"Hi!","done":true}'
         cb = ollama_callback(model="llama3.2")
-        with patch("urllib.request.urlopen", return_value=self._make_urlopen_cm(body)) as mock_open:
+        with patch(
+            "urllib.request.urlopen", return_value=self._make_urlopen_cm(body)
+        ) as mock_open:
             result = cb("hi")
         assert result == "Hi!"
         req = mock_open.call_args[0][0]
@@ -251,12 +260,14 @@ class TestOllamaCallback:
     def test_max_retries_default_is_one(self):
         """Default max_retries is 1."""
         import inspect
+
         sig = inspect.signature(ollama_callback)
         assert sig.parameters["max_retries"].default == 1
 
     def test_exception_retried_then_raised(self):
         """Exceptions are retried; final exception is re-raised."""
         import urllib.error
+
         cb = ollama_callback(model="llama3.2", max_retries=1)
         err = urllib.error.URLError("connection refused")
         with patch("urllib.request.urlopen", side_effect=err):

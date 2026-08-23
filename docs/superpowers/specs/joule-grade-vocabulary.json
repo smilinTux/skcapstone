@@ -1,0 +1,68 @@
+{
+  "$comment": "CANONICAL grade vocabulary for the SKWorld Joule Economy. Consume this file; do not retype the enums. Owned by docs/superpowers/specs/2026-08-14-joule-economy-design.md sections 3.1 to 3.4. Consumed by skgateway docs/specs/2026-08-14-model-metadata-risk-job-matching-arch.md.",
+  "version": 1,
+  "updated": "2026-08-15",
+  "size": {
+    "meaning": "reasoning difficulty: how much model the work needs",
+    "values": ["S", "M", "L", "XL"],
+    "ranks": { "S": 0, "M": 1, "L": 2, "XL": 3 },
+    "definitions": {
+      "S": "Mechanical and deterministic. Verifiable by inspection. No judgment calls.",
+      "M": "Bounded implementation following an established pattern. Judgment inside a well-worn groove.",
+      "L": "Design within one subsystem. Several components in mind, a choice between approaches.",
+      "XL": "Architecture. Changes contracts others depend on, spans repos, or has no pattern to follow."
+    }
+  },
+  "risk": {
+    "meaning": "blast radius: how bad it is if the work is wrong",
+    "values": ["low", "med", "high", "crit"],
+    "ranks": { "low": 0, "med": 1, "high": 2, "crit": 3 },
+    "definitions": {
+      "low": "Isolated or throwaway. A wrong answer is noticed at once and costs nothing.",
+      "med": "Changes one service's behaviour. Degradation shows within a day; a revert fixes it.",
+      "high": "Touches auth, data integrity, secrets, or the fleet control plane. Failure can be silent and costly.",
+      "crit": "Irreversible or safety relevant. ALWAYS routed to Chef regardless of confidence."
+    },
+    "$warning": "risk MUST NOT reuse the S/M/L/XL labels. The two axes exist to be read apart: 'size M, risk crit' says ordinary work with dangerous consequences, which calls for a human rather than a bigger model. 'size XL, risk XL' says nothing. The max() rule compares RANKS, so shared labels buy nothing mechanically and only create ambiguity and grep collisions."
+  },
+  "sensitivity": {
+    "meaning": "data exposure: what the payload would reveal, INDEPENDENT of blast radius",
+    "values": ["public", "internal", "secret"],
+    "definitions": {
+      "public": "Nothing in the payload that could not be posted publicly.",
+      "internal": "Fleet or business context, code, ops detail. Default for agent traffic.",
+      "secret": "Credentials, keys, private corpora (legal/medical), soul or memory content, anything under seal."
+    },
+    "$warning": "Not a rank and NOT derived from risk. A docs card built on the private legal corpus is risk low and must never reach a free remote model; a card deleting stale files in a public repo is risk crit on public data. Sensitivity resolves to a provider trust-zone ceiling, it does not feed model_class."
+  },
+  "model_class": {
+    "meaning": "the capability FLOOR for the work",
+    "rule": "model_class = CLASS[max(size_rank, risk_rank)]",
+    "values": ["S", "M", "L", "XL"],
+    "semantics": "Floor is HARD: never route graded work to a model below its class. Ceiling is SOFT: a bigger model is allowed but must record an escalation_reason and is charged the energy overage.",
+    "worked_examples": [
+      { "size": "S",  "risk": "low",  "model_class": "S",  "note": "trivial and harmless" },
+      { "size": "S",  "risk": "high", "model_class": "L",  "note": "one threshold value, but it guards against disk-full corruption" },
+      { "size": "M",  "risk": "crit", "model_class": "XL", "note": "a subprocess wrapper that hands an agent fleet-wide ansible" },
+      { "size": "L",  "risk": "low",  "model_class": "L",  "note": "hard thinking, throwaway output" },
+      { "size": "XL", "risk": "crit", "model_class": "XL", "note": "and routed to Chef regardless" }
+    ]
+  },
+  "card_shape": {
+    "meta": {
+      "grade": {
+        "size": "M",
+        "risk": "high",
+        "sensitivity": "internal",
+        "model_class": "L",
+        "joule_estimate": 42000,
+        "joule_bounty": 46200,
+        "graded_by": "assessor@noroc2027",
+        "grader_model": "ornith-1.0-35b",
+        "rubric_version": 1,
+        "confidence": 0.82,
+        "pool": "private"
+      }
+    }
+  }
+}

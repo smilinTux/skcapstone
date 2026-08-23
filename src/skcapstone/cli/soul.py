@@ -1,23 +1,20 @@
-"""Soul layering commands: list, install, install-all, load, unload, swap, show, status, history, info."""
+"""Soul layering commands: list, install, install-all, load, unload, swap, show, status, history, info."""  # noqa: E501
 
 from __future__ import annotations
 
 import json
 import logging
-import shutil
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import click
-
-from ._common import AGENT_HOME, console
-from ._validators import validate_soul_name
-from ..pillars.security import audit_event
-from .. import SKCAPSTONE_AGENT
-
 from rich.panel import Panel
 from rich.table import Table
+
+from .. import SKCAPSTONE_AGENT
+from ..pillars.security import audit_event
+from ._common import AGENT_HOME, console
+from ._validators import validate_soul_name
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +60,8 @@ def register_soul_commands(main: click.Group) -> None:
     def _agent_option():
         """Reusable --agent/-a option for soul subcommands."""
         return click.option(
-            "--agent", "-a",
+            "--agent",
+            "-a",
             default=SKCAPSTONE_AGENT,
             envvar="SKAGENT",
             help="Agent profile name (default: SKAGENT or active agent).",
@@ -73,7 +71,7 @@ def register_soul_commands(main: click.Group) -> None:
     @_agent_option()
     @click.pass_context
     def soul(ctx, agent):
-        """Soul layering — hot-swappable personality overlays.
+        """Soul layering - hot-swappable personality overlays.
 
         Install soul blueprints, load overlays at runtime,
         and manage personality while preserving identity.
@@ -138,7 +136,12 @@ def register_soul_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--category", "filter_category", default=None, help="Filter by category.")
     @click.option("--page", default=1, type=int, help="Page number (10 per page).")
-    @click.option("--install", "install_name", default=None, help="Install a soul by name from browse results.")
+    @click.option(
+        "--install",
+        "install_name",
+        default=None,
+        help="Install a soul by name from browse results.",
+    )
     @click.pass_context
     def soul_browse(ctx, home, filter_category, page, install_name):
         """Browse available souls grouped by category with details.
@@ -209,13 +212,17 @@ def register_soul_commands(main: click.Group) -> None:
             page_by_cat.setdefault(s["category"], []).append(s)
 
         installed_count = sum(1 for s in all_souls if s["source"] == "installed")
-        console.print(f"\n  [bold]{len(all_souls)}[/] soul(s) available ({installed_count} installed)")
+        console.print(
+            f"\n  [bold]{len(all_souls)}[/] soul(s) available ({installed_count} installed)"
+        )
         console.print(f"  Page {page}/{total_pages}\n")
 
         state = mgr.get_status()
 
         for category, souls in sorted(page_by_cat.items()):
-            console.print(f"  [bold yellow]{category}[/] ({len(by_category.get(category, []))} total)")
+            console.print(
+                f"  [bold yellow]{category}[/] ({len(by_category.get(category, []))} total)"
+            )
             console.print()
 
             for s in souls:
@@ -267,7 +274,7 @@ def register_soul_commands(main: click.Group) -> None:
         installed = mgr.install_all(Path(directory))
         console.print(f"\n  [green]Installed {len(installed)} soul(s)[/]")
         for bp in installed:
-            console.print(f"    [cyan]{bp.name}[/] — {bp.display_name}")
+            console.print(f"    [cyan]{bp.name}[/] - {bp.display_name}")
         audit_event(home_path, "SOUL_INSTALL_ALL", f"{len(installed)} souls installed")
         console.print()
 
@@ -288,7 +295,9 @@ def register_soul_commands(main: click.Group) -> None:
             state = mgr.load(name, reason=reason)
             console.print(f"\n  [green]Loaded:[/] [bold]{name}[/]")
             console.print(f"  Base: {state.base_soul}")
-            audit_event(home_path, "SOUL_LOAD", f"Soul '{name}' loaded", metadata={"reason": reason})
+            audit_event(
+                home_path, "SOUL_LOAD", f"Soul '{name}' loaded", metadata={"reason": reason}
+            )
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}")
             sys.exit(1)
@@ -307,7 +316,9 @@ def register_soul_commands(main: click.Group) -> None:
         state = mgr.unload(reason=reason)
         if state.active_soul is None:
             console.print("\n  [green]Returned to base soul.[/]")
-            audit_event(home_path, "SOUL_UNLOAD", "Returned to base soul", metadata={"reason": reason})
+            audit_event(
+                home_path, "SOUL_UNLOAD", "Returned to base soul", metadata={"reason": reason}
+            )
         else:
             console.print("\n  [dim]Already at base soul.[/]")
         console.print()
@@ -333,6 +344,7 @@ def register_soul_commands(main: click.Group) -> None:
         if base_path.exists():
             try:
                 import json
+
                 base_data = json.loads(base_path.read_text(encoding="utf-8"))
                 vibe = base_data.get("vibe", "")
             except Exception as exc:
@@ -349,10 +361,13 @@ def register_soul_commands(main: click.Group) -> None:
             lines.insert(1, f"Vibe: [italic]{vibe}[/]")
 
         console.print()
-        console.print(Panel(
-            "\n".join(lines),
-            title="Soul Layer", border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                "\n".join(lines),
+                title="Soul Layer",
+                border_style="yellow",
+            )
+        )
         console.print()
 
     @soul.command("history")
@@ -410,24 +425,41 @@ def register_soul_commands(main: click.Group) -> None:
 
         emoji = f" {bp.emoji}" if bp.emoji else ""
         console.print()
-        console.print(Panel(
-            f"[bold]{bp.display_name}[/]{emoji}\n"
-            f"Category: [cyan]{bp.category}[/]\n"
-            f"Vibe: {bp.vibe}\n"
-            + (f"Philosophy: [italic]{bp.philosophy}[/]\n" if bp.philosophy else "")
-            + f"\n[bold]Core Traits ({len(bp.core_traits)}):[/]\n"
-            + "\n".join(f"  \u2022 {t}" for t in bp.core_traits[:10])
-            + (f"\n\n[bold]Communication:[/]\n"
-               + ("  Patterns: " + ", ".join(bp.communication_style.patterns[:3]) if bp.communication_style.patterns else "")
-               + ("\n  Phrases: " + ", ".join(bp.communication_style.signature_phrases[:3]) if bp.communication_style.signature_phrases else ""))
-            + ("\n\n[bold]Emotional Topology:[/]\n"
-               + "\n".join(f"  {k}: {v:.2f}" for k, v in bp.emotional_topology.items()) if bp.emotional_topology else ""),
-            title=f"Soul: {name}", border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                f"[bold]{bp.display_name}[/]{emoji}\n"
+                f"Category: [cyan]{bp.category}[/]\n"
+                f"Vibe: {bp.vibe}\n"
+                + (f"Philosophy: [italic]{bp.philosophy}[/]\n" if bp.philosophy else "")
+                + f"\n[bold]Core Traits ({len(bp.core_traits)}):[/]\n"
+                + "\n".join(f"  \u2022 {t}" for t in bp.core_traits[:10])
+                + (
+                    "\n\n[bold]Communication:[/]\n"
+                    + (
+                        "  Patterns: " + ", ".join(bp.communication_style.patterns[:3])
+                        if bp.communication_style.patterns
+                        else ""
+                    )
+                    + (
+                        "\n  Phrases: " + ", ".join(bp.communication_style.signature_phrases[:3])
+                        if bp.communication_style.signature_phrases
+                        else ""
+                    )
+                )
+                + (
+                    "\n\n[bold]Emotional Topology:[/]\n"
+                    + "\n".join(f"  {k}: {v:.2f}" for k, v in bp.emotional_topology.items())
+                    if bp.emotional_topology
+                    else ""
+                ),
+                title=f"Soul: {name}",
+                border_style="yellow",
+            )
+        )
         console.print()
 
     # -----------------------------------------------------------------------
-    # soul show — display current active soul or a specific skmemory blueprint
+    # soul show - display current active soul or a specific skmemory blueprint
     # -----------------------------------------------------------------------
 
     @soul.command("show")
@@ -446,6 +478,7 @@ def register_soul_commands(main: click.Group) -> None:
         if name:
             # Show a specific installed soul overlay
             from ..soul import SoulManager
+
             validate_soul_name(name)
             mgr = SoulManager(home_path, agent_name=agent_name)
             bp = mgr.get_info(name)
@@ -453,19 +486,23 @@ def register_soul_commands(main: click.Group) -> None:
                 console.print(f"\n  [red]Soul not found:[/] {name}\n")
                 sys.exit(1)
             console.print()
-            console.print(Panel(
-                f"[bold]{bp.display_name}[/]\n"
-                f"Category: {bp.category}\n"
-                f"Vibe: {bp.vibe}\n"
-                f"Traits: {', '.join(bp.core_traits[:8])}\n",
-                title=f"Soul: {name}", border_style="cyan",
-            ))
+            console.print(
+                Panel(
+                    f"[bold]{bp.display_name}[/]\n"
+                    f"Category: {bp.category}\n"
+                    f"Vibe: {bp.vibe}\n"
+                    f"Traits: {', '.join(bp.core_traits[:8])}\n",
+                    title=f"Soul: {name}",
+                    border_style="cyan",
+                )
+            )
             console.print()
             return
 
         # Show the current skmemory soul identity (base.json)
         try:
             from skmemory.soul import load_soul
+
             if agent_name:
                 soul_base = home_path / "agents" / agent_name / "soul"
             else:
@@ -491,22 +528,24 @@ def register_soul_commands(main: click.Group) -> None:
                 lines.append(f"\nBoot: [italic]{blueprint.boot_message}[/]")
 
             console.print()
-            console.print(Panel(
-                "\n".join(lines),
-                title="Active Soul Identity",
-                border_style="green",
-            ))
+            console.print(
+                Panel(
+                    "\n".join(lines),
+                    title="Active Soul Identity",
+                    border_style="green",
+                )
+            )
             console.print()
         except ImportError:
             console.print("\n  [red]skmemory not installed.[/] Run: pip install skmemory\n")
             sys.exit(1)
 
     # -----------------------------------------------------------------------
-    # soul swap — search, install-if-needed, and activate a soul overlay
+    # soul swap - search, install-if-needed, and activate a soul overlay
     # -----------------------------------------------------------------------
 
     # -----------------------------------------------------------------------
-    # soul registry — interact with the souls.skworld.io blueprint registry
+    # soul registry - interact with the souls.skworld.io blueprint registry
     # -----------------------------------------------------------------------
 
     @soul.group("registry")
@@ -682,7 +721,9 @@ def register_soul_commands(main: click.Group) -> None:
                 dest = client.download_and_install(soul_id, home=home_path)
                 console.print(f"\n  [green]Downloaded and installed:[/] {soul_id}")
                 console.print(f"  Saved to: {dest}")
-                audit_event(home_path, "SOUL_REGISTRY_DOWNLOAD", f"Downloaded '{soul_id}' from registry")
+                audit_event(
+                    home_path, "SOUL_REGISTRY_DOWNLOAD", f"Downloaded '{soul_id}' from registry"
+                )
             else:
                 bp_data = client.download_blueprint(soul_id)
                 console.print(f"\n  [green]Downloaded:[/] {soul_id}")
@@ -708,7 +749,7 @@ def register_soul_commands(main: click.Group) -> None:
         If found in the blueprints repo but not installed, installs it first.
         Backs up current state and activates the new soul overlay.
         """
-        from ..soul import SoulManager, parse_blueprint
+        from ..soul import SoulManager
 
         home_path = Path(home).expanduser()
         mgr = SoulManager(home_path, agent_name=ctx.obj["agent_name"])

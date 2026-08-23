@@ -1,9 +1,9 @@
 """Crush (charmbracelet/crush) integration commands.
 
 Subcommands:
-    skcapstone crush setup   — install config + soul instructions
-    skcapstone crush config  — print the generated crush.json
-    skcapstone crush status  — show installation status
+    skcapstone crush setup   - install config + soul instructions
+    skcapstone crush config  - print the generated crush.json
+    skcapstone crush status  - show installation status
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ def register_crush_commands(main: click.Group) -> None:
         """Set up Crush: write crush.json + instructions.md.
 
         Writes:
-          ~/.config/crush/crush.json     — MCP wiring + permissions
-          ~/.config/crush/instructions.md — soul blueprint as system prompt
+          ~/.config/crush/crush.json     - MCP wiring + permissions
+          ~/.config/crush/instructions.md - soul blueprint as system prompt
         """
         from ..crush_integration import setup_crush
 
@@ -75,7 +75,7 @@ def register_crush_commands(main: click.Group) -> None:
 
         console.print()
         console.print(
-            "  [dim]Run crush in your project directory to start coding with your sovereign agent.[/]"
+            "  [dim]Run crush in your project directory to start coding with your sovereign agent.[/]"  # noqa: E501
         )
         if not result["installed"]:
             console.print()
@@ -103,20 +103,20 @@ def register_crush_commands(main: click.Group) -> None:
             console.print_json(json.dumps(config, indent=2))
             console.print()
             console.print(
-                f"  [dim]Write this to [cyan]~/.config/crush/crush.json[/] "
-                f"with:  skcapstone crush setup[/]"
+                "  [dim]Write this to [cyan]~/.config/crush/crush.json[/] "
+                "with:  skcapstone crush setup[/]"
             )
             console.print()
 
     @crush.command("status")
     def crush_status() -> None:
         """Show Crush installation and config status."""
+        from pathlib import Path
+
         from ..crush_integration import (
             find_crush_binary,
             get_install_hint,
-            is_crush_installed,
         )
-        from pathlib import Path
 
         crush_config_dir = Path("~/.config/crush").expanduser()
         crush_json = crush_config_dir / "crush.json"
@@ -148,7 +148,7 @@ def register_crush_commands(main: click.Group) -> None:
                 t.add_row(
                     "crush.json",
                     "[green]OK[/]",
-                    f"{mcp_count} MCP server(s) — {str(crush_json)}",
+                    f"{mcp_count} MCP server(s) - {str(crush_json)}",
                 )
             except Exception:
                 t.add_row("crush.json", "[red]CORRUPT[/]", str(crush_json))
@@ -158,7 +158,7 @@ def register_crush_commands(main: click.Group) -> None:
         # instructions.md
         if instructions_md.exists():
             size = instructions_md.stat().st_size
-            t.add_row("instructions.md", "[green]OK[/]", f"{size} bytes — {str(instructions_md)}")
+            t.add_row("instructions.md", "[green]OK[/]", f"{size} bytes - {str(instructions_md)}")
         else:
             t.add_row(
                 "instructions.md",

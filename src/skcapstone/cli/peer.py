@@ -7,12 +7,11 @@ import sys
 from pathlib import Path
 
 import click
+from rich.panel import Panel
+from rich.table import Table
 
 from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name
-
-from rich.panel import Panel
-from rich.table import Table
 
 
 def register_peer_commands(main: click.Group) -> None:
@@ -20,14 +19,18 @@ def register_peer_commands(main: click.Group) -> None:
 
     @main.group()
     def peer():
-        """Peer management — discover, add, and manage trusted contacts.
+        """Peer management - discover, add, and manage trusted contacts.
 
         Identity-layer peers (PGP keys, trust). For transport routing, see 'peers'."""
 
     @peer.command("add")
-    @click.option("--card", "card_path", type=click.Path(exists=True), help="Import from identity card.")
+    @click.option(
+        "--card", "card_path", type=click.Path(exists=True), help="Import from identity card."
+    )
     @click.option("--name", default=None, help="Peer name (required if not using --card).")
-    @click.option("--pubkey", default=None, type=click.Path(exists=True), help="Path to PGP public key.")
+    @click.option(
+        "--pubkey", default=None, type=click.Path(exists=True), help="Path to PGP public key."
+    )
     @click.option("--email", default=None, help="Peer contact email.")
     @click.option("--home", "sk_home", default=AGENT_HOME, type=click.Path())
     def peer_add(card_path, name, pubkey, email, sk_home):
@@ -46,19 +49,21 @@ def register_peer_commands(main: click.Group) -> None:
                 console.print(f"  Trust: {peer_record.trust_level}")
                 console.print(f"  Capabilities: {', '.join(peer_record.capabilities[:5])}")
                 if peer_record.public_key:
-                    console.print(f"  [green]Public key imported[/] — encrypted messaging enabled")
+                    console.print("  [green]Public key imported[/] - encrypted messaging enabled")
                 console.print()
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"\n  [red]Error:[/] {exc}\n")
                 sys.exit(1)
         elif name:
             peer_record = add_peer_manual(
-                name=name, public_key_path=Path(pubkey) if pubkey else None,
-                email=email or "", skcapstone_home=sk_path,
+                name=name,
+                public_key_path=Path(pubkey) if pubkey else None,
+                email=email or "",
+                skcapstone_home=sk_path,
             )
             console.print(f"\n  [green]Added peer:[/] [cyan]{peer_record.name}[/]")
             if peer_record.public_key:
-                console.print(f"  [green]Public key imported[/]")
+                console.print("  [green]Public key imported[/]")
             console.print()
         else:
             console.print("\n  [yellow]Provide --card or --name.[/]")
@@ -86,8 +91,13 @@ def register_peer_commands(main: click.Group) -> None:
             console.print()
             return
 
-        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2),
-                      title=f"Known Peers ({len(peers)})")
+        table = Table(
+            show_header=True,
+            header_style="bold",
+            box=None,
+            padding=(0, 2),
+            title=f"Known Peers ({len(peers)})",
+        )
         table.add_column("Name", style="cyan")
         table.add_column("Type", style="dim")
         table.add_column("Fingerprint", style="dim", max_width=20)
@@ -149,7 +159,9 @@ def register_peer_commands(main: click.Group) -> None:
         if p.contact_uris:
             for uri in p.contact_uris:
                 lines.append(f"[bold]Contact:[/]      [cyan]{uri}[/]")
-        lines.append(f"[bold]PGP Key:[/]      {'[green]present[/]' if p.public_key else '[yellow]missing[/]'}")
+        lines.append(
+            f"[bold]PGP Key:[/]      {'[green]present[/]' if p.public_key else '[yellow]missing[/]'}"  # noqa: E501
+        )
 
         console.print()
         console.print(Panel("\n".join(lines), title=f"Peer: {p.name}", border_style="cyan"))

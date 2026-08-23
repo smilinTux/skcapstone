@@ -1,5 +1,5 @@
 """
-Memory pillar — sovereign memory initialization.
+Memory pillar - sovereign memory initialization.
 
 Persistent context across platforms and sessions.
 The agent remembers. Always. Everywhere.

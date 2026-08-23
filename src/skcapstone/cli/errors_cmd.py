@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.table import Table
@@ -18,7 +17,7 @@ def register_errors_commands(main: click.Group) -> None:
 
     @main.group("errors")
     def errors_grp():
-        """Error recovery queue — inspect and replay failed operations.
+        """Error recovery queue - inspect and replay failed operations.
 
         Failed LLM calls, message sends, and sync operations land here
         and are retried automatically with exponential backoff (max 3 times).
@@ -36,7 +35,8 @@ def register_errors_commands(main: click.Group) -> None:
         help="Override error queue JSON path.",
     )
     @click.option(
-        "--all", "show_all",
+        "--all",
+        "show_all",
         is_flag=True,
         help="Include resolved entries.",
     )
@@ -55,7 +55,7 @@ def register_errors_commands(main: click.Group) -> None:
 
         stats = q.stats()
         console.print(
-            f"\n  Error queue — "
+            f"\n  Error queue - "
             f"[yellow]{stats.get('pending', 0)}[/] pending  "
             f"[red]{stats.get('exhausted', 0)}[/] exhausted  "
             f"[green]{stats.get('resolved', 0)}[/] resolved  "
@@ -89,7 +89,7 @@ def register_errors_commands(main: click.Group) -> None:
                 entry.error_message[:60] + ("…" if len(entry.error_message) > 60 else ""),
                 str(entry.retry_count),
                 Text(entry.status, style=color),
-                entry.next_retry_at[:19].replace("T", " ") if entry.next_retry_at else "—",
+                entry.next_retry_at[:19].replace("T", " ") if entry.next_retry_at else "-",
             )
 
         console.print(table)
@@ -102,7 +102,8 @@ def register_errors_commands(main: click.Group) -> None:
     @errors_grp.command("retry")
     @click.argument("entry_id", required=False, default=None)
     @click.option(
-        "--all", "retry_all",
+        "--all",
+        "retry_all",
         is_flag=True,
         help="Retry all due entries.",
     )
@@ -135,7 +136,7 @@ def register_errors_commands(main: click.Group) -> None:
             ok = sum(1 for v in results.values() if v)
             fail = len(results) - ok
             console.print(
-                f"\n  Retried [bold]{len(results)}[/] entries — "
+                f"\n  Retried [bold]{len(results)}[/] entries - "
                 f"[green]{ok} resolved[/]  [yellow]{fail} still pending[/]\n"
             )
             return
@@ -148,7 +149,7 @@ def register_errors_commands(main: click.Group) -> None:
             sys.exit(1)
         if len(matched) > 1:
             console.print(
-                f"[yellow]Ambiguous prefix '[/]{entry_id}[yellow]' — "
+                f"[yellow]Ambiguous prefix '[/]{entry_id}[yellow]' - "
                 f"matches {len(matched)} entries. Use more characters.[/]"
             )
             sys.exit(1)
@@ -169,7 +170,8 @@ def register_errors_commands(main: click.Group) -> None:
     @errors_grp.command("clear")
     @click.argument("entry_id", required=False, default=None)
     @click.option(
-        "--all", "clear_all",
+        "--all",
+        "clear_all",
         is_flag=True,
         help="Clear all entries.",
     )
@@ -200,9 +202,7 @@ def register_errors_commands(main: click.Group) -> None:
         from ..error_queue import ErrorQueue, ErrorStatus
 
         if not any([entry_id, clear_all, exhausted, resolved]):
-            console.print(
-                "[red]Provide ENTRY_ID, --all, --exhausted, or --resolved.[/]"
-            )
+            console.print("[red]Provide ENTRY_ID, --all, --exhausted, or --resolved.[/]")
             sys.exit(1)
 
         q = ErrorQueue(path=Path(path) if path else None)
@@ -212,7 +212,9 @@ def register_errors_commands(main: click.Group) -> None:
                 console.print("[yellow]Aborted.[/]")
                 return
             removed = q.clear_all(status=ErrorStatus.EXHAUSTED)
-            console.print(f"\n  [red]Cleared[/] {removed} exhausted entr{'y' if removed == 1 else 'ies'}.\n")
+            console.print(
+                f"\n  [red]Cleared[/] {removed} exhausted entr{'y' if removed == 1 else 'ies'}.\n"
+            )
             return
 
         if resolved:
@@ -220,7 +222,9 @@ def register_errors_commands(main: click.Group) -> None:
                 console.print("[yellow]Aborted.[/]")
                 return
             removed = q.clear_all(status=ErrorStatus.RESOLVED)
-            console.print(f"\n  [green]Cleared[/] {removed} resolved entr{'y' if removed == 1 else 'ies'}.\n")
+            console.print(
+                f"\n  [green]Cleared[/] {removed} resolved entr{'y' if removed == 1 else 'ies'}.\n"
+            )
             return
 
         if clear_all:
@@ -230,7 +234,9 @@ def register_errors_commands(main: click.Group) -> None:
                 console.print("[yellow]Aborted.[/]")
                 return
             removed = q.clear_all()
-            console.print(f"\n  Cleared [bold]{removed}[/] entr{'y' if removed == 1 else 'ies'}.\n")
+            console.print(
+                f"\n  Cleared [bold]{removed}[/] entr{'y' if removed == 1 else 'ies'}.\n"
+            )
             return
 
         # Single entry
@@ -241,7 +247,7 @@ def register_errors_commands(main: click.Group) -> None:
             sys.exit(1)
         if len(matched) > 1:
             console.print(
-                f"[yellow]Ambiguous prefix '[/]{entry_id}[yellow]' — "
+                f"[yellow]Ambiguous prefix '[/]{entry_id}[yellow]' - "
                 f"matches {len(matched)} entries.[/]"
             )
             sys.exit(1)
@@ -266,20 +272,23 @@ def register_errors_commands(main: click.Group) -> None:
     )
     def errors_stats(path):
         """Show error queue statistics."""
-        from ..error_queue import ErrorQueue
         from rich.panel import Panel
+
+        from ..error_queue import ErrorQueue
 
         q = ErrorQueue(path=Path(path) if path else None)
         s = q.stats()
 
         console.print()
-        console.print(Panel(
-            f"[bold]Total:[/]     {s.get('total', 0)}\n"
-            f"[yellow]Pending:[/]   {s.get('pending', 0)}\n"
-            f"[blue]Retrying:[/]  {s.get('retrying', 0)}\n"
-            f"[red]Exhausted:[/] {s.get('exhausted', 0)}\n"
-            f"[green]Resolved:[/]  {s.get('resolved', 0)}",
-            title="Error Queue",
-            border_style="bright_blue",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Total:[/]     {s.get('total', 0)}\n"
+                f"[yellow]Pending:[/]   {s.get('pending', 0)}\n"
+                f"[blue]Retrying:[/]  {s.get('retrying', 0)}\n"
+                f"[red]Exhausted:[/] {s.get('exhausted', 0)}\n"
+                f"[green]Resolved:[/]  {s.get('resolved', 0)}",
+                title="Error Queue",
+                border_style="bright_blue",
+            )
+        )
         console.print()

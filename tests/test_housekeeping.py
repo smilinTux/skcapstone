@@ -1,16 +1,69 @@
-"""Tests for skcapstone.housekeeping — storage pruning."""
+"""Tests for skcapstone.housekeeping - storage pruning."""
 
+import os
 import time
-from pathlib import Path
 
 import pytest
 
 from skcapstone.housekeeping import (
+    _seed_outbox_dirs,
     prune_acks,
     prune_comms_outbox,
     prune_seeds,
     run_housekeeping,
 )
+
+
+class TestPerAgentSeedOutbox:
+    """The daemon writes seeds to agents/<agent>/sync/outbox, not sync/outbox.
+
+    Regression: housekeeping only ever pruned the shared ``sync/outbox``, so the
+    per-agent outboxes grew without bound - 240k files / 12 GB per node on a
+    six-node cluster before anyone noticed.
+    """
+
+    def _seed(self, outbox, agent, peer, stamp):
+        f = outbox / f"{agent}-{peer}-{stamp}.seed.json"
+        f.write_text("{}", encoding="utf-8")
+        return f
+
+    def test_discovers_per_agent_outboxes(self, tmp_path):
+        shared = tmp_path / "sync" / "outbox"
+        shared.mkdir(parents=True)
+        a = tmp_path / "agents" / "jarvis" / "sync" / "outbox"
+        b = tmp_path / "agents" / "aster" / "sync" / "outbox"
+        a.mkdir(parents=True)
+        b.mkdir(parents=True)
+
+        found = _seed_outbox_dirs(tmp_path)
+        assert shared in found
+        assert a in found
+        assert b in found
+
+    def test_run_housekeeping_prunes_per_agent_seeds(self, tmp_path):
+        outbox = tmp_path / "agents" / "jarvis" / "sync" / "outbox"
+        outbox.mkdir(parents=True)
+        # 30 seeds from one peer; only the newest 10 should survive.
+        for i in range(30):
+            f = self._seed(outbox, "Jarvis", "chiap01", f"2026081{i // 10}T0{i % 10}0000Z")
+            os.utime(f, (1_700_000_000 + i, 1_700_000_000 + i))
+
+        assert len(list(outbox.iterdir())) == 30
+        run_housekeeping(skcapstone_home=tmp_path, skcomms_home=tmp_path / "skcomms")
+        assert len(list(outbox.iterdir())) == 10
+
+    def test_dry_run_counts_per_agent_seeds_without_deleting(self, tmp_path):
+        outbox = tmp_path / "agents" / "jarvis" / "sync" / "outbox"
+        outbox.mkdir(parents=True)
+        for i in range(25):
+            f = self._seed(outbox, "Jarvis", "chiap02", f"2026081{i // 10}T0{i % 10}0000Z")
+            os.utime(f, (1_700_000_000 + i, 1_700_000_000 + i))
+
+        res = run_housekeeping(
+            skcapstone_home=tmp_path, skcomms_home=tmp_path / "skcomms", dry_run=True
+        )
+        assert res["seed_outbox"]["would_delete"] == 15
+        assert len(list(outbox.iterdir())) == 25
 
 
 @pytest.fixture
@@ -52,6 +105,7 @@ class TestPruneAcks:
             f = acks_dir / f"ack-{i}.json"
             f.write_text("{}")
             import os
+
             os.utime(f, (old_time, old_time))
 
         # Create 3 fresh files
@@ -71,6 +125,7 @@ class TestPruneAcks:
         f = acks_dir / "recent.json"
         f.write_text("{}")
         import os
+
         os.utime(f, (time.time() - 3600, time.time() - 3600))
 
         assert prune_acks(skcomms_home, max_age_hours=2) == 0
@@ -98,6 +153,7 @@ class TestPruneCommsOutbox:
             f = agent_dir / f"env-{i}.json"
             f.write_text("{}")
             import os
+
             os.utime(f, (old_time, old_time))
 
         f = agent_dir / "fresh.json"
@@ -124,6 +180,7 @@ class TestPruneSeeds:
             f = seed_dir / f"opus-170900000{i:01d}.json.gpg"
             f.write_text("{}")
             import os
+
             os.utime(f, (time.time() - (15 - i) * 300, time.time() - (15 - i) * 300))
 
         deleted = prune_seeds(seed_dir, keep_per_agent=10)
@@ -161,6 +218,7 @@ class TestRunHousekeeping:
             f = acks_dir / f"old-{i}.json"
             f.write_text("{}")
             import os
+
             os.utime(f, (time.time() - 48 * 3600, time.time() - 48 * 3600))
 
         results = run_housekeeping(
@@ -182,6 +240,7 @@ class TestRunHousekeeping:
             f = acks_dir / f"old-{i}.json"
             f.write_text("{}")
             import os
+
             os.utime(f, (time.time() - 48 * 3600, time.time() - 48 * 3600))
 
         results = run_housekeeping(

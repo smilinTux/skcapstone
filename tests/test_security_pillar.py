@@ -5,9 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from skcapstone.models import PillarStatus
 from skcapstone.pillars.security import (
     AUDIT_LOG_NAME,
     AuditEntry,
@@ -56,7 +53,7 @@ class TestInitializeSecurity:
         initialize_security(tmp_agent_home)
         initialize_security(tmp_agent_home)
         log_path = tmp_agent_home / "security" / AUDIT_LOG_NAME
-        lines = [l for l in log_path.read_text().splitlines() if l.strip()]
+        lines = [ln for ln in log_path.read_text().splitlines() if ln.strip()]
         assert len(lines) == 1
 
 
@@ -159,8 +156,8 @@ class TestReadAuditLog:
         security_dir = tmp_agent_home / "security"
         security_dir.mkdir(parents=True, exist_ok=True)
         (security_dir / AUDIT_LOG_NAME).write_text(
-            "[2026-01-01T00:00:00] INIT — legacy format\n"
-            "[2026-01-01T00:01:00] AUTH — old auth event\n",
+            "[2026-01-01T00:00:00] INIT - legacy format\n"
+            "[2026-01-01T00:01:00] AUTH - old auth event\n",
             encoding="utf-8",
         )
         entries = read_audit_log(tmp_agent_home)

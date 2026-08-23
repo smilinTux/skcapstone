@@ -12,11 +12,9 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("skcapstone.summary")
 
@@ -92,7 +90,6 @@ def _memory_summary(home: Path) -> dict:
     """Get memory counts and recent entries."""
     try:
         from .memory_engine import get_stats, list_memories
-        from .models import MemoryLayer
 
         stats = get_stats(home)
         recent = list_memories(home, limit=3)

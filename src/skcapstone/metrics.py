@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -290,10 +289,7 @@ class MetricsCollector:
             mid = sum(1 for m in all_mems if m.layer == MemoryLayer.MID)
             long_ = sum(1 for m in all_mems if m.layer == MemoryLayer.LONG)
 
-            store_size = sum(
-                f.stat().st_size
-                for f in mem_path.rglob("*") if f.is_file()
-            )
+            store_size = sum(f.stat().st_size for f in mem_path.rglob("*") if f.is_file())
 
             report.memory = MemoryMetrics(
                 available=True,
@@ -312,8 +308,8 @@ class MetricsCollector:
     def _collect_chat(self, report: MetricsReport) -> None:
         """Collect SKChat metrics."""
         try:
-            from skmemory import MemoryStore, SQLiteBackend
             from skchat.history import ChatHistory
+            from skmemory import MemoryStore, SQLiteBackend
 
             mem_path = self._home / "memory"
             if not mem_path.exists():
@@ -359,7 +355,8 @@ class MetricsCollector:
                     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
                     transports = cfg.get("skcomms", {}).get("transports", {})
                     transport_count = sum(
-                        1 for t in transports.values()
+                        1
+                        for t in transports.values()
                         if isinstance(t, dict) and t.get("enabled", True)
                     )
                 except Exception as exc:
@@ -629,9 +626,7 @@ class ConsciousnessMetrics:
             the background thread (useful in tests).
     """
 
-    def __init__(
-        self, home: Optional[Path] = None, persist_interval: int = 300
-    ) -> None:
+    def __init__(self, home: Optional[Path] = None, persist_interval: int = 300) -> None:
         self._lock = threading.Lock()
         self._home = (home or Path("~/.skcapstone")).expanduser()
         self._persist_interval = persist_interval
@@ -641,13 +636,18 @@ class ConsciousnessMetrics:
         self._responses_sent: int = 0
         self._errors: int = 0
 
-        # Response-time histogram samples (ms) — capped at 1 000 entries
+        # Response-time histogram samples (ms) - capped at 1 000 entries
         self._response_times: list[float] = []
 
         # Per-backend, per-tier, per-peer counters
         self._backend_usage: dict[str, int] = {}
         self._tier_usage: dict[str, int] = {}
         self._messages_per_peer: dict[str, int] = {}
+
+        # Per-classification-tag counters (observability only - the loop's
+        # routing decision is unaffected). A message may carry several tags,
+        # so each tag is counted independently.
+        self._classification_usage: dict[str, int] = {}
 
         # Quality score accumulators (running sums + count for avg)
         self._quality_sum_length: float = 0.0
@@ -681,22 +681,36 @@ class ConsciousnessMetrics:
         safe_peer = peer[:64]
         with self._lock:
             self._messages_processed += 1
-            self._messages_per_peer[safe_peer] = (
-                self._messages_per_peer.get(safe_peer, 0) + 1
-            )
+            self._messages_per_peer[safe_peer] = self._messages_per_peer.get(safe_peer, 0) + 1
 
-    def record_response(
-        self, response_time_ms: float, backend: str, tier: str
-    ) -> None:
+    def record_response(self, response_time_ms: float, backend: str, tier: str) -> None:
         """Record a successful response: timing, backend, and tier."""
         with self._lock:
             self._responses_sent += 1
             self._response_times.append(response_time_ms)
-            # Bound memory — keep the most recent 1 000 samples
+            # Bound memory - keep the most recent 1 000 samples
             if len(self._response_times) > 1000:
                 self._response_times = self._response_times[-1000:]
             self._backend_usage[backend] = self._backend_usage.get(backend, 0) + 1
             self._tier_usage[tier] = self._tier_usage.get(tier, 0) + 1
+
+    def record_classification(self, tags: Any, estimated_tokens: int = 0) -> None:
+        """Record how an inbound message was classified.
+
+        Increments a counter for each classification tag so operators can see
+        the distribution of message types the loop is handling. Logging /
+        observability only - it never influences routing behavior.
+
+        Args:
+            tags: Iterable of classification tags (e.g. ``["code", "analyze"]``).
+                Falls back to ``["general"]`` when empty.
+            estimated_tokens: Rough token estimate for the message (unused for
+                counting; accepted so callers can pass the full signal shape).
+        """
+        tag_list = list(tags) if tags else ["general"]
+        with self._lock:
+            for tag in tag_list:
+                self._classification_usage[tag] = self._classification_usage.get(tag, 0) + 1
 
     def record_error(self) -> None:
         """Record a processing error."""
@@ -769,6 +783,7 @@ class ConsciousnessMetrics:
                 "backend_usage": dict(self._backend_usage),
                 "tier_usage": dict(self._tier_usage),
                 "messages_per_peer": dict(self._messages_per_peer),
+                "classification_usage": dict(self._classification_usage),
                 "quality_avg": quality_avg,
                 "quality_sums": {
                     "length": self._quality_sum_length,
@@ -824,6 +839,7 @@ class ConsciousnessMetrics:
                 self._backend_usage = dict(data.get("backend_usage", {}))
                 self._tier_usage = dict(data.get("tier_usage", {}))
                 self._messages_per_peer = dict(data.get("messages_per_peer", {}))
+                self._classification_usage = dict(data.get("classification_usage", {}))
                 # response_times are session-only; do not restore
                 # Restore quality score accumulators
                 sums = data.get("quality_sums", {})

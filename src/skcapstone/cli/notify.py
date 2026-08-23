@@ -19,7 +19,12 @@ def register_notify_commands(main: click.Group) -> None:
 
     @notify.command("test")
     @click.option("--title", default="SKCapstone", show_default=True, help="Notification title.")
-    @click.option("--body", default="Test notification from SKCapstone.", show_default=True, help="Notification body.")
+    @click.option(
+        "--body",
+        default="Test notification from SKCapstone.",
+        show_default=True,
+        help="Notification body.",
+    )
     @click.option(
         "--urgency",
         default="normal",
@@ -48,7 +53,7 @@ def register_notify_commands(main: click.Group) -> None:
             )
         else:
             console.print(
-                "\n  [yellow]Notification not dispatched[/] — no supported notification "
+                "\n  [yellow]Notification not dispatched[/] - no supported notification "
                 "system found (gi.repository.Notify / notify-send / osascript).\n"
             )
 
@@ -74,7 +79,9 @@ def register_notify_commands(main: click.Group) -> None:
             console.print("[bold red]No agent found.[/] Run skcapstone init first.")
             sys.exit(1)
 
-        results = mem_search(home=home_path, query="notification", tags=["notification"], limit=limit)
+        results = mem_search(
+            home=home_path, query="notification", tags=["notification"], limit=limit
+        )
 
         if json_out:
             output = [
@@ -96,7 +103,9 @@ def register_notify_commands(main: click.Group) -> None:
 
         from rich.table import Table
 
-        console.print(f"\n  [bold]{len(results)}[/] notification{'s' if len(results) != 1 else ''} in history:\n")
+        console.print(
+            f"\n  [bold]{len(results)}[/] notification{'s' if len(results) != 1 else ''} in history:\n"  # noqa: E501
+        )
 
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         table.add_column("ID", style="cyan", max_width=14)
@@ -104,7 +113,7 @@ def register_notify_commands(main: click.Group) -> None:
         table.add_column("Content", max_width=70)
 
         for entry in results:
-            created = entry.created_at.strftime("%Y-%m-%d %H:%M:%S") if entry.created_at else "—"
+            created = entry.created_at.strftime("%Y-%m-%d %H:%M:%S") if entry.created_at else "-"
             preview = entry.content[:100] + ("..." if len(entry.content) > 100 else "")
             table.add_row(entry.memory_id, created, preview)
 

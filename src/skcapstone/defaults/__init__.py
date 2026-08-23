@@ -12,10 +12,9 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import shutil
-from pathlib import Path
 from importlib import resources
+from pathlib import Path
 
 
 def get_defaults_path(agent_name: str = "lumina") -> Path:

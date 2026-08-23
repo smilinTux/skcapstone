@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from skcapstone.blueprints.schema import AgentRole, ModelTier, ProviderType
 from skcapstone.spawner import (
     NodeInfo,
@@ -14,8 +12,6 @@ from skcapstone.spawner import (
     classify_task,
     select_node,
 )
-from skcapstone.team_engine import AgentStatus
-
 
 # ---------------------------------------------------------------------------
 # classify_task
@@ -90,7 +86,9 @@ class TestSelectNode:
             NodeInfo(name="local1", provider=ProviderType.LOCAL, capacity=0.9),
         ]
         node = select_node(
-            nodes, AgentRole.CODER, ModelTier.CODE,
+            nodes,
+            AgentRole.CODER,
+            ModelTier.CODE,
             preferred_provider=ProviderType.DOCKER,
         )
         assert node.name == "docker1"

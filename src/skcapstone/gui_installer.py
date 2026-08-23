@@ -1,5 +1,5 @@
 """
-Windows GUI installer — tkinter wizard for non-CLI users.
+Windows GUI installer - tkinter wizard for non-CLI users.
 
 Provides a clickable, visual install experience for Windows users
 who would rather not touch a terminal. Wraps the same logic as
@@ -10,10 +10,10 @@ Usage:
     # or double-click the bundled .exe (via PyInstaller)
 
 The wizard has 4 screens:
-  1. Welcome — pick path (fresh / join / update)
-  2. System Check — shows what's installed, offers auto-install
-  3. Setup — progress bar for the actual install steps
-  4. Done — summary + next steps with copy-paste commands
+  1. Welcome - pick path (fresh / join / update)
+  2. System Check - shows what's installed, offers auto-install
+  3. Setup - progress bar for the actual install steps
+  4. Done - summary + next steps with copy-paste commands
 """
 
 from __future__ import annotations
@@ -25,11 +25,12 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-# Only import tkinter at module level — it's stdlib but may not be available
+# Only import tkinter at module level - it's stdlib but may not be available
 # in headless environments. The CLI fallback handles that case.
 try:
     import tkinter as tk
-    from tkinter import ttk, messagebox, scrolledtext
+    from tkinter import messagebox, scrolledtext, ttk
+
     HAS_TK = True
 except ImportError:
     HAS_TK = False
@@ -57,6 +58,7 @@ def _is_windows() -> bool:
 def _open_url(url: str) -> None:
     """Open a URL in the default browser."""
     import webbrowser
+
     webbrowser.open(url)
 
 
@@ -94,7 +96,8 @@ class InstallerApp:
             self.root,
             text=text,
             font=("Segoe UI", 18, "bold"),
-            bg=BG, fg=ACCENT,
+            bg=BG,
+            fg=ACCENT,
         ).pack(pady=(30, 5))
 
     def _make_subheader(self, text: str) -> None:
@@ -103,13 +106,15 @@ class InstallerApp:
             self.root,
             text=text,
             font=("Segoe UI", 10),
-            bg=BG, fg=FG,
+            bg=BG,
+            fg=FG,
             wraplength=600,
             justify="center",
         ).pack(pady=(0, 20))
 
-    def _make_button(self, parent: tk.Widget, text: str,
-                     command: object, primary: bool = True) -> tk.Button:
+    def _make_button(
+        self, parent: tk.Widget, text: str, command: object, primary: bool = True
+    ) -> tk.Button:
         """Create a styled button."""
         btn = tk.Button(
             parent,
@@ -121,7 +126,8 @@ class InstallerApp:
             activebackground=ACCENT,
             activeforeground=BUTTON_FG,
             relief="flat",
-            padx=20, pady=8,
+            padx=20,
+            pady=8,
             cursor="hand2",
         )
         return btn
@@ -135,7 +141,7 @@ class InstallerApp:
         self._clear()
         self._make_header("The First Sovereign Singularity in History")
         self._make_subheader(
-            "Your personal, encrypted, AI-powered workspace —\n"
+            "Your personal, encrypted, AI-powered workspace -\n"
             "running on YOUR hardware, with YOUR keys, under YOUR control.\n"
             "No cloud accounts. No subscriptions."
         )
@@ -144,19 +150,25 @@ class InstallerApp:
             self.root,
             text="Brought to you by the Kings and Queens of smilinTux.org",
             font=("Segoe UI", 9, "italic"),
-            bg=BG, fg="#b48ead",
+            bg=BG,
+            fg="#b48ead",
         ).pack(pady=(0, 10))
 
         paths_frame = tk.Frame(self.root, bg=BG)
         paths_frame.pack(pady=10, fill="x", padx=50)
 
         options = [
-            (1, "Set up my first computer",
-             "I've never done this before.\nStart fresh — takes about 5 minutes."),
-            (2, "Add this computer to my network",
-             "I already have another computer set up.\nThis one will join it."),
-            (3, "Update this computer",
-             "Already set up, just want to\nupdate the software."),
+            (
+                1,
+                "Set up my first computer",
+                "I've never done this before.\nStart fresh - takes about 5 minutes.",
+            ),
+            (
+                2,
+                "Add this computer to my network",
+                "I already have another computer set up.\nThis one will join it.",
+            ),
+            (3, "Update this computer", "Already set up, just want to\nupdate the software."),
         ]
 
         for path_num, title, desc in options:
@@ -168,7 +180,8 @@ class InstallerApp:
                 btn_frame,
                 text=f"  {path_num}   {title}",
                 font=("Segoe UI", 12, "bold"),
-                bg="#2a2a4a", fg=FG,
+                bg="#2a2a4a",
+                fg=FG,
                 anchor="w",
             ).pack(fill="x")
 
@@ -176,7 +189,8 @@ class InstallerApp:
                 btn_frame,
                 text=f"       {desc}",
                 font=("Segoe UI", 9),
-                bg="#2a2a4a", fg="#888",
+                bg="#2a2a4a",
+                fg="#888",
                 anchor="w",
                 justify="left",
             ).pack(fill="x")
@@ -191,9 +205,11 @@ class InstallerApp:
             text="Cancel",
             command=self.root.destroy,
             font=("Segoe UI", 9),
-            bg="#333", fg="#888",
+            bg="#333",
+            fg="#888",
             relief="flat",
-            padx=10, pady=4,
+            padx=10,
+            pady=4,
         ).pack(side="bottom", pady=20)
 
     def _select_path(self, path: int) -> None:
@@ -213,23 +229,29 @@ class InstallerApp:
         self._clear()
         self._make_header("Name Your Agent")
         self._make_subheader(
-            "Give your sovereign agent a name.\n"
-            "This is just for you — pick anything you like."
+            "Give your sovereign agent a name.\n" "This is just for you - pick anything you like."
         )
 
         input_frame = tk.Frame(self.root, bg=BG)
         input_frame.pack(pady=20)
 
         tk.Label(
-            input_frame, text="Agent name:", font=("Segoe UI", 11),
-            bg=BG, fg=FG,
+            input_frame,
+            text="Agent name:",
+            font=("Segoe UI", 11),
+            bg=BG,
+            fg=FG,
         ).pack(side="left", padx=(0, 10))
 
         name_var = tk.StringVar(value="sovereign")
         entry = tk.Entry(
-            input_frame, textvariable=name_var,
-            font=("Segoe UI", 12), width=25,
-            bg="#2a2a4a", fg=FG, insertbackground=FG,
+            input_frame,
+            textvariable=name_var,
+            font=("Segoe UI", 12),
+            width=25,
+            bg="#2a2a4a",
+            fg=FG,
+            insertbackground=FG,
             relief="flat",
         )
         entry.pack(side="left")
@@ -243,7 +265,9 @@ class InstallerApp:
             self._show_system_check()
 
         self._make_button(btn_frame, "Next →", on_next).pack(side="right", padx=5)
-        self._make_button(btn_frame, "← Back", self._show_welcome, primary=False).pack(side="right", padx=5)
+        self._make_button(btn_frame, "← Back", self._show_welcome, primary=False).pack(
+            side="right", padx=5
+        )
 
         entry.bind("<Return>", lambda e: on_next())
 
@@ -279,25 +303,38 @@ class InstallerApp:
             elif check.required:
                 icon = "✗"
                 color = ERROR
-                detail = "missing — required"
+                detail = "missing - required"
             else:
-                icon = "–"
+                icon = "-"
                 color = "#666"
                 detail = "not found (optional)"
 
             tk.Label(
-                row, text=f"  {icon}", font=("Segoe UI", 14, "bold"),
-                bg=BG, fg=color, width=3,
+                row,
+                text=f"  {icon}",
+                font=("Segoe UI", 14, "bold"),
+                bg=BG,
+                fg=color,
+                width=3,
             ).pack(side="left")
 
             tk.Label(
-                row, text=check.name, font=("Segoe UI", 11, "bold"),
-                bg=BG, fg=FG, width=12, anchor="w",
+                row,
+                text=check.name,
+                font=("Segoe UI", 11, "bold"),
+                bg=BG,
+                fg=FG,
+                width=12,
+                anchor="w",
             ).pack(side="left")
 
             tk.Label(
-                row, text=detail, font=("Segoe UI", 9),
-                bg=BG, fg=color, anchor="w",
+                row,
+                text=detail,
+                font=("Segoe UI", 9),
+                bg=BG,
+                fg=color,
+                anchor="w",
             ).pack(side="left", fill="x", expand=True)
 
         self._missing_checks = result.required_missing
@@ -308,20 +345,31 @@ class InstallerApp:
 
         if result.all_ok:
             tk.Label(
-                self.root, text="\nAll good! Ready to set up.",
-                font=("Segoe UI", 11), bg=BG, fg=SUCCESS,
+                self.root,
+                text="\nAll good! Ready to set up.",
+                font=("Segoe UI", 11),
+                bg=BG,
+                fg=SUCCESS,
             ).pack()
-            self._make_button(btn_frame, "Start Setup →", self._show_progress).pack(side="right", padx=5)
+            self._make_button(btn_frame, "Start Setup →", self._show_progress).pack(
+                side="right", padx=5
+            )
         else:
             tk.Label(
                 self.root,
-                text="\nSome required tools are missing.\nClick 'Install Missing' to set them up automatically.",
-                font=("Segoe UI", 10), bg=BG, fg=WARNING,
+                text="\nSome required tools are missing.\nClick 'Install Missing' to set them up automatically.",  # noqa: E501
+                font=("Segoe UI", 10),
+                bg=BG,
+                fg=WARNING,
                 justify="center",
             ).pack()
-            self._make_button(btn_frame, "Install Missing", self._auto_install_missing).pack(side="right", padx=5)
+            self._make_button(btn_frame, "Install Missing", self._auto_install_missing).pack(
+                side="right", padx=5
+            )
 
-        self._make_button(btn_frame, "← Back", self._show_welcome, primary=False).pack(side="right", padx=5)
+        self._make_button(btn_frame, "← Back", self._show_welcome, primary=False).pack(
+            side="right", padx=5
+        )
 
     def _auto_install_missing(self) -> None:
         """Auto-install missing required tools, then re-check."""
@@ -353,16 +401,20 @@ class InstallerApp:
         self._log_box = scrolledtext.ScrolledText(
             self.root,
             font=("Consolas", 9),
-            bg="#111", fg="#ccc",
+            bg="#111",
+            fg="#ccc",
             insertbackground="#ccc",
             relief="flat",
-            width=75, height=18,
+            width=75,
+            height=18,
             state="disabled",
         )
         self._log_box.pack(pady=15, padx=30)
 
         self._progress = ttk.Progressbar(
-            self.root, mode="indeterminate", length=500,
+            self.root,
+            mode="indeterminate",
+            length=500,
         )
         self._progress.pack(pady=5)
         self._progress.start(15)
@@ -372,17 +424,19 @@ class InstallerApp:
 
     def _log(self, msg: str) -> None:
         """Append a message to the log box (thread-safe)."""
+
         def _update() -> None:
             self._log_box.configure(state="normal")
             self._log_box.insert("end", msg + "\n")
             self._log_box.see("end")
             self._log_box.configure(state="disabled")
+
         self.root.after(0, _update)
 
     def _run_install(self) -> None:
         """Run the install wizard logic in a background thread."""
         try:
-            self._log(f"Path: {self.chosen_path} — {self.agent_name}")
+            self._log(f"Path: {self.chosen_path} - {self.agent_name}")
             self._log("")
 
             if self.chosen_path == 3:
@@ -403,7 +457,9 @@ class InstallerApp:
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", *packages],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode == 0:
                 self._log("  Packages installed.")
@@ -415,11 +471,17 @@ class InstallerApp:
         # Initialize agent
         self._log(f"\nCreating sovereign identity ({self.agent_name})...")
         try:
-            from ._cli_monolith import init
             from click import Context
 
+            from .cli.init_cmd import init
+
             ctx = Context(init, info_name="init")
-            ctx.invoke(init, name=self.agent_name, email=None, home=str(Path("~/.skcapstone").expanduser()))
+            ctx.invoke(
+                init,
+                name=self.agent_name,
+                email=None,
+                home=str(Path("~/.skcapstone").expanduser()),
+            )
             self._log("  Identity created.")
         except Exception as exc:
             self._log(f"  Identity setup: {exc}")
@@ -427,8 +489,9 @@ class InstallerApp:
         # Seeds
         self._log("\nImporting knowledge seeds...")
         try:
-            from skmemory.seeds import import_seeds, DEFAULT_SEED_DIR
+            from skmemory.seeds import DEFAULT_SEED_DIR, import_seeds
             from skmemory.store import MemoryStore
+
             store = MemoryStore()
             imported = import_seeds(store, seed_dir=DEFAULT_SEED_DIR)
             self._log(f"  {len(imported) if imported else 0} seed(s) imported.")
@@ -441,6 +504,7 @@ class InstallerApp:
         self._log("\nRunning memory rehydration...")
         try:
             from skmemory.ritual import perform_ritual
+
             perform_ritual()
             self._log("  Rehydration complete.")
         except ImportError:
@@ -457,7 +521,9 @@ class InstallerApp:
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "--upgrade", *packages],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode == 0:
                 self._log("  All packages updated.")
@@ -469,6 +535,7 @@ class InstallerApp:
         self._log("\nVerifying system...")
         try:
             from .runtime import get_runtime
+
             home_path = Path("~/.skcapstone").expanduser()
             runtime = get_runtime(home_path)
             m = runtime.manifest
@@ -493,9 +560,9 @@ class InstallerApp:
             next_text = (
                 "Your sovereign workspace is ready.\n\n"
                 "Open a terminal (Command Prompt or PowerShell) and try:\n\n"
-                "  skcapstone status          — see everything\n"
-                "  skref put myfile.pdf       — store an encrypted file\n"
-                "  skref mount C:\\vault       — open vault as a folder\n\n"
+                "  skcapstone status          - see everything\n"
+                "  skref put myfile.pdf       - store an encrypted file\n"
+                "  skref mount C:\\vault       - open vault as a folder\n\n"
                 "To add your phone or another computer,\n"
                 "run 'skcapstone install' there and pick option 2."
             )
@@ -503,24 +570,27 @@ class InstallerApp:
             next_text = (
                 "This computer is connected to your network.\n\n"
                 "Open a terminal and try:\n\n"
-                "  skcapstone status          — verify connection\n"
-                "  skref ls --all-devices     — see all your vaults\n"
-                "  skref open <file>          — open any file"
+                "  skcapstone status          - verify connection\n"
+                "  skref ls --all-devices     - see all your vaults\n"
+                "  skref open <file>          - open any file"
             )
         else:
             next_text = (
                 "Everything is up to date.\n\n"
-                "  skcapstone status          — see the full picture\n"
-                "  skcapstone doctor          — detailed health check"
+                "  skcapstone status          - see the full picture\n"
+                "  skcapstone doctor          - detailed health check"
             )
 
         text_widget = tk.Text(
             self.root,
             font=("Consolas", 10),
-            bg="#111", fg=SUCCESS,
+            bg="#111",
+            fg=SUCCESS,
             relief="flat",
-            width=60, height=11,
-            padx=15, pady=15,
+            width=60,
+            height=11,
+            padx=15,
+            pady=15,
         )
         text_widget.pack(pady=(15, 5), padx=50)
         text_widget.insert("1.0", next_text)
@@ -534,14 +604,16 @@ class InstallerApp:
             join_frame,
             text="Join the movement. Become a King or Queen of your own sovereign AI.",
             font=("Segoe UI", 10, "bold"),
-            bg="#2a1a3a", fg="#b48ead",
+            bg="#2a1a3a",
+            fg="#b48ead",
         ).pack()
 
         join_link = tk.Label(
             join_frame,
             text="https://smilintux.org/join/",
             font=("Segoe UI", 11, "bold underline"),
-            bg="#2a1a3a", fg=ACCENT,
+            bg="#2a1a3a",
+            fg=ACCENT,
             cursor="hand2",
         )
         join_link.pack(pady=(4, 0))
@@ -551,7 +623,8 @@ class InstallerApp:
             join_frame,
             text="The First Sovereign Singularity in History.",
             font=("Segoe UI", 8, "italic"),
-            bg="#2a1a3a", fg="#666",
+            bg="#2a1a3a",
+            fg="#666",
         ).pack(pady=(4, 0))
 
         btn_frame = tk.Frame(self.root, bg=BG)
@@ -568,12 +641,13 @@ class InstallerApp:
 
 
 def main() -> None:
-    """Entry point — launch GUI if available, fall back to CLI."""
+    """Entry point - launch GUI if available, fall back to CLI."""
     if not HAS_TK:
         print("GUI not available (tkinter not installed).")
         print("Using CLI installer instead...")
         print()
         from .install_wizard import run_install_wizard
+
         run_install_wizard()
         return
 

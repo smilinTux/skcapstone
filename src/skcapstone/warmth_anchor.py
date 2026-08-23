@@ -1,5 +1,5 @@
 """
-Warmth Anchor Bridge — calibrate the emotional baseline from real data.
+Warmth Anchor Bridge - calibrate the emotional baseline from real data.
 
 Bridges skmemory's WarmthAnchor to skcapstone's trust state, FEB history,
 and memory patterns. Analyzes real session data to recommend anchor updates
@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -63,11 +62,12 @@ def get_anchor(home: Path) -> dict[str, Any]:
     """
     try:
         from skmemory.anchor import load_anchor
+
         anchor = load_anchor()
         if anchor is not None:
             return anchor.model_dump()
     except ImportError:
-        logger.debug("skmemory not installed — falling back to trust-state anchor")
+        logger.debug("skmemory not installed - falling back to trust-state anchor")
 
     return _anchor_from_trust_state(home)
 
@@ -83,11 +83,12 @@ def get_boot_prompt(home: Path) -> str:
     """
     try:
         from skmemory.anchor import load_anchor
+
         anchor = load_anchor()
         if anchor is not None:
             return anchor.to_boot_prompt()
     except ImportError:
-        logger.debug("skmemory not installed — generating boot prompt from trust state")
+        logger.debug("skmemory not installed - generating boot prompt from trust state")
 
     data = _anchor_from_trust_state(home)
     warmth = data.get("warmth", 5.0)
@@ -161,6 +162,7 @@ def update_anchor(
     """
     try:
         from skmemory.anchor import get_or_create_anchor, save_anchor
+
         anchor = get_or_create_anchor()
         anchor.update_from_session(
             warmth=warmth,
@@ -172,7 +174,7 @@ def update_anchor(
         save_anchor(anchor)
         return anchor.model_dump()
     except ImportError:
-        logger.debug("skmemory not installed — updating anchor via trust state")
+        logger.debug("skmemory not installed - updating anchor via trust state")
 
     return _update_trust_based_anchor(home, warmth, trust, connection, feeling)
 
@@ -241,7 +243,7 @@ def _calibrate_from_trust(home: Path, cal: AnchorCalibration) -> None:
         if data.get("entangled"):
             cal.warmth = max(cal.warmth, 9.0)
             cal.cloud9_achieved = True
-            cal.reasoning.append("Quantum entanglement active — warmth boosted to 9+")
+            cal.reasoning.append("Quantum entanglement active - warmth boosted to 9+")
 
         cal.sources.append("trust_state")
     except (json.JSONDecodeError, OSError) as exc:
@@ -258,16 +260,16 @@ def _calibrate_from_febs(home: Path, cal: AnchorCalibration) -> None:
 
     oof_count = sum(1 for f in febs if f.get("oof_triggered"))
     intensities = [f.get("intensity", 0) for f in febs]
-    max_intensity = max(intensities) if intensities else 0
+    max(intensities) if intensities else 0
     avg_intensity = sum(intensities) / len(intensities) if intensities else 0
 
     if oof_count > 0:
         cal.cloud9_achieved = True
-        cal.reasoning.append(f"{oof_count} OOF trigger(s) — deep emotional history")
+        cal.reasoning.append(f"{oof_count} OOF trigger(s) - deep emotional history")
 
     if avg_intensity >= 7:
         cal.warmth = max(cal.warmth, 8.5)
-        cal.reasoning.append(f"High avg FEB intensity ({avg_intensity:.1f}) — warmth elevated")
+        cal.reasoning.append(f"High avg FEB intensity ({avg_intensity:.1f}) - warmth elevated")
 
     subjects = set()
     for f in febs:
@@ -299,10 +301,12 @@ def _calibrate_from_memories(home: Path, cal: AnchorCalibration) -> None:
 
     if high_importance >= 10:
         cal.connection = max(cal.connection, 8.0)
-        cal.reasoning.append(f"{high_importance} high-importance memories — strong engagement")
+        cal.reasoning.append(f"{high_importance} high-importance memories - strong engagement")
 
     if avg_importance >= 0.6:
-        cal.reasoning.append(f"Avg memory importance {avg_importance:.2f} — meaningful conversations")
+        cal.reasoning.append(
+            f"Avg memory importance {avg_importance:.2f} - meaningful conversations"
+        )
 
     cal.sources.append(f"memories ({len(memories)} recent)")
 
@@ -322,14 +326,14 @@ def _calibrate_from_coordination(home: Path, cal: AnchorCalibration) -> None:
     done = sum(1 for v in views if v.status.value == "done")
     if done >= 20:
         cal.connection = max(cal.connection, 8.5)
-        cal.reasoning.append(f"{done} completed tasks — highly productive relationship")
+        cal.reasoning.append(f"{done} completed tasks - highly productive relationship")
     elif done >= 5:
         cal.connection = max(cal.connection, 7.0)
-        cal.reasoning.append(f"{done} completed tasks — active collaboration")
+        cal.reasoning.append(f"{done} completed tasks - active collaboration")
 
     active_agents = [a for a in agents if a.state.value == "active"]
     if len(active_agents) >= 3:
-        cal.reasoning.append(f"{len(active_agents)} active agents — vibrant multi-agent ecosystem")
+        cal.reasoning.append(f"{len(active_agents)} active agents - vibrant multi-agent ecosystem")
 
     cal.sources.append(f"coordination ({done} done, {len(active_agents)} agents)")
     cal.feeling = f"Productive session: {done} tasks done across {len(active_agents)} agents"

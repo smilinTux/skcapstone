@@ -1,5 +1,5 @@
 """
-Sync pipeline engine — comms path alignment for Syncthing ↔ consciousness loop.
+Sync pipeline engine - comms path alignment for Syncthing ↔ consciousness loop.
 
 Verifies that the inbox/outbox directories used by the consciousness loop
 inotify watcher and the SKComms Syncthing transport are aligned under the
@@ -9,7 +9,7 @@ Pipeline:
     Syncthing → {shared_root}/sync/comms/inbox/{peer}/*.skc.json
              ↓  inotify  (ConsciousnessLoop._INBOX_DIR = "sync/comms/inbox")
     ConsciousnessLoop.process_envelope()
-             ↓  skcomms.send()  — must route to SyncthingTransport with
+             ↓  skcomms.send()  - must route to SyncthingTransport with
                                  comms_root = {shared_root}/sync/comms
     SyncthingTransport → {shared_root}/sync/comms/outbox/{peer}/*.skc.json
              ↓  Syncthing propagates to peer
@@ -39,7 +39,7 @@ from typing import Optional
 
 logger = logging.getLogger("skcapstone.sync_engine")
 
-# Relative paths under SHARED_ROOT — must stay in sync with
+# Relative paths under SHARED_ROOT - must stay in sync with
 # _INBOX_DIR in consciousness_loop.py ("sync/comms/inbox")
 COMMS_SUBPATH = "sync/comms"
 INBOX_SUBPATH = "sync/comms/inbox"
@@ -145,14 +145,14 @@ def verify_pipeline_paths(shared_root: Path, skcomms=None) -> dict:
     Returns:
         Dict with keys:
 
-        - ``inbox_ok`` (bool) — inbox dir exists.
-        - ``outbox_ok`` (bool) — outbox dir exists.
-        - ``transport_aligned`` (bool | None) — transport comms_root matches
+        - ``inbox_ok`` (bool) - inbox dir exists.
+        - ``outbox_ok`` (bool) - outbox dir exists.
+        - ``transport_aligned`` (bool | None) - transport comms_root matches
           (None if skcomms not provided or check failed).
-        - ``inbox_path`` (str) — absolute inbox path.
-        - ``outbox_path`` (str) — absolute outbox path.
-        - ``expected_comms_root`` (str) — the expected comms root.
-        - ``issues`` (list[str]) — human-readable problem descriptions.
+        - ``inbox_path`` (str) - absolute inbox path.
+        - ``outbox_path`` (str) - absolute outbox path.
+        - ``expected_comms_root`` (str) - the expected comms root.
+        - ``issues`` (list[str]) - human-readable problem descriptions.
     """
     inbox = get_inbox_dir(shared_root)
     outbox = get_outbox_dir(shared_root)
@@ -200,7 +200,7 @@ def _check_transport_alignment(skcomms, expected_root: Path, issues: list[str]) 
     """
     router = getattr(skcomms, "router", None) or getattr(skcomms, "_router", None)
     if router is None:
-        return True  # can't check — assume ok
+        return True  # can't check - assume ok
 
     transports = getattr(router, "transports", [])
     aligned = True
@@ -212,7 +212,7 @@ def _check_transport_alignment(skcomms, expected_root: Path, issues: list[str]) 
             continue
         if Path(actual_root).resolve() != expected_root.resolve():
             issues.append(
-                f"SyncthingTransport comms_root mismatch — "
+                f"SyncthingTransport comms_root mismatch - "
                 f"expected {expected_root}, got {actual_root}. "
                 f"Set comms_root: {expected_root} in ~/.skcomms/config.yml"
             )
@@ -236,13 +236,13 @@ def get_sync_pipeline_status(shared_root: Path) -> dict:
     Returns:
         Dict with keys:
 
-        - ``inbox_files`` (int) — pending inbox envelope count.
-        - ``outbox_files`` (int) — pending outbox envelope count.
-        - ``inbox_peers`` (list[str]) — peers with pending inbox files.
-        - ``outbox_peers`` (list[str]) — peers with pending outbox files.
-        - ``inbox_path`` (str), ``outbox_path`` (str) — absolute paths.
+        - ``inbox_files`` (int) - pending inbox envelope count.
+        - ``outbox_files`` (int) - pending outbox envelope count.
+        - ``inbox_peers`` (list[str]) - peers with pending inbox files.
+        - ``outbox_peers`` (list[str]) - peers with pending outbox files.
+        - ``inbox_path`` (str), ``outbox_path`` (str) - absolute paths.
         - ``inbox_exists`` (bool), ``outbox_exists`` (bool).
-        - ``checked_at`` (str) — ISO-8601 UTC timestamp.
+        - ``checked_at`` (str) - ISO-8601 UTC timestamp.
     """
     inbox = get_inbox_dir(shared_root)
     outbox = get_outbox_dir(shared_root)
@@ -317,12 +317,10 @@ def write_outbox_envelope(
         try:
             _sign_envelope(envelope, pgp_key_id)
         except Exception as exc:
-            logger.warning("PGP signing failed — writing unsigned envelope: %s", exc)
+            logger.warning("PGP signing failed - writing unsigned envelope: %s", exc)
 
     envelope_id = (
-        envelope.get("envelope_id")
-        or envelope.get("message_id")
-        or str(int(time.time() * 1000))
+        envelope.get("envelope_id") or envelope.get("message_id") or str(int(time.time() * 1000))
     )
     filename = f"{envelope_id}{ENVELOPE_SUFFIX}"
     target = outbox_peer / filename

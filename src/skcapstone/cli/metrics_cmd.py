@@ -18,7 +18,9 @@ def register_metrics_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
     @click.option("--port", default=7777, help="Daemon API port (default: 7777).")
     @click.option("--json-out", is_flag=True, help="Output raw JSON.")
-    @click.option("--date", "date_str", default=None, help="Show metrics for a specific date (YYYY-MM-DD).")
+    @click.option(
+        "--date", "date_str", default=None, help="Show metrics for a specific date (YYYY-MM-DD)."
+    )
     def metrics_cmd(home: str, port: int, json_out: bool, date_str: str | None):
         """Show today's consciousness loop metrics.
 
@@ -33,7 +35,9 @@ def register_metrics_commands(main: click.Group) -> None:
             if json_out:
                 click.echo(json.dumps({"error": "No metrics available"}))
             else:
-                console.print("[yellow]No metrics found.[/] Start the daemon or run a test message first.")
+                console.print(
+                    "[yellow]No metrics found.[/] Start the daemon or run a test message first."
+                )
             return
 
         if json_out:
@@ -45,8 +49,8 @@ def register_metrics_commands(main: click.Group) -> None:
 
 def _fetch_from_daemon(port: int) -> dict | None:
     """Try GET /api/v1/metrics from the running daemon."""
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     try:
         url = f"http://127.0.0.1:{port}/api/v1/metrics"
@@ -82,12 +86,16 @@ def _print_metrics(data: dict) -> None:
 
     error_color = "red" if errors > 0 else "green"
     rt_str = (
-        f"min={rt.get('min', 0):.0f}ms  "
-        f"avg={rt.get('avg', 0):.0f}ms  "
-        f"p99={rt.get('p99', 0):.0f}ms  "
-        f"max={rt.get('max', 0):.0f}ms  "
-        f"n={rt.get('count', 0)}"
-    ) if rt.get("count", 0) > 0 else "[dim]no data[/]"
+        (
+            f"min={rt.get('min', 0):.0f}ms  "
+            f"avg={rt.get('avg', 0):.0f}ms  "
+            f"p99={rt.get('p99', 0):.0f}ms  "
+            f"max={rt.get('max', 0):.0f}ms  "
+            f"n={rt.get('count', 0)}"
+        )
+        if rt.get("count", 0) > 0
+        else "[dim]no data[/]"
+    )
 
     summary_lines = [
         f"[bold]Date:[/]          {date}",
@@ -97,11 +105,13 @@ def _print_metrics(data: dict) -> None:
         f"[bold]Response time:[/] {rt_str}",
     ]
     console.print()
-    console.print(Panel(
-        "\n".join(summary_lines),
-        title="[cyan]Consciousness Metrics[/]",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            "\n".join(summary_lines),
+            title="[cyan]Consciousness Metrics[/]",
+            border_style="cyan",
+        )
+    )
 
     # Backend usage table
     backend_usage = data.get("backend_usage", {})

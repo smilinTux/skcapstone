@@ -1,5 +1,5 @@
 """
-CursorConnector — sovereign agent viewport into the Cursor editor.
+CursorConnector - sovereign agent viewport into the Cursor editor.
 
 Cursor is an Electron-based VS Code fork.  The connector follows the same
 Unix domain socket protocol as :class:`VSCodeConnector`: the agent binds

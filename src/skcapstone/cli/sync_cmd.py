@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import Optional
 
 import click
-
-from ._common import AGENT_HOME, console, status_icon, logger
-from ._validators import validate_file_path
-from ..pillars.security import audit_event
-from ..pillars.sync import discover_sync, push_seed, pull_seeds, save_sync_state
-from ..runtime import get_runtime
-
 from rich.panel import Panel
+
+from ..pillars.security import audit_event
+from ..pillars.sync import discover_sync, pull_seeds, push_seed, save_sync_state
+from ..runtime import get_runtime
+from ._common import AGENT_HOME, console, logger, status_icon
+from ._validators import validate_file_path
 
 
 def _register_peer_fingerprint(home_path: Path, fingerprint: str) -> None:
@@ -37,12 +36,64 @@ def _register_peer_fingerprint(home_path: Path, fingerprint: str) -> None:
         logger.warning("Could not persist peer fingerprint: %s", exc)
 
 
+def _render_sync_audit(report) -> None:
+    """Render a sync policy report as human text, with dry-run remediation.
+
+    Args:
+        report: The SyncPolicyReport from the audit run.
+    """
+    colors = {"error": "red", "warn": "yellow", "info": "cyan", "ok": "green"}
+    console.print("\n  [bold]Syncthing private-material policy audit[/]")
+    for folder in report.folders:
+        console.print(
+            f"\n  {folder.folder_id}  {folder.path}  "
+            f"[{colors[folder.severity]}]{folder.severity.upper()}[/]"
+        )
+        if not folder.present_on_host:
+            console.print("    [dim]not held on this host[/]")
+            continue
+        if not folder.findings:
+            console.print("    [green](clean)[/]")
+        for finding in folder.findings:
+            console.print(f"    {finding.severity:5} {finding.category:32} {finding.path}")
+            if finding.detail:
+                console.print(f"        [dim]{finding.detail}[/]")
+    for finding in report.findings:
+        console.print(f"  {finding.severity:5} {finding.category:32} {finding.path}")
+        if finding.detail:
+            console.print(f"      [dim]{finding.detail}[/]")
+
+    if report.dry_run:
+        shown = False
+        for folder in report.folders:
+            lines = folder.remediation_lines
+            if not lines or not folder.present_on_host:
+                continue
+            shown = True
+            console.print(f"\n  DRY-RUN remediation for {folder.path}/.stignore (no writes):")
+            for line in lines:
+                console.print(f"    + {line}")
+        if shown:
+            console.print(
+                "\n  [dim]Re-run with --apply to union-merge these rules "
+                "(additive only, existing rules kept).[/]"
+            )
+    elif report.applied:
+        console.print("\n  [green]Applied remediation (union-merge) to:[/]")
+        for path in report.applied:
+            console.print(f"    {path}")
+
+    verdict = "CLEAN" if report.ok else "VIOLATIONS FOUND"
+    color = "green" if report.ok else "red"
+    console.print(f"\n  verdict: [{color}]{verdict}[/]\n")
+
+
 def register_sync_commands(main: click.Group) -> None:
     """Register the sync command group."""
 
     @main.group()
     def sync():
-        """Sovereign Singularity — encrypted memory sync.
+        """Sovereign Singularity - encrypted memory sync.
 
         Push your agent's state to the mesh. Pull from peers.
         GPG-encrypted, Syncthing-transported, truly sovereign.
@@ -173,10 +224,12 @@ def register_sync_commands(main: click.Group) -> None:
             console.print("  [yellow]Could not start Syncthing automatically.[/]")
 
         if result["device_id"]:
-            console.print(f"\n  [bold]Your Device ID:[/bold]")
+            console.print("\n  [bold]Your Device ID:[/bold]")
             console.print(f"  [cyan]{result['device_id']}[/cyan]")
             console.print("\n  Share this ID with your other device to pair.")
-            console.print(f"  On the other device: [cyan]skcapstone sync pair {result['device_id']}[/cyan]")
+            console.print(
+                f"  On the other device: [cyan]skcapstone sync pair {result['device_id']}[/cyan]"
+            )
 
             if result["qr_code"]:
                 console.print("\n  [bold]QR Code:[/bold]")
@@ -184,7 +237,9 @@ def register_sync_commands(main: click.Group) -> None:
             else:
                 console.print("\n  [dim]Install 'qrcode' for QR output: pip install qrcode[/dim]")
         else:
-            console.print("  [yellow]Could not retrieve device ID. Syncthing may still be starting.[/]")
+            console.print(
+                "  [yellow]Could not retrieve device ID. Syncthing may still be starting.[/]"
+            )
 
         console.print()
 
@@ -196,12 +251,14 @@ def register_sync_commands(main: click.Group) -> None:
         from ..skills.syncthing_setup import add_remote_device, detect_syncthing
 
         if not detect_syncthing():
-            console.print("[red]Syncthing not installed.[/] Run [cyan]skcapstone sync setup[/cyan] first.")
+            console.print(
+                "[red]Syncthing not installed.[/] Run [cyan]skcapstone sync setup[/cyan] first."
+            )
             sys.exit(1)
 
         console.print(f"\n  Adding device [cyan]{name}[/cyan]...")
         if add_remote_device(device_id, name):
-            console.print(f"  [green]Device paired![/green]")
+            console.print("  [green]Device paired![/green]")
             console.print(f"  Device ID: [dim]{device_id[:20]}...[/dim]")
             console.print("  The skcapstone-sync folder is now shared with this device.")
         else:
@@ -223,14 +280,21 @@ def register_sync_commands(main: click.Group) -> None:
             sys.exit(1)
 
         from ..pillars.sync import _detect_gpg_key
+
         fingerprint = _detect_gpg_key(home_path)
         if not fingerprint:
-            console.print("[red]No GPG key found.[/] Run [cyan]skcapstone init[/cyan] to generate.")
+            console.print(
+                "[red]No GPG key found.[/] Run [cyan]skcapstone init[/cyan] to generate."
+            )
             sys.exit(1)
 
         try:
-            result = sp.run(["gpg", "--armor", "--export", fingerprint],
-                            capture_output=True, check=True, timeout=15)
+            result = sp.run(
+                ["gpg", "--armor", "--export", fingerprint],
+                capture_output=True,
+                check=True,
+                timeout=15,
+            )
             pubkey_data = result.stdout
         except sp.CalledProcessError as exc:
             console.print(f"[red]GPG export failed:[/] {exc}")
@@ -240,14 +304,18 @@ def register_sync_commands(main: click.Group) -> None:
             Path(output).write_bytes(pubkey_data)
             console.print(f"  [green]Public key exported to:[/] {output}")
             console.print(f"  [dim]Fingerprint: {fingerprint}[/]")
-            console.print(f"  Share this file with your peer. They import it with: "
-                          f"[cyan]skcapstone sync import-peer-key --file {output}[/cyan]")
+            console.print(
+                f"  Share this file with your peer. They import it with: "
+                f"[cyan]skcapstone sync import-peer-key --file {output}[/cyan]"
+            )
         else:
             console.print(pubkey_data.decode("utf-8", errors="replace"))
 
     @sync.command("import-peer-key")
     @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Agent home directory.")
-    @click.option("--file", "-f", "keyfile", required=True, help="Path to peer's exported public key.")
+    @click.option(
+        "--file", "-f", "keyfile", required=True, help="Path to peer's exported public key."
+    )
     @click.option("--fingerprint", default=None, help="Expected fingerprint (for verification).")
     def sync_import_peer_key(home, keyfile, fingerprint):
         """Import a peer's GPG public key and register it for encrypted sync."""
@@ -268,8 +336,9 @@ def register_sync_commands(main: click.Group) -> None:
             sys.exit(1)
 
         try:
-            result = sp.run(["gpg", "--import", str(key_path)],
-                            capture_output=True, text=True, timeout=15)
+            result = sp.run(
+                ["gpg", "--import", str(key_path)], capture_output=True, text=True, timeout=15
+            )
             if result.returncode != 0:
                 console.print(f"[red]GPG import failed:[/] {result.stderr.strip()}")
                 sys.exit(1)
@@ -283,14 +352,18 @@ def register_sync_commands(main: click.Group) -> None:
                 parts = line.split(":")
                 for part in parts:
                     part = part.strip().replace(" ", "")
-                    if len(part) in (8, 16, 40) and all(c in "0123456789ABCDEFabcdef" for c in part):
+                    if len(part) in (8, 16, 40) and all(
+                        c in "0123456789ABCDEFabcdef" for c in part
+                    ):
                         imported_fp = part.upper()
                         break
                 if imported_fp:
                     break
 
         if fingerprint and imported_fp and fingerprint.upper() != imported_fp:
-            console.print(f"[yellow]Warning: expected fingerprint {fingerprint} but got {imported_fp}[/]")
+            console.print(
+                f"[yellow]Warning: expected fingerprint {fingerprint} but got {imported_fp}[/]"
+            )
 
         if imported_fp:
             _register_peer_fingerprint(home_path, imported_fp)
@@ -299,3 +372,63 @@ def register_sync_commands(main: click.Group) -> None:
         else:
             console.print("[yellow]Key imported into GPG but fingerprint could not be parsed.[/]")
             console.print("  Run: [dim]gpg --list-keys[/dim] to find it, then add manually.")
+
+    @sync.command("audit")
+    @click.option(
+        "--config",
+        "config_path",
+        default=None,
+        type=click.Path(),
+        help="Explicit Syncthing config.xml (default: standard locations under --home).",
+    )
+    @click.option(
+        "--home",
+        default=str(Path.home()),
+        type=click.Path(),
+        help="Home directory for config discovery and default roots.",
+    )
+    @click.option(
+        "--agent-home",
+        default=None,
+        type=click.Path(),
+        help="Shared agent home holding agents/*/capauth (default: <home>/.skcapstone).",
+    )
+    @click.option(
+        "--capauth-home",
+        default=None,
+        type=click.Path(),
+        help="Legacy capauth root to inspect (default: <home>/.capauth).",
+    )
+    @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+    @click.option(
+        "--apply",
+        "apply_flag",
+        is_flag=True,
+        help="Union-merge the missing ignore rules (additive only). Default is dry-run.",
+    )
+    def sync_audit(config_path, home, agent_home, capauth_home, as_json, apply_flag):
+        """Audit every Syncthing folder root for private-material exposure.
+
+        Discovers each configured folder, resolves symlinks, and fails
+        closed when private keys, revocation certificates, passphrases,
+        secret keyrings, or token stores could synchronize. Dry-run by
+        default: prints the exact .stignore lines each folder would gain
+        and writes nothing. Exits nonzero on any error-grade finding.
+        """
+        import json as jsonlib
+
+        from ..sync_policy import audit as run_audit
+
+        report = run_audit(
+            home=Path(home).expanduser(),
+            config_path=Path(config_path).expanduser() if config_path else None,
+            agent_home=Path(agent_home).expanduser() if agent_home else None,
+            legacy_home=Path(capauth_home).expanduser() if capauth_home else None,
+            apply=apply_flag,
+        )
+        if as_json:
+            click.echo(jsonlib.dumps(report.model_dump(mode="json"), indent=2, sort_keys=True))
+        else:
+            _render_sync_audit(report)
+        if not report.ok:
+            sys.exit(1)

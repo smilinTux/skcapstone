@@ -19,7 +19,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------
@@ -30,19 +29,35 @@ def agent_home(tmp_path: Path) -> Path:
     """Fully initialised agent home with minimal required files."""
     home = tmp_path / ".skcapstone"
     for d in [
-        "identity", "memory", "trust", "security", "sync", "config",
-        "memory/short-term", "memory/mid-term", "memory/long-term",
+        "identity",
+        "memory",
+        "trust",
+        "security",
+        "sync",
+        "config",
+        "memory/short-term",
+        "memory/mid-term",
+        "memory/long-term",
     ]:
         (home / d).mkdir(parents=True, exist_ok=True)
 
-    (home / "manifest.json").write_text(json.dumps({
-        "name": "TestAgent", "version": "0.1.0",
-    }))
-    (home / "identity" / "identity.json").write_text(json.dumps({
-        "name": "TestAgent",
-        "fingerprint": "DEADBEEF12345678",
-        "capauth_managed": True,
-    }))
+    (home / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "version": "0.1.0",
+            }
+        )
+    )
+    (home / "identity" / "identity.json").write_text(
+        json.dumps(
+            {
+                "name": "TestAgent",
+                "fingerprint": "DEADBEEF12345678",
+                "capauth_managed": True,
+            }
+        )
+    )
     return home
 
 
@@ -95,9 +110,9 @@ class TestProbeOllama:
         """Running Ollama: running=True, models list populated."""
         from skcapstone.cli.version_cmd import _probe_ollama
 
-        payload = json.dumps({
-            "models": [{"name": "llama3:latest"}, {"name": "phi3:mini"}]
-        }).encode()
+        payload = json.dumps(
+            {"models": [{"name": "llama3:latest"}, {"name": "phi3:mini"}]}
+        ).encode()
         mock_resp = MagicMock()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
@@ -169,8 +184,10 @@ class TestGatherVersionInfo:
         """Dict has all required top-level keys."""
         from skcapstone.cli.version_cmd import gather_version_info
 
-        with patch("urllib.request.urlopen", side_effect=OSError), \
-             patch("skcapstone.daemon.read_pid", return_value=None):
+        with (
+            patch("urllib.request.urlopen", side_effect=OSError),
+            patch("skcapstone.daemon.read_pid", return_value=None),
+        ):
             info = gather_version_info(agent_home)
 
         assert "package_version" in info
@@ -184,8 +201,10 @@ class TestGatherVersionInfo:
         """optional_deps covers watchdog, skcomms, skchat, skseed."""
         from skcapstone.cli.version_cmd import gather_version_info
 
-        with patch("urllib.request.urlopen", side_effect=OSError), \
-             patch("skcapstone.daemon.read_pid", return_value=None):
+        with (
+            patch("urllib.request.urlopen", side_effect=OSError),
+            patch("skcapstone.daemon.read_pid", return_value=None),
+        ):
             info = gather_version_info(agent_home)
 
         deps = info["optional_deps"]
@@ -196,15 +215,17 @@ class TestGatherVersionInfo:
         from skcapstone import __version__
         from skcapstone.cli.version_cmd import gather_version_info
 
-        with patch("urllib.request.urlopen", side_effect=OSError), \
-             patch("skcapstone.daemon.read_pid", return_value=None):
+        with (
+            patch("urllib.request.urlopen", side_effect=OSError),
+            patch("skcapstone.daemon.read_pid", return_value=None),
+        ):
             info = gather_version_info(agent_home)
 
         assert info["package_version"] == __version__
 
 
 # ---------------------------------------------------------------------------
-# CLI integration tests — version command
+# CLI integration tests - version command
 # ---------------------------------------------------------------------------
 
 
@@ -215,8 +236,10 @@ class TestVersionCommand:
         from skcapstone.cli import main
 
         runner = CliRunner()
-        with patch("urllib.request.urlopen", side_effect=OSError), \
-             patch("skcapstone.daemon.read_pid", return_value=None):
+        with (
+            patch("urllib.request.urlopen", side_effect=OSError),
+            patch("skcapstone.daemon.read_pid", return_value=None),
+        ):
             return runner.invoke(
                 main,
                 ["version", "--home", str(agent_home)] + args,
@@ -254,8 +277,10 @@ class TestVersionCommand:
         from skcapstone.cli import main
 
         runner = CliRunner()
-        with patch("urllib.request.urlopen", side_effect=OSError), \
-             patch("skcapstone.daemon.read_pid", return_value=42001):
+        with (
+            patch("urllib.request.urlopen", side_effect=OSError),
+            patch("skcapstone.daemon.read_pid", return_value=42001),
+        ):
             result = runner.invoke(
                 main,
                 ["version", "--home", str(agent_home)],
@@ -268,17 +293,19 @@ class TestVersionCommand:
         """When Ollama is up, output includes model count."""
         from skcapstone.cli import main
 
-        payload = json.dumps({
-            "models": [{"name": "llama3:latest"}, {"name": "mistral:7b"}]
-        }).encode()
+        payload = json.dumps(
+            {"models": [{"name": "llama3:latest"}, {"name": "mistral:7b"}]}
+        ).encode()
         mock_resp = MagicMock()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_resp.read.return_value = payload
 
         runner = CliRunner()
-        with patch("urllib.request.urlopen", return_value=mock_resp), \
-             patch("skcapstone.daemon.read_pid", return_value=None):
+        with (
+            patch("urllib.request.urlopen", return_value=mock_resp),
+            patch("skcapstone.daemon.read_pid", return_value=None),
+        ):
             result = runner.invoke(
                 main,
                 ["version", "--home", str(agent_home)],
@@ -289,7 +316,7 @@ class TestVersionCommand:
 
 
 # ---------------------------------------------------------------------------
-# CLI integration tests — doctor --verbose
+# CLI integration tests - doctor --verbose
 # ---------------------------------------------------------------------------
 
 

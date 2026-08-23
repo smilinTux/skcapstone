@@ -1,13 +1,13 @@
 """
-Memory Adapter — bridge between skcapstone's MemoryEntry and skmemory's Memory.
+Memory Adapter - bridge between skcapstone's MemoryEntry and skmemory's Memory.
 
 Provides a unified memory backend that routes through skmemory's three-tier
 architecture (SQLite + SKVector + SKGraph) while keeping the existing JSON
 engine as a fallback for offline/minimal deployments.
 
 Environment variables:
-    SKMEMORY_SKVECTOR_URL  — SKVector server URL (enables semantic search)
-    SKMEMORY_SKGRAPH_URL — SKGraph/Redis URL (enables graph traversal)
+    SKMEMORY_SKVECTOR_URL  - SKVector server URL (enables semantic search)
+    SKMEMORY_SKGRAPH_URL - SKGraph/Redis URL (enables graph traversal)
 """
 
 from __future__ import annotations
@@ -17,9 +17,12 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .models import MemoryEntry, MemoryLayer
+
+if TYPE_CHECKING:
+    import skmemory
 
 logger = logging.getLogger("skcapstone.memory_adapter")
 
@@ -62,7 +65,7 @@ def _try_endpoint_selector() -> tuple[Optional[str], Optional[str], Optional[str
         or (None, None, None) if the selector is not available/configured.
     """
     try:
-        from skmemory.config import load_config, build_endpoint_list
+        from skmemory.config import build_endpoint_list, load_config
         from skmemory.endpoint_selector import EndpointSelector, RoutingConfig
 
         cfg = load_config()
@@ -114,8 +117,8 @@ def _get_store() -> Optional["skmemory.MemoryStore"]:
         return None
 
     try:
-        from skmemory.store import MemoryStore
         from skmemory.backends.sqlite_backend import SQLiteBackend
+        from skmemory.store import MemoryStore
 
         # Try endpoint selector first for HA routing
         sel_skvector, sel_key, sel_skgraph = _try_endpoint_selector()
@@ -184,7 +187,8 @@ def entry_to_memory(entry: MemoryEntry) -> "skmemory.Memory":
     Returns:
         skmemory Memory object.
     """
-    from skmemory.models import EmotionalSnapshot, Memory, MemoryLayer as SKLayer
+    from skmemory.models import EmotionalSnapshot, Memory
+    from skmemory.models import MemoryLayer as SKLayer
 
     layer_value = _LAYER_TO_SKMEMORY.get(entry.layer, "short-term")
     sk_layer = SKLayer(layer_value)
@@ -196,7 +200,11 @@ def entry_to_memory(entry: MemoryEntry) -> "skmemory.Memory":
         layer=sk_layer,
         tags=entry.tags,
         source=entry.source,
-        created_at=entry.created_at.isoformat() if entry.created_at else datetime.now(timezone.utc).isoformat(),
+        created_at=(
+            entry.created_at.isoformat()
+            if entry.created_at
+            else datetime.now(timezone.utc).isoformat()
+        ),
         emotional=EmotionalSnapshot(
             intensity=entry.importance * 10,
         ),
@@ -282,14 +290,12 @@ def verify_sync() -> dict:
             "count": health["graph"].get("node_count", None),
         }
 
-    counts = [
-        v["count"]
-        for v in result["backends"].values()
-        if v.get("count") is not None
-    ]
+    counts = [v["count"] for v in result["backends"].values() if v.get("count") is not None]
     if len(counts) >= 2 and len(set(counts)) > 1:
         result["synced"] = False
-        result["reason"] = f"Count mismatch across backends: {dict((k, v['count']) for k, v in result['backends'].items() if v.get('count') is not None)}"
+        result["reason"] = (
+            f"Count mismatch across backends: {dict((k, v['count']) for k, v in result['backends'].items() if v.get('count') is not None)}"  # noqa: E501
+        )
 
     return result
 

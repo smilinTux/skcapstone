@@ -1,0 +1,102 @@
+{
+  "kind": "profile",
+  "labels": {
+    "epic": "3bbf39ea"
+  },
+  "name": "worker-gpu",
+  "spec": {
+    "capauthIdentityClass": "worker",
+    "description": "The GPU worker (.100). Serves inference, holds ZERO sovereign state. The mustNot list is the load-bearing part: no memory daemon, no agent runtime, no coordination writer, and no membership in the sovereign Syncthing folder. The sovereign tree is 19G, 13G of it agent state, and an outbox incident once reached 83G. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
+    "packages": {
+      "allowed": [
+        "capauth",
+        "skcapstone"
+      ],
+      "mustNot": [
+        "skchat",
+        "skchat-sovereign",
+        "skcomm",
+        "skcomms",
+        "skcoord",
+        "skmemory",
+        "skseed"
+      ],
+      "required": []
+    },
+    "stateTier": "control-bus",
+    "syncFolders": [
+      "skfleet-control"
+    ],
+    "units": {
+      "allowed": [
+        "comfyui.service",
+        "f5-tts.service",
+        "mxbai-arc.service",
+        "ollama.service",
+        "qwen3-arc.service",
+        "skai-beellama-restart.timer",
+        "skai-beellama.service",
+        "skvoice.service",
+        "sovereign-orchestrator.service",
+        "syncthing.service",
+        "whisper-stt.service"
+      ],
+      "mustNot": [
+        "skcapstone-dashboard.service",
+        "skcapstone.service",
+        "skchat-daemon.service",
+        "skcomm-daemon.service",
+        "skcomms-api.service",
+        "skgateway.service",
+        "skmemory-daemon.service",
+        "skoperator.timer",
+        "skos-web.service",
+        "skwhisper.service"
+      ],
+      "required": [
+        "skai-beellama.service"
+      ]
+    },
+    "unitsIgnore": [
+      "anthropic-proxy.service",
+      "archive-sessions.timer",
+      "at-spi-*",
+      "battery-cycle-watch.timer",
+      "claude-code-api.service",
+      "cloudflared-*",
+      "dconf.service",
+      "dirmngr.socket",
+      "evolution*",
+      "filter-chain.service",
+      "gcr-*",
+      "gnome-keyring-daemon.*",
+      "gpg-agent*.socket",
+      "gpu-maint-reminder.timer",
+      "gvfs*",
+      "hermes-*",
+      "jarvis-heartbeat.service",
+      "keyboxd.socket",
+      "kokoro-proxy.service",
+      "launchpadlib-cache-clean.timer",
+      "livekit-server.service",
+      "obex.service",
+      "org.freedesktop.*",
+      "pipewire*",
+      "pk-debconf-helper.socket",
+      "pulseaudio*",
+      "push-pending.timer",
+      "session-migration.service",
+      "shadowcopy-*",
+      "snap.*",
+      "speech-dispatcher*",
+      "telegram-catchup.timer",
+      "tracker-*",
+      "ubuntu-report.path",
+      "virtualmic.service",
+      "weather-*",
+      "wiki-reconcile.timer",
+      "wireplumber*",
+      "xdg-*"
+    ]
+  }
+}

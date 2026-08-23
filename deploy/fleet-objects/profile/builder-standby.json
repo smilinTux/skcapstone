@@ -1,0 +1,118 @@
+{
+  "kind": "profile",
+  "labels": {
+    "epic": "3bbf39ea"
+  },
+  "name": "builder-standby",
+  "spec": {
+    "capauthIdentityClass": "agent",
+    "description": "The build toolchain and warm state replica (.41, node-41). Two copies of the STATE, one copy of each running SERVICE: it holds a full replica and is the promotion target, but it does not run the control-plane loops. A laptop that sleeps cannot honor always-on services, and the half-alive duplicates are the proven source of comms pileups and outbox floods. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
+    "packages": {
+      "allowed": [
+        "capauth",
+        "cloud9",
+        "sk_pgp",
+        "skcapstone",
+        "skchat-sovereign",
+        "skcomms",
+        "skcoord",
+        "skcot",
+        "skdashboard",
+        "skharness",
+        "skmemory",
+        "skos",
+        "skseal",
+        "sksecurity",
+        "skseed",
+        "skskills",
+        "skvault",
+        "skvoice"
+      ],
+      "mustNot": [],
+      "required": [
+        "skcapstone"
+      ]
+    },
+    "stateTier": "full-replica",
+    "syncFolders": [
+      "skcapstone-sync",
+      "skfleet-control"
+    ],
+    "units": {
+      "allowed": [
+        "sk-hls-retention.timer",
+        "skcapstone-context.timer",
+        "skchat-app-web.service",
+        "skchat-bridges.target",
+        "skchat-daemon-jarvis.service",
+        "skchat-daemon.service",
+        "skcomms-access.service",
+        "skcomms-heartbeat.timer",
+        "skcomms-housekeep.timer",
+        "skcomms.service",
+        "skhousekeep.timer",
+        "sknoded.service",
+        "sksso-pg-backup.timer",
+        "skwhisper.service",
+        "syncthing.service"
+      ],
+      "mustNot": [
+        "comfyui.service",
+        "f5-tts.service",
+        "mxbai-arc.service",
+        "ollama.service",
+        "qwen3-arc.service",
+        "skai-beellama.service",
+        "skcapstone-dashboard.service",
+        "skgateway.service",
+        "skoperator.timer",
+        "skos-web.service",
+        "whisper-stt.service"
+      ],
+      "required": [
+        "sknoded.service"
+      ]
+    },
+    "unitsIgnore": [
+      "anthropic-proxy.service",
+      "archive-sessions.timer",
+      "at-spi-*",
+      "battery-cycle-watch.timer",
+      "claude-code-api.service",
+      "cloudflared-*",
+      "dconf.service",
+      "dirmngr.socket",
+      "evolution*",
+      "filter-chain.service",
+      "gcr-*",
+      "gnome-keyring-daemon.*",
+      "gpg-agent*.socket",
+      "gpu-maint-reminder.timer",
+      "gvfs*",
+      "hermes-*",
+      "jarvis-heartbeat.service",
+      "keyboxd.socket",
+      "kokoro-proxy.service",
+      "launchpadlib-cache-clean.timer",
+      "livekit-server.service",
+      "obex.service",
+      "org.freedesktop.*",
+      "pipewire*",
+      "pk-debconf-helper.socket",
+      "pulseaudio*",
+      "push-pending.timer",
+      "session-migration.service",
+      "shadowcopy-*",
+      "snap.*",
+      "speech-dispatcher*",
+      "telegram-catchup.timer",
+      "tracker-*",
+      "ubuntu-report.path",
+      "virtualmic.service",
+      "weather-*",
+      "wiki-reconcile.timer",
+      "wireplumber*",
+      "xdg-*"
+    ]
+  }
+}

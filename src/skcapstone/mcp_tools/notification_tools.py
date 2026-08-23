@@ -1,4 +1,4 @@
-"""Desktop notification tool — send_notification via notify-send."""
+"""Desktop notification tool - send_notification via notify-send."""
 
 from __future__ import annotations
 

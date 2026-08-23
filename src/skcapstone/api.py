@@ -1,5 +1,5 @@
 """
-SKCapstone REST API — FastAPI application with OpenAPI documentation.
+SKCapstone REST API - FastAPI application with OpenAPI documentation.
 
 Exposes all daemon /api/v1/* endpoints as a proper REST API with:
 - Pydantic response models for automatic schema generation
@@ -20,6 +20,7 @@ Usage (programmatic, from daemon):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -41,16 +42,18 @@ try:
         Depends,
         FastAPI,
         HTTPException,
-        Path as FPath,
-        Query,
+        Query,  # noqa: F401
         Request,
         Security,
         WebSocket,
         WebSocketDisconnect,
         status,
     )
+    from fastapi import (
+        Path as FPath,
+    )
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse, StreamingResponse
+    from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse  # noqa: F401
     from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel, Field
 except ImportError as _exc:
@@ -108,7 +111,7 @@ def init_api(
     _ctx["config"] = config
     _ctx["consciousness"] = consciousness
     _ctx["runtime"] = runtime
-    logger.info("FastAPI context initialised — docs at /docs")
+    logger.info("FastAPI context initialised - docs at /docs")
 
 
 def _get_ctx() -> Dict[str, Any]:
@@ -149,9 +152,7 @@ class ComponentSnapshot(BaseModel):
     """Health record for a single daemon subsystem component."""
 
     name: str = Field(..., description="Component identifier (e.g. 'poll', 'consciousness').")
-    status: str = Field(
-        ..., description="One of: pending, alive, dead, restarting, disabled."
-    )
+    status: str = Field(..., description="One of: pending, alive, dead, restarting, disabled.")
     auto_restart: bool = Field(
         ..., description="True when the watchdog will auto-restart this component."
     )
@@ -165,9 +166,7 @@ class ComponentSnapshot(BaseModel):
         None, description="Seconds since the last heartbeat."
     )
     restart_count: int = Field(0, description="Number of automatic restarts.")
-    last_error: Optional[str] = Field(
-        None, description="Last recorded error message, if any."
-    )
+    last_error: Optional[str] = Field(None, description="Last recorded error message, if any.")
 
 
 class ComponentsResponse(BaseModel):
@@ -298,12 +297,8 @@ class HouseholdAgent(BaseModel):
 
     name: str = Field(..., description="Agent directory name.")
     status: str = Field("unknown", description="Derived liveness status.")
-    identity: Optional[Dict[str, Any]] = Field(
-        None, description="Agent identity.json contents."
-    )
-    heartbeat: Optional[Dict[str, Any]] = Field(
-        None, description="Most recent heartbeat record."
-    )
+    identity: Optional[Dict[str, Any]] = Field(None, description="Agent identity.json contents.")
+    heartbeat: Optional[Dict[str, Any]] = Field(None, description="Most recent heartbeat record.")
     consciousness: Optional[Dict[str, Any]] = Field(
         None, description="Consciousness stats from the serving agent (if available)."
     )
@@ -325,9 +320,7 @@ class ConversationSummary(BaseModel):
     last_message_time: Optional[str] = Field(
         None, description="ISO-8601 timestamp of the most recent message."
     )
-    last_message_preview: str = Field(
-        "", description="First 120 characters of the last message."
-    )
+    last_message_preview: str = Field("", description="First 120 characters of the last message.")
 
 
 class ConversationsResponse(BaseModel):
@@ -447,12 +440,8 @@ class ArgoCDStatusResponse(BaseModel):
     )
     checked_at: str = Field(..., description="ISO-8601 timestamp of this response.")
     skstacks_root: str = Field("", description="Resolved path to skstacks v2 root.")
-    apps: List[ArgoCDApp] = Field(
-        default_factory=list, description="List of ArgoCD applications."
-    )
-    summary: ArgoCDSummary = Field(
-        default_factory=ArgoCDSummary, description="App count summary."
-    )
+    apps: List[ArgoCDApp] = Field(default_factory=list, description="List of ArgoCD applications.")
+    summary: ArgoCDSummary = Field(default_factory=ArgoCDSummary, description="App count summary.")
 
 
 # ── Security dependency ───────────────────────────────────────────────────────
@@ -533,7 +522,7 @@ def _check_bearer(
     except ImportError:
         if token_str and config:
             try:
-                from .tokens import import_token, verify_token
+                from capauth.tokens import import_token, verify_token
 
                 tok = import_token(token_str)
                 if verify_token(tok, home=config.home):
@@ -545,8 +534,7 @@ def _check_bearer(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=(
-                "CapAuth bearer token required.  "
-                "Obtain a token with: skcapstone token issue"
+                "CapAuth bearer token required.  " "Obtain a token with: skcapstone token issue"
             ),
         )
     return fingerprint
@@ -622,9 +610,9 @@ app = FastAPI(
         "Privileged streaming endpoints (e.g. `GET /api/v1/logs`) require a "
         "CapAuth Bearer token issued by `skcapstone token issue`.\n\n"
         "## Security Schemes\n\n"
-        "- **ApiKeyAuth** — `X-API-Key` request header, validated when "
+        "- **ApiKeyAuth** - `X-API-Key` request header, validated when "
         "`SKCAPSTONE_API_KEY` env var is set.\n"
-        "- **BearerAuth** — `Authorization: Bearer <capauth-token>` for privileged "
+        "- **BearerAuth** - `Authorization: Bearer <capauth-token>` for privileged "
         "streaming endpoints."
     ),
     version="0.9.0",
@@ -653,6 +641,7 @@ app.add_middleware(
 
 # ── Custom OpenAPI schema: inject BearerAuth security scheme ─────────────────
 
+
 def _custom_openapi() -> Dict[str, Any]:
     """Return a customised OpenAPI schema with both security schemes registered.
 
@@ -662,8 +651,8 @@ def _custom_openapi() -> Dict[str, Any]:
     included in the OpenAPI 3.0 spec.
 
     Registered security schemes:
-    - **APIKeyHeader** — ``apiKey`` in header ``X-API-Key`` (optional, see SKCAPSTONE_API_KEY)
-    - **BearerAuth** — HTTP Bearer token issued by CapAuth (required for /api/v1/logs WS)
+    - **APIKeyHeader** - ``apiKey`` in header ``X-API-Key`` (optional, see SKCAPSTONE_API_KEY)
+    - **BearerAuth** - HTTP Bearer token issued by CapAuth (required for /api/v1/logs WS)
     """
     if app.openapi_schema:
         return app.openapi_schema
@@ -851,17 +840,21 @@ async def get_dashboard(
     try:
         conv_dir = config.shared_root / "conversations"
         if conv_dir.exists():
-            for cf in sorted(conv_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
+            for cf in sorted(
+                conv_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+            )[:5]:
                 msgs = json.loads(cf.read_text(encoding="utf-8"))
                 if isinstance(msgs, list) and msgs:
                     last = msgs[-1]
                     preview = (last.get("content") or last.get("message", ""))[:80]
-                    conversations.append({
-                        "peer": cf.stem,
-                        "count": len(msgs),
-                        "last": last.get("timestamp"),
-                        "preview": preview,
-                    })
+                    conversations.append(
+                        {
+                            "peer": cf.stem,
+                            "count": len(msgs),
+                            "last": last.get("timestamp"),
+                            "preview": preview,
+                        }
+                    )
     except Exception as exc:
         logger.warning("Failed to list recent conversations for API status: %s", exc)
 
@@ -1345,9 +1338,7 @@ async def send_message(
         )
     safe_peer = _sanitize_peer(peer)
     if not safe_peer:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid peer name."
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid peer name.")
 
     message_id = str(uuid.uuid4())
     ts = datetime.now(timezone.utc).isoformat()
@@ -1413,7 +1404,7 @@ async def delete_conversation(
 
     The peer parameter is sanitised before constructing the file path.
     Returns 404 when no conversation file exists.  This operation is
-    irreversible — back up the file first if needed.
+    irreversible - back up the file first if needed.
     """
     config = _ctx.get("config")
     if config is None:
@@ -1423,9 +1414,7 @@ async def delete_conversation(
         )
     safe_peer = _sanitize_peer(peer)
     if not safe_peer:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid peer name."
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid peer name.")
 
     conv_file = config.shared_root / "conversations" / f"{safe_peer}.json"
     if not conv_file.exists():
@@ -1473,9 +1462,184 @@ async def get_metrics(
         )
     try:
         raw = consciousness.metrics.to_dict()
-        return MetricsResponse(**{k: v for k, v in raw.items() if k in MetricsResponse.model_fields})
+        return MetricsResponse(
+            **{k: v for k, v in raw.items() if k in MetricsResponse.model_fields}
+        )
     except Exception:
         return MetricsResponse()
+
+
+# ── /metrics (Prometheus exposition) ──────────────────────────────────────────
+
+# Prometheus text exposition version served by GET /metrics.
+_PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+
+def _prom_escape_label(value: str) -> str:
+    """Escape a Prometheus label value per the text exposition format.
+
+    Backslashes, double quotes, and newlines must be escaped in label
+    values (metric/label *names* are assumed to be safe literals here).
+
+    Args:
+        value: Raw label value.
+
+    Returns:
+        The escaped label value, safe to embed inside double quotes.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _prom_line(name: str, value: float, labels: Optional[Dict[str, str]] = None) -> str:
+    """Render a single Prometheus sample line.
+
+    Args:
+        name: Metric name.
+        value: Numeric sample value (rendered as int when integral).
+        labels: Optional label key→value mapping.
+
+    Returns:
+        A single exposition line, without a trailing newline.
+    """
+    if labels:
+        label_str = ",".join(f'{k}="{_prom_escape_label(str(v))}"' for k, v in labels.items())
+        head = f"{name}{{{label_str}}}"
+    else:
+        head = name
+    # Render integral floats without a decimal point for cleaner output.
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return f"{head} {value}"
+
+
+def _collect_prometheus_metrics() -> str:
+    """Assemble the Prometheus text exposition for the daemon.
+
+    Wires each metric to a real source where cheap:
+      * ``consciousness_messages_total`` - consciousness metrics collector.
+      * ``memory_count{layer=...}`` - ``memory_engine.get_stats``.
+      * ``coord_tasks_total{status=...}`` - coordination ``Board`` task views.
+      * ``heartbeat_peers_alive`` - fresh heartbeats in the shared household.
+      * ``llm_errors_total`` - consciousness loop response/LLM error counter.
+
+    Each source is guarded independently so a failure in one collector never
+    blanks the whole endpoint (Prometheus scrapes must not hard-fail).
+
+    Returns:
+        The full exposition text (ends with a trailing newline).
+    """
+    config = _ctx.get("config")
+    consciousness = _ctx.get("consciousness")
+    lines: List[str] = []
+
+    # ── consciousness_messages_total (counter) - REAL ─────────────────────────
+    messages_total = 0
+    llm_errors_total = 0
+    if consciousness is not None:
+        try:
+            raw = consciousness.metrics.to_dict()
+            messages_total = int(raw.get("messages_processed", 0) or 0)
+            # The consciousness metrics ``errors`` counter is incremented only in
+            # the response-generation path (LLM bridge call + response send), so
+            # it is the real, closest-available source for LLM errors.
+            llm_errors_total = int(raw.get("errors", 0) or 0)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Prometheus: failed to read consciousness metrics: %s", exc)
+    lines.append(
+        "# HELP consciousness_messages_total Messages processed by the consciousness loop."
+    )
+    lines.append("# TYPE consciousness_messages_total counter")
+    lines.append(_prom_line("consciousness_messages_total", messages_total))
+
+    # ── memory_count{layer=...} (gauge) - REAL ────────────────────────────────
+    lines.append("# HELP memory_count Number of memory entries by layer.")
+    lines.append("# TYPE memory_count gauge")
+    layer_counts = {"short_term": 0, "mid_term": 0, "long_term": 0}
+    if config is not None:
+        try:
+            from .memory_engine import get_stats as _mem_stats
+
+            ms = _mem_stats(config.home)
+            layer_counts = {
+                "short_term": int(getattr(ms, "short_term", 0) or 0),
+                "mid_term": int(getattr(ms, "mid_term", 0) or 0),
+                "long_term": int(getattr(ms, "long_term", 0) or 0),
+            }
+        except Exception as exc:
+            logger.warning("Prometheus: failed to read memory stats: %s", exc)
+    for layer, count in layer_counts.items():
+        lines.append(_prom_line("memory_count", count, {"layer": layer}))
+
+    # ── coord_tasks_total{status=...} (gauge) - REAL ──────────────────────────
+    lines.append("# HELP coord_tasks_total Coordination board tasks by status.")
+    lines.append("# TYPE coord_tasks_total gauge")
+    status_counts = {"open": 0, "claimed": 0, "in_progress": 0, "done": 0}
+    if config is not None:
+        try:
+            from .coordination import Board
+
+            views = Board(config.home).get_task_views()
+            for v in views:
+                key = v.status.value
+                status_counts[key] = status_counts.get(key, 0) + 1
+        except Exception as exc:
+            logger.warning("Prometheus: failed to read coordination board: %s", exc)
+    for st, count in status_counts.items():
+        lines.append(_prom_line("coord_tasks_total", count, {"status": st}))
+
+    # ── heartbeat_peers_alive (gauge) - REAL ──────────────────────────────────
+    lines.append("# HELP heartbeat_peers_alive Household agents with a fresh heartbeat.")
+    lines.append("# TYPE heartbeat_peers_alive gauge")
+    peers_alive = 0
+    if config is not None:
+        try:
+            heartbeats_dir = config.shared_root / "heartbeats"
+            if heartbeats_dir.exists():
+                for hb_path in heartbeats_dir.glob("*.json"):
+                    try:
+                        hb = json.loads(hb_path.read_text(encoding="utf-8"))
+                        if _hb_alive(hb):
+                            peers_alive += 1
+                    except Exception:
+                        continue
+        except Exception as exc:
+            logger.warning("Prometheus: failed to count alive heartbeats: %s", exc)
+    lines.append(_prom_line("heartbeat_peers_alive", peers_alive))
+
+    # ── llm_errors_total (counter) - REAL (consciousness response error path) ──
+    lines.append("# HELP llm_errors_total Errors in the consciousness LLM response path.")
+    lines.append("# TYPE llm_errors_total counter")
+    lines.append(_prom_line("llm_errors_total", llm_errors_total))
+
+    return "\n".join(lines) + "\n"
+
+
+@app.get(
+    "/metrics",
+    summary="Prometheus metrics exposition",
+    tags=["Metrics"],
+    responses={
+        200: {
+            "description": "Prometheus text exposition (version 0.0.4).",
+            "content": {"text/plain": {}},
+        },
+    },
+)
+async def get_prometheus_metrics(
+    _key: Optional[str] = Depends(_check_api_key),
+) -> "PlainTextResponse":
+    """Expose daemon metrics in Prometheus text exposition format.
+
+    Hand-rolled exposition (no ``prometheus_client`` dependency).  Metrics are
+    wired to real daemon sources - consciousness message/error counters, memory
+    layer counts, coordination task counts, and live household heartbeats.
+
+    Returns:
+        A ``PlainTextResponse`` with the ``text/plain; version=0.0.4`` content
+        type expected by Prometheus scrapers.
+    """
+    body = _collect_prometheus_metrics()
+    return PlainTextResponse(content=body, media_type=_PROM_CONTENT_TYPE)
 
 
 # ── /api/v1/skstacks/argocd/status helpers ────────────────────────────────────
@@ -1744,7 +1908,7 @@ async def websocket_logs(
     except ImportError:
         if token_str and config:
             try:
-                from .tokens import import_token, verify_token
+                from capauth.tokens import import_token, verify_token
 
                 tok = import_token(token_str)
                 if verify_token(tok, home=config.home):
@@ -1927,7 +2091,7 @@ def start_api_server(
     t = threading.Thread(target=_run, name="fastapi-api", daemon=True)
     t.start()
     logger.info(
-        "FastAPI API server started — http://%s:%d  docs: http://%s:%d/docs",
+        "FastAPI API server started - http://%s:%d  docs: http://%s:%d/docs",
         host,
         port,
         host,

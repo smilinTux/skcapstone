@@ -1,5 +1,5 @@
 """
-Sovereign identity card — who you are on the mesh.
+Sovereign identity card - who you are on the mesh.
 
 Generates a compact, shareable identity card containing everything
 another agent needs to discover and trust you: name, fingerprint,
@@ -22,9 +22,10 @@ import logging
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field
+
+from .key_io import read_armored_public_key
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,7 @@ class IdentityCard(BaseModel):
     memory_count: int = 0
     contact_uris: list[str] = Field(default_factory=list)
     hostname: str = Field(default_factory=socket.gethostname)
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 def generate_card(home: Path) -> IdentityCard:
@@ -180,10 +179,7 @@ def _load_capauth(card: IdentityCard) -> None:
 
     pub_key_path = capauth_dir / "public.asc"
     if pub_key_path.exists():
-        try:
-            card.public_key = pub_key_path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            logger.warning("Failed to read public key from %s: %s", pub_key_path, exc)
+        card.public_key = read_armored_public_key(pub_key_path)
 
 
 def _load_runtime(home: Path, card: IdentityCard) -> None:
@@ -241,27 +237,31 @@ def _load_capabilities(home: Path, card: IdentityCard) -> None:
 
     try:
         import capauth  # noqa: F401
+
         caps.append("capauth:identity")
     except ImportError:
-        logger.debug("capauth not installed — skipping capauth:identity capability")
+        logger.debug("capauth not installed - skipping capauth:identity capability")
 
     try:
         import skcomms  # noqa: F401
+
         caps.append("skcomms:messaging")
     except ImportError:
-        logger.debug("skcomms not installed — skipping skcomms:messaging capability")
+        logger.debug("skcomms not installed - skipping skcomms:messaging capability")
 
     try:
         import skchat  # noqa: F401
+
         caps.append("skchat:p2p-chat")
     except ImportError:
-        logger.debug("skchat not installed — skipping skchat:p2p-chat capability")
+        logger.debug("skchat not installed - skipping skchat:p2p-chat capability")
 
     try:
         import skmemory  # noqa: F401
+
         caps.append("skmemory:persistence")
     except ImportError:
-        logger.debug("skmemory not installed — skipping skmemory:persistence capability")
+        logger.debug("skmemory not installed - skipping skmemory:persistence capability")
 
     skills_dir = home / "skills"
     if skills_dir.exists():

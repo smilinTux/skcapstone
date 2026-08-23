@@ -1,4 +1,5 @@
 """Tests for the unified per-agent capability manifest (`skcapstone agent profile`)."""
+
 from __future__ import annotations
 
 import json

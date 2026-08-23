@@ -1,5 +1,5 @@
 """
-Blueprint Registry Client — interact with the souls.skworld.io API.
+Blueprint Registry Client - interact with the souls.skworld.io API.
 
 This is a client library for the remote soul blueprint registry hosted at
 souls.skworld.io. The actual server is a separate service; this module
@@ -10,7 +10,7 @@ Authentication uses DID-based bearer tokens: the agent's DID key is
 sent as ``Authorization: Bearer did:key:<fingerprint>`` so the registry
 can attribute published blueprints to a sovereign identity.
 
-No external dependencies — uses only ``urllib`` from the standard library.
+No external dependencies - uses only ``urllib`` from the standard library.
 
 Usage::
 
@@ -167,9 +167,7 @@ class BlueprintRegistryClient:
         if body is not None:
             data = json.dumps(body).encode("utf-8")
 
-        req = urllib.request.Request(
-            url, data=data, headers=headers, method=method
-        )
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
         logger.debug("%s %s", method, url)
 
@@ -190,9 +188,7 @@ class BlueprintRegistryClient:
                 msg += f": {error_body[:500]}"
             raise BlueprintRegistryError(msg, status_code=exc.code) from exc
         except urllib.error.URLError as exc:
-            raise BlueprintRegistryError(
-                f"Cannot reach registry at {url}: {exc.reason}"
-            ) from exc
+            raise BlueprintRegistryError(f"Cannot reach registry at {url}: {exc.reason}") from exc
         except json.JSONDecodeError as exc:
             raise BlueprintRegistryError(
                 f"Invalid JSON in response from {method} {path}: {exc}"
@@ -253,9 +249,7 @@ class BlueprintRegistryClient:
         Raises:
             BlueprintRegistryError: On API failure or auth error.
         """
-        return self._request(
-            "POST", "/blueprints", body=soul_data, authenticated=True
-        )
+        return self._request("POST", "/blueprints", body=soul_data, authenticated=True)
 
     def search_blueprints(self, query: str) -> list[dict[str, Any]]:
         """Search for blueprints by a text query.
@@ -358,7 +352,7 @@ class BlueprintRegistryClient:
 
 
 # --------------------------------------------------------------------------
-# GitHub-based fallback — reads blueprints directly from the repo
+# GitHub-based fallback - reads blueprints directly from the repo
 # --------------------------------------------------------------------------
 
 _GITHUB_API_URL = "https://api.github.com/repos/smilinTux/soul-blueprints/contents/blueprints"
@@ -425,12 +419,14 @@ def _fetch_github_blueprints(query: str = "") -> Optional[list[dict[str, Any]]]:
             if q and q not in slug and q not in cat_name.lower() and q not in display.lower():
                 continue
 
-            blueprints.append({
-                "name": slug,
-                "display_name": display,
-                "category": cat_name,
-                "source": "github",
-                "raw_url": f"{_GITHUB_RAW_URL}/{cat_name}/{fname}",
-            })
+            blueprints.append(
+                {
+                    "name": slug,
+                    "display_name": display,
+                    "category": cat_name,
+                    "source": "github",
+                    "raw_url": f"{_GITHUB_RAW_URL}/{cat_name}/{fname}",
+                }
+            )
 
     return sorted(blueprints, key=lambda d: (d["category"], d["name"]))

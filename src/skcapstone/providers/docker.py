@@ -1,5 +1,5 @@
 """
-Docker Provider — deploy agent teams as Docker containers.
+Docker Provider - deploy agent teams as Docker containers.
 
 Each agent runs in its own container with resource limits derived from
 the blueprint ResourceSpec. Supports both individual container management
@@ -8,11 +8,11 @@ and docker-compose generation for full team orchestration.
 The provider wires three sovereign infrastructure components into every
 agent container:
 
-1. **Soul Blueprint** — injected via SOUL_BLUEPRINT env and config.json
-2. **MCP Server** — host-side skcapstone MCP reachable via env
+1. **Soul Blueprint** - injected via SOUL_BLUEPRINT env and config.json
+2. **MCP Server** - host-side skcapstone MCP reachable via env
    (SKCAPSTONE_MCP_HOST / SKCAPSTONE_MCP_SOCKET).  Set one of these so
    containers can call memory_store, coord_claim, etc.
-3. **SKComms Transport** — comms directory bind-mounted at /skcomms so
+3. **SKComms Transport** - comms directory bind-mounted at /skcomms so
    containers share the same file-channel inboxes as local agents.
 
 Prerequisites:
@@ -30,7 +30,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import yaml
 
@@ -119,18 +119,13 @@ class DockerProvider(ProviderBackend):
         mcp_host: Optional[str] = None,
         mcp_socket_path: Optional[str] = None,
     ) -> None:
-        self._base_image = (
-            base_image
-            or os.environ.get("DOCKER_BASE_IMAGE", _DEFAULT_IMAGE)
-        )
+        self._base_image = base_image or os.environ.get("DOCKER_BASE_IMAGE", _DEFAULT_IMAGE)
         self._network_name = network_name
         self._volume_prefix = volume_prefix
         self._docker_host = docker_host or os.environ.get("DOCKER_HOST", "")
         self._skcomms_home = skcomms_home or os.environ.get("SKCOMMS_HOME", "")
         self._mcp_host = mcp_host or os.environ.get("SKCAPSTONE_MCP_HOST", "")
-        self._mcp_socket_path = (
-            mcp_socket_path or os.environ.get("SKCAPSTONE_MCP_SOCKET", "")
-        )
+        self._mcp_socket_path = mcp_socket_path or os.environ.get("SKCAPSTONE_MCP_SOCKET", "")
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -149,9 +144,7 @@ class DockerProvider(ProviderBackend):
         try:
             import docker
         except ImportError:
-            raise RuntimeError(
-                "Docker provider requires 'docker' SDK: pip install docker"
-            )
+            raise RuntimeError("Docker provider requires 'docker' SDK: pip install docker")
 
         kwargs: Dict[str, Any] = {}
         if self._docker_host:
@@ -162,9 +155,7 @@ class DockerProvider(ProviderBackend):
             client.ping()
             return client
         except Exception as exc:
-            raise RuntimeError(
-                f"Cannot connect to Docker daemon: {exc}"
-            ) from exc
+            raise RuntimeError(f"Cannot connect to Docker daemon: {exc}") from exc
 
     def _ensure_network(self, client) -> None:
         """Create the shared Docker network if it does not exist.
@@ -205,7 +196,9 @@ class DockerProvider(ProviderBackend):
         """
         return agent_name.replace("_", "-").lower()
 
-    def _build_agent_config(self, agent_name: str, spec: AgentSpec, team_name: str) -> Dict[str, Any]:
+    def _build_agent_config(
+        self, agent_name: str, spec: AgentSpec, team_name: str
+    ) -> Dict[str, Any]:
         """Build the agent config dict written into the container.
 
         Args:
@@ -308,7 +301,11 @@ class DockerProvider(ProviderBackend):
             logger.warning("Removing stale container: %s", container_name)
             old.remove(force=True)
         except Exception as exc:
-            logger.debug("No stale container to remove for %s (expected if first run): %s", container_name, exc)
+            logger.debug(
+                "No stale container to remove for %s (expected if first run): %s",
+                container_name,
+                exc,
+            )
 
         # Ensure named volume for agent state persistence
         try:
@@ -422,7 +419,9 @@ class DockerProvider(ProviderBackend):
         if exit_code != 0:
             logger.warning(
                 "Config write exit_code=%d for %s: %s",
-                exit_code, agent_name, output,
+                exit_code,
+                agent_name,
+                output,
             )
             return False
 
@@ -454,7 +453,8 @@ class DockerProvider(ProviderBackend):
             container.reload()
             logger.info(
                 "Started container %s (id=%s)",
-                container_name, container.id[:12],
+                container_name,
+                container.id[:12],
             )
             return True
         except Exception as exc:
@@ -725,13 +725,11 @@ class DockerProvider(ProviderBackend):
                 if spec.depends_on and include_mcp_service:
                     # Always depend on MCP service first when included
                     service["depends_on"] = [mcp_service_name] + [
-                        f"{blueprint.slug}-{dep}".replace("_", "-")
-                        for dep in spec.depends_on
+                        f"{blueprint.slug}-{dep}".replace("_", "-") for dep in spec.depends_on
                     ]
                 elif spec.depends_on:
                     service["depends_on"] = [
-                        f"{blueprint.slug}-{dep}".replace("_", "-")
-                        for dep in spec.depends_on
+                        f"{blueprint.slug}-{dep}".replace("_", "-") for dep in spec.depends_on
                     ]
                 elif include_mcp_service:
                     service["depends_on"] = [mcp_service_name]

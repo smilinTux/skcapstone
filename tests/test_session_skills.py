@@ -1,4 +1,4 @@
-"""Tests for the session skills bridge — wiring SKSkills into agent runtime sessions."""
+"""Tests for the session skills bridge - wiring SKSkills into agent runtime sessions."""
 
 import json
 import os
@@ -68,9 +68,7 @@ class TestResolveSkillPaths:
         from skcapstone.session_skills import resolve_skill_paths_with_skskills
 
         with patch.dict(os.environ, {"SKSKILLS_HOME": str(skskills_home)}):
-            result = resolve_skill_paths_with_skskills(
-                ["code-review"], agent="jarvis"
-            )
+            result = resolve_skill_paths_with_skskills(["code-review"], agent="jarvis")
             assert len(result) == 1
             assert "jarvis" in result[0]
             assert "code-review" in result[0]
@@ -80,9 +78,7 @@ class TestResolveSkillPaths:
         from skcapstone.session_skills import resolve_skill_paths_with_skskills
 
         with patch.dict(os.environ, {"SKSKILLS_HOME": str(skskills_home)}):
-            result = resolve_skill_paths_with_skskills(
-                ["legacy"], repo_root=repo_root
-            )
+            result = resolve_skill_paths_with_skskills(["legacy"], repo_root=repo_root)
             assert result == ["legacy"]
 
     def test_resolve_passthrough_for_unknown(self, skskills_home: Path):

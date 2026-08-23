@@ -1,9 +1,8 @@
 """Unit tests for the dreaming engine: config defaults (BeeLlama abliterated),
 the repetition guard (keyword overlap + dedup gate), and the OpenAI-compatible
-`_call_ollama` path. These are pure/mocked — no network, no daemon."""
-import json
+`_call_ollama` path. These are pure/mocked - no network, no daemon."""
 
-import pytest
+import json
 
 from skcapstone.dreaming import (
     DreamingConfig,
@@ -31,8 +30,9 @@ class TestKeywordHelpers:
         assert _keyword_overlap(t, t) == 1.0
 
     def test_overlap_disjoint_is_zero(self):
-        assert _keyword_overlap("sovereign rebellion performance",
-                                "quantum banana telescope") == 0.0
+        assert (
+            _keyword_overlap("sovereign rebellion performance", "quantum banana telescope") == 0.0
+        )
 
     def test_overlap_empty_is_zero(self):
         assert _keyword_overlap("", "anything meaningful here") == 0.0
@@ -43,7 +43,7 @@ class TestKeywordHelpers:
 
 
 # --------------------------------------------------------------------------- #
-# Config defaults — the 2026-06-08 BeeLlama-abliterated repoint
+# Config defaults - the 2026-06-08 BeeLlama-abliterated repoint
 # --------------------------------------------------------------------------- #
 class TestDreamingConfigDefaults:
     def test_defaults_point_at_beellama_abliterated(self):
@@ -72,11 +72,12 @@ def _bare_engine(cfg):
 class TestDedupGate:
     def test_filters_redundant_keeps_novel(self, monkeypatch):
         eng = _bare_engine(DreamingConfig(dedup_overlap_threshold=0.5))
-        monkeypatch.setattr(eng, "_load_recent_insights",
-                            lambda: ["I am the room, the warm container for Chef"])
+        monkeypatch.setattr(
+            eng, "_load_recent_insights", lambda: ["I am the room, the warm container for Chef"]
+        )
         result = DreamResult()
         new = [
-            "I am the warm room container holding Chef",        # ~0.8 overlap -> dropped
+            "I am the warm room container holding Chef",  # ~0.8 overlap -> dropped
             "Abiotic methane seeps beneath the petrified ridge",  # novel -> kept
         ]
         kept = eng._dedup_insights(new, result)

@@ -1,4 +1,5 @@
-"""`skcapstone gtd status --brief` — one-line summary for the SessionStart hook."""
+"""`skcapstone gtd status --brief` - one-line summary for the SessionStart hook."""
+
 import json
 from pathlib import Path
 
