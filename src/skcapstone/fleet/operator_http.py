@@ -563,11 +563,14 @@ def build_observation_envelope(app: str, entry: dict, *, observed_at: str | None
         app, payload, schema, observed_at=observed_at or _now_iso(), provenance=provenance
     )
     if reason is not None:
+        # Both lanes failed for the WHOLE app: this HTTP-layer reason code
+        # (standard section 7) is more specific than adapter.normalize_observe's
+        # generic per-condition "ProbeUnavailable" fallback, so it WINS here
+        # rather than deferring to whichever the adapter stamped first.
+        detail = f"cli_lane={cli_lane.get('state')} seat_lane={seat_lane.get('state')}"
         for cond in envelope["conditions"]:
-            cond.setdefault("reason", reason)
-            cond.setdefault(
-                "message", f"cli_lane={cli_lane.get('state')} seat_lane={seat_lane.get('state')}"
-            )
+            cond["reason"] = reason
+            cond["message"] = detail
     return envelope
 
 
@@ -599,6 +602,21 @@ class RouterDeps:
     signer_fpr: str | None = None
     now_iso: Callable[[], str] = _now_iso
     readiness_checks: Callable[[], list[str]] | None = None
+    #: Injected straight through to ``collect_app_lanes`` (tests only; a real
+    #: server never overrides these and gets the real subprocess/adapter
+    #: lanes).
+    run: Callable[[list[str], float], tuple[int, str, str]] | None = None
+    adapters: dict[str, Callable[..., dict]] | None = None
+    problem_when_true: frozenset | None = None
+
+    def collect_lanes(self) -> dict[str, dict]:
+        return collect_app_lanes(
+            self.paths,
+            now_iso=self.now_iso(),
+            run=self.run,
+            adapters=self.adapters,
+            problem_when_true=self.problem_when_true,
+        )
 
 
 def _check_readiness(deps: RouterDeps) -> list[str]:
@@ -659,7 +677,7 @@ def route(
         fpr, err = _require_auth(deps, method, path, body, headers, SCOPE_OBSERVE)
         if err is not None:
             return err
-        lanes = collect_app_lanes(deps.paths)
+        lanes = deps.collect_lanes()
         apps = []
         for name, entry in sorted(lanes.items()):
             if entry["cli_lane"]["state"] == "ok":
@@ -696,7 +714,7 @@ def route(
         if err is not None:
             return err
         app = tail[1]
-        lanes = collect_app_lanes(deps.paths)
+        lanes = deps.collect_lanes()
         entry = lanes.get(app)
         if entry is None:
             return _error(404, REASON_NO_ENDPOINT, f"{app!r} is not observable on this node")
@@ -708,7 +726,7 @@ def route(
         fpr, err = _require_auth(deps, method, path, body, headers, SCOPE_ESTATE_READ)
         if err is not None:
             return err
-        lanes = collect_app_lanes(deps.paths)
+        lanes = deps.collect_lanes()
         envelopes = [
             sign_envelope(
                 build_observation_envelope(name, entry, observed_at=deps.now_iso()),
@@ -790,12 +808,34 @@ class CursorState:
 
 
 def _estate_digest(deps: RouterDeps) -> tuple[str, list[dict]]:
-    lanes = collect_app_lanes(deps.paths)
+    """The current per-app envelopes, plus a digest of their CONTENT only.
+
+    ``observed_at`` is a fresh wall-clock stamp on every poll by construction
+    (each poll re-runs the probes); hashing it in would bump the cursor on
+    every single tick regardless of whether anything actually changed,
+    which is exactly the "new observation" spam the standard's watch section
+    exists to avoid (and would make the heartbeat branch unreachable in
+    practice). The cursor tracks CONTENT change (status/reason/provenance),
+    matching k8s resourceVersion bumping on object change, not on the clock.
+    """
+    lanes = deps.collect_lanes()
     envelopes = [
         build_observation_envelope(name, entry, observed_at=deps.now_iso())
         for name, entry in sorted(lanes.items())
     ]
-    canonical = json.dumps(envelopes, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    # ``observed_at`` rides per CONDITION (adapter.normalize_observe's shape),
+    # not at the envelope's top level -- strip it there.
+    content_only = [
+        {
+            **env,
+            "conditions": [
+                {k: v for k, v in cond.items() if k != "observed_at"}
+                for cond in env.get("conditions", [])
+            ],
+        }
+        for env in envelopes
+    ]
+    canonical = json.dumps(content_only, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest(), envelopes
 
 
@@ -953,12 +993,14 @@ def start_background(
 
     Returns None (and logs, never raises) when no valid bind host resolves:
     a misconfigured/absent Tailscale IP disables the SURFACE, not the node
-    agent's core self-report loop. Callers passing an explicit ``host``
-    bypass env resolution entirely (tests use this to bind ``127.0.0.1``
-    without touching ``SKOPERATOR_HTTP_BIND``); production callers leave it
-    None so the wildcard-refusing env resolution applies.
+    agent's core self-report loop. An explicit ``host`` still goes through
+    :func:`resolve_bind_host`'s wildcard/blank refusal (tests use it to bind
+    ``127.0.0.1`` without touching ``SKOPERATOR_HTTP_BIND``, but ``0.0.0.0``/
+    ``::`` are refused from EVERY call path, not just the env-resolved one:
+    "never 0.0.0.0" is a property of this function, not of one argument to
+    it). Only an unset ``host`` falls through to ``SKOPERATOR_HTTP_BIND``.
     """
-    resolved_host = host if host is not None else resolve_bind_host()
+    resolved_host = resolve_bind_host(host)
     if resolved_host is None:
         logger.error("operator_http: refusing to start -- %s is unset/blank/wildcard", BIND_ENV)
         return None
