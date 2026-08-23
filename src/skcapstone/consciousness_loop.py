@@ -734,13 +734,13 @@ class LLMBridge:
 # (the "middle" — agent-context memories / snapshots) are trimmed or dropped
 # first (lowest priority first), so that soul, identity, behavioral rules, and
 # the most-recent peer history always survive.
-_PRIO_SOUL = 100          # personality overlay — never dropped
-_PRIO_BEHAVIORAL = 95     # response rules — never dropped
-_PRIO_IDENTITY = 90       # who the agent is — never dropped
-_PRIO_HISTORY = 85        # most-recent conversation — never dropped
-_PRIO_WARMTH = 80         # warmth anchor — never dropped
-_PRIO_SNAPSHOT = 40       # recent snapshot — trimmable middle
-_PRIO_CONTEXT = 30        # gathered memories/journal — trimmable middle
+_PRIO_SOUL = 100  # personality overlay — never dropped
+_PRIO_BEHAVIORAL = 95  # response rules — never dropped
+_PRIO_IDENTITY = 90  # who the agent is — never dropped
+_PRIO_HISTORY = 85  # most-recent conversation — never dropped
+_PRIO_WARMTH = 80  # warmth anchor — never dropped
+_PRIO_SNAPSHOT = 40  # recent snapshot — trimmable middle
+_PRIO_CONTEXT = 30  # gathered memories/journal — trimmable middle
 
 # Sections at or above this priority are preserved verbatim; only lower-priority
 # sections are trimmed to fit the budget.
@@ -839,9 +839,7 @@ class SystemPromptBuilder:
             sections.append(("snapshot", snapshot, _PRIO_SNAPSHOT))
 
         # 6. Behavioral instructions
-        sections.append(
-            ("behavioral", self._behavioral_instructions(), _PRIO_BEHAVIORAL)
-        )
+        sections.append(("behavioral", self._behavioral_instructions(), _PRIO_BEHAVIORAL))
 
         # 7. Peer history (thread-aware)
         if peer_name:
