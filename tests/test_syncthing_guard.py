@@ -119,7 +119,7 @@ def test_healthy_and_active_but_unavailable_cases_are_distinct() -> None:
     assert unavailable["failure"] == "probe_unavailable"
 
 
-def test_persistent_failure_creates_one_incident_and_recovery_is_recorded(
+def test_persistent_failure_resolves_on_recovery_and_reopens_on_recurrence(
     tmp_path: Path,
 ) -> None:
     node = "chiap04"
@@ -144,6 +144,56 @@ def test_persistent_failure_creates_one_incident_and_recovery_is_recorded(
     assert reconcile_incidents(tmp_path, recovered, prior, threshold=2, agent="jarvis") == [
         incidents[0].id
     ]
-    refreshed = ITILManager(tmp_path).find_open_incident_for_service(service_id)
-    assert refreshed is not None
-    assert any("recovered on chiap04" in item["note"] for item in refreshed.timeline)
+    manager = ITILManager(tmp_path)
+    resolved = manager.list_incidents(service=service_id)[0]
+    assert resolved.status.value == "resolved"
+    assert resolved.resolution_summary == "Resolved after a healthy current Syncthing guard check"
+    assert manager.find_open_incident_for_service(service_id) is None
+
+    assert reconcile_incidents(tmp_path, failed, prior, threshold=2, agent="jarvis") == [
+        incidents[0].id
+    ]
+    reopened = manager.find_open_incident_for_service(service_id)
+    assert reopened is not None
+    assert reopened.status.value == "investigating"
+    assert reopened.resolution_summary is None
+
+
+def test_healthy_guard_does_not_resolve_manual_incident(tmp_path: Path) -> None:
+    node = "chiap04"
+    service_id = make_ci_id(CIType.SERVICE.value, f"syncthing@{node}")
+    manager = ITILManager(tmp_path)
+    incident = manager.create_incident(
+        title="Manual Syncthing investigation",
+        affected_services=[service_id],
+    )
+
+    assert (
+        reconcile_incidents(
+            tmp_path,
+            {"nodes": [{"node": node, "failure": ""}]},
+            [],
+            threshold=2,
+            agent="jarvis",
+        )
+        == []
+    )
+    assert manager.list_incidents(service=service_id)[0].id == incident.id
+    assert manager.list_incidents(service=service_id)[0].status.value == "detected"
+
+
+def test_single_failure_after_recovery_does_not_reopen_before_threshold(tmp_path: Path) -> None:
+    node = "chiap04"
+    failed = {"nodes": [{"node": node, "failure": "start_failed"}]}
+    service_id = make_ci_id(CIType.SERVICE.value, f"syncthing@{node}")
+    manager = ITILManager(tmp_path)
+    incident = manager.create_incident(
+        title="Syncthing start failed on chiap04",
+        source="service_health",
+        affected_services=[service_id],
+        failure_class="start_failed",
+    )
+    manager.update_incident(incident.id, "jarvis", new_status="resolved")
+
+    assert reconcile_incidents(tmp_path, failed, [], threshold=2, agent="jarvis") == []
+    assert manager.list_incidents(service=service_id)[0].status.value == "resolved"

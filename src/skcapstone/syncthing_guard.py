@@ -202,7 +202,7 @@ def reconcile_incidents(
     threshold: int,
     agent: str,
 ) -> list[str]:
-    """Create one persistent-failure incident and record later recovery."""
+    """Create one persistent-failure incident and resolve verified recovery."""
     manager = ITILManager(home)
     incident_ids: list[str] = []
     rows = guard.get("nodes") or []
@@ -214,11 +214,13 @@ def reconcile_incidents(
         failure = str(row.get("failure") or "")
         existing = manager.find_open_incident_for_service(service_id)
         if not failure:
-            if existing is not None:
-                manager.note_recovery(
+            if existing is not None and existing.created_by == "syncthing_guard":
+                manager.update_incident(
                     existing.id,
                     agent,
-                    f"Syncthing recovered on {node}; evidence recorded by the fleet guard",
+                    new_status="resolved",
+                    note=f"Syncthing recovered on {node}; verified by the current fleet guard run",
+                    resolution_summary="Resolved after a healthy current Syncthing guard check",
                 )
                 incident_ids.append(existing.id)
             continue
@@ -226,7 +228,7 @@ def reconcile_incidents(
         if _consecutive_failures(artifacts, node, failure) < required:
             continue
         if existing is None:
-            existing = manager.create_incident(
+            incident = manager.create_incident(
                 title=f"Syncthing {failure.replace('_', ' ')} on {node}",
                 severity="sev3",
                 source="service_health",
@@ -237,5 +239,6 @@ def reconcile_incidents(
                 tags=["auto-detected", "syncthing", "fleet-guard", node],
                 failure_class=failure,
             )
+            existing = incident
         incident_ids.append(existing.id)
     return sorted(set(incident_ids))

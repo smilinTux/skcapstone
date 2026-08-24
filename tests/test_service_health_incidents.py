@@ -6,8 +6,12 @@ import pytest
 
 import skcapstone
 import skcapstone.mcp_tools._helpers as _helpers
+from skcapstone import service_health
 from skcapstone.itil import ITILManager
-from skcapstone.service_health import _create_incident_for_down_service
+from skcapstone.service_health import (
+    _auto_resolve_recovered_service,
+    _create_incident_for_down_service,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +19,7 @@ def _isolate(tmp_path: Path, monkeypatch) -> None:
     """Redirect ITIL + GTD storage to a tmp dir (no ~/.skcapstone writes)."""
     monkeypatch.setattr(skcapstone, "SHARED_ROOT", str(tmp_path))
     monkeypatch.setattr(_helpers, "SHARED_ROOT", str(tmp_path))
+    monkeypatch.setattr(service_health, "_may_file_incidents", lambda: True)
 
 
 def test_repeated_down_creates_one_incident_with_no_still_down_notes(tmp_path: Path):
@@ -33,3 +38,61 @@ def test_repeated_down_creates_one_incident_with_no_still_down_notes(tmp_path: P
     # And the timeline never accumulated recurring "still down" churn.
     still_down = [e for e in incidents[0].timeline if "still down" in (e.get("note") or "")]
     assert still_down == []
+
+
+def test_current_healthy_probe_resolves_sev3_incident(tmp_path: Path):
+    result = {"name": "skvector", "status": "down", "error": "no route to host"}
+    _create_incident_for_down_service(result)
+
+    _auto_resolve_recovered_service({"name": "skvector", "status": "up"})
+
+    incident = ITILManager(tmp_path).list_incidents(service="skvector")[0]
+    assert incident.status.value == "resolved"
+    assert incident.resolution_summary == "Resolved after a successful current health probe"
+
+
+def test_recurring_failure_reopens_same_deduplicated_incident(tmp_path: Path):
+    result = {"name": "skvector", "status": "down", "error": "no route to host"}
+    _create_incident_for_down_service(result)
+    manager = ITILManager(tmp_path)
+    first = manager.list_incidents(service="skvector")[0]
+    _auto_resolve_recovered_service({"name": "skvector", "status": "up"})
+
+    _create_incident_for_down_service(result)
+
+    incidents = manager.list_incidents(service="skvector")
+    assert len(incidents) == 1
+    assert incidents[0].id == first.id
+    assert incidents[0].status.value == "investigating"
+    assert incidents[0].resolution_summary is None
+
+
+def test_down_status_cannot_resolve_incident(tmp_path: Path):
+    result = {"name": "skvector", "status": "down", "error": "no route to host"}
+    _create_incident_for_down_service(result)
+
+    _auto_resolve_recovered_service(result)
+
+    assert ITILManager(tmp_path).list_incidents(service="skvector")[0].status.value == "detected"
+
+
+def test_manual_incident_is_not_auto_resolved(tmp_path: Path) -> None:
+    manager = ITILManager(tmp_path)
+    incident = manager.create_incident(title="skvector degraded", affected_services=["skvector"])
+
+    _auto_resolve_recovered_service({"name": "skvector", "status": "up"})
+
+    assert manager.list_incidents(service="skvector")[0].id == incident.id
+    assert manager.list_incidents(service="skvector")[0].status.value == "detected"
+
+
+def test_non_authority_healthy_probe_does_not_resolve_incident(
+    tmp_path: Path, monkeypatch
+) -> None:
+    result = {"name": "skvector", "status": "down", "error": "no route to host"}
+    _create_incident_for_down_service(result)
+    monkeypatch.setattr(service_health, "_may_file_incidents", lambda: False)
+
+    _auto_resolve_recovered_service({"name": "skvector", "status": "up"})
+
+    assert ITILManager(tmp_path).list_incidents(service="skvector")[0].status.value == "detected"

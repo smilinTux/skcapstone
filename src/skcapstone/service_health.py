@@ -626,7 +626,7 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
                 existing.id,
             )
             return
-        mgr.create_incident(
+        incident = mgr.create_incident(
             title=f"{svc_name} down",
             severity="sev3",
             source="service_health",
@@ -637,13 +637,15 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
             tags=["auto-detected", "service-health"],
             failure_class=failure_class,
         )
-        logger.info("Auto-created incident for down service: %s", svc_name)
+        logger.info("Active incident %s for down service %s", incident.id, svc_name)
     except Exception as exc:
         logger.debug("Failed to create incident for %s: %s", service_result.get("name"), exc)
 
 
 def _auto_resolve_recovered_service(service_result: dict[str, Any]) -> None:
-    """Auto-resolve sev4 incidents when a service recovers."""
+    """Resolve an open incident after an authority-node healthy probe."""
+    if service_result.get("status") != "up" or not _may_file_incidents():
+        return
     try:
         from . import SHARED_ROOT
         from .itil import ITILManager
@@ -651,29 +653,15 @@ def _auto_resolve_recovered_service(service_result: dict[str, Any]) -> None:
         svc_name = service_result["name"]
         mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
         existing = mgr.find_open_incident_for_service(svc_name)
-        if existing is None:
-            return
-
-        if existing.severity.value == "sev4":
+        if existing is not None and existing.created_by == "service_health":
             mgr.update_incident(
                 existing.id,
                 "service_health",
                 new_status="resolved",
-                note=f"Service {svc_name} recovered automatically",
-                resolution_summary="Auto-resolved: service came back up",
+                note=f"[{_HOSTNAME}] Service {svc_name} recovered",
+                resolution_summary="Resolved after a successful current health probe",
             )
-            logger.info(
-                "Auto-resolved sev4 incident %s for recovered service %s", existing.id, svc_name
-            )
-        else:
-            # Append a recovery note to THIS node's own writer file. The manager
-            # bounds this to one recovery event per host (own-file check), so
-            # there is no last-3-notes timeline guard and no cross-node churn.
-            mgr.note_recovery(
-                existing.id,
-                "service_health",
-                f"[{_HOSTNAME}] Service {svc_name} appears to be back up",
-            )
+            logger.info("Resolved incident %s for recovered service %s", existing.id, svc_name)
     except Exception as exc:
         logger.debug("Failed to auto-resolve incident for %s: %s", service_result.get("name"), exc)
 
@@ -683,8 +671,8 @@ def make_service_health_task() -> callable:
 
     Runs check_all_services() and logs results.  Down services are logged
     at WARNING level; all-up is logged at DEBUG level.  Auto-creates ITIL
-    incidents for down services and auto-resolves sev4 incidents for
-    recovered services.
+    incidents for down services and resolves incidents only for services
+    healthy in the current check.
     """
 
     def _run() -> None:
