@@ -86,6 +86,7 @@ def create_read_only_app(
     reliability_provider=None,
     session_adapter=None,
     architecture_provider=None,
+    governance_provider=None,
 ) -> Starlette:
     """Build the least-privilege app without importing legacy route tables."""
 
@@ -98,6 +99,10 @@ def create_read_only_app(
         from .dashboard_architecture import ArchitectureProjectionProvider
 
         architecture_provider = ArchitectureProjectionProvider()
+    if governance_provider is None and decision_authorizer is not None:
+        from .dashboard_governance import GovernanceProjectionProvider
+
+        governance_provider = GovernanceProjectionProvider()
 
     async def index(_request):
         name = "read_only_session.html" if session_adapter is not None else "read_only.html"
@@ -132,6 +137,7 @@ def create_read_only_app(
             reliability_provider=reliability_provider,
             session_resolver=session_adapter.resolve if session_adapter else None,
             architecture_provider=architecture_provider,
+            governance_provider=governance_provider,
         )
     )
     if session_adapter is not None:

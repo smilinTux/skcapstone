@@ -432,6 +432,7 @@ def routes(
     reliability_provider=None,
     session_resolver=None,
     architecture_provider=None,
+    governance_provider=None,
 ):
     if (decision_authorizer is None) != (invocation_factory is None):
         raise ValueError("typed control-plane authorization requires both injected components")
@@ -440,6 +441,7 @@ def routes(
         or schedule_provider is not None
         or reliability_provider is not None
         or architecture_provider is not None
+        or governance_provider is not None
     ) and decision_authorizer is None:
         raise ValueError("owner projection requires typed control-plane authorization")
     hits: dict[str, deque[float]] = defaultdict(deque)
@@ -791,6 +793,62 @@ def routes(
             return Response(status_code=304, headers={"ETag": etag})
         return Response(serialized, media_type="application/json", headers={"ETag": etag})
 
+    async def governance(request):
+        allowed = {"role", "scope", "window", "baseline", "service"}
+        pairs = list(request.query_params.multi_items())
+        if (
+            any(key not in allowed or not value or len(value) > 128 for key, value in pairs)
+            or len({key for key, _value in pairs}) != len(pairs)
+        ):
+            return _error(
+                request,
+                400,
+                "INVALID_GOVERNANCE_SCOPE",
+                "unsupported governance scope",
+            )
+        query = dict(pairs)
+        if (
+            query.get("role") not in {"governance", "auditor", "operator"}
+            or query.get("scope") != "estate"
+            or query.get("window") != "latest"
+            or query.get("baseline") != "none"
+            or query.get("service") != "all"
+        ):
+            return _error(
+                request,
+                400,
+                "INVALID_GOVERNANCE_SCOPE",
+                "unsupported governance scope",
+            )
+        context = getattr(request.state, "control_plane_decision", None)
+        verifier = getattr(request.state, "control_plane_currentness_verifier", None)
+        if governance_provider is None or context is None or verifier is None:
+            return _error(
+                request,
+                503,
+                "GOVERNANCE_UNAVAILABLE",
+                "the authorized governance projection is unavailable",
+                retryable=True,
+            )
+        projection = governance_provider.read(
+            context,
+            query,
+            home,
+            currentness_verifier=verifier,
+        )
+        if not isinstance(projection, dict):
+            return _error(
+                request,
+                503,
+                "GOVERNANCE_UNAVAILABLE",
+                "invalid governance projection",
+            )
+        serialized = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
+        etag = f'"{hashlib.sha256(serialized).hexdigest()}"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return Response(serialized, media_type="application/json", headers={"ETag": etag})
+
     async def events(request):
         raw_cursor = request.query_params.get("cursor") or request.headers.get("last-event-id")
         topics = [value for value in request.query_params.get("topics", "").split(",") if value]
@@ -829,6 +887,7 @@ def routes(
         Route("/api/v1/schedule/projection", protected(schedule, "skdashboard.read")),
         Route("/api/v1/reliability/projection", protected(reliability, "skdashboard.read")),
         Route("/api/v1/architecture/projection", protected(architecture, "skdashboard.read")),
+        Route("/api/v1/governance/projection", protected(governance, "skdashboard.read")),
         Route("/api/v1/board/summary", protected(board, "skdashboard.read")),
         Route("/api/v1/fleet/summary", protected(fleet, "skdashboard.read")),
         Route("/api/v1/economy/summary", protected(economy, "skdashboard.read")),
