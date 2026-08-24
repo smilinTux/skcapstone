@@ -51,6 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from ..fleet import operatorapp
 from . import adapter, manifest_adapter
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,10 @@ def make_subprocess_observe(
     *,
     timeout: float = SUBPROCESS_TIMEOUT,
     runner: Callable[..., dict | None] | None = None,
+    contract_version: int = 1,
+    node: str | None = None,
+    endpoint: str | None = None,
+    local_node: str | None = None,
 ) -> Callable[..., dict]:
     """Build a loop-compatible ``observe(paths, now_iso)`` over the OOP contract.
 
@@ -271,21 +276,48 @@ def make_subprocess_observe(
     the fail-safe contract applied at the subprocess boundary. It never raises and
     never invokes an ``act`` verb.
 
+    ``contract_version`` / ``node`` / ``endpoint`` thread the manifest's operator
+    facet through the SAME precedence rule ``operator_seat.eyes`` applies to the
+    built-in registry (card 90b5b277 Phase 2,
+    :func:`skcapstone.fleet.operatorapp.cli_exec_eligible`): a declared
+    ``endpoint`` is authoritative and this function never execs ``cli`` at all
+    (Unknown, fail-safe -- the signed remote transport client is Phase 3+ work);
+    otherwise a contractVersion 2 manifest execs ``cli`` only on its declared
+    home node (``local_node``, resolved lazily via
+    ``fleet.paths.self_node_name()`` when not given). Every manifest shipped
+    today is contractVersion 1 with neither field set, for which this is
+    byte-identical to before these keyword-only args existed.
+
     Args:
         cli: The manifest's ``operator.cli`` prefix (e.g. ``"skbrain operator"``).
         conditions: The condition names the manifest declares (the Unknown floor).
         timeout: Hard per-call timeout in seconds.
         runner: Injectable process runner (tests supply a fake); defaults to
             :func:`_run_operator_json`.
+        contract_version / node / endpoint: the manifest's operator facet
+            fields (see above).
+        local_node: Injectable for tests; defaults to this process's own node.
 
     Returns:
         ``observe(paths=None, now_iso=None) -> {"conditions": [...]}``.
     """
     run = runner or _run_operator_json
     declared = list(conditions)
+    spec = {"contractVersion": contract_version, "node": node, "endpoint": endpoint}
+    resolved_node = local_node
 
     def observe(paths: Any = None, now_iso: str | None = None, **_: Any) -> dict:
+        nonlocal resolved_node
         now = now_iso or _now_iso()
+        if endpoint:
+            return {"conditions": _unknown_conditions(declared, now)}
+        if resolved_node is None:
+            from ..fleet.paths import self_node_name
+
+            resolved_node = self_node_name()
+        eligible, _ = operatorapp.cli_exec_eligible(spec, resolved_node)
+        if not eligible:
+            return {"conditions": _unknown_conditions(declared, now)}
         payload = run(cli, "observe", timeout=timeout)
         if isinstance(payload, dict) and not adapter.validate_observe(payload):
             return {"conditions": list(payload.get("conditions", []))}
@@ -398,6 +430,7 @@ def discover_apps(
     runner: Callable[..., dict | None] | None = None,
     verified_ids_fn: Callable[..., set[str] | None] | None = None,
     knowledge_prober: Callable[[manifest_adapter.KnowledgeSource], bool] | None = None,
+    local_node: str | None = None,
 ) -> list[DiscoveredApp]:
     """Discover verified, non-built-in operator apps from signed shell manifests.
 
@@ -413,6 +446,10 @@ def discover_apps(
         verified_ids_fn: Injectable signature gate (tests); defaults to
             :func:`_verified_module_ids`.
         knowledge_prober: Injectable knowledge probe (tests).
+        local_node: Injectable node-identity override (tests); the discovered
+            apps' observe() closures resolve ``fleet.paths.self_node_name()``
+            lazily on first call when this is None (see
+            :func:`make_subprocess_observe`).
 
     Returns:
         The discovered apps, in manifest-id order.
@@ -427,6 +464,7 @@ def discover_apps(
             runner=runner,
             verified_ids_fn=verified_ids_fn or _verified_module_ids,
             knowledge_prober=knowledge_prober,
+            local_node=local_node,
         )
     except Exception as exc:  # noqa: BLE001 - discovery must never break the seat
         logger.warning("operator discovery failed wholesale (%s); no discovered apps", exc)
@@ -441,6 +479,7 @@ def _discover(
     runner: Callable[..., dict | None] | None,
     verified_ids_fn: Callable[..., set[str] | None],
     knowledge_prober: Callable[[manifest_adapter.KnowledgeSource], bool] | None,
+    local_node: str | None = None,
 ) -> list[DiscoveredApp]:
     verified = verified_ids_fn(home)
     if verified is None:
@@ -463,6 +502,7 @@ def _discover(
             timeout=timeout,
             runner=runner,
             knowledge_prober=knowledge_prober,
+            local_node=local_node,
         )
         if app is not None:
             apps.append(app)
@@ -477,6 +517,7 @@ def _discover_one(
     timeout: float,
     runner: Callable[..., dict | None] | None,
     knowledge_prober: Callable[[manifest_adapter.KnowledgeSource], bool] | None,
+    local_node: str | None = None,
 ) -> DiscoveredApp | None:
     """Turn one manifest file into a DiscoveredApp, or None (logged) if unusable."""
     try:
@@ -543,7 +584,16 @@ def _discover_one(
         logger.info("operator discovery: %r knowledge facet unusable (%s)", mid, exc)
         knowledge = None
 
-    observe = make_subprocess_observe(cli, spec["conditions"], timeout=timeout, runner=runner)
+    observe = make_subprocess_observe(
+        cli,
+        spec["conditions"],
+        timeout=timeout,
+        runner=runner,
+        contract_version=spec.get("contractVersion", 1),
+        node=spec.get("node"),
+        endpoint=spec.get("endpoint"),
+        local_node=local_node,
+    )
     rag = probe_knowledge(knowledge, prober=knowledge_prober)
     if knowledge is not None:
         logger.info(

@@ -264,6 +264,96 @@ def test_observe_malformed_payload_yields_unknown():
     assert out["conditions"][0]["status"] == "Unknown"
 
 
+# --- v2 precedence: node / endpoint gating (card 90b5b277 Phase 2) ----------
+
+
+def test_observe_v1_execs_regardless_of_local_node():
+    ran = []
+    observe = discovery.make_subprocess_observe(
+        "skbrain operator",
+        ["OpsSchemaPresent"],
+        runner=lambda *a, **k: (
+            ran.append(a) or {"conditions": [{"type": "OpsSchemaPresent", "status": "True"}]}
+        ),
+        local_node="node-anywhere",
+    )
+    out = observe(None, "2026-07-31T00:00:00Z")
+    assert ran
+    assert out["conditions"][0]["status"] == "True"
+
+
+def test_observe_v2_execs_only_on_matching_home_node():
+    ran = []
+    observe = discovery.make_subprocess_observe(
+        "skbrain operator",
+        ["OpsSchemaPresent"],
+        runner=lambda *a, **k: (
+            ran.append(a) or {"conditions": [{"type": "OpsSchemaPresent", "status": "True"}]}
+        ),
+        contract_version=2,
+        node="node-100",
+        local_node="node-100",
+    )
+    out = observe(None, "2026-07-31T00:00:00Z")
+    assert ran
+    assert out["conditions"][0]["status"] == "True"
+
+
+def test_observe_v2_never_execs_on_a_different_node():
+    ran = []
+    observe = discovery.make_subprocess_observe(
+        "skbrain operator",
+        ["OpsSchemaPresent"],
+        runner=lambda *a, **k: ran.append(a),
+        contract_version=2,
+        node="node-100",
+        local_node="node-noroc2027",
+    )
+    out = observe(None, "2026-07-31T00:00:00Z")
+    assert not ran, "a remote seat must never exec cli for another node's discovered app"
+    assert out["conditions"][0]["status"] == "Unknown"
+
+
+def test_observe_v2_with_endpoint_never_execs_even_on_home_node():
+    ran = []
+    observe = discovery.make_subprocess_observe(
+        "skbrain operator",
+        ["OpsSchemaPresent"],
+        runner=lambda *a, **k: ran.append(a),
+        contract_version=2,
+        node="node-100",
+        endpoint="https://100.64.0.100:9392/operator/v1",
+        local_node="node-100",
+    )
+    out = observe(None, "2026-07-31T00:00:00Z")
+    assert not ran, "endpoint outranks cli-local even on the home node"
+    assert out["conditions"][0]["status"] == "Unknown"
+
+
+def test_discover_one_threads_spec_node_endpoint_into_the_observer(tmp_path, on):
+    # End to end via a NON-skbrain id (skbrain alone carries the extra strict
+    # health gate, which is orthogonal to this precedence rule): a discovered
+    # v2 manifest declaring a foreign home node never execs its cli through
+    # discover_apps()'s wiring either.
+    ran = []
+    m = _skbrain_manifest()
+    m["id"] = "skwidget"
+    m["operator"]["contractVersion"] = 2
+    m["operator"]["node"] = "node-100"
+    _write_manifest(tmp_path, m, name="skwidget")
+    apps = discovery.discover_apps(
+        home=tmp_path,
+        builtin_ids=frozenset(),
+        verified_ids_fn=lambda h: {"skwidget"},
+        runner=lambda *a, **k: ran.append(a),
+        local_node="node-noroc2027",
+    )
+    (app,) = apps
+    out = app.observe(None, "2026-07-31T00:00:00Z")
+    assert not ran, "a remote seat must never exec a discovered v2 app's cli off its home node"
+    assert out["conditions"][0]["status"] == "Unknown"
+
+
 def test_discovered_app_observe_never_raises_on_timeout(tmp_path, on):
     # A real hung binary hits the hard timeout and fails safe to Unknown.
     hung = f'{sys.executable} -c "import time;time.sleep(5)" operator'
