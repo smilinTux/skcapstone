@@ -218,3 +218,29 @@ def test_validation_rejects_frozen_metric_or_watermark_tampering():
     report["report_hash"] = report_hash(report)
     with pytest.raises(ReportSnapshotError, match="content addressed|calculation"):
         validate_report_snapshot(report)
+
+
+def test_validation_rejects_protected_scope_and_model_provenance_tampering():
+    report = snapshot()
+    report["scope"] = {"tenant_id": "protected"}
+    report["report_hash"] = report_hash(report)
+    with pytest.raises(ReportSnapshotError, match="protected"):
+        validate_report_snapshot(report)
+
+    with_insight = snapshot()
+    with_insight["model_provenance"] = [
+        {
+            "logical_route": "unbound",
+            "transport_profile": "fixture",
+            "gateway_revision": "fixture",
+            "backend": "fixture",
+            "requested_model": "fixture",
+            "served_model": "fixture",
+            "model_revision": "fixture",
+            "prompt_hash": "sha256:" + "c" * 64,
+            "schema_hash": "sha256:" + "d" * 64,
+        }
+    ]
+    with_insight["report_hash"] = report_hash(with_insight)
+    with pytest.raises(ReportSnapshotError, match="model provenance|content addressed"):
+        validate_report_snapshot(with_insight)

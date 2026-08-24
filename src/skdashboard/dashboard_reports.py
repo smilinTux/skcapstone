@@ -317,14 +317,14 @@ def build_report_snapshot(
         "review_state": review,
         "supersedes": supersedes,
     }
+    if model_provenance:
+        identity_body["model_provenance"] = model_provenance
     snapshot_id = f"rpt-{hashlib.sha256(_canonical(identity_body)).hexdigest()[:24]}"
     snapshot = {
         "snapshot_id": snapshot_id,
         "schema_version": "1.1.0",
         **identity_body,
     }
-    if model_provenance:
-        snapshot["model_provenance"] = model_provenance
     snapshot["report_hash"] = report_hash(snapshot)
     validate_report_snapshot(snapshot)
     return snapshot
@@ -339,12 +339,21 @@ def validate_report_snapshot(snapshot: object) -> dict:
         raise ReportSnapshotError("report snapshot id is invalid")
     if snapshot.get("report_type") not in REPORT_TYPES:
         raise ReportSnapshotError("report snapshot type is invalid")
+    scope = snapshot.get("scope")
+    if (
+        not isinstance(scope, dict)
+        or not scope
+        or any(
+            key in scope for key in ("tenant_id", "matter_id", "person_id", "user_id", "agent_id")
+        )
+    ):
+        raise ReportSnapshotError("report scope is empty or protected")
     if snapshot.get("report_hash") != report_hash(snapshot):
         raise ReportSnapshotError("report snapshot hash does not match its content")
     identity_body = {
         key: value
         for key, value in snapshot.items()
-        if key not in {"snapshot_id", "schema_version", "report_hash", "model_provenance"}
+        if key not in {"snapshot_id", "schema_version", "report_hash"}
     }
     expected_id = f"rpt-{hashlib.sha256(_canonical(identity_body)).hexdigest()[:24]}"
     if snapshot_id != expected_id:
@@ -360,6 +369,16 @@ def validate_report_snapshot(snapshot: object) -> dict:
         if isinstance(section, dict)
         for metric in section.get("metric_results", [])
     ]
+    insights = [
+        insight
+        for section in sections
+        if isinstance(section, dict)
+        for insight in section.get("insights", [])
+        if isinstance(insight, dict)
+    ]
+    expected_provenance = _model_provenance(insights)
+    if snapshot.get("model_provenance", []) != expected_provenance:
+        raise ReportSnapshotError("report model provenance does not reproduce insight content")
     expected_hashes = {
         _metric_identity(metric): metric["calculation"]["definition_hash"] for metric in metrics
     }

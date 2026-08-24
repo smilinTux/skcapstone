@@ -892,6 +892,8 @@ def routes(
             )
         except KeyError:
             return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+        except ValueError:
+            return _error(request, 503, "REPORTS_UNAVAILABLE", "the immutable report store is unavailable", retryable=True)
         if not isinstance(projection, dict):
             return _error(request, 503, "REPORTS_UNAVAILABLE", "invalid report projection")
         serialized = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
@@ -913,6 +915,8 @@ def routes(
                 context, snapshot_id, home, currentness_verifier=verifier
             )
         except KeyError:
+            return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+        except ValueError:
             return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
         if not isinstance(snapshot, dict):
             return _error(request, 503, "REPORTS_UNAVAILABLE", "invalid report snapshot")
