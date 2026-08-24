@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard estate pulse V2.1 wireframe</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --rail: #0a1627;
+      --panel: #0d1b2d;
+      --panel2: #11233a;
+      --line: #29425f;
+      --line2: #1a304a;
+      --text: #edf5ff;
+      --muted: #a7bad0;
+      --faint: #7890ad;
+      --accent: #62d6ff;
+      --accent2: #9a8cff;
+      --ok: #54d69c;
+      --warn: #ffc866;
+      --bad: #ff718a;
+      --unknown: #b0bac8;
+      --shadow: 0 16px 50px rgba(0, 0, 0, .26);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); }
+    a { color: inherit; }
+    button, input, select { font: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid var(--accent); outline-offset: 2px;
+    }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .skip { position: fixed; left: 12px; top: 8px; transform: translateY(-150%); z-index: 100; padding: 8px 12px; border-radius: 8px; background: var(--accent); color: #06111e; font-weight: 800; }
+    .skip:focus { transform: translateY(0); }
+    .app { min-height: 100vh; display: grid; grid-template-columns: 230px minmax(0, 1fr); }
+    .rail { position: sticky; top: 0; height: 100vh; padding: 20px 14px; background: linear-gradient(180deg, var(--rail), #081321); border-right: 1px solid var(--line2); display: flex; flex-direction: column; gap: 18px; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; }
+    .brandmark { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: linear-gradient(145deg, var(--accent), var(--accent2)); color: #05101c; font-weight: 900; }
+    .brand strong, .brand small, .operator strong, .operator small { display: block; }
+    .brand small { color: var(--muted); margin-top: 2px; }
+    .navgroup { display: grid; gap: 5px; }
+    .navlabel { padding: 8px 11px 4px; color: var(--faint); text-transform: uppercase; letter-spacing: .1em; font-size: 10px; font-weight: 800; }
+    .navitem { border-radius: 9px; padding: 9px 11px; display: flex; align-items: center; gap: 10px; color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 650; }
+    .navitem:hover, .navitem[aria-current="page"] { background: rgba(98, 214, 255, .12); color: var(--accent); }
+    .navicon { width: 20px; text-align: center; font-size: 11px; font-weight: 900; }
+    .railfoot { margin-top: auto; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.02); }
+    .operator { display: flex; align-items: center; gap: 9px; }
+    .avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: #203957; color: var(--accent); font-size: 12px; font-weight: 800; }
+    .operator small { color: var(--ok); font-size: 10px; }
+    .main { min-width: 0; }
+    .topbar { position: sticky; top: 0; z-index: 10; min-height: 66px; padding: 12px 24px; background: rgba(7, 17, 31, .94); border-bottom: 1px solid var(--line2); backdrop-filter: blur(14px); display: flex; align-items: center; gap: 10px; }
+    .scope, .search { height: 39px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 9px; padding: 0 11px; }
+    .scope { min-width: 145px; }
+    .scope.wide { min-width: 185px; }
+    .search { margin-left: auto; min-width: 230px; }
+    .kbd { border: 1px solid var(--line); background: var(--panel2); border-radius: 6px; color: var(--muted); padding: 4px 7px; font-size: 10px; white-space: nowrap; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 8px; padding: 7px 10px; font-size: 10px; font-weight: 750; text-decoration: none; cursor: pointer; }
+    .btn:hover { border-color: var(--accent); }
+    .btn:disabled { cursor: not-allowed; opacity: .5; border-color: var(--line); }
+    .btn.primary { color: #06111e; border-color: transparent; background: var(--accent); }
+    .btn.purple { color: #06111e; border-color: transparent; background: var(--accent2); }
+    .content { max-width: 1740px; margin: 0 auto; padding: 16px 24px 44px; }
+    .prototype { border: 1px solid rgba(255, 200, 102, .45); border-radius: 10px; padding: 9px 12px; background: rgba(255, 200, 102, .07); color: #ffdc9b; display: flex; justify-content: space-between; gap: 16px; align-items: center; font-size: 12px; }
+    .prototype strong { color: var(--warn); }
+    .headline { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: 20px 0 14px; }
+    h1 { margin: 0 0 4px; font-size: 28px; letter-spacing: -.035em; }
+    h2 { margin: 0; font-size: 14px; }
+    h3 { margin: 6px 0; font-size: 12px; line-height: 1.35; }
+    p { color: var(--muted); }
+    .headline p { margin: 0; font-size: 13px; }
+    .fresh, .tagrow, .actions, .pathlist { display: flex; flex-wrap: wrap; gap: 7px; }
+    .badge, .state, .tag { border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); padding: 5px 8px; font-size: 10px; font-weight: 750; }
+    .badge.ok, .state.current { color: var(--ok); border-color: rgba(84,214,156,.38); }
+    .badge.warn, .state.partial, .state.stale { color: var(--warn); border-color: rgba(255,200,102,.4); }
+    .badge.bad, .state.unavailable { color: var(--bad); border-color: rgba(255,113,138,.4); }
+    .state.unknown, .state.not_applicable, .state.policy_filtered { color: var(--unknown); }
+    .panel { border: 1px solid var(--line2); background: linear-gradient(180deg, var(--panel), #0b192a); border-radius: 14px; box-shadow: var(--shadow); }
+    .panelhead { padding: 14px 16px; border-bottom: 1px solid var(--line2); display: flex; align-items: center; gap: 9px; }
+    .panelhead p { margin: 3px 0 0; font-size: 10px; }
+    .right { margin-left: auto; }
+    .body { padding: 15px 16px; }
+    .rolebar { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .rolecard { padding: 14px; border: 1px solid var(--line2); border-radius: 11px; background: rgba(255,255,255,.025); }
+    .rolecard p { margin: 5px 0 10px; font-size: 11px; line-height: 1.45; }
+    .rolecard .rolemeta { color: var(--accent); font-size: 10px; font-weight: 750; }
+    .briefgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .insight { min-height: 180px; padding: 12px; border: 1px solid var(--line2); border-radius: 11px; background: rgba(255,255,255,.02); display: flex; flex-direction: column; }
+    .eyebrow, .field dt, .previewitem span { color: var(--faint); text-transform: uppercase; letter-spacing: .07em; font-size: 9px; font-weight: 800; }
+    .insight p { margin: 0; font-size: 11px; line-height: 1.48; }
+    .why { margin-top: 8px; color: var(--warn); font-size: 10px; }
+    .actions { margin-top: auto; padding-top: 11px; }
+    .askrow { display: flex; gap: 8px; margin-top: 12px; }
+    .askrow input { flex: 1; min-width: 0; height: 38px; border: 1px solid var(--line); border-radius: 9px; background: #091726; color: var(--text); padding: 0 11px; }
+    .transparency { margin-top: 12px; padding: 12px; border: 1px solid rgba(98,214,255,.28); border-radius: 10px; background: rgba(98,214,255,.045); }
+    .transparency h3 { color: var(--accent); margin-top: 0; }
+    .fieldgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .field { margin: 0; padding: 8px; border: 1px solid var(--line2); border-radius: 8px; background: rgba(0,0,0,.1); }
+    .field dd { margin: 4px 0 0; color: var(--text); font-size: 10px; line-height: 1.4; }
+    .pathbudget { margin: 14px 0; padding: 11px 14px; border: 1px solid var(--line2); border-radius: 10px; background: rgba(255,255,255,.02); }
+    .pathbudget strong { font-size: 11px; }
+    .path { color: var(--muted); font-size: 10px; }
+    .path b { color: var(--ok); }
+    .tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+    .tile { min-height: 116px; padding: 13px; border: 1px solid var(--line2); border-radius: 12px; background: var(--panel); text-decoration: none; }
+    .tile:hover { border-color: var(--accent); }
+    .tile .label { color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; }
+    .tile .value { margin: 9px 0 4px; font-size: 23px; font-weight: 830; }
+    .tile .sub, .tile .trend { font-size: 10px; line-height: 1.4; }
+    .tile .sub { color: var(--muted); }
+    .trend.ok { color: var(--ok); } .trend.warn { color: var(--warn); } .trend.bad { color: var(--bad); }
+    .lowergrid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(330px, .7fr); gap: 14px; }
+    .tablewrap { overflow-x: auto; }
+    table { width: 100%; min-width: 920px; border-collapse: collapse; }
+    caption { padding: 0 0 10px; color: var(--muted); text-align: left; font-size: 10px; }
+    th { color: var(--faint); text-transform: uppercase; letter-spacing: .07em; font-size: 9px; font-weight: 800; text-align: left; padding: 0 8px 10px; }
+    th, td { border-bottom: 1px solid var(--line2); }
+    td { padding: 9px 8px; font-size: 10px; vertical-align: middle; }
+    td strong, td small { display: block; }
+    td small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+    .metricbar { width: 105px; height: 5px; margin-top: 5px; border-radius: 99px; background: #1a3049; overflow: hidden; }
+    .metricbar span { display: block; height: 100%; background: var(--accent); }
+    .legend { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line2); border-radius: 10px; }
+    .legend h3 { margin: 0 0 7px; }
+    .legendlist { display: flex; flex-wrap: wrap; gap: 6px; }
+    .legenditem { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 9px; }
+    .legenditem .state { padding: 3px 6px; }
+    .rec { padding: 12px; border: 1px solid rgba(154,140,255,.38); border-radius: 11px; background: rgba(154,140,255,.055); }
+    .rec + .rec { margin-top: 9px; }
+    .rec p { margin: 0; font-size: 10px; line-height: 1.45; }
+    .impact { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+    .impact div { padding: 7px; border: 1px solid var(--line2); border-radius: 8px; }
+    .impact span { display: block; color: var(--faint); font-size: 8px; text-transform: uppercase; }
+    .impact strong { display: block; margin-top: 3px; font-size: 10px; }
+    .source { margin-top: 8px; color: var(--accent); font-size: 9px; }
+    .drawerbackdrop { position: fixed; inset: 0; z-index: 40; display: none; background: rgba(2, 8, 16, .76); }
+    .drawerbackdrop.open { display: block; }
+    .drawer { position: fixed; z-index: 50; top: 0; right: 0; width: min(560px, 100vw); height: 100vh; padding: 18px; overflow: auto; background: #0a1728; border-left: 1px solid var(--line); transform: translateX(102%); transition: transform .18s ease; }
+    .drawer.open { transform: translateX(0); }
+    .drawerhead { display: flex; align-items: start; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--line2); }
+    .drawerhead h2 { font-size: 18px; }
+    .drawerhead p { margin: 4px 0 0; font-size: 11px; }
+    .close { margin-left: auto; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--text); cursor: pointer; }
+    .previewstatus { margin: 14px 0; padding: 10px 12px; border: 1px solid rgba(84,214,156,.35); border-radius: 10px; background: rgba(84,214,156,.06); display: flex; justify-content: space-between; gap: 8px; }
+    .previewstatus strong { color: var(--ok); font-size: 11px; }
+    .previewstatus span { color: var(--muted); font-size: 9px; }
+    .previewgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .previewitem { padding: 10px; border: 1px solid var(--line2); border-radius: 9px; background: var(--panel); }
+    .previewitem.full { grid-column: 1 / -1; }
+    .previewitem strong { display: block; margin-top: 5px; font-size: 11px; line-height: 1.4; }
+    .previewitem code { color: var(--accent); overflow-wrap: anywhere; }
+    .checklist { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .outcomes { display: grid; gap: 6px; margin-top: 12px; }
+    .outcome { padding: 8px 10px; border: 1px solid var(--line2); border-radius: 8px; font-size: 10px; }
+    .outcome strong { margin-right: 5px; }
+    .outcome.stale strong { color: var(--warn); }
+    .outcome.denied strong { color: var(--bad); }
+    .approvalnote { margin-top: 12px; padding: 10px; border: 1px solid rgba(255,200,102,.3); border-radius: 9px; color: #ffdc9b; background: rgba(255,200,102,.05); font-size: 10px; line-height: 1.45; }
+    .draweractions { position: sticky; bottom: -18px; margin: 16px -18px -18px; padding: 14px 18px; display: flex; gap: 8px; background: #0a1728; border-top: 1px solid var(--line2); }
+    .draweractions .primary { flex: 1; }
+    .toast { position: fixed; z-index: 70; left: 50%; bottom: 24px; transform: translate(-50%, 30px); opacity: 0; pointer-events: none; background: #152943; border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px; color: var(--text); font-size: 11px; transition: .18s ease; }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    @media (max-width: 1220px) { .tiles { grid-template-columns: repeat(3, 1fr); } .briefgrid { grid-template-columns: 1fr; } .fieldgrid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 920px) { .app { grid-template-columns: 72px minmax(0, 1fr); } .rail { padding: 16px 10px; } .brand > div:last-child, .navlabel, .navitem span:last-child, .railfoot { display: none; } .navitem { justify-content: center; padding: 10px; } .lowergrid { grid-template-columns: 1fr; } .search, .kbd { display: none; } }
+    @media (max-width: 680px) { .app { display: block; } .rail { position: static; width: 100%; height: auto; flex-direction: row; align-items: center; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line2); } .brand, .navgroup:nth-of-type(n+2) { display: none; } .navgroup { display: flex; } .navitem { white-space: nowrap; } .topbar { padding: 10px 12px; overflow-x: auto; } .scope { min-width: 130px; } .content { padding: 12px; } .prototype, .headline { align-items: start; flex-direction: column; } .rolebar { grid-template-columns: 1fr; } .tiles { grid-template-columns: repeat(2, 1fr); } .fieldgrid, .previewgrid { grid-template-columns: 1fr; } .previewitem.full { grid-column: auto; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main-content">Skip to main content</a>
+  <div class="app">
+    <aside class="rail" aria-label="Control plane workspaces">
+      <div class="brand"><div class="brandmark" aria-hidden="true">SK</div><div><strong>Control Plane</strong><small>V2 UX contract</small></div></div>
+      <nav class="navgroup" aria-label="Primary workspaces">
+        <div class="navlabel">Workspaces</div>
+        <a class="navitem" aria-current="page" href="/control-plane/now?role=operator&scope=estate&window=30d&baseline=previous"><span class="navicon">01</span><span>Now</span></a>
+        <a class="navitem" href="/control-plane/portfolio?role=project-manager&scope=estate&window=30d&baseline=previous"><span class="navicon">02</span><span>Portfolio</span></a>
+        <a class="navitem" href="/control-plane/delivery?role=project-manager&scope=estate&window=30d&baseline=previous"><span class="navicon">03</span><span>Delivery</span></a>
+        <a class="navitem" href="/control-plane/architecture?role=architect&scope=estate&window=30d&baseline=previous"><span class="navicon">04</span><span>Architecture</span></a>
+        <a class="navitem" href="/control-plane/reliability?role=architect&scope=estate&window=30d&baseline=previous"><span class="navicon">05</span><span>Reliability</span></a>
+        <a class="navitem" href="/control-plane/ai-cost?role=architect&scope=estate&window=30d&baseline=previous"><span class="navicon">06</span><span>AI and Cost</span></a>
+        <a class="navitem" href="/control-plane/governance?role=operator&scope=estate&window=30d&baseline=previous"><span class="navicon">07</span><span>Governance</span></a>
+      </nav>
+      <nav class="navgroup" aria-label="Reports and configuration">
+        <div class="navlabel">Operate</div>
+        <a class="navitem" href="/control-plane/reports?role=operator&scope=estate&window=30d&baseline=previous"><span class="navicon">R</span><span>Reports</span></a>
+        <a class="navitem" href="/control-plane/saved-views?role=operator&scope=estate&window=30d&baseline=previous"><span class="navicon">V</span><span>Saved views</span></a>
+        <a class="navitem" href="/control-plane/data-quality?role=operator&scope=estate&window=30d&baseline=previous"><span class="navicon">D</span><span>Data quality</span></a>
+      </nav>
+      <div class="railfoot"><div class="operator"><span class="avatar">OP</span><span><strong>Operator</strong><small>Policy available</small></span></div></div>
+    </aside>
+    <main class="main" id="main-content" tabindex="-1">
+      <header class="topbar" aria-label="Global scope and search">
+        <label class="sr-only" for="estate-scope">Estate scope</label><select id="estate-scope" class="scope wide"><option>Whole SK estate</option><option>SKDashboard</option><option>SKLegal program</option></select>
+        <label class="sr-only" for="service-scope">Service scope</label><select id="service-scope" class="scope"><option>All services</option><option>Control plane</option><option>SKGateway</option></select>
+        <label class="sr-only" for="time-window">Time window</label><select id="time-window" class="scope"><option>Last 30 days</option><option>Last 7 days</option><option>This sprint</option></select>
+        <label class="sr-only" for="baseline">Comparison baseline</label><select id="baseline" class="scope"><option>Previous period</option><option>Approved target</option><option>No baseline</option></select>
+        <label class="sr-only" for="role-context">Active role</label><select id="role-context" class="scope"><option value="operator">Operator</option><option value="project-manager">Project manager</option><option value="architect">Architect</option></select>
+        <label class="sr-only" for="estate-search">Search or ask the estate</label><input id="estate-search" class="search" placeholder="Search or ask the estate...">
+        <span class="kbd" aria-hidden="true">Ctrl K</span>
+        <a class="btn" href="/control-plane/saved-views/new?scope=estate&window=30d&baseline=previous">Save view</a>
+      </header>
+      <div class="content">
+        <div class="prototype" role="note"><span><strong>Interactive V2.1 wireframe</strong> using synthetic data. No live source is queried and no action is sent.</span><span>Original manifest assets remain pinned</span></div>
+        <section class="headline" aria-labelledby="page-title"><div><h1 id="page-title">Now</h1><p>Decisions, material change, and cross-estate evidence at a glance.</p></div><div class="fresh" aria-label="Truth and visibility summary for 12 visible silos"><span class="badge ok">5 current</span><span class="badge warn">3 partial</span><span class="badge bad">1 unavailable</span><span class="badge warn">1 stale</span><span class="badge">2 unknown</span><span class="badge">1 policy filtered visibility</span><span class="badge">12 visible silos</span><span class="badge">As of 10:42 local</span></div></section>
+
+        <section class="rolebar" aria-labelledby="role-title">
+          <h2 class="sr-only" id="role-title">Role paths</h2>
+          <article class="rolecard" data-role="project-manager"><div class="rolemeta">PROJECT MANAGER LENS</div><h3>Find blocked value and decide what needs attention</h3><p>Start with blocked objectives, aging review work, milestone risk, and decision latency. Scope remains Whole SK estate.</p><a class="btn primary" href="/control-plane/portfolio?role=project-manager&task=blocked-value&scope=estate&window=30d&baseline=previous">Open blocked value path</a></article>
+          <article class="rolecard" data-role="architect"><div class="rolemeta">ARCHITECT LENS</div><h3>Trace service risk to topology and evidence</h3><p>Start with blast radius, unsupported dependencies, drift, error budget, and route quality. Scope remains Whole SK estate.</p><a class="btn primary" href="/control-plane/architecture?role=architect&task=blast-radius&scope=estate&window=30d&baseline=previous">Open blast radius path</a></article>
+        </section>
+
+        <section class="panel" aria-labelledby="ai-title">
+          <div class="panelhead"><div aria-hidden="true" class="badge">AI</div><div><h2 id="ai-title">Estate intelligence brief</h2><p>Evidence-linked conclusions against approved operating practices</p></div><span class="right badge ok">Evidence coverage 87%</span></div>
+          <div class="body">
+            <div class="briefgrid">
+              <article class="insight"><span class="eyebrow">Flow risk, high confidence</span><h3>Review-stage WIP is constraining two delivery paths</h3><p>Work-item age and blocked time rose while throughput stayed flat. The pattern is consistent with a review bottleneck, not increased demand.</p><span class="why">Kanban: inspect WIP, age, throughput, and cycle time together.</span><div class="actions"><button class="btn evidence" data-evidence="flow" type="button">Explain evidence</button><button class="btn primary preview" type="button">Review next step</button></div></article>
+              <article class="insight"><span class="eyebrow">Reliability, medium confidence</span><h3>Change health needs more evidence before intervention</h3><p>One rejected change dominates the denominator. Closed changes are not classified consistently, so the conclusion is an abstention.</p><span class="why">ITIL and DORA: publish numerator, denominator, sample, and exclusions.</span><div class="actions"><button class="btn evidence" data-evidence="itil" type="button">Open calculation</button><a class="btn" href="/control-plane/data-quality?role=operator&task=change-denominator&scope=estate&window=30d&baseline=previous">Track data fix</a></div></article>
+              <article class="insight"><span class="eyebrow">Architecture, high confidence</span><h3>Fleet runtime and CMDB completeness disagree</h3><p>Configuration records are complete, but runtime heartbeats are unavailable. Treat the estate as operationally unknown, not healthy.</p><span class="why">SRE: health follows user-facing evidence and explicit freshness.</span><div class="actions"><button class="btn evidence" data-evidence="fleet" type="button">Compare populations</button><a class="btn" href="/control-plane/saved-views/new?watch=fleet-cmdb&scope=estate&window=30d&baseline=previous">Save watch</a></div></article>
+            </div>
+            <section class="transparency" aria-labelledby="transparency-title"><h3 id="transparency-title">AI transparency and abstention state</h3><div class="fieldgrid"><dl class="field"><dt>Metric references</dt><dd>flow.review_age.v1.0; flow.cycle_time.v1.0</dd></dl><dl class="field"><dt>Uncertainty</dt><dd>Reviewer capacity is not observed for two teams.</dd></dl><dl class="field"><dt>Counter-indicators</dt><dd>Throughput rose 4% in one service.</dd></dl><dl class="field"><dt>Alternatives</dt><dd>Inspect reviewers or compare demand before changing WIP.</dd></dl><dl class="field"><dt>Preconditions</dt><dd>Current source watermarks and assigned reviewer data.</dd></dl><dl class="field"><dt>Impact horizon</dt><dd>Expected within one sprint; range is P85 minus 8% to 18%.</dd></dl><dl class="field"><dt>Model status</dt><dd>Proposal only. No command tool or connector is available.</dd></dl><dl class="field"><dt>Abstention example</dt><dd>Change-health recommendation withheld until denominator repair.</dd></dl></div></section>
+            <div class="askrow"><label class="sr-only" for="ask">Ask AI about the selected estate scope</label><input id="ask" placeholder="Ask why a metric changed, compare a baseline, or draft a report..."><button class="btn purple" id="ask-button" type="button">Ask AI</button></div>
+          </div>
+        </section>
+
+        <section class="pathbudget" aria-labelledby="path-title"><strong id="path-title">Least-click acceptance paths</strong><div class="pathlist"><span class="path" data-interactions="1">KPI to evidence: <b>1 interaction</b></span><span class="path" data-interactions="2">Role lens to evidence: <b>2 interactions</b></span><span class="path" data-interactions="2">Recommendation to preview and approval: <b>2 interactions</b></span></div></section>
+
+        <section class="tiles" aria-label="Cross-estate key signals"><a class="tile" href="/control-plane/portfolio?role=project-manager&metric=outcome-confidence&scope=estate&window=30d&baseline=previous"><span class="label">Portfolio</span><div class="value">6 / 9</div><div class="sub">outcomes on track</div><div class="trend warn">2 decisions block value</div></a><a class="tile" href="/control-plane/delivery?role=project-manager&metric=cycle-time&scope=estate&window=30d&baseline=previous"><span class="label">Flow</span><div class="value">P85 4.8d</div><div class="sub">cycle time, 42 items</div><div class="trend bad">Review age up 31%</div></a><a class="tile" href="/control-plane/reliability?role=architect&metric=service-sli&scope=estate&window=30d&baseline=previous"><span class="label">Reliability</span><div class="value">99.91%</div><div class="sub">service SLI, 30 days</div><div class="trend warn">41% error budget left</div></a><a class="tile" href="/control-plane/delivery?role=project-manager&metric=dora&scope=estate&window=30d&baseline=previous"><span class="label">Delivery</span><div class="value">Partial</div><div class="sub">3 of 5 DORA current</div><div class="trend warn">2 source gaps</div></a><a class="tile" href="/control-plane/architecture?role=architect&metric=drift&scope=estate&window=30d&baseline=previous"><span class="label">Architecture</span><div class="value">12</div><div class="sub">material drift signals</div><div class="trend bad">3 high blast radius</div></a><a class="tile" href="/control-plane/ai-cost?role=architect&metric=accepted-outcome-cost&scope=estate&window=30d&baseline=previous"><span class="label">AI and cost</span><div class="value">74%</div><div class="sub">recommendations accepted</div><div class="trend ok">$18 to $24 per accepted outcome</div></a></section>
+
+        <section class="lowergrid">
+          <article class="panel" id="pulse" aria-labelledby="pulse-title"><div class="panelhead"><div><h2 id="pulse-title">Estate pulse</h2><p>All twelve approved silos, owner and truth state, with one-click evidence</p></div><a class="right btn" href="/control-plane/data-quality?role=operator&scope=estate&window=30d&baseline=previous">Configure signals</a></div><div class="body tablewrap"><table><caption>Twelve synthetic estate silo signals for the Whole SK estate, last 30 days, previous period baseline</caption><thead><tr><th scope="col">Silo and owner</th><th scope="col">Truth state</th><th scope="col">Primary signal</th><th scope="col">Coverage</th><th scope="col">Material change</th><th scope="col"><span class="sr-only">Evidence action</span></th></tr></thead><tbody>
+            <tr data-silo="portfolio"><td><strong>Portfolio and projects</strong><small>Owner: SKCapstone and skcoord</small></td><td><span class="state current">Current</span></td><td><strong>2 decisions block 3 objectives</strong><small>Definition v1.0.0, 30-day window</small></td><td>9 / 9<div class="metricbar"><span style="width:100%"></span></div></td><td class="trend warn">Risk up</td><td><button class="btn evidence" data-evidence="portfolio" aria-label="Evidence for Portfolio and projects" type="button">Evidence</button></td></tr>
+            <tr data-silo="flow"><td><strong>Agile flow</strong><small>Owner: skcoord card store</small></td><td><span class="state current">Current</span></td><td><strong>Review age is the constraint</strong><small>P85, sample 42, excludes migrated closes</small></td><td>42 / 47<div class="metricbar"><span style="width:89%"></span></div></td><td class="trend bad">Age +31%</td><td><button class="btn evidence" data-evidence="flow" aria-label="Evidence for Agile flow" type="button">Evidence</button></td></tr>
+            <tr data-silo="itil"><td><strong>ITIL and SRE</strong><small>Owner: SKCapstone ITIL and skcoord</small></td><td><span class="state partial">Partial</span></td><td><strong>Service level current, change quality unknown</strong><small>Change denominator needs repair</small></td><td>7 / 8<div class="metricbar"><span style="width:87%"></span></div></td><td class="trend warn">1 gap</td><td><button class="btn evidence" data-evidence="itil" aria-label="Evidence for ITIL and SRE" type="button">Evidence</button></td></tr>
+            <tr data-silo="engineering"><td><strong>Engineering delivery</strong><small>Owner: CI, release, repository, service observations</small></td><td><span class="state current">Current</span></td><td><strong>DORA direction is mixed</strong><small>Three of five metrics have current observations</small></td><td>3 / 5<div class="metricbar"><span style="width:60%"></span></div></td><td class="trend warn">2 gaps</td><td><button class="btn evidence" data-evidence="engineering" aria-label="Evidence for Engineering delivery" type="button">Evidence</button></td></tr>
+            <tr data-silo="architecture"><td><strong>Architecture and CMDB</strong><small>Owner: CMDB, ADR, dependency and SKPerf observations</small></td><td><span class="state partial">Partial</span></td><td><strong>3 high-impact drift signals</strong><small>Runtime evidence missing for fleet health</small></td><td>10 / 12<div class="metricbar"><span style="width:83%"></span></div></td><td class="trend bad">Drift +2</td><td><button class="btn evidence" data-evidence="architecture" aria-label="Evidence for Architecture and CMDB" type="button">Evidence</button></td></tr>
+            <tr data-silo="fleet"><td><strong>Fleet runtime</strong><small>Owner: SKCapstone Fleet</small></td><td><span class="state unavailable">Unavailable</span></td><td><strong>Heartbeat source did not report</strong><small>Last valid observation 6h ago</small></td><td>0 / 10<div class="metricbar"><span style="width:0%"></span></div></td><td class="trend bad">Unknown</td><td><button class="btn evidence" data-evidence="fleet" aria-label="Evidence for Fleet runtime" type="button">Evidence</button></td></tr>
+            <tr data-silo="ai"><td><strong>AI and models</strong><small>Owner: SKCounter, SKGateway and model services</small></td><td><span class="state current">Current</span></td><td><strong>Accepted outcomes stable</strong><small>Harness and gateway lanes remain separate</small></td><td>8 / 9<div class="metricbar"><span style="width:89%"></span></div></td><td class="trend ok">Quality +4%</td><td><button class="btn evidence" data-evidence="ai" aria-label="Evidence for AI and models" type="button">Evidence</button></td></tr>
+            <tr data-silo="economy"><td><strong>Economy</strong><small>Owner: SKCounter cost estimates and SKJoule</small></td><td><span class="state stale">Stale</span></td><td><strong>Estimated cost is current; Joule wallet is stale</strong><small>Pricing revision observed 2 days ago</small></td><td>1 / 2<div class="metricbar"><span style="width:50%"></span></div></td><td class="trend warn">Wallet stale</td><td><button class="btn evidence" data-evidence="economy" aria-label="Evidence for Economy" type="button">Evidence</button></td></tr>
+            <tr data-silo="governance"><td><strong>Governance and data quality</strong><small>Owner: CapAuth, policy, audit and metric registry</small></td><td><span class="state current">Current</span></td><td><strong>6 definition or dependency issues</strong><small>Global view contains no protected data</small></td><td>11 / 12<div class="metricbar"><span style="width:92%"></span></div></td><td class="trend warn">2 new</td><td><button class="btn evidence" data-evidence="governance" aria-label="Evidence for Governance and data quality" type="button">Evidence</button></td></tr>
+            <tr data-silo="legal"><td><strong>Legal platform</strong><small>Owner: SKLegal policy-filtered aggregate</small></td><td><span class="state unknown">Unknown</span><small>Visibility: policy filtered, authorization denied</small></td><td><strong>Matter-free global program status only</strong><small>Tenant and Matter detail requires policy and membership</small></td><td>Policy<div class="metricbar"><span style="width:35%"></span></div></td><td class="trend warn">Scoped</td><td><button class="btn evidence" data-evidence="legal" aria-label="Evidence for Legal platform" type="button">Evidence</button></td></tr>
+            <tr data-silo="corpus"><td><strong>Corpus pipeline</strong><small>Owner: HammerTime approved aggregate and SKPerf</small></td><td><span class="state unknown">Unknown</span></td><td><strong>Release health is awaiting approved aggregate</strong><small>No Inbox access from SKDashboard</small></td><td>0 / 1<div class="metricbar"><span style="width:0%"></span></div></td><td class="trend bad">Missing</td><td><button class="btn evidence" data-evidence="corpus" aria-label="Evidence for Corpus pipeline" type="button">Evidence</button></td></tr>
+            <tr data-silo="operator"><td><strong>Operator and shell</strong><small>Owner: Atlas, SKOS and SKWorld</small></td><td><span class="state partial">Partial</span></td><td><strong>Conditions visible; navigation health needs review</strong><small>Action readiness is preview-only</small></td><td>2 / 3<div class="metricbar"><span style="width:67%"></span></div></td><td class="trend warn">1 gap</td><td><button class="btn evidence" data-evidence="operator" aria-label="Evidence for Operator and shell" type="button">Evidence</button></td></tr>
+          </tbody></table><div class="legend" aria-labelledby="legend-title"><h3 id="legend-title">Truth-state legend</h3><div class="legendlist"><span class="legenditem"><span class="state current">Current</span>within TTL and coverage floor</span><span class="legenditem"><span class="state stale">Stale</span>last valid evidence is older than TTL</span><span class="legenditem"><span class="state partial">Partial</span>some expected sources missing</span><span class="legenditem"><span class="state unavailable">Unavailable</span>owner or adapter failed</span><span class="legenditem"><span class="state unknown">Unknown</span>insufficient evidence</span><span class="legenditem"><span class="state not_applicable">Not applicable</span>explicitly outside metric scope</span><span class="legenditem"><span class="state policy_filtered">Policy filtered visibility</span>source truth preserved</span></div></div></div></article>
+          <aside class="panel" id="recommendations" aria-labelledby="recommendation-title"><div class="panelhead"><div><h2 id="recommendation-title">Recommended next moves</h2><p>Ranked by impact, confidence, and reversibility</p></div><span class="right badge">AI proposal</span></div><div class="body"><article class="rec"><div class="tagrow"><span class="tag">Improve flow</span><span class="badge">86% confidence</span></div><h3>Schedule a focused blocker review for the oldest review items</h3><p>Review WIP and age indicate a local constraint. Do not raise the WIP limit until the oldest items and reviewer capacity are inspected.</p><div class="impact"><div><span>Expected impact and horizon</span><strong>P85 cycle time -8% to -18% within one sprint</strong></div><div><span>Risk and reversibility</span><strong>Low, reversible</strong></div></div><div class="source">Kanban Guide, WIP and work-item age practice</div><div class="actions"><button class="btn evidence" data-evidence="flow" type="button">Why this?</button><button class="btn primary preview" type="button">Review next step</button></div></article><article class="rec"><div class="tagrow"><span class="tag">Abstain</span><span class="badge warn">93% evidence coverage</span></div><h3>Do not publish change-success trend yet</h3><p>Repair the classification rule, recalculate fixtures, then ask AI to reassess. Counter-indicators and denominator uncertainty prevent a safe recommendation.</p><div class="source">DORA and ITIL, explicit sample and outcome classification</div><div class="actions"><button class="btn evidence" data-evidence="itil" type="button">Why abstain?</button><a class="btn" href="/control-plane/data-quality?role=operator&task=change-denominator&scope=estate&window=30d&baseline=previous">Draft data fix</a></div></article></div></aside>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="drawerbackdrop" id="drawer-backdrop" aria-hidden="true" hidden></div>
+  <aside class="drawer" id="evidence-drawer" role="dialog" aria-modal="true" aria-hidden="true" hidden inert aria-labelledby="evidence-title" aria-describedby="evidence-description"><div class="drawerhead"><div><h2 id="evidence-title">Evidence detail</h2><p id="evidence-description">Read-only synthetic evidence for the selected signal. No source action is available.</p></div><button class="close" id="evidence-close" type="button" aria-label="Close evidence detail">X</button></div><div class="previewgrid"><div class="previewitem"><span>Metric references</span><strong id="evidence-metrics">flow.review_age.v1.0; flow.cycle_time.v1.0</strong></div><div class="previewitem"><span>Calculation references</span><strong id="evidence-calculation">calc-flow-2026-08-23-01</strong></div><div class="previewitem full"><span>Source and watermark</span><strong id="evidence-source">skcoord card store, observed 2026-08-23T10:42 local, watermark coord-r7</strong></div><div class="previewitem"><span>Truth state</span><strong id="evidence-truth">current</strong></div><div class="previewitem"><span>Visibility and authorization</span><strong id="evidence-visibility">visible; authorization authorized</strong></div><div class="previewitem"><span>Coverage and exclusions</span><strong id="evidence-coverage">42 of 47, migrated closes excluded</strong></div><div class="previewitem full"><span>Uncertainty and contradictions</span><strong id="evidence-uncertainty">Reviewer capacity is not observed for two teams. No contradictory source is resolved by this view.</strong></div><div class="previewitem full"><span>Scoped drill target</span><a class="btn" id="evidence-drill" href="/control-plane/delivery?role=operator&scope=estate&window=30d&baseline=previous">Open scoped evidence</a></div></div><div class="draweractions"><button class="btn" id="evidence-cancel" type="button">Close</button></div></aside>
+
+  <aside class="drawer" id="auth-drawer" role="dialog" aria-modal="true" aria-hidden="true" hidden inert aria-labelledby="auth-title" aria-describedby="auth-description"><div class="drawerhead"><div><h2 id="auth-title">Authorization preview</h2><p id="auth-description">Prepared from recommendation rec-flow-review-01. Synthetic preview only.</p></div><button class="close" id="auth-close" type="button" aria-label="Close authorization preview">X</button></div><div class="previewitem"><label for="preview-state">Synthetic preview state</label><select id="preview-state" class="scope"><option value="ready">Ready for human authorization</option><option value="stale-target">Stale target</option><option value="denied-policy">Denied policy</option><option value="expired">Expired preview</option><option value="changed-parameters">Changed parameters</option></select></div><div class="previewstatus" id="auth-status"><strong id="auth-status-text">Ready for human authorization</strong><span id="auth-expiry">Expires in 12 minutes</span></div><div class="previewgrid"><div class="previewitem"><span>Actor</span><strong>operator-project-manager-01</strong></div><div class="previewitem"><span>Capability</span><strong><code>coordination.review.schedule</code></strong></div><div class="previewitem"><span>Action contract</span><strong>coordination.schedule_blocker_review v1.0.0</strong></div><div class="previewitem"><span>Owner operation</span><strong>SKCapstone coordination.review.schedule</strong></div><div class="previewitem full"><span>Exact target and target version</span><strong>Control-plane project, five oldest Review items, assigned reviewers only. <code>project:cp-2026-08-23-r7</code></strong></div><div class="previewitem full"><span>Before state and proposed effect</span><strong>Review WIP 7, limit 4, oldest age 6.2 days. Create one 30-minute review agenda and link five evidence records. No source work item or external calendar changes.</strong></div><div class="previewitem"><span>Policy decision reference</span><strong><code>pd-2026-08-23-019</code></strong></div><div class="previewitem"><span>Exact preview hash</span><strong><code>sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef</code></strong></div><div class="previewitem"><span>Expiry</span><strong>2026-08-23T10:54:00-05:00</strong></div><div class="previewitem"><span>Approval</span><strong>One project-manager approval required</strong></div><div class="previewitem full"><span>Verification and rollback</span><ul class="checklist"><li>Owner API accepts the idempotency key once</li><li>Created review task links all five evidence records</li><li>Changed target version invalidates this hash</li><li>Rollback voids only the created task and preserves the audit event</li></ul></div></div><div class="outcomes" aria-label="Authorization failure examples"><div class="outcome stale"><strong>Stale target:</strong> target version changed, preview invalidated, new preview required.</div><div class="outcome denied"><strong>Denied:</strong> missing capability, policy outage, or expired preview fails closed and sends nothing.</div></div><div class="approvalnote" id="auth-disabled-reason" role="status" aria-live="polite">Authorization is available for the exact synthetic preview after revalidation. This wireframe never dispatches.</div><div class="draweractions"><button class="btn" id="auth-cancel" type="button">Cancel</button><button class="btn primary" id="authorize" type="button">Approve and queue exact preview</button></div></aside>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const backdrop = document.getElementById("drawer-backdrop");
+    const toast = document.getElementById("toast");
+    const drawers = [document.getElementById("evidence-drawer"), document.getElementById("auth-drawer")];
+    const estateScope = document.getElementById("estate-scope");
+    const serviceScope = document.getElementById("service-scope");
+    const timeWindow = document.getElementById("time-window");
+    const baseline = document.getElementById("baseline");
+    const roleContext = document.getElementById("role-context");
+    const previewState = document.getElementById("preview-state");
+    const authorizeButton = document.getElementById("authorize");
+    let activeDrawer = null;
+    let lastTrigger = null;
+    const query = new URLSearchParams(window.location.search);
+    const scopeLabels = { estate: "Whole SK estate", skdashboard: "SKDashboard", sklegal: "SKLegal program" };
+    const serviceLabels = { all: "All services", "control-plane": "Control plane", skgateway: "SKGateway" };
+    const windowLabels = { "30d": "Last 30 days", "7d": "Last 7 days", sprint: "This sprint" };
+    const baselineLabels = { previous: "Previous period", target: "Approved target", none: "No baseline" };
+    function showToast(message) { toast.textContent = message; toast.classList.add("show"); window.setTimeout(() => toast.classList.remove("show"), 2800); }
+    function focusables(drawer) { return [...drawer.querySelectorAll("button, a[href], input, select, [tabindex]:not([tabindex='-1'])")].filter((node) => !node.disabled); }
+    function currentContext() { return { scope: Object.entries(scopeLabels).find(([, label]) => label === estateScope.value)?.[0] || "estate", service: Object.entries(serviceLabels).find(([, label]) => label === serviceScope.value)?.[0] || "all", window: Object.entries(windowLabels).find(([, label]) => label === timeWindow.value)?.[0] || "30d", baseline: Object.entries(baselineLabels).find(([, label]) => label === baseline.value)?.[0] || "previous", role: roleContext.value }; }
+    function writeContextUrl(context, pushHistory) { const url = new URL(window.location.href); Object.entries(context).forEach(([key, value]) => url.searchParams.set(key, value)); const next = `${url.pathname}?${url.searchParams.toString()}`; if (pushHistory) window.history.pushState({ controlPlaneContext: context }, "", next); else if (window.location.search !== url.search) window.history.replaceState({ controlPlaneContext: context }, "", next); }
+    function applyContextToLinks(pushHistory = false) { const context = currentContext(); document.querySelectorAll('a[href^="/control-plane/"]').forEach((link) => { const url = new URL(link.getAttribute("href"), "https://wireframe.local"); url.searchParams.set("scope", context.scope); url.searchParams.set("service", context.service); url.searchParams.set("window", context.window); url.searchParams.set("baseline", context.baseline); if (!link.closest(".rolecard")) url.searchParams.set("role", context.role); link.setAttribute("href", `${url.pathname}?${url.searchParams.toString()}`); }); writeContextUrl(context, pushHistory); }
+    function setContextFromQuery(params) { estateScope.value = scopeLabels[params.get("scope")] || estateScope.value; serviceScope.value = serviceLabels[params.get("service")] || serviceScope.value; timeWindow.value = windowLabels[params.get("window")] || timeWindow.value; baseline.value = baselineLabels[params.get("baseline")] || baseline.value; if (["operator", "project-manager", "architect"].includes(params.get("role"))) roleContext.value = params.get("role"); }
+    function initializeContext() { setContextFromQuery(query); applyContextToLinks(); }
+    function openDrawer(drawer, trigger) { lastTrigger = trigger || document.activeElement; drawers.forEach((item) => { item.classList.remove("open"); item.setAttribute("aria-hidden", "true"); item.hidden = true; item.inert = true; }); activeDrawer = drawer; drawer.hidden = false; drawer.inert = false; drawer.classList.add("open"); drawer.setAttribute("aria-hidden", "false"); backdrop.hidden = false; backdrop.classList.add("open"); backdrop.setAttribute("aria-hidden", "false"); const first = focusables(drawer)[0]; if (first) first.focus(); }
+    function closeDrawer() { if (!activeDrawer) return; activeDrawer.classList.remove("open"); activeDrawer.setAttribute("aria-hidden", "true"); activeDrawer.hidden = true; activeDrawer.inert = true; backdrop.classList.remove("open"); backdrop.setAttribute("aria-hidden", "true"); backdrop.hidden = true; const trigger = lastTrigger; activeDrawer = null; lastTrigger = null; if (trigger && typeof trigger.focus === "function") trigger.focus(); }
+    const evidenceData = {
+      portfolio: ["portfolio.outcome_confidence.v1.0", "calc-portfolio-2026-08-23-01", "SKCapstone and skcoord, watermark portfolio-r9", "current", "9 of 9 objectives, no exclusions", "Decision latency is missing for one objective.", "/control-plane/portfolio"],
+      flow: ["flow.review_age.v1.0; flow.cycle_time.v1.0", "calc-flow-2026-08-23-01", "skcoord card store, watermark coord-r7", "current", "42 of 47, migrated closes excluded", "Reviewer capacity is not observed for two teams.", "/control-plane/delivery"],
+      itil: ["itil.service_level.v1.0; itil.change_success.v1.0", "calc-itil-2026-08-23-02", "SKCapstone ITIL and skcoord, watermark itil-r3", "partial", "7 of 8, rejected-change denominator needs repair", "Closed changes are not classified consistently. AI abstains.", "/control-plane/reliability"],
+      engineering: ["dora.delivery_direction.v1.0", "calc-engineering-2026-08-23-04", "CI and release observations, watermark ci-r4", "current", "3 of 5 DORA metrics, two source gaps", "Recovery data is unavailable for one service.", "/control-plane/delivery"],
+      architecture: ["architecture.drift.v1.0; cmdb.blast_radius.v1.0", "calc-architecture-2026-08-23-05", "CMDB, ADR and SKPerf, watermark cmdb-r6", "partial", "10 of 12 dependency records, two missing owners", "Topology and runtime evidence disagree for one service.", "/control-plane/architecture"],
+      fleet: ["fleet.reporting_coverage.v1.0; cmdb.completeness.v1.0", "calc-fleet-cmdb-2026-08-23-03", "Fleet and CMDB, watermark fleet-r0", "unavailable", "0 of 10 heartbeats, runtime source unavailable", "CMDB completeness cannot establish runtime health.", "/control-plane/architecture"],
+      ai: ["ai.accepted_outcome.v1.0; gateway.queue_health.v1.0", "calc-ai-2026-08-23-06", "SKCounter and SKGateway, watermark ai-r8", "current", "8 of 9 outcome lanes, harness and gateway kept separate", "One provider lane has insufficient evaluation samples.", "/control-plane/ai-cost"],
+      economy: ["economy.estimated_cost.v1.0; joule.wallet_state.v1.0", "calc-economy-2026-08-23-07", "SKCounter and SKJoule, watermark economy-r2", "stale", "1 of 2 lanes, Joule wallet observed 2 days ago", "Pricing is current but wallet freshness is outside TTL.", "/control-plane/ai-cost"],
+      governance: ["governance.reconciliation_gap.v1.0; policy.denial.v1.0", "calc-governance-2026-08-23-08", "CapAuth, audit and metric registry, watermark gov-r5", "current", "11 of 12 definitions, protected content excluded", "One dependency owner is not recorded.", "/control-plane/governance"],
+      legal: ["sklegal.global_program_status.v1.0", "calc-legal-2026-08-23-09", "SKLegal policy-filtered aggregate, watermark legal-r1", "unknown", "Policy-filtered global aggregate only", "Tenant and Matter detail requires membership and policy.", "/control-plane/governance"],
+      corpus: ["corpus.release_health.v1.0", "calc-corpus-2026-08-23-10", "HammerTime approved aggregate and SKPerf, watermark corpus-r0", "unknown", "0 of 1 approved aggregate, Inbox not accessed", "Release evidence is not sufficient for a health conclusion.", "/control-plane/governance"],
+      operator: ["operator.navigation_health.v1.0; atlas.condition_state.v1.0", "calc-operator-2026-08-23-11", "Atlas, SKOS and SKWorld, watermark operator-r2", "partial", "2 of 3 navigation conditions, action readiness is preview-only", "One navigation condition has no current observation.", "/control-plane/governance"],
+    };
+    const visibilityData = { legal: "policy_filtered; authorization denied; source truth preserved" };
+    function openEvidence(event) { const trigger = event.currentTarget; const key = trigger.dataset.evidence; const item = evidenceData[key]; if (!item) { showToast("Synthetic evidence key is not registered."); return; } ["evidence-metrics", "evidence-calculation", "evidence-source", "evidence-truth", "evidence-coverage", "evidence-uncertainty"].forEach((id, index) => { document.getElementById(id).textContent = item[index]; }); document.getElementById("evidence-visibility").textContent = visibilityData[key] || "visible; authorization authorized"; const drill = document.getElementById("evidence-drill"); drill.setAttribute("href", `${item[6]}?role=${roleContext.value}`); applyContextToLinks(); openDrawer(document.getElementById("evidence-drawer"), trigger); }
+    const previewStates = {
+      ready: ["Ready for human authorization", "Expires in 12 minutes", "Authorization is available for the exact synthetic preview after revalidation.", false],
+      "stale-target": ["Stale target", "Preview invalidated", "Authorization disabled: target version changed. Create a new preview.", true],
+      "denied-policy": ["Denied by policy", "No authorization", "Authorization disabled: capability or policy decision is unavailable. Fails closed.", true],
+      expired: ["Expired preview", "Expired now", "Authorization disabled: preview expiry passed. Create a new preview.", true],
+      "changed-parameters": ["Changed parameters", "Hash mismatch", "Authorization disabled: parameters changed after preview creation.", true],
+    };
+    function setPreviewState(stateName) { const state = previewStates[stateName] || previewStates.ready; document.getElementById("auth-status-text").textContent = state[0]; document.getElementById("auth-expiry").textContent = state[1]; document.getElementById("auth-disabled-reason").textContent = state[2]; authorizeButton.disabled = state[3]; authorizeButton.setAttribute("aria-disabled", String(state[3])); previewState.value = previewStates[stateName] ? stateName : "ready"; }
+    function openAuth(event) { setPreviewState("ready"); openDrawer(document.getElementById("auth-drawer"), event.currentTarget); }
+    initializeContext();
+    [estateScope, serviceScope, timeWindow, baseline, roleContext].forEach((control) => control.addEventListener("change", () => applyContextToLinks(true)));
+    window.addEventListener("popstate", () => { setContextFromQuery(new URLSearchParams(window.location.search)); applyContextToLinks(); });
+    document.querySelectorAll(".evidence").forEach((button) => button.addEventListener("click", openEvidence));
+    document.querySelectorAll(".preview").forEach((button) => button.addEventListener("click", openAuth));
+    previewState.addEventListener("change", () => setPreviewState(previewState.value));
+    document.querySelectorAll("#evidence-close, #evidence-cancel, #auth-close, #auth-cancel").forEach((button) => button.addEventListener("click", closeDrawer));
+    backdrop.addEventListener("click", closeDrawer);
+    authorizeButton.addEventListener("click", () => { if (authorizeButton.disabled) return; closeDrawer(); showToast("Prototype only. Exact preview was not authorized or queued."); });
+    document.getElementById("ask-button").addEventListener("click", () => showToast(document.getElementById("ask").value.trim() ? "AI would answer with evidence, uncertainty, and abstention when needed." : "Enter a question about the selected estate scope."));
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape" && activeDrawer) { event.preventDefault(); closeDrawer(); return; } if (activeDrawer && event.key === "Tab") { const items = focusables(activeDrawer); if (!items.length) return; const first = items[0]; const last = items[items.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); document.getElementById("estate-search").focus(); } });
+    if (query.get("preview") === "1") { openDrawer(document.getElementById("auth-drawer"), null); setPreviewState(query.get("state") || "ready"); }
+    if (query.get("evidence")) { const evidenceButton = document.querySelector(`[data-evidence="${query.get("evidence")}"]`); if (evidenceButton) openEvidence({ currentTarget: evidenceButton }); }
+  </script>
+</body>
+</html>
