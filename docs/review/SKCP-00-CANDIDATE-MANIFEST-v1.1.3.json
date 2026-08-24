@@ -1,0 +1,107 @@
+{
+  "manifest_version": "2.3.0",
+  "manifest_schema_version": "2020-12",
+  "candidate_package_version": "1.1.3",
+  "candidate_id": "SKCP-00-v1.1.3-lineage-correction",
+  "status": "proposed_for_exact_human_review",
+  "implementation_authorized": false,
+  "active_contract_source_revision": "dcdd6b25df3663656e7d476ac848ffdf6e183c66",
+  "active_presentation_source_revision": "ef340747db4c3c2d5b879ec2571a75d24d55587a",
+  "human_review": {
+    "card_id": "9ad1eeb8",
+    "captured_status": "backlog",
+    "status": "incomplete"
+  },
+  "independent_review": {
+    "card_id": "39085b32",
+    "captured_status": "backlog",
+    "status": "incomplete"
+  },
+  "predecessor": {
+    "manifest_path": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.2.json",
+    "manifest_sha256": "257db46aa26297873cd6a769e3f0eb7e6e3cf756224f99ef9a3aad61a45ff5ab",
+    "receipt_path": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.2.receipt.json",
+    "receipt_sha256": "46b98341094cf06a5f260c0ad1eed1e8d3a0090f27c2f8d570dcb84312028749"
+  },
+  "lineage_correction": {
+    "estate_pulse_png_path": "docs/review/lineage/v1.1.0/docs/wireframes/control-plane-estate-pulse-v2.png",
+    "estate_pulse_png_sha256": "33c400d4d4546e120a2662d5ef887d27ee85e4b87f5bdd973e038114d5e8c129",
+    "authorization_preview_png_path": "docs/review/lineage/v1.1.0/docs/wireframes/control-plane-authorization-preview-v2.png",
+    "authorization_preview_png_sha256": "f1ddf830f41a052917aeab6640183f649c0c8937cf7c441c5f2d1ef3d87463a8",
+    "role": "historical_lineage_only"
+  },
+  "detached_receipt": {
+    "path": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.3.receipt.json",
+    "included_in_artifacts": false,
+    "rule": "The detached receipt hashes this manifest. This manifest does not hash or list the receipt."
+  },
+  "artifacts": [
+    {
+      "path": "docs/architecture/ADR-0001-CONTROL-PLANE-MEASUREMENT-AND-REPORTING-v1.1.3.md",
+      "sha256": "963aaf67175f3c6f917bd57356ee535c9ef721498b77a18a5856cf4c6fcb526f"
+    },
+    {
+      "path": "docs/review/SKCP-00-SCHEDULE-REQUIREMENTS-v1.1.2.md",
+      "sha256": "b1f05fd98aa1d9dc940302321efcf57b5209a8020a1cff02ab658b3e5ec0911e"
+    },
+    {
+      "path": "docs/wireframes/control-plane-estate-pulse-v2.1.html",
+      "sha256": "b3636c0017f5f3289094873b0ebed03806fbaa3bbc92bc705e03e0f7c32037c9"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F9-SCHEDULE-TRUTH-REPAIR-2026-08-24.md",
+      "sha256": "f9eb1f86bda60e433f56b6cca68406940079a4d0c38bf9a9ef9e400fe0ac1f1f"
+    },
+    {
+      "path": "docs/review/SKCP-00-V1.1.2-INDEPENDENT-REREVIEW-2026-08-24.md",
+      "sha256": "d80a27211cc00f9c4c4b50ff8d70e48dd5a4e2cc4df75ee3da682ab6845eefa1"
+    },
+    {
+      "path": "docs/contracts/CONTROL-PLANE-CONTRACT-COMPATIBILITY-v1.1.0.md",
+      "sha256": "4a808cb45819fd8702bd48b197ead840f7bc8cbd3baba40448ceef97c77ac40f"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-action-preview.v1.1.0.schema.json",
+      "sha256": "d14119863d3c2bc88102e9569f3c0fe30b77e2ee57766a0e87f5f7bef260bbe6"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-insight.v1.1.0.schema.json",
+      "sha256": "36398cbe6adb8523b46f6092ba237e8b351e91608771f3fcd388c38a76a72048"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-metric-result.v1.1.0.schema.json",
+      "sha256": "0000825f24a702766f24ac47cc1207339d5a9bfd09d5719b933331b2d1336326"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-recommendation.v1.1.0.schema.json",
+      "sha256": "39de7f7eddfa892d2c31706201be3be86f509ef95a85f7db3588b19aac8d58fc"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-report-snapshot.v1.1.0.schema.json",
+      "sha256": "5e65fe06e6c9781ac7b08842c6a3cac23770f05025b8f4df3c08730b339e1dee"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/openapi.control-plane.v1.1.0.json",
+      "sha256": "7aa2c1dade90323939f7cc9cceb67331281ff45a7e4ea3d59b02b2e55ecff900"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F10-LINEAGE-CANDIDATE-2026-08-24.md",
+      "sha256": "ece62f7269246b06873dfa65c1c07d367017c2ebad2cfe98fd179ae1a085a518"
+    },
+    {
+      "path": "tests/test_control_plane_v1_1_3_candidate.py",
+      "sha256": "a80a896a1e7e28c49d0556f9619bcabfc1f3750a975647d5a62d83f640b5c9b0"
+    }
+  ],
+  "non_authorizations": [
+    "implementation",
+    "deployment",
+    "activation",
+    "restart",
+    "external_action",
+    "protected_matter_access",
+    "hammertime_inbox",
+    "board_reconciliation",
+    "gate_bypass"
+  ]
+}

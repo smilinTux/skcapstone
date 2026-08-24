@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an append-only V1.1.3 lineage correction candidate that truthfully
+  records the retained historical PNG bytes without changing approved history.
+
 - Added an append-only V1.1.2 schedule supplement and V2.1 wireframe that keep
   policy visibility separate from source truth and make closed dialogs inert.
 
