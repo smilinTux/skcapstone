@@ -1,0 +1,134 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SKDashboard schedule projection API",
+    "version": "1.0.0",
+    "description": "Contract-only read and immutable no-write proposal surface. It authorizes no implementation, mutation, deployment, or external action."
+  },
+  "servers": [{"url": "/api/v1", "description": "Origin-relative canonical API"}],
+  "paths": {
+    "/schedule/projection": {
+      "get": {
+        "operationId": "getScheduleProjection",
+        "summary": "Read one versioned policy-filtered schedule projection",
+        "security": [{"capability": ["skdashboard.schedule.read"]}],
+        "parameters": [
+          {"$ref": "#/components/parameters/Role"},
+          {"$ref": "#/components/parameters/PortfolioId"},
+          {"$ref": "#/components/parameters/ProjectId"},
+          {"$ref": "#/components/parameters/ServiceId"},
+          {"$ref": "#/components/parameters/TeamId"},
+          {"$ref": "#/components/parameters/Timezone"},
+          {"$ref": "#/components/parameters/ProjectionVersion"}
+        ],
+        "responses": {
+          "200": {"description": "Canonical schedule projection", "content": {"application/json": {"schema": {"$ref": "control-plane-schedule-projection.v1.0.0.schema.json"}}}},
+          "400": {"$ref": "#/components/responses/Error"},
+          "401": {"$ref": "#/components/responses/Error"},
+          "403": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"},
+          "503": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/schedule/scenarios": {
+      "post": {
+        "operationId": "createImmutableScheduleScenario",
+        "summary": "Create an immutable no-write scenario derived from an exact projection",
+        "description": "Creates a derived scenario record only. It cannot write owner-system records.",
+        "security": [{"capability": ["skdashboard.schedule.scenario"]}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ScenarioRequest"}}}},
+        "responses": {
+          "200": {"description": "Immutable scenario", "content": {"application/json": {"schema": {"$ref": "control-plane-schedule-scenario.v1.0.0.schema.json"}}}},
+          "400": {"$ref": "#/components/responses/Error"},
+          "401": {"$ref": "#/components/responses/Error"},
+          "403": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"},
+          "503": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/schedule/reschedule-previews": {
+      "post": {
+        "operationId": "previewExactReschedule",
+        "summary": "Preview a typed reschedule proposal against an exact version and base hash",
+        "description": "Non-executing preview only. A stale version or hash returns no proposal.",
+        "security": [{"capability": ["skdashboard.schedule.preview"]}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReschedulePreviewRequest"}}}},
+        "responses": {
+          "200": {"description": "Exact non-executing reschedule preview", "content": {"application/json": {"schema": {"$ref": "control-plane-reschedule-preview.v1.0.0.schema.json"}}}},
+          "400": {"$ref": "#/components/responses/Error"},
+          "401": {"$ref": "#/components/responses/Error"},
+          "403": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"},
+          "503": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "capability": {
+        "type": "oauth2",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "/capauth/token",
+            "scopes": {
+              "skdashboard.schedule.read": "Read authorized schedule projections",
+              "skdashboard.schedule.scenario": "Create an immutable no-write schedule scenario",
+              "skdashboard.schedule.preview": "Preview a typed reschedule proposal"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "Role": {"name": "role", "in": "query", "required": true, "schema": {"enum": ["portfolio", "project_manager", "architect", "service", "team"]}},
+      "PortfolioId": {"name": "portfolio_id", "in": "query", "required": false, "schema": {"type": "string", "maxLength": 128}},
+      "ProjectId": {"name": "project_id", "in": "query", "required": false, "schema": {"type": "string", "maxLength": 128}},
+      "ServiceId": {"name": "service_id", "in": "query", "required": false, "schema": {"type": "string", "maxLength": 128}},
+      "TeamId": {"name": "team_id", "in": "query", "required": false, "schema": {"type": "string", "maxLength": 128}},
+      "Timezone": {"name": "timezone", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 64}},
+      "ProjectionVersion": {"name": "projection_version", "in": "query", "required": false, "schema": {"type": "string", "maxLength": 128}}
+    },
+    "schemas": {
+      "ScenarioRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_projection_id", "source_projection_version", "source_projection_hash", "input_hash"],
+        "properties": {
+          "source_projection_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "source_projection_version": {"type": "string", "minLength": 1, "maxLength": 128},
+          "source_projection_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+          "input_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+        }
+      },
+      "ReschedulePreviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_projection_id", "source_projection_version", "base_projection_hash", "scenario_id", "scenario_hash"],
+        "properties": {
+          "source_projection_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "source_projection_version": {"type": "string", "minLength": 1, "maxLength": 128},
+          "base_projection_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+          "scenario_id": {"type": "string", "pattern": "^scn-[a-z0-9][a-z0-9-]{7,95}$"},
+          "scenario_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+        }
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "retryable", "request_id"],
+        "properties": {
+          "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+          "message": {"type": "string", "minLength": 1, "maxLength": 500},
+          "retryable": {"type": "boolean"},
+          "request_id": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    },
+    "responses": {
+      "Error": {"description": "Fail-closed schedule, policy, exactness, or source error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+    }
+  }
+}
