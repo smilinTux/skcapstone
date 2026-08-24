@@ -1,5 +1,6 @@
 /* Economy workspace. Units and measurement lanes remain visibly separate. */
 .eco-workspace{display:flex;flex-direction:column;gap:16px;padding-bottom:36px;}
+.eco-workspace,.eco-card,.eco-grid>*,.eco-kpis>*{min-width:0;max-width:100%;}
 .eco-workspace [hidden]{display:none!important;}
 .eco-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:22px 24px;border:1px solid var(--hair);border-radius:14px;background:linear-gradient(135deg,var(--panel),var(--panel2));}
 .eco-hero h2{font-size:30px;line-height:1.05;margin:2px 0 8px;color:var(--ink);}
@@ -83,7 +84,7 @@
 .eco-pill{appearance:none;border:1px solid var(--hair2);border-radius:999px;background:var(--panel2);color:var(--ink3);padding:4px 8px;font-size:9.5px;font-weight:650;cursor:pointer;}
 .eco-pill:hover{color:var(--ink);border-color:var(--hair);}
 .eco-pill.active{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--hair));background:color-mix(in srgb,var(--accent) 8%,var(--panel));}
-.eco-table-wrap{overflow:auto;}
+.eco-table-wrap{contain:inline-size;overflow:auto;}
 table.eco{width:100%;border-collapse:collapse;font-size:11px;}
 table.eco th{text-align:left;white-space:nowrap;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);padding:8px 10px;border-bottom:1px solid var(--hair);font-weight:650;}
 table.eco td{padding:8px 10px;border-bottom:1px solid var(--hair2);white-space:nowrap;}
@@ -109,4 +110,6 @@ table.eco tbody tr:hover{background:color-mix(in srgb,var(--accent) 4%,transpare
 
 @media (max-width:1200px){.eco-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}.eco-filter-grid{grid-template-columns:repeat(4,minmax(130px,1fr));}}
 @media (max-width:850px){.eco-hero{align-items:flex-start;flex-direction:column;}.eco-subnav{grid-template-columns:1fr;}.eco-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.eco-grid,.eco-grid-main{grid-template-columns:1fr;}.eco-span-2{grid-column:auto;}.eco-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}.eco-section-intro{align-items:flex-start;flex-direction:column;}.usage-chart{height:190px;}.contribution-grid{grid-template-columns:repeat(10,minmax(8px,1fr));}}
-@media (max-width:520px){.eco-workspace{gap:11px;}.eco-hero{padding:17px;}.eco-hero h2{font-size:25px;}.eco-filter-grid,.eco-kpis{grid-template-columns:1fr;}.eco-card-heading{padding:11px 12px;}.activity-grid{grid-template-columns:1fr;}.contribution-grid{grid-template-columns:repeat(7,minmax(8px,1fr));}.eco-pills{width:100%;}.eco-pill{flex:1 1 auto;}.eco-filter-actions .btn{flex:1;}}
+@media (max-width:520px){.eco-workspace{gap:11px;}.eco-hero{padding:17px;}.eco-hero h2{font-size:25px;}.eco-filter-grid,.eco-kpis{grid-template-columns:1fr;}.eco-card-heading{padding:11px 12px;}.activity-grid{grid-template-columns:1fr;}.contribution-grid{grid-template-columns:repeat(7,minmax(0,1fr));}.eco-pills{width:100%;}.eco-pill{flex:1 1 auto;}.eco-filter-actions{flex-wrap:wrap}.eco-filter-actions .btn{flex:1;}.eco-table-wrap{max-width:100%}}
+@media (max-width:520px){.eco-table-wrap{contain:inline-size paint}}
+@media(prefers-reduced-motion:reduce){.eco-subtab{transition:none}}

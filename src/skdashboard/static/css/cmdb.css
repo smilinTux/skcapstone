@@ -20,7 +20,7 @@
 .ci-group h2{font-size:12.5px;font-weight:640;margin:0 0 8px;text-transform:capitalize;display:flex;align-items:center;gap:8px;}
 .ci-group h2 .ct{margin-left:auto;font-size:11px;color:var(--ink3);font-weight:500;}
 .ci-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:9px;}
-.ci{background:var(--panel);border:1px solid var(--hair);border-radius:10px;padding:10px 12px;box-shadow:var(--shadowc);cursor:pointer;transition:transform .1s,border-color .1s;position:relative;}
+.ci{display:block;width:100%;background:var(--panel);color:var(--ink);font:inherit;text-align:left;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;box-shadow:var(--shadowc);cursor:pointer;transition:transform .1s,border-color .1s;position:relative;}
 .ci:hover{transform:translateY(-1px);border-color:var(--accent);}
 .ci::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:3px;background:var(--stat,var(--done));}
 .ci.s-operational{--stat:var(--done);}
@@ -36,8 +36,10 @@
 /* detail panel reuses .panel */
 .relrow{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 0;border-bottom:1px solid var(--hair2);}
 .relrow:last-child{border-bottom:none;}
+.detail-link{padding:0;border:0;background:transparent;color:var(--ink2);font:inherit;text-align:left;text-decoration:underline;cursor:pointer}.detail-link:hover{color:var(--ink)}
 .reltag{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);background:var(--accentsoft);padding:2px 6px;border-radius:5px;}
 .attr{display:flex;font-size:12px;padding:4px 0;gap:10px;}
 .attr .ak{color:var(--ink3);min-width:90px;}
 .impact-inc{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 0;border-bottom:1px solid var(--hair2);}
-@media(max-width:700px){.cmdb-search-row{flex-wrap:wrap}.sync-head{align-items:flex-start;flex-direction:column}.run-row{grid-template-columns:65px 1fr}.cmdb-coverage summary span{display:block;float:none;margin-top:4px}}
+@media(max-width:700px){.cmdb-search-row{flex-wrap:wrap}.sync-head{align-items:flex-start;flex-direction:column}.run-row{grid-template-columns:65px 1fr}.cmdb-coverage summary span{display:block;float:none;margin-top:4px}.ci-grid,.sync-grid,.coverage-grid{grid-template-columns:minmax(0,1fr)}.cmdb-health{grid-template-columns:1fr}.attr,.relrow{min-width:0;overflow-wrap:anywhere}}
+@media(prefers-reduced-motion:reduce){.ci{transition:none}}

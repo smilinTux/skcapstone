@@ -1,7 +1,9 @@
 // CMDB view: CIs by type + health, CI detail panel with relationships + impact.
 import { esc, getJSON, toast, authHeaders } from "./api.js";
+import { createDetailPanel, wireDetailControl } from "./detail_panel.js";
 
 const TYPE_IC = { service: "⚙️", host: "🖥️", agent: "🤖", credential: "🔑", port: "🔌", datastore: "🗄️", network: "🌐" };
+const detailPanel = createDetailPanel(document.getElementById("panel"), document.getElementById("overlay"));
 
 async function load() {
   let d;
@@ -19,13 +21,13 @@ async function load() {
     <div class="ci-group">
       <h2>${TYPE_IC[g.type] || "•"} ${esc(g.type)}s <span class="ct">${g.items.length}</span></h2>
       <div class="ci-grid">${g.items.map((c) => `
-        <div class="ci s-${esc(c.status)}" data-ci="${esc(c.id)}">
+        <button class="ci s-${esc(c.status)}" type="button" data-ci="${esc(c.id)}">
           <div class="cn">${esc(c.name)}</div>
           <div class="cm"><span class="cstat ${esc(c.status)}">${esc(c.status)}</span>
             ${c.node ? `<span>on ${esc(c.node)}</span>` : ""}${c.rels ? `<span>${c.rels} rel</span>` : ""}</div>
-        </div>`).join("")}</div>
+        </button>`).join("")}</div>
     </div>`).join("");
-  body.querySelectorAll(".ci").forEach((el) => el.addEventListener("click", () => openCI(el.dataset.ci)));
+  body.querySelectorAll(".ci").forEach((el) => wireDetailControl(el, () => openCI(el.dataset.ci)));
 }
 
 function searchParams() {
@@ -48,13 +50,13 @@ async function searchCMDB() {
     }
     body.innerHTML = `<div class="ci-group"><h2>Search results <span class="ct">${d.total}</span></h2>
       <div class="ci-grid">${d.items.map((c) => `
-        <div class="ci s-${esc(c.status)}" data-ci="${esc(c.id)}">
+        <button class="ci s-${esc(c.status)}" type="button" data-ci="${esc(c.id)}">
           <div class="cn">${esc(c.name)}</div>
           <div class="cm"><span class="cstat ${esc(c.status)}">${esc(c.status)}</span>
             <span>${esc(c.type)}</span>${c.node ? `<span>on ${esc(c.node)}</span>` : ""}
             <span>${esc(c.staleness)}</span>${c.owner ? `<span>${esc(c.owner)}</span>` : ""}</div>
-        </div>`).join("")}</div></div>`;
-    body.querySelectorAll(".ci").forEach((el) => el.addEventListener("click", () => openCI(el.dataset.ci)));
+        </button>`).join("")}</div></div>`;
+    body.querySelectorAll(".ci").forEach((el) => wireDetailControl(el, () => openCI(el.dataset.ci)));
   } catch (e) { body.innerHTML = `<div class="emptymsg">${esc(e.message)}</div>`; }
 }
 
@@ -76,7 +78,7 @@ function renderSyncthing(d) {
         <span>${node.pending_items} pending · ${node.pull_errors} errors</span>
         <span class="sync-evidence">${esc(node.freshness)} evidence · ${node.evidence_age_seconds == null ? "age unknown" : `${node.evidence_age_seconds}s old`}</span>
       </button>`).join("")}</div>`;
-  el.querySelectorAll("[data-ci]").forEach((node) => node.addEventListener("click", () => openCI(node.dataset.ci)));
+  el.querySelectorAll("[data-ci]").forEach((node) => wireDetailControl(node, () => openCI(node.dataset.ci)));
 }
 
 function renderHealth(d) {
@@ -129,14 +131,20 @@ function renderActionState(d) {
 
 async function openCI(ciId) {
   const panel = document.getElementById("panel");
-  panel.classList.add("open"); panel.setAttribute("aria-hidden", "false");
-  document.getElementById("overlay").classList.add("open");
-  panel.innerHTML = `<div class="psec"><div class="st">Loading…</div></div>`;
+  detailPanel.open("Loading…");
   try {
     const d = await getJSON(`/api/cmdb/ci/${encodeURIComponent(ciId)}`);
-    if (d.error) { panel.innerHTML = `<div class="psec">${esc(d.error)}</div>`; return; }
+    if (d.error) {
+      panel.innerHTML = `<div class="psec" tabindex="-1" role="alert">${esc(d.error)}</div>`;
+      detailPanel.focusFirst();
+      return;
+    }
     renderCI(panel, d);
-  } catch (e) { panel.innerHTML = `<div class="psec">${esc(e.message)}</div>`; }
+    detailPanel.focusFirst();
+  } catch (e) {
+    panel.innerHTML = `<div class="psec" tabindex="-1" role="alert">${esc(e.message)}</div>`;
+    detailPanel.focusFirst();
+  }
 }
 
 function renderCI(panel, d) {
@@ -145,10 +153,10 @@ function renderCI(panel, d) {
     `<div class="attr"><span class="ak">${esc(k)}</span><span>${esc(String(v))}</span></div>`).join("")
     || '<span style="color:var(--ink3);font-size:11px">none</span>';
   const rels = (d.relationships || []).map((r) =>
-    `<div class="relrow"><span class="reltag">${esc(r.rel_type)}</span><span data-ci="${esc(r.target)}" style="cursor:pointer;color:var(--accent)">${esc(r.target_name)}</span></div>`).join("")
+    `<div class="relrow"><span class="reltag">${esc(r.rel_type)}</span><button class="detail-link" type="button" data-ci="${esc(r.target)}">${esc(r.target_name)}</button></div>`).join("")
     || '<span style="color:var(--ink3);font-size:11px">none</span>';
   const deps = (d.dependents || []).map((x) =>
-    `<div class="relrow"><span class="reltag">${esc(x.rel)}</span><span data-ci="${esc(x.id)}" style="cursor:pointer;color:var(--accent)">${esc(x.name)}</span></div>`).join("")
+    `<div class="relrow"><span class="reltag">${esc(x.rel)}</span><button class="detail-link" type="button" data-ci="${esc(x.id)}">${esc(x.name)}</button></div>`).join("")
     || '<span style="color:var(--ink3);font-size:11px">nothing depends on this</span>';
   const incs = (d.open_incidents || []).map((i) =>
     `<div class="impact-inc"><span class="sev" style="background:var(--${i.severity})">${esc(i.severity.toUpperCase())}</span>
@@ -165,7 +173,7 @@ function renderCI(panel, d) {
 
   panel.innerHTML = `
     <div class="phead"><div class="pkind"><span class="kbadge task">${esc(ci.ci_type)}</span>
-      <span class="kid mono">${esc(ci.id)}</span><button class="pclose">×</button></div>
+      <span class="kid mono">${esc(ci.id)}</span><button class="pclose" type="button" aria-label="Close details">×</button></div>
       <div class="ptitle">${esc(ci.name)} <span class="cstat ${esc(ci.status)}" style="font-size:9px;vertical-align:middle">${esc(ci.status)}</span></div></div>
     ${ci.description ? `<div class="psec"><div class="notes">${esc(ci.description)}</div></div>` : ""}
     <div class="psec"><div class="st">Ownership and last seen</div><div class="attr"><span class="ak">owner</span><span>${esc(d.owner)}</span></div><div class="attr"><span class="ak">last seen</span><span>${esc(d.last_seen || "unknown")}</span></div></div>
@@ -177,16 +185,11 @@ function renderCI(panel, d) {
     <div class="psec"><div class="st">Open incidents affecting this</div>${incs}</div>`;
   panel.innerHTML += `<div class="psec"><div class="st">Health history</div>${health}</div>`;
   panel.querySelector(".pclose").addEventListener("click", closePanel);
-  panel.querySelectorAll("[data-ci]").forEach((n) => n.addEventListener("click", () => openCI(n.dataset.ci)));
+  panel.querySelectorAll("[data-ci]").forEach((n) => wireDetailControl(n, () => openCI(n.dataset.ci)));
 }
 
-function closePanel() {
-  document.getElementById("panel").classList.remove("open");
-  document.getElementById("panel").setAttribute("aria-hidden", "true");
-  document.getElementById("overlay").classList.remove("open");
-}
+const closePanel = detailPanel.close;
 
-document.getElementById("overlay").addEventListener("click", closePanel);
 document.getElementById("cmdb-search").addEventListener("submit", (e) => {
   e.preventDefault();
   searchCMDB();
@@ -195,7 +198,6 @@ document.getElementById("cmdb-clear").addEventListener("click", () => {
   document.getElementById("cmdb-search").reset();
   load();
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
 document.getElementById("btn-plan").addEventListener("click", async () => {
   try {
     const d = await getJSON("/api/cmdb/plan");
