@@ -8,9 +8,9 @@ projection. It adds no API route, mutation, credential flow, deployment, or
 external action.
 
 The combined integration review used exact `origin/main`
-`0b430b3efb45259441dcc81dcb9f4093f9406407`, pre-correction HEAD
-`5a67ff7cfaf31ba4926e9b09caa086b975e5caba`, and tree
-`9ca9bfe8b36e5ad6dd97185407be0adc7709a835`.
+`82541d95db709bc564e8c52f6a3b99ea9bdbfe76`, pre-correction HEAD
+`8e74b89565a0f83f372948f724f6f4a1431a2c60`, and tree
+`093ae1f2d07b1b78a21875437cc22f8e90f4648c`.
 
 The implementation keeps these observations separate:
 
