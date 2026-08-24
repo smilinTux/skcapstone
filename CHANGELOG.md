@@ -116,6 +116,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card `5b57816b`: recovered service incidents now resolve without masking
+  recurring failures.** Generic service health resolves only its own incidents
+  after an authority-node `up` result, and the Syncthing guard resolves only
+  its own incidents after a verified healthy run. A same-day recurrence with
+  the same service and failure class reopens that append-only record after the
+  Syncthing guard's existing failure threshold is met.
+
 - **Card 90b5b277: skdashboard, fleet, and skbrain made observable (ATLAS
   Eyes was showing 1 BLIND app + 2 structurally invisible ones).**
   - `skdashboard` was registered as an Operatorapp with a working, tested
