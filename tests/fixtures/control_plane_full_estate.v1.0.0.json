@@ -1,0 +1,289 @@
+{
+  "fixture_version": "1.0.0",
+  "schema_version": "1.1.0",
+  "classification": "public",
+  "synthetic": true,
+  "portfolio_id": "synthetic-estate",
+  "observed_at": "2026-08-24T12:00:00Z",
+  "projected_at": "2026-08-24T12:00:30Z",
+  "qualification_targets": [
+    "ui",
+    "api",
+    "agent",
+    "mcp",
+    "report",
+    "forecast",
+    "failure"
+  ],
+  "qualification_profiles": {
+    "ui": {
+      "projection": "estate_rows",
+      "required_fields": ["silo", "signal", "truth_state", "watermark", "errors"],
+      "expected_item_count": 16,
+      "expected_row_set_sha256": "sha256:6d5c4aeb6e7a836c3bb9b36de5c653960276866765f4940dc2cb1aace1e83d27"
+    },
+    "api": {
+      "method": "GET",
+      "route": "/api/v1/overview",
+      "expected_status": 200,
+      "required_envelope_fields": ["schema_version", "source_owner", "items", "freshness", "errors"]
+    },
+    "agent": {
+      "access": "read_only",
+      "representation": "canonical_json",
+      "expected_payload_sha256": "sha256:a4c5338f757902dcb50c4a3a86dd646cef69b35493e5005cc51bbc5a7639a759"
+    },
+    "mcp": {
+      "access": "read_only",
+      "resource_uri": "skdashboard://fixtures/control-plane/full-estate/v1",
+      "media_type": "application/json",
+      "expected_payload_sha256": "sha256:a4c5338f757902dcb50c4a3a86dd646cef69b35493e5005cc51bbc5a7639a759"
+    },
+    "report": {
+      "schema": "control-plane-report-snapshot.v1.1.0",
+      "expected_sections": 1
+    },
+    "forecast": {
+      "metric_id": "operator.ready_condition_forecast",
+      "requires_confidence_bounds": true
+    },
+    "failure": {
+      "required_truth_states": ["stale", "partial", "unavailable", "unknown", "not_applicable"],
+      "no_value_states": ["unavailable", "unknown", "not_applicable"]
+    }
+  },
+  "metric_pack": {
+    "registry_hash": "sha256:198f5cfb5b42a67e52cdb00f17f8620fdc1dd4f3e28fb7bc9eb1f893e5baacfb",
+    "calculation_fixture_sha256": "352c55134ad6327aabd7bab132cb0f19ef327be53bcf3d2c3b28f6c6bee03b49",
+    "result_set_sha256": "sha256:d391a300dfa1c714d1d946194ad67cffa5e2353e93a08c372dec2e31206b62b2",
+    "case_overrides": {
+      "4": {
+        "errors": ["declared and observed revisions conflict"]
+      }
+    }
+  },
+  "estate_cases": [
+    {
+      "silo": "portfolio",
+      "signal": "blocked_objectives",
+      "adapter_id": "skcapstone.portfolio",
+      "condition": "healthy",
+      "aggregate": {"total": 9, "open": 3, "in_progress": 2, "done": 4},
+      "coverage": {"expected": 9, "reporting": 9},
+      "watermark": "synthetic-portfolio-r1",
+      "errors": [],
+      "has_observations": true,
+      "expected_truth_state": "current"
+    },
+    {
+      "silo": "flow",
+      "signal": "dependency_flow",
+      "adapter_id": "skcoord.flow",
+      "condition": "partial",
+      "aggregate": {"open": 3, "in_progress": 2, "done": 4, "blocked": 2},
+      "coverage": {"expected": 9, "reporting": 8},
+      "watermark": "synthetic-flow-r1",
+      "errors": ["one dependency owner is unavailable"],
+      "has_observations": true,
+      "expected_truth_state": "partial"
+    },
+    {
+      "silo": "flow",
+      "signal": "agent_presence",
+      "adapter_id": "skcoord.agent_presence",
+      "condition": "healthy",
+      "aggregate": {"total_agents": 4, "active_agents": 3},
+      "coverage": {"expected": 4, "reporting": 4},
+      "watermark": "synthetic-presence-r1",
+      "errors": [],
+      "has_observations": true,
+      "expected_truth_state": "current"
+    },
+    {
+      "silo": "itil_sre",
+      "signal": "service_events",
+      "adapter_id": "skcapstone.itil",
+      "condition": "observed_zero",
+      "aggregate": {"open_incidents": 0, "sev1": 0, "sev2": 0, "awaiting_cab": 0},
+      "coverage": {"expected": 6, "reporting": 6},
+      "watermark": "synthetic-itil-r1",
+      "errors": [],
+      "has_observations": true,
+      "expected_truth_state": "current"
+    },
+    {
+      "silo": "dora",
+      "signal": "delivery_and_recovery",
+      "adapter_id": "skcapstone.service_release",
+      "condition": "partial",
+      "aggregate": {"services": 5, "releases": 3},
+      "coverage": {"expected": 5, "reporting": 4},
+      "watermark": "synthetic-delivery-r1",
+      "errors": ["one service recovery event is unavailable"],
+      "has_observations": true,
+      "expected_truth_state": "partial"
+    },
+    {
+      "silo": "architecture",
+      "signal": "configuration_drift",
+      "adapter_id": "cmdb.configuration",
+      "condition": "conflict",
+      "aggregate": {"total": 12, "operational": 8, "degraded": 2, "other_status": 2, "fresh": 9, "stale": 2, "unknown": 1},
+      "coverage": {"expected": 12, "reporting": 11},
+      "watermark": "synthetic-cmdb-r1",
+      "errors": ["declared and observed revisions conflict"],
+      "has_observations": true,
+      "expected_truth_state": "partial"
+    },
+    {
+      "silo": "fleet",
+      "signal": "runtime_health",
+      "adapter_id": "skcapstone.fleet",
+      "condition": "unavailable",
+      "failure": "timeout",
+      "expected_truth_state": "unavailable"
+    },
+    {
+      "silo": "ai",
+      "signal": "harness_usage",
+      "adapter_id": "skcounter.harness",
+      "condition": "mixed_lane",
+      "measurement_lane": "harness_reported",
+      "aggregate": {"tokens_total": 1200, "cost_usd": 18.0, "cost_state": "estimated", "observation_count": 8, "fresh_collectors": 2, "delayed_collectors": 0, "stale_collectors": 0},
+      "coverage": {"expected": 2, "reporting": 2},
+      "watermark": "synthetic-harness-r1",
+      "errors": [],
+      "has_observations": true,
+      "expected_truth_state": "current"
+    },
+    {
+      "silo": "ai",
+      "signal": "gateway_usage",
+      "adapter_id": "skgateway.observed",
+      "condition": "mixed_lane",
+      "measurement_lane": "gateway_observed",
+      "aggregate": {"tokens_total": 1260, "cost_usd": null, "cost_state": "unavailable", "observation_count": 9, "fresh_collectors": 1, "delayed_collectors": 1, "stale_collectors": 0},
+      "coverage": {"expected": 2, "reporting": 1},
+      "watermark": "synthetic-gateway-r1",
+      "errors": ["one gateway collector is delayed"],
+      "has_observations": true,
+      "expected_truth_state": "partial"
+    },
+    {
+      "silo": "economy",
+      "signal": "performance_capacity",
+      "adapter_id": "skperf.aggregate",
+      "condition": "stale",
+      "observed_at": "2026-08-24T11:55:00Z",
+      "aggregate": {"regressions": 1, "capacity_pressure": 0.72},
+      "coverage": {"expected": 4, "reporting": 4},
+      "watermark": "synthetic-perf-r1",
+      "errors": [],
+      "has_observations": true,
+      "expected_truth_state": "stale"
+    },
+    {
+      "silo": "economy",
+      "signal": "joule_supply",
+      "adapter_id": "skjoule.wallet",
+      "condition": "healthy",
+      "aggregate": {"total_supply": 420, "active_agents": 3},
+      "coverage": {"expected": 4, "reporting": 4},
+      "watermark": "synthetic-joule-r1",
+      "errors": [],
+      "has_observations": true,
+      "expected_truth_state": "current"
+    },
+    {
+      "silo": "governance",
+      "signal": "policy_denials",
+      "adapter_id": "capauth.policy",
+      "condition": "governance_denial",
+      "aggregate": {"available": true, "denials": 2},
+      "coverage": {"expected": 5, "reporting": 5},
+      "watermark": "synthetic-policy-r1",
+      "errors": [],
+      "has_observations": true,
+      "expected_truth_state": "current"
+    },
+    {
+      "silo": "atlas",
+      "signal": "operator_conditions",
+      "adapter_id": "atlas.conditions",
+      "condition": "healthy",
+      "aggregate": {"open_conditions": 3, "ready_actions": 2},
+      "coverage": {"expected": 3, "reporting": 3},
+      "watermark": "synthetic-atlas-r1",
+      "errors": [],
+      "has_observations": true,
+      "expected_truth_state": "current"
+    },
+    {
+      "silo": "skos",
+      "signal": "module_discovery",
+      "adapter_id": "skos.discovery",
+      "condition": "unknown",
+      "aggregate": {"discovered": 0, "unavailable": 0},
+      "coverage": {"expected": 0, "reporting": 0},
+      "watermark": "synthetic-skos-r1",
+      "errors": [],
+      "has_observations": false,
+      "expected_truth_state": "unknown"
+    },
+    {
+      "silo": "legal_program",
+      "signal": "matter_free_program_aggregate",
+      "adapter_id": "sklegal.global",
+      "condition": "unknown",
+      "failure": "unauthorized",
+      "expected_truth_state": "unknown"
+    },
+    {
+      "silo": "corpus_pipeline",
+      "signal": "approved_release_aggregate",
+      "adapter_id": "hammertime.pipeline",
+      "condition": "unknown",
+      "aggregate": {"approved_releases": 0, "pipeline_failures": 0},
+      "coverage": {"expected": 0, "reporting": 0},
+      "watermark": "synthetic-corpus-r1",
+      "errors": [],
+      "has_observations": false,
+      "expected_truth_state": "unknown"
+    }
+  ],
+  "metric_conditions": {
+    "healthy": "portfolio.blocked_objectives@0",
+    "observed_zero": "portfolio.blocked_objectives@16",
+    "stale": "economy.cost_per_accepted_outcome@8",
+    "partial": "itil.change_classification_coverage@2",
+    "unavailable": "fleet.reporting_nodes@5",
+    "unknown": "legal.global_program_status@10",
+    "not_applicable": "engineering.delivery_signals_current@14",
+    "conflict": "architecture.drift_signals@4",
+    "forecast": "operator.ready_condition_forecast@12",
+    "mixed_lane": [
+      "ai.accepted_outcome_rate@6",
+      "ai.gateway_observation_count@7"
+    ]
+  },
+  "report_profile": {
+    "report_type": "daily_operations",
+    "included_silos": [
+      "portfolio",
+      "flow",
+      "itil_sre",
+      "dora",
+      "architecture",
+      "fleet",
+      "ai",
+      "economy",
+      "governance",
+      "legal_program",
+      "corpus_pipeline",
+      "atlas",
+      "skos"
+    ],
+    "watermark_policy": "include_nonempty_authorized_aggregate_watermarks",
+    "expected_report_hash": "sha256:015094d96ce6acb97947a4fd04a31a22678fe490a1a5b0930b38d6d7b2d70af5"
+  }
+}
