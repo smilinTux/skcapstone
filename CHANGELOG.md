@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the protected read-only Reliability workspace at
+  `/control-plane/reliability`, with explicit service-level Unknown states,
+  full-denominator ITIL metrics, and traceable change, PIR, and KEDB evidence.
+
 - Linked all dashboard workspaces through one truthful navigation rail, added
   accessible keyboard detail dialogs and Board filters, and contained the Now,
   Cockpit, CMDB, and Economy layouts at 320 and 390 CSS pixels.
