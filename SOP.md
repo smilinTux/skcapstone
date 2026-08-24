@@ -196,7 +196,7 @@ The canonical event, redaction, cursor/gap, multi-node, and command-receipt desi
 in SKHarness at `docs/architecture/live-agent-observation-and-control.md`. SKCapstone
 does not create a second activity or control store.
 
-**⚠️ coordination / ITIL / cards no longer live here.** `skcoord>=0.1.36` is a **hard
+**⚠️ coordination / ITIL / cards no longer live here.** `skcoord>=0.1.39` is a **hard
 runtime dependency** (`pyproject.toml`), and `skcapstone.coordination`,
 `skcapstone.card_store`, and `skcapstone.itil` are **transparent re-export shims** over
 `skcoord.*` (the CR-4.1 extraction). Each aliases the real module into `sys.modules`, so
@@ -209,10 +209,10 @@ all reach the same object. Consequences worth knowing before you debug:
 - `import skcapstone` succeeds without skcoord installed, but
   `from skcapstone.coordination import Board` does not. That asymmetry is why CI installs
   skcoord explicitly `--no-deps`.
-- The `0.1.36` floor is intentional. It retains the lifecycle and authoritative
-  criteria-fold contracts introduced in `0.1.18`, adds the scheduled CMDB
-  reconciliation policy, lease, incident-routing, and retention API, and provides
-  the Syncthing discovery contract used by scheduled fleet reconciliation.
+- The `0.1.39` floor is intentional. It retains the lifecycle, scheduled CMDB
+  reconciliation policy, lease, incident-routing, retention, and Syncthing discovery
+  contracts, and folds current acceptance criteria through every CardStore rollback
+  selector without rewriting immutable task or core birth facts.
 - Release skcoord before any skcapstone release that consumes a new skcoord symbol or
   fold behavior. Verify the published skcoord artifact in a fresh environment without a
   sibling checkout or `PYTHONPATH` overlay, then raise the skcapstone floor and release
@@ -737,7 +737,7 @@ checks:
   - name: ci.yml still runs NO tests, as section 4 warns
     run: ! grep -qE '^\s+run:.*pytest' .github/workflows/ci.yml
   - name: skcoord is still a hard dep and coordination is still a shim over it
-    run: grep -qxF '    "skcoord>=0.1.36",' pyproject.toml && grep -qxF 'import skcoord.coordination as _src' src/skcapstone/coordination.py && grep -qxF 'sys.modules[__name__] = _src' src/skcapstone/coordination.py
+    run: grep -qxF '    "skcoord>=0.1.39",' pyproject.toml && grep -qxF 'import skcoord.coordination as _src' src/skcapstone/coordination.py && grep -qxF 'sys.modules[__name__] = _src' src/skcapstone/coordination.py
   - name: SKCAPSTONE_HOME is still the real home override, per section 6
     run: grep -qxF 'AGENT_HOME = os.environ.get("SKCAPSTONE_HOME", _default_home())' src/skcapstone/__init__.py
   - name: Codex and Pi loaders still export skenv and default Codex YOLO mode

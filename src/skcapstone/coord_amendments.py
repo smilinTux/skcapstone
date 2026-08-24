@@ -10,9 +10,9 @@ edit is reversible by re-applying and the original stays visible in
   both folds (legacy ``fold_overlay`` and the CardStore fold via
   ``load_legacy_mutations``) already understand.
 - ``amend_criteria`` is appended to the card's own store log. The required
-  ``skcoord>=0.1.18`` fold applies it to both ``CardStore.fold`` and
-  ``Board.get_task_views``; :func:`current_acceptance_criteria` delegates to
-  that authoritative fold.
+  ``skcoord>=0.1.39`` fold applies it to both ``CardStore.fold`` and every
+  legacy rollback selector through ``Board.get_task_views``;
+  :func:`current_acceptance_criteria` delegates to that authoritative fold.
 - ``void_card`` (card 325a737f) kills a mistakenly created card without
   completing it: a ``void`` audit event plus the archive mechanism, so no
   Joules are minted and the changelog stays clean.

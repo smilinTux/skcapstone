@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Card db5ce143: require `skcoord>=0.1.39` for acceptance-criteria parity.**
+  The released SKCoord fold now presents the latest append-only criteria amendment
+  through the default CardStore lane and every supported rollback selector (`1`,
+  `dual`, `0`, `off`, `false`, and `no`). Malformed fold state fails closed instead
+  of presenting stale immutable birth criteria, and the registry contract gate pins
+  the exact qualifying SKCoord wheel before any source overlay.
+
 - The operator-plane standard and migration plan are marked RATIFIED. They had
   stayed `Status: PROPOSED` while the board card said "doing" and commit messages
   already called the standard ratified: three sources disagreeing about whether the
