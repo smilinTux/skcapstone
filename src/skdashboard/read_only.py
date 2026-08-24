@@ -82,6 +82,7 @@ def create_read_only_app(
     decision_authorizer=None,
     invocation_factory=None,
     project_provider=None,
+    schedule_provider=None,
 ) -> Starlette:
     """Build the least-privilege app without importing legacy route tables."""
 
@@ -115,6 +116,7 @@ def create_read_only_app(
             decision_authorizer=decision_authorizer,
             invocation_factory=invocation_factory,
             project_provider=project_provider,
+            schedule_provider=schedule_provider,
         )
     )
     app = Starlette(routes=routes)

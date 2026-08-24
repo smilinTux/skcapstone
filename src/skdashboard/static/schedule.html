@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard | Schedule</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <link rel="stylesheet" href="/static/css/overview.css">
+  <link rel="stylesheet" href="/static/css/projects.css">
+  <link rel="stylesheet" href="/static/css/schedule.css">
+</head>
+<body>
+  <div class="wrap">
+    <nav class="topbar sidebar" aria-label="Dashboard sections">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/control-plane/now">Now</a>
+        <a class="tab" href="/control-plane/portfolio?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Portfolio</a>
+        <a class="tab active" href="/control-plane/schedule?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;lens=roadmap&amp;timezone=UTC">Schedule</a>
+      </div>
+      <div class="spacer"></div><span class="quality-mode">Read only</span>
+    </nav>
+
+    <header class="now-head project-head">
+      <div><span class="now-kicker">Schedule and forecast workspace</span><h2>Roadmap, Gantt, and Flow</h2><p>One exact scoped projection through synchronized lenses. No person or team ranking.</p></div>
+      <button id="schedule-export" class="quality-preview-button" type="button">Export snapshot</button>
+    </header>
+
+    <form id="schedule-context" class="project-context schedule-context" aria-label="Schedule context">
+      <label>Role<select id="schedule-role"><option value="project-manager">Project manager</option><option value="operator">Operator</option><option value="architect">Architect</option><option value="service">Service</option><option value="team">Team</option></select></label>
+      <label>Lens<select id="schedule-lens"><option value="roadmap">Roadmap</option><option value="gantt">Gantt</option><option value="flow">Flow</option></select></label>
+      <label>Timezone<select id="schedule-timezone"><option value="UTC">UTC</option><option value="America/Chicago">America/Chicago</option></select></label>
+      <p><strong>Scope</strong> Whole authorized estate</p><p><strong>Window</strong> Latest projection</p><p><strong>Baseline</strong> Original</p>
+    </form>
+
+    <div class="schedule-toolbar" aria-label="Schedule controls">
+      <button id="schedule-zoom-out" type="button">Zoom out</button><button id="schedule-zoom-in" type="button">Zoom in</button>
+      <button id="schedule-collapse" type="button">Collapse all</button><button id="schedule-expand" type="button">Expand all</button>
+      <span id="schedule-status" role="status" aria-live="polite">Loading</span>
+    </div>
+
+    <section id="schedule-warning" class="project-boundary" hidden aria-live="assertive"></section>
+    <section id="schedule-visual" class="project-panel schedule-visual" aria-labelledby="schedule-visual-title">
+      <div class="quality-heading"><div><h2 id="schedule-visual-title">Roadmap</h2><p id="schedule-meta">Loading exact schedule projection.</p></div><span id="schedule-truth" class="quality-mode">Loading</span></div>
+      <div id="schedule-rows" class="schedule-rows" role="list" aria-label="Schedule visual rows"></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="schedule-table-title">
+      <div class="quality-heading"><div><h2 id="schedule-table-title">Accessible schedule table</h2><p>Table equivalent to the selected visual lens.</p></div></div>
+      <div class="project-table-wrap"><table><caption>Schedule items, dates, truth, progress, and blockers</caption><thead><tr><th scope="col">Item</th><th scope="col">Type and owner</th><th scope="col">Baseline</th><th scope="col">Planned</th><th scope="col">Actual</th><th scope="col">Progress</th><th scope="col">Truth and visibility</th><th scope="col">Blockers</th><th scope="col">Evidence</th></tr></thead><tbody id="schedule-table-rows"><tr><td colspan="9">Loading schedule.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="schedule-dependencies-title">
+      <div class="quality-heading"><div><h2 id="schedule-dependencies-title">Dependency list</h2><p>Typed direction, lag, cycle, blocker, and visibility states.</p></div></div>
+      <div class="project-table-wrap"><table><caption>Schedule dependencies</caption><thead><tr><th scope="col">Dependency</th><th scope="col">Type</th><th scope="col">Lag</th><th scope="col">Blocker</th><th scope="col">Cycle</th><th scope="col">Truth and visibility</th><th scope="col">Evidence</th></tr></thead><tbody id="schedule-dependency-rows"><tr><td colspan="7">Loading dependencies.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-boundary"><h2>No-write boundary</h2><p>This workspace displays schedule evidence only. It cannot create scenarios, preview reschedules, mutate owner records, dispatch work, or authorize an external action.</p></section>
+  </div>
+
+  <dialog id="schedule-detail" aria-labelledby="schedule-detail-title">
+    <form method="dialog" class="quality-dialog project-evidence-dialog">
+      <div class="quality-dialog-head"><div><span class="quality-mode">Schedule evidence</span><h2 id="schedule-detail-title">Item detail</h2></div><button class="quality-close" value="close" aria-label="Close schedule detail">Close</button></div>
+      <div id="schedule-detail-body"></div>
+    </form>
+  </dialog>
+  <script type="module" src="/static/js/schedule.js"></script>
+</body>
+</html>
