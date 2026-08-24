@@ -16,9 +16,11 @@ import pytest
 import tomllib
 from click.testing import CliRunner
 from packaging.requirements import Requirement
+from packaging.version import Version
+from skcoord import card_store as skcoord_card_store
 
 from skcapstone.card import KanbanBoard
-from skcapstone.card_store import CardCore, CardStore
+from skcapstone.card_store import CardCore, CardStore, parity_check
 from skcapstone.cli.coord import register_coord_commands
 from skcapstone.coord_amendments import current_acceptance_criteria
 from skcapstone.coordination import Board, Task
@@ -67,13 +69,78 @@ def _assert_authoritative_criteria(tmp_path, task_id: str, expected: list[str]) 
     assert view.task.acceptance_criteria == expected
 
 
-def test_skcoord_dependency_requires_scheduled_reconcile_policy():
+def test_skcoord_dependency_requires_criteria_fold_release():
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     requirements = [Requirement(value) for value in project["project"]["dependencies"]]
     skcoord = next(requirement for requirement in requirements if requirement.name == "skcoord")
 
-    assert "0.1.27" not in skcoord.specifier
-    assert "0.1.36" in skcoord.specifier
+    assert Version("0.1.38") not in skcoord.specifier
+    assert Version("0.1.39") in skcoord.specifier
+
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "pytest.yml").read_text(encoding="utf-8")
+    assert '"skcoord==0.1.39"' in workflow
+    assert 'Version(version("skcoord")) == Version("0.1.39")' in workflow
+
+
+@pytest.mark.parametrize("mode", [None, "1", "dual", "0", "off", "false", "no"])
+def test_every_card_store_selector_projects_current_criteria(tmp_path, monkeypatch, mode):
+    birth = [f"birth criterion {index}" for index in range(1, 10)]
+    current = [f"current criterion {index}" for index in range(1, 10)]
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _seed(tmp_path, "criteria9", criteria=birth)
+    task_before = next((tmp_path / "coordination" / "tasks").glob("criteria9-*.json")).read_bytes()
+    core_before = (CardStore(tmp_path).cards_dir / "criteria9" / "core.json").read_bytes()
+    CardStore(tmp_path).append_event(
+        "criteria9", "amend_criteria", "uptake-test", criteria=current
+    )
+
+    if mode is None:
+        monkeypatch.delenv("SKCOORD_CARD_STORE", raising=False)
+    else:
+        monkeypatch.setenv("SKCOORD_CARD_STORE", mode)
+    projected = next(card for card in KanbanBoard(tmp_path).cards() if card.id == "criteria9")
+
+    assert projected.acceptance_criteria == current
+    assert (
+        next((tmp_path / "coordination" / "tasks").glob("criteria9-*.json")).read_bytes()
+        == task_before
+    )
+    assert (CardStore(tmp_path).cards_dir / "criteria9" / "core.json").read_bytes() == core_before
+
+
+@pytest.mark.parametrize("mode", [None, "1", "dual", "0", "off", "false", "no"])
+def test_every_card_store_selector_fails_closed_on_malformed_criteria(tmp_path, monkeypatch, mode):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _seed(tmp_path, "badcriteria", criteria=["birth criterion"])
+    CardStore(tmp_path).append_event("badcriteria", "amend_criteria", "uptake-test", criteria=[])
+    if mode is None:
+        monkeypatch.delenv("SKCOORD_CARD_STORE", raising=False)
+    else:
+        monkeypatch.setenv("SKCOORD_CARD_STORE", mode)
+
+    with pytest.raises(ValueError, match="criteria"):
+        KanbanBoard(tmp_path).cards()
+
+
+def test_criteria_projection_assertion_is_sensitive_to_fold_bypass(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _seed(tmp_path, "sensitive9", criteria=["birth criterion"])
+    CardStore(tmp_path).append_event(
+        "sensitive9", "amend_criteria", "uptake-test", criteria=["current criterion"]
+    )
+
+    def stale_criteria(home, card_id, birth_criteria=None, store=None):
+        del home, card_id, store
+        return list(birth_criteria or [])
+
+    monkeypatch.setattr(skcoord_card_store, "current_acceptance_criteria", stale_criteria)
+    result = parity_check(tmp_path)
+    mismatch = next(item for item in result["mismatches"] if item["id"] == "sensitive9")
+
+    assert mismatch["diff"]["acceptance_criteria"] == [
+        ["birth criterion"],
+        ["current criterion"],
+    ]
 
 
 def test_current_acceptance_criteria_delegates_to_card_store_fold(tmp_path, monkeypatch):
