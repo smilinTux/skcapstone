@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = ROOT / "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-v1.json"
 
-RECEIPT_SHA256 = "9a7e902774ea1b3dc5ac550766a2e21cd51bc31a6d04a475996c60cbc8cdad81"
+RECEIPT_SHA256 = "d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18"
 RAW_SHA256 = "8756eeeb8075de8ac020c757f1c596739fcd6b4e5b221a7dd10b564044ddaa3e"
 NORMALIZED_SHA256 = "3427620b09ac23049ade1894ebbd52d9213439a3e112704dad37f7bd013f3cbe"
 
@@ -83,3 +83,4 @@ def test_decision_and_supersession_are_narrow_and_complete() -> None:
     assert "nonverbatim_expansion_mislabeled_as_quote" in statuses
     assert "accurate_transcription_superseded_by_machine_receipt" in statuses
     assert "preserved_fail_finding_pending_r3" in statuses
+    assert "false_expansion_reassertion_superseded_by_exact_source_receipt" in statuses

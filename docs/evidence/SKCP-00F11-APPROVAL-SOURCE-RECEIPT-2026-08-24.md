@@ -13,7 +13,7 @@ extracted decision fields, explicit unknown metadata, and attribution
 supersession map.
 
 Receipt SHA-256:
-`9a7e902774ea1b3dc5ac550766a2e21cd51bc31a6d04a475996c60cbc8cdad81`
+`d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18`
 
 Normalized decision text SHA-256:
 `3427620b09ac23049ade1894ebbd52d9213439a3e112704dad37f7bd013f3cbe`
@@ -21,7 +21,9 @@ Normalized decision text SHA-256:
 The first approval artifact remains immutable but is classified as a
 nonverbatim expansion mislabeled as a quote. The append-only correction remains
 immutable and is classified as an accurate transcription superseded by this
-machine receipt. The R2 FAIL evidence also remains immutable pending R3.
+machine receipt. The later expanded-quote supersession remains immutable and is
+classified as a false expansion reassertion superseded by this exact-source
+receipt. The R2 FAIL evidence also remains immutable pending R3.
 
 ## Verification boundary
 
@@ -38,4 +40,3 @@ advance.
 
 This receipt does not authorize deployment, activation, restart, external
 action, protected Matter access, board reconciliation, or gate bypass.
-
