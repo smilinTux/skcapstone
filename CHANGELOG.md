@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Linked all dashboard workspaces through one truthful navigation rail, added
+  accessible keyboard detail dialogs and Board filters, and contained the Now,
+  Cockpit, CMDB, and Economy layouts at 320 and 390 CSS pixels.
+
 - Added the protected read-only Schedule workspace at
   `/control-plane/schedule`, with synchronized Roadmap, Gantt, and Flow lenses,
   accessible table and dependency alternatives, and fail-closed schedule exceptions.
