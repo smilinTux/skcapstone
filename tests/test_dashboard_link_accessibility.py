@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
 STATIC = Path(__file__).parents[1] / "src" / "skdashboard" / "static"
+CDP_QUALIFIER = (
+    Path(__file__).parents[1] / "scripts" / "qualify_dashboard_navigation_contrast_cdp.mjs"
+)
 
 
 def test_every_dashboard_surface_links_now_and_portfolio() -> None:
@@ -60,3 +69,35 @@ def test_mobile_styles_contain_wide_content() -> None:
     assert ".ci{transition:none}" in (STATIC / "css" / "cmdb.css").read_text()
     assert ".eco-subtab{transition:none}" in economy
     assert "color:var(--ink2)" in cockpit
+
+
+def test_active_navigation_uses_shared_high_contrast_text_token() -> None:
+    css = (STATIC / "css" / "board.css").read_text()
+    active_rule = css.split(".tab.active{", 1)[1].split("}", 1)[0]
+    assert "color:var(--ink)" in active_rule
+    assert "color:var(--accent)" not in active_rule
+
+
+def test_real_chrome_navigation_contrast_matrix() -> None:
+    node = shutil.which("node")
+    chrome = shutil.which("google-chrome") or shutil.which("google-chrome-stable")
+    if not node or not chrome:
+        pytest.skip("Node or Chrome is unavailable for the CDP qualification wrapper")
+    result = subprocess.run(
+        [node, str(CDP_QUALIFIER)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CHROME_PATH": chrome},
+    )
+    evidence = json.loads(result.stdout)
+    assert evidence["result"] == "PASS"
+    assert evidence["surfaces"] == 11
+    assert evidence["matrixEntries"] == 66
+    assert evidence["measuredLinks"] >= 726
+    assert evidence["minimumContrast"] >= 4.5
+    assert evidence["oldColorMaximum"] < 4.5
+    assert evidence["oldColorSensitivity"] == "PASS"
+    assert evidence["nonGetRequests"] == 0
+    assert evidence["externalRequests"] == 0
+    assert evidence["runtimeExceptions"] == 0
