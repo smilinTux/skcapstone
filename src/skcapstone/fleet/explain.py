@@ -218,6 +218,9 @@ KINDS: dict[str, dict] = {
             "cli": "the app's operator CLI entrypoint (e.g. 'skchat operator')",
             "repos": "repos the app's operator facet lives in",
             "contractVersion": "operator-facet contract version the app implements",
+            "endpoint": ("v2 only: the app's skoperator.remote/v1 URL (authoritative when set)"),
+            "node": "v2 only: the app's home node; only that node may exec cli locally",
+            "transport": "v2 only: 'http' or 'cli-local'",
             "proposedStandardActions": (
                 "actions the app's manifest proposes as reversible standard"
             ),
