@@ -1,0 +1,61 @@
+{
+  "receipt_version": "1.0.0",
+  "status": "proposed_for_exact_human_attestation",
+  "card_id": "2632ebc5",
+  "human_attestation_card_id": "651f68fc",
+  "independent_review_card_id": "cb8796b0",
+  "source": {
+    "kind": "conversation_user_message",
+    "message_id": null,
+    "message_timestamp": null,
+    "unavailable_metadata_reason": "The conversation interface exposed the message content but no stable source message identifier or source timestamp.",
+    "raw_markdown": "> I approve SKCP-00 V1.1.3 manifest sha256:9d06d085d4297cbad9a2f018daba091de011b98e3ed8eb788b59f80b8d36c4fb at release v0.1.29 and authorize\n  > independent rereview through the existing dependency gates. This does not authorize deployment or external action.",
+    "raw_markdown_sha256": "8756eeeb8075de8ac020c757f1c596739fcd6b4e5b221a7dd10b564044ddaa3e"
+  },
+  "normalization": {
+    "rule": "Split lines, trim ASCII whitespace, remove one leading Markdown blockquote marker and following ASCII space from each line, then join the resulting nonempty lines with one ASCII space. Preserve case and punctuation.",
+    "normalized_text": "I approve SKCP-00 V1.1.3 manifest sha256:9d06d085d4297cbad9a2f018daba091de011b98e3ed8eb788b59f80b8d36c4fb at release v0.1.29 and authorize independent rereview through the existing dependency gates. This does not authorize deployment or external action.",
+    "normalized_text_sha256": "3427620b09ac23049ade1894ebbd52d9213439a3e112704dad37f7bd013f3cbe"
+  },
+  "decision": {
+    "result": "approve",
+    "candidate": "SKCP-00 V1.1.3",
+    "manifest_sha256": "9d06d085d4297cbad9a2f018daba091de011b98e3ed8eb788b59f80b8d36c4fb",
+    "release": "v0.1.29",
+    "authorized_next_gate": "independent_rereview_through_existing_dependencies",
+    "deployment_authorized": false,
+    "external_action_authorized": false
+  },
+  "attribution_supersession": {
+    "authoritative_record": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-v1.json",
+    "predecessors": [
+      {
+        "path": "docs/approval/SKCP-00-V1.1.3-LINEAGE-CANDIDATE-APPROVAL-2026-08-24.md",
+        "sha256": "7e4a84c70beb394c58493acb8e5e89ccfae24423dfeaee2351c17cd1fa5efc86",
+        "attribution_status": "nonverbatim_expansion_mislabeled_as_quote",
+        "historical_bytes_preserved": true
+      },
+      {
+        "path": "docs/approval/SKCP-00-V1.1.3-LINEAGE-CANDIDATE-APPROVAL-CORRECTION-2026-08-24.md",
+        "sha256": "d34be0489b202e548ea6dfb033185a30ab3211b349c8de70701331b800d4f58d",
+        "attribution_status": "accurate_transcription_superseded_by_machine_receipt",
+        "historical_bytes_preserved": true
+      },
+      {
+        "path": "docs/review/SKCP-00-V1.1.3-INDEPENDENT-REREVIEW-2026-08-24.md",
+        "sha256": "4eec9f3211779a24e1299c42b3f762a395c578e39b99f466af0574941b96a42e",
+        "attribution_status": "preserved_fail_finding_pending_r3",
+        "historical_bytes_preserved": true
+      }
+    ]
+  },
+  "non_authorizations": [
+    "deployment",
+    "activation",
+    "restart",
+    "external_action",
+    "protected_matter_access",
+    "board_reconciliation",
+    "gate_bypass"
+  ]
+}

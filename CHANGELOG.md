@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a machine-readable exact-source approval receipt with explicit
+  normalization, unknown metadata, and append-only attribution supersession.
+
 - Added an independent FAIL rereview of the exact V1.1.3 lineage candidate
   after a concurrent approval-attribution record created contradictory claims.
 
