@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a versioned, hash-addressed control-plane metric registry and
+  deterministic synthetic calculations spanning every approved estate family,
+  truth state, and measurement kind without individual productivity ranking.
+
 - Added bounded, read-only cross-estate observation adapters with explicit
   owners, populations, query budgets, watermarks, classifications, freshness,
   coverage, and fail-closed unavailable states.
