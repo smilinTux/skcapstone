@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import base64
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from starlette.testclient import TestClient
 
+from skdashboard.control_plane_api import _capauth_authorize
 from skdashboard.dashboard import create_app
 
 LAN_ORIGIN = "http://10.0.0.139:7778"
@@ -22,6 +26,26 @@ def _authorizer(bearer: str, capability: str, _target: str) -> bool:
 
 def _app(home: Path):
     return create_app(home, control_plane_authorizer=_authorizer)
+
+
+def _canonical_bearer(scope: str) -> str:
+    from capauth.tokens import SignedToken, TokenPayload, TokenType, export_token
+
+    issued = datetime.now(timezone.utc)
+    token = SignedToken(
+        payload=TokenPayload(
+            token_id="a" * 64,
+            token_type=TokenType.CAPABILITY,
+            issuer="B" * 40,
+            subject="human@example.test",
+            capabilities=[scope],
+            issued_at=issued,
+            expires_at=issued + timedelta(minutes=1),
+            audience="skdashboard",
+        ),
+        signature="test-signature",
+    )
+    return base64.urlsafe_b64encode(export_token(token).encode()).decode("ascii")
 
 
 def test_v1_board_is_bounded_etagged_and_read_only(tmp_path: Path) -> None:
@@ -142,3 +166,42 @@ def test_metrics_are_bounded_and_never_echo_sensitive_input(tmp_path: Path) -> N
     assert str(tmp_path) not in response.text
     assert "prompt" not in response.text.lower()
     assert client.post("/metrics", headers=READ_HEADERS).status_code == 405
+
+
+def test_canonical_capauth_transport_reaches_signature_and_pdp_for_all_routes(
+    tmp_path: Path,
+) -> None:
+    read = _canonical_bearer("skdashboard.read")
+    events = _canonical_bearer("skdashboard.events.read")
+    with patch("capauth.tokens.verify_audience_token", return_value=True) as verify, patch(
+        "capauth.authz.decide", return_value=SimpleNamespace(allow=True)
+    ) as decide:
+        client = TestClient(create_app(tmp_path))
+        for path in ("/api/v1/overview", "/metrics"):
+            response = client.get(
+                path,
+                headers={"Authorization": f"Bearer {read}", "Origin": LAN_ORIGIN},
+            )
+            assert response.status_code == 200
+        response = client.get(
+            "/api/v1/events",
+            headers={"Authorization": f"Bearer {events}", "Origin": TAILNET_ORIGIN},
+        )
+    assert response.status_code == 200
+    assert verify.call_count == 3
+    assert decide.call_count == 3
+
+
+def test_noncanonical_capauth_transport_is_denied_before_crypto(tmp_path: Path) -> None:
+    canonical = _canonical_bearer("skdashboard.read")
+    decoded = base64.urlsafe_b64decode(canonical).decode()
+    unsafe = (decoded, canonical.rstrip("="), canonical + "\n", "%%%%")
+    with patch("capauth.tokens.verify_audience_token", return_value=True) as verify, patch(
+        "capauth.authz.decide", return_value=SimpleNamespace(allow=True)
+    ) as decide:
+        for bearer in unsafe:
+            assert not _capauth_authorize(
+                tmp_path, bearer, "skdashboard.read", "/api/v1/overview"
+            )
+    verify.assert_not_called()
+    decide.assert_not_called()
