@@ -335,6 +335,7 @@ def routes(home: Path, *, board_reader, health_reader, authorizer=None):
 
     async def overview(request):
         from .control_plane_adapters import default_readers, project_estate
+        from .control_plane_quality import project_data_quality
 
         items = project_estate(default_readers(home))
         errors = [
@@ -348,9 +349,10 @@ def routes(home: Path, *, board_reader, health_reader, authorizer=None):
             if states == {"current"}
             else ("unavailable" if states == {"unavailable"} else "partial")
         )
+        quality = project_data_quality(items)
         return _response(
             request,
-            _envelope(request, "skdashboard", items, errors, truth_state=truth),
+            _envelope(request, "skdashboard", [*items, quality], errors, truth_state=truth),
         )
 
     async def events(request):

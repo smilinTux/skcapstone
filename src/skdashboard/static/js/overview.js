@@ -8,6 +8,7 @@ const IS_ID = (s) => /^(inc-|prb-|chg-|[0-9a-f]{6,})/i.test(s || "");
 const SEV_VAR = { sev1: "sev1", sev2: "sev2", sev3: "sev3", sev4: "sev4" };
 
 async function load() {
+  loadQuality();
   let d;
   try { d = await getJSON("/api/overview"); }
   catch (e) { document.getElementById("tiles").innerHTML = `<div class="emptymsg">${esc(e.message)}</div>`; return; }
@@ -17,8 +18,85 @@ async function load() {
   renderHealth(d.agent || {});
 }
 
+const QUALITY_ICON = {
+  current: "✓", stale: "◷", partial: "◐", unavailable: "!",
+  unreachable: "×", unknown: "?", not_applicable: "○",
+};
+
+function coverageText(coverage) {
+  if (!coverage || coverage.percent == null) return "Coverage unavailable";
+  if (coverage.population === "declared_sources") {
+    return `${coverage.reporting} of ${coverage.expected} sources observed (${coverage.percent}%)`;
+  }
+  return `${coverage.reporting} of ${coverage.expected} reporting (${coverage.percent}%)`;
+}
+
+async function loadQuality() {
+  const summary = document.getElementById("quality-summary");
+  const issues = document.getElementById("quality-issues");
+  try {
+    const response = await getJSON("/api/v1/overview");
+    const quality = response.items.find((item) => item.projection_type === "data_quality");
+    if (!quality) throw new Error("Data-quality projection unavailable");
+    renderQuality(quality);
+  } catch (error) {
+    summary.innerHTML = `<span class="truth-badge unavailable"><b>!</b> Unavailable</span><span>${esc(error.message)}</span>`;
+    issues.innerHTML = `<p class="quality-empty">Data-quality evidence could not be observed. No source is assumed healthy.</p>`;
+  }
+}
+
+function renderQuality(quality) {
+  const summary = document.getElementById("quality-summary");
+  const issues = document.getElementById("quality-issues");
+  const states = ["current", "stale", "partial", "unavailable", "unreachable", "unknown", "not_applicable"];
+  const labels = { not_applicable: "not applicable" };
+  summary.innerHTML = `<div class="quality-coverage">
+      <strong>${esc(coverageText(quality.coverage))}</strong>
+      <span>${quality.source_count} sources · ${quality.metric_registry.definition_count} metric definitions · registry ${esc(quality.metric_registry.registry_version)}</span>
+    </div>
+    <div class="truth-counts" aria-label="Truth state counts">${states.map((state) =>
+      `<span class="truth-badge ${state}"><b aria-hidden="true">${QUALITY_ICON[state]}</b>${esc(labels[state] || state)} ${quality.state_counts[state]}</span>`
+    ).join("")}</div>`;
+  issues.innerHTML = quality.issues.length ? quality.issues.map((issue) => {
+    const watermark = issue.watermark && issue.watermark.value ? issue.watermark.value : "Unavailable";
+    const observed = issue.last_observation || "Not observed";
+    const reason = issue.safe_provenance.map((item) => `${item.code}: ${item.message}`).join("; ");
+    return `<article class="quality-issue" id="quality-source-${esc(issue.source.adapter_id)}">
+      <div class="quality-issue-title">
+        <span class="truth-badge ${esc(issue.truth_state)}"><b aria-hidden="true">${QUALITY_ICON[issue.truth_state]}</b>${esc(issue.truth_state)}</span>
+        <strong>${esc(issue.owner)}</strong>
+      </div>
+      <dl>
+        <div><dt>Source</dt><dd class="mono">${esc(issue.source.adapter_id)}@${esc(issue.source.adapter_version)}</dd></div>
+        <div><dt>Coverage</dt><dd>${esc(coverageText(issue.coverage))}</dd></div>
+        <div><dt>Watermark</dt><dd class="mono">${esc(watermark)}</dd></div>
+        <div><dt>Last observation</dt><dd>${esc(observed)}</dd></div>
+        <div><dt>Safe provenance</dt><dd>${esc(reason)}</dd></div>
+      </dl>
+      <button class="quality-preview-button" data-issue="${esc(issue.issue_id)}">${esc(issue.safe_next_step.label)}</button>
+    </article>`;
+  }).join("") : `<p class="quality-empty">No reconciliation issues are visible.</p>`;
+  issues.querySelectorAll(".quality-preview-button").forEach((button) => button.addEventListener("click", () => {
+    const issue = quality.issues.find((candidate) => candidate.issue_id === button.dataset.issue);
+    openQualityPreview(issue);
+  }));
+}
+
+function openQualityPreview(issue) {
+  const dialog = document.getElementById("quality-preview");
+  document.getElementById("quality-preview-body").innerHTML = `<dl>
+    <div><dt>Owner</dt><dd>${esc(issue.owner)}</dd></div>
+    <div><dt>Source</dt><dd class="mono">${esc(issue.source.adapter_id)}</dd></div>
+    <div><dt>Current truth</dt><dd>${esc(issue.truth_state)}</dd></div>
+    <div><dt>Required check</dt><dd>Re-read the bounded aggregate and compare its next watermark.</dd></div>
+  </dl>`;
+  dialog.showModal();
+}
+
 function renderTiles(d) {
   const k = d.kanban || {}, itil = (d.itil || {}), kp = itil.kpis || {}, cm = d.cmdb || {};
+  const itilAvailable = itil.available === true;
+  const cmdbAvailable = cm.available === true;
   const health = cm.health || {};
   const wipOver = (k.wip_over || []).length;
   const sev = kp.sev1 ? `${kp.sev1} SEV1` : (kp.sev2 ? `${kp.sev2} SEV2` : "");
@@ -29,22 +107,22 @@ function renderTiles(d) {
       <div class="tsub">${(k.by_column && k.by_column.doing) || 0} in progress
         ${wipOver ? `<span class="chip warn">${wipOver} WIP over</span>` : `<span class="chip ok">WIP ok</span>`}</div>
     </a>
-    <a class="tile ${kp.sev1 || kp.sev2 ? "alert" : ""}" href="/cockpit">
+    <a class="tile ${itilAvailable && (kp.sev1 || kp.sev2) ? "alert" : ""}" href="/cockpit">
       <div class="th"><span class="ic">🚨</span> Incidents</div>
-      <div class="tn">${kp.open_incidents || 0} <small>open</small></div>
-      <div class="tsub">${sev ? `<span class="chip crit">${esc(sev)}</span>` : ""}
+      <div class="tn">${itilAvailable ? kp.open_incidents : "Unknown"} <small>${itilAvailable ? "open" : "source unavailable"}</small></div>
+      <div class="tsub">${itilAvailable && sev ? `<span class="chip crit">${esc(sev)}</span>` : ""}
         ${itil.breaches ? `<span class="chip warn">${itil.breaches} past SLA</span>` : ""}</div>
     </a>
     <a class="tile" href="/cockpit">
       <div class="th"><span class="ic">🔁</span> Change / SLA</div>
-      <div class="tn mono">${esc(kp.mttr || "-")} <small>MTTR</small></div>
-      <div class="tsub">MTTA ${esc(kp.mtta || "-")} ${itil.cab ? `<span class="chip warn">${itil.cab} awaiting CAB</span>` : ""}</div>
+      <div class="tn mono">${itilAvailable ? esc(kp.mttr || "-") : "Unknown"} <small>${itilAvailable ? "MTTR" : "source unavailable"}</small></div>
+      <div class="tsub">${itilAvailable ? `MTTA ${esc(kp.mtta || "-")}` : "ITIL evidence unavailable"} ${itil.cab ? `<span class="chip warn">${itil.cab} awaiting CAB</span>` : ""}</div>
     </a>
-    <a class="tile ${health.down ? "alert" : ""}" href="/cmdb">
+    <a class="tile ${cmdbAvailable && health.down ? "alert" : ""}" href="/cmdb">
       <div class="th"><span class="ic">🖥️</span> Assets</div>
-      <div class="tn">${cm.total || 0} <small>CIs</small></div>
-      <div class="tsub">${health.down ? `<span class="chip crit">${health.down} down</span>` : ""}
-        ${health.degraded ? `<span class="chip warn">${health.degraded} degraded</span>` : `<span class="chip ok">all healthy</span>`}</div>
+      <div class="tn">${cmdbAvailable ? cm.total : "Unknown"} <small>${cmdbAvailable ? "CIs" : "source unavailable"}</small></div>
+      <div class="tsub">${cmdbAvailable && health.down ? `<span class="chip crit">${health.down} down</span>` : ""}
+        ${!cmdbAvailable ? `<span class="chip warn">health unknown</span>` : health.degraded ? `<span class="chip warn">${health.degraded} degraded</span>` : `<span class="chip ok">all healthy</span>`}</div>
     </a>`;
 }
 

@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a fail-closed cross-estate data-quality projection and accessible
+  overview strip with explicit truth-state coverage, safe provenance, and
+  non-dispatching refresh previews.
+
 - Added a versioned, hash-addressed control-plane metric registry and
   deterministic synthetic calculations spanning every approved estate family,
   truth state, and measurement kind without individual productivity ranking.
