@@ -120,7 +120,7 @@ def test_ai_workspace_real_chrome_purges_delayed_401_and_403_responses() -> None
     evidence = json.loads(result.stdout.strip())
     assert evidence == {
         "result": "PASS",
-        "base": "b880ae13",
+        "base": "0b430b3e",
         "budgetRows": 11,
         "registry": True,
         "keyboard": True,

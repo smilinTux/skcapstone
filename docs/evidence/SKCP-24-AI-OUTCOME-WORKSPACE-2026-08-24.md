@@ -7,8 +7,10 @@ Card `77d6bae0` adds a read-only AI outcome and economy workspace at
 projection. It adds no API route, mutation, credential flow, deployment, or
 external action.
 
-The verified base is exact `origin/main`
-`b880ae13fd231c66b50f57bc90812f194fcf6276`.
+The combined integration review used exact `origin/main`
+`0b430b3efb45259441dcc81dcb9f4093f9406407`, pre-correction HEAD
+`5a67ff7cfaf31ba4926e9b09caa086b975e5caba`, and tree
+`9ca9bfe8b36e5ad6dd97185407be0adc7709a835`.
 
 The implementation keeps these observations separate:
 
