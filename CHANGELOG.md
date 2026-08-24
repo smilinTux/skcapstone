@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The operator-plane standard and migration plan are marked RATIFIED. They had
+  stayed `Status: PROPOSED` while the board card said "doing" and commit messages
+  already called the standard ratified: three sources disagreeing about whether the
+  design was settled, right as Phase 2 began building on it. P0 through P3 are
+  implemented and merged; the HTTP surface ships gated OFF (`SKOPERATOR_HTTP`
+  unset), so nothing in either document has yet changed a running service.
+
 ### Added
 
 - **Card 90b5b277 (epic c880017b): `skcapstone atlas soak`, the Phase 3
@@ -39,6 +48,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   file or `SKOPERATOR_HTTP`. A soak with zero endpoints registered anywhere
   (today's live state) reports "no soak samples yet" / `NO-ENDPOINT` for
   every app rather than a false-clean `READY`.
+- **Card ccbe1a37: add the read-only `coord portfolio-plan` shadow CLI.**
+  The command accepts one frozen, typed JSON input on stdin or from a file and
+  emits the exact deterministic SKCoord proposal. Expected abstention succeeds
+  by default, while `--strict` exits nonzero for automation. It has no board,
+  model, queue, claim, or mutation path.
 
 - **Card 90b5b277 (epic c880017b): `sknoded` grows a read-only operator-plane
   HTTP surface, P1 of the `skoperator.remote/v1` migration
