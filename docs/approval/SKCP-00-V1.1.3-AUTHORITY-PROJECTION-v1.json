@@ -1,0 +1,79 @@
+{
+  "projection_version": "1.0.0",
+  "card_id": "45acd0eb",
+  "status": "active_projection",
+  "authority_rule": "Only exact human source evidence can grant approval authority. Repository files, reviews, tests, and board state cannot create or widen human authority.",
+  "authoritative_records": [
+    {
+      "kind": "approval_source_receipt",
+      "path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-v1.json",
+      "sha256": "d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18",
+      "authority_basis_path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-ATTESTATION-2026-08-24.md",
+      "authority_basis_sha256": "dc1a54c080e98ffa0fa817109dc5d1eab438b92b367aa7a051aed82ef24dbab8"
+    },
+    {
+      "kind": "human_attestation",
+      "path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-ATTESTATION-2026-08-24.md",
+      "sha256": "dc1a54c080e98ffa0fa817109dc5d1eab438b92b367aa7a051aed82ef24dbab8",
+      "attested_receipt_sha256": "d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18",
+      "authorized_review_card_id": "cb8796b0"
+    }
+  ],
+  "non_authoritative_records": [
+    {
+      "kind": "unattested_proposed_receipt",
+      "path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-v2.json",
+      "sha256": "bf1c9d48c7721857d19f522a7aa36780f0a9fdb6cfa2c5a7bd6317c25fd213d3",
+      "authority_status": "non_authoritative",
+      "reason": "Its expanded approval text has no exact human source evidence and contradicts the later exact H4 attestation."
+    },
+    {
+      "kind": "unsupported_h5_quote",
+      "path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-V2-ATTESTATION-2026-08-24.md",
+      "sha256": "84c99131840cebcc07cdea6d0020527107a92354d0ef2edf4a3d1a673da8fbe7",
+      "card_id": "8a2331a2",
+      "authority_status": "non_authoritative",
+      "reason": "The quoted statement is absent from the authoritative human source and cannot attest V2 or reject V1."
+    },
+    {
+      "kind": "dependent_r4_review",
+      "path": "docs/review/SKCP-00-V1.1.3-SOURCE-RECEIPT-V2-R4-2026-08-24.md",
+      "sha256": "16b3842c8c957c6b3ef3c392b5c289a24aede0d571bb663f17726e331a9bb459",
+      "card_id": "526bb17f",
+      "authority_status": "non_authoritative",
+      "depends_on_unsupported_card_id": "8a2331a2",
+      "reason": "A review PASS cannot supply missing human source authority or widen the H4 authorization boundary."
+    }
+  ],
+  "history_policy": {
+    "append_only": true,
+    "historical_bytes_preserved": true,
+    "conflicting_records_deleted": false
+  },
+  "known_governance_limitations": [
+    {
+      "implementation_card_id": "d12b8951",
+      "observed_state": "done",
+      "historical_unsupported_dependency_card_id": "526bb17f",
+      "fresh_review_gate_card_id": "847e250a"
+    },
+    {
+      "implementation_card_id": "94cbf19a",
+      "observed_state": "doing",
+      "historical_unsupported_dependency_card_id": "526bb17f",
+      "fresh_review_gate_card_id": "847e250a"
+    }
+  ],
+  "scope": {
+    "authorized": ["independent_review_cb8796b0_through_existing_dependency_gates"],
+    "not_authorized": [
+      "deployment",
+      "activation",
+      "restart",
+      "external_action",
+      "protected_matter_access",
+      "board_reconciliation",
+      "gate_bypass"
+    ]
+  }
+}
