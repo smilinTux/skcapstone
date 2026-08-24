@@ -22,6 +22,9 @@ def test_normalize_defaults() -> None:
         "cli": None,
         "repos": [],
         "contractVersion": 1,
+        "endpoint": None,
+        "node": None,
+        "transport": None,
         "proposedStandardActions": [],
         "ratifiedStandardActions": [],
         "conditions": [],
@@ -53,6 +56,127 @@ def test_normalize_rejects_missing_name() -> None:
 def test_normalize_rejects_bad_action_list() -> None:
     with pytest.raises(operatorapp.OperatorappSpecError):
         operatorapp.normalize_operatorapp_spec({"name": "skchat", "proposedStandardActions": [""]})
+
+
+# --- contractVersion 2 schema (card 90b5b277 Phase 2) ------------------------
+
+
+def test_v1_spec_rejects_endpoint() -> None:
+    # "v1 specs stay valid and mean cli-local": a v1 spec declaring a v2 field
+    # is a spec error, not a silently-ignored extra key.
+    with pytest.raises(operatorapp.OperatorappSpecError, match="endpoint"):
+        operatorapp.normalize_operatorapp_spec(
+            {"name": "skgateway", "endpoint": "https://100.64.0.5:9392/operator/v1"}
+        )
+
+
+def test_v1_spec_rejects_node() -> None:
+    with pytest.raises(operatorapp.OperatorappSpecError, match="node"):
+        operatorapp.normalize_operatorapp_spec({"name": "skgateway", "node": "node-noroc2027"})
+
+
+def test_v1_spec_rejects_transport() -> None:
+    with pytest.raises(operatorapp.OperatorappSpecError, match="transport"):
+        operatorapp.normalize_operatorapp_spec({"name": "skgateway", "transport": "http"})
+
+
+def test_v2_spec_accepts_endpoint_node_transport() -> None:
+    spec = operatorapp.normalize_operatorapp_spec(
+        {
+            "name": "skgateway",
+            "contractVersion": 2,
+            "endpoint": "https://100.64.0.5:9392/operator/v1",
+            "node": "node-noroc2027",
+            "transport": "http",
+        }
+    )
+    assert spec["contractVersion"] == 2
+    assert spec["endpoint"] == "https://100.64.0.5:9392/operator/v1"
+    assert spec["node"] == "node-noroc2027"
+    assert spec["transport"] == "http"
+
+
+def test_v2_spec_without_any_v2_field_still_normalizes() -> None:
+    # v2 does not REQUIRE endpoint/node/transport; a v2 spec that sets none of
+    # them just carries three Nones, same shape as a v1 spec plus the bumped
+    # version.
+    spec = operatorapp.normalize_operatorapp_spec({"name": "skgateway", "contractVersion": 2})
+    assert spec["endpoint"] is None
+    assert spec["node"] is None
+    assert spec["transport"] is None
+
+
+def test_v2_spec_rejects_empty_endpoint() -> None:
+    with pytest.raises(operatorapp.OperatorappSpecError):
+        operatorapp.normalize_operatorapp_spec(
+            {"name": "skgateway", "contractVersion": 2, "endpoint": ""}
+        )
+
+
+def test_v2_spec_rejects_bad_transport() -> None:
+    with pytest.raises(operatorapp.OperatorappSpecError, match="transport"):
+        operatorapp.normalize_operatorapp_spec(
+            {"name": "skgateway", "contractVersion": 2, "transport": "carrier-pigeon"}
+        )
+
+
+def test_contract_version_rejects_bool() -> None:
+    # bool is an int subclass in Python; guard against `contractVersion: true`
+    # silently passing the isinstance(int) check.
+    with pytest.raises(operatorapp.OperatorappSpecError):
+        operatorapp.normalize_operatorapp_spec({"name": "skgateway", "contractVersion": True})
+
+
+# --- cli_exec_eligible: the home-node precedence rule -------------------------
+
+
+def test_v1_spec_always_cli_eligible_regardless_of_node() -> None:
+    # The whole point of "v1 means cli-local": no node check ever applies.
+    spec = operatorapp.normalize_operatorapp_spec({"name": "cmdb", "cli": "skcapstone cmdb"})
+    eligible, reason = operatorapp.cli_exec_eligible(spec, "node-anywhere")
+    assert eligible is True
+    assert reason == ""
+
+
+def test_v2_spec_eligible_only_on_matching_home_node() -> None:
+    spec = operatorapp.normalize_operatorapp_spec(
+        {
+            "name": "skgateway",
+            "contractVersion": 2,
+            "node": "node-noroc2027",
+            "cli": "skgateway operator",
+        }
+    )
+    eligible, _ = operatorapp.cli_exec_eligible(spec, "node-noroc2027")
+    assert eligible is True
+
+
+def test_v2_spec_ineligible_on_a_different_node() -> None:
+    spec = operatorapp.normalize_operatorapp_spec(
+        {
+            "name": "skgateway",
+            "contractVersion": 2,
+            "node": "node-noroc2027",
+            "cli": "skgateway operator",
+        }
+    )
+    eligible, reason = operatorapp.cli_exec_eligible(spec, "node-100")
+    assert eligible is False
+    assert "node-noroc2027" in reason
+    assert "node-100" in reason
+    assert "remote seat never execs" in reason
+
+
+def test_v2_spec_with_no_node_is_never_locally_eligible() -> None:
+    # A v2 spec that declares no home node cannot be exec'd by ANY seat,
+    # including one that happens to be running on the app's actual host --
+    # there is no way to know it is the home node without the field.
+    spec = operatorapp.normalize_operatorapp_spec(
+        {"name": "skgateway", "contractVersion": 2, "cli": "skgateway operator"}
+    )
+    eligible, reason = operatorapp.cli_exec_eligible(spec, "node-noroc2027")
+    assert eligible is False
+    assert "declares no home node" in reason
 
 
 # --- conditions --------------------------------------------------------------

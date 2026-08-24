@@ -325,6 +325,51 @@ def test_malformed_operator_contract_version():
     assert any(e.field == "operator.contractVersion" for e in errors)
 
 
+# --- contractVersion 2 pass-through (card 90b5b277 Phase 2) -----------------
+
+
+def test_v2_manifest_operator_facet_builds_v2_spec():
+    manifest = _v11_manifest()
+    manifest["operator"]["contractVersion"] = 2
+    manifest["operator"]["endpoint"] = "https://100.64.0.100:9392/operator/v1"
+    manifest["operator"]["node"] = "node-100"
+    manifest["operator"]["transport"] = "http"
+    spec = ma.operatorapp_from_manifest(manifest)
+    assert spec["contractVersion"] == 2
+    assert spec["endpoint"] == "https://100.64.0.100:9392/operator/v1"
+    assert spec["node"] == "node-100"
+    assert spec["transport"] == "http"
+
+
+def test_v1_manifest_declaring_endpoint_is_a_manifest_error():
+    manifest = _v11_manifest()
+    manifest["operator"]["endpoint"] = "https://100.64.0.100:9392/operator/v1"
+    errors = ma.validate_manifest(manifest)
+    assert any(e.field == "operator.endpoint" for e in errors)
+    with pytest.raises(OperatorappSpecError):
+        ma.operatorapp_from_manifest(manifest)
+
+
+def test_v2_manifest_bad_transport_is_a_manifest_error():
+    manifest = _v11_manifest()
+    manifest["operator"]["contractVersion"] = 2
+    manifest["operator"]["transport"] = "carrier-pigeon"
+    errors = ma.validate_manifest(manifest)
+    assert any(e.field == "operator.transport" for e in errors)
+    with pytest.raises(OperatorappSpecError):
+        ma.operatorapp_from_manifest(manifest)
+
+
+def test_v2_manifest_with_no_v2_fields_is_unaffected():
+    manifest = _v11_manifest()
+    manifest["operator"]["contractVersion"] = 2
+    assert ma.validate_manifest(manifest) == []
+    spec = ma.operatorapp_from_manifest(manifest)
+    assert spec["endpoint"] is None
+    assert spec["node"] is None
+    assert spec["transport"] is None
+
+
 def test_unknown_install_step_kind():
     manifest = _v12_manifest()
     manifest["install"]["steps"] = [{"kind": "reformat_planet"}]

@@ -225,6 +225,14 @@ def operatorapp_from_manifest(manifest: Mapping[str, Any]) -> dict:
             "cli": operator.get("cli"),
             "repos": list(operator.get("repos", [])),
             "contractVersion": operator.get("contractVersion", 1),
+            # v2 only (card 90b5b277 Phase 2): a manifest whose operator facet
+            # declares endpoint/node/transport builds a v2 Operatorapp spec the
+            # same way the built-in registry could; normalize_operatorapp_spec
+            # rejects them outright on a contractVersion 1 manifest, so a
+            # manifest cannot smuggle remote semantics into a v1 registration.
+            "endpoint": operator.get("endpoint"),
+            "node": operator.get("node"),
+            "transport": operator.get("transport"),
             "proposedStandardActions": list(operator.get("proposedStandardActions", [])),
             "conditions": list(operator.get("conditions", [])),
         }
@@ -388,6 +396,39 @@ def _validate_operator(operator: Any) -> list[ManifestError]:
                 "contractVersion must be an int",
             )
         )
+    # v2 fields (card 90b5b277 Phase 2): declaring any of endpoint/node/transport
+    # on a contractVersion 1 facet is caught HERE with a manifest-shaped error,
+    # rather than surfacing as a bare OperatorappSpecError only once
+    # operatorapp_from_manifest calls normalize_operatorapp_spec.
+    v2_fields = {f: operator.get(f) for f in ("endpoint", "node", "transport")}
+    if isinstance(contract_version, int) and contract_version < 2:
+        present = [f for f, v in v2_fields.items() if v is not None]
+        if present:
+            errors.append(
+                ManifestError(
+                    "operator",
+                    f"operator.{present[0]}",
+                    f"{present!r} require operator.contractVersion >= 2",
+                )
+            )
+    else:
+        for field in ("endpoint", "node"):
+            value = v2_fields[field]
+            if value is not None and (not isinstance(value, str) or not value):
+                errors.append(
+                    ManifestError(
+                        "operator", f"operator.{field}", f"{field} must be a non-empty str"
+                    )
+                )
+        transport = v2_fields["transport"]
+        if transport is not None and transport not in operatorapp.TRANSPORTS:
+            errors.append(
+                ManifestError(
+                    "operator",
+                    "operator.transport",
+                    f"transport must be one of {sorted(operatorapp.TRANSPORTS)}",
+                )
+            )
     for list_field in ("conditions", "proposedStandardActions", "repos"):
         value = operator.get(list_field, [])
         if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):

@@ -98,6 +98,146 @@ def test_seat_lane_raising_adapter_is_error():
     assert "nope" in lane["detail"]
 
 
+# ── cli-lane precedence (card 90b5b277 Phase 2) ─────────────────────────────
+
+
+def test_resolve_cli_lane_v1_spec_execs_cli_regardless_of_node():
+    # contractVersion defaults to 1: byte-identical to observe_via_cli, on
+    # ANY local_node, exactly as before this function existed.
+    ran = []
+
+    def fake_run(argv, timeout):
+        ran.append(argv)
+        return (0, json.dumps({"conditions": [{"type": "A", "status": "True"}]}), "")
+
+    spec = {"name": "cmdb", "cli": "sh -c x", "conditions": ["A"]}
+    lane = eyes.resolve_cli_lane(spec, ["A"], PWT, local_node="node-anywhere", run=fake_run)
+    assert lane["state"] == "ok"
+    assert ran, "v1 spec must still exec cli locally"
+
+
+def test_resolve_cli_lane_v2_spec_on_home_node_execs_cli():
+    ran = []
+
+    def fake_run(argv, timeout):
+        ran.append(argv)
+        return (0, json.dumps({"conditions": [{"type": "A", "status": "True"}]}), "")
+
+    spec = {
+        "name": "skgateway",
+        "contractVersion": 2,
+        "node": "node-noroc2027",
+        "cli": "sh -c x",
+        "conditions": ["A"],
+    }
+    lane = eyes.resolve_cli_lane(spec, ["A"], PWT, local_node="node-noroc2027", run=fake_run)
+    assert lane["state"] == "ok"
+    assert ran
+
+
+def test_resolve_cli_lane_v2_spec_on_a_different_node_never_execs():
+    # This is the load-bearing assertion for "a remote seat never execs
+    # spec.cli itself again": the injected run() must not be called at all.
+    ran = []
+
+    def fake_run(argv, timeout):
+        ran.append(argv)
+        return (0, "{}", "")
+
+    spec = {
+        "name": "skgateway",
+        "contractVersion": 2,
+        "node": "node-100",
+        "cli": "sh -c x",
+        "conditions": ["A"],
+    }
+    lane = eyes.resolve_cli_lane(spec, ["A"], PWT, local_node="node-noroc2027", run=fake_run)
+    assert lane["state"] == "remote-node"
+    assert lane["conditions"] == []
+    assert not ran, "a remote seat must never exec spec.cli for another node's app"
+    assert "node-100" in lane["detail"]
+    assert "node-noroc2027" in lane["detail"]
+
+
+def test_resolve_cli_lane_v2_spec_with_endpoint_never_execs_cli_even_on_home_node():
+    # endpoint is precedence #1, authoritative: it wins even when this IS the
+    # home node and the cli would otherwise be eligible.
+    ran = []
+
+    def fake_run(argv, timeout):
+        ran.append(argv)
+        return (0, "{}", "")
+
+    spec = {
+        "name": "skgateway",
+        "contractVersion": 2,
+        "node": "node-noroc2027",
+        "endpoint": "https://100.64.0.5:9392/operator/v1",
+        "cli": "sh -c x",
+        "conditions": ["A"],
+    }
+    lane = eyes.resolve_cli_lane(spec, ["A"], PWT, local_node="node-noroc2027", run=fake_run)
+    assert lane["state"] == "endpoint-pending"
+    assert not ran, "endpoint outranks cli-local even when this is the home node"
+    assert "100.64.0.5" in lane["detail"]
+
+
+def test_resolve_cli_lane_no_cli_declared_is_unchanged():
+    spec = {"name": "fleet", "conditions": []}
+    lane = eyes.resolve_cli_lane(spec, [], PWT, local_node="node-anywhere")
+    assert lane["state"] == "no-cli"
+
+
+def test_resolve_cli_lane_explicit_cli_none_and_no_endpoint_is_graceful():
+    # PR #185 registers "fleet" with cli=None ON PURPOSE (inventing a cli
+    # string would trade "no registration" for a lying "cli-error"). The v2
+    # precedence resolution must treat an explicit None the same as an
+    # absent key, never raise, and never mistake it for a malformed spec.
+    spec = {
+        "name": "fleet",
+        "cli": None,
+        "endpoint": None,
+        "node": None,
+        "transport": None,
+        "contractVersion": 1,
+        "conditions": [],
+    }
+    lane = eyes.resolve_cli_lane(spec, [], PWT, local_node="node-anywhere")
+    assert lane["state"] == "no-cli"
+    assert lane["conditions"] == []
+
+
+def test_assess_threads_local_node_into_cli_lane_resolution(tmp_path):
+    # End-to-end: a v2 app homed elsewhere shows up as remote-node, not BLIND
+    # from a crash and not silently executed.
+    paths = _tmp_fleet(tmp_path)
+    writer = store.Writer(role="operator", node="cli", identity="test")
+    store.write_spec(
+        paths,
+        "operatorapp",
+        "skgateway",
+        {
+            "name": "skgateway",
+            "contractVersion": 2,
+            "node": "node-100",
+            "cli": "skgateway operator",
+            "conditions": ["UpstreamServing"],
+        },
+        writer=writer,
+    )
+    res = eyes.assess(
+        paths,
+        run=lambda argv, t: (0, "{}", ""),
+        adapters={},
+        problem_when_true=PWT,
+        skcapstone_home=tmp_path / "nohome",
+        itil_home=tmp_path / "nohome",
+        local_node="node-noroc2027",
+    )
+    (app,) = [a for a in res["apps"] if a["name"] == "skgateway"]
+    assert app["cli_lane"]["state"] == "remote-node"
+
+
 # ── lane merge: conflicts and verdicts ──────────────────────────────────────
 
 

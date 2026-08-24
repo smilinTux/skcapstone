@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from ..fleet import store
+from ..fleet import operatorapp, store
 from ..fleet.paths import FleetPaths
 
 SCHEMA = "skoperator.eyes/v1"
@@ -58,7 +58,21 @@ CLI_TIMEOUT = 15.0
 SEAT_TIMEOUT = 10.0
 
 _UNREACHABLE = frozenset(
-    {"no-cli", "cli-error", "timeout", "unparseable", "no-adapter", "error", "unregistered"}
+    {
+        "no-cli",
+        "cli-error",
+        "timeout",
+        "unparseable",
+        "no-adapter",
+        "error",
+        "unregistered",
+        # Phase 2 (card 90b5b277) precedence states: a v2 spec whose home
+        # node is not this process, or whose endpoint isn't consumed yet.
+        # Neither is "healthy", "firing", or "unknown-condition" -- both are
+        # "this lane could not be produced here" like every state above.
+        "remote-node",
+        "endpoint-pending",
+    }
 )
 
 
@@ -421,6 +435,65 @@ def disabled_module_notes(extra_modules: list[dict]) -> list[str]:
     ]
 
 
+# ── cli-lane precedence (card 90b5b277 Phase 2) ─────────────────────────────
+
+
+def resolve_cli_lane(
+    spec: dict,
+    declared: list[str],
+    problem_when_true: frozenset,
+    *,
+    local_node: str,
+    timeout: float = CLI_TIMEOUT,
+    run: Callable[[list[str], float], tuple[int, str, str]] | None = None,
+) -> dict:
+    """The cli-lane reading for one Operatorapp spec, honoring the v2 precedence
+    order (docs/OPERATOR_PLANE_MIGRATION.md Phase 2):
+
+      1. ``endpoint`` -- authoritative, remote-capable. A v2 spec that declares
+         one wins outright: this phase ships the schema and the precedence
+         DECISION, not the signed remote transport client (that lands with the
+         first real endpoint registration, Phase 3+), so the reading is
+         ``Unknown`` state ``endpoint-pending`` rather than a fabricated probe.
+      2. ``spec.cli`` executed by the app's HOME-NODE agent only -- the local
+         fallback. Gated by :func:`operatorapp.cli_exec_eligible`: a
+         contractVersion 1 spec (every app registered today) is always
+         eligible, unchanged from before this function existed. A
+         contractVersion 2 spec is eligible ONLY on its declared home node --
+         "a remote seat never execs spec.cli itself again".
+      3. Neither: ``no-cli`` (nothing declared) exactly as before, or
+         ``remote-node`` (declared, but this is not the home node).
+
+    Args:
+        spec: The raw or normalized Operatorapp spec dict.
+        declared: The app's declared condition names.
+        problem_when_true: Condition types that fire on ``True``.
+        local_node: This process's own node name (``fleet.paths.self_node_name()``).
+        timeout / run: passed through to :func:`observe_via_cli`.
+
+    Returns:
+        A cli-lane dict, same shape as :func:`observe_via_cli`'s return.
+    """
+    endpoint = spec.get("endpoint")
+    if endpoint:
+        return {
+            "state": "endpoint-pending",
+            "conditions": [],
+            "detail": (
+                f"endpoint={endpoint!r} declared (contractVersion=2, authoritative); "
+                "the signed remote transport client is not wired until a Phase 3+ "
+                "cutover actually registers one (docs/OPERATOR_PLANE_MIGRATION.md)"
+            ),
+        }
+    cli = str(spec.get("cli", "") or "")
+    if not cli:
+        return {"state": "no-cli", "conditions": [], "detail": "spec declares no cli"}
+    eligible, reason = operatorapp.cli_exec_eligible(spec, local_node)
+    if not eligible:
+        return {"state": "remote-node", "conditions": [], "detail": reason}
+    return observe_via_cli(cli, declared, problem_when_true, timeout=timeout, run=run)
+
+
 # ── the one pass ────────────────────────────────────────────────────────────
 
 
@@ -435,6 +508,7 @@ def assess(
     run: Callable[[list[str], float], tuple[int, str, str]] | None = None,
     adapters: dict[str, Callable[..., dict]] | None = None,
     problem_when_true: frozenset | None = None,
+    local_node: str | None = None,
 ) -> dict:
     """One read-only pass over the whole operator estate. Never writes anything.
 
@@ -445,11 +519,19 @@ def assess(
         skcapstone_home: home holding ``shell/modules.json`` (same default).
         cli_timeout / seat_timeout: hard per-app deadlines, seconds.
         now_iso / run / adapters / problem_when_true: injectable for tests.
+        local_node: This process's own node name, for the v2 home-node
+            eligibility check (:func:`resolve_cli_lane`). Defaults to
+            ``fleet.paths.self_node_name()``; every app registered in
+            production is contractVersion 1, which never consults this value.
 
     Returns:
         The ``skoperator.eyes/v1`` assessment dict (see ``render`` for shape use).
     """
     now = now_iso or _now_iso()
+    if local_node is None:
+        from ..fleet.paths import self_node_name
+
+        local_node = self_node_name()
     if adapters is None or problem_when_true is None:
         from . import loop  # deferred: the loop pulls in the whole seat
 
@@ -475,12 +557,9 @@ def assess(
             continue
         declared = [str(c) for c in spec.get("conditions", []) or []]
         cli = str(spec.get("cli", "") or "")
-        if cli:
-            cli_lane = observe_via_cli(
-                cli, declared, problem_when_true, timeout=cli_timeout, run=run
-            )
-        else:
-            cli_lane = {"state": "no-cli", "conditions": [], "detail": "spec declares no cli"}
+        cli_lane = resolve_cli_lane(
+            spec, declared, problem_when_true, local_node=local_node, timeout=cli_timeout, run=run
+        )
         seat_lane = observe_via_seat(
             name, adapters, declared, problem_when_true, paths, now, timeout=seat_timeout
         )
@@ -632,6 +711,8 @@ _STATE_SHORT = {
     "no-adapter": "NO ADAPTER",
     "error": "ERR",
     "unregistered": "NOT REGISTERED",
+    "remote-node": "REMOTE (no local exec)",
+    "endpoint-pending": "ENDPOINT (unconsumed)",
 }
 
 
