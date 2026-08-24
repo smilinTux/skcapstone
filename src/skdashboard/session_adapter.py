@@ -24,6 +24,8 @@ COOKIE_NAME = "__Host-skdashboard_session"
 SCOPES = "openid skdashboard.read skdashboard.events.read"
 SESSION_TTL = 8 * 60 * 60
 LOGIN_TTL = 5 * 60
+MAX_LOGIN_GLOBAL = 128
+MAX_LOGIN_SOURCE = 16
 
 
 def _digest(value: str) -> str:
@@ -45,6 +47,12 @@ class SessionConfig:
             raise ValueError("issuer must be an exact HTTPS origin")
         if not self.redirect_uri.startswith("https://") or not self.client_secret:
             raise ValueError("redirect URI and confidential client secret are required")
+
+
+@dataclass(frozen=True)
+class SessionResolution:
+    state: str
+    access_token: str | None = None
 
 
 class OIDCClient:
@@ -87,6 +95,14 @@ class OIDCClient:
                     raise ValueError("nonce mismatch")
         return result
 
+    async def revoke(self, refresh_token: str) -> None:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{self.config.issuer}/oidc/revoke",
+                data={"token": refresh_token, "token_type_hint": "refresh_token", "client_id": "skdashboard", "client_secret": self.config.client_secret},
+            )
+            response.raise_for_status()
+
 
 class EncryptedSessionAdapter:
     """Own opaque cookie handles while CapAuth credentials remain encrypted at rest."""
@@ -123,13 +139,16 @@ class EncryptedSessionAdapter:
                 """
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS login_transactions (
-                    state_hash TEXT PRIMARY KEY, encrypted BLOB NOT NULL, expires_at INTEGER NOT NULL
+                    state_hash TEXT PRIMARY KEY, encrypted BLOB NOT NULL, expires_at INTEGER NOT NULL, source TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS sessions (
                     handle_hash TEXT PRIMARY KEY, encrypted BLOB NOT NULL, expires_at INTEGER NOT NULL
                 );
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(login_transactions)")}
+            if "source" not in columns:
+                connection.execute("ALTER TABLE login_transactions ADD COLUMN source TEXT NOT NULL DEFAULT ''")
         os.chmod(self.database, 0o600)
 
     def backup(self, destination: Path) -> None:
@@ -154,7 +173,7 @@ class EncryptedSessionAdapter:
             Route("/auth/logout", self.logout, methods=["POST"]),
         ]
 
-    async def login(self, _request: Request) -> Response:
+    async def login(self, request: Request) -> Response:
         state, nonce, verifier = _opaque(), _opaque(), _opaque() + _opaque()
         challenge = (
             base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
@@ -162,10 +181,17 @@ class EncryptedSessionAdapter:
             .rstrip("=")
         )
         payload = {"nonce": nonce, "verifier": verifier}
+        now = int(self.clock())
+        source = request.client.host if request.client else "unknown"
         with self._connect() as connection:
+            connection.execute("DELETE FROM login_transactions WHERE expires_at <= ?", (now,))
+            total = connection.execute("SELECT COUNT(*) FROM login_transactions WHERE expires_at > ?", (now,)).fetchone()[0]
+            per_source = connection.execute("SELECT COUNT(*) FROM login_transactions WHERE source = ? AND expires_at > ?", (source, now)).fetchone()[0]
+            if total >= MAX_LOGIN_GLOBAL or per_source >= MAX_LOGIN_SOURCE:
+                return JSONResponse({"error": "login_rate_limited", "retryable": True}, status_code=429, headers={"Retry-After": "60"})
             connection.execute(
-                "INSERT INTO login_transactions VALUES (?, ?, ?)",
-                (_digest(state), self._seal(payload), int(self.clock()) + LOGIN_TTL),
+                "INSERT INTO login_transactions(state_hash, encrypted, expires_at, source) VALUES (?, ?, ?, ?)",
+                (_digest(state), self._seal(payload), now + LOGIN_TTL, source),
             )
         query = urlencode(
             {
@@ -260,21 +286,28 @@ class EncryptedSessionAdapter:
         except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
             return None
 
-    async def resolve(self, request: Request) -> str | None:
+    async def resolve(self, request: Request) -> SessionResolution:
         loaded = self._load(request)
         if loaded is None:
-            return None
+            return SessionResolution("absent")
         handle, record = loaded
         now = int(self.clock())
         if record["access_expires_at"] > now + 15:
-            return record["access_token"]
-        old_encrypted = self._seal(record)
+            return SessionResolution("authenticated", record["access_token"])
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             current = connection.execute(
                 "SELECT encrypted FROM sessions WHERE handle_hash = ?", (_digest(handle),)
             ).fetchone()
             if current is None:
-                return None
+                return SessionResolution("expired")
+            try:
+                current_record = self._open(current["encrypted"])
+            except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
+                return SessionResolution("corrupt")
+            if current_record.get("refreshing"):
+                return SessionResolution("unavailable")
+            old_encrypted = current["encrypted"]
             old_encrypted = current["encrypted"]
             reserved = dict(record)
             reserved["refreshing"] = True
@@ -284,7 +317,7 @@ class EncryptedSessionAdapter:
                 (reserved_encrypted, _digest(handle), old_encrypted),
             ).rowcount
         if changed != 1:
-            return None
+            return SessionResolution("unavailable")
         try:
             token = await self.oidc.exchange(
                 {"grant_type": "refresh_token", "refresh_token": record["refresh_token"]}
@@ -296,14 +329,14 @@ class EncryptedSessionAdapter:
                     "UPDATE sessions SET encrypted = ? WHERE handle_hash = ? AND encrypted = ?",
                     (old_encrypted, _digest(handle), reserved_encrypted),
                 )
-            return None
+            return SessionResolution("unavailable")
         record.update(fresh)
         with self._connect() as connection:
             changed = connection.execute(
                 "UPDATE sessions SET encrypted = ? WHERE handle_hash = ? AND encrypted = ?",
                 (self._seal(record), _digest(handle), reserved_encrypted),
             ).rowcount
-        return record["access_token"] if changed == 1 else None
+        return SessionResolution("authenticated", record["access_token"]) if changed == 1 else SessionResolution("unavailable")
 
     async def session(self, request: Request) -> Response:
         loaded = self._load(request)
@@ -327,6 +360,10 @@ class EncryptedSessionAdapter:
         handle, record = loaded
         if not secrets.compare_digest(request.headers.get("x-csrf-token", ""), record["csrf"]):
             return JSONResponse({"error": "forbidden"}, status_code=403)
+        try:
+            await self.oidc.revoke(record["refresh_token"])
+        except Exception:
+            return JSONResponse({"error": "session_unavailable", "retryable": True}, status_code=503)
         with self._connect() as connection:
             connection.execute("DELETE FROM sessions WHERE handle_hash = ?", (_digest(handle),))
         response = Response(status_code=204)
@@ -336,4 +373,4 @@ class EncryptedSessionAdapter:
         return response
 
 
-__all__ = ["COOKIE_NAME", "EncryptedSessionAdapter", "SessionConfig"]
+__all__ = ["COOKIE_NAME", "EncryptedSessionAdapter", "SessionConfig", "SessionResolution"]

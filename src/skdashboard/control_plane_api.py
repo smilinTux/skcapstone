@@ -358,7 +358,15 @@ def _protected_handler(
         header = request.headers.get("authorization", "")
         if session_resolver is not None and not header:
             try:
-                bearer = await session_resolver(request)
+                resolved = await session_resolver(request)
+                state = getattr(resolved, "state", None)
+                if state in {"corrupt", "unavailable"}:
+                    counters["denied"] += 1
+                    response = _error(request, 503, "SESSION_UNAVAILABLE", "session authorization is temporarily unavailable")
+                    response.headers["Retry-After"] = "5"
+                    response.headers["Cache-Control"] = "no-store"
+                    return response
+                bearer = getattr(resolved, "access_token", resolved)
             except Exception:
                 bearer = None
             if bearer:
