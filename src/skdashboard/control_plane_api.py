@@ -345,6 +345,7 @@ def _protected_handler(
     decision_authorizer,
     invocation_factory,
     counters,
+    session_resolver=None,
 ):
     async def wrapped(request):
         _clear_decision(request)
@@ -355,6 +356,13 @@ def _protected_handler(
             response.headers["Cache-Control"] = "no-store"
             return response
         header = request.headers.get("authorization", "")
+        if session_resolver is not None and not header:
+            try:
+                bearer = await session_resolver(request)
+            except Exception:
+                bearer = None
+            if bearer:
+                header = f"Bearer {bearer}"
         if not header.startswith("Bearer ") or header.count(" ") != 1:
             counters["denied"] += 1
             response = _error(request, 401, "UNAUTHORIZED", "a bearer capability is required")
@@ -422,6 +430,7 @@ def routes(
     project_provider=None,
     schedule_provider=None,
     reliability_provider=None,
+    session_resolver=None,
     architecture_provider=None,
 ):
     if (decision_authorizer is None) != (invocation_factory is None):
@@ -467,6 +476,7 @@ def routes(
                 decision_authorizer=decision_authorizer,
                 invocation_factory=invocation_factory,
                 counters=counters,
+                session_resolver=session_resolver,
             )
         )
 

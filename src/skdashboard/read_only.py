@@ -84,6 +84,7 @@ def create_read_only_app(
     project_provider=None,
     schedule_provider=None,
     reliability_provider=None,
+    session_adapter=None,
     architecture_provider=None,
 ) -> Starlette:
     """Build the least-privilege app without importing legacy route tables."""
@@ -99,7 +100,8 @@ def create_read_only_app(
         architecture_provider = ArchitectureProjectionProvider()
 
     async def index(_request):
-        return HTMLResponse((static_dir / "read_only.html").read_text(encoding="utf-8"))
+        name = "read_only_session.html" if session_adapter is not None else "read_only.html"
+        return HTMLResponse((static_dir / name).read_text(encoding="utf-8"))
 
     async def manifest(request):
         base = str(request.base_url).rstrip("/")
@@ -128,9 +130,12 @@ def create_read_only_app(
             project_provider=project_provider,
             schedule_provider=schedule_provider,
             reliability_provider=reliability_provider,
+            session_resolver=session_adapter.resolve if session_adapter else None,
             architecture_provider=architecture_provider,
         )
     )
+    if session_adapter is not None:
+        routes.extend(session_adapter.routes())
     app = Starlette(routes=routes)
     app.add_middleware(SecureTransportMiddleware)
     return app
@@ -143,14 +148,44 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=7778)
     parser.add_argument("--tls-certfile", type=Path, required=True)
     parser.add_argument("--tls-keyfile", type=Path, required=True)
+    parser.add_argument("--session-db", type=Path)
+    parser.add_argument("--session-key-file", type=Path)
+    parser.add_argument("--oidc-issuer")
+    parser.add_argument("--oidc-redirect-uri")
+    parser.add_argument("--oidc-client-secret-file", type=Path)
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
 
+    session_values = (
+        args.session_db,
+        args.session_key_file,
+        args.oidc_issuer,
+        args.oidc_redirect_uri,
+        args.oidc_client_secret_file,
+    )
+    if any(session_values) and not all(session_values):
+        parser.error("all session and OIDC options are required together")
+    session_adapter = None
+    if all(session_values):
+        from .session_adapter import EncryptedSessionAdapter, SessionConfig
+
+        if args.oidc_client_secret_file.stat().st_mode & 0o077:
+            parser.error("OIDC client secret file must be mode 0600")
+        session_adapter = EncryptedSessionAdapter(
+            args.session_db,
+            args.session_key_file,
+            SessionConfig(
+                issuer=args.oidc_issuer,
+                redirect_uri=args.oidc_redirect_uri,
+                client_secret=args.oidc_client_secret_file.read_text(encoding="utf-8").strip(),
+            ),
+        )
+
     import uvicorn
 
     uvicorn.run(
-        create_read_only_app(args.home),
+        create_read_only_app(args.home, session_adapter=session_adapter),
         host=args.host,
         port=args.port,
         ssl_certfile=str(args.tls_certfile),
