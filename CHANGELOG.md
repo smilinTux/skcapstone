@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a same-origin, allowlisted, schema-validating read-only control-plane
+  client, deterministic public-synthetic fixture server, and MCP resources for
+  projections and immutable report snapshots without MCP tools or command access.
+
 - Added the protected read-only Reports workspace at
   `/control-plane/reports`, with schema-valid content-addressed snapshots,
   write-once offline storage, explicit comparison, and reproducibility evidence.

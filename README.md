@@ -43,6 +43,37 @@ Full deploy and rollback: [`SOP.md`](SOP.md) section 5.
 ~/.skenv/bin/python -m pytest tests/ -q
 ```
 
+## Read-only control-plane client and MCP resources
+
+`skdashboard.control_plane_client.ControlPlaneClient` discovers the canonical
+same-origin API from `/.well-known/skworld-module.json`, accepts a caller-owned
+short-lived bearer, allowlists the frozen V1.1 read and insight-query routes,
+and validates every successful response against packaged copies of the
+published JSON Schemas. It supports conditional reads, bounded opaque-cursor
+pagination, event resume, saved-scope reads, metric-family selection, exact
+report snapshots, insight proposals, and evidence-reference extraction.
+
+For development without production state, use
+`skdashboard.control_plane_fixture.create_fixture_app()` with
+`httpx.ASGITransport`. The fixture is public synthetic, deterministic, and
+contains deliberate model abstention rather than live inference.
+
+`skdashboard-control-plane-mcp` publishes fixed read-only MCP resources and one
+hash-addressed report template. It publishes no MCP tools, command preview,
+authorization, shell, filesystem, connector, or arbitrary endpoint access. The
+bearer file must be mode `0600` and is never returned in resource metadata.
+
+```bash
+skdashboard-control-plane-mcp \
+  --discovery-url https://DASHBOARD/.well-known/skworld-module.json \
+  --bearer-file /run/user/$(id -u)/skdashboard-read.cap
+```
+
+The frozen contract currently advertises insight query while a deployed
+runtime may not yet serve it, and older overview projections may use scope
+fields outside the frozen V1.1 schema. The client intentionally fails closed
+in either case instead of accepting an unvalidated response.
+
 ## ATLAS operator cockpit
 
 `/cockpit` includes a read-only operator plane backed by
