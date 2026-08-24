@@ -24,6 +24,19 @@ from skdashboard.control_plane_adapters import (
 from skdashboard.dashboard import create_app
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+READ_HEADERS = {
+    "Authorization": "Bearer valid-read",
+    "Origin": "http://10.0.0.139:7778",
+}
+
+
+def _read_app():
+    return create_app(
+        Path("/tmp/does-not-matter"),
+        control_plane_authorizer=lambda bearer, capability, _target: (
+            bearer == "valid-read" and capability == "skdashboard.read"
+        ),
+    )
 
 
 def _all_readers(*, observed_at: str | None = None) -> dict:
@@ -232,11 +245,12 @@ def test_default_readers_keep_populations_and_measurement_lanes_separate(tmp_pat
 def test_overview_etag_ignores_delivery_clocks_but_changes_with_source() -> None:
     observed_at = datetime.now(timezone.utc).isoformat()
     readers = _all_readers(observed_at=observed_at)
-    client = TestClient(create_app(Path("/tmp/does-not-matter")))
+    client = TestClient(_read_app())
     with patch("skdashboard.control_plane_adapters.default_readers", return_value=readers):
-        first = client.get("/api/v1/overview")
+        first = client.get("/api/v1/overview", headers=READ_HEADERS)
         unchanged = client.get(
-            "/api/v1/overview", headers={"If-None-Match": first.headers["etag"]}
+            "/api/v1/overview",
+            headers={**READ_HEADERS, "If-None-Match": first.headers["etag"]},
         )
     assert first.status_code == 200
     assert unchanged.status_code == 304
@@ -247,7 +261,8 @@ def test_overview_etag_ignores_delivery_clocks_but_changes_with_source() -> None
     )
     with patch("skdashboard.control_plane_adapters.default_readers", return_value=changed):
         response = client.get(
-            "/api/v1/overview", headers={"If-None-Match": first.headers["etag"]}
+            "/api/v1/overview",
+            headers={**READ_HEADERS, "If-None-Match": first.headers["etag"]},
         )
     assert response.status_code == 200
     assert response.headers["etag"] != first.headers["etag"]
@@ -317,13 +332,13 @@ def test_empty_or_malformed_owner_folds_never_become_current_zero(tmp_path: Path
 
 
 def test_http_timeout_is_bounded_and_projection_clock_follows_source_clock() -> None:
-    client = TestClient(create_app(Path("/tmp/does-not-matter")))
+    client = TestClient(_read_app())
     with patch(
         "skdashboard.control_plane_adapters.default_readers",
         return_value={SPECS[0].adapter_id: Reader(failure="timeout")},
     ):
         started = time.monotonic()
-        response = client.get("/api/v1/overview")
+        response = client.get("/api/v1/overview", headers=READ_HEADERS)
         elapsed = time.monotonic() - started
     assert elapsed < 1.4
     assert response.status_code == 200
