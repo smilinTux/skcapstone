@@ -40,6 +40,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and `own_fingerprint()` (additive) so a claimed identity can be pinned to
   its own key rather than "any roster key verifies".
 
+- **Card 90b5b277 (epic c880017b): registration contract v2, P2 of the
+  `skoperator.remote/v1` migration
+  (`docs/OPERATOR_PLANE_MIGRATION.md` Phase 2, schema only).**
+  `Operatorapp.spec.contractVersion: 2` adds `endpoint`, `node`, and
+  `transport` (`fleet/operatorapp.py`, `normalize_operatorapp_spec`),
+  store-side validated: a contractVersion 1 spec (every one of the 8 apps
+  registered in production today) now REJECTS all three v2 fields outright,
+  making "v1 means cli-local" an enforced invariant instead of just
+  documentation; a contractVersion 2 spec validates `endpoint`/`node` as
+  non-empty strings and `transport` as one of `{"http", "cli-local"}`.
+  `operator_seat.eyes`, `operator_seat.discovery`, and
+  `operator_seat.manifest_adapter` learn the precedence order the standard
+  ratifies: (1) `endpoint`, authoritative when declared -- renders
+  `Unknown (endpoint-pending)`, since the signed remote transport client is
+  Phase 3+ work once a real endpoint is registered, not fabricated here; (2)
+  `spec.cli` exec'd by the app's HOME-NODE agent only, gated by the new
+  `fleet.operatorapp.cli_exec_eligible(spec, local_node)` -- a contractVersion
+  2 spec homed on a different node (or with no declared node at all) is NEVER
+  exec'd locally and renders `remote-node`, proven by tests asserting the
+  injected subprocess runner is never called; (3) the seat's built-in
+  adapter, unchanged, still advisory-only for conflict detection. Every
+  contractVersion 1 app is byte-identical before and after (verified via
+  `skcapstone atlas eyes`: zero BLIND, zero CONFLICT, zero lane
+  disagreements, both before and after this change). Out of scope for this
+  card by design: no per-app cutover, no endpoint actually registered on any
+  live Operatorapp object, `sknoded`'s `operator_http.py` HTTP surface
+  untouched (it wasn't named in the precedence requirement and stays exactly
+  as P1 shipped it).
+
 ### Fixed
 
 - **Card 90b5b277: skdashboard, fleet, and skbrain made observable (ATLAS
