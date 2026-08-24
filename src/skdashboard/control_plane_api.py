@@ -69,9 +69,17 @@ def _visibility() -> dict:
     return {"state": "visible", "authorization": "authorized"}
 
 
-def _envelope(request, owner: str, items: list[dict], errors: list[str], *, observed_at=None):
+def _envelope(
+    request,
+    owner: str,
+    items: list[dict],
+    errors: list[str],
+    *,
+    observed_at=None,
+    truth_state=None,
+):
     projected_at = _now()
-    truth = "partial" if errors else ("current" if items else "unknown")
+    truth = truth_state or ("partial" if errors else ("current" if items else "unknown"))
     request_id = request.headers.get("x-request-id", "")[:128] or uuid4().hex
     envelope = {
         "schema_version": SCHEMA_VERSION,
@@ -135,7 +143,20 @@ def _response(request, body: dict):
     }
     for error in projection.get("errors") or []:
         error.pop("request_id", None)
-    etag_bytes = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
+    def source_projection(value):
+        if isinstance(value, dict):
+            return {
+                key: source_projection(item)
+                for key, item in value.items()
+                if key not in {"projected_at", "observed_at", "age_seconds", "request_id"}
+            }
+        if isinstance(value, list):
+            return [source_projection(item) for item in value]
+        return value
+
+    etag_bytes = json.dumps(
+        source_projection(projection), sort_keys=True, separators=(",", ":")
+    ).encode()
     etag = f'"{hashlib.sha256(etag_bytes).hexdigest()}"'
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
@@ -247,10 +268,24 @@ def routes(home: Path, *, board_reader, health_reader):
             return _error(request, 400, "INVALID_QUERY", str(exc))
 
     async def overview(request):
-        board_data = board_reader(home)
-        errors = [board_data["error"]] if board_data.get("error") else []
-        items = [] if errors else [{"board": board_data.get("summary", {})}]
-        return _response(request, _envelope(request, "skdashboard", items, errors))
+        from .control_plane_adapters import default_readers, project_estate
+
+        items = project_estate(default_readers(home))
+        errors = [
+            f"{item['adapter_id']}: {error['code']}"
+            for item in items
+            for error in item["errors"]
+        ]
+        states = {item["truth_state"] for item in items}
+        truth = (
+            "current"
+            if states == {"current"}
+            else ("unavailable" if states == {"unavailable"} else "partial")
+        )
+        return _response(
+            request,
+            _envelope(request, "skdashboard", items, errors, truth_state=truth),
+        )
 
     async def events(request):
         raw_cursor = request.query_params.get("cursor") or request.headers.get("last-event-id")
