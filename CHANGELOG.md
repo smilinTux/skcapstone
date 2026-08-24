@@ -9,6 +9,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card 90b5b277 (epic c880017b): `skcapstone atlas soak`, the Phase 3
+  dual-read soak harness (`docs/OPERATOR_PLANE_MIGRATION.md` Phase 3,
+  `operator_seat/soak.py`).** Phase 3's per-app cutover recipe ("register
+  endpoint -> dual-read for one week -> zero LaneConflict and zero
+  Unknown-regression -> demote old lane") had no instrument to run it against;
+  this ships one, built entirely on `operator_seat.eyes` rather than a third
+  probe. `atlas soak record` calls `eyes.assess` for one read-only pass,
+  reduces it to a compact sample (per app: the ENDPOINT lane, derived from
+  eyes' `cli_lane` under its v2 precedence, versus the OLD lane, eyes'
+  `seat_lane` -- exactly the pairing Phase 5 already names "advisory through
+  dual-read, deleted after two clean weeks"), and appends it to an
+  append-only, per-node-per-day file under `<fleet-root>/atlas/soak/`,
+  pruning samples older than `--retention-days` (default 21) on every call.
+  `atlas soak report` reads a window back and answers the two gate questions
+  per app -- **LaneConflict count** (endpoint and old lane disagreeing on a
+  condition both actually read) and **Unknown-regression count** (old lane
+  had True/False, endpoint reads Unknown -- the dangerous, signal-losing
+  direction) -- plus a `READY`/`BLOCKED`/`SOAKING`/`PENDING`/`NO-ENDPOINT`
+  verdict per app (`READY` requires zero of both gates across the ratified
+  one-week span AND a sample-count floor, both configurable). Unknown stays
+  three distinct, never-collapsed flavours: `no-endpoint-registered` (no app
+  has one yet -- today's universal, correctly-reported state), an unreachable
+  endpoint (`endpoint-unreachable`, currently always `endpoint-pending` since
+  the Phase 3+ transport client doesn't exist), and a per-condition `Unknown`
+  inside an otherwise-`ok` endpoint reading. Read-only and freeze-independent
+  by construction (built on `eyes.assess`, which already is both): never
+  calls `act`, never writes to `fleet/objects/`, never touches the freeze
+  file or `SKOPERATOR_HTTP`. A soak with zero endpoints registered anywhere
+  (today's live state) reports "no soak samples yet" / `NO-ENDPOINT` for
+  every app rather than a false-clean `READY`.
+
 - **Card 90b5b277 (epic c880017b): `sknoded` grows a read-only operator-plane
   HTTP surface, P1 of the `skoperator.remote/v1` migration
   (`docs/OPERATOR_PLANE_REMOTE_STANDARD.md`, PR #179).** `sknoded` now serves
