@@ -1,8 +1,8 @@
 # SKCP-00 V1.1.3 approval attribution R3
 
 Card: `026d71a5`
-Verdict: `PASS`
-Reviewed revision: `37532d3f7e67427845b3d0411a9e60ffd006bc81`
+Verdict: `FAIL`
+Reviewed revision: `01ae8021e1a070df53fa6fc283ad10df0a4a7ac9`
 
 ## Scope and independence
 
@@ -25,6 +25,25 @@ tests, and live gates without repairing any reviewed artifact.
   `4eec9f3211779a24e1299c42b3f762a395c578e39b99f466af0574941b96a42e`
 - F11 attribution supersession:
   `1265c0df4edfdd4f722df028ae430f0b289decd97c5d1b9c94a10654020d8f57`
+- Concurrent approval source receipt:
+  `d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18`
+
+## Blocking finding R1: unattested alternate source text
+
+Concurrent PR #40 merged while R3 was running. Its machine-readable source
+receipt records a shorter user message than the exact current-gate approval
+preserved in the first record and F11. It labels the first approval and F11 as
+nonverbatim or false expansions.
+
+The receipt itself has status `proposed_for_exact_human_attestation` and names
+human attestation card `651f68fc`. That gate is not complete. The receipt also
+lacks a stable source message identifier and timestamp. R3 cannot select one
+of two contradictory alleged user messages or treat a proposed receipt as an
+approved authority source.
+
+The exact human source must be resolved by the declared human attestation gate
+and an append-only repair if the receipt is wrong. Until then, the approval
+chain is not internally consistent and R3 cannot PASS.
 
 ## Attribution result
 
@@ -68,11 +87,11 @@ Live CardStore parity remains unsafe and was not reconciled:
 - missing: `272`
 - open-count drift: `10`, above threshold `5`
 
-This PASS authorizes only completion of R3 card `026d71a5`. It does not
-complete the prior failed R2 record, authorize deployment, or clear the parity
-gate.
+This FAIL authorizes no completion, deployment, or parity clearance. R3 card
+`026d71a5` must remain in review.
 
 ## Verdict
 
-`PASS`. F11 closes the approval-attribution blocker through an exact,
-append-only supersession with sensitive tests and unchanged predecessor bytes.
+`FAIL`. The reviewed F11 bytes and tests are sound, but the later unattested
+machine receipt reopens the attribution conflict with a different alleged
+source message.
