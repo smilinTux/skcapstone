@@ -126,6 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failed closed unknown, missing, blank, and whitespace authorization-preview
+  URL states, and added an append-only approval authority projection that
+  preserves V1 and H4 while classifying unsupported V2, H5, and R4 claims.
+
 - Hardened the V1.1 control-plane contracts with distinct unreachable truth,
   nonempty evidence and watermark requirements, nested insight grounding, and
   ready mutating preview target and version invariants. Proposed preview-action
