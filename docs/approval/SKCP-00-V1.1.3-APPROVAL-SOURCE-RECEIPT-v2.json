@@ -1,0 +1,76 @@
+{
+  "receipt_version": "2.0.0",
+  "status": "proposed_for_exact_human_attestation",
+  "card_id": "8f2a2cf3",
+  "human_attestation_card_id": "8a2331a2",
+  "independent_review_card_id": "526bb17f",
+  "source": {
+    "kind": "conversation_user_message",
+    "message_id": null,
+    "message_timestamp": null,
+    "unavailable_metadata_reason": "The conversation interface exposed the message content but no stable source message identifier or source timestamp.",
+    "raw_markdown": "> I APPROVE SKCP-00 V1.1.3 manifest SHA256 9d06d085d4297cbad9a2f018daba091de011b98e3ed8eb788b59f80b8d36c4fb at release v0.1.29 and merge\n  > revision e39b1b4cf2d546ea2c309174cce30b69eb43373c. I confirm the archived PNG lineage narrative matches the retained bytes and hashes. This\n  > authorizes only completion of 9ad1eeb8 and independent review 39085b32. It does not authorize deployment, activation, external action,\n  > protected Matter access, board reconciliation, or any safety-gate bypass.",
+    "raw_markdown_sha256": "2d3c419f9b86f39305b2c82ca349314326c89c59be51fba00853155b41d7443d"
+  },
+  "normalization": {
+    "rule": "Split lines, trim ASCII whitespace, remove one leading Markdown blockquote marker and following ASCII space from each line, then join the resulting nonempty lines with one ASCII space. Preserve case and punctuation.",
+    "normalized_text": "I APPROVE SKCP-00 V1.1.3 manifest SHA256 9d06d085d4297cbad9a2f018daba091de011b98e3ed8eb788b59f80b8d36c4fb at release v0.1.29 and merge revision e39b1b4cf2d546ea2c309174cce30b69eb43373c. I confirm the archived PNG lineage narrative matches the retained bytes and hashes. This authorizes only completion of 9ad1eeb8 and independent review 39085b32. It does not authorize deployment, activation, external action, protected Matter access, board reconciliation, or any safety-gate bypass.",
+    "normalized_text_sha256": "5979722d8346187273873daaa513f3b40fd5aa952f319376d9b8a76b69c27eec"
+  },
+  "v1_rejection": {
+    "rejected_receipt_path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-v1.json",
+    "rejected_receipt_sha256": "d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18",
+    "reason": "The human owner stated that v1 does not contain the exact approval text and identified the extended V1.1.3 approval as authoritative.",
+    "rejection_raw_markdown_sha256": "b5414e470a897f51eb693070b0e0f0a594e62e64e041eef3ced89ee9ee597cc4",
+    "rejection_normalized_text_sha256": "721f86f20c11dc95c95957aac7aa45cb0fbff6826b3a15fae27e6c98e149ad06"
+  },
+  "decision": {
+    "result": "approve",
+    "candidate": "SKCP-00 V1.1.3",
+    "manifest_sha256": "9d06d085d4297cbad9a2f018daba091de011b98e3ed8eb788b59f80b8d36c4fb",
+    "release": "v0.1.29",
+    "candidate_merge_revision": "e39b1b4cf2d546ea2c309174cce30b69eb43373c",
+    "archived_png_lineage_confirmed": true,
+    "authorized_next_gates": ["complete_9ad1eeb8", "independent_review_39085b32"],
+    "deployment_authorized": false,
+    "external_action_authorized": false
+  },
+  "attribution_supersession": {
+    "authoritative_record_after_attestation": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-v2.json",
+    "predecessors": [
+      {
+        "path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-v1.json",
+        "sha256": "d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18",
+        "attribution_status": "rejected_by_human_owner",
+        "historical_bytes_preserved": true
+      },
+      {
+        "path": "docs/approval/SKCP-00-V1.1.3-LINEAGE-CANDIDATE-APPROVAL-2026-08-24.md",
+        "sha256": "7e4a84c70beb394c58493acb8e5e89ccfae24423dfeaee2351c17cd1fa5efc86",
+        "attribution_status": "exact_extended_approval_preserved",
+        "historical_bytes_preserved": true
+      },
+      {
+        "path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-ATTRIBUTION-SUPERSESSION-2026-08-24.md",
+        "sha256": "1265c0df4edfdd4f722df028ae430f0b289decd97c5d1b9c94a10654020d8f57",
+        "attribution_status": "extended_approval_preserved_pending_v2_attestation",
+        "historical_bytes_preserved": true
+      },
+      {
+        "path": "docs/review/SKCP-00-V1.1.3-APPROVAL-ATTRIBUTION-R3-2026-08-24.md",
+        "sha256": "5e2009970d63adbe3f16d3621c2090d4e7ccd67d04493bcb4b74603a69dad843",
+        "attribution_status": "preserved_fail_finding",
+        "historical_bytes_preserved": true
+      }
+    ]
+  },
+  "non_authorizations": [
+    "deployment",
+    "activation",
+    "restart",
+    "external_action",
+    "protected_matter_access",
+    "board_reconciliation",
+    "gate_bypass"
+  ]
+}

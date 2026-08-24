@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a corrected v2 approval source receipt containing the exact extended
+  V1.1.3 approval and preserving the human rejection of v1.
+
 - Added an independent FAIL review after a concurrent machine-readable source
   receipt introduced a different, unattested approval transcription.
 
