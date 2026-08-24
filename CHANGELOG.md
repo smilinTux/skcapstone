@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an independent FAIL R3 review after an unknown authorization-preview
   URL state rendered ready and false V2/H5/R4 provenance contradicted H4.
 
+- Added an independent PASS review of the corrected V1.1.3 source receipt v2,
+  its exact attestation, rejected v1 history, and remaining deployment gates.
+
 - Recorded the human owner's exact-hash attestation of the corrected V1.1.3
   approval source receipt v2 and continued rejection of v1.
 
