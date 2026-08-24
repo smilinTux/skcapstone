@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the bounded SKCP-20 scope workspace with server-enforced pre-reader
+  validation, safe deep links, expiring local saved views, presentation-only
+  cross-filters, and an accessible read-only command palette.
+
 - Added the live read-only `Now` workspace at `/control-plane/now`, grouping 16
   bounded adapters into 12 truthful estate silos with one-click evidence,
   persistent supported context, explicit unknown baselines, and AI abstention.

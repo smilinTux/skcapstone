@@ -2,17 +2,33 @@
 // agent health, from one /api/overview call. Live-refreshes over SSE.
 import { esc, getJSON, timeShort, avatarColor } from "./api.js";
 import { openCard, initPanel } from "./editor.js";
+import {
+  DEFAULT_CONTEXT, REGISTRY_HASH, REGISTRY_VERSION, SILOS, TRUTH_STATES,
+  apiUrl, listViews, normalizedContext, parseUrl, removeView, responseMatches,
+  safeSearch, saveView, shareUrl,
+} from "./control_plane_scope.js";
 
 const IS_ID = (s) => /^(inc-|prb-|chg-|[0-9a-f]{6,})/i.test(s || "");
+// V1 remains scope: "estate", window: "latest", baseline: "none", service: "all".
 
 const SEV_VAR = { sev1: "sev1", sev2: "sev2", sev3: "sev3", sev4: "sev4" };
 
 let loadEpoch = 0;
+let currentContext = normalizedContext(DEFAULT_CONTEXT);
+let contextBlocked = false;
+let currentQuality = null;
 
 async function load() {
+  if (contextBlocked) return;
   const epoch = ++loadEpoch;
-  const protectedReady = await loadQuality(epoch);
+  clearScopedForTransition();
+  const protectedReady = await loadQuality(epoch, currentContext);
   if (protectedReady !== true) return;
+  if (hasFilters()) {
+    setLegacyVisible(false);
+    return;
+  }
+  setLegacyVisible(true);
   let d;
   try { d = await getJSON("/api/overview"); }
   catch (e) {
@@ -50,23 +66,75 @@ const STATE_ORDER = { unavailable: 0, unreachable: 1, unknown: 2, partial: 3, st
 let estateEvidence = new Map();
 
 function initializeContext() {
-  const query = new URLSearchParams(location.search);
-  const role = ["operator", "project-manager", "architect"].includes(query.get("role")) ? query.get("role") : "operator";
-  document.getElementById("now-role").value = role;
-  const writeUrl = () => {
-    const url = new URL(location.href);
-    url.pathname = "/control-plane/now";
-    url.search = new URLSearchParams({
-      role: document.getElementById("now-role").value,
-      scope: "estate", window: "latest", baseline: "none", service: "all",
-    }).toString();
-    history.replaceState({}, "", url);
-  };
+  const parsed = parseUrl(location.search);
+  if (parsed.ok) applyContext(parsed.context, "replace");
+  else blockContext(parsed.state, parsed.message);
   document.getElementById("now-context").addEventListener("change", () => {
-    writeUrl();
+    currentContext = normalizedContext({
+      role: document.getElementById("now-role").value,
+      scope: document.getElementById("now-scope").value,
+      window: document.getElementById("now-window").value,
+      baseline: document.getElementById("now-baseline").value,
+      service: document.getElementById("now-service").value,
+      selected_silo: document.getElementById("now-selected-silo").value,
+      truth: document.getElementById("now-truth").value,
+      saved_view: "",
+    });
+    contextBlocked = false;
+    applyContext(currentContext, "push");
     load();
   });
-  writeUrl();
+  window.addEventListener("popstate", () => {
+    const next = parseUrl(location.search);
+    if (!next.ok) blockContext(next.state, next.message);
+    else { applyContext(next.context, "none"); load(); }
+  });
+  initializeSavedViews();
+  initializeCommandPalette();
+  return parsed.ok;
+}
+
+function contextLabel() {
+  const silo = ESTATE_SILOS.find((candidate) => candidate.id === currentContext.selected_silo);
+  return `${silo ? silo.label : "Whole authorized estate"}${currentContext.truth ? `, truth ${currentContext.truth.replace("_", " ")}` : ""}`;
+}
+
+function applyContext(context, historyMode) {
+  currentContext = normalizedContext(context);
+  contextBlocked = false;
+  for (const key of ["role", "scope", "window", "baseline", "service", "selected-silo", "truth"]) {
+    document.getElementById(`now-${key}`).value = currentContext[key.replace("-", "_")];
+  }
+  const url = new URL(location.href);
+  url.pathname = "/control-plane/now";
+  url.search = safeSearch(currentContext);
+  if (historyMode === "push") history.pushState({}, "", url);
+  if (historyMode === "replace") history.replaceState({}, "", url);
+  document.querySelectorAll("[data-context-summary]").forEach((node) => { node.textContent = contextLabel(); });
+  document.getElementById("share-link").value = shareUrl(currentContext);
+  refreshSavedViewControls();
+}
+
+function blockContext(state, message) {
+  loadEpoch += 1;
+  contextBlocked = true;
+  currentContext = normalizedContext(DEFAULT_CONTEXT);
+  const url = new URL(location.href);
+  url.pathname = "/control-plane/now";
+  url.search = safeSearch(currentContext);
+  history.replaceState({}, "", url);
+  clearProtectedEstate(message);
+  setLegacyVisible(false);
+  document.getElementById("saved-view-status").textContent = `${state}: ${message} No protected value was retained.`;
+}
+
+function hasFilters() {
+  return Boolean(currentContext.selected_silo || currentContext.truth);
+}
+
+function setLegacyVisible(visible) {
+  document.getElementById("legacy-overview").hidden = !visible;
+  document.getElementById("legacy-details").hidden = !visible;
 }
 
 function combinedState(items) {
@@ -121,7 +189,12 @@ function renderEstate(items) {
     return false;
   }
   estateEvidence = new Map();
-  rows.innerHTML = ESTATE_SILOS.map((silo) => {
+  const visible = ESTATE_SILOS.filter((silo) => {
+    const sources = silo.adapters.map((adapter) => byId.get(adapter));
+    return (!currentContext.selected_silo || silo.id === currentContext.selected_silo)
+      && (!currentContext.truth || combinedState(sources) === currentContext.truth);
+  });
+  rows.innerHTML = visible.map((silo) => {
     const sources = silo.adapters.map((adapter) => byId.get(adapter));
     const state = combinedState(sources);
     const owners = [...new Set(sources.map((item) => item.owner))].join(" + ");
@@ -133,12 +206,13 @@ function renderEstate(items) {
       <td><strong>${esc(silo.label)}</strong><small>Owner: ${esc(owners)}</small></td>
       <td><span class="truth-badge ${esc(state)}"><b aria-hidden="true">${QUALITY_ICON[state]}</b>${esc(state.replace("_", " "))}</span><small>${esc(visibility)}</small></td>
       <td><strong>${esc(signalFor(silo.id, sources))}</strong><small>Source aggregate only; no AI inference</small></td>
-      <td><span class="mono">${esc(silo.metric)}</span><small>definition only; result not projected</small><small>scope estate; window latest; registry source ${esc(metricSource)}${metricSourceHere ? "" : "; source observation appears in another silo"}</small><small>${esc(coverageFor(sources))}</small></td>
+      <td><span class="mono">${esc(silo.metric)}</span><small>definition only; result not projected</small><small>scope estate; window latest; ${esc(contextLabel())}; registry source ${esc(metricSource)}${metricSourceHere ? "" : "; source observation appears in another silo"}</small><small>${esc(coverageFor(sources))}</small></td>
       <td><strong>Unknown</strong><small>No comparable baseline is projected</small></td>
       <td><button class="quality-preview-button estate-evidence-button" type="button" data-silo="${esc(silo.id)}" aria-label="Evidence for ${esc(silo.label)}">Evidence</button></td>
     </tr>`;
-  }).join("");
-  document.getElementById("estate-count").textContent = "12 silos | 16 sources";
+  }).join("") || `<tr><td colspan="6" class="quality-empty">No authorized silo matches this presentation filter. No hidden result is inferred.</td></tr>`;
+  const sourceCount = [...estateEvidence.values()].reduce((total, value) => total + value.sources.length, 0);
+  document.getElementById("estate-count").textContent = `${visible.length} silos | ${sourceCount} sources`;
   rows.querySelectorAll(".estate-evidence-button").forEach((button) => button.addEventListener("click", () => openEstateEvidence(button.dataset.silo, button)));
   return true;
 }
@@ -151,7 +225,7 @@ function openEstateEvidence(siloId, trigger) {
   document.getElementById("estate-evidence-body").innerHTML = `<dl>
     <div><dt>Metric definition</dt><dd class="mono">${esc(evidence.metric)}</dd></div>
     <div><dt>Metric registry source</dt><dd class="mono">${esc(evidence.metricSource)}${evidence.metricSourceHere ? "" : "; projected under another silo, so no result is associated here"}</dd></div>
-    <div><dt>Scope and window</dt><dd>Whole authorized estate; latest source observation; no comparable baseline</dd></div>
+    <div><dt>Scope and window</dt><dd>${esc(contextLabel())}; latest source observation; no comparable baseline</dd></div>
     <div><dt>Truth and visibility</dt><dd>${esc(evidence.state)}; ${esc(evidence.visibility)}</dd></div>
     <div><dt>Sample</dt><dd>${esc(coverageFor(evidence.sources))}</dd></div>
     <div><dt>Uncertainty</dt><dd>Material change and causality are not projected. Conflicting or missing source evidence remains unresolved.</dd></div>
@@ -178,13 +252,15 @@ function clearLegacyOverview(message) {
 
 function clearProtectedEstate(message) {
   estateEvidence = new Map();
-  for (const id of ["estate-evidence", "quality-preview"]) {
+  currentQuality = null;
+  for (const id of ["estate-evidence", "quality-preview", "command-palette"]) {
     const dialog = document.getElementById(id);
     if (dialog.open) dialog.close();
   }
   document.getElementById("estate-evidence-title").textContent = "Estate evidence unavailable";
   document.getElementById("estate-evidence-body").replaceChildren();
   document.getElementById("quality-preview-body").replaceChildren();
+  document.getElementById("command-results").replaceChildren();
   document.getElementById("estate-rows").innerHTML = `<tr><td colspan="6" class="quality-empty">${esc(message)} No silo is assumed healthy.</td></tr>`;
   document.getElementById("estate-count").textContent = "Unavailable";
   document.getElementById("quality-summary").innerHTML = `<span class="truth-badge unavailable"><b aria-hidden="true">!</b> Unavailable</span><span>${esc(message)}</span>`;
@@ -192,18 +268,41 @@ function clearProtectedEstate(message) {
   clearLegacyOverview("Protected estate evidence unavailable");
 }
 
-async function loadQuality(epoch) {
+function clearScopedForTransition() {
+  estateEvidence = new Map();
+  currentQuality = null;
+  for (const id of ["estate-evidence", "quality-preview", "command-palette"]) {
+    const dialog = document.getElementById(id);
+    if (dialog.open) dialog.close();
+  }
+  document.getElementById("estate-evidence-body").replaceChildren();
+  document.getElementById("quality-preview-body").replaceChildren();
+  document.getElementById("estate-rows").innerHTML = `<tr><td colspan="6"><div class="spinner" aria-label="Loading authorized scope"></div></td></tr>`;
+  document.getElementById("estate-count").textContent = "Loading";
+  document.getElementById("quality-summary").innerHTML = `<div class="spinner" aria-label="Loading data quality"></div>`;
+  document.getElementById("quality-issues").replaceChildren();
+  setLegacyVisible(false);
+}
+
+async function loadQuality(epoch, context) {
   try {
-    const response = await getJSON("/api/v1/overview");
+    const response = await getJSON(apiUrl(context));
     if (epoch !== loadEpoch) return null;
+    if (!responseMatches(response, context)) throw new Error("Response scope did not match the requested scope");
     const quality = response.items.find((item) => item.projection_type === "data_quality");
     if (!quality) throw new Error("Data-quality projection unavailable");
+    if (quality.metric_registry.registry_version !== REGISTRY_VERSION || quality.metric_registry.registry_hash !== REGISTRY_HASH) {
+      throw new Error("Metric registry changed; this view is stale");
+    }
     if (!renderEstate(response.items)) throw new Error("Expected 16 bounded adapter observations");
     renderQuality(quality);
+    currentQuality = quality;
+    refreshCommandResults();
     return true;
   } catch (error) {
     if (epoch !== loadEpoch) return null;
     clearProtectedEstate(`Protected estate evidence is unavailable: ${error.message}.`);
+    if (currentContext.saved_view) document.getElementById("saved-view-status").textContent = "Unauthorized or revoked. The saved view retained no protected evidence.";
     return false;
   }
 }
@@ -211,16 +310,22 @@ async function loadQuality(epoch) {
 function renderQuality(quality) {
   const summary = document.getElementById("quality-summary");
   const issues = document.getElementById("quality-issues");
-  const states = ["current", "stale", "partial", "unavailable", "unreachable", "unknown", "not_applicable"];
+  const states = TRUTH_STATES;
   const labels = { not_applicable: "not applicable" };
+  const visibleEvidence = [...estateEvidence.values()];
+  const visibleSources = visibleEvidence.flatMap((value) => value.sources);
+  const visibleAdapters = new Set(visibleSources.map((item) => item.adapter_id));
+  const counts = Object.fromEntries(states.map((state) => [state, visibleSources.filter((item) => item.truth_state === state).length]));
+  const visibleIssues = quality.issues.filter((issue) => visibleAdapters.has(issue.source.adapter_id)
+    && (!currentContext.truth || issue.truth_state === currentContext.truth));
   summary.innerHTML = `<div class="quality-coverage">
-      <strong>${esc(coverageText(quality.coverage))}</strong>
-      <span>${quality.source_count} sources · ${quality.metric_registry.definition_count} metric definitions · registry ${esc(quality.metric_registry.registry_version)}</span>
+      <strong>${visibleSources.length} authorized sources in this presentation</strong>
+      <span>${visibleEvidence.length} silos · ${quality.metric_registry.definition_count} metric definitions · registry ${esc(quality.metric_registry.registry_version)}</span>
     </div>
     <div class="truth-counts" aria-label="Truth state counts">${states.map((state) =>
-      `<span class="truth-badge ${state}"><b aria-hidden="true">${QUALITY_ICON[state]}</b>${esc(labels[state] || state)} ${quality.state_counts[state]}</span>`
+      `<span class="truth-badge ${state}"><b aria-hidden="true">${QUALITY_ICON[state]}</b>${esc(labels[state] || state)} ${counts[state]}</span>`
     ).join("")}</div>`;
-  issues.innerHTML = quality.issues.length ? quality.issues.map((issue) => {
+  issues.innerHTML = visibleIssues.length ? visibleIssues.map((issue) => {
     const watermark = issue.watermark && issue.watermark.value ? issue.watermark.value : "Unavailable";
     const observed = issue.last_observation || "Not observed";
     const reason = issue.safe_provenance.map((item) => `${item.code}: ${item.message}`).join("; ");
@@ -241,12 +346,14 @@ function renderQuality(quality) {
   }).join("") : `<p class="quality-empty">No reconciliation issues are visible.</p>`;
   issues.querySelectorAll(".quality-preview-button").forEach((button) => button.addEventListener("click", () => {
     const issue = quality.issues.find((candidate) => candidate.issue_id === button.dataset.issue);
-    openQualityPreview(issue);
+    openQualityPreview(issue, button);
   }));
 }
 
-function openQualityPreview(issue) {
+function openQualityPreview(issue, trigger) {
+  if (!issue) return;
   const dialog = document.getElementById("quality-preview");
+  dialog._trigger = trigger;
   document.getElementById("quality-preview-body").innerHTML = `<dl>
     <div><dt>Owner</dt><dd>${esc(issue.owner)}</dd></div>
     <div><dt>Source</dt><dd class="mono">${esc(issue.source.adapter_id)}</dd></div>
@@ -254,6 +361,157 @@ function openQualityPreview(issue) {
     <div><dt>Required check</dt><dd>Re-read the bounded aggregate and compare its next watermark.</dd></div>
   </dl>`;
   dialog.showModal();
+}
+
+function initializeSavedViews() {
+  document.getElementById("save-view").addEventListener("click", () => {
+    if (!currentQuality) return;
+    const view = saveView(currentContext);
+    applyContext({ ...currentContext, saved_view: view.id }, "push");
+    document.getElementById("saved-view-status").textContent = `Saved ${view.label}. Expires ${new Date(view.expires_at).toLocaleString()}.`;
+    refreshCommandResults();
+    load();
+  });
+  document.getElementById("remove-view").addEventListener("click", () => {
+    if (!currentContext.saved_view) return;
+    removeView(currentContext.saved_view);
+    applyContext({ ...currentContext, saved_view: "" }, "push");
+    document.getElementById("saved-view-status").textContent = "Saved view removed. Current safe context remains active.";
+    refreshCommandResults();
+  });
+  document.getElementById("saved-view-select").addEventListener("change", (event) => {
+    if (!event.target.value) return;
+    const view = listViews().find((candidate) => candidate.id === event.target.value);
+    if (!view) return;
+    applyContext({ ...view.context, ...view.filters, saved_view: view.id }, "push");
+    load();
+  });
+  document.getElementById("share-view").addEventListener("click", async () => {
+    const input = document.getElementById("share-link");
+    input.value = shareUrl(currentContext);
+    try {
+      await navigator.clipboard.writeText(input.value);
+      document.getElementById("saved-view-status").textContent = "Safe non-secret link copied. It does not require this saved-view record.";
+    } catch (_error) {
+      input.focus(); input.select();
+      document.getElementById("saved-view-status").textContent = "Safe link selected. Copy it with Ctrl+C or Cmd+C.";
+    }
+  });
+  refreshSavedViewControls();
+}
+
+function refreshSavedViewControls() {
+  const select = document.getElementById("saved-view-select");
+  if (!select) return;
+  const views = listViews();
+  select.innerHTML = `<option value="">Current unsaved view</option>${views.map((view) => `<option value="${esc(view.id)}">${esc(view.label)}</option>`).join("")}`;
+  select.value = currentContext.saved_view;
+  document.getElementById("remove-view").disabled = !currentContext.saved_view;
+  if (contextBlocked) return;
+  const active = views.find((view) => view.id === currentContext.saved_view);
+  document.getElementById("saved-view-status").textContent = active
+    ? `Active saved view ${active.label}. Expires ${new Date(active.expires_at).toLocaleString()}.`
+    : "Unsaved view. Saved views expire after 24 hours.";
+}
+
+let commandItems = [];
+let activeCommand = 0;
+
+function buildCommands() {
+  const items = [
+    { category: "Scopes", label: "Whole authorized estate", kind: "scope" },
+    { category: "Reports", label: "Reports unavailable in this slice", kind: "disabled", disabled: true },
+    { category: "Workspaces", label: "Now workspace", kind: "workspace", href: "/control-plane/now" },
+    { category: "Workspaces", label: "ITIL Cockpit", kind: "workspace", href: "/cockpit" },
+    { category: "Workspaces", label: "Assets and CMDB", kind: "workspace", href: "/cmdb" },
+    { category: "Workspaces", label: "Kanban Board", kind: "workspace", href: "/board" },
+  ];
+  for (const silo of ESTATE_SILOS.filter((candidate) => estateEvidence.has(candidate.id))) {
+    items.push({ category: "Metrics", label: silo.metric, kind: "evidence", silo: silo.id });
+    items.push({ category: "Evidence", label: `${silo.label} evidence`, kind: "evidence", silo: silo.id });
+  }
+  for (const view of listViews()) items.push({ category: "Saved views", label: view.label, kind: "saved", view });
+  if (currentQuality && currentQuality.issues.some((issue) => [...estateEvidence.values()].some((value) => value.adapters.includes(issue.source.adapter_id)))) {
+    items.push({ category: "Allowed actions", label: "Preview source refresh", kind: "preview" });
+  } else {
+    items.push({ category: "Allowed actions", label: "No refresh preview in this view", kind: "disabled", disabled: true });
+  }
+  return items;
+}
+
+function refreshCommandResults() {
+  const results = document.getElementById("command-results");
+  if (!results) return;
+  const query = document.getElementById("command-search").value.trim().toLowerCase();
+  commandItems = buildCommands().filter((item) => `${item.category} ${item.label}`.toLowerCase().includes(query));
+  activeCommand = Math.min(activeCommand, Math.max(0, commandItems.length - 1));
+  results.innerHTML = commandItems.map((item, index) => `<button type="button" role="option" class="command-option" data-command="${index}" aria-selected="${index === activeCommand}" aria-disabled="${Boolean(item.disabled)}"><span>${esc(item.category)}</span><strong>${esc(item.label)}</strong></button>`).join("")
+    || `<p class="quality-empty">No command matches this search.</p>`;
+  results.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => executeCommand(Number(button.dataset.command))));
+  const active = results.querySelector(`[data-command="${activeCommand}"]`);
+  document.getElementById("command-search").setAttribute("aria-activedescendant", active ? `command-option-${activeCommand}` : "");
+  results.querySelectorAll("[data-command]").forEach((button, index) => { button.id = `command-option-${index}`; });
+}
+
+function executeCommand(index) {
+  const item = commandItems[index];
+  if (!item) return;
+  if (item.disabled) {
+    document.getElementById("command-status").textContent = item.label;
+    return;
+  }
+  const palette = document.getElementById("command-palette");
+  if (item.kind === "scope") {
+    palette.close(); applyContext({ ...currentContext, selected_silo: "", truth: "", saved_view: "" }, "push"); load();
+  } else if (item.kind === "evidence") {
+    palette.close(); openEstateEvidence(item.silo, document.getElementById("command-trigger"));
+  } else if (item.kind === "saved") {
+    palette.close(); applyContext({ ...item.view.context, ...item.view.filters, saved_view: item.view.id }, "push"); load();
+  } else if (item.kind === "preview") {
+    const issue = currentQuality.issues.find((candidate) => [...estateEvidence.values()].some((value) => value.adapters.includes(candidate.source.adapter_id)));
+    palette.close(); openQualityPreview(issue, document.getElementById("command-trigger"));
+  } else if (item.kind === "workspace" && item.href === "/control-plane/now") {
+    palette.close(); document.getElementById("estate-heading").focus();
+  } else if (item.kind === "workspace") {
+    location.assign(item.href);
+  }
+}
+
+function initializeCommandPalette() {
+  const dialog = document.getElementById("command-palette");
+  const input = document.getElementById("command-search");
+  const open = (trigger) => {
+    if (contextBlocked) return;
+    dialog._trigger = trigger;
+    input.value = "";
+    activeCommand = 0;
+    refreshCommandResults();
+    dialog.showModal();
+    input.focus();
+  };
+  document.getElementById("command-trigger").addEventListener("click", (event) => open(event.currentTarget));
+  document.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault(); open(document.getElementById("command-trigger"));
+    }
+  });
+  input.addEventListener("input", () => { activeCommand = 0; refreshCommandResults(); });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const offset = event.key === "ArrowDown" ? 1 : -1;
+      activeCommand = (activeCommand + offset + commandItems.length) % Math.max(1, commandItems.length);
+      refreshCommandResults();
+    }
+    if (event.key === "Enter") { event.preventDefault(); executeCommand(activeCommand); }
+  });
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    const focusable = [...dialog.querySelectorAll("button:not([disabled]),input:not([disabled])")];
+    const first = focusable[0], last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
 }
 
 function renderTiles(d) {
@@ -343,7 +601,7 @@ function connectSSE() {
   es.addEventListener("error", () => { dot.classList.remove("on"); text.textContent = "reconnecting"; });
 }
 
-initializeContext();
+const initialContextReady = initializeContext();
 document.getElementById("ai-boundary-button").addEventListener("click", (event) => {
   const dialog = document.getElementById("ai-boundary");
   dialog._trigger = event.currentTarget;
@@ -355,6 +613,6 @@ for (const dialog of document.querySelectorAll("dialog")) {
   });
 }
 initPanel(() => load());   // card detail panel (edit/notes/AI); reload on change
-load();
+if (initialContextReady) load();
 connectSSE();
 setInterval(load, 30000);
