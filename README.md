@@ -29,8 +29,9 @@ no import-time cycle (the dashboard is launched on demand, after skcapstone is u
 
 ## Launch
 
-This package has **no console script and no unit of its own**. The deployed unit
-is `skcapstone-dashboard.service`, whose ExecStart is
+This package provides `skdashboard-read-only` for named read-only listeners. The
+legacy operator dashboard still has no unit of its own; its deployed unit is
+`skcapstone-dashboard.service`, whose ExecStart is
 `~/.skenv/bin/skcapstone dashboard --port 7778`; that CLI resolves
 `skcapstone.dashboard` to this package through a transparent alias shim (which
 lives in `skcapstone`), so routes are byte-identical to the pre-split dashboard.

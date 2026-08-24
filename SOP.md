@@ -225,8 +225,9 @@ has no delete API and the manage UI is authoritative.
 
 ### Process deploy (incomplete by design, today)
 
-There is **no `skdashboard` systemd unit and no `skdashboard` console script.** The
-running service is:
+There is no existing dedicated `skdashboard` systemd unit. The legacy running
+service uses `skcapstone dashboard`; `skdashboard-read-only` is the separate
+approved launcher for named read-only listeners:
 
 | Fact | Value |
 |---|---|
@@ -413,7 +414,7 @@ and does not provide.
 | Symptom | Check |
 |---|---|
 | Nothing on `:7778` | `systemctl --user status skcapstone-dashboard.service`, then `ss -ltnp \| grep 7778`. Remember the unit is named `skcapstone-dashboard`, **not** `skdashboard`. |
-| `skdashboard: command not found` | Expected. There is no console script. Launch it with `skcapstone dashboard --port 7778`. |
+| `skdashboard-read-only: command not found` | Reinstall this package from the pinned revision, then use the dedicated command only for named read-only listeners. |
 | Unit dies instantly, or `203/EXEC` | `~/.skenv/bin/skcapstone` missing or not executable. `journalctl --user -u skcapstone-dashboard -n 50`. The restart-storm drop-in caps the retry loop, so a broken unit fails quietly rather than spinning. |
 | Import error mentioning `skcapstone.dashboard` | The alias shim is missing from the installed `skcapstone` (it lives there, not here). Reinstall/upgrade `skcapstone`. |
 | Code change deployed but the UI is unchanged | The process is long-lived. `systemctl --user restart skcapstone-dashboard.service`. An editable install alone changes nothing already imported. |
@@ -461,11 +462,9 @@ and does not provide.
 These are open questions, not statements of fact. Do not treat them as documented
 behavior.
 
-1. **Is a dedicated `skdashboard` console script planned?** Unknown. Today there is no
-   `[project.scripts]` and no `skdashboard` unit, so the package cannot be run without
-   `skcapstone`. Whether that is a deliberate end state or an unfinished step of CR-4.3
-   is not recorded anywhere this audit could find. Until it is decided, section 5 stands
-   as written and the "no console script" evidence check below pins the current reality.
+1. **Is a dedicated systemd unit planned?** The read-only console script now exists,
+   but no dedicated unit is committed. A deployment must install a reviewed local unit
+   pinned to the approved package revision and named bind addresses.
 2. **The alias shim is outside this repo's blast radius.** It was located at
    `skcapstone/src/skcapstone/dashboard.py` on the audited host, so the launch path is
    confirmed end to end. But it is a **skcapstone** file: no check in this repo can
@@ -502,8 +501,8 @@ checks:
     run: grep -q 'Route("/api/doctor"' src/skdashboard/dashboard.py
   - name: still no /health route (SOP says there is none)
     run: ! grep -rq 'Route("/health"' src/skdashboard/
-  - name: still no console script (launched via skcapstone dashboard)
-    run: ! grep -q '^\[project.scripts\]' pyproject.toml
+  - name: dedicated read-only console script is separate from legacy dashboard
+    run: grep -q '^skdashboard-read-only = "skdashboard.read_only:main"' pyproject.toml && grep -q '^def create_read_only_app' src/skdashboard/read_only.py
   - name: module entry point start_dashboard still exists
     run: grep -q '^def start_dashboard' src/skdashboard/dashboard.py
   - name: setuptools_scm still restricted to v-semver tags
