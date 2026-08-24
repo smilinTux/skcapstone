@@ -1866,6 +1866,7 @@ def create_app(
         Route("/control-plane/schedule", _page("schedule.html")),
         Route("/control-plane/reliability", _page("reliability.html")),
         Route("/control-plane/architecture", _page("architecture.html")),
+        Route("/control-plane/ai", _page("ai.html")),
         Route("/control-plane/governance", _page("governance.html")),
         Route("/index.html", index),
         Route("/models", _page("models.html")),

@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/control-plane/architecture`, with explicit DORA and owner-source Unknown
   states, CMDB blast-radius evidence, verified drift, and approved SKPerf aggregates.
 
+- Added the protected read-only AI outcomes workspace at `/control-plane/ai`,
+  keeping harness, gateway, and SKJoule lanes separate while unknown outcome,
+  quality, value, pricing confidence, and detailed operational inputs remain explicit.
+
 - Added deterministic aggregate throughput forecasts, dependency sensitivity
   against exact schedule projections, and typed calibration abstention.
 

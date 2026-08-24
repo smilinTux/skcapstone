@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard | AI outcomes</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <link rel="stylesheet" href="/static/css/overview.css">
+  <link rel="stylesheet" href="/static/css/projects.css">
+  <link rel="stylesheet" href="/static/css/ai.css">
+</head>
+<body>
+  <div class="wrap">
+    <nav class="topbar sidebar" aria-label="Dashboard sections">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/control-plane/now">Now</a>
+        <a class="tab" href="/control-plane/portfolio?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Portfolio</a>
+        <a class="tab" href="/control-plane/schedule?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;lens=roadmap&amp;timezone=UTC">Schedule</a>
+        <a class="tab" href="/control-plane/reliability?role=operator&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Reliability</a>
+        <a class="tab" href="/control-plane/architecture?role=architect&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;environment=all">Architecture</a>
+        <a class="tab active" href="/control-plane/ai?role=operator&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">AI outcomes</a>
+        <a class="tab" href="/control-plane/governance?role=governance&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Governance</a>
+        <a class="tab" href="/economy">Economy</a>
+        <a class="tab" href="/models">Models</a>
+      </div>
+      <div class="spacer"></div><span class="quality-mode">Read only</span>
+    </nav>
+
+    <header class="now-head project-head">
+      <div><span class="now-kicker">AI outcome and economy workspace</span><h2>Outcomes before activity</h2><p>Accepted outcomes, verified effect, evaluation quality, and cost confidence stay distinct from usage.</p></div>
+      <span id="ai-status" class="quality-mode" role="status" aria-live="polite">Loading</span>
+    </header>
+
+    <form id="ai-context" class="project-context ai-context" aria-label="AI outcome workspace context">
+      <label>Role<select id="ai-role"><option value="operator">Operator</option><option value="project-manager">Project manager</option><option value="architect">Architect</option></select></label>
+      <p><strong>Scope</strong> Whole authorized estate</p><p><strong>Window</strong> Latest observation</p><p><strong>Baseline</strong> None</p><p><strong>Service</strong> All authorized silos</p>
+    </form>
+
+    <section class="project-boundary ai-boundary" aria-labelledby="lane-boundary-title">
+      <h2 id="lane-boundary-title">Separate measurement lanes</h2>
+      <p>Harness-reported usage, gateway-observed usage, and SKJoule accounting state are never summed. No usage measure is treated as quality, value, accepted outcome, or verified effect.</p>
+    </section>
+
+    <section class="project-panel" aria-labelledby="lane-title">
+      <div class="quality-heading"><div><h2 id="lane-title">Lane observations</h2><p>Tokens, USD, Joules, latency, quality, and value retain their own units and truth states.</p></div></div>
+      <div id="ai-lanes" class="ai-lanes"><p>Loading bounded observations.</p></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="quality-title">
+      <div class="quality-heading"><div><h2 id="quality-title">Outcome and evaluation quality</h2><p>Missing typed owner evidence stays Unknown. Usage volume is not a substitute.</p></div></div>
+      <div class="project-table-wrap"><table><caption>AI outcome and quality evidence</caption><thead><tr><th scope="col">Measure</th><th scope="col">Result</th><th scope="col">Unit</th><th scope="col">Required evidence</th><th scope="col">Scope and provenance</th></tr></thead><tbody id="ai-quality-rows"><tr><td colspan="5">Loading quality evidence.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="drilldown-title">
+      <div class="quality-heading"><div><h2 id="drilldown-title">Operational drilldowns</h2><p>Each dimension remains bound to one lane. The overview contract does not expose detailed records.</p></div></div>
+      <div class="project-table-wrap"><table><caption>Model and gateway operational drilldowns</caption><thead><tr><th scope="col">Dimension</th><th scope="col">Harness-reported</th><th scope="col">Gateway-observed</th><th scope="col">Boundary</th></tr></thead><tbody id="ai-drilldown-rows"><tr><td colspan="4">Loading drilldown availability.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="provenance-title">
+      <div class="quality-heading"><div><h2 id="provenance-title">Scope and provenance</h2><p>Owner, population, adapter revision, freshness, coverage, and source watermark remain visible.</p></div></div>
+      <p id="ai-registry" class="ai-registry">Metric registry loading.</p>
+      <div class="project-table-wrap"><table><caption>AI and economy source provenance</caption><thead><tr><th scope="col">Source</th><th scope="col">Owner and population</th><th scope="col">Truth</th><th scope="col">Observed</th><th scope="col">Coverage</th><th scope="col">Watermark</th></tr></thead><tbody id="ai-provenance-rows"><tr><td colspan="6">Loading provenance.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-boundary"><h2>No-write and data-minimization boundary</h2><p>This workspace reads only bounded aggregate overview observations. It cannot submit model work, change routes, alter queues, assign budgets, mutate owner records, or dispatch an external action. Detailed model content and identity material are outside this projection.</p></section>
+  </div>
+  <dialog id="ai-detail" aria-labelledby="ai-detail-title">
+    <form method="dialog" class="quality-dialog project-evidence-dialog">
+      <div class="quality-dialog-head"><div><span class="quality-mode">Bounded drilldown</span><h2 id="ai-detail-title">Operational evidence</h2></div><button class="quality-close" value="close" aria-label="Close AI drilldown">Close</button></div>
+      <div id="ai-detail-body"></div>
+    </form>
+  </dialog>
+  <script type="module" src="/static/js/ai.js"></script>
+</body>
+</html>
