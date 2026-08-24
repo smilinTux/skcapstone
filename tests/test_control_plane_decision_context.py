@@ -38,7 +38,7 @@ from skdashboard.control_plane_api import _protected_handler
 from skdashboard.dashboard import create_app
 
 UTC = timezone.utc
-ORIGIN = "http://10.0.0.139:7778"
+ORIGIN = "https://10.0.0.139:7778"
 NOW = datetime.now(UTC)
 REVISION = "b" * 64
 

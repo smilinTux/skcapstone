@@ -337,7 +337,7 @@ def test_one_pack_drives_api_report_forecast_failure_agent_and_mcp_qualification
             profiles["api"]["route"],
             headers={
                 "Authorization": "Bearer fixture-read",
-                "Origin": "http://10.0.0.139:7778",
+                "Origin": "https://10.0.0.139:7778",
             },
         )
     assert response.status_code == profiles["api"]["expected_status"]
