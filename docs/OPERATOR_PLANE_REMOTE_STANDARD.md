@@ -1,6 +1,6 @@
 # Operator-plane remote transport standard (skoperator.remote/v1)
 
-Status: PROPOSED (design only; nothing in this doc changes a running service).
+Status: RATIFIED 2026-08-23. P0-P3 are implemented and merged; the surface ships gated OFF (SKOPERATOR_HTTP unset) so nothing in this doc has yet changed a running service.
 Companion: [OPERATOR_PLANE_MIGRATION.md](OPERATOR_PLANE_MIGRATION.md).
 Evidence base: ATLAS Eyes first real run (PR #178), card 504d0046.
 

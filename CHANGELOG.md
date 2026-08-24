@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The operator-plane standard and migration plan are marked RATIFIED. They had
+  stayed `Status: PROPOSED` while the board card said "doing" and commit messages
+  already called the standard ratified: three sources disagreeing about whether the
+  design was settled, right as Phase 2 began building on it. P0 through P3 are
+  implemented and merged; the HTTP surface ships gated OFF (`SKOPERATOR_HTTP`
+  unset), so nothing in either document has yet changed a running service.
+
 ### Added
 
 - **Card 90b5b277 (epic c880017b): `sknoded` grows a read-only operator-plane

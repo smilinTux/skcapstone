@@ -1,6 +1,6 @@
 # Operator-plane migration: spec.cli to skoperator.remote/v1
 
-Status: PROPOSED. Standard: [OPERATOR_PLANE_REMOTE_STANDARD.md](OPERATOR_PLANE_REMOTE_STANDARD.md).
+Status: RATIFIED 2026-08-23 (P0-P3 implemented; see CHANGELOG). Standard: [OPERATOR_PLANE_REMOTE_STANDARD.md](OPERATOR_PLANE_REMOTE_STANDARD.md).
 Principle: no flag day. Every phase is additive, gated, and reversible; the
 old lane keeps serving until the new lane proves parity per app.
 
