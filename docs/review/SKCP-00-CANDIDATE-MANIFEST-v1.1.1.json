@@ -1,0 +1,208 @@
+{
+  "manifest_version": "2.1.0",
+  "manifest_schema_version": "2020-12",
+  "candidate_id": "SKCP-00-v1.1.1-truthful-superseding",
+  "candidate_package_version": "1.1.1",
+  "contract_version": "1.1.0",
+  "generated_at": "2026-08-23T22:35:28Z",
+  "captured_at": "2026-08-23T22:35:28Z",
+  "status": "proposed_for_human_review",
+  "implementation_authorized": false,
+  "supersedes": [
+    {
+      "path": "docs/review/SKCP-00-CANDIDATE-MANIFEST.json",
+      "sha256": "88b78aece092291535177414f159925ce997083c7c51134ed184495c8b9318d3",
+      "disposition": "superseded_but_valid_for_audit"
+    },
+    {
+      "path": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.0.json",
+      "sha256": "6b35f9e77f8f51dde5243bd9ebc5f55adbf65141d344218b165845bd3475a194",
+      "disposition": "superseded_but_valid_for_audit"
+    }
+  ],
+  "capture": {
+    "command": "skcapstone coord kanban --json",
+    "projection": "installed local CardStore folded Kanban",
+    "raw_projection_sha256": "28db70226ac8ab4716cf26b72bed23040970ec23dc06af22156c233142716be6",
+    "status_semantics": "All status values are point-in-time folded observations at captured_at. They neither rewrite historical evidence nor predict a later board state.",
+    "observed_statuses": {
+      "90a02b0e": "done",
+      "f701b0d3": "done",
+      "559c8c48": "doing",
+      "bea13a70": "backlog",
+      "d0edbff1": "review",
+      "c3a9c9e9": "backlog",
+      "eddaa1fb": "backlog",
+      "7888e091": "backlog",
+      "4e1130cc": "backlog"
+    }
+  },
+  "human_review": {
+    "card_id": "bea13a70",
+    "status_at_capture": "backlog",
+    "required_before": "independent review completion and any implementation eligibility"
+  },
+  "independent_review": {
+    "card_id": "d0edbff1",
+    "status_at_capture": "review",
+    "original_verdict": "FAIL",
+    "required_before": "any implementation eligibility"
+  },
+  "ui_contract_state_map": {
+    "service": {
+      "query_key": "service",
+      "contract_field": "scope.service_id",
+      "mode": "read_only_scoped_projection",
+      "rule": "Service ownership, watermark, and freshness remain attribution fields and never replace the typed scope."
+    },
+    "truth": {
+      "mode": "typed_truth_state",
+      "values": ["current", "stale", "partial", "unavailable", "unknown", "not_applicable"],
+      "rule": "Presentation cannot add truth states or turn missing evidence into healthy or zero."
+    },
+    "preview": {
+      "mode": "non_executing_exact_preview",
+      "contract_fields": ["status", "preview_hash", "expires_at", "policy_decision_ref", "required_approvals"],
+      "rule": "A preview cannot execute and requires a new exact preview after a stale or changed parameter."
+    },
+    "proposal": {
+      "mode": "evidence_linked_advisory_or_abstained",
+      "contract_fields": ["Insight.status", "Recommendation.status", "evidence_refs"],
+      "rule": "AI output is a proposal or explicit abstention and cannot authorize an action."
+    }
+  },
+  "catalog_lineage": {
+    "baseline_manifest_path": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.0.json",
+    "baseline_manifest_sha256": "6b35f9e77f8f51dde5243bd9ebc5f55adbf65141d344218b165845bd3475a194",
+    "baseline_catalog_card_count": 24,
+    "discovered_schedule_contract_cards": ["c3a9c9e9", "4e1130cc"]
+  },
+  "schedule_snapshot": {
+    "path": "docs/review/SKCP-00-SCHEDULE-CARD-SNAPSHOT-v1.1.1.json",
+    "sha256": "64c036715d2f1ed50cfe619a901363ee675dda3e590481001dd199e56b5e254b",
+    "card_ids": ["c3a9c9e9", "eddaa1fb", "7888e091", "4e1130cc"],
+    "description": "Full metadata, descriptions, criteria, labels, and folded dependencies for the two implementation and two discovered contract schedule cards."
+  },
+  "schedule_requirements": {
+    "path": "docs/review/SKCP-00-SCHEDULE-REQUIREMENTS-v1.1.1.md",
+    "sha256": "88172dd498f3071d7665dd1f5e37933dd229d808c6f3cc78b0ace14ce1b9b0ff",
+    "description": "Hash-pinned shared projection, URL state, semantics, accessibility, performance, forecast, scenario, visibility, and contract decomposition requirements."
+  },
+  "gate_topology": {
+    "independent_review_human_gate_edge": {
+      "card_id": "d0edbff1",
+      "dependency": "bea13a70",
+      "event_id": "c04a363468ed4efda9382fb497f195d6",
+      "writer": "jarvis",
+      "reason": "Superseding exact-hash human approval must precede independent review completion."
+    },
+    "paths": [
+      {"card_id": "9e88de5c", "path": ["9e88de5c", "d0edbff1", "bea13a70"]},
+      {"card_id": "804f14de", "path": ["804f14de", "d0edbff1", "bea13a70"]},
+      {"card_id": "c6828b8a", "path": ["c6828b8a", "d0edbff1", "bea13a70"]},
+      {"card_id": "5026359d", "path": ["5026359d", "d0edbff1", "bea13a70"]},
+      {"card_id": "08f4cdcb", "path": ["08f4cdcb", "d0edbff1", "bea13a70"]},
+      {"card_id": "b7ada8b9", "path": ["b7ada8b9", "c6828b8a", "d0edbff1", "bea13a70"]},
+      {"card_id": "5ee56779", "path": ["5ee56779", "804f14de", "d0edbff1", "bea13a70"]},
+      {"card_id": "eddaa1fb", "path": ["eddaa1fb", "d0edbff1", "bea13a70"]},
+      {"card_id": "da097cbb", "path": ["da097cbb", "804f14de", "d0edbff1", "bea13a70"]},
+      {"card_id": "866ffaac", "path": ["866ffaac", "804f14de", "d0edbff1", "bea13a70"]},
+      {"card_id": "77d6bae0", "path": ["77d6bae0", "804f14de", "d0edbff1", "bea13a70"]},
+      {"card_id": "b548a77a", "path": ["b548a77a", "5026359d", "d0edbff1", "bea13a70"]},
+      {"card_id": "169028ce", "path": ["169028ce", "08f4cdcb", "d0edbff1", "bea13a70"]},
+      {"card_id": "7888e091", "path": ["7888e091", "d0edbff1", "bea13a70"]},
+      {"card_id": "f080f150", "path": ["f080f150", "b7ada8b9", "c6828b8a", "d0edbff1", "bea13a70"]},
+      {"card_id": "efa9bee8", "path": ["efa9bee8", "f080f150", "b7ada8b9", "c6828b8a", "d0edbff1", "bea13a70"]},
+      {"card_id": "38731952", "path": ["38731952", "9e88de5c", "d0edbff1", "bea13a70"]},
+      {"card_id": "631f90bf", "path": ["631f90bf", "38731952", "9e88de5c", "d0edbff1", "bea13a70"]},
+      {"card_id": "5858a34f", "path": ["5858a34f", "d12b8951", "d0edbff1", "bea13a70"]},
+      {"card_id": "008bd490", "path": ["008bd490", "e6326000", "d12b8951", "d0edbff1", "bea13a70"]},
+      {"card_id": "cae1eaef", "path": ["cae1eaef", "94cbf19a", "d0edbff1", "bea13a70"]},
+      {"card_id": "83a8c40b", "path": ["83a8c40b", "c6828b8a", "d0edbff1", "bea13a70"]},
+      {"card_id": "2d02b6ed", "path": ["2d02b6ed", "d12b8951", "d0edbff1", "bea13a70"]},
+      {"card_id": "ecf1148c", "path": ["ecf1148c", "169028ce", "08f4cdcb", "d0edbff1", "bea13a70"]},
+      {"card_id": "c3a9c9e9", "path": ["c3a9c9e9", "d0edbff1", "bea13a70"]},
+      {"card_id": "4e1130cc", "path": ["4e1130cc", "d0edbff1", "bea13a70"]},
+      {"card_id": "d12b8951", "path": ["d12b8951", "d0edbff1", "bea13a70"]},
+      {"card_id": "94cbf19a", "path": ["94cbf19a", "d0edbff1", "bea13a70"]},
+      {"card_id": "f0c63c2a", "path": ["f0c63c2a", "94cbf19a", "d0edbff1", "bea13a70"]}
+    ]
+  },
+  "f4_effective_dependency_fold": {
+    "card_id": "90a02b0e",
+    "status_at_capture": "done",
+    "effective_dependency_ids": ["ee1d0874", "0242f9f2", "83a404bf", "079cd760", "f94fde82", "1f9ee2c9", "a081d5ed", "b24213ea", "8ab522ee", "bd732651", "50e36b06"],
+    "proof_source": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.0.json"
+  },
+  "remediation_traceability": [
+    {"code": "F1", "card_id": "ee1d0874", "evidence_path": "docs/evidence/SKCP-00F1-TRUTH-STATE-REMEDIATION-2026-08-23.md", "status": "complete"},
+    {"code": "F1A", "card_id": "bd732651", "evidence_path": "docs/evidence/SKCP-00F1A-V1.1-CONTRACT-REMEDIATION-2026-08-23.md", "status": "complete"},
+    {"code": "F2", "card_id": "0242f9f2", "evidence_path": "docs/evidence/SKCP-00F2-UX-WIREFRAME-2026-08-23.md", "status": "complete"},
+    {"code": "F2A", "card_id": "f94fde82", "evidence_path": "docs/evidence/SKCP-00F2A-UX-CORRECTION-2026-08-23.md", "status": "complete"},
+    {"code": "F2B", "card_id": "b24213ea", "evidence_path": "docs/evidence/SKCP-00F2B-UX-SERVICE-SCOPE-2026-08-23.md", "status": "complete"},
+    {"code": "F3", "card_id": "83a404bf", "evidence_path": "docs/evidence/SKCP-00F3-DEPENDENCY-GATE-2026-08-23.md", "status": "complete"},
+    {"code": "F3A", "card_id": "079cd760", "evidence_path": "docs/evidence/SKCP-00F3A-RUNTIME-ACTIVATION-2026-08-23.md", "status": "complete"},
+    {"code": "F3B", "card_id": "1f9ee2c9", "evidence_path": "docs/evidence/SKCP-00F3B-ATOMIC-MUTATION-2026-08-23.md", "status": "complete"},
+    {"code": "F3C", "card_id": "a081d5ed", "evidence_path": "docs/evidence/SKCP-00F3C-RELEASE-RECOVERY-2026-08-23.md", "status": "complete"},
+    {"code": "F3D", "card_id": "8ab522ee", "evidence_path": "docs/evidence/SKCP-00F3D-BOARD-MUTATION-HARDENING-2026-08-23.md", "status": "complete"},
+    {"code": "F3E", "card_id": "50e36b06", "evidence_path": "docs/evidence/SKCP-00F3E-PARTIAL-RECOVERY-READ-SAFETY-2026-08-23.md", "status": "complete"},
+    {"code": "F3F", "card_id": "f701b0d3", "evidence_path": "docs/evidence/SKCP-00F3F-COMPLETION-DEPENDENCY-GATE-2026-08-23.md", "status": "complete"}
+  ],
+  "historical_vs_fresh_test_results": {
+    "historical_original": "The independent review recorded FAIL despite historical architecture 8 passed and dashboard 244 passed results.",
+    "accepted_remediation": "V1.1.0 records SKCoord 406 passed and bounded SKCapstone 6405 passed with 38 skipped.",
+    "v1_1_1_verification": "Focused V1.1.1, V1.1.0, and contract tests passed 31 with 2 warnings in 0.23s. Full dashboard passed 287 with 143 warnings in 22.44s."
+  },
+  "global_parity_limitation": {
+    "scope": "shared live board read-only audit outside this candidate's isolated topology proof",
+    "effect": "Pre-existing global projection drift is recorded and is not reconciled or migrated by this candidate.",
+    "non_authorization": "No global reconcile, migration, or board rewrite is authorized."
+  },
+  "consolidated_non_authorizations": [
+    "No implementation source or leaf-card implementation.",
+    "No deployment, production activation, service restart, commit, push, merge, branch, tag, reset, or cleanup.",
+    "No successful live implementation claim probe.",
+    "No external action, account, product integration, data import, Matter access, protected-data retrieval, HammerTime corpus access, or HammerTime Inbox access.",
+    "No completion of human gate bea13a70 or independent review d0edbff1.",
+    "No modification of original or V1.1.0 manifest-pinned candidate artifacts.",
+    "No reconciliation of global board parity."
+  ],
+  "rollback": {
+    "candidate": "Decline V1.1.1 and retain V1.1.0 and the original candidate byte-exact for audit.",
+    "board": "The discovered card and dependency additions are append-only evidence. No automatic rollback or board rewrite is performed.",
+    "migration": "None. This package is additive documentation, hashes, tests, and append-only board events."
+  },
+  "artifacts": [
+    {"path": "docs/architecture/ADR-0001-CONTROL-PLANE-MEASUREMENT-AND-REPORTING-v1.1.0.md", "sha256": "e1d0af95e471d622204456ffd8022385e69886a6b705fac21a4e371d6a156c79", "purpose": "V1.1 ADR amendment"},
+    {"path": "docs/planning/SK-CONTROL-PLANE-BREADTH-FIRST-SPRINTS-v1.1.0.md", "sha256": "02567b79f7f83a4858a40dba7cdef3791dd7879a071ec2f33e1a066e9567b4cc", "purpose": "V1.1 sprint-plan amendment"},
+    {"path": "docs/contracts/CONTROL-PLANE-CONTRACT-COMPATIBILITY-v1.1.0.md", "sha256": "a048f1bd715e6243eb1d2d293b0187512b35055d5a82c8480d7aff2c2b060353", "purpose": "V1.1 compatibility note"},
+    {"path": "docs/contracts/v1.1.0/control-plane-action-preview.v1.1.0.schema.json", "sha256": "8cfbabbe47b971f1e2b8ccc4c90ff77a17701caf84d209f0a4fe2a257b47ae21", "purpose": "V1.1 action-preview schema"},
+    {"path": "docs/contracts/v1.1.0/control-plane-insight.v1.1.0.schema.json", "sha256": "3625513fe1e9e870deabadac840c76c7049638645d2b6d490d884deb2c871737", "purpose": "V1.1 insight schema"},
+    {"path": "docs/contracts/v1.1.0/control-plane-metric-result.v1.1.0.schema.json", "sha256": "a55d5de1db6241e5067a4d50c96a6bdd861b0b324785c54def7b92782de45c20", "purpose": "V1.1 metric-result schema"},
+    {"path": "docs/contracts/v1.1.0/control-plane-recommendation.v1.1.0.schema.json", "sha256": "d9a80faae276d2ce22a0189c1a03081dd2b293618e88838612df16895dd49fcd", "purpose": "V1.1 recommendation schema"},
+    {"path": "docs/contracts/v1.1.0/control-plane-report-snapshot.v1.1.0.schema.json", "sha256": "0758690146f4f937ff0c904a902f5324561f4b11cbd346a735535eb2c7e923e5", "purpose": "V1.1 report-snapshot schema"},
+    {"path": "docs/contracts/v1.1.0/openapi.control-plane.v1.1.0.json", "sha256": "32bed62acce4a12eea5c633e7ee0ffa5ebe35c5764dfbae3d1ccec6c333c1487", "purpose": "V1.1 OpenAPI"},
+    {"path": "docs/wireframes/control-plane-estate-pulse-v2.html", "sha256": "66d007a9f1339929666e2a34586c1d49eb7e3d6236d83d11f43a449cf02b4c63", "purpose": "V2 interactive estate wireframe"},
+    {"path": "docs/wireframes/control-plane-estate-pulse-v2.png", "sha256": "33c400d4d4546e120a2662d5ef887d27ee85e4b87f5bdd973e038114d5e8c129", "purpose": "V2 estate wireframe image"},
+    {"path": "docs/wireframes/control-plane-authorization-preview-v2.png", "sha256": "f1ddf830f41a052917aeab6640183f649c0c8937cf7c441c5f2d1ef3d87463a8", "purpose": "V2 authorization preview image"},
+    {"path": "docs/evidence/SKCP-00F1-TRUTH-STATE-REMEDIATION-2026-08-23.md", "sha256": "fbfb6aab27c47aeac35b9401a58953f6fd1b0f746c097a43f05032a8201ed463", "purpose": "F1 evidence"},
+    {"path": "docs/evidence/SKCP-00F1A-V1.1-CONTRACT-REMEDIATION-2026-08-23.md", "sha256": "1eae8fd37fc2f329ef2f5de2ee61f053f6cd045938047098e3680757f573b382", "purpose": "F1A evidence"},
+    {"path": "docs/evidence/SKCP-00F2-UX-WIREFRAME-2026-08-23.md", "sha256": "3196a5a2e96190dff5523178de5b8185d78f365dd6c6d55a6b12539654d305d8", "purpose": "F2 evidence"},
+    {"path": "docs/evidence/SKCP-00F2A-UX-CORRECTION-2026-08-23.md", "sha256": "81661e47f0fae160f8a3f4a28c18d6fcaf30f6c53af1c641374d8d14bdfc2422", "purpose": "F2A evidence"},
+    {"path": "docs/evidence/SKCP-00F2B-UX-SERVICE-SCOPE-2026-08-23.md", "sha256": "7559dd1b819d684e883fb7aeca31d190db4c878b4f05b2e625d3c551c4536304", "purpose": "F2B evidence"},
+    {"path": "docs/evidence/SKCP-00F3-DEPENDENCY-GATE-2026-08-23.md", "sha256": "20610e8cb8107c43ab03e78cb3a26a2fd3eb994a0ec59031206e86bc4c6c4258", "purpose": "F3 evidence"},
+    {"path": "docs/evidence/SKCP-00F3A-RUNTIME-ACTIVATION-2026-08-23.md", "sha256": "7f19d57a0803556f945f192d320c4351c12806a441b502c091719c88ee2595db", "purpose": "F3A evidence"},
+    {"path": "docs/evidence/SKCP-00F3B-ATOMIC-MUTATION-2026-08-23.md", "sha256": "c38be480551eec3396e650bb8a7d00d606c98001cd3b7a1cd9081c84a131dbfa", "purpose": "F3B evidence"},
+    {"path": "docs/evidence/SKCP-00F3C-RELEASE-RECOVERY-2026-08-23.md", "sha256": "a2b88b73a2c013ad01a0971050d776a75dc184756d227446b438f747e7d0b859", "purpose": "F3C evidence"},
+    {"path": "docs/evidence/SKCP-00F3D-BOARD-MUTATION-HARDENING-2026-08-23.md", "sha256": "d754d6a12e2d4c1ce6e7381a8b8b92ba533611979035e29e00d49d04ef3dbdd6", "purpose": "F3D evidence"},
+    {"path": "docs/evidence/SKCP-00F3E-PARTIAL-RECOVERY-READ-SAFETY-2026-08-23.md", "sha256": "c59aafd10300c51d0e86c43821e5b5c15fa0d9133f35309409be1c39398a788f", "purpose": "F3E evidence"},
+    {"path": "docs/evidence/SKCP-00F3F-COMPLETION-DEPENDENCY-GATE-2026-08-23.md", "sha256": "f4e7e4404196da0fa43dd3fce2938d0ff9a36137254e706093d23f439ab16fae", "purpose": "F3F evidence"},
+    {"path": "docs/review/SKCP-00-INDEPENDENT-REVIEW-2026-08-23.md", "sha256": "41af3cd58a22013cb8184d9f1334d901e18fd1e84583ce5cd6dab52bfa515a52", "purpose": "original independent FAIL review"},
+    {"path": "tests/test_control_plane_superseding_candidate.py", "sha256": "f476e5d4497cd9e1448b79b85b963574052d23d7ec2eb3b06fe253a045fe9c4c", "purpose": "V1.1 superseding candidate integrity tests"},
+    {"path": "docs/architecture/ADR-0001-CONTROL-PLANE-MEASUREMENT-AND-REPORTING-v1.1.1.md", "sha256": "d024f9767777667d0b054fd644497d30f9e07a9c9c6ec38d829a46bdd34055ab", "purpose": "V1.1.1 truthful capture ADR amendment"},
+    {"path": "docs/planning/SK-CONTROL-PLANE-BREADTH-FIRST-SPRINTS-v1.1.1.md", "sha256": "29bac11e251f8f96e919a6922ecaf0abd4dd3982a465ce61f4da1c06f09626bc", "purpose": "V1.1.1 truthful capture sprint-plan amendment"},
+    {"path": "docs/review/SKCP-00-SCHEDULE-REQUIREMENTS-v1.1.1.md", "sha256": "88172dd498f3071d7665dd1f5e37933dd229d808c6f3cc78b0ace14ce1b9b0ff", "purpose": "V1.1.1 schedule requirements supplement"},
+    {"path": "docs/review/SKCP-00-SCHEDULE-CARD-SNAPSHOT-v1.1.1.json", "sha256": "64c036715d2f1ed50cfe619a901363ee675dda3e590481001dd199e56b5e254b", "purpose": "V1.1.1 full schedule-card snapshot"},
+    {"path": "tests/test_control_plane_v1_1_1_candidate.py", "sha256": "b08b43b8e8867db198b20449b16b953b833ec6e9669e4359cddb6490c40c97f4", "purpose": "V1.1.1 hash, topology, snapshot, schema, and dash tests"}
+  ]
+}

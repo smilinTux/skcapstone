@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the truthful V1.1.2 control-plane review candidate, reproducible
+  CardStore capture, preserved lineage artifacts, and detached manifest seal.
 - Scoped gitleaks CI to the complete history reachable from checked-out HEAD,
   preventing unrelated retained remote refs from contaminating candidate CI.
 

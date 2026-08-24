@@ -1,0 +1,59 @@
+{
+  "manifest_version": "2.2.0",
+  "manifest_schema_version": "2020-12",
+  "candidate_package_version": "1.1.2",
+  "candidate_id": "SKCP-00-v1.1.2-truthful-superseding",
+  "status": "proposed_for_human_review",
+  "implementation_authorized": false,
+  "active_contract_source_revision": "dcdd6b25df3663656e7d476ac848ffdf6e183c66",
+  "human_review": {"card_id": "bea13a70", "captured_status": "backlog", "status": "incomplete"},
+  "independent_review": {"card_id": "d0edbff1", "captured_status": "review", "prior_verdict": "FAIL", "status": "failed_pending_exact_hash_rereview"},
+  "captured_gate_statuses": {"26c69f86": "done", "ef91a99f": "ready", "bea13a70": "backlog", "d0edbff1": "review"},
+  "prior_manifests": [
+    {"path": "docs/review/SKCP-00-CANDIDATE-MANIFEST.json", "sha256": "88b78aece092291535177414f159925ce997083c7c51134ed184495c8b9318d3", "authority": "historical"},
+    {"path": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.0.json", "sha256": "6b35f9e77f8f51dde5243bd9ebc5f55adbf65141d344218b165845bd3475a194", "authority": "non_authoritative_future_timestamp"},
+    {"path": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.1.json", "sha256": "2876a22ea8fe29fb28c8c2c918c9e67b339e9f7836e59218b9bac1dba573dbe0", "authority": "non_authoritative_pre_f5_f6_f8_capture"}
+  ],
+  "historical_parity": {"checked": 985, "matched": 590, "mismatches": 125, "missing": 270, "open_drift": 10},
+  "fresh_parity_observation": {"checked": 1051, "matched": 651, "mismatches": 130, "missing": 270, "open_drift": 10, "state": "unsafe"},
+  "detached_receipt": {
+    "path": "docs/review/SKCP-00-CANDIDATE-MANIFEST-v1.1.2.receipt.json",
+    "included_in_artifacts": false,
+    "rule": "The detached receipt hashes this manifest. This manifest does not hash or list the receipt."
+  },
+  "artifacts": [
+    {"path": "docs/architecture/ADR-0001-CONTROL-PLANE-MEASUREMENT-AND-REPORTING-v1.1.2.md", "sha256": "fb3f5668e4d7d5c8db82bb6a2e74821944d91a9fec3c3db9b2dc74b58ab1ff0e"},
+    {"path": "docs/planning/SK-CONTROL-PLANE-BREADTH-FIRST-SPRINTS-v1.1.2.md", "sha256": "054bc57d6a2376d59ed8b0b8e1c3efbacc0cd986bb66c4030569a2a5c00c616b"},
+    {"path": "docs/review/SKCP-00-RELEVANT-BOARD-CAPTURE-v1.1.2.json", "sha256": "1f3da2641ef5e61fa459fd9dd027b15614f3b630919eb1834e66b9d9aae2b78d"},
+    {"path": "docs/review/SKCP-00-SCHEDULE-CARD-SNAPSHOT-v1.1.1.json", "sha256": "64c036715d2f1ed50cfe619a901363ee675dda3e590481001dd199e56b5e254b"},
+    {"path": "docs/review/SKCP-00-SCHEDULE-REQUIREMENTS-v1.1.1.md", "sha256": "88172dd498f3071d7665dd1f5e37933dd229d808c6f3cc78b0ace14ce1b9b0ff"},
+    {"path": "docs/wireframes/control-plane-estate-pulse-v2.html", "sha256": "66d007a9f1339929666e2a34586c1d49eb7e3d6236d83d11f43a449cf02b4c63"},
+    {"path": "docs/evidence/SKCP-00F6-NON-BYPASSABLE-DEPENDENCY-PUBLICATION-2026-08-24.md", "sha256": "8ba590df883503741539fd24291fa7a8455d73829aff7c834c3912169d76db17"},
+    {"path": "docs/evidence/SKCP-00F5-CONTRACT-REPAIR-2026-08-23.md", "sha256": "01328bc924ab19781ea687600861cf30a094d2116fc09420d8fb1d5f5697f141"},
+    {"path": "docs/contracts/CONTROL-PLANE-CONTRACT-COMPATIBILITY-v1.1.0.md", "sha256": "4a808cb45819fd8702bd48b197ead840f7bc8cbd3baba40448ceef97c77ac40f"},
+    {"path": "docs/contracts/v1.1.0/control-plane-action-preview.v1.1.0.schema.json", "sha256": "d14119863d3c2bc88102e9569f3c0fe30b77e2ee57766a0e87f5f7bef260bbe6"},
+    {"path": "docs/contracts/v1.1.0/control-plane-insight.v1.1.0.schema.json", "sha256": "36398cbe6adb8523b46f6092ba237e8b351e91608771f3fcd388c38a76a72048"},
+    {"path": "docs/contracts/v1.1.0/control-plane-metric-result.v1.1.0.schema.json", "sha256": "0000825f24a702766f24ac47cc1207339d5a9bfd09d5719b933331b2d1336326"},
+    {"path": "docs/contracts/v1.1.0/control-plane-recommendation.v1.1.0.schema.json", "sha256": "39de7f7eddfa892d2c31706201be3be86f509ef95a85f7db3588b19aac8d58fc"},
+    {"path": "docs/contracts/v1.1.0/control-plane-report-snapshot.v1.1.0.schema.json", "sha256": "5e65fe06e6c9781ac7b08842c6a3cac23770f05025b8f4df3c08730b339e1dee"},
+    {"path": "docs/contracts/v1.1.0/openapi.control-plane.v1.1.0.json", "sha256": "7aa2c1dade90323939f7cc9cceb67331281ff45a7e4ea3d59b02b2e55ecff900"},
+    {"path": "tests/test_control_plane_contract_remediation.py", "sha256": "a7c7b419d24319699532828aa2d4051a3c01b8587641bd14ae81c8cbaa16e68e"},
+    {"path": "tests/test_control_plane_v1_1_2_candidate.py", "sha256": "28d30b585c2e3cbbbe45e65d0a30bafcecc738396ad1db989e6778d5219b2dc1"},
+    {"path": "scripts/capture_skcp00_v112.py", "sha256": "94a5f5202d188059c8b527d13b30d76b73f62842fb207922ca077f64f4064a0f"}
+  ],
+  "publication_receipts": {
+    "f5": {"commit": "e1b7c978b00974c7f580c2706c5cdc9d485255ed", "evidence_path": "docs/evidence/SKCP-00F5-CONTRACT-REPAIR-2026-08-23.md"},
+    "f6": {"evidence_path": "docs/evidence/SKCP-00F6-NON-BYPASSABLE-DEPENDENCY-PUBLICATION-2026-08-24.md"},
+    "f8": {"card_id": "26c69f86", "pr": "https://github.com/smilinTux/skdashboard/pull/28", "commit": "dcdd6b25df3663656e7d476ac848ffdf6e183c66", "tests": "30 targeted, 275 full, required CI green"}
+  },
+  "gate_paths": {
+    "c3a9c9e9": ["bea13a70", "d0edbff1"],
+    "eddaa1fb": ["bea13a70", "d0edbff1"],
+    "7888e091": ["bea13a70", "d0edbff1"],
+    "4e1130cc": ["bea13a70", "d0edbff1"]
+  },
+  "non_authorizations": [
+    "implementation", "deployment", "activation", "restart", "external_action",
+    "protected_matter_access", "hammertime_inbox", "board_reconciliation", "gate_bypass"
+  ]
+}

@@ -1,0 +1,3449 @@
+{
+  "canonical_subset_sha256": "af66e566f71a896a07c1c3403e3dd99442fd660684fa7b5b3e49f56764040b2a",
+  "capture_version": "1.1.0",
+  "captured_at": "2026-08-24T02:52:32.186485Z",
+  "cards": [
+    {
+      "acceptance_criteria": [
+        "The visual represents all twelve estate silos with explicit owner and truth state, including unavailable or policy-filtered aggregates.",
+        "Project manager and architect lenses each have a direct task path and preserve global scope.",
+        "Every primary evidence and specialist link has a real deep-link target, and common drill paths require no more than two interactions.",
+        "The AI explanation exposes metric references, uncertainty, counter-indicators, alternatives, preconditions, impact horizon, and abstention state.",
+        "The authorization preview exposes actor, capability, target version, policy decision reference, exact hash, expiry, and denial or stale behavior without dispatch.",
+        "Keyboard, dialog, focus, table, labeling, and responsive acceptance checks are documented and tested."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9442b3b3"
+      ],
+      "id": "0242f9f2",
+      "internal_dependency_ids": [
+        "9442b3b3"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "wireframe",
+        "ux",
+        "sprint-0",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/0242f9f2/core.json",
+        "core_sha256": "adec0fcb7854307f0eaa7d145730aeead5e4e9f116e24b9b3385669efb090a7a",
+        "event_logs": [
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "a58064124f75435eaf551d445867dc6a",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:07:50.371542+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "ad8461982b70432b9cad7dbcd6c1c200",
+                "node": "chiap08",
+                "order": null,
+                "seq": 1,
+                "ts": "2026-08-23T20:07:54.851019+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "b858af237abc48b195249cd7982eb97e",
+                "node": "chiap08",
+                "seq": 2,
+                "ts": "2026-08-23T20:15:24.613397+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/0242f9f2/events/jarvis@chiap08.jsonl",
+            "sha256": "00cab8ed256409074f581e289cf395a3b561c38bd7920b65f3fc9007f0e2ee54"
+          }
+        ],
+        "id": "0242f9f2"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F2][L] Complete breadth-first role and least-click wireframe contract"
+    },
+    {
+      "acceptance_criteria": [
+        "A separate typed visibility or authorization dimension preserves unauthorized and policy-filtered states without mapping them to not_applicable truth.",
+        "Proposal insights require nonempty summary, evidence and calculation grounding, uncertainty, policy decision reference, and model provenance.",
+        "Abstained insights require a nonempty typed abstention reason and cannot expose a ready next step.",
+        "Ready action previews require every required approval to be approved and current, reject mixed rejected or expired approvals, and require a nonempty policy decision reference.",
+        "Executable negative fixtures prove each V1.1.1 counterexample fails validation and sensitivity tests fail when the guard is removed.",
+        "Focused and full dashboard tests, Draft 2020-12 validation, local references, Ruff, and forbidden-dash checks pass."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "559c8c48",
+        "f701b0d3"
+      ],
+      "id": "057f981b",
+      "internal_dependency_ids": [
+        "559c8c48",
+        "f701b0d3"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "contracts",
+        "ai-governance",
+        "truth-state",
+        "sprint-0",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/057f981b/core.json",
+        "core_sha256": "56f80cac959b638fab1e264b1a51154f2b83522a88c242ef276c7b81a26f5d0b",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "claim_revision": "b27da1b67a5f456d92bb77327dc77b77",
+                "event_id": "c7df6a65c3704be4863e736aa2bd0f8b",
+                "node": "chiap08",
+                "owner": "codex-contract-version-fix",
+                "seq": 0,
+                "transition_id": "39f9dcf0dc7946e5b3dcf2fafdb2a0aa",
+                "ts": "2026-08-23T22:57:18.164114+00:00",
+                "writer": "codex-contract-version-fix"
+              },
+              {
+                "action": "complete",
+                "event_id": "f6a675a8f3174e92be22b506f7529210",
+                "node": "chiap08",
+                "seq": 1,
+                "transition_id": "dd7235b6e8df478d9d5bb320df87c365",
+                "ts": "2026-08-23T23:17:40.165945+00:00",
+                "writer": "codex-contract-version-fix"
+              }
+            ],
+            "path": "cards/057f981b/events/codex-contract-version-fix@chiap08.jsonl",
+            "sha256": "71c24607ce096079c2098728a6774658bf726218c7fdde58abc8972f7ef61e6d"
+          }
+        ],
+        "id": "057f981b"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F5][L] Repair AI action visibility and candidate contract invariants"
+    },
+    {
+      "acceptance_criteria": [
+        "A supported append-only and legacy-consistent release-claim command clears only the skcp-gate-probe ownership of d12b8951 and returns it to backlog without completing it.",
+        "The local installed skcapstone operator CLI exposes dependency amendment and claim release commands and folds d0edbff1 into all three gated legacy cards.",
+        "Normal installed CLI claims for d12b8951, 94cbf19a, and f0c63c2a are refused while d0edbff1 is incomplete.",
+        "Package activation has exact pre-state, post-state, rollback, and no-production-deployment evidence.",
+        "Focused SKCoord, SKCapstone CLI, lifecycle, parity, and live readback tests pass with no unrelated board mutation."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "83a404bf"
+      ],
+      "id": "079cd760",
+      "internal_dependency_ids": [
+        "83a404bf"
+      ],
+      "kind": "task",
+      "labels": [
+        "skcapstone",
+        "skcoord",
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "runtime-qualification",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/079cd760/core.json",
+        "core_sha256": "8d0f39ed57333fa731ca2507ae8bb09538119c419ed2261a617b0fc2c54a1a90",
+        "event_logs": [
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "57114f7173cc48c98528cbe601e0882b",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:19:44.241857+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "f4d8a3abb3d944e289f57d78534b9362",
+                "node": "chiap08",
+                "order": null,
+                "seq": 1,
+                "ts": "2026-08-23T20:21:10.494628+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "c27104c1064c40209a11a49984c4a8ee",
+                "node": "chiap08",
+                "seq": 2,
+                "ts": "2026-08-23T20:22:15.928362+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/079cd760/events/jarvis@chiap08.jsonl",
+            "sha256": "15d3c076cb2c992ffb1725367a3b88260f493734d3800715dda6760b9f029d27"
+          }
+        ],
+        "id": "079cd760"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F3A][M] Activate dependency amendments and recover gate probe claim"
+    },
+    {
+      "acceptance_criteria": [
+        "Fixture pack spans portfolio, flow, ITIL and SRE, DORA, architecture, fleet, AI, economy, governance, legal-program aggregate, corpus-pipeline aggregate, Atlas, and SKOS signals.",
+        "Fixtures include healthy, zero, stale, partial, unavailable, unknown, not applicable, conflict, and mixed-lane cases.",
+        "Expected metric results and definition hashes are deterministic and reviewable.",
+        "No prompt, response, raw session, protected Matter content, credential, capability, source path, or HammerTime Inbox data is present.",
+        "The pack supports UI, API, agent, MCP, report, forecast, and failure qualification without production state."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9508b8fd",
+        "d0edbff1",
+        "9e88de5c"
+      ],
+      "id": "08f4cdcb",
+      "internal_dependency_ids": [
+        "9508b8fd",
+        "d0edbff1",
+        "9e88de5c"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "measurement",
+        "sprint-1",
+        "epic-6f7fd828",
+        "parent-4747a506",
+        "leaf-task",
+        "synthetic",
+        "fixtures",
+        "golden-tests",
+        "size-m"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/08f4cdcb/core.json",
+        "core_sha256": "aff2a7c89a902634ee07f9b7a2a2ad48f0bdd9835dc403aa1aca6ab88665a3ef",
+        "event_logs": [],
+        "id": "08f4cdcb"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-15][M] Create synthetic full-estate golden fixture and metric pack"
+    },
+    {
+      "acceptance_criteria": [
+        "Forecasts publish probability ranges, cohort, history window, sample, scope, assumptions, exclusions, and method.",
+        "Dependency simulations show changed assumptions, affected paths, and sensitivity without mutating source work.",
+        "Backtests record calibration, misses, drift, and when the model must abstain.",
+        "Migrated administrative completions and mixed timing data are excluded or explicitly modeled.",
+        "No forecast ranks or estimates an individual and no model owns deterministic sampling or calculation."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "08f4cdcb",
+        "5ee56779"
+      ],
+      "id": "169028ce",
+      "internal_dependency_ids": [
+        "08f4cdcb",
+        "5ee56779"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "ai-first",
+        "sprint-3",
+        "epic-6f7fd828",
+        "parent-ef218eb9",
+        "leaf-task",
+        "forecasting",
+        "monte-carlo",
+        "dependencies",
+        "calibration",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/169028ce/core.json",
+        "core_sha256": "589c61d001099e44a73dc29a4f7ab18f769c0ddc2621a5e74155afc8ee21b846",
+        "event_logs": [],
+        "id": "169028ce"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-30][L] Build probabilistic forecast dependency simulation and calibration"
+    },
+    {
+      "acceptance_criteria": [
+        "Eight concurrent identical dependency additions append exactly one event and return exactly one changed result.",
+        "Eight concurrent identical claim releases append exactly one logical unassign/backlog transition and return exactly one changed result.",
+        "Release failure injection cannot leave legacy and CardStore projections divergent without an explicit fail-closed recovery record.",
+        "Cross-process locking is bounded, path-safe, and covered for retry, timeout, and already-released behavior.",
+        "Local installed CLI, focused tests, parity checks, exact board readback, activation rollback, and no-unrelated-mutation evidence pass."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "079cd760"
+      ],
+      "id": "1f9ee2c9",
+      "internal_dependency_ids": [
+        "079cd760"
+      ],
+      "kind": "task",
+      "labels": [
+        "skcapstone",
+        "skcoord",
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "concurrency",
+        "idempotency",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/1f9ee2c9/core.json",
+        "core_sha256": "c5ba81912fbac747c43a05fff7e56a79f80487ed11765256f58145e25a3b4915",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "b2414da6e4c2429ea3bea7dc3a882bf1",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:24:09.732222+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "9078ebc6c11247e0a63acceab8273b69",
+                "node": "chiap08",
+                "seq": 1,
+                "ts": "2026-08-23T20:26:10.400377+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/1f9ee2c9/events/jarvis@chiap08.jsonl",
+            "sha256": "add48f7db3609eb5923f28da8bb442af4b566aa90c783cc17cd994ab2485cc7f"
+          }
+        ],
+        "id": "1f9ee2c9"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F3B][M] Make board dependency and claim-release amendments atomic"
+    },
+    {
+      "acceptance_criteria": [
+        "Truth state includes distinct unreachable semantics separate from unknown, unavailable, and unauthorized visibility. No such state renders healthy.",
+        "Unavailable, unreachable, unknown, and not_applicable values are null. Every non-null measured or derived current, stale, or partial value has nonempty evidence_refs and a source watermark. Current metrics reject nonempty errors.",
+        "Every evidence, calculation, best-practice, and model-provenance reference requires nonempty values at every nested level. Metric zero rejects empty-string evidence references.",
+        "Proposal insights require at least one metric_ref as well as nonempty evidence, calculation, uncertainty, policy, and model provenance grounding. Nested proposal insights reject ungrounded recommendations.",
+        "Ready mutating previews require nonempty target identity and non-null exact expected_version. Required approvals are unanimously approved, current, and exact-version-bound.",
+        "OpenAPI and schema parity plus fail-closed counterexamples and sensitivity tests cover every repaired invariant, including nested reference sensitivity.",
+        "Targeted and full dashboard tests, schema checks, Ruff, and forbidden-dash scan pass.",
+        "Work uses an isolated worktree and lands through a green PR with the exact required Claude Opus trailer. No admin bypass, force push, manual tag, or baseline change.",
+        "The candidate remains unauthorized. No deployment, external action, human-gate completion, or independent-review completion occurs."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "057f981b",
+        "54cd56f2"
+      ],
+      "id": "26c69f86",
+      "internal_dependency_ids": [
+        "057f981b",
+        "54cd56f2"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "contract",
+        "remediation",
+        "fail-closed",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/26c69f86/core.json",
+        "core_sha256": "41b34785147ea660dc31eb420f8eb2b9912000a9935f805c6d4ca1e8d49d404f",
+        "event_logs": [
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "amend_criteria",
+                "criteria": [
+                  "Truth state includes distinct unreachable semantics separate from unknown, unavailable, and unauthorized visibility. No such state renders healthy.",
+                  "Unavailable, unreachable, unknown, and not_applicable values are null. Every non-null measured or derived current, stale, or partial value has nonempty evidence_refs and a source watermark. Current metrics reject nonempty errors.",
+                  "Every evidence, calculation, best-practice, and model-provenance reference requires nonempty values at every nested level. Metric zero rejects empty-string evidence references.",
+                  "Proposal insights require at least one metric_ref as well as nonempty evidence, calculation, uncertainty, policy, and model provenance grounding. Nested proposal insights reject ungrounded recommendations.",
+                  "Ready mutating previews require nonempty target identity and non-null exact expected_version. Required approvals are unanimously approved, current, and exact-version-bound.",
+                  "OpenAPI and schema parity plus fail-closed counterexamples and sensitivity tests cover every repaired invariant, including nested reference sensitivity.",
+                  "Targeted and full dashboard tests, schema checks, Ruff, and forbidden-dash scan pass.",
+                  "Work uses an isolated worktree and lands through a green PR with the exact required Claude Opus trailer. No admin bypass, force push, manual tag, or baseline change.",
+                  "The candidate remains unauthorized. No deployment, external action, human-gate completion, or independent-review completion occurs."
+                ],
+                "event_id": "feef6db668e54417b79ef9c53b9cb516",
+                "node": "chiap08",
+                "seq": 0,
+                "ts": "2026-08-24T01:30:53.233743+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "claim",
+                "claim_revision": "081332710c5348d3bdc6b49c6a3a50aa",
+                "event_id": "e76a0f66232a44879b7cb680ed3cb257",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 1,
+                "transition_id": "3f99c5bffbcb43a5b84e7aef647fdd30",
+                "ts": "2026-08-24T01:32:33.970474+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "3e28136779e44101b1034c3e6c52b8f0",
+                "node": "chiap08",
+                "seq": 2,
+                "transition_id": "c27046da2c0c4cb08b50f16b08068929",
+                "ts": "2026-08-24T02:36:11.248965+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/26c69f86/events/jarvis@chiap08.jsonl",
+            "sha256": "cec5e21b920eaef39a5d3af25576775088b524ac58f97e2c7209c08c1e9969f3"
+          }
+        ],
+        "id": "26c69f86"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F8][M] Close metric evidence, reachability, insight, and mutation-preview invariants"
+    },
+    {
+      "acceptance_criteria": [
+        "Critical-path date forecasts and throughput Monte Carlo quantiles are discriminated and mutually exclusive.",
+        "Rolling backtests prevent leakage and define calibration, low-sample abstention, and reproducibility.",
+        "Schedule insights include supporting and counter evidence, affected outcomes, alternatives, uncertainty, and expected impact.",
+        "AI explains engine results and cannot authorize, mutate, or execute a schedule action.",
+        "Policy, truth-state, no-ranking, and contract tests are specified."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "bea13a70",
+        "d0edbff1",
+        "169028ce",
+        "f080f150",
+        "efa9bee8",
+        "c3a9c9e9"
+      ],
+      "id": "4e1130cc",
+      "internal_dependency_ids": [
+        "bea13a70",
+        "d0edbff1",
+        "169028ce",
+        "f080f150",
+        "efa9bee8",
+        "c3a9c9e9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "scheduling",
+        "forecasting",
+        "ai-insights",
+        "contract",
+        "sprint-3",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/4e1130cc/core.json",
+        "core_sha256": "ddcc291c20208127eb7dfaf2968f3e957e578054b884fdb023d3560184eff6bb",
+        "event_logs": [],
+        "id": "4e1130cc"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-30B][L] Freeze discriminated forecast calibration and AI schedule insight contracts"
+    },
+    {
+      "acceptance_criteria": [
+        "The strip distinguishes all approved truth states and shows expected versus reporting coverage.",
+        "Every issue links to owner, source, watermark, last observation, error provenance, and safe next step.",
+        "No failed source becomes an empty green state or a zero metric.",
+        "Refresh and remediation remain previews until a separate policy and authorization path is approved.",
+        "Keyboard, responsive, non-color, and screen-reader behavior have tests."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9508b8fd",
+        "d0edbff1",
+        "9e88de5c",
+        "804f14de"
+      ],
+      "id": "5026359d",
+      "internal_dependency_ids": [
+        "9508b8fd",
+        "d0edbff1",
+        "9e88de5c",
+        "804f14de"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "measurement",
+        "sprint-1",
+        "epic-6f7fd828",
+        "parent-4747a506",
+        "leaf-task",
+        "data-quality",
+        "reconciliation",
+        "truth-state",
+        "size-m"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/5026359d/core.json",
+        "core_sha256": "b67972b9c34f7765a24656702e684c63f8d6faa6bf6ca9417a401ac103a1f429",
+        "event_logs": [],
+        "id": "5026359d"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-14][M] Expose truth-state data-quality and reconciliation strip"
+    },
+    {
+      "acceptance_criteria": [
+        "A durable target claim followed by pre-append bumped-card demote failure leaves both projections at the prior state or deterministically completes a fully consistent intended transition.",
+        "Durable complete-after-error mints Joules exactly once, while retries and failed or compensated completions mint none.",
+        "CardStore core, event enumeration, event-log reads, and card ID listing use descriptor-pinned no-follow regular single-link checks and reject external symlinks.",
+        "Exact regression probes, full SKCoord, relevant full SKCapstone evidence, Ruff, installed read-only checks, parity, lifecycle, and rollback evidence pass.",
+        "No live implementation claim, production deployment, service restart, commit, or push occurs."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "8ab522ee"
+      ],
+      "id": "50e36b06",
+      "internal_dependency_ids": [
+        "8ab522ee"
+      ],
+      "kind": "task",
+      "labels": [
+        "skcapstone",
+        "skcoord",
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "recovery",
+        "security",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/50e36b06/core.json",
+        "core_sha256": "3b65ae8cc1dafd2bb601d671f447314455c087bfe8051cc7547fab1f5c5b419e",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "claim_revision": "eaaaddfcd3be4ac08099720345a121b2",
+                "event_id": "8b11d6bf93a340c3893a12fb02794d9e",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "transition_id": "d68c0bbf4d904c95a597904f05d2c4a2",
+                "ts": "2026-08-23T21:40:08.367256+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "142b378777f24eee81a7d713748e5328",
+                "node": "chiap08",
+                "seq": 1,
+                "transition_id": "340509040d934eb380660a3ddf47e420",
+                "ts": "2026-08-23T21:48:07.403977+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/50e36b06/events/jarvis@chiap08.jsonl",
+            "sha256": "284e2b2f8add3f763c4a9a2ad8b5864469b27ee7be0bb52d691b16b50c149a9b"
+          }
+        ],
+        "id": "50e36b06"
+      },
+      "status": "done",
+      "swimlane": "security",
+      "title": "[SKCP-00F3E][M] Close partial claim recovery and CardStore read-path safety"
+    },
+    {
+      "acceptance_criteria": [
+        "Force claim cannot bypass any incomplete, unknown, review, or human dependency and returns a nonzero refusal listing every blocking ID.",
+        "Normal claim, completion, release, lifecycle, append-only dependency, rollback, crash-recovery, and parity behavior remain covered.",
+        "Counterexample test force_claim_overrides_dependencies is replaced by sensitivity coverage proving the bypass is rejected.",
+        "Changes are developed only in fetched isolated worktrees, never by branching or committing a shared editable checkout.",
+        "Required SKCoord and SKCapstone suites and Ruff pass without weakening honest environmental failures.",
+        "Green PRs land without force, admin bypass, hand tags, secret-baseline changes, or red CI, and shared editable checkouts can return to clean main."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "f701b0d3",
+        "559c8c48"
+      ],
+      "id": "54cd56f2",
+      "internal_dependency_ids": [
+        "f701b0d3",
+        "559c8c48"
+      ],
+      "kind": "task",
+      "labels": [
+        "skcoord",
+        "skcapstone",
+        "skdashboard",
+        "dependency-gate",
+        "cross-cluster",
+        "sprint-0",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/54cd56f2/core.json",
+        "core_sha256": "56d2ee0bb443d569f6c6a02b0cb2bbd585317ba603880e47e49fb4e10e1f6027",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "claim_revision": "8d05aad0732d4fe4afe00240b9f71c5c",
+                "event_id": "24252332173d43659a5f6bc0dc57b889",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "transition_id": "27860e3dde06494baa812f1f9471e0ca",
+                "ts": "2026-08-23T22:56:15.231248+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "e2ee47f7edc244f08c67badedd1c45c0",
+                "node": "chiap08",
+                "seq": 1,
+                "transition_id": "9ac4458e124d49b68d5f0fa4002e6162",
+                "ts": "2026-08-24T00:54:41.237680+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/54cd56f2/events/jarvis@chiap08.jsonl",
+            "sha256": "512e1b4507d6b317502296ddeb00e65beeead155ae7e0e346c401f85a86b80a6"
+          }
+        ],
+        "id": "54cd56f2"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F6][L] Enforce non-bypassable dependency claims and durable publication"
+    },
+    {
+      "acceptance_criteria": [
+        "A distinct V1.1.1 manifest records the V1.1.0 manifest hash, original manifest hash, truthful capture time, historical status semantics, and exact artifact hashes.",
+        "A pinned schedule-card snapshot contains IDs, titles, full descriptions, all acceptance criteria, labels, and folded dependencies for eddaa1fb and 7888e091.",
+        "The package explicitly maps UI service to contract scope.service_id and preserves all earlier UI truth, preview, proposal, and abstention mappings.",
+        "Manifest gate topology records d0edbff1 depending on bea13a70 and every implementation path transitively blocked by both.",
+        "Original, V1.1.0, and V1.1.1 hash tests, dashboard full suite, board topology, Ruff, forbidden-dash, and independent traceability checks pass.",
+        "Status remains proposed_for_human_review and implementation_authorized false, with consolidated non-authorizations."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "90a02b0e",
+        "f701b0d3"
+      ],
+      "id": "559c8c48",
+      "internal_dependency_ids": [
+        "90a02b0e",
+        "f701b0d3"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "review-package",
+        "scheduling",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/559c8c48/core.json",
+        "core_sha256": "2a5e8bb309d539a108b0bdfabde64e448f5554bf3ab2d65e8177c2ce7117e8a1",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "claim_revision": "6befa802b570462aa0ce95f135f5eecd",
+                "event_id": "0914f0ca9819445d8036570b445beb1f",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "transition_id": "f57f30c2cdec458dac58a51ff69cbccd",
+                "ts": "2026-08-23T22:29:58.171289+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "917d4509beb64b0993ce1e1e8ccfb82c",
+                "node": "chiap08",
+                "seq": 1,
+                "transition_id": "aafac66952bb4be593dbabc9fe0a3e81",
+                "ts": "2026-08-23T22:45:05.204819+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/559c8c48/events/jarvis@chiap08.jsonl",
+            "sha256": "e60c1273b244037c794f6f118c907f383f72d29d0cfab3d8928d2eb202936d55"
+          }
+        ],
+        "id": "559c8c48"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F4A][M] Regenerate truthful V1.1.1 manifest and schedule acceptance snapshot"
+    },
+    {
+      "acceptance_criteria": [
+        "Portfolio outcomes, projects, epics, tasks, risks, dependencies, decisions, and investment remain traceable to owner records.",
+        "WIP, throughput, age, cycle percentiles, blocked time, flow efficiency, churn, and rollover show definitions, samples, windows, and exclusions.",
+        "Velocity is labeled local planning context and no person is ranked by activity, cards, tokens, commits, cost, or Joules.",
+        "Dependency and milestone views expose stale, orphaned, conflicted, and human-gated paths.",
+        "Common project-manager questions reach evidence within two interactions and every chart has a table equivalent."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "804f14de",
+        "b7ada8b9"
+      ],
+      "id": "5ee56779",
+      "internal_dependency_ids": [
+        "804f14de",
+        "b7ada8b9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "analytics",
+        "sprint-2",
+        "epic-6f7fd828",
+        "parent-973b802f",
+        "leaf-task",
+        "portfolio",
+        "project-management",
+        "agile",
+        "kanban",
+        "dependencies",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/5ee56779/core.json",
+        "core_sha256": "ce71581dc25f5758043c2fb381f8f99e255d7be1dbbcc88f45499a7c784b0bcd",
+        "event_logs": [],
+        "id": "5ee56779"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-21][L] Build portfolio project Agile flow and dependency workspace"
+    },
+    {
+      "acceptance_criteria": [
+        "Harness-reported and gateway-observed measurement lanes remain separate and are not summed by default.",
+        "Estimated cost names pricing revision and confidence; tokens, USD, Joules, latency, quality, and value are never treated as interchangeable.",
+        "AI quality emphasizes accepted outcome, verified effect, evaluation, rework, override, abstention, denial handling, and cost per accepted outcome.",
+        "No raw prompt, response, retrieval query, workspace path, source path, session ID, credential, or capability token is read or rendered.",
+        "Model, client, provider, node, route, queue, cache, error, quality, and cost drilldowns preserve scope and provenance."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "804f14de",
+        "b7ada8b9"
+      ],
+      "id": "77d6bae0",
+      "internal_dependency_ids": [
+        "804f14de",
+        "b7ada8b9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "analytics",
+        "sprint-2",
+        "epic-6f7fd828",
+        "parent-973b802f",
+        "leaf-task",
+        "ai",
+        "skcounter",
+        "skgateway",
+        "evaluations",
+        "cost",
+        "skjoule",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/77d6bae0/core.json",
+        "core_sha256": "396d4cee0d1e33c746fa9dc51fd35b9a7a4dac5d6658120b06ea9c1dae9d7488",
+        "event_logs": [],
+        "id": "77d6bae0"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-24][L] Build AI outcome SKCounter SKGateway evaluation cost and Joule workspace"
+    },
+    {
+      "acceptance_criteria": [
+        "Forecasts show P50, P85, and P95 ranges, method, history window, sample, exclusions, assumptions, dependency treatment, and calibration.",
+        "Critical-path and flow-based forecasts remain separately labeled and are never collapsed into false date precision.",
+        "Scenario comparison covers scope change, capacity change, dependency slip, milestone move, ITIL blackout or change window, and architecture migration sequencing without mutating owner data.",
+        "AI identifies schedule risk, supporting and counter evidence, uncertainty, affected outcomes, alternatives, expected impact, and abstains when evidence is insufficient.",
+        "A proposed reschedule creates a deterministic preview with owner operation, changed dates or dependencies, blast radius, policy decision, exact hash, expiry, rollback, and required approvals.",
+        "Backtests, forecast calibration, scenario reproducibility, accessibility, performance, and no-individual-ranking tests pass."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "bea13a70",
+        "d0edbff1",
+        "169028ce",
+        "f080f150",
+        "efa9bee8",
+        "eddaa1fb",
+        "4e1130cc"
+      ],
+      "id": "7888e091",
+      "internal_dependency_ids": [
+        "bea13a70",
+        "d0edbff1",
+        "169028ce",
+        "f080f150",
+        "efa9bee8",
+        "eddaa1fb",
+        "4e1130cc"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "scheduling",
+        "forecasting",
+        "monte-carlo",
+        "ai-insights",
+        "scenarios",
+        "sprint-3",
+        "epic-6f7fd828",
+        "parent-ef218eb9",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/7888e091/core.json",
+        "core_sha256": "263ced93555737b9e56fb475042ae5a15c99a5c3580ace302b49f2a396c1c3ea",
+        "event_logs": [
+          {
+            "event_count": 1,
+            "events": [
+              {
+                "action": "add_dependency",
+                "dependency": "eddaa1fb",
+                "event_id": "7beb1070dc4e48f58f7bb86679f85e3c",
+                "node": "chiap08",
+                "reason": "Forecast scenarios require the synchronized schedule explorer projection and interaction contract.",
+                "seq": 0,
+                "ts": "2026-08-23T21:26:50.171733+00:00",
+                "writer": "codex-root"
+              }
+            ],
+            "path": "cards/7888e091/events/codex-root@chiap08.jsonl",
+            "sha256": "fe52d72f893aa9602e1faba60c66f71424dbf2d7849902301a0676ae3f6e008f"
+          },
+          {
+            "event_count": 1,
+            "events": [
+              {
+                "action": "add_dependency",
+                "dependency": "4e1130cc",
+                "event_id": "340d6799389546f686ed0e91e9712265",
+                "node": "chiap08",
+                "reason": "The forecast workspace must wait for the discriminated forecast calibration and AI schedule insight contracts.",
+                "seq": 0,
+                "ts": "2026-08-23T22:35:28.286401+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/7888e091/events/jarvis@chiap08.jsonl",
+            "sha256": "c38d54d08d4e3467a168659f1b64de31d19bb23ebe9d462507f3d3e22354f6a1"
+          }
+        ],
+        "id": "7888e091"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-30A][L] Add probabilistic schedule forecasts scenarios and AI schedule recommendations"
+    },
+    {
+      "acceptance_criteria": [
+        "Every adapter has an owner, bounded query budget, schema version, TTL, watermark, classification, and explicit unavailable path.",
+        "Fleet, CMDB, agent-presence, wallet, harness-reported, and gateway-observed populations remain separate.",
+        "Protected SKLegal detail requires Tenant and Matter policy; the global adapter exposes no Matter content.",
+        "HammerTime Inbox is never accessed and only approved aggregate pipeline evidence is consumed.",
+        "Source failure, timeout, malformed data, stale data, and partial coverage remain visible and cannot render healthy."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9508b8fd",
+        "d0edbff1"
+      ],
+      "id": "804f14de",
+      "internal_dependency_ids": [
+        "9508b8fd",
+        "d0edbff1"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "measurement",
+        "sprint-1",
+        "epic-6f7fd828",
+        "parent-4747a506",
+        "leaf-task",
+        "adapters",
+        "watermarks",
+        "data-quality",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/804f14de/core.json",
+        "core_sha256": "20cf9cc7af83bd0bb8fc29c778922ede2bedf29bf4f3a58a272afa629ff3a55a",
+        "event_logs": [],
+        "id": "804f14de"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-12][L] Build bounded cross-estate observation adapters and source watermarks"
+    },
+    {
+      "acceptance_criteria": [
+        "Claims for d12b8951, 94cbf19a, and f0c63c2a are refused while d0edbff1 is incomplete without relying on operator convention.",
+        "Dependency changes are append-only, auditable, idempotent, and available through a supported coordination command or event.",
+        "Existing downstream card identity and provenance are preserved without falsely completing implementation work.",
+        "Canonical SKCP-04 label state matches completed board confirmation d79100a7.",
+        "Focused and integration tests prove claim refusal before the gate and eligibility behavior after a synthetic completed gate, with rollback evidence."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9442b3b3"
+      ],
+      "id": "83a404bf",
+      "internal_dependency_ids": [
+        "9442b3b3"
+      ],
+      "kind": "task",
+      "labels": [
+        "skcapstone",
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "board-governance",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/83a404bf/core.json",
+        "core_sha256": "b5590ca88d086674668c3575b905dad9fc23a1311d6cbf5259e972d9e3769dec",
+        "event_logs": [
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "86e04d8b90254df883eceb412dc84a26",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:07:54.850912+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "a8c3367c313647d183fd416161c658f9",
+                "node": "chiap08",
+                "order": null,
+                "seq": 1,
+                "ts": "2026-08-23T20:11:33.181630+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "635033139c5640b1b25fecfc5644c217",
+                "node": "chiap08",
+                "seq": 2,
+                "ts": "2026-08-23T20:14:24.128143+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/83a404bf/events/jarvis@chiap08.jsonl",
+            "sha256": "428dfd1206680e95a9176bdfd49715095bd7c355887ff456dc10979c600ba51f"
+          }
+        ],
+        "id": "83a404bf"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F3][M] Enforce independent-review dependencies on legacy implementation cards"
+    },
+    {
+      "acceptance_criteria": [
+        "DORA metrics are scoped to services, use current definitions, show balancing context, and are not used for broad team rankings.",
+        "Topology and blast-radius views trace relationships, owner, environment, evidence age, reconciliation state, and impacted services.",
+        "ADR, lifecycle, technical debt, capacity, and SKPerf signals show approved definitions, targets, regression baselines, and uncertainty.",
+        "SKPerf ingestion reads approved aggregates only and does not expose raw corpus targets or protected paths.",
+        "Architecture exceptions reach affected CIs, services, decisions, and evidence within two interactions."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "804f14de",
+        "b7ada8b9"
+      ],
+      "id": "866ffaac",
+      "internal_dependency_ids": [
+        "804f14de",
+        "b7ada8b9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "analytics",
+        "sprint-2",
+        "epic-6f7fd828",
+        "parent-973b802f",
+        "leaf-task",
+        "dora",
+        "architecture",
+        "cmdb",
+        "skperf",
+        "capacity",
+        "drift",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/866ffaac/core.json",
+        "core_sha256": "ea689a1f1d4292e8f267d8c15bbfdc9784a129ceb91af2bff7ca9e796252644e",
+        "event_logs": [],
+        "id": "866ffaac"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-23][L] Build DORA architecture CMDB SKPerf capacity and drift workspace"
+    },
+    {
+      "acceptance_criteria": [
+        "Forced claim, complete, release, stale-release, and lifecycle interleavings produce matching legacy and CardStore projections or an explicit fail-closed recovery record.",
+        "Same-host writers acquire one documented shared board lock order; affected card locks are acquired deterministically and Joule minting cannot reenter the critical section.",
+        "Claim, complete, and release mirror failures restore exact legacy bytes or create durable recovery evidence and return failure.",
+        "Release events bind expected owner and claim revision so stale or cross-host events cannot clear a newer owner.",
+        "Cross-host concurrency limitations are explicit, and append-only folding deterministically converges or surfaces a conflict without false completion.",
+        "Board, card, recovery, and compensation paths reject symlinks, unsafe parents, path traversal, controls, NULs, and oversized identifiers using open-time checks.",
+        "Legacy compensation and recovery writes are atomic, fsynced, no-follow, and failure-injection tested.",
+        "Staged label add and removal emit CardStore events and preserve eligibility parity under CardStore, legacy, and dual modes.",
+        "Focused races, full SKCoord, full SKCapstone, Ruff, parity, lifecycle, installed CLI readback, and rollback evidence pass.",
+        "No live implementation claim, production deployment, service restart, commit, or push occurs."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "a081d5ed"
+      ],
+      "id": "8ab522ee",
+      "internal_dependency_ids": [
+        "a081d5ed"
+      ],
+      "kind": "task",
+      "labels": [
+        "skcapstone",
+        "skcoord",
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "concurrency",
+        "durability",
+        "security",
+        "sprint-0",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/8ab522ee/core.json",
+        "core_sha256": "3f0c2b211e495e3f2251d7021b6b0326736912b29ac0666c67b10cc974a5d7e7",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "describe",
+                "description": "Resolve all remaining board-consistency findings. Serialize same-host claim, complete, release, stale-release, and lifecycle agent-file mutations; use crash-safe compensation and recovery; mirror staged-label changes; make release events owner- and claim-revision-specific; reject unsafe paths; and define deterministic cross-host convergence or explicit conflict detection because host-local file locks are not distributed locks.",
+                "event_id": "6a34abf0dbcd4270954dd79e36755e7e",
+                "node": "chiap08",
+                "seq": 0,
+                "ts": "2026-08-23T20:49:42.000661+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "amend_criteria",
+                "criteria": [
+                  "Forced claim, complete, release, stale-release, and lifecycle interleavings produce matching legacy and CardStore projections or an explicit fail-closed recovery record.",
+                  "Same-host writers acquire one documented shared board lock order; affected card locks are acquired deterministically and Joule minting cannot reenter the critical section.",
+                  "Claim, complete, and release mirror failures restore exact legacy bytes or create durable recovery evidence and return failure.",
+                  "Release events bind expected owner and claim revision so stale or cross-host events cannot clear a newer owner.",
+                  "Cross-host concurrency limitations are explicit, and append-only folding deterministically converges or surfaces a conflict without false completion.",
+                  "Board, card, recovery, and compensation paths reject symlinks, unsafe parents, path traversal, controls, NULs, and oversized identifiers using open-time checks.",
+                  "Legacy compensation and recovery writes are atomic, fsynced, no-follow, and failure-injection tested.",
+                  "Staged label add and removal emit CardStore events and preserve eligibility parity under CardStore, legacy, and dual modes.",
+                  "Focused races, full SKCoord, full SKCapstone, Ruff, parity, lifecycle, installed CLI readback, and rollback evidence pass.",
+                  "No live implementation claim, production deployment, service restart, commit, or push occurs."
+                ],
+                "event_id": "ba8532b2eb0c407682ad3ccf2d1cebf8",
+                "node": "chiap08",
+                "seq": 1,
+                "ts": "2026-08-23T20:49:42.212089+00:00",
+                "writer": "codex-root"
+              }
+            ],
+            "path": "cards/8ab522ee/events/codex-root@chiap08.jsonl",
+            "sha256": "754e3bc25c7438fcab95301b4ca6653c7ce30c67f404ec7080b0024e77475e9e"
+          },
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "04ccc8360e2642208e985d8ee7bf0cb6",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:44:53.441722+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "e6f70d933b844390b4af4cedab894d7e",
+                "node": "chiap08",
+                "order": null,
+                "seq": 1,
+                "ts": "2026-08-23T21:09:48.377740+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "c5fcb973fad542adbcadce0089d4ef94",
+                "node": "chiap08",
+                "seq": 2,
+                "transition_id": "c1111e9683e54113b14942ce78db5fac",
+                "ts": "2026-08-23T21:34:33.968051+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/8ab522ee/events/jarvis@chiap08.jsonl",
+            "sha256": "7ed9d066ddc3f4494154dd029b98dd3cafc0359781b9c7b645711de244ea8320"
+          }
+        ],
+        "id": "8ab522ee"
+      },
+      "status": "done",
+      "swimlane": "security",
+      "title": "[SKCP-00F3D][L] Close claim-complete races and harden board mutation durability"
+    },
+    {
+      "acceptance_criteria": [
+        "Manifest pins every reviewed artifact and records the superseded manifest hash.",
+        "All schema, OpenAPI, UX, board-topology, forbidden-character, lint, targeted, and full-suite checks pass.",
+        "Independent-review blockers and UX findings have explicit disposition evidence.",
+        "The candidate states all non-authorizations and requires a new exact-hash human approval before d0edbff1 can pass."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "ee1d0874",
+        "0242f9f2",
+        "83a404bf",
+        "079cd760",
+        "f94fde82",
+        "1f9ee2c9",
+        "a081d5ed",
+        "b24213ea",
+        "8ab522ee",
+        "bd732651",
+        "50e36b06"
+      ],
+      "id": "90a02b0e",
+      "internal_dependency_ids": [
+        "ee1d0874",
+        "0242f9f2",
+        "83a404bf",
+        "079cd760",
+        "f94fde82",
+        "1f9ee2c9",
+        "a081d5ed",
+        "b24213ea",
+        "8ab522ee",
+        "bd732651",
+        "50e36b06"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "review-package",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/90a02b0e/core.json",
+        "core_sha256": "0a5b7f9cac4807312d18ea2a85faa89577a56e9340ab96bd81de249359d2b10c",
+        "event_logs": [
+          {
+            "event_count": 7,
+            "events": [
+              {
+                "action": "add_dependency",
+                "dependency": "f94fde82",
+                "event_id": "879af84c4eb74b0288e5225a13ec8ee2",
+                "node": "chiap08",
+                "reason": "Superseding candidate assembly requires independent V2 UX blocker correction.",
+                "seq": 0,
+                "ts": "2026-08-23T20:23:49.957925+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "1f9ee2c9",
+                "event_id": "a4963096310144edb0ed306a77e078fd",
+                "node": "chiap08",
+                "reason": "Superseding candidate requires atomic and fail-closed board amendment semantics.",
+                "seq": 1,
+                "ts": "2026-08-23T20:23:55.039083+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "a081d5ed",
+                "event_id": "f54248c9e5264b39b6308eecbd0b0358",
+                "node": "chiap08",
+                "reason": "Superseding candidate requires shared-owner claim serialization and atomic recoverable release.",
+                "seq": 2,
+                "ts": "2026-08-23T20:29:53.420504+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "b24213ea",
+                "event_id": "67815bb4d461446dad6e432cb314c92b",
+                "node": "chiap08",
+                "reason": "Superseding candidate requires service-scope propagation and truthful row summary.",
+                "seq": 3,
+                "ts": "2026-08-23T20:33:35.948090+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "8ab522ee",
+                "event_id": "7e885a2d7d8a430bb0ddc5b6b9d728ad",
+                "node": "chiap08",
+                "reason": "Superseding candidate requires locked claim-complete semantics, safe paths, durable recovery, and clean full suites.",
+                "seq": 4,
+                "ts": "2026-08-23T20:44:26.922301+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "bd732651",
+                "event_id": "f6738d8052034c2ca14b2d604f624c31",
+                "node": "chiap08",
+                "reason": "Superseding candidate requires aligned V1.1 self-declared versions and UI contract normalization.",
+                "seq": 5,
+                "ts": "2026-08-23T21:38:58.264335+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "50e36b06",
+                "event_id": "1b383fd0fc4f47b49c6dbbe96596da01",
+                "node": "chiap08",
+                "reason": "Superseding candidate requires partial-claim recovery, exactly-once Joules, and symlink-safe CardStore reads.",
+                "seq": 6,
+                "ts": "2026-08-23T21:39:36.101166+00:00",
+                "writer": "codex-root"
+              }
+            ],
+            "path": "cards/90a02b0e/events/codex-root@chiap08.jsonl",
+            "sha256": "ef13f5a2ad651100564faf3bdc40801a9efe86a477905a7013bc1aff420b3171"
+          },
+          {
+            "event_count": 7,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "0f6044239ba74d8788b9c8d4b29eed50",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:17:41.426004+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "811bd1c75f5c492c838d304c48921d34",
+                "node": "chiap08",
+                "order": null,
+                "seq": 1,
+                "ts": "2026-08-23T20:19:44.241959+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "079cd760",
+                "event_id": "b5f17b93563341fbab119ea4a7e521f4",
+                "node": "chiap08",
+                "reason": "Runtime activation and live dependency-gate qualification must complete before F4 assembly.",
+                "seq": 2,
+                "ts": "2026-08-23T20:21:27.215227+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "claim",
+                "event_id": "cb1acdb39d724aac9a9f16d8bad63ae2",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 3,
+                "ts": "2026-08-23T20:29:20.180222+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "4335bdf1891a442480b82bb07bce0b02",
+                "node": "chiap08",
+                "order": null,
+                "seq": 4,
+                "ts": "2026-08-23T20:30:08.374946+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "claim",
+                "claim_revision": "ab376aeec712492e82c2439f4b92c4df",
+                "event_id": "c4b220a074c34c2885d0ae6b67e9cbfa",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 5,
+                "transition_id": "1f545f89b88f4fadba7b20e5105c2e5f",
+                "ts": "2026-08-23T21:51:52.948563+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "1e54bb313daa42ffa57d623459a18629",
+                "node": "chiap08",
+                "seq": 6,
+                "transition_id": "16b85cbfc81d4c07bf6a12c351d2f612",
+                "ts": "2026-08-23T22:07:20.042101+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/90a02b0e/events/jarvis@chiap08.jsonl",
+            "sha256": "af161a2b9186a168bd1649e4edfc8c564630a70ce9fa2441e672b03d13f59a46"
+          }
+        ],
+        "id": "90a02b0e"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F4][M] Assemble and verify superseding SKCP-00 candidate"
+    },
+    {
+      "acceptance_criteria": [
+        "ADR names the canonical production process, origin, API namespace, and authoritative owner for every exposed resource.",
+        "OpenAPI and JSON Schema fixtures cover Economy, fleet, board, health, errors, freshness, pagination, and event streaming.",
+        "Threat model covers confused deputy, route fallback, capability leakage, replay, cross-origin access, oversized payloads, stale projections, and unauthorized mutation.",
+        "Unsupported routes return an explicit non-success response and never fall through to an unrelated endpoint.",
+        "Contract tests and compatibility policy are executable in CI."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [],
+      "id": "9442b3b3",
+      "internal_dependency_ids": [],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture",
+        "api-contract",
+        "security",
+        "size-m",
+        "epic-6f7fd828",
+        "parent-6f7fd828",
+        "sprint-0",
+        "parent-84f763ac"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/9442b3b3/core.json",
+        "core_sha256": "e7539374e55c34ee771677d410693647f9a1aa76372b9c954f0258927d612b64",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "0bb7b731c99b40f79c6fc6c896da17c8",
+                "node": "chiap08",
+                "owner": "codex-root",
+                "seq": 0,
+                "ts": "2026-08-23T19:26:16.767178+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "complete",
+                "event_id": "512e64529b8c4c29a2b7242c55d94f4a",
+                "node": "chiap08",
+                "seq": 1,
+                "ts": "2026-08-23T20:01:37.858118+00:00",
+                "writer": "codex-root"
+              }
+            ],
+            "path": "cards/9442b3b3/events/codex-root@chiap08.jsonl",
+            "sha256": "46d6be53251897b5fc7b191cf4d5f504eb56f76000e63f619b09b915d05cda99"
+          }
+        ],
+        "id": "9442b3b3"
+      },
+      "status": "done",
+      "swimlane": "security",
+      "title": "[SKCP-00][M] Freeze control-plane API, ownership, and threat boundaries"
+    },
+    {
+      "acceptance_criteria": [
+        "Human explicitly approves or requests changes to the exact hashed architecture, sprint, contract, and wireframe artifacts.",
+        "Approval addresses the authoritative-owner boundary, metric truth states, immutable reports, AI recommendation contract, and separate action authorization path.",
+        "Approval addresses the six-sprint breadth-first sequence and the proposed card catalog.",
+        "Silence, page viewing, or partial feedback is not completion.",
+        "No production API, deployment, command execution, or external integration is authorized by this decision."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [],
+      "id": "9508b8fd",
+      "internal_dependency_ids": [],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "human-gate",
+        "architecture",
+        "measurement",
+        "ai-first",
+        "wireframe",
+        "exact-version",
+        "epic-6f7fd828",
+        "parent-84f763ac",
+        "sprint-0"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/9508b8fd/core.json",
+        "core_sha256": "9da3e0054e18a21c8a099210387f3805ed28019129928772e90e25072a4d829b",
+        "event_logs": [
+          {
+            "event_count": 1,
+            "events": [
+              {
+                "action": "describe",
+                "description": "Human decision gate for the proposed SKDashboard measurement architecture. Review docs/review/SKCP-00-CANDIDATE-MANIFEST.json at sha256 88b78aece092291535177414f159925ce997083c7c51134ed184495c8b9318d3. The manifest pins the ADR, breadth-first sprint plan, six JSON contracts, interactive wireframe, and two browser renders. Approve the projection boundary, /api/v1, metric envelope, truth states, report snapshots, AI evidence-to-decision loop, two-stage authorization pattern, and six-sprint structure, or request exact changes.",
+                "event_id": "bc39587997644ce5be97ebdc4ea984dd",
+                "node": "chiap08",
+                "seq": 0,
+                "ts": "2026-08-23T19:51:13.992333+00:00",
+                "writer": "codex-root"
+              }
+            ],
+            "path": "cards/9508b8fd/events/codex-root@chiap08.jsonl",
+            "sha256": "0840905d89ba56d4e2b5671f6e85228914c8896b18f7d193d0f06c9f0fe4075e"
+          },
+          {
+            "event_count": 1,
+            "events": [
+              {
+                "action": "complete",
+                "event_id": "bd143baf42224aae8102602de7aeffe3",
+                "node": "chiap08",
+                "seq": 0,
+                "ts": "2026-08-23T20:01:37.573942+00:00",
+                "writer": "human"
+              }
+            ],
+            "path": "cards/9508b8fd/events/human@chiap08.jsonl",
+            "sha256": "e61c29cb11bb7e564858aea3bdcb0171904447995dd40696130f9bf15a360223"
+          }
+        ],
+        "id": "9508b8fd"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00H][HUMAN] Approve exact measurement architecture sprint plan and wireframes"
+    },
+    {
+      "acceptance_criteria": [
+        "Registry validates every approved metric family against the frozen JSON Schema and rejects unknown versions or missing provenance.",
+        "Golden fixtures cover current, stale, partial, unavailable, unknown, not applicable, measured, derived, estimated, and forecast states.",
+        "Zero is preserved as an observed value and never substituted for missing or failed evidence.",
+        "Definitions are hash-addressed and deterministic tests reproduce numerator, denominator, sample, exclusions, and result.",
+        "No individual productivity ranking metric is registered."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9508b8fd",
+        "d0edbff1"
+      ],
+      "id": "9e88de5c",
+      "internal_dependency_ids": [
+        "9508b8fd",
+        "d0edbff1"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "measurement",
+        "sprint-1",
+        "epic-6f7fd828",
+        "parent-4747a506",
+        "leaf-task",
+        "metric-registry",
+        "contracts",
+        "size-m"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/9e88de5c/core.json",
+        "core_sha256": "1fd1f592d230f3ec70e029175dff23b0698f61fe768c3852211e85e001abec1d",
+        "event_logs": [],
+        "id": "9e88de5c"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-11][M] Build versioned metric registry and deterministic calculation fixtures"
+    },
+    {
+      "acceptance_criteria": [
+        "Concurrent releases of two tasks owned by one agent remove both claims with no lost update.",
+        "Claim, release, and complete races use one fixed board lock order and produce a deterministic projection without deadlock.",
+        "Release appends one atomic release_claim event that folds unowned backlog state without partial transitions.",
+        "Injected store failure restores exact legacy bytes; injected compensation failure writes a durable fail-closed recovery record and returns failure.",
+        "Timeout, retry, already-released, symlink rejection, identifier validation, immutable core bytes, parity, lifecycle, installed CLI, and rollback tests pass.",
+        "No live implementation claim, production deployment, service restart, commit, or push occurs."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "1f9ee2c9"
+      ],
+      "id": "a081d5ed",
+      "internal_dependency_ids": [
+        "1f9ee2c9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skcapstone",
+        "skcoord",
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "concurrency",
+        "recovery",
+        "sprint-0",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/a081d5ed/core.json",
+        "core_sha256": "198efaa66e712bf133080054a5ea8b5ea8746632e829bb664bcbc55e522c047b",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "e3430850eec946a7995b0cb014ce46b4",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:30:08.374837+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "c682ef5e947340aab60171bf5c527996",
+                "node": "chiap08",
+                "seq": 1,
+                "ts": "2026-08-23T20:31:20.514628+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/a081d5ed/events/jarvis@chiap08.jsonl",
+            "sha256": "f39e4caf8d1c4d73ce02b4c04a0ca08b5724b6ee2916925b1f5b16a78dbf9f57"
+          }
+        ],
+        "id": "a081d5ed"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F3C][L] Serialize shared claim state and make release a single recoverable event"
+    },
+    {
+      "acceptance_criteria": [
+        "Changing service scope updates every relevant deep link and evidence drill without losing estate scope, time, baseline, or role.",
+        "Initialization from URL parameters and browser history preserves service scope deterministically.",
+        "Freshness and truth-state summary counts match the twelve visible rows or clearly disclose a separate denominator and calculation.",
+        "Focused browser interaction tests, full suite, render checks, original hash preservation, Ruff, and forbidden-dash checks pass."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "f94fde82"
+      ],
+      "id": "b24213ea",
+      "internal_dependency_ids": [
+        "f94fde82"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "wireframe",
+        "ux",
+        "sprint-0",
+        "leaf-task",
+        "size-s"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/b24213ea/core.json",
+        "core_sha256": "7e8bead1d764d46686408595a5730ee1470f4d1a0ab7d756dbb575cd3049ae5d",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "92b921ee73754753b99910154b84a066",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:33:55.764476+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "16bba8bb5c4941cd8883fac78ace61c2",
+                "node": "chiap08",
+                "seq": 1,
+                "ts": "2026-08-23T20:38:34.975090+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/b24213ea/events/jarvis@chiap08.jsonl",
+            "sha256": "d6eebc5a62e22cb8b9e8fa99b353f20b3c2af0bbd0535a3403ff92ae0e249cf7"
+          }
+        ],
+        "id": "b24213ea"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F2B][S] Wire service scope and reconcile truth-state summary"
+    },
+    {
+      "acceptance_criteria": [
+        "Every metric and report traces to definition, owner, source watermarks, classification, calculation, and human review state.",
+        "Policy unavailable, denial, stale evidence, partial coverage, orphan dependency, duplicate card, missing criteria, and claim-TTL issues remain separate.",
+        "Corrections and supersessions are attributable append-only records and never rewrite history.",
+        "Protected classifications expose only policy-permitted metadata and safe error detail.",
+        "Governance findings offer evidence, owner, severity, due state, and a preview-only remediation path."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "5026359d",
+        "b7ada8b9"
+      ],
+      "id": "b548a77a",
+      "internal_dependency_ids": [
+        "5026359d",
+        "b7ada8b9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "analytics",
+        "sprint-2",
+        "epic-6f7fd828",
+        "parent-973b802f",
+        "leaf-task",
+        "governance",
+        "lineage",
+        "capauth",
+        "data-quality",
+        "audit",
+        "size-m"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/b548a77a/core.json",
+        "core_sha256": "9a0e15c8ebcdbc6ceced582932485f01ce2f152f8f370627304b3d0a0c400445",
+        "event_logs": [],
+        "id": "b548a77a"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-25][M] Build governance metric-lineage policy and data-quality center"
+    },
+    {
+      "acceptance_criteria": [
+        "A scope change updates all visible metrics, insights, recommendations, and evidence without mixed-scope leakage.",
+        "Saved views and deep links preserve only authorized non-secret scope, time, baseline, filters, and presentation state.",
+        "Ctrl+K or Cmd+K reaches scopes, metrics, reports, workspaces, evidence, and allowed actions with keyboard-only operation.",
+        "Protected Tenant and Matter scope fails closed before retrieval and cannot be inferred from unauthorized results.",
+        "Browser navigation, refresh, share, expiry, revocation, and stale saved-view behavior have tests."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "c6828b8a"
+      ],
+      "id": "b7ada8b9",
+      "internal_dependency_ids": [
+        "c6828b8a"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "analytics",
+        "sprint-2",
+        "epic-6f7fd828",
+        "parent-973b802f",
+        "leaf-task",
+        "scope",
+        "saved-views",
+        "deep-links",
+        "accessibility",
+        "size-m"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/b7ada8b9/core.json",
+        "core_sha256": "0fea59f9994ad5ce39d9c75d5b442748b3f235e8065eb2e29c5e3cd9cf4ef7b1",
+        "event_logs": [],
+        "id": "b7ada8b9"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-20][M] Add unified scope saved views deep links and cross-filtering"
+    },
+    {
+      "acceptance_criteria": [
+        "Every V1.1 schema ID, schema_version constant, OpenAPI projection version, and local reference consistently uses 1.1.0.",
+        "Regression tests reject any V1.1 filename or ID whose self-declared version differs.",
+        "Compatibility notes map Policy filtered to not_applicable, UI service to service_id, stale-target and denied-policy to contract states, changed parameters to re-preview, and proposal or abstention states to typed insight outcomes.",
+        "Focused and full SKDashboard tests, Draft 2020-12 checks, local references, Ruff, original hashes, and forbidden-dash checks pass."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "ee1d0874"
+      ],
+      "id": "bd732651",
+      "internal_dependency_ids": [
+        "ee1d0874"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "contracts",
+        "schema-version",
+        "sprint-0",
+        "leaf-task",
+        "size-s"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/bd732651/core.json",
+        "core_sha256": "80a663c30c9f2df893c246fc5bc511c8b4292eeefad792e7777840e0e38e4acd",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "claim_revision": "e2de6da657c247ecb18d9fde36c98c2a",
+                "event_id": "3440b8e7b11a4a5bb7391a28e8caffa8",
+                "node": "chiap08",
+                "owner": "codex-skdashboard-contract-v11",
+                "seq": 0,
+                "transition_id": "5db01990ed2541b195120f011419527a",
+                "ts": "2026-08-23T21:39:52.001360+00:00",
+                "writer": "codex-skdashboard-contract-v11"
+              },
+              {
+                "action": "complete",
+                "event_id": "6bf73238a3654263a1bd5434c5df6f27",
+                "node": "chiap08",
+                "seq": 1,
+                "transition_id": "0353e623e63b4929a6a8eeaf2a9f3b38",
+                "ts": "2026-08-23T21:43:43.166977+00:00",
+                "writer": "codex-skdashboard-contract-v11"
+              }
+            ],
+            "path": "cards/bd732651/events/codex-skdashboard-contract-v11@chiap08.jsonl",
+            "sha256": "91c3a1efd4edc507f477752c978c7b840bc6e463b5d0f0db610c794f2161daab"
+          }
+        ],
+        "id": "bd732651"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F1A][S] Align V1.1 schema declarations and UI contract normalization"
+    },
+    {
+      "acceptance_criteria": [
+        "Human approval names the exact superseding manifest SHA256 and records any conditions.",
+        "Approval covers the corrected truth-state invariants, enforced board dependencies, twelve-silo role wireframe, AI explanation, and authorization-preview boundary.",
+        "The approval artifact preserves explicit non-authorizations and is linked before independent review can be re-evaluated."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "90a02b0e",
+        "559c8c48",
+        "ef91a99f"
+      ],
+      "id": "bea13a70",
+      "internal_dependency_ids": [
+        "90a02b0e",
+        "559c8c48",
+        "ef91a99f"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "human-gate",
+        "architecture-remediation",
+        "sprint-0",
+        "not-claimable",
+        "do-not-claim"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/bea13a70/core.json",
+        "core_sha256": "3a32c65efeaecde8b7ae144b918cdadcbade9921443f9e6eedf102754cf9e1cd",
+        "event_logs": [
+          {
+            "event_count": 1,
+            "events": [
+              {
+                "action": "add_dependency",
+                "dependency": "559c8c48",
+                "event_id": "bb7d21de72854bd4940b60b4f3e8894f",
+                "node": "chiap08",
+                "reason": "Human approval must target the truthful V1.1.1 manifest and pinned schedule acceptance snapshot.",
+                "seq": 0,
+                "ts": "2026-08-23T22:13:14.498252+00:00",
+                "writer": "codex-root"
+              }
+            ],
+            "path": "cards/bea13a70/events/codex-root@chiap08.jsonl",
+            "sha256": "866d47953c0aa6619bfd83a63db6818375f870ad6334b79be624b1f8def29e18"
+          },
+          {
+            "event_count": 1,
+            "events": [
+              {
+                "action": "add_dependency",
+                "dependency": "ef91a99f",
+                "event_id": "d05085e09cba467d911bf6085615257d",
+                "node": "chiap08",
+                "reason": "Exact V1.1.2 remediation and durable green publication must complete before superseding human approval.",
+                "seq": 0,
+                "ts": "2026-08-23T22:55:18.397932+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/bea13a70/events/jarvis@chiap08.jsonl",
+            "sha256": "fa168ff83a0c448f7e18bf15e9b4899163c4b4268783bbae2580416be9776bbd"
+          }
+        ],
+        "id": "bea13a70"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-00H2][HUMAN] Approve exact superseding measurement architecture candidate"
+    },
+    {
+      "acceptance_criteria": [
+        "Canonical schedule projection envelope and typed item contracts are frozen.",
+        "Timezone, null-date, rollup, partial-rollup, and dependency-cycle semantics are explicit.",
+        "ITIL and architecture overlays remain policy-filtered truth, not inferred ranking.",
+        "Scenarios are immutable and cannot write owner-system records.",
+        "Reschedule previews require version and base-hash exactness before any typed proposal.",
+        "OpenAPI and policy, truth-state, and no-ranking tests are specified."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "bea13a70",
+        "d0edbff1",
+        "b7ada8b9"
+      ],
+      "id": "c3a9c9e9",
+      "internal_dependency_ids": [
+        "bea13a70",
+        "d0edbff1",
+        "b7ada8b9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "scheduling",
+        "contract",
+        "openapi",
+        "sprint-2",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/c3a9c9e9/core.json",
+        "core_sha256": "a7856cafeb0da6b312c1eb07bcfa768fa81d3895ff8517232736ba08f1fea934",
+        "event_logs": [],
+        "id": "c3a9c9e9"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-20A][L] Freeze typed schedule projection overlay scenario and reschedule contracts"
+    },
+    {
+      "acceptance_criteria": [
+        "One honest high-level signal from every authorized silo renders in the default Now workspace.",
+        "Decision queue, source-freshness strip, metric tiles, estate pulse, AI conclusions, recommendations, and evidence drill targets match the accepted visual direction.",
+        "Each metric shows definition version, scope, window, source, truth state, sample where relevant, and one-interaction evidence target.",
+        "AI conclusions and recommendations show evidence, best-practice reference, confidence, uncertainty, counter-indicators, alternatives, expected impact, risk, and preconditions.",
+        "No UI control executes an AI recommendation; action affordances open a separate preview only.",
+        "Meaningful content, keyboard, responsive, reduced-motion, contrast, and accessible-table budgets pass."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9508b8fd",
+        "d0edbff1",
+        "d12b8951",
+        "9e88de5c",
+        "804f14de",
+        "5026359d",
+        "08f4cdcb"
+      ],
+      "id": "c6828b8a",
+      "internal_dependency_ids": [
+        "9508b8fd",
+        "d0edbff1",
+        "d12b8951",
+        "9e88de5c",
+        "804f14de",
+        "5026359d",
+        "08f4cdcb"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "measurement",
+        "sprint-1",
+        "epic-6f7fd828",
+        "parent-4747a506",
+        "leaf-task",
+        "now-workspace",
+        "breadth-first",
+        "user-experience",
+        "ai-first",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/c6828b8a/core.json",
+        "core_sha256": "b6d1c7f731120502f39fbcbb1fe2cea8ee818729ba75e62c61b3144378ba084e",
+        "event_logs": [],
+        "id": "c6828b8a"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-13][L] Deliver live breadth-first Now workspace across every estate silo"
+    },
+    {
+      "acceptance_criteria": [
+        "Review recomputes candidate hashes and validates all local JSON references and contract tests.",
+        "Review proves missing or failed evidence cannot become zero or healthy.",
+        "Review proves AI cannot calculate canonical metrics, bypass policy, receive capability material, or execute an action from reporting context.",
+        "Review checks recommendations for evidence, best-practice version, impact, uncertainty, counter-indicators, alternatives, risk, and preconditions.",
+        "Review publishes PASS or FAIL with exact findings and no repair changes."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9442b3b3",
+        "bea13a70"
+      ],
+      "id": "d0edbff1",
+      "internal_dependency_ids": [
+        "9442b3b3",
+        "bea13a70"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture",
+        "review",
+        "measurement",
+        "ai-first",
+        "security",
+        "mandatory-correctness-boundary",
+        "size-m",
+        "epic-6f7fd828",
+        "parent-84f763ac",
+        "sprint-0",
+        "review-failed"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/d0edbff1/core.json",
+        "core_sha256": "bdca92c1588a95e479d63924ca61edc332d34ec353f2482d8a62a32eebae19cb",
+        "event_logs": [
+          {
+            "event_count": 4,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "19df7096be294edaa2bee1bf1a5930e0",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:02:09.414468+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "5e8a053bddb644fe9d70aad14ab73627",
+                "node": "chiap08",
+                "order": null,
+                "seq": 1,
+                "ts": "2026-08-23T20:07:28.342199+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "review",
+                "event_id": "1ca6baaab104419aad1c1dfed17ebe15",
+                "node": "chiap08",
+                "order": null,
+                "seq": 2,
+                "ts": "2026-08-23T20:10:31.260022+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "bea13a70",
+                "event_id": "c04a363468ed4efda9382fb497f195d6",
+                "node": "chiap08",
+                "reason": "Superseding exact-hash human approval must precede independent review completion.",
+                "seq": 3,
+                "ts": "2026-08-23T22:25:52.233470+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/d0edbff1/events/jarvis@chiap08.jsonl",
+            "sha256": "a41c89d02f82126986330d65cf57dcb19e63c775b6dd59c8362ff3d360ee5a15"
+          }
+        ],
+        "id": "d0edbff1"
+      },
+      "status": "review",
+      "swimlane": "security",
+      "title": "[SKCP-00R][M][REVIEW] Independently challenge measurement contract and AI decision loop"
+    },
+    {
+      "acceptance_criteria": [
+        "Canonical /api/v1 endpoints implement the frozen schemas and never use catch-all success responses.",
+        "Economy reports token dimensions, lanes, collectors, expected nodes, freshness, errors, and unavailable cost distinctly from zero.",
+        "Board, fleet, and component projections identify source owner, observation time, projection time, schema version, and partial-data state.",
+        "ETag or cursor semantics, bounded query limits, rate controls, and SSE reconnect behavior have tests.",
+        "No raw prompt, response, tool payload, workspace path, session identifier, secret, or capability token appears in API fixtures or responses."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9442b3b3",
+        "f0d2f784",
+        "d0edbff1"
+      ],
+      "id": "d12b8951",
+      "internal_dependency_ids": [
+        "9442b3b3",
+        "f0d2f784",
+        "d0edbff1"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "read-api",
+        "skcounter",
+        "fleet",
+        "observability",
+        "size-l",
+        "epic-6f7fd828",
+        "parent-6f7fd828",
+        "sprint-1",
+        "parent-4747a506",
+        "do-not-claim-until-d0edbff1"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/d12b8951/core.json",
+        "core_sha256": "d864622b9832e60c86703bdc4875140c96676d1e89205b9e461feec9dfeb7c90",
+        "event_logs": [
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "add_dependency",
+                "dependency": "d0edbff1",
+                "event_id": "2062f0029cd447dda1f38bbfdc17e857",
+                "node": "chiap08",
+                "reason": "SKCP-00 independent review must pass before SKCP-01 implementation.",
+                "seq": 0,
+                "ts": "2026-08-23T20:12:16.228707+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "unassign",
+                "event_id": "7c7eee048e5e4872b4b16419298f0034",
+                "node": "chiap08",
+                "released_owner": "skcp-gate-probe",
+                "seq": 1,
+                "ts": "2026-08-23T20:21:26.979006+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "backlog",
+                "event_id": "5a7cd05d1dc740609837fe2e7405d96f",
+                "node": "chiap08",
+                "released_owner": "skcp-gate-probe",
+                "seq": 2,
+                "ts": "2026-08-23T20:21:26.979091+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/d12b8951/events/jarvis@chiap08.jsonl",
+            "sha256": "9dd9976752c5ed3b77f8ac20cc5d4ee702e698ae77838682850f5e6fbd8bab2d"
+          },
+          {
+            "event_count": 1,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "3e7272ff72bd4be88964536c9e819caf",
+                "node": "chiap08",
+                "owner": "skcp-gate-probe",
+                "seq": 0,
+                "ts": "2026-08-23T20:17:57.896664+00:00",
+                "writer": "skcp-gate-probe"
+              }
+            ],
+            "path": "cards/d12b8951/events/skcp-gate-probe@chiap08.jsonl",
+            "sha256": "3a2a327f00f00cb66b3c8513871b977c9cc3674296710002bf1f3a6433609caf"
+          }
+        ],
+        "id": "d12b8951"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-01][L] Serve versioned read-only Economy, fleet, board, and health APIs"
+    },
+    {
+      "acceptance_criteria": [
+        "SLIs are user-facing, SLOs and error budgets show approved targets, and Unknown is explicit when evidence is insufficient.",
+        "ITIL metrics publish numerator, denominator, sample, window, classification, exclusions, and legacy coverage.",
+        "Breach counts are never derived from a truncated display list and closed change outcomes are classified consistently.",
+        "Incident recurrence, Problem linkage, KEDB use, CAB, validation, deployment, verification, PIR, and rollback remain traceable.",
+        "Legacy INC, PRB, and CHG identifiers remain provenance aliases and are not introduced as SKLegal canonical domain types."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "804f14de",
+        "b7ada8b9"
+      ],
+      "id": "da097cbb",
+      "internal_dependency_ids": [
+        "804f14de",
+        "b7ada8b9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "analytics",
+        "sprint-2",
+        "epic-6f7fd828",
+        "parent-973b802f",
+        "leaf-task",
+        "itil",
+        "sre",
+        "slo",
+        "error-budget",
+        "change-management",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/da097cbb/core.json",
+        "core_sha256": "bf3b1aeaaea6f574954c824907b252915c09102327bd538e8d40db913fc93c54",
+        "event_logs": [],
+        "id": "da097cbb"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-22][L] Build ITIL SRE service-level change PIR and KEDB workspace"
+    },
+    {
+      "acceptance_criteria": [
+        "Roadmap, Gantt, and Flow lenses use the same versioned scoped projection and switching views preserves filters, role, selection, and deep-link state.",
+        "The timeline shows planned dates, original baseline, actual progress, milestone and release markers, dependencies, blockers, critical path where applicable, ITIL change windows, and architecture migration or deprecation dates.",
+        "Unknown, stale, partial, unavailable, policy-filtered, and not-applicable schedule evidence remain distinct from on-time or zero variance.",
+        "A material schedule exception is reachable from Now in one interaction and its source evidence in no more than two interactions.",
+        "The workspace supports portfolio, project manager, architect, service, and team scopes without individual productivity ranking.",
+        "Keyboard navigation, zoom, collapse, virtualized rows, table equivalent, print/export snapshot, and responsive acceptance tests pass."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "bea13a70",
+        "d0edbff1",
+        "b7ada8b9",
+        "5ee56779",
+        "c3a9c9e9"
+      ],
+      "id": "eddaa1fb",
+      "internal_dependency_ids": [
+        "bea13a70",
+        "d0edbff1",
+        "b7ada8b9",
+        "5ee56779",
+        "c3a9c9e9"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "scheduling",
+        "forecasting",
+        "gantt",
+        "roadmap",
+        "agile-flow",
+        "sprint-2",
+        "epic-6f7fd828",
+        "parent-973b802f",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/eddaa1fb/core.json",
+        "core_sha256": "3f62fe11a0adc763e96bbab7d512cb8efc90918551ac91918210780f11a9f964",
+        "event_logs": [
+          {
+            "event_count": 1,
+            "events": [
+              {
+                "action": "add_dependency",
+                "dependency": "c3a9c9e9",
+                "event_id": "754b3f5407404d27ab0a57fdf73f9c5a",
+                "node": "chiap08",
+                "reason": "The schedule explorer must wait for the frozen typed schedule projection overlay scenario and reschedule contracts.",
+                "seq": 0,
+                "ts": "2026-08-23T22:35:23.533635+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/eddaa1fb/events/jarvis@chiap08.jsonl",
+            "sha256": "5653db672c5cb8d7ea0fe7b960624d62ddc6398e53b679dd96636086a52c9753"
+          }
+        ],
+        "id": "eddaa1fb"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-21A][L] Deliver synchronized roadmap Gantt and flow schedule explorer"
+    },
+    {
+      "acceptance_criteria": [
+        "Unavailable, unknown, and not applicable metric results cannot carry a numeric or textual observed value.",
+        "Observed zero remains valid only with an evidence-bearing truth state and explicit provenance.",
+        "A projection with source errors cannot claim a current healthy truth state.",
+        "Action-oriented recommendations require nonempty best-practice, impact, risk, counter-indicator, alternative, and precondition grounding, while insufficient evidence uses a typed abstention.",
+        "Ready high-risk, external, destructive, or protected actions require at least one exact-version approval, with ready, denied, expired, and approval-required fixtures.",
+        "Negative schema fixtures prove zero, missing, failed, partial, current-with-errors, empty-grounding, and approval-bypass behavior.",
+        "Schema versions, hashes, OpenAPI references, compatibility notes, and test evidence remain aligned."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "9442b3b3"
+      ],
+      "id": "ee1d0874",
+      "internal_dependency_ids": [
+        "9442b3b3"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "contracts",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/ee1d0874/core.json",
+        "core_sha256": "5acfcacbd1a17be60264db6e6c9a2ed50a40293d2da5ff3d8ee96b5163508ccc",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "describe",
+                "description": "Produce a superseding contract revision that makes missing or failed evidence structurally incapable of rendering as zero or healthy, requires action-oriented AI recommendations to carry substantive grounding, and requires approvals for ready high-risk or protected actions. Correct metric result, recommendation, action preview, and OpenAPI projection conditions. Add positive, negative, denial, expiry, and abstention fixtures. This is architecture remediation only and does not authorize production API implementation.",
+                "event_id": "31a4777c6f324cc8b8be8ef7df8bcf70",
+                "node": "chiap08",
+                "seq": 0,
+                "ts": "2026-08-23T20:08:04.492045+00:00",
+                "writer": "codex-root"
+              },
+              {
+                "action": "amend_criteria",
+                "criteria": [
+                  "Unavailable, unknown, and not applicable metric results cannot carry a numeric or textual observed value.",
+                  "Observed zero remains valid only with an evidence-bearing truth state and explicit provenance.",
+                  "A projection with source errors cannot claim a current healthy truth state.",
+                  "Action-oriented recommendations require nonempty best-practice, impact, risk, counter-indicator, alternative, and precondition grounding, while insufficient evidence uses a typed abstention.",
+                  "Ready high-risk, external, destructive, or protected actions require at least one exact-version approval, with ready, denied, expired, and approval-required fixtures.",
+                  "Negative schema fixtures prove zero, missing, failed, partial, current-with-errors, empty-grounding, and approval-bypass behavior.",
+                  "Schema versions, hashes, OpenAPI references, compatibility notes, and test evidence remain aligned."
+                ],
+                "event_id": "9b0d5678d3ec43a3b98e346176ca1402",
+                "node": "chiap08",
+                "seq": 1,
+                "ts": "2026-08-23T20:08:04.701030+00:00",
+                "writer": "codex-root"
+              }
+            ],
+            "path": "cards/ee1d0874/events/codex-root@chiap08.jsonl",
+            "sha256": "6556f015ef56335002fb95416b7e7cd17b86185dfdf5f7314c40a91998b873fa"
+          },
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "531f1d3b5c464ba9841ee60c12a255cf",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:07:28.342095+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "ae9844b5c0f344269db56939622655b1",
+                "node": "chiap08",
+                "order": null,
+                "seq": 1,
+                "ts": "2026-08-23T20:07:50.371645+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "76144a2693834b078b839705bd836e45",
+                "node": "chiap08",
+                "seq": 2,
+                "ts": "2026-08-23T20:16:14.364666+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/ee1d0874/events/jarvis@chiap08.jsonl",
+            "sha256": "2f6fb245112fff909d789d1b5187b4235bc400f1f8031453a4d1b70c453fd910"
+          }
+        ],
+        "id": "ee1d0874"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F1][M] Enforce truth-state invariants in measurement contracts"
+    },
+    {
+      "acceptance_criteria": [
+        "V1.1.2 explicitly marks the V1.1.0 future timestamp and V1.1.1 capture as corrected non-authoritative lineage evidence while preserving their exact hashes.",
+        "A pinned capture artifact contains every relevant card, folded dependency, status, event reference, command, capture time, and reproducible subset hash used by the candidate.",
+        "Global parity records 985 checked, 590 matched, 125 mismatches, 270 missing, and open drift 10 without reconciling the shared board.",
+        "The F4A stale hash is superseded by a non-self-referential sealing rule and a detached exact manifest receipt that is not recursively pinned by the manifest.",
+        "All repaired contracts, four schedule cards, schedule requirements, gate paths, publication receipts, non-authorizations, and exact prior hashes are pinned and independently reproducible.",
+        "Focused and full dashboard suites, schemas, refs, hashes, Ruff, dash scan, board topology, and exact live status checks pass.",
+        "The candidate remains proposed_for_human_review with implementation_authorized false; bea13a70 and d0edbff1 remain incomplete.",
+        "The candidate PR is green and merged without admin bypass, force push, hand tag, secret-baseline changes, or red CI."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "057f981b",
+        "54cd56f2",
+        "26c69f86"
+      ],
+      "id": "ef91a99f",
+      "internal_dependency_ids": [
+        "057f981b",
+        "54cd56f2",
+        "26c69f86"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture",
+        "traceability",
+        "exact-hash",
+        "cross-cluster",
+        "sprint-0",
+        "leaf-task",
+        "size-l"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/ef91a99f/core.json",
+        "core_sha256": "957fa653662fd40dbf308452a3cb079fea4e27adb3a5010ef037749a771d2649",
+        "event_logs": [
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "claim",
+                "claim_revision": "f239a8b6bce9488d882edf6c31cd7ebd",
+                "event_id": "f4d3c3c4c6f84839bf984c91f59bb62b",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "transition_id": "0780647c473a457885cbfc1c54e737d8",
+                "ts": "2026-08-24T01:03:40.914093+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "add_dependency",
+                "dependency": "26c69f86",
+                "event_id": "8f1feee0a07f4391a4ceb1bc05de804c",
+                "node": "chiap08",
+                "reason": "Independent F7 validation found canonical contract counterexamples that require a separately reviewed fail-closed repair before candidate assembly can continue.",
+                "seq": 1,
+                "ts": "2026-08-24T01:30:42.156245+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "d530d3f6903242ba885fe80b6090329a",
+                "node": "chiap08",
+                "order": null,
+                "seq": 2,
+                "transition_id": "cccb61403a1f4fee8f563e15312beeb0",
+                "ts": "2026-08-24T01:32:33.971874+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/ef91a99f/events/jarvis@chiap08.jsonl",
+            "sha256": "10ca926f81bfe81a1e67da1441ab1711a0374c173fba5d5bbf8a55b997ba5bb8"
+          }
+        ],
+        "id": "ef91a99f"
+      },
+      "status": "ready",
+      "swimlane": "feature",
+      "title": "[SKCP-00F7][L] Assemble truthful V1.1.2 with pinned capture and detached seal"
+    },
+    {
+      "acceptance_criteria": [
+        "Every recommendation validates against the recommendation schema and cites exact evidence, metrics, calculations, and practice version.",
+        "Conclusions state confidence, uncertainty, counter-indicators, and conditions that would change them.",
+        "Recommendations show expected impact range, horizon, method, risk, alternatives, preconditions, reversibility, and why no action may be preferable.",
+        "Next steps are none, evidence, saved view, report draft, or allowlisted action preview; none execute from the insight response.",
+        "Acceptance, rejection, override, rework, verified effect, calibration, and user feedback are recorded without treating acceptance alone as correctness."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "f080f150"
+      ],
+      "id": "efa9bee8",
+      "internal_dependency_ids": [
+        "f080f150"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "ai-first",
+        "sprint-3",
+        "epic-6f7fd828",
+        "parent-ef218eb9",
+        "leaf-task",
+        "recommendations",
+        "best-practices",
+        "impact",
+        "outcome-learning",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/efa9bee8/core.json",
+        "core_sha256": "db254f7dcefa27bc80571c2c945d01644c19c6aff4e10f732798ca36989ff246",
+        "event_logs": [],
+        "id": "efa9bee8"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-31A][L] Add best-practice recommendations impact options and outcome learning"
+    },
+    {
+      "acceptance_criteria": [
+        "Every response validates against the insight schema and identifies scope, window, metric versions, evidence, calculations, uncertainty, contradictions, exclusions, model provenance, and policy reference.",
+        "Numeric claims resolve to deterministic metric results and calculation traces.",
+        "Cross-scope, protected, stale, partial, unavailable, conflicting, prompt-injected, and unsupported questions have evaluation fixtures.",
+        "The system abstains when evidence, policy, source rights, classification, model qualification, or metric quality is insufficient.",
+        "The reporting model has no command tool, capability token, arbitrary network, shell, filesystem, email, filing, calendar, or connector access."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "b7ada8b9",
+        "5ee56779",
+        "da097cbb",
+        "866ffaac",
+        "77d6bae0",
+        "b548a77a"
+      ],
+      "id": "f080f150",
+      "internal_dependency_ids": [
+        "b7ada8b9",
+        "5ee56779",
+        "da097cbb",
+        "866ffaac",
+        "77d6bae0",
+        "b548a77a"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "ai-first",
+        "sprint-3",
+        "epic-6f7fd828",
+        "parent-ef218eb9",
+        "leaf-task",
+        "insights",
+        "natural-language",
+        "evaluation",
+        "policy",
+        "size-l"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/f080f150/core.json",
+        "core_sha256": "cd8cb987ec302a7aa0be65e87c4a247decaf6324fe0f31d0d4ddbb01063db99c",
+        "event_logs": [],
+        "id": "f080f150"
+      },
+      "status": "backlog",
+      "swimlane": "feature",
+      "title": "[SKCP-31][L] Build governed read-only AI insight query and evaluation suite"
+    },
+    {
+      "acceptance_criteria": [
+        "Economy navigation clearly separates AI Usage, Autopilot Cost, and Joule without treating tokens, USD, or Joules as equivalent.",
+        "A read-only API projects valid append-only skcounter.snapshot.v1 observations from an isolated configurable data root and degrades cleanly on missing or malformed data.",
+        "Harness-reported and gateway-observed lanes remain separately filterable and are not summed by default.",
+        "The AI Usage UI exposes totals, trends, token dimensions, cache ratio, time metrics, model/client/provider/node breakdowns, collector coverage, freshness, backend versions, and cost estimation state.",
+        "No raw prompt, response, workspace path, source path, credential, or raw session identifier is read or rendered.",
+        "Tests cover empty, seeded, malformed, stale, lane-separated, and page registration behavior, and existing Economy tests remain green or retain their documented dependency skip.",
+        "Architecture and operator documentation define the SKCounter, SKDashboard, SKJoule, SKGateway, and central collector boundaries."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [],
+      "id": "f0d2f784",
+      "internal_dependency_ids": [],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "skcounter",
+        "economy",
+        "observability",
+        "epic-6f7fd828",
+        "parent-6f7fd828",
+        "skcp-sprint-1-input"
+      ],
+      "priority": "high",
+      "provenance": {
+        "core_path": "cards/f0d2f784/core.json",
+        "core_sha256": "e64fc4f73200b69894c9024e3dd8bf2434de5758c6007d9dc972bb1d091987cd",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "fa629a7cadd646b492db187c1944f0dc",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T17:35:14.096975+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "ce6fd47a2d35432e9d9f1a4d69b72a01",
+                "node": "chiap08",
+                "seq": 1,
+                "ts": "2026-08-23T17:58:36.480261+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/f0d2f784/events/jarvis@chiap08.jsonl",
+            "sha256": "ccd7810f7070cbe823887a3a1d628b4963b6853af086f5eb67a59f800254e0ff"
+          }
+        ],
+        "id": "f0d2f784"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKDASHBOARD][M] Add SKCounter AI Usage to the Economy workspace"
+    },
+    {
+      "acceptance_criteria": [
+        "complete_task refuses any task with an unknown or non-done folded dependency and reports every blocking ID.",
+        "The completion check applies to claimed, doing, and review cards and cannot be bypassed by stale legacy birth dependencies.",
+        "d0edbff1 has one effective append-only dependency on bea13a70, while bea13a70 remains incomplete.",
+        "All original and new implementation cards retain a direct or transitive path through d0edbff1 to bea13a70.",
+        "Focused and full SKCoord, relevant SKCapstone CLI, installed read-only topology, Ruff, parity, lifecycle, and rollback tests pass.",
+        "No human gate, independent review, implementation card, deployment, external action, commit, or push is completed."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "50e36b06",
+        "90a02b0e"
+      ],
+      "id": "f701b0d3",
+      "internal_dependency_ids": [
+        "50e36b06",
+        "90a02b0e"
+      ],
+      "kind": "task",
+      "labels": [
+        "skcapstone",
+        "skcoord",
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "human-gate",
+        "completion-gate",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/f701b0d3/core.json",
+        "core_sha256": "0f7932f717fd7ac55723014437264cc41876e12c15e265bc41061610ffdd578c",
+        "event_logs": [
+          {
+            "event_count": 2,
+            "events": [
+              {
+                "action": "claim",
+                "claim_revision": "478234f182cb490c89e79474fa094f88",
+                "event_id": "08790f99874a412b974c7c9b95b4963d",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "transition_id": "e2f18bd6b429470e9b6d6aaf848e9e4a",
+                "ts": "2026-08-23T22:13:23.921469+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "d88a01010878487698e4b771359e8f1f",
+                "node": "chiap08",
+                "seq": 1,
+                "transition_id": "39f0b64acd124edab96fce0bf3ca0dbf",
+                "ts": "2026-08-23T22:29:09.135647+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/f701b0d3/events/jarvis@chiap08.jsonl",
+            "sha256": "a24d9a430618678fa1334e7fa7a47c640b8eebcf7b95a6402dcd5d581c7af42e"
+          }
+        ],
+        "id": "f701b0d3"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F3F][M] Enforce completion dependencies and bind superseding human gate"
+    },
+    {
+      "acceptance_criteria": [
+        "All twelve silo evidence keys resolve to silo-correct content with no unrelated fallback.",
+        "Changing scope, time window, or baseline updates all relevant evidence and specialist deep links while retaining role context.",
+        "Synthetic ready, stale-target, denied-policy, expired, and changed-parameter states visibly update preview status and authorization availability.",
+        "Focused interaction tests cover all evidence keys, dynamic scope links, disabled-state reasons, keyboard behavior, and original artifact preservation.",
+        "V2 screenshots and remediation evidence are refreshed without modifying any original manifest-pinned artifact."
+      ],
+      "external_dependency_ids": [],
+      "folded_dependencies": [
+        "0242f9f2"
+      ],
+      "id": "f94fde82",
+      "internal_dependency_ids": [
+        "0242f9f2"
+      ],
+      "kind": "task",
+      "labels": [
+        "skdashboard",
+        "control-plane",
+        "architecture-remediation",
+        "wireframe",
+        "ux",
+        "sprint-0",
+        "leaf-task",
+        "size-m"
+      ],
+      "priority": "critical",
+      "provenance": {
+        "core_path": "cards/f94fde82/core.json",
+        "core_sha256": "0328c2722c79bb0e83bee15597690eb8d34072c92af3b0870f96b8da3e6eff90",
+        "event_logs": [
+          {
+            "event_count": 3,
+            "events": [
+              {
+                "action": "claim",
+                "event_id": "019f22249da64eb28564d75b83e3a275",
+                "node": "chiap08",
+                "owner": "jarvis",
+                "seq": 0,
+                "ts": "2026-08-23T20:21:10.494454+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "move",
+                "column": "ready",
+                "event_id": "888e5fe23b914e2f93f55635d445c4f7",
+                "node": "chiap08",
+                "order": null,
+                "seq": 1,
+                "ts": "2026-08-23T20:24:09.732322+00:00",
+                "writer": "jarvis"
+              },
+              {
+                "action": "complete",
+                "event_id": "3b075ac65da849c8bfb449d21e5ba8d2",
+                "node": "chiap08",
+                "seq": 2,
+                "ts": "2026-08-23T20:28:08.156446+00:00",
+                "writer": "jarvis"
+              }
+            ],
+            "path": "cards/f94fde82/events/jarvis@chiap08.jsonl",
+            "sha256": "5fb70958fbd99139bf33efd229caa04ad4380af7d0be08589a77f6729636e1c4"
+          }
+        ],
+        "id": "f94fde82"
+      },
+      "status": "done",
+      "swimlane": "feature",
+      "title": "[SKCP-00F2A][M] Correct V2 evidence routing and authorization state transitions"
+    }
+  ],
+  "closure": {
+    "closure_ids": [
+      "0242f9f2",
+      "057f981b",
+      "079cd760",
+      "08f4cdcb",
+      "169028ce",
+      "1f9ee2c9",
+      "26c69f86",
+      "4e1130cc",
+      "5026359d",
+      "50e36b06",
+      "54cd56f2",
+      "559c8c48",
+      "5ee56779",
+      "77d6bae0",
+      "7888e091",
+      "804f14de",
+      "83a404bf",
+      "866ffaac",
+      "8ab522ee",
+      "90a02b0e",
+      "9442b3b3",
+      "9508b8fd",
+      "9e88de5c",
+      "a081d5ed",
+      "b24213ea",
+      "b548a77a",
+      "b7ada8b9",
+      "bd732651",
+      "bea13a70",
+      "c3a9c9e9",
+      "c6828b8a",
+      "d0edbff1",
+      "d12b8951",
+      "da097cbb",
+      "eddaa1fb",
+      "ee1d0874",
+      "ef91a99f",
+      "efa9bee8",
+      "f080f150",
+      "f0d2f784",
+      "f701b0d3",
+      "f94fde82"
+    ],
+    "internal_dependency_edge_count": 102,
+    "missing_ids": [],
+    "node_count": 42,
+    "root_count": 5,
+    "status_counts": {
+      "backlog": 20,
+      "done": 20,
+      "ready": 1,
+      "review": 1
+    }
+  },
+  "closure_algorithm": {
+    "canonical_subset_rule": "SHA256 of sorted-key compact UTF-8 JSON containing cards and edges.",
+    "method": "Recursively include every folded dependency from one frozen kanban response.",
+    "roots": [
+      "26c69f86",
+      "4e1130cc",
+      "7888e091",
+      "c3a9c9e9",
+      "eddaa1fb"
+    ]
+  },
+  "command": "skcapstone coord kanban --json",
+  "command_exit_status": 0,
+  "edges": [
+    {
+      "classification": "internal",
+      "from": "0242f9f2",
+      "to": "9442b3b3"
+    },
+    {
+      "classification": "internal",
+      "from": "057f981b",
+      "to": "559c8c48"
+    },
+    {
+      "classification": "internal",
+      "from": "057f981b",
+      "to": "f701b0d3"
+    },
+    {
+      "classification": "internal",
+      "from": "079cd760",
+      "to": "83a404bf"
+    },
+    {
+      "classification": "internal",
+      "from": "08f4cdcb",
+      "to": "9508b8fd"
+    },
+    {
+      "classification": "internal",
+      "from": "08f4cdcb",
+      "to": "9e88de5c"
+    },
+    {
+      "classification": "internal",
+      "from": "08f4cdcb",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "169028ce",
+      "to": "08f4cdcb"
+    },
+    {
+      "classification": "internal",
+      "from": "169028ce",
+      "to": "5ee56779"
+    },
+    {
+      "classification": "internal",
+      "from": "1f9ee2c9",
+      "to": "079cd760"
+    },
+    {
+      "classification": "internal",
+      "from": "26c69f86",
+      "to": "057f981b"
+    },
+    {
+      "classification": "internal",
+      "from": "26c69f86",
+      "to": "54cd56f2"
+    },
+    {
+      "classification": "internal",
+      "from": "4e1130cc",
+      "to": "169028ce"
+    },
+    {
+      "classification": "internal",
+      "from": "4e1130cc",
+      "to": "bea13a70"
+    },
+    {
+      "classification": "internal",
+      "from": "4e1130cc",
+      "to": "c3a9c9e9"
+    },
+    {
+      "classification": "internal",
+      "from": "4e1130cc",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "4e1130cc",
+      "to": "efa9bee8"
+    },
+    {
+      "classification": "internal",
+      "from": "4e1130cc",
+      "to": "f080f150"
+    },
+    {
+      "classification": "internal",
+      "from": "5026359d",
+      "to": "804f14de"
+    },
+    {
+      "classification": "internal",
+      "from": "5026359d",
+      "to": "9508b8fd"
+    },
+    {
+      "classification": "internal",
+      "from": "5026359d",
+      "to": "9e88de5c"
+    },
+    {
+      "classification": "internal",
+      "from": "5026359d",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "50e36b06",
+      "to": "8ab522ee"
+    },
+    {
+      "classification": "internal",
+      "from": "54cd56f2",
+      "to": "559c8c48"
+    },
+    {
+      "classification": "internal",
+      "from": "54cd56f2",
+      "to": "f701b0d3"
+    },
+    {
+      "classification": "internal",
+      "from": "559c8c48",
+      "to": "90a02b0e"
+    },
+    {
+      "classification": "internal",
+      "from": "559c8c48",
+      "to": "f701b0d3"
+    },
+    {
+      "classification": "internal",
+      "from": "5ee56779",
+      "to": "804f14de"
+    },
+    {
+      "classification": "internal",
+      "from": "5ee56779",
+      "to": "b7ada8b9"
+    },
+    {
+      "classification": "internal",
+      "from": "77d6bae0",
+      "to": "804f14de"
+    },
+    {
+      "classification": "internal",
+      "from": "77d6bae0",
+      "to": "b7ada8b9"
+    },
+    {
+      "classification": "internal",
+      "from": "7888e091",
+      "to": "169028ce"
+    },
+    {
+      "classification": "internal",
+      "from": "7888e091",
+      "to": "4e1130cc"
+    },
+    {
+      "classification": "internal",
+      "from": "7888e091",
+      "to": "bea13a70"
+    },
+    {
+      "classification": "internal",
+      "from": "7888e091",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "7888e091",
+      "to": "eddaa1fb"
+    },
+    {
+      "classification": "internal",
+      "from": "7888e091",
+      "to": "efa9bee8"
+    },
+    {
+      "classification": "internal",
+      "from": "7888e091",
+      "to": "f080f150"
+    },
+    {
+      "classification": "internal",
+      "from": "804f14de",
+      "to": "9508b8fd"
+    },
+    {
+      "classification": "internal",
+      "from": "804f14de",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "83a404bf",
+      "to": "9442b3b3"
+    },
+    {
+      "classification": "internal",
+      "from": "866ffaac",
+      "to": "804f14de"
+    },
+    {
+      "classification": "internal",
+      "from": "866ffaac",
+      "to": "b7ada8b9"
+    },
+    {
+      "classification": "internal",
+      "from": "8ab522ee",
+      "to": "a081d5ed"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "0242f9f2"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "079cd760"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "1f9ee2c9"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "50e36b06"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "83a404bf"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "8ab522ee"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "a081d5ed"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "b24213ea"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "bd732651"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "ee1d0874"
+    },
+    {
+      "classification": "internal",
+      "from": "90a02b0e",
+      "to": "f94fde82"
+    },
+    {
+      "classification": "internal",
+      "from": "9e88de5c",
+      "to": "9508b8fd"
+    },
+    {
+      "classification": "internal",
+      "from": "9e88de5c",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "a081d5ed",
+      "to": "1f9ee2c9"
+    },
+    {
+      "classification": "internal",
+      "from": "b24213ea",
+      "to": "f94fde82"
+    },
+    {
+      "classification": "internal",
+      "from": "b548a77a",
+      "to": "5026359d"
+    },
+    {
+      "classification": "internal",
+      "from": "b548a77a",
+      "to": "b7ada8b9"
+    },
+    {
+      "classification": "internal",
+      "from": "b7ada8b9",
+      "to": "c6828b8a"
+    },
+    {
+      "classification": "internal",
+      "from": "bd732651",
+      "to": "ee1d0874"
+    },
+    {
+      "classification": "internal",
+      "from": "bea13a70",
+      "to": "559c8c48"
+    },
+    {
+      "classification": "internal",
+      "from": "bea13a70",
+      "to": "90a02b0e"
+    },
+    {
+      "classification": "internal",
+      "from": "bea13a70",
+      "to": "ef91a99f"
+    },
+    {
+      "classification": "internal",
+      "from": "c3a9c9e9",
+      "to": "b7ada8b9"
+    },
+    {
+      "classification": "internal",
+      "from": "c3a9c9e9",
+      "to": "bea13a70"
+    },
+    {
+      "classification": "internal",
+      "from": "c3a9c9e9",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "c6828b8a",
+      "to": "08f4cdcb"
+    },
+    {
+      "classification": "internal",
+      "from": "c6828b8a",
+      "to": "5026359d"
+    },
+    {
+      "classification": "internal",
+      "from": "c6828b8a",
+      "to": "804f14de"
+    },
+    {
+      "classification": "internal",
+      "from": "c6828b8a",
+      "to": "9508b8fd"
+    },
+    {
+      "classification": "internal",
+      "from": "c6828b8a",
+      "to": "9e88de5c"
+    },
+    {
+      "classification": "internal",
+      "from": "c6828b8a",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "c6828b8a",
+      "to": "d12b8951"
+    },
+    {
+      "classification": "internal",
+      "from": "d0edbff1",
+      "to": "9442b3b3"
+    },
+    {
+      "classification": "internal",
+      "from": "d0edbff1",
+      "to": "bea13a70"
+    },
+    {
+      "classification": "internal",
+      "from": "d12b8951",
+      "to": "9442b3b3"
+    },
+    {
+      "classification": "internal",
+      "from": "d12b8951",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "d12b8951",
+      "to": "f0d2f784"
+    },
+    {
+      "classification": "internal",
+      "from": "da097cbb",
+      "to": "804f14de"
+    },
+    {
+      "classification": "internal",
+      "from": "da097cbb",
+      "to": "b7ada8b9"
+    },
+    {
+      "classification": "internal",
+      "from": "eddaa1fb",
+      "to": "5ee56779"
+    },
+    {
+      "classification": "internal",
+      "from": "eddaa1fb",
+      "to": "b7ada8b9"
+    },
+    {
+      "classification": "internal",
+      "from": "eddaa1fb",
+      "to": "bea13a70"
+    },
+    {
+      "classification": "internal",
+      "from": "eddaa1fb",
+      "to": "c3a9c9e9"
+    },
+    {
+      "classification": "internal",
+      "from": "eddaa1fb",
+      "to": "d0edbff1"
+    },
+    {
+      "classification": "internal",
+      "from": "ee1d0874",
+      "to": "9442b3b3"
+    },
+    {
+      "classification": "internal",
+      "from": "ef91a99f",
+      "to": "057f981b"
+    },
+    {
+      "classification": "internal",
+      "from": "ef91a99f",
+      "to": "26c69f86"
+    },
+    {
+      "classification": "internal",
+      "from": "ef91a99f",
+      "to": "54cd56f2"
+    },
+    {
+      "classification": "internal",
+      "from": "efa9bee8",
+      "to": "f080f150"
+    },
+    {
+      "classification": "internal",
+      "from": "f080f150",
+      "to": "5ee56779"
+    },
+    {
+      "classification": "internal",
+      "from": "f080f150",
+      "to": "77d6bae0"
+    },
+    {
+      "classification": "internal",
+      "from": "f080f150",
+      "to": "866ffaac"
+    },
+    {
+      "classification": "internal",
+      "from": "f080f150",
+      "to": "b548a77a"
+    },
+    {
+      "classification": "internal",
+      "from": "f080f150",
+      "to": "b7ada8b9"
+    },
+    {
+      "classification": "internal",
+      "from": "f080f150",
+      "to": "da097cbb"
+    },
+    {
+      "classification": "internal",
+      "from": "f701b0d3",
+      "to": "50e36b06"
+    },
+    {
+      "classification": "internal",
+      "from": "f701b0d3",
+      "to": "90a02b0e"
+    },
+    {
+      "classification": "internal",
+      "from": "f94fde82",
+      "to": "0242f9f2"
+    }
+  ],
+  "raw_projection": {
+    "card_count": 732,
+    "published": false,
+    "reason": "The full projection contains unrelated board content. Only the exact closure is published.",
+    "sha256": "cad72a5b2f1525577826d4764cd1eff3d1e0c955e9fe9aac44c722675c17d953",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

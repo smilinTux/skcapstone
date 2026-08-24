@@ -1,0 +1,770 @@
+{
+  "manifest_version": "2.0.0",
+  "manifest_schema_version": "2020-12",
+  "contract_version": "1.1.0",
+  "generated_at": "2026-08-23T23:10:00Z",
+  "candidate_id": "SKCP-00-v1.1.0-superseding",
+  "supersedes": {
+    "path": "docs/review/SKCP-00-CANDIDATE-MANIFEST.json",
+    "sha256": "88b78aece092291535177414f159925ce997083c7c51134ed184495c8b9318d3",
+    "disposition": "superseded_but_valid_for_audit",
+    "original_manifest_version": "1.0.0"
+  },
+  "architecture_card_id": "9442b3b3",
+  "assembly_card_id": "90a02b0e",
+  "human_review": {
+    "card_id": "bea13a70",
+    "title": "[SKCP-00H2][HUMAN] Approve exact superseding measurement architecture candidate",
+    "status": "backlog",
+    "required_before": "independent review and any implementation eligibility"
+  },
+  "independent_review": {
+    "card_id": "d0edbff1",
+    "title": "[SKCP-00R][M][REVIEW] Independently challenge measurement contract and AI decision loop",
+    "status": "review",
+    "original_verdict": "FAIL",
+    "required_before": "any implementation eligibility"
+  },
+  "status": "proposed_for_human_review",
+  "implementation_authorized": false,
+  "artifacts": [
+    {
+      "path": "docs/architecture/ADR-0001-CONTROL-PLANE-MEASUREMENT-AND-REPORTING-v1.1.0.md",
+      "sha256": "e1d0af95e471d622204456ffd8022385e69886a6b705fac21a4e371d6a156c79",
+      "purpose": "V1.1 ADR amendment"
+    },
+    {
+      "path": "docs/planning/SK-CONTROL-PLANE-BREADTH-FIRST-SPRINTS-v1.1.0.md",
+      "sha256": "02567b79f7f83a4858a40dba7cdef3791dd7879a071ec2f33e1a066e9567b4cc",
+      "purpose": "V1.1 sprint-plan amendment"
+    },
+    {
+      "path": "docs/contracts/CONTROL-PLANE-CONTRACT-COMPATIBILITY-v1.1.0.md",
+      "sha256": "a048f1bd715e6243eb1d2d293b0187512b35055d5a82c8480d7aff2c2b060353",
+      "purpose": "V1.1 compatibility note"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-action-preview.v1.1.0.schema.json",
+      "sha256": "8cfbabbe47b971f1e2b8ccc4c90ff77a17701caf84d209f0a4fe2a257b47ae21",
+      "purpose": "V1.1 action-preview schema"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-insight.v1.1.0.schema.json",
+      "sha256": "3625513fe1e9e870deabadac840c76c7049638645d2b6d490d884deb2c871737",
+      "purpose": "V1.1 insight schema"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-metric-result.v1.1.0.schema.json",
+      "sha256": "a55d5de1db6241e5067a4d50c96a6bdd861b0b324785c54def7b92782de45c20",
+      "purpose": "V1.1 metric-result schema"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-recommendation.v1.1.0.schema.json",
+      "sha256": "d9a80faae276d2ce22a0189c1a03081dd2b293618e88838612df16895dd49fcd",
+      "purpose": "V1.1 recommendation schema"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/control-plane-report-snapshot.v1.1.0.schema.json",
+      "sha256": "0758690146f4f937ff0c904a902f5324561f4b11cbd346a735535eb2c7e923e5",
+      "purpose": "V1.1 report-snapshot schema"
+    },
+    {
+      "path": "docs/contracts/v1.1.0/openapi.control-plane.v1.1.0.json",
+      "sha256": "32bed62acce4a12eea5c633e7ee0ffa5ebe35c5764dfbae3d1ccec6c333c1487",
+      "purpose": "V1.1 OpenAPI"
+    },
+    {
+      "path": "docs/wireframes/control-plane-estate-pulse-v2.html",
+      "sha256": "66d007a9f1339929666e2a34586c1d49eb7e3d6236d83d11f43a449cf02b4c63",
+      "purpose": "V2 interactive estate wireframe"
+    },
+    {
+      "path": "docs/wireframes/control-plane-estate-pulse-v2.png",
+      "sha256": "33c400d4d4546e120a2662d5ef887d27ee85e4b87f5bdd973e038114d5e8c129",
+      "purpose": "V2 estate wireframe image"
+    },
+    {
+      "path": "docs/wireframes/control-plane-authorization-preview-v2.png",
+      "sha256": "f1ddf830f41a052917aeab6640183f649c0c8937cf7c441c5f2d1ef3d87463a8",
+      "purpose": "V2 authorization preview image"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F1-TRUTH-STATE-REMEDIATION-2026-08-23.md",
+      "sha256": "fbfb6aab27c47aeac35b9401a58953f6fd1b0f746c097a43f05032a8201ed463",
+      "purpose": "F1 evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F1A-V1.1-CONTRACT-REMEDIATION-2026-08-23.md",
+      "sha256": "1eae8fd37fc2f329ef2f5de2ee61f053f6cd045938047098e3680757f573b382",
+      "purpose": "F1A evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F2-UX-WIREFRAME-2026-08-23.md",
+      "sha256": "3196a5a2e96190dff5523178de5b8185d78f365dd6c6d55a6b12539654d305d8",
+      "purpose": "F2 evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F2A-UX-CORRECTION-2026-08-23.md",
+      "sha256": "81661e47f0fae160f8a3f4a28c18d6fcaf30f6c53af1c641374d8d14bdfc2422",
+      "purpose": "F2A evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F2B-UX-SERVICE-SCOPE-2026-08-23.md",
+      "sha256": "7559dd1b819d684e883fb7aeca31d190db4c878b4f05b2e625d3c551c4536304",
+      "purpose": "F2B evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F3-DEPENDENCY-GATE-2026-08-23.md",
+      "sha256": "20610e8cb8107c43ab03e78cb3a26a2fd3eb994a0ec59031206e86bc4c6c4258",
+      "purpose": "F3 evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F3A-RUNTIME-ACTIVATION-2026-08-23.md",
+      "sha256": "7f19d57a0803556f945f192d320c4351c12806a441b502c091719c88ee2595db",
+      "purpose": "F3A evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F3B-ATOMIC-MUTATION-2026-08-23.md",
+      "sha256": "c38be480551eec3396e650bb8a7d00d606c98001cd3b7a1cd9081c84a131dbfa",
+      "purpose": "F3B evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F3C-RELEASE-RECOVERY-2026-08-23.md",
+      "sha256": "a2b88b73a2c013ad01a0971050d776a75dc184756d227446b438f747e7d0b859",
+      "purpose": "F3C evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F3D-BOARD-MUTATION-HARDENING-2026-08-23.md",
+      "sha256": "d754d6a12e2d4c1ce6e7381a8b8b92ba533611979035e29e00d49d04ef3dbdd6",
+      "purpose": "F3D evidence"
+    },
+    {
+      "path": "docs/evidence/SKCP-00F3E-PARTIAL-RECOVERY-READ-SAFETY-2026-08-23.md",
+      "sha256": "c59aafd10300c51d0e86c43821e5b5c15fa0d9133f35309409be1c39398a788f",
+      "purpose": "F3E evidence"
+    },
+    {
+      "path": "docs/review/SKCP-00-INDEPENDENT-REVIEW-2026-08-23.md",
+      "sha256": "41af3cd58a22013cb8184d9f1334d901e18fd1e84583ce5cd6dab52bfa515a52",
+      "purpose": "original independent FAIL review"
+    },
+    {
+      "path": "tests/test_control_plane_superseding_candidate.py",
+      "sha256": "f476e5d4497cd9e1448b79b85b963574052d23d7ec2eb3b06fe253a045fe9c4c",
+      "purpose": "superseding candidate integrity tests"
+    }
+  ],
+  "f4_effective_dependency_fold": {
+    "source": {
+      "read_only_command": "skcapstone coord kanban --json",
+      "card_event_log": "/home/skuser01/.skcapstone/cards/90a02b0e/events/codex-root@chiap08.jsonl",
+      "captured_at": "2026-08-23T23:10:00Z",
+      "card_id": "90a02b0e",
+      "card_status_at_capture": "doing"
+    },
+    "card_id": "90a02b0e",
+    "effective_dependency_ids": [
+      "ee1d0874",
+      "0242f9f2",
+      "83a404bf",
+      "079cd760",
+      "f94fde82",
+      "1f9ee2c9",
+      "a081d5ed",
+      "b24213ea",
+      "8ab522ee",
+      "bd732651",
+      "50e36b06"
+    ],
+    "effective_dependencies": [
+      {
+        "card_id": "ee1d0874",
+        "description": "F1 truth-state invariant",
+        "status": "done"
+      },
+      {
+        "card_id": "0242f9f2",
+        "description": "F2 grounded recommendations",
+        "status": "done"
+      },
+      {
+        "card_id": "83a404bf",
+        "description": "F3 independent-review dependency gate",
+        "status": "done"
+      },
+      {
+        "card_id": "079cd760",
+        "description": "F3A runtime activation and claim release",
+        "status": "done"
+      },
+      {
+        "card_id": "f94fde82",
+        "description": "F2A V2 UX correction",
+        "status": "done"
+      },
+      {
+        "card_id": "1f9ee2c9",
+        "description": "F3B atomic board amendments",
+        "status": "done"
+      },
+      {
+        "card_id": "a081d5ed",
+        "description": "F3C shared claim serialization",
+        "status": "done"
+      },
+      {
+        "card_id": "b24213ea",
+        "description": "F2B service scope correction",
+        "status": "done"
+      },
+      {
+        "card_id": "8ab522ee",
+        "description": "F3D board mutation hardening",
+        "status": "done"
+      },
+      {
+        "card_id": "bd732651",
+        "description": "F1A version alignment",
+        "status": "done"
+      },
+      {
+        "card_id": "50e36b06",
+        "description": "F3E partial recovery and read safety",
+        "status": "done"
+      }
+    ],
+    "append_only_events": [
+      {
+        "event_id": "879af84c4eb74b0288e5225a13ec8ee2",
+        "ts": "2026-08-23T20:23:49.957925+00:00",
+        "writer": "codex-root",
+        "node": "chiap08",
+        "seq": 0,
+        "action": "add_dependency",
+        "dependency": "f94fde82",
+        "reason": "Superseding candidate assembly requires independent V2 UX blocker correction."
+      },
+      {
+        "event_id": "a4963096310144edb0ed306a77e078fd",
+        "ts": "2026-08-23T20:23:55.039083+00:00",
+        "writer": "codex-root",
+        "node": "chiap08",
+        "seq": 1,
+        "action": "add_dependency",
+        "dependency": "1f9ee2c9",
+        "reason": "Superseding candidate requires atomic and fail-closed board amendment semantics."
+      },
+      {
+        "event_id": "f54248c9e5264b39b6308eecbd0b0358",
+        "ts": "2026-08-23T20:29:53.420504+00:00",
+        "writer": "codex-root",
+        "node": "chiap08",
+        "seq": 2,
+        "action": "add_dependency",
+        "dependency": "a081d5ed",
+        "reason": "Superseding candidate requires shared-owner claim serialization and atomic recoverable release."
+      },
+      {
+        "event_id": "67815bb4d461446dad6e432cb314c92b",
+        "ts": "2026-08-23T20:33:35.948090+00:00",
+        "writer": "codex-root",
+        "node": "chiap08",
+        "seq": 3,
+        "action": "add_dependency",
+        "dependency": "b24213ea",
+        "reason": "Superseding candidate requires service-scope propagation and truthful row summary."
+      },
+      {
+        "event_id": "7e885a2d7d8a430bb0ddc5b6b9d728ad",
+        "ts": "2026-08-23T20:44:26.922301+00:00",
+        "writer": "codex-root",
+        "node": "chiap08",
+        "seq": 4,
+        "action": "add_dependency",
+        "dependency": "8ab522ee",
+        "reason": "Superseding candidate requires locked claim-complete semantics, safe paths, durable recovery, and clean full suites."
+      },
+      {
+        "event_id": "f6738d8052034c2ca14b2d604f624c31",
+        "ts": "2026-08-23T21:38:58.264335+00:00",
+        "writer": "codex-root",
+        "node": "chiap08",
+        "seq": 5,
+        "action": "add_dependency",
+        "dependency": "bd732651",
+        "reason": "Superseding candidate requires aligned V1.1 self-declared versions and UI contract normalization."
+      },
+      {
+        "event_id": "1b383fd0fc4f47b49c6dbbe96596da01",
+        "ts": "2026-08-23T21:39:36.101166+00:00",
+        "writer": "codex-root",
+        "node": "chiap08",
+        "seq": 6,
+        "action": "add_dependency",
+        "dependency": "50e36b06",
+        "reason": "Superseding candidate requires partial-claim recovery, exactly-once Joules, and symlink-safe CardStore reads."
+      }
+    ]
+  },
+  "lineage": {
+    "original_leaf_card_count": 22,
+    "original_leaf_cards": {
+      "SKCP-11": "9e88de5c",
+      "SKCP-12": "804f14de",
+      "SKCP-13": "c6828b8a",
+      "SKCP-14": "5026359d",
+      "SKCP-15": "08f4cdcb",
+      "SKCP-20": "b7ada8b9",
+      "SKCP-21": "5ee56779",
+      "SKCP-22": "da097cbb",
+      "SKCP-23": "866ffaac",
+      "SKCP-24": "77d6bae0",
+      "SKCP-25": "b548a77a",
+      "SKCP-30": "169028ce",
+      "SKCP-31": "f080f150",
+      "SKCP-31A": "efa9bee8",
+      "SKCP-32": "38731952",
+      "SKCP-33": "631f90bf",
+      "SKCP-34": "5858a34f",
+      "SKCP-40": "008bd490",
+      "SKCP-41": "cae1eaef",
+      "SKCP-50": "83a8c40b",
+      "SKCP-51": "2d02b6ed",
+      "SKCP-52": "ecf1148c"
+    },
+    "additions": [
+      "eddaa1fb",
+      "7888e091"
+    ]
+  },
+  "schedule_catalog": [
+    {
+      "key": "SKCP-11",
+      "card_id": "9e88de5c",
+      "title": "Build versioned metric registry and deterministic calculation fixtures",
+      "dependencies": [
+        "9508b8fd",
+        "d0edbff1"
+      ]
+    },
+    {
+      "key": "SKCP-12",
+      "card_id": "804f14de",
+      "title": "Build bounded cross-estate observation adapters and source watermarks",
+      "dependencies": [
+        "9508b8fd",
+        "d0edbff1"
+      ]
+    },
+    {
+      "key": "SKCP-13",
+      "card_id": "c6828b8a",
+      "title": "Deliver live breadth-first Now workspace across every estate silo",
+      "dependencies": [
+        "9508b8fd",
+        "d0edbff1",
+        "d12b8951",
+        "9e88de5c",
+        "804f14de",
+        "5026359d",
+        "08f4cdcb"
+      ]
+    },
+    {
+      "key": "SKCP-14",
+      "card_id": "5026359d",
+      "title": "Expose truth-state data-quality and reconciliation strip",
+      "dependencies": [
+        "9508b8fd",
+        "d0edbff1",
+        "9e88de5c",
+        "804f14de"
+      ]
+    },
+    {
+      "key": "SKCP-15",
+      "card_id": "08f4cdcb",
+      "title": "Create synthetic full-estate golden fixture and metric pack",
+      "dependencies": [
+        "9508b8fd",
+        "d0edbff1",
+        "9e88de5c"
+      ]
+    },
+    {
+      "key": "SKCP-20",
+      "card_id": "b7ada8b9",
+      "title": "Add unified scope saved views deep links and cross-filtering",
+      "dependencies": [
+        "c6828b8a"
+      ]
+    },
+    {
+      "key": "SKCP-21",
+      "card_id": "5ee56779",
+      "title": "Build portfolio project Agile flow and dependency workspace",
+      "dependencies": [
+        "804f14de",
+        "b7ada8b9"
+      ]
+    },
+    {
+      "key": "SKCP-21A",
+      "card_id": "eddaa1fb",
+      "title": "Deliver synchronized roadmap Gantt and flow schedule explorer",
+      "dependencies": [
+        "bea13a70",
+        "d0edbff1",
+        "b7ada8b9",
+        "5ee56779"
+      ]
+    },
+    {
+      "key": "SKCP-22",
+      "card_id": "da097cbb",
+      "title": "Build ITIL SRE service-level change PIR and KEDB workspace",
+      "dependencies": [
+        "804f14de",
+        "b7ada8b9"
+      ]
+    },
+    {
+      "key": "SKCP-23",
+      "card_id": "866ffaac",
+      "title": "Build DORA architecture CMDB SKPerf capacity and drift workspace",
+      "dependencies": [
+        "804f14de",
+        "b7ada8b9"
+      ]
+    },
+    {
+      "key": "SKCP-24",
+      "card_id": "77d6bae0",
+      "title": "Build AI outcome SKCounter SKGateway evaluation cost and Joule workspace",
+      "dependencies": [
+        "804f14de",
+        "b7ada8b9"
+      ]
+    },
+    {
+      "key": "SKCP-25",
+      "card_id": "b548a77a",
+      "title": "Build governance metric-lineage policy and data-quality center",
+      "dependencies": [
+        "5026359d",
+        "b7ada8b9"
+      ]
+    },
+    {
+      "key": "SKCP-30",
+      "card_id": "169028ce",
+      "title": "Build probabilistic forecast dependency simulation and calibration",
+      "dependencies": [
+        "08f4cdcb",
+        "5ee56779"
+      ]
+    },
+    {
+      "key": "SKCP-30A",
+      "card_id": "7888e091",
+      "title": "Add probabilistic schedule forecasts scenarios and AI schedule recommendations",
+      "dependencies": [
+        "bea13a70",
+        "d0edbff1",
+        "169028ce",
+        "f080f150",
+        "efa9bee8",
+        "eddaa1fb"
+      ]
+    },
+    {
+      "key": "SKCP-31",
+      "card_id": "f080f150",
+      "title": "Build governed read-only AI insight query and evaluation suite",
+      "dependencies": [
+        "b7ada8b9",
+        "5ee56779",
+        "da097cbb",
+        "866ffaac",
+        "77d6bae0",
+        "b548a77a"
+      ]
+    },
+    {
+      "key": "SKCP-31A",
+      "card_id": "efa9bee8",
+      "title": "Add best-practice recommendations impact options and outcome learning",
+      "dependencies": [
+        "f080f150"
+      ]
+    },
+    {
+      "key": "SKCP-32",
+      "card_id": "38731952",
+      "title": "Build immutable report snapshots comparisons and reproducibility",
+      "dependencies": [
+        "9e88de5c",
+        "b7ada8b9"
+      ]
+    },
+    {
+      "key": "SKCP-33",
+      "card_id": "631f90bf",
+      "title": "Add policy-gated report subscriptions exports and destinations",
+      "dependencies": [
+        "38731952",
+        "94cbf19a"
+      ]
+    },
+    {
+      "key": "SKCP-34",
+      "card_id": "5858a34f",
+      "title": "Build read-only typed client MCP resources and evidence links",
+      "dependencies": [
+        "d12b8951",
+        "38731952"
+      ]
+    },
+    {
+      "key": "SKCP-40",
+      "card_id": "008bd490",
+      "title": "Extend canonical typed client with governed command preview and receipts",
+      "dependencies": [
+        "e6326000",
+        "5858a34f",
+        "d79100a7"
+      ]
+    },
+    {
+      "key": "SKCP-41",
+      "card_id": "cae1eaef",
+      "title": "Build deterministic action preview exact-hash authorization and outcome loop",
+      "dependencies": [
+        "94cbf19a",
+        "e6326000",
+        "efa9bee8",
+        "008bd490"
+      ]
+    },
+    {
+      "key": "SKCP-50",
+      "card_id": "83a8c40b",
+      "title": "Qualify browser accessibility task time responsive and visual behavior",
+      "dependencies": [
+        "c6828b8a",
+        "b7ada8b9",
+        "5ee56779",
+        "da097cbb",
+        "866ffaac",
+        "77d6bae0",
+        "b548a77a"
+      ]
+    },
+    {
+      "key": "SKCP-51",
+      "card_id": "2d02b6ed",
+      "title": "Qualify API latency cache pagination streams and backpressure",
+      "dependencies": [
+        "d12b8951",
+        "804f14de",
+        "38731952"
+      ]
+    },
+    {
+      "key": "SKCP-52",
+      "card_id": "ecf1148c",
+      "title": "Establish metric governance forecast calibration and AI outcome review",
+      "dependencies": [
+        "169028ce",
+        "83a8c40b",
+        "efa9bee8"
+      ]
+    }
+  ],
+  "remediation_traceability": [
+    {
+      "code": "F1",
+      "card_id": "ee1d0874",
+      "evidence_path": "docs/evidence/SKCP-00F1-TRUTH-STATE-REMEDIATION-2026-08-23.md",
+      "description": "Truth-state invariant, null failed values, and evidence-bearing zero.",
+      "status": "complete"
+    },
+    {
+      "code": "F1A",
+      "card_id": "bd732651",
+      "evidence_path": "docs/evidence/SKCP-00F1A-V1.1-CONTRACT-REMEDIATION-2026-08-23.md",
+      "description": "V1.1 declarations and V2 contract normalization.",
+      "status": "complete"
+    },
+    {
+      "code": "F2",
+      "card_id": "0242f9f2",
+      "evidence_path": "docs/evidence/SKCP-00F2-UX-WIREFRAME-2026-08-23.md",
+      "description": "Grounded recommendation or typed abstention.",
+      "status": "complete"
+    },
+    {
+      "code": "F2A",
+      "card_id": "f94fde82",
+      "evidence_path": "docs/evidence/SKCP-00F2A-UX-CORRECTION-2026-08-23.md",
+      "description": "V2 evidence routing and authorization transitions.",
+      "status": "complete"
+    },
+    {
+      "code": "F2B",
+      "card_id": "b24213ea",
+      "evidence_path": "docs/evidence/SKCP-00F2B-UX-SERVICE-SCOPE-2026-08-23.md",
+      "description": "V2 service scope and truthful summary.",
+      "status": "complete"
+    },
+    {
+      "code": "F3",
+      "card_id": "83a404bf",
+      "evidence_path": "docs/evidence/SKCP-00F3-DEPENDENCY-GATE-2026-08-23.md",
+      "description": "independent-review dependency gate for legacy implementation cards.",
+      "status": "complete"
+    },
+    {
+      "code": "F3A",
+      "card_id": "079cd760",
+      "evidence_path": "docs/evidence/SKCP-00F3A-RUNTIME-ACTIVATION-2026-08-23.md",
+      "description": "Editable activation and accidental claim release.",
+      "status": "complete"
+    },
+    {
+      "code": "F3B",
+      "card_id": "1f9ee2c9",
+      "evidence_path": "docs/evidence/SKCP-00F3B-ATOMIC-MUTATION-2026-08-23.md",
+      "description": "Atomic dependency and claim-release amendments.",
+      "status": "complete"
+    },
+    {
+      "code": "F3C",
+      "card_id": "a081d5ed",
+      "evidence_path": "docs/evidence/SKCP-00F3C-RELEASE-RECOVERY-2026-08-23.md",
+      "description": "Shared owner locking and single recoverable release.",
+      "status": "complete"
+    },
+    {
+      "code": "F3D",
+      "card_id": "8ab522ee",
+      "evidence_path": "docs/evidence/SKCP-00F3D-BOARD-MUTATION-HARDENING-2026-08-23.md",
+      "description": "Race, mirror, lifecycle, and mutation durability hardening.",
+      "status": "complete"
+    },
+    {
+      "code": "F3E",
+      "card_id": "50e36b06",
+      "evidence_path": "docs/evidence/SKCP-00F3E-PARTIAL-RECOVERY-READ-SAFETY-2026-08-23.md",
+      "description": "Partial claim recovery, exactly-once Joules, and safe CardStore reads.",
+      "status": "complete"
+    }
+  ],
+  "ui_contract_state_map": {
+    "truth": {
+      "ui_values": [
+        "current",
+        "stale",
+        "partial",
+        "unavailable",
+        "unknown",
+        "not_applicable"
+      ],
+      "contract_fields": [
+        "MetricResult.truth_state",
+        "ProjectionEnvelope.freshness.truth_state"
+      ],
+      "rule": "Presentation labels do not add truth states."
+    },
+    "service": {
+      "ui_values": [
+        "selected service",
+        "service row",
+        "source watermark"
+      ],
+      "contract_fields": [
+        "service_id",
+        "source.owner",
+        "source_owner",
+        "watermarks",
+        "observed_at",
+        "projected_at"
+      ],
+      "rule": "Scope and attribution are read-only projection values."
+    },
+    "preview": {
+      "ui_values": [
+        "ready",
+        "denied",
+        "needs information",
+        "needs approval",
+        "stale",
+        "expired"
+      ],
+      "contract_fields": [
+        "ActionPreview.status",
+        "preview_hash",
+        "expires_at",
+        "policy_decision_ref",
+        "required_approvals"
+      ],
+      "rule": "Preview is not execution and requires revalidation at authorization."
+    },
+    "proposal": {
+      "ui_values": [
+        "proposal",
+        "abstained"
+      ],
+      "contract_fields": [
+        "Insight.status",
+        "Recommendation.status",
+        "evidence_refs"
+      ],
+      "rule": "AI output is advisory, evidence-linked, and preview-only."
+    }
+  },
+  "historical_vs_fresh_test_results": {
+    "historical_original": {
+      "source": "docs/review/SKCP-00-INDEPENDENT-REVIEW-2026-08-23.md",
+      "status": "FAIL",
+      "architecture_suite": "8 passed in 0.13s",
+      "dashboard_suite": "244 passed, 141 warnings in 17.64s",
+      "draft_2020_12_counterexamples": "unavailable numeric zero, empty recommendation grounding, and ready sensitive preview without approval were accepted"
+    },
+    "fresh_remediation": {
+      "source": "F1 through F3E evidence pinned above",
+      "status": "corrected candidate pending new human and independent review",
+      "contract_remediation": "16 passed; 272 passed, 143 warnings; six Draft 2020-12 JSON documents passed",
+      "V2_correction": "11 passed; 268 passed, 143 warnings",
+      "board_runtime": "SKCoord 406 passed; bounded SKCapstone 6405 passed, 38 skipped, 554 warnings in 357.85s",
+      "assembly_verification": "Dashboard full suite: 280 passed, 143 warnings in 22.06s; focused candidate and contract suite: 43 passed, 2 warnings in 2.59s"
+    }
+  },
+  "global_parity_limitation": {
+    "command": "skcapstone coord parity --check",
+    "scope": "shared live board read-only audit outside this candidate's isolated parity proof",
+    "observed": {
+      "checked": 985,
+      "matched": 590,
+      "mismatches": 125,
+      "missing": 270,
+      "open_drift": 10
+    },
+    "effect": "Pre-existing global projection drift is recorded, not reconciled or migrated by this candidate.",
+    "non_authorization": "No global reconcile, migration, or board rewrite was authorized."
+  },
+  "consolidated_non_authorizations": [
+    "No implementation source or leaf-card implementation.",
+    "No deployment, production activation, service restart, commit, or push.",
+    "No successful live implementation claim probe.",
+    "No external action, account, product integration, or data import.",
+    "No Matter access, protected-data retrieval, HammerTime corpus access, or HammerTime Inbox access.",
+    "No completion of human gate bea13a70 or independent review d0edbff1.",
+    "No modification of original manifest-pinned candidate artifacts."
+  ],
+  "rollback": {
+    "candidate": "Retain and select the original manifest for audit, or decline this superseding manifest. Neither operation rewrites the original candidate.",
+    "board_read_only": "SKCOORD_CARD_STORE=0 skcapstone coord kanban --json remains an executable read-only dependency-fold check.",
+    "data_migration": "None. This assembly is additive documentation, evidence, hashes, and tests."
+  }
+}

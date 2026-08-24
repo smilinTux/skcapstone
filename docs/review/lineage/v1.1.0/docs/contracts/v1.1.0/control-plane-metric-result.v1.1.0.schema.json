@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.skworld.local/skdashboard/control-plane-metric-result.v1.1.0.schema.json",
+  "title": "SKDashboard control-plane metric result version 1.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "metric_id",
+    "schema_version",
+    "definition_version",
+    "value",
+    "unit",
+    "polarity",
+    "scope",
+    "window",
+    "truth_state",
+    "measurement_kind",
+    "source",
+    "data_quality",
+    "calculation",
+    "classification"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.1.0"
+    },
+    "metric_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{2,127}$"
+    },
+    "definition_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "label": {
+      "type": "string",
+      "maxLength": 160
+    },
+    "value": {
+      "type": ["number", "integer", "string", "boolean", "null"]
+    },
+    "unit": {
+      "type": "string",
+      "maxLength": 48
+    },
+    "polarity": {
+      "enum": [
+        "higher_is_better",
+        "lower_is_better",
+        "target_range",
+        "context_only"
+      ]
+    },
+    "numerator": {
+      "type": ["number", "null"]
+    },
+    "denominator": {
+      "type": ["number", "null"]
+    },
+    "sample_size": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "grain": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "window": {
+      "$ref": "#/$defs/window"
+    },
+    "target": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/target"}
+      ]
+    },
+    "truth_state": {
+      "enum": [
+        "current",
+        "stale",
+        "partial",
+        "unavailable",
+        "unknown",
+        "not_applicable"
+      ]
+    },
+    "measurement_kind": {
+      "enum": ["measured", "derived", "estimated", "forecast"]
+    },
+    "confidence": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["level", "method"],
+          "properties": {
+            "level": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "lower": {"type": ["number", "null"]},
+            "upper": {"type": ["number", "null"]},
+            "method": {"type": "string", "maxLength": 160}
+          }
+        }
+      ]
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "data_quality": {
+      "$ref": "#/$defs/data_quality"
+    },
+    "calculation": {
+      "$ref": "#/$defs/calculation"
+    },
+    "classification": {
+      "$ref": "#/$defs/classification"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["truth_state"],
+        "properties": {
+          "truth_state": {
+            "enum": ["unavailable", "unknown", "not_applicable"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "value": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["value"],
+        "properties": {
+          "value": {"const": 0}
+        }
+      },
+      "then": {
+        "properties": {
+          "source": {
+            "required": ["evidence_refs"],
+            "properties": {
+              "evidence_refs": {"minItems": 1}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "portfolio_id": {"type": "string", "maxLength": 128},
+        "project_id": {"type": "string", "maxLength": 128},
+        "product_id": {"type": "string", "maxLength": 128},
+        "service_id": {"type": "string", "maxLength": 128},
+        "team_id": {"type": "string", "maxLength": 128},
+        "tenant_id": {"type": "string", "maxLength": 128},
+        "matter_id": {"type": "string", "maxLength": 128},
+        "node_id": {"type": "string", "maxLength": 128},
+        "environment": {"type": "string", "maxLength": 64},
+        "measurement_lane": {"type": "string", "maxLength": 64}
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "timezone"],
+      "properties": {
+        "start": {"type": "string", "format": "date-time"},
+        "end": {"type": "string", "format": "date-time"},
+        "timezone": {"type": "string", "maxLength": 64},
+        "baseline": {"type": ["string", "null"], "maxLength": 128}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["minimum", "maximum", "range", "exact"]},
+        "value": {"type": ["number", "string", "null"]},
+        "lower": {"type": ["number", "null"]},
+        "upper": {"type": ["number", "null"]},
+        "approved_by": {"type": ["string", "null"], "maxLength": 128},
+        "approved_at": {"type": ["string", "null"], "format": "date-time"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "observed_at",
+        "projected_at",
+        "freshness_ttl_seconds",
+        "watermarks"
+      ],
+      "properties": {
+        "owner": {"type": "string", "maxLength": 128},
+        "adapter_id": {"type": "string", "maxLength": 128},
+        "adapter_version": {"type": "string", "maxLength": 64},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "projected_at": {"type": "string", "format": "date-time"},
+        "freshness_ttl_seconds": {"type": "integer", "minimum": 1},
+        "watermarks": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "value"],
+            "properties": {
+              "source": {"type": "string", "maxLength": 128},
+              "value": {"type": "string", "maxLength": 256}
+            }
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {"type": "string", "maxLength": 512}
+        }
+      }
+    },
+    "data_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverage_numerator", "coverage_denominator", "errors", "exclusions"],
+      "properties": {
+        "coverage_numerator": {"type": ["integer", "null"], "minimum": 0},
+        "coverage_denominator": {"type": ["integer", "null"], "minimum": 0},
+        "errors": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "maxLength": 256}
+        },
+        "exclusions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "maxLength": 256}
+        },
+        "notes": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "maxLength": 256}
+        }
+      }
+    },
+    "calculation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definition_hash", "method"],
+      "properties": {
+        "definition_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "method": {"type": "string", "maxLength": 256},
+        "expression": {"type": ["string", "null"], "maxLength": 512},
+        "calculation_ref": {"type": ["string", "null"], "maxLength": 512}
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level"],
+      "properties": {
+        "level": {
+          "enum": ["public", "internal", "confidential", "restricted"]
+        },
+        "policy_decision_ref": {"type": ["string", "null"], "maxLength": 256},
+        "purpose": {"type": ["string", "null"], "maxLength": 128}
+      }
+    }
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "snapshot_version": "1.1.1",
+  "captured_at": "2026-08-23T22:35:28Z",
+  "capture": {
+    "command": "skcapstone coord kanban --json",
+    "projection": "installed local CardStore folded Kanban",
+    "raw_projection_sha256": "28db70226ac8ab4716cf26b72bed23040970ec23dc06af22156c233142716be6",
+    "status_semantics": "Statuses are point-in-time folded observations at captured_at. They do not rewrite historical artifacts or predict later board state.",
+    "relevant_statuses": [
+      {"card_id": "90a02b0e", "status": "done"},
+      {"card_id": "f701b0d3", "status": "done"},
+      {"card_id": "559c8c48", "status": "doing"},
+      {"card_id": "bea13a70", "status": "backlog"},
+      {"card_id": "d0edbff1", "status": "review"},
+      {"card_id": "c3a9c9e9", "status": "backlog"},
+      {"card_id": "eddaa1fb", "status": "backlog"},
+      {"card_id": "7888e091", "status": "backlog"},
+      {"card_id": "4e1130cc", "status": "backlog"}
+    ]
+  },
+  "requirements_artifact": "docs/review/SKCP-00-SCHEDULE-REQUIREMENTS-v1.1.1.md",
+  "cards": [
+    {
+      "id": "c3a9c9e9",
+      "title": "[SKCP-20A][L] Freeze typed schedule projection overlay scenario and reschedule contracts",
+      "description": "Freeze the versioned typed schedule projection contract that every Schedule lens consumes before implementation. Define the canonical envelope and items, deterministic timezone and null-date behavior, rollup and partial-rollup states, dependency-cycle handling, ITIL and architecture overlays, immutable no-write scenarios, and version plus base-hash exact reschedule previews. This is a contract-only planning card and authorizes no implementation.",
+      "priority": "high",
+      "labels": ["skdashboard", "control-plane", "scheduling", "contract", "openapi", "sprint-2", "leaf-task", "size-l"],
+      "dependencies": ["bea13a70", "d0edbff1", "b7ada8b9"],
+      "acceptance_criteria": [
+        "Canonical schedule projection envelope and typed item contracts are frozen.",
+        "Timezone, null-date, rollup, partial-rollup, and dependency-cycle semantics are explicit.",
+        "ITIL and architecture overlays remain policy-filtered truth, not inferred ranking.",
+        "Scenarios are immutable and cannot write owner-system records.",
+        "Reschedule previews require version and base-hash exactness before any typed proposal.",
+        "OpenAPI and policy, truth-state, and no-ranking tests are specified."
+      ],
+      "kind": "task", "swimlane": "feature", "source": "cards", "originator": "jarvis",
+      "created_at": "2026-08-23T22:35:13.896452+00:00", "updated_at": "", "order": 0,
+      "owner": null, "status": "backlog", "archived": false, "meta": {}, "links": {}
+    },
+    {
+      "id": "eddaa1fb",
+      "title": "[SKCP-21A][L] Deliver synchronized roadmap Gantt and flow schedule explorer",
+      "description": "Add a deeper Schedule and Forecast workspace below the breadth-first Now view. Present one canonical scoped dataset through synchronized Roadmap, Gantt, and Flow lenses. Support portfolio outcomes, epics, releases, milestones, work packages, teams, services, architecture migrations, ITIL change windows, dependencies, planned dates, original baselines, actuals, forecast ranges, and evidence without individual productivity ranking.",
+      "priority": "high",
+      "labels": ["skdashboard", "control-plane", "scheduling", "forecasting", "gantt", "roadmap", "agile-flow", "sprint-2", "epic-6f7fd828", "parent-973b802f", "leaf-task", "size-l"],
+      "dependencies": ["bea13a70", "d0edbff1", "b7ada8b9", "5ee56779", "c3a9c9e9"],
+      "acceptance_criteria": [
+        "Roadmap, Gantt, and Flow lenses use the same versioned scoped projection and switching views preserves filters, role, selection, and deep-link state.",
+        "The timeline shows planned dates, original baseline, actual progress, milestone and release markers, dependencies, blockers, critical path where applicable, ITIL change windows, and architecture migration or deprecation dates.",
+        "Unknown, stale, partial, unavailable, policy-filtered, and not-applicable schedule evidence remain distinct from on-time or zero variance.",
+        "A material schedule exception is reachable from Now in one interaction and its source evidence in no more than two interactions.",
+        "The workspace supports portfolio, project manager, architect, service, and team scopes without individual productivity ranking.",
+        "Keyboard navigation, zoom, collapse, virtualized rows, table equivalent, print/export snapshot, and responsive acceptance tests pass."
+      ],
+      "kind": "task", "swimlane": "feature", "source": "cards", "originator": "codex-root",
+      "created_at": "2026-08-23T21:26:45.529160+00:00", "updated_at": "2026-08-23T22:35:23.533635+00:00", "order": 0,
+      "owner": null, "status": "backlog", "archived": false, "meta": {}, "links": {}
+    },
+    {
+      "id": "7888e091",
+      "title": "[SKCP-30A][L] Add probabilistic schedule forecasts scenarios and AI schedule recommendations",
+      "description": "Layer deterministic scheduling and probabilistic delivery forecasts over the synchronized schedule explorer. Use critical-path calculations for date-based predictive work and calibrated throughput Monte Carlo for Agile flow without silently blending methods. Add read-only scenario comparison and evidence-grounded AI explanations and recommendations. Any reschedule remains a typed owner-system action preview requiring exact authorization.",
+      "priority": "high",
+      "labels": ["skdashboard", "control-plane", "scheduling", "forecasting", "monte-carlo", "ai-insights", "scenarios", "sprint-3", "epic-6f7fd828", "parent-ef218eb9", "leaf-task", "size-l"],
+      "dependencies": ["bea13a70", "d0edbff1", "169028ce", "f080f150", "efa9bee8", "eddaa1fb", "4e1130cc"],
+      "acceptance_criteria": [
+        "Forecasts show P50, P85, and P95 ranges, method, history window, sample, exclusions, assumptions, dependency treatment, and calibration.",
+        "Critical-path and flow-based forecasts remain separately labeled and are never collapsed into false date precision.",
+        "Scenario comparison covers scope change, capacity change, dependency slip, milestone move, ITIL blackout or change window, and architecture migration sequencing without mutating owner data.",
+        "AI identifies schedule risk, supporting and counter evidence, uncertainty, affected outcomes, alternatives, expected impact, and abstains when evidence is insufficient.",
+        "A proposed reschedule creates a deterministic preview with owner operation, changed dates or dependencies, blast radius, policy decision, exact hash, expiry, rollback, and required approvals.",
+        "Backtests, forecast calibration, scenario reproducibility, accessibility, performance, and no-individual-ranking tests pass."
+      ],
+      "kind": "task", "swimlane": "feature", "source": "cards", "originator": "codex-root",
+      "created_at": "2026-08-23T21:26:45.760710+00:00", "updated_at": "2026-08-23T22:35:28.286401+00:00", "order": 0,
+      "owner": null, "status": "backlog", "archived": false, "meta": {}, "links": {}
+    },
+    {
+      "id": "4e1130cc",
+      "title": "[SKCP-30B][L] Freeze discriminated forecast calibration and AI schedule insight contracts",
+      "description": "Freeze the typed forecast, calibration, and AI schedule insight contracts before implementation. Keep date-based critical-path dates mutually exclusive from throughput Monte Carlo quantiles. Define rolling backtests without leakage, calibration, low-sample abstention, reproducibility, support and counter evidence, affected outcomes, alternatives, expected impact, and the rule that AI explains engine results and cannot authorize actions. This is a contract-only planning card and authorizes no implementation.",
+      "priority": "high",
+      "labels": ["skdashboard", "control-plane", "scheduling", "forecasting", "ai-insights", "contract", "sprint-3", "leaf-task", "size-l"],
+      "dependencies": ["bea13a70", "d0edbff1", "169028ce", "f080f150", "efa9bee8", "c3a9c9e9"],
+      "acceptance_criteria": [
+        "Critical-path date forecasts and throughput Monte Carlo quantiles are discriminated and mutually exclusive.",
+        "Rolling backtests prevent leakage and define calibration, low-sample abstention, and reproducibility.",
+        "Schedule insights include supporting and counter evidence, affected outcomes, alternatives, uncertainty, and expected impact.",
+        "AI explains engine results and cannot authorize, mutate, or execute a schedule action.",
+        "Policy, truth-state, no-ranking, and contract tests are specified."
+      ],
+      "kind": "task", "swimlane": "feature", "source": "cards", "originator": "jarvis",
+      "created_at": "2026-08-23T22:35:23.752731+00:00", "updated_at": "", "order": 0,
+      "owner": null, "status": "backlog", "archived": false, "meta": {}, "links": {}
+    }
+  ]
+}
