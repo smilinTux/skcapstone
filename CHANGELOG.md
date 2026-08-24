@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve typed unavailable and corrupt durable-session states for retryable authorization responses.
+
 - Repair durable session refresh single-flight, logout revocation, login bounds, and typed outage states.
 
 - Add an opt-in encrypted server-side OIDC session adapter for the dedicated

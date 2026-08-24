@@ -286,10 +286,28 @@ class EncryptedSessionAdapter:
         except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
             return None
 
-    async def resolve(self, request: Request) -> SessionResolution:
-        loaded = self._load(request)
-        if loaded is None:
+    def _load_with_state(self, request: Request) -> tuple[str, dict] | SessionResolution:
+        handle = request.cookies.get(COOKIE_NAME, "")
+        if not handle:
             return SessionResolution("absent")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT encrypted, expires_at FROM sessions WHERE handle_hash = ?",
+                (_digest(handle),),
+            ).fetchone()
+        if row is None:
+            return SessionResolution("absent")
+        if row["expires_at"] <= int(self.clock()):
+            return SessionResolution("expired")
+        try:
+            return handle, self._open(row["encrypted"])
+        except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
+            return SessionResolution("corrupt")
+
+    async def resolve(self, request: Request) -> SessionResolution:
+        loaded = self._load_with_state(request)
+        if isinstance(loaded, SessionResolution):
+            return loaded
         handle, record = loaded
         now = int(self.clock())
         if record["access_expires_at"] > now + 15:
