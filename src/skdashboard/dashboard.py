@@ -764,7 +764,7 @@ def _json(data: dict):
     )
 
 
-def create_app(home: Path):
+def create_app(home: Path, *, control_plane_authorizer=None):
     """Build the Starlette ASGI app for the dashboard.
 
     Phase 1 (behavior-identical): serves the same self-contained HTML at ``/``
@@ -1913,7 +1913,12 @@ def create_app(home: Path):
     from .control_plane_api import routes as control_plane_routes
 
     routes.extend(
-        control_plane_routes(home, board_reader=_get_board_state, health_reader=_get_agent_status)
+        control_plane_routes(
+            home,
+            board_reader=_get_board_state,
+            health_reader=_get_agent_status,
+            authorizer=control_plane_authorizer,
+        )
     )
     if static_dir.exists():
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))

@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deterministic synthetic calculations spanning every approved estate family,
   truth state, and measurement kind without individual productivity ranking.
 
+- Enforced CapAuth and exact named browser origins across protected `/api/v1`
+  reads and events, and added a bounded authenticated `/metrics` projection.
+
 - Added bounded, read-only cross-estate observation adapters with explicit
   owners, populations, query budgets, watermarks, classifications, freshness,
   coverage, and fail-closed unavailable states.

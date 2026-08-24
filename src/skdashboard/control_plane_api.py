@@ -16,6 +16,10 @@ from starlette.routing import Route
 
 SCHEMA_VERSION = "1.1.0"
 MAX_LIMIT = 200
+MAX_BEARER_BYTES = 64 * 1024
+ALLOWED_BROWSER_ORIGINS = frozenset(
+    {"http://10.0.0.139:7778", "http://100.81.238.58:7778"}
+)
 
 
 def _now() -> str:
@@ -163,8 +167,44 @@ def _response(request, body: dict):
     return Response(serialized, media_type="application/json", headers={"ETag": etag})
 
 
-def routes(home: Path, *, board_reader, health_reader):
+def _capauth_authorize(home: Path, bearer: str, capability: str, target: str) -> bool:
+    """Verify one bounded audience token and its current CapAuth policy."""
+
+    try:
+        from capauth.authz import decide
+        from capauth.tokens import has_scope, import_token, verify_audience_token
+
+        token = import_token(bearer)
+        payload = token.payload
+        if (
+            payload.expires_at is None
+            or payload.expires_at <= payload.issued_at
+            or (payload.expires_at - payload.issued_at).total_seconds() > 300
+            or "*" in payload.capabilities
+            or not has_scope(token, capability)
+            or not verify_audience_token(token, "skdashboard", home=home)
+        ):
+            return False
+        decision = decide(
+            payload.subject,
+            capability,
+            resource={"target": target},
+            context={"service": "skdashboard-api"},
+            base_dir=home,
+        )
+        return bool(decision.allow)
+    except Exception:
+        return False
+
+
+def routes(home: Path, *, board_reader, health_reader, authorizer=None):
     hits: dict[str, deque[float]] = defaultdict(deque)
+    counters = {"requests": 0, "denied": 0}
+    authorize = authorizer or (
+        lambda bearer, capability, target: _capauth_authorize(
+            home, bearer, capability, target
+        )
+    )
 
     def limited(handler):
         async def wrapped(request):
@@ -178,9 +218,35 @@ def routes(home: Path, *, board_reader, health_reader):
                 response.headers["Retry-After"] = "60"
                 return response
             recent.append(now)
+            counters["requests"] += 1
             return await handler(request)
 
         return wrapped
+
+    def protected(handler, capability: str):
+        async def wrapped(request):
+            origin = request.headers.get("origin")
+            if origin is not None and origin not in ALLOWED_BROWSER_ORIGINS:
+                counters["denied"] += 1
+                return _error(request, 403, "ORIGIN_DENIED", "browser origin is not allowed")
+            header = request.headers.get("authorization", "")
+            if not header.startswith("Bearer ") or header.count(" ") != 1:
+                counters["denied"] += 1
+                return _error(request, 401, "UNAUTHORIZED", "a bearer capability is required")
+            bearer = header[7:]
+            if not bearer or len(bearer.encode()) > MAX_BEARER_BYTES:
+                counters["denied"] += 1
+                return _error(request, 401, "UNAUTHORIZED", "the bearer capability is invalid")
+            try:
+                allowed = authorize(bearer, capability, request.url.path)
+            except Exception:
+                allowed = False
+            if not allowed:
+                counters["denied"] += 1
+                return _error(request, 403, "FORBIDDEN", "the capability decision denied access")
+            return await handler(request)
+
+        return limited(wrapped)
 
     async def health(request):
         raw = health_reader(home)
@@ -305,11 +371,26 @@ def routes(home: Path, *, board_reader, health_reader):
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 
+    async def metrics(_request):
+        lines = [
+            "# HELP skdashboard_control_plane_up Whether this projection process is serving.",
+            "# TYPE skdashboard_control_plane_up gauge",
+            "skdashboard_control_plane_up 1",
+            "# HELP skdashboard_control_plane_requests_total Bounded control-plane requests.",
+            "# TYPE skdashboard_control_plane_requests_total counter",
+            f"skdashboard_control_plane_requests_total {counters['requests']}",
+            "# HELP skdashboard_control_plane_denied_total Denied control-plane requests.",
+            "# TYPE skdashboard_control_plane_denied_total counter",
+            f"skdashboard_control_plane_denied_total {counters['denied']}",
+        ]
+        return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
     return [
         Route("/api/v1/health", limited(health)),
-        Route("/api/v1/overview", limited(overview)),
-        Route("/api/v1/board/summary", limited(board)),
-        Route("/api/v1/fleet/summary", limited(fleet)),
-        Route("/api/v1/economy/summary", limited(economy)),
-        Route("/api/v1/events", limited(events)),
+        Route("/api/v1/overview", protected(overview, "skdashboard.read")),
+        Route("/api/v1/board/summary", protected(board, "skdashboard.read")),
+        Route("/api/v1/fleet/summary", protected(fleet, "skdashboard.read")),
+        Route("/api/v1/economy/summary", protected(economy, "skdashboard.read")),
+        Route("/api/v1/events", protected(events, "skdashboard.events.read")),
+        Route("/metrics", protected(metrics, "skdashboard.read")),
     ]
