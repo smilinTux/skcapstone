@@ -427,6 +427,7 @@ function buildCommands() {
     { category: "Workspaces", label: "ITIL and SRE reliability", kind: "workspace", href: "/control-plane/reliability?role=operator&scope=estate&window=latest&baseline=none&service=all" },
     { category: "Workspaces", label: "DORA architecture CMDB and drift", kind: "workspace", href: "/control-plane/architecture?role=architect&scope=estate&window=latest&baseline=none&service=all&environment=all" },
     { category: "Workspaces", label: "Governance metric lineage and data quality", kind: "workspace", href: "/control-plane/governance?role=governance&scope=estate&window=latest&baseline=none&service=all" },
+    { category: "Workspaces", label: "Immutable reports and comparison", kind: "workspace", href: "/control-plane/reports?role=project-manager&scope=estate&window=latest&baseline=none&service=all&report_type=all" },
     { category: "Workspaces", label: "ITIL Cockpit", kind: "workspace", href: "/cockpit" },
     { category: "Workspaces", label: "Assets and CMDB", kind: "workspace", href: "/cmdb" },
     { category: "Workspaces", label: "Kanban Board", kind: "workspace", href: "/board" },

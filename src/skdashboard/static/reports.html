@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard | Reports</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <link rel="stylesheet" href="/static/css/overview.css">
+  <link rel="stylesheet" href="/static/css/projects.css">
+  <link rel="stylesheet" href="/static/css/reports.css">
+</head>
+<body>
+  <div class="wrap">
+    <nav class="topbar sidebar" aria-label="Dashboard sections">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/control-plane/now">Now</a>
+        <a class="tab" href="/control-plane/portfolio?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Portfolio</a>
+        <a class="tab" href="/control-plane/schedule?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;lens=roadmap&amp;timezone=UTC">Schedule</a>
+        <a class="tab" href="/control-plane/reliability?role=operator&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Reliability</a>
+        <a class="tab" href="/control-plane/architecture?role=architect&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;environment=all">Architecture</a>
+        <a class="tab" href="/control-plane/ai?role=operator&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">AI outcomes</a>
+        <a class="tab" href="/control-plane/governance?role=governance&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Governance</a>
+        <a class="tab active" href="/control-plane/reports?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;report_type=all">Reports</a>
+      </div>
+      <div class="spacer"></div><span class="quality-mode">Read only</span>
+    </nav>
+
+    <header class="now-head project-head">
+      <div><span class="now-kicker">Immutable reports</span><h2>Snapshots, comparison, and reproducibility</h2><p>Frozen scope, metric definitions, calculation references, owner watermarks, truth states, AI provenance, review state, content hash, and supersession.</p></div>
+      <span id="reports-status" class="quality-mode" role="status" aria-live="polite">Loading</span>
+    </header>
+
+    <form id="reports-context" class="project-context reports-context" aria-label="Report workspace context">
+      <label>Role<select id="reports-role"><option value="project-manager">Project manager</option><option value="operator">Operator</option><option value="architect">Architect</option><option value="auditor">Auditor</option></select></label>
+      <label>Report type<select id="reports-type"><option value="all">All</option><option value="daily_operations">Daily operations</option><option value="weekly_portfolio">Weekly portfolio</option><option value="sprint_flow">Sprint or flow</option><option value="monthly_service">Monthly service</option><option value="monthly_ai_economy">Monthly AI and economy</option><option value="quarterly_strategy">Quarterly strategy</option><option value="ad_hoc_evidence">Ad hoc evidence</option></select></label>
+      <p><strong>Scope</strong> Whole authorized estate</p><p><strong>Window</strong> Latest</p><p><strong>Baseline</strong> Explicit only</p>
+    </form>
+
+    <section id="reports-summary" class="project-summary" aria-label="Report summary">
+      <article><span>Snapshots</span><strong>Loading</strong><small>Immutable local evidence.</small></article>
+      <article><span>Selected quality</span><strong>Loading</strong><small>Truth states remain visible.</small></article>
+      <article><span>Metrics</span><strong>Loading</strong><small>Frozen values and definitions.</small></article>
+      <article><span>Review</span><strong>Loading</strong><small>Separate from metric truth.</small></article>
+    </section>
+
+    <section class="project-panel" aria-labelledby="snapshot-title">
+      <div class="quality-heading"><div><h2 id="snapshot-title">Immutable report snapshots</h2><p>Select a report or compare it to an explicit prior snapshot. Selection never changes the source report.</p></div><span id="snapshot-count" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table><caption>Immutable report snapshot index</caption><thead><tr><th scope="col">Snapshot</th><th scope="col">Type and as-of</th><th scope="col">Scope and baseline</th><th scope="col">Quality</th><th scope="col">Metrics</th><th scope="col">Review</th><th scope="col">Supersession</th><th scope="col">Content hash</th><th scope="col">View</th></tr></thead><tbody id="snapshot-rows"><tr><td colspan="9">Loading snapshots.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="metric-title">
+      <div class="quality-heading"><div><h2 id="metric-title">Frozen metric and calculation evidence</h2><p>AI narrative remains separate and cannot alter these exact metric values.</p></div><span id="metric-count" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table><caption>Frozen metric values and reproducibility evidence</caption><thead><tr><th scope="col">Metric</th><th scope="col">Value and truth</th><th scope="col">Kind</th><th scope="col">Definition hash</th><th scope="col">Calculation</th><th scope="col">Watermarks</th><th scope="col">Quality</th></tr></thead><tbody id="metric-rows"><tr><td colspan="7">Select a snapshot.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="comparison-title">
+      <div class="quality-heading"><div><h2 id="comparison-title">Explicit baseline comparison</h2><p>Definition changes, no-value truth states, and incompatible scope remain non-comparable rather than producing false deltas.</p></div><span id="comparison-state" class="quality-mode">No comparison</span></div>
+      <div class="project-table-wrap"><table><caption>Frozen report comparison</caption><thead><tr><th scope="col">Metric</th><th scope="col">Current</th><th scope="col">Baseline</th><th scope="col">Truth states</th><th scope="col">Definition changed</th><th scope="col">Comparable</th><th scope="col">Delta</th></tr></thead><tbody id="comparison-rows"><tr><td colspan="7">Choose a comparison from a snapshot row.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="narrative-title">
+      <div class="quality-heading"><div><h2 id="narrative-title">AI narrative provenance and review</h2><p>Typed insights and exact model provenance are separately attributable. No narrative can mutate frozen metrics.</p></div><span id="narrative-count" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table><caption>AI narrative and model provenance</caption><thead><tr><th scope="col">Insight</th><th scope="col">Status and kind</th><th scope="col">Metric and calculation refs</th><th scope="col">Evidence</th><th scope="col">Uncertainty and exclusions</th><th scope="col">Model route and revision</th><th scope="col">Policy</th></tr></thead><tbody id="narrative-rows"><tr><td colspan="7">Select a snapshot.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-boundary"><h2>Immutable and GET-only boundary</h2><p>HTTP creation, correction, supersession, export, subscription, destination, approval, and dispatch are disabled. Offline creation uses deterministic content hashes and write-once storage. This workspace cannot rewrite a report, change a metric, execute an action, rank individuals, access protected Matter content, or access HammerTime Inbox material.</p></section>
+  </div>
+  <script type="module" src="/static/js/reports.js"></script>
+</body>
+</html>
