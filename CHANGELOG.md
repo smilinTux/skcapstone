@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the protected read-only Reports workspace at
+  `/control-plane/reports`, with schema-valid content-addressed snapshots,
+  write-once offline storage, explicit comparison, and reproducibility evidence.
+
 - Added the protected read-only Governance workspace at
   `/control-plane/governance`, with metric lineage, source currentness,
   separate quality findings, append-only correction evidence, and preview-only remediation.

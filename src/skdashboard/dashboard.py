@@ -775,6 +775,7 @@ def create_app(
     control_plane_reliability_provider=None,
     control_plane_architecture_provider=None,
     control_plane_governance_provider=None,
+    control_plane_report_provider=None,
 ):
     """Build the Starlette ASGI app for the dashboard.
 
@@ -832,6 +833,10 @@ def create_app(
         from .dashboard_governance import GovernanceProjectionProvider
 
         control_plane_governance_provider = GovernanceProjectionProvider()
+    if control_plane_report_provider is None and control_plane_decision_authorizer is not None:
+        from .dashboard_reports import ReportProjectionProvider
+
+        control_plane_report_provider = ReportProjectionProvider()
 
     def _page(name):
         async def handler(_request):
@@ -1868,6 +1873,7 @@ def create_app(
         Route("/control-plane/architecture", _page("architecture.html")),
         Route("/control-plane/ai", _page("ai.html")),
         Route("/control-plane/governance", _page("governance.html")),
+        Route("/control-plane/reports", _page("reports.html")),
         Route("/index.html", index),
         Route("/models", _page("models.html")),
         Route("/api/models", api_models_get),
@@ -1962,6 +1968,7 @@ def create_app(
             reliability_provider=control_plane_reliability_provider,
             architecture_provider=control_plane_architecture_provider,
             governance_provider=control_plane_governance_provider,
+            report_provider=control_plane_report_provider,
         )
     )
     if static_dir.exists():

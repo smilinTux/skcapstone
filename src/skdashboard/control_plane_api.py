@@ -441,6 +441,7 @@ def routes(
     session_resolver=None,
     architecture_provider=None,
     governance_provider=None,
+    report_provider=None,
 ):
     if (decision_authorizer is None) != (invocation_factory is None):
         raise ValueError("typed control-plane authorization requires both injected components")
@@ -450,6 +451,7 @@ def routes(
         or reliability_provider is not None
         or architecture_provider is not None
         or governance_provider is not None
+        or report_provider is not None
     ) and decision_authorizer is None:
         raise ValueError("owner projection requires typed control-plane authorization")
     hits: dict[str, deque[float]] = defaultdict(deque)
@@ -857,6 +859,69 @@ def routes(
             return Response(status_code=304, headers={"ETag": etag})
         return Response(serialized, media_type="application/json", headers={"ETag": etag})
 
+    async def reports(request):
+        allowed = {"role", "scope", "window", "baseline", "service", "report_type", "snapshot", "compare"}
+        pairs = list(request.query_params.multi_items())
+        if (
+            any(key not in allowed or not value or len(value) > 128 for key, value in pairs)
+            or len({key for key, _value in pairs}) != len(pairs)
+        ):
+            return _error(request, 400, "INVALID_REPORT_SCOPE", "unsupported report scope")
+        query = dict(pairs)
+        if (
+            query.get("role") not in {"project-manager", "operator", "architect", "auditor"}
+            or query.get("scope") != "estate"
+            or query.get("window") != "latest"
+            or query.get("baseline") not in {"none", "previous"}
+            or query.get("service") != "all"
+            or query.get("report_type", "all")
+            not in {
+                "all", "daily_operations", "weekly_portfolio", "sprint_flow",
+                "monthly_service", "monthly_ai_economy", "quarterly_strategy",
+                "ad_hoc_evidence",
+            }
+        ):
+            return _error(request, 400, "INVALID_REPORT_SCOPE", "unsupported report scope")
+        context = getattr(request.state, "control_plane_decision", None)
+        verifier = getattr(request.state, "control_plane_currentness_verifier", None)
+        if report_provider is None or context is None or verifier is None:
+            return _error(request, 503, "REPORTS_UNAVAILABLE", "the authorized report projection is unavailable", retryable=True)
+        try:
+            projection = report_provider.read(
+                context, query, home, currentness_verifier=verifier
+            )
+        except KeyError:
+            return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+        if not isinstance(projection, dict):
+            return _error(request, 503, "REPORTS_UNAVAILABLE", "invalid report projection")
+        serialized = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
+        etag = f'"{hashlib.sha256(serialized).hexdigest()}"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return Response(serialized, media_type="application/json", headers={"ETag": etag})
+
+    async def report_snapshot(request):
+        snapshot_id = request.path_params.get("snapshot_id", "")
+        if len(snapshot_id) > 96:
+            return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+        context = getattr(request.state, "control_plane_decision", None)
+        verifier = getattr(request.state, "control_plane_currentness_verifier", None)
+        if report_provider is None or context is None or verifier is None:
+            return _error(request, 503, "REPORTS_UNAVAILABLE", "the authorized report snapshot is unavailable", retryable=True)
+        try:
+            snapshot = report_provider.read_snapshot(
+                context, snapshot_id, home, currentness_verifier=verifier
+            )
+        except KeyError:
+            return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+        if not isinstance(snapshot, dict):
+            return _error(request, 503, "REPORTS_UNAVAILABLE", "invalid report snapshot")
+        serialized = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
+        etag = f'"{snapshot["report_hash"].removeprefix("sha256:")}"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return Response(serialized, media_type="application/json", headers={"ETag": etag})
+
     async def events(request):
         raw_cursor = request.query_params.get("cursor") or request.headers.get("last-event-id")
         topics = [value for value in request.query_params.get("topics", "").split(",") if value]
@@ -896,6 +961,8 @@ def routes(
         Route("/api/v1/reliability/projection", protected(reliability, "skdashboard.read")),
         Route("/api/v1/architecture/projection", protected(architecture, "skdashboard.read")),
         Route("/api/v1/governance/projection", protected(governance, "skdashboard.read")),
+        Route("/api/v1/reports/projection", protected(reports, "skdashboard.read")),
+        Route("/api/v1/reports/{snapshot_id}", protected(report_snapshot, "skdashboard.read")),
         Route("/api/v1/board/summary", protected(board, "skdashboard.read")),
         Route("/api/v1/fleet/summary", protected(fleet, "skdashboard.read")),
         Route("/api/v1/economy/summary", protected(economy, "skdashboard.read")),
