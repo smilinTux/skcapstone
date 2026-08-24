@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Accepted only the canonical base64url CapAuth bearer transport at the
+  control-plane PEP while retaining strict malformed-token denial.
+
 - Added a fail-closed cross-estate data-quality projection and accessible
   overview strip with explicit truth-state coverage, safe provenance, and
   non-dispatching refresh previews.

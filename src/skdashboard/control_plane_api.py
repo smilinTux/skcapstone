@@ -174,7 +174,10 @@ def _capauth_authorize(home: Path, bearer: str, capability: str, target: str) ->
         from capauth.authz import decide
         from capauth.tokens import has_scope, import_token, verify_audience_token
 
-        token = import_token(bearer)
+        decoded = base64.b64decode(bearer.encode("ascii"), altchars=b"-_", validate=True)
+        if base64.urlsafe_b64encode(decoded).decode("ascii") != bearer:
+            return False
+        token = import_token(decoded.decode("utf-8"))
         payload = token.payload
         if (
             payload.expires_at is None
