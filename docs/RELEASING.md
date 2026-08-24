@@ -14,10 +14,10 @@ fold behavior, release order is strict:
 2. In a fresh environment, install the published skcoord artifact from the
    registry, with no sibling checkout, editable install, VCS dependency, or
    `PYTHONPATH` overlay.
-3. Verify every new import and behavior against that artifact. For the 0.1.28
-   floor, this includes the existing lifecycle and authoritative criteria-fold
-   contracts plus `skcoord.cmdb_scheduler`, its disabled default policy, lease,
-   incident routing, and retention helpers.
+3. Verify every new import and behavior against that artifact. For the 0.1.39
+   floor, this includes the existing lifecycle and scheduled reconciliation
+   contracts plus current acceptance-criteria folding through every CardStore
+   rollback selector.
 4. Raise the skcapstone dependency floor to the verified skcoord version.
 5. Only then release skcapstone.
 
@@ -38,6 +38,23 @@ So a normal merge to main produces a patch release with no human action.
 
 The version itself comes from the tag via setuptools-scm (`pyproject.toml`
 `[tool.setuptools_scm]`, "The git tag IS the version"). Nothing is hardcoded.
+
+## Reproducible candidate artifacts
+
+Evidence and independent review builds use the task-owned deterministic entry
+point, not ordinary `python -m build`:
+
+```bash
+python -m pip install build setuptools-scm
+python scripts/build_reproducible.py --outdir /tmp/skcapstone-dist
+```
+
+Run it from a clean tracked checkout and an empty output directory. It derives
+`SOURCE_DATE_EPOCH` from the exact source commit, derives the exact version from
+setuptools-scm, exports the distribution-specific pretend-version value to the
+isolated build, and normalizes the source archive's gzip, tar, timestamp, and
+owner metadata. It adds no runtime dependency. Two clean checkouts at the same
+commit must produce byte-identical wheel and source archives.
 
 **Cut a tag by hand only when you want a version the bot would not choose**,
 which in practice means a minor or major bump. `v0.15.15` was hand-cut that way.

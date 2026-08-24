@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Card e1d24370: add a byte-reproducible package build procedure.** The
+  task-owned entry point derives a fixed source epoch and exact setuptools-scm
+  version from a clean commit, then normalizes source-archive metadata so
+  differently timed builds produce identical wheel and sdist bytes. It uses only
+  existing build requirements and adds no runtime dependency.
+
 - **Card db5ce143: require `skcoord>=0.1.39` for acceptance-criteria parity.**
   The released SKCoord fold now presents the latest append-only criteria amendment
   through the default CardStore lane and every supported rollback selector (`1`,
