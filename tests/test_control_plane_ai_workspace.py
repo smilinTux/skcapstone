@@ -98,6 +98,7 @@ def test_control_plane_navigation_links_the_ai_workspace() -> None:
         "schedule.html",
         "reliability.html",
         "architecture.html",
+        "governance.html",
     ):
         text = (ROOT / "src/skdashboard/static" / page).read_text(encoding="utf-8")
         assert "/control-plane/ai?" in text

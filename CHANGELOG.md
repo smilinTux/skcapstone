@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the protected read-only Governance workspace at
+  `/control-plane/governance`, with metric lineage, source currentness,
+  separate quality findings, append-only correction evidence, and preview-only remediation.
+
 - Added the protected read-only Architecture workspace at
   `/control-plane/architecture`, with explicit DORA and owner-source Unknown
   states, CMDB blast-radius evidence, verified drift, and approved SKPerf aggregates.

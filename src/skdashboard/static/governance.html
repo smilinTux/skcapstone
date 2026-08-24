@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard | Governance</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <link rel="stylesheet" href="/static/css/overview.css">
+  <link rel="stylesheet" href="/static/css/projects.css">
+  <link rel="stylesheet" href="/static/css/governance.css">
+</head>
+<body>
+  <div class="wrap">
+    <nav class="topbar sidebar" aria-label="Dashboard sections">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" data-nav="home" href="/control-plane/now">Now</a>
+        <a class="tab" href="/control-plane/portfolio?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Portfolio</a>
+        <a class="tab" href="/control-plane/schedule?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;lens=roadmap&amp;timezone=UTC">Schedule</a>
+        <a class="tab" href="/control-plane/reliability?role=operator&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Reliability</a>
+        <a class="tab" href="/control-plane/architecture?role=architect&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;environment=all">Architecture</a>
+        <a class="tab active" href="/control-plane/governance?role=governance&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Governance</a>
+        <a class="tab" href="/control-plane/ai?role=operator&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">AI outcomes</a>
+      </div>
+      <div class="spacer"></div><span class="quality-mode">Read only</span>
+    </nav>
+
+    <header class="now-head project-head">
+      <div><span class="now-kicker">Governance workspace</span><h2>Metric lineage, policy, and data quality</h2><p>Authoritative owners, source watermarks, definitions, protected classification state, quality findings, and append-only correction evidence.</p></div>
+      <span id="governance-status" class="quality-mode" role="status" aria-live="polite">Loading</span>
+    </header>
+
+    <form id="governance-context" class="project-context governance-context" aria-label="Governance workspace context">
+      <label>Role<select id="governance-role"><option value="governance">Governance</option><option value="auditor">Auditor</option><option value="operator">Operator</option></select></label>
+      <p><strong>Scope</strong> Whole authorized estate</p><p><strong>Service</strong> All visible services</p><p><strong>Window</strong> Latest</p><p><strong>Baseline</strong> None</p>
+    </form>
+
+    <section id="governance-summary" class="project-summary" aria-label="Governance summary">
+      <article><span>Metric definitions</span><strong>Loading</strong><small>Hash-addressed registry.</small></article>
+      <article><span>Source coverage</span><strong>Loading</strong><small>Distinct from source health.</small></article>
+      <article><span>Policy state</span><strong>Loading</strong><small>Unavailable and denial remain separate.</small></article>
+      <article><span>Findings</span><strong>Loading</strong><small>Evidence and preview only.</small></article>
+    </section>
+
+    <section class="project-panel" aria-labelledby="finding-title">
+      <div class="quality-heading"><div><h2 id="finding-title">Governance findings</h2><p>Policy unavailable, denial, stale evidence, partial coverage, orphan dependency, duplicate card, missing criteria, and claim-TTL states remain separate.</p></div><span id="finding-count" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table><caption>Governance findings with evidence and preview-only remediation</caption><thead><tr><th scope="col">Finding</th><th scope="col">Class and truth</th><th scope="col">Owner and severity</th><th scope="col">Due state</th><th scope="col">Safe detail</th><th scope="col">Evidence</th><th scope="col">Remediation</th></tr></thead><tbody id="finding-rows"><tr><td colspan="7">Loading findings.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="lineage-title">
+      <div class="quality-heading"><div><h2 id="lineage-title">Metric definition and calculation lineage</h2><p>Every registered metric traces to its definition hash, owner, source watermark, classification, calculation, and explicit human-review state.</p></div><span id="lineage-count" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table><caption>Metric definition and source lineage</caption><thead><tr><th scope="col">Metric</th><th scope="col">Definition</th><th scope="col">Owner and source</th><th scope="col">Classification</th><th scope="col">Calculation</th><th scope="col">Watermark and truth</th><th scope="col">Human review and history</th></tr></thead><tbody id="lineage-rows"><tr><td colspan="7">Loading metric lineage.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="source-title">
+      <div class="quality-heading"><div><h2 id="source-title">Authoritative owner and source currentness</h2><p>Classification, visibility, age, TTL, coverage, safe errors, and source watermark are separately visible.</p></div><span id="source-count" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table><caption>Authoritative source currentness and coverage</caption><thead><tr><th scope="col">Source</th><th scope="col">Owner and population</th><th scope="col">Classification and visibility</th><th scope="col">Truth and age</th><th scope="col">Coverage</th><th scope="col">Watermark</th><th scope="col">Safe errors</th></tr></thead><tbody id="source-rows"><tr><td colspan="7">Loading sources.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="history-title">
+      <div class="quality-heading"><div><h2 id="history-title">Correction and supersession history</h2><p>Attributable append-only event references are shown without mutable payload content.</p></div><span id="history-count" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table><caption>Append-only correction and supersession history</caption><thead><tr><th scope="col">Record</th><th scope="col">Target</th><th scope="col">Kind and action</th><th scope="col">Attribution</th><th scope="col">Recorded</th><th scope="col">Append-only evidence</th></tr></thead><tbody id="history-rows"><tr><td colspan="6">Loading history.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-boundary"><h2>Protected metadata and no-write boundary</h2><p>Protected content, raw audit payloads, denial detail, Card titles and descriptions, secrets, capability tokens, and Matter data are excluded. Remediation is preview-only. This workspace cannot rewrite history, mutate owner records, approve, dispatch, deploy, rank individuals, or access HammerTime Inbox material.</p></section>
+  </div>
+  <script type="module" src="/static/js/governance.js"></script>
+</body>
+</html>
