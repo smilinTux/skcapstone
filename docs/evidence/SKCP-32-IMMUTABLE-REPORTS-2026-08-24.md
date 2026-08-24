@@ -34,10 +34,10 @@ and never rewrites or deletes the prior report.
 
 ## Qualification
 
-- Focused report tests: 9 passed.
-- Changed protected-boundary, contract, and navigation tests: 85 passed with 6
+- Focused report tests: 10 passed.
+- Changed protected-boundary, contract, and navigation tests: 86 passed with 6
   existing deprecation warnings.
-- Full repository suite: 500 passed with 8 existing deprecation warnings.
+- Full repository suite: 501 passed with 8 existing deprecation warnings.
 - Ruff over `src/` and `tests/`: passed.
 - JavaScript syntax checks over all static and qualification scripts: passed.
 - Chrome 151 CDP qualification: two immutable reports, supersession, typed AI
@@ -49,7 +49,8 @@ and never rewrites or deletes the prior report.
 
 1. Builder output validates against
    `control-plane-report-snapshot.v1.1.0.schema.json`, uses a deterministic
-   content-addressed ID, and carries a verified report hash.
+   content-addressed ID, and carries a verified report hash. Exact snapshot
+   reads require `skdashboard.reports.read`.
 2. Definitions, source watermarks, scope, window, baseline, calculation
    references, quality, and frozen metrics reproduce from exact snapshot
    content. Tampering fails validation even if a caller recomputes only the
