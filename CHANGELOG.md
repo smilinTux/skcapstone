@@ -189,6 +189,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Raised active navigation text to WCAG AA contrast across all legacy dashboard
+  surfaces, themes, and responsive widths, with real Chrome regression coverage.
+
 - Failed closed unknown, missing, blank, and whitespace authorization-preview
   URL states, and added an append-only approval authority projection that
   preserves V1 and H4 while classifying unsupported V2, H5, and R4 claims.
