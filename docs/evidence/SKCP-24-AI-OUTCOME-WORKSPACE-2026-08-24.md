@@ -52,7 +52,7 @@ python -m pytest tests/test_control_plane_ai_workspace.py \
   tests/test_control_plane_architecture_workspace.py \
   tests/test_dashboard_link_accessibility.py \
   tests/test_session_adapter.py -q
-34 passed in 4.51s
+35 passed in 4.65s
 ```
 
 Full repository tests:
