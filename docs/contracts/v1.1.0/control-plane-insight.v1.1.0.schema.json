@@ -125,10 +125,10 @@
         "additionalProperties": false,
         "required": ["label", "kind", "preview_only"],
         "properties": {
-          "label": {"type": "string", "maxLength": 200},
+          "label": {"type": "string", "minLength": 1, "maxLength": 200},
           "kind": {"enum": ["open_evidence", "save_view", "draft_report", "preview_command"]},
           "preview_only": {"const": true},
-          "target_ref": {"type": ["string", "null"], "maxLength": 512}
+          "target_ref": {"type": ["string", "null"], "minLength": 1, "maxLength": 512}
         }
       }
     }
@@ -171,6 +171,7 @@
         "properties": {
           "evidence_refs": {"minItems": 1},
           "calculation_refs": {"minItems": 1},
+          "metric_refs": {"minItems": 1},
           "uncertainty": {"minItems": 1},
           "policy_decision_ref": {"minLength": 1},
           "visibility": {
@@ -181,8 +182,27 @@
           }
         },
         "anyOf": [
-          {"required": ["recommendations"], "properties": {"recommendations": {"minItems": 1}}},
-          {"required": ["next_steps"], "properties": {"next_steps": {"minItems": 1}}}
+          {
+            "required": ["recommendations"],
+            "properties": {
+              "recommendations": {
+                "minItems": 1,
+                "contains": {
+                  "type": "object",
+                  "required": ["status"],
+                  "properties": {"status": {"const": "proposed"}}
+                },
+                "minContains": 1
+              }
+            }
+          },
+          {
+            "required": ["next_steps"],
+            "properties": {
+              "recommendations": {"maxItems": 0},
+              "next_steps": {"minItems": 1}
+            }
+          }
         ]
       }
     },
@@ -194,6 +214,7 @@
       "then": {
         "required": ["abstention_reason"],
         "properties": {
+          "recommendations": {"maxItems": 0},
           "next_steps": {
             "items": {
               "not": {

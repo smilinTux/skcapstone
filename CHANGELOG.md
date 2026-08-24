@@ -75,6 +75,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hardened the V1.1 control-plane contracts with distinct unreachable truth,
+  nonempty evidence and watermark requirements, nested insight grounding, and
+  ready mutating preview target and version invariants. Proposed preview-action
+  next steps now require nonempty target, action contract, and parameter
+  proposal references, with fail-closed composed insight and recommendation
+  outcomes.
+
 - Pinned the CI Ruff version so an unrelated upstream release cannot change the
   lint gate without a reviewed repository change.
 

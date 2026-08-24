@@ -84,6 +84,7 @@
         "stale",
         "partial",
         "unavailable",
+        "unreachable",
         "unknown",
         "not_applicable"
       ]
@@ -133,7 +134,7 @@
         "required": ["truth_state"],
         "properties": {
           "truth_state": {
-            "enum": ["unavailable", "unknown", "not_applicable"]
+            "enum": ["unavailable", "unreachable", "unknown", "not_applicable"]
           }
         }
       },
@@ -174,6 +175,44 @@
             "required": ["evidence_refs"],
             "properties": {
               "evidence_refs": {"minItems": 1}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["truth_state", "measurement_kind", "value"],
+        "properties": {
+          "truth_state": {"enum": ["current", "stale", "partial"]},
+          "measurement_kind": {"enum": ["measured", "derived"]},
+          "value": {"not": {"const": null}}
+        }
+      },
+      "then": {
+        "properties": {
+          "source": {
+            "required": ["evidence_refs", "watermarks"],
+            "properties": {
+              "evidence_refs": {"minItems": 1},
+              "watermarks": {"minItems": 1}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["truth_state", "data_quality"],
+        "properties": {
+          "truth_state": {"const": "current"}
+        }
+      },
+      "then": {
+        "properties": {
+          "data_quality": {
+            "properties": {
+              "errors": {"maxItems": 0}
             }
           }
         }
@@ -297,9 +336,9 @@
         "watermarks"
       ],
       "properties": {
-        "owner": {"type": "string", "maxLength": 128},
-        "adapter_id": {"type": "string", "maxLength": 128},
-        "adapter_version": {"type": "string", "maxLength": 64},
+        "owner": {"type": "string", "minLength": 1, "maxLength": 128},
+        "adapter_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "adapter_version": {"type": "string", "minLength": 1, "maxLength": 64},
         "observed_at": {"type": "string", "format": "date-time"},
         "projected_at": {"type": "string", "format": "date-time"},
         "freshness_ttl_seconds": {"type": "integer", "minimum": 1},
@@ -311,15 +350,15 @@
             "additionalProperties": false,
             "required": ["source", "value"],
             "properties": {
-              "source": {"type": "string", "maxLength": 128},
-              "value": {"type": "string", "maxLength": 256}
+              "source": {"type": "string", "minLength": 1, "maxLength": 128},
+              "value": {"type": "string", "minLength": 1, "maxLength": 256}
             }
           }
         },
         "evidence_refs": {
           "type": "array",
           "maxItems": 128,
-          "items": {"type": "string", "maxLength": 512}
+          "items": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       }
     },
@@ -333,12 +372,12 @@
         "errors": {
           "type": "array",
           "maxItems": 64,
-          "items": {"type": "string", "maxLength": 256}
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}
         },
         "exclusions": {
           "type": "array",
           "maxItems": 64,
-          "items": {"type": "string", "maxLength": 256}
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}
         },
         "notes": {
           "type": "array",
@@ -356,9 +395,9 @@
           "type": "string",
           "pattern": "^sha256:[a-f0-9]{64}$"
         },
-        "method": {"type": "string", "maxLength": 256},
-        "expression": {"type": ["string", "null"], "maxLength": 512},
-        "calculation_ref": {"type": ["string", "null"], "maxLength": 512}
+        "method": {"type": "string", "minLength": 1, "maxLength": 256},
+        "expression": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+        "calculation_ref": {"type": ["string", "null"], "minLength": 1, "maxLength": 512}
       }
     },
     "classification": {

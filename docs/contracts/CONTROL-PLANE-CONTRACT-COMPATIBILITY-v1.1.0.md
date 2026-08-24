@@ -46,20 +46,28 @@ read, but it may not turn missing, failed, unavailable, unknown, or not
 applicable evidence into a numeric or textual value. Visibility and
 authorization are separate typed dimensions. `not_applicable` is reserved for
 an explicitly out-of-scope metric, not a policy, membership, privilege,
-tenant, Matter, or protected-data denial. A policy-filtered record remains
-visible as a typed denied or unknown visibility state with its source truth
-preserved.
+tenant, Matter, or protected-data denial. `unreachable` is a distinct source
+reachability failure and remains separate from unknown, unavailable, and
+visibility authorization. A policy-filtered record remains visible as a typed
+denied or unknown visibility state with its source truth preserved.
 
 Observed numeric zero is valid only when the metric has an evidence-bearing
-truth state and at least one explicit source evidence reference. Unavailable,
-unknown, and not applicable metric results carry a null value. A projection
-with one or more source errors cannot use the current freshness truth state.
+truth state and at least one explicit, nonempty source evidence reference.
+Every non-null measured or derived current, stale, or partial value carries a
+nonempty evidence reference and source watermark. Unavailable, unreachable,
+unknown, and not applicable metric results carry a null value. A current
+metric or projection with one or more source errors cannot claim current
+freshness.
 
-Proposal insights require a nonempty summary, evidence references, calculation
-references, uncertainty, policy decision reference, and every nonempty model
-provenance field. Action-oriented proposed recommendations also require
+Proposal insights require at least one metric reference, a nonempty summary,
+evidence references, calculation references, uncertainty, policy decision
+reference, and every nonempty model provenance field. Nested recommendation
+references and grounding fields are nonempty at every level. Action-oriented
+proposed recommendations also require
 nonempty best-practice, impact, risk, counter-indicator, alternative, and
-precondition grounding. An insufficient-evidence insight uses `status:
+precondition grounding. A proposed `preview_action` next step additionally
+requires nonempty target, action contract, and parameter proposal references.
+An insufficient-evidence insight uses `status:
 abstained`, a typed nonempty `abstention_reason`, and cannot expose a ready
 preview next step.
 
@@ -70,7 +78,10 @@ preview must be `approved`, marked `current`, and set
 entry invalidates readiness. A preview with unresolved approvals uses
 `status: needs_approval`; denied previews carry a denial reason; expired
 previews use `status: expired`; every preview carries a nonempty policy
-decision reference.
+decision reference. Any ready mutating preview also carries a nonempty target
+identity and a non-null exact expected version, each containing a non-whitespace
+character. Read-only previews remain preview-only and do not imply
+authorization.
 
 These rules preserve the architecture decision that source failure remains
 visible and that reporting cannot bypass policy or exact-version approval.

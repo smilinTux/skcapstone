@@ -34,7 +34,7 @@
       "type": "string",
       "pattern": "^rec-[a-z0-9][a-z0-9-]{7,95}$"
     },
-    "title": {"type": "string", "maxLength": 240},
+    "title": {"type": "string", "minLength": 1, "maxLength": 240},
     "recommendation_type": {
       "enum": [
         "inspect",
@@ -51,19 +51,19 @@
       ]
     },
     "urgency": {"enum": ["now", "this_cycle", "monitor", "opportunity"]},
-    "rationale": {"type": "string", "maxLength": 3000},
+    "rationale": {"type": "string", "minLength": 1, "maxLength": 3000},
     "abstention_reason": {"type": "string", "minLength": 1, "maxLength": 1000},
     "metric_refs": {
       "type": "array",
       "minItems": 1,
       "maxItems": 128,
-      "items": {"type": "string", "maxLength": 256}
+      "items": {"type": "string", "minLength": 1, "maxLength": 256}
     },
     "evidence_refs": {
       "type": "array",
       "minItems": 1,
       "maxItems": 256,
-      "items": {"type": "string", "maxLength": 512}
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
     },
     "best_practice_refs": {
       "type": "array",
@@ -73,10 +73,10 @@
         "additionalProperties": false,
         "required": ["framework", "practice", "version", "reference"],
         "properties": {
-          "framework": {"type": "string", "maxLength": 128},
-          "practice": {"type": "string", "maxLength": 240},
-          "version": {"type": "string", "maxLength": 64},
-          "reference": {"type": "string", "maxLength": 512}
+          "framework": {"type": "string", "minLength": 1, "maxLength": 128},
+          "practice": {"type": "string", "minLength": 1, "maxLength": 240},
+          "version": {"type": "string", "minLength": 1, "maxLength": 64},
+          "reference": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       }
     },
@@ -88,11 +88,11 @@
         "additionalProperties": false,
         "required": ["metric_id", "direction", "range", "horizon", "method"],
         "properties": {
-          "metric_id": {"type": "string", "maxLength": 128},
+          "metric_id": {"type": "string", "minLength": 1, "maxLength": 128},
           "direction": {"enum": ["increase", "decrease", "stabilize", "unknown"]},
-          "range": {"type": "string", "maxLength": 128},
-          "horizon": {"type": "string", "maxLength": 128},
-          "method": {"type": "string", "maxLength": 256}
+          "range": {"type": "string", "minLength": 1, "maxLength": 128},
+          "horizon": {"type": "string", "minLength": 1, "maxLength": 128},
+          "method": {"type": "string", "minLength": 1, "maxLength": 256}
         }
       }
     },
@@ -102,18 +102,18 @@
       "required": ["level", "basis"],
       "properties": {
         "level": {"type": "number", "minimum": 0, "maximum": 1},
-        "basis": {"type": "string", "maxLength": 500}
+        "basis": {"type": "string", "minLength": 1, "maxLength": 500}
       }
     },
     "risks": {
       "type": "array",
       "maxItems": 32,
-      "items": {"type": "string", "maxLength": 500}
+      "items": {"type": "string", "minLength": 1, "maxLength": 500}
     },
     "counter_indicators": {
       "type": "array",
       "maxItems": 32,
-      "items": {"type": "string", "maxLength": 500}
+      "items": {"type": "string", "minLength": 1, "maxLength": 500}
     },
     "alternatives": {
       "type": "array",
@@ -123,15 +123,15 @@
         "additionalProperties": false,
         "required": ["label", "tradeoff"],
         "properties": {
-          "label": {"type": "string", "maxLength": 240},
-          "tradeoff": {"type": "string", "maxLength": 800}
+          "label": {"type": "string", "minLength": 1, "maxLength": 240},
+          "tradeoff": {"type": "string", "minLength": 1, "maxLength": 800}
         }
       }
     },
     "preconditions": {
       "type": "array",
       "maxItems": 32,
-      "items": {"type": "string", "maxLength": 500}
+      "items": {"type": "string", "minLength": 1, "maxLength": 500}
     },
     "next_step": {
       "type": "object",
@@ -141,34 +141,52 @@
         "kind": {
           "enum": ["none", "open_evidence", "save_view", "draft_report", "preview_action"]
         },
-        "label": {"type": "string", "maxLength": 200},
-        "target_ref": {"type": ["string", "null"], "maxLength": 512},
-        "action_contract_id": {"type": ["string", "null"], "maxLength": 128},
-        "parameter_proposal_ref": {"type": ["string", "null"], "maxLength": 512}
+        "label": {"type": "string", "minLength": 1, "maxLength": 200},
+        "target_ref": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+        "action_contract_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+        "parameter_proposal_ref": {"type": ["string", "null"], "minLength": 1, "maxLength": 512}
       }
     }
   },
   "allOf": [
     {
       "if": {
-        "required": ["status", "recommendation_type"],
+        "required": ["status"],
         "properties": {
-          "status": {"const": "proposed"},
-          "recommendation_type": {
-            "enum": [
-              "plan",
-              "rebalance",
-              "mitigate_risk",
-              "improve_flow",
-              "improve_reliability",
-              "improve_quality",
-              "reduce_cost",
-              "improve_data_quality",
-              "draft_report",
-              "preview_action"
-            ]
+          "status": {"const": "proposed"}
+        },
+        "anyOf": [
+          {
+            "required": ["recommendation_type"],
+            "properties": {
+              "recommendation_type": {
+                "enum": [
+                  "plan",
+                  "rebalance",
+                  "mitigate_risk",
+                  "improve_flow",
+                  "improve_reliability",
+                  "improve_quality",
+                  "reduce_cost",
+                  "improve_data_quality",
+                  "draft_report",
+                  "preview_action"
+                ]
+              }
+            }
+          },
+          {
+            "required": ["next_step"],
+            "properties": {
+              "next_step": {
+                "required": ["kind"],
+                "properties": {
+                  "kind": {"enum": ["preview_action", "draft_report"]}
+                }
+              }
+            }
           }
-        }
+        ]
       },
       "then": {
         "properties": {
@@ -187,7 +205,14 @@
         "properties": {"status": {"const": "abstained"}}
       },
       "then": {
-        "required": ["abstention_reason"]
+        "required": ["abstention_reason"],
+        "properties": {
+          "next_step": {
+            "properties": {
+              "kind": {"not": {"const": "preview_action"}}
+            }
+          }
+        }
       }
     },
     {
@@ -197,6 +222,42 @@
       },
       "then": {
         "not": {"required": ["abstention_reason"]}
+      }
+    },
+    {
+      "if": {
+        "required": ["status", "next_step"],
+        "properties": {
+          "status": {"const": "proposed"},
+          "next_step": {
+            "required": ["kind"],
+            "properties": {"kind": {"const": "preview_action"}}
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "next_step": {
+            "required": [
+              "target_ref",
+              "action_contract_id",
+              "parameter_proposal_ref"
+            ],
+            "properties": {
+              "target_ref": {"type": "string", "minLength": 1, "pattern": "\\S"},
+              "action_contract_id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "parameter_proposal_ref": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            }
+          }
+        }
       }
     }
   ]

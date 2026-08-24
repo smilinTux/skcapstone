@@ -438,7 +438,15 @@
     },
     "schemas": {
       "TruthState": {
-        "enum": ["current", "stale", "partial", "unavailable", "unknown", "not_applicable"]
+        "enum": [
+          "current",
+          "stale",
+          "partial",
+          "unavailable",
+          "unreachable",
+          "unknown",
+          "not_applicable"
+        ]
       },
       "Visibility": {
         "$ref": "control-plane-metric-result.v1.1.0.schema.json#/$defs/visibility"
@@ -490,8 +498,8 @@
         ],
         "properties": {
           "schema_version": {"const": "1.1.0"},
-          "request_id": {"type": "string", "maxLength": 128},
-          "source_owner": {"type": "string", "maxLength": 128},
+          "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "source_owner": {"type": "string", "minLength": 1, "maxLength": 128},
           "scope": {"$ref": "#/components/schemas/Scope"},
           "freshness": {"$ref": "#/components/schemas/Freshness"},
           "visibility": {"$ref": "#/components/schemas/Visibility"},
@@ -529,6 +537,7 @@
                         "stale",
                         "partial",
                         "unavailable",
+                        "unreachable",
                         "unknown",
                         "not_applicable"
                       ]
@@ -600,9 +609,9 @@
         "additionalProperties": false,
         "required": ["recommendation_id", "action_contract_id", "parameter_proposal_ref"],
         "properties": {
-          "recommendation_id": {"type": "string", "maxLength": 96},
-          "action_contract_id": {"type": "string", "maxLength": 128},
-          "parameter_proposal_ref": {"type": "string", "maxLength": 512}
+          "recommendation_id": {"type": "string", "minLength": 1, "maxLength": 96},
+          "action_contract_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "parameter_proposal_ref": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       },
       "ActionAuthorizationRequest": {
@@ -647,10 +656,10 @@
         "required": ["code", "message", "retryable", "request_id"],
         "properties": {
           "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
-          "message": {"type": "string", "maxLength": 500},
+          "message": {"type": "string", "minLength": 1, "maxLength": 500},
           "retryable": {"type": "boolean"},
-          "request_id": {"type": "string", "maxLength": 128},
-          "evidence_ref": {"type": ["string", "null"], "maxLength": 512},
+          "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "evidence_ref": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
           "safe_detail": {"type": ["object", "null"]}
         }
       }
