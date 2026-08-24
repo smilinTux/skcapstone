@@ -4,7 +4,7 @@ Date: 2026-08-24
 
 Card: `b548a77a`
 
-Base main: `b3b49f85ccfdd785550b7918bd131e831686f2a6`
+Base main: `b880ae1160747abc10a6b24dfd73d7beaa92cc57`
 
 ## Delivered slice
 
@@ -35,8 +35,8 @@ are not rendered as zero, healthy, reviewed, or current.
 
 - Focused governance tests: 6 passed.
 - Changed protected-boundary and navigation tests: 71 passed.
-- Full repository suite before browser qualification: 485 passed with 6 existing
-  deprecation warnings.
+- Rebased full repository suite: 485 passed with 6 existing deprecation
+  warnings.
 - Ruff over `src/` and `tests/`: passed.
 - JavaScript syntax checks over all static and qualification scripts: passed.
 - Chrome 151 CDP qualification: 13 metric definitions, 16 declared sources,
