@@ -4,7 +4,7 @@ Date: 2026-08-24
 
 Card: `866ffaac`
 
-Base main: `c8a4048738ce3d1d4bfceebf4625476fea26792c`
+Base main: `aa2529c252bdaecb6d08ec4d50475bb690f19573`
 
 ## Delivered slice
 
@@ -34,8 +34,8 @@ repository activity, names, versions, card movement, or model output.
 ## Qualification
 
 - Focused architecture tests: 7 passed.
-- Changed protected-boundary tests: 66 passed.
-- Full repository suite: 453 passed with 6 existing deprecation warnings.
+- Rebased changed protected-boundary tests: 55 passed.
+- Full repository suite: 469 passed with 6 existing deprecation warnings.
 - Ruff over `src/` and `tests/`: passed.
 - JavaScript syntax checks over all static and qualification scripts: passed.
 - Chrome 151 CDP qualification: 15 metrics, 3 CIs, 2 relationships, explicit
