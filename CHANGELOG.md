@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the protected read-only Schedule workspace at
+  `/control-plane/schedule`, with synchronized Roadmap, Gantt, and Flow lenses,
+  accessible table and dependency alternatives, and fail-closed schedule exceptions.
+
 - Added the protected read-only Portfolio workspace at
   `/control-plane/portfolio`, with attributable owner records, bounded
   dependency and milestone evidence, honest Unknown states, and real-browser
