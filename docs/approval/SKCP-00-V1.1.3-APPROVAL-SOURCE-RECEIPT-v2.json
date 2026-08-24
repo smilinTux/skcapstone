@@ -22,7 +22,10 @@
     "rejected_receipt_sha256": "d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18",
     "reason": "The human owner stated that v1 does not contain the exact approval text and identified the extended V1.1.3 approval as authoritative.",
     "rejection_raw_markdown_sha256": "b5414e470a897f51eb693070b0e0f0a594e62e64e041eef3ced89ee9ee597cc4",
-    "rejection_normalized_text_sha256": "721f86f20c11dc95c95957aac7aa45cb0fbff6826b3a15fae27e6c98e149ad06"
+    "rejection_normalized_text_sha256": "721f86f20c11dc95c95957aac7aa45cb0fbff6826b3a15fae27e6c98e149ad06",
+    "later_v1_attestation_path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-ATTESTATION-2026-08-24.md",
+    "later_v1_attestation_sha256": "dc1a54c080e98ffa0fa817109dc5d1eab438b92b367aa7a051aed82ef24dbab8",
+    "later_v1_attestation_status": "invalidated_by_prior_human_rejection"
   },
   "decision": {
     "result": "approve",
@@ -42,6 +45,12 @@
         "path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-v1.json",
         "sha256": "d6c5a0245ca42c3f32ffa73c3c0843154e66391ff40ad350ee58e3b7db91ac18",
         "attribution_status": "rejected_by_human_owner",
+        "historical_bytes_preserved": true
+      },
+      {
+        "path": "docs/approval/SKCP-00-V1.1.3-APPROVAL-SOURCE-RECEIPT-ATTESTATION-2026-08-24.md",
+        "sha256": "dc1a54c080e98ffa0fa817109dc5d1eab438b92b367aa7a051aed82ef24dbab8",
+        "attribution_status": "invalidated_by_prior_human_rejection",
         "historical_bytes_preserved": true
       },
       {
