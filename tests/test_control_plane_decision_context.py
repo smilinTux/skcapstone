@@ -3,11 +3,13 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Barrier, Lock
+from unittest.mock import Mock
 
 import pytest
 from capauth import (
     ClientKind,
     ControlPlaneBinding,
+    ControlPlaneCurrentnessVerifier,
     ControlPlaneDecisionAuthorizer,
     ControlPlaneInvocationV1,
     DecisionCode,
@@ -155,6 +157,10 @@ def test_typed_context_exists_only_during_handler_and_is_sanitized() -> None:
     async def handler(request):
         observed["request"] = request
         context = request.state.control_plane_decision
+        verifier = request.state.control_plane_currentness_verifier
+        assert type(verifier) is ControlPlaneCurrentnessVerifier
+        assert verifier.check_before_owner_read(context) is DecisionState.ALLOW
+        assert verifier.check_after_owner_read(context) is DecisionState.ALLOW
         observed["context"] = context
         return JSONResponse({"subject": context.binding.principal.subject})
 
@@ -166,10 +172,40 @@ def test_typed_context_exists_only_during_handler_and_is_sanitized() -> None:
     assert response.status_code == 200
     assert response.json() == {"subject": "human@example.test"}
     assert "control_plane_decision" not in observed["request"].state._state
+    assert "control_plane_currentness_verifier" not in observed["request"].state._state
     serialized = observed["context"].model_dump_json()
     assert rig.bearer not in serialized
     assert "owner_decision" not in serialized
     assert "reason_code" not in serialized
+
+
+def test_malformed_typed_result_closes_returned_verifier() -> None:
+    rig = Rig()
+    captured = {}
+
+    class Malformed:
+        def authorize_with_currentness(self, bearer, invocation):
+            result, verifier = rig.authorizer.authorize_with_currentness(
+                bearer, invocation
+            )
+            captured["result"] = result
+            captured["verifier"] = verifier
+            return result, verifier, None
+
+    async def handler(_request):
+        raise AssertionError("handler must not run")
+
+    app, _ = _app(handler, decision_authorizer=Malformed(), factory=rig.factory)
+    response = TestClient(app).get(
+        "/api/v1/overview",
+        headers={"Authorization": f"Bearer {rig.bearer}", "Origin": ORIGIN},
+    )
+
+    assert response.status_code == 403
+    assert (
+        captured["verifier"].check_before_owner_read(captured["result"].context)
+        is DecisionState.DENY
+    )
 
 
 def test_legacy_boolean_allow_never_creates_typed_authority() -> None:
@@ -183,6 +219,209 @@ def test_legacy_boolean_allow_never_creates_typed_authority() -> None:
     )
     assert response.status_code == 200
     assert response.json() == {"has_context": False}
+
+
+def test_overview_passes_exact_context_and_verifier_to_project_provider(
+    tmp_path, monkeypatch
+) -> None:
+    from skcoord.authorized_card_snapshot import unavailable_authorized_card_snapshot
+
+    from skdashboard import control_plane_adapters, control_plane_quality
+
+    rig = Rig()
+    calls = []
+
+    class ProjectProvider:
+        def read(self, context, scope, home, *, currentness_verifier):
+            assert home == tmp_path
+            assert context.binding == rig.binding
+            assert type(currentness_verifier) is ControlPlaneCurrentnessVerifier
+            assert currentness_verifier.check_before_owner_read(context) is DecisionState.ALLOW
+            assert currentness_verifier.check_after_owner_read(context) is DecisionState.ALLOW
+            calls.append(scope)
+            return unavailable_authorized_card_snapshot(scope)
+
+    monkeypatch.setattr(control_plane_adapters, "default_readers", lambda _home: {})
+    monkeypatch.setattr(control_plane_adapters, "project_estate", lambda _readers: [])
+    monkeypatch.setattr(
+        control_plane_quality,
+        "project_data_quality",
+        lambda _items: {"projection_type": "data_quality", "truth_state": "unknown"},
+    )
+    app = create_app(
+        tmp_path,
+        control_plane_decision_authorizer=rig.authorizer,
+        control_plane_invocation_factory=rig.factory,
+        control_plane_project_provider=ProjectProvider(),
+    )
+
+    response = TestClient(app).get(
+        "/api/v1/overview?role=operator&scope=estate&window=latest&baseline=none&service=all",
+        headers={"Authorization": f"Bearer {rig.bearer}", "Origin": ORIGIN},
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert any(
+        item.get("projection_type") == "project_records" for item in response.json()["items"]
+    )
+
+
+def test_overview_integrates_released_skcoord_provider(tmp_path, monkeypatch) -> None:
+    from skcoord.authorized_card_policy import (
+        AuthorizedCardPolicyEntryV1,
+        AuthorizedCardPolicyProvider,
+        StaticAuthorizedCardPolicyBackend,
+    )
+    from skcoord.authorized_card_snapshot import AuthorizedCardScopeV1
+    from skcoord.card import Card, Column, Kind
+
+    from skdashboard import control_plane_adapters, control_plane_quality
+
+    scope = AuthorizedCardScopeV1(role="project-manager")
+    entry = AuthorizedCardPolicyEntryV1.issue(
+        subject="human@example.test",
+        acting_principal_id="human-1",
+        node_id="chiap04",
+        scope=scope,
+        valid_from=NOW - timedelta(minutes=1),
+        expires_at=NOW + timedelta(minutes=2),
+        visible_card_ids=("source",),
+        field_mask=("owner_ref", "visible_edges"),
+        semantic_classes=("project",),
+    )
+    source = Card(
+        id="source",
+        kind=Kind.TASK,
+        title="not projected",
+        description="not projected",
+        status=Column.DOING,
+        swimlane="feature",
+        priority="high",
+        originator="not projected",
+        owner="project-owner",
+        labels=["project"],
+        acceptance_criteria=[],
+        dependencies=[],
+        links={},
+        meta={},
+        created_at="2026-08-20T00:00:00Z",
+        updated_at="2026-08-24T00:00:00Z",
+    )
+
+    class Store:
+        def fold(self, card_id):
+            return source if card_id == "source" else None
+
+    def clock():
+        return NOW
+
+    provider = AuthorizedCardPolicyProvider(
+        StaticAuthorizedCardPolicyBackend((entry,)),
+        clock=clock,
+        store_factory=Mock(return_value=Store()),
+    )
+    principal = Principal(principal_id="human-1", subject="human@example.test", kind="human")
+    binding = ControlPlaneBinding(
+        principal=principal,
+        node_id="chiap04",
+        purpose="project-management-reporting",
+        capability="skdashboard.read",
+        target="/api/v1/overview",
+        resource_type="skcoord.card_store.project_snapshot",
+        resource_id=entry.resource_id,
+        owner_policy_revision=entry.owner_policy_revision,
+        expires_at=NOW + timedelta(minutes=1),
+    )
+    signer = Signer()
+    capability = CapabilityAuthorizer(
+        trusted_issuers=StaticTrustedIssuerBackend(
+            (
+                IssuerGrant(
+                    fingerprint=signer.issuer_fingerprint,
+                    capabilities=frozenset({"skdashboard.read"}),
+                    audiences=frozenset({"skdashboard"}),
+                    principal_kinds=frozenset({"human"}),
+                ),
+            )
+        ),
+        principals=InMemoryPrincipalPolicyBackend((principal,)),
+        revocations=InMemoryRevocationBackend(),
+        replay=InMemoryReplayBackend(clock=clock),
+        audit=InMemoryAuditSink(),
+        signature_verifier=signer,
+        clock=clock,
+    )
+    authorizer = ControlPlaneDecisionAuthorizer(
+        capability_authorizer=capability,
+        owner_policy=provider,
+        allowed_origins=frozenset({ORIGIN}),
+        clock=clock,
+    )
+    bearer = export_control_plane_bearer(
+        CapabilityIssuer(signer, clock=clock).issue_root(
+            principal=principal,
+            scope=binding.capability_scope(),
+            ttl_seconds=60,
+        )
+    )
+
+    def factory(request, capability_name, target):
+        return ControlPlaneInvocationV1(
+            node_id=binding.node_id,
+            purpose=binding.purpose,
+            capability=capability_name,
+            target=target,
+            resource_type=binding.resource_type,
+            resource_id=binding.resource_id,
+            correlation_id=request.headers.get("x-request-id", "request-1"),
+            boundary=RequestBoundary(client_kind=ClientKind.BROWSER, origin=ORIGIN),
+        )
+
+    monkeypatch.setattr(control_plane_adapters, "default_readers", lambda _home: {})
+    monkeypatch.setattr(control_plane_adapters, "project_estate", lambda _readers: [])
+    monkeypatch.setattr(
+        control_plane_quality,
+        "project_data_quality",
+        lambda _items: {"projection_type": "data_quality", "truth_state": "current"},
+    )
+    app = create_app(
+        tmp_path,
+        control_plane_decision_authorizer=authorizer,
+        control_plane_invocation_factory=factory,
+        control_plane_project_provider=provider,
+    )
+
+    response = TestClient(app).get(
+        "/api/v1/overview?role=project-manager&scope=estate&window=latest&baseline=none&service=all",
+        headers={"Authorization": f"Bearer {bearer}", "Origin": ORIGIN},
+    )
+
+    assert response.status_code == 200
+    project = next(
+        item
+        for item in response.json()["items"]
+        if item.get("projection_type") == "project_records"
+    )
+    assert project["truth_state"] == "current"
+    assert project["records"][0]["record_id"] == "source"
+    assert "not projected" not in response.text
+    next_bearer = export_control_plane_bearer(
+        CapabilityIssuer(signer, clock=clock).issue_root(
+            principal=principal,
+            scope=binding.capability_scope(),
+            ttl_seconds=60,
+        )
+    )
+    unchanged = TestClient(app).get(
+        "/api/v1/overview?role=project-manager&scope=estate&window=latest&baseline=none&service=all",
+        headers={
+            "Authorization": f"Bearer {next_bearer}",
+            "Origin": ORIGIN,
+            "If-None-Match": response.headers["etag"],
+        },
+    )
+    assert unchanged.status_code == 304
 
 
 @pytest.mark.parametrize("value", [True, {}, None])

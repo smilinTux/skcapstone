@@ -16,7 +16,14 @@ from .dashboard import _get_agent_status, _get_board_state
 ALLOWED_BIND_HOSTS = frozenset({"127.0.0.1", "10.0.0.139", "100.81.238.58"})
 
 
-def create_read_only_app(home: Path, *, authorizer=None) -> Starlette:
+def create_read_only_app(
+    home: Path,
+    *,
+    authorizer=None,
+    decision_authorizer=None,
+    invocation_factory=None,
+    project_provider=None,
+) -> Starlette:
     """Build the least-privilege app without importing legacy route tables."""
 
     static_dir = Path(__file__).parent / "static"
@@ -46,6 +53,9 @@ def create_read_only_app(home: Path, *, authorizer=None) -> Starlette:
             board_reader=_get_board_state,
             health_reader=_get_agent_status,
             authorizer=authorizer,
+            decision_authorizer=decision_authorizer,
+            invocation_factory=invocation_factory,
+            project_provider=project_provider,
         )
     )
     return Starlette(routes=routes)

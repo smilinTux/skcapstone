@@ -770,6 +770,7 @@ def create_app(
     control_plane_authorizer=None,
     control_plane_decision_authorizer=None,
     control_plane_invocation_factory=None,
+    control_plane_project_provider=None,
 ):
     """Build the Starlette ASGI app for the dashboard.
 
@@ -1838,6 +1839,7 @@ def create_app(
     routes = [
         Route("/", index),
         Route("/control-plane/now", index),
+        Route("/control-plane/portfolio", _page("projects.html")),
         Route("/index.html", index),
         Route("/models", _page("models.html")),
         Route("/api/models", api_models_get),
@@ -1927,6 +1929,7 @@ def create_app(
             authorizer=control_plane_authorizer,
             decision_authorizer=control_plane_decision_authorizer,
             invocation_factory=control_plane_invocation_factory,
+            project_provider=control_plane_project_provider,
         )
     )
     if static_dir.exists():

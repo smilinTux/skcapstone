@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard | Portfolio</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <link rel="stylesheet" href="/static/css/overview.css">
+  <link rel="stylesheet" href="/static/css/projects.css">
+</head>
+<body>
+  <div class="wrap">
+    <nav class="topbar sidebar" aria-label="Dashboard sections">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/control-plane/now">Now</a>
+        <a class="tab active" href="/control-plane/portfolio?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Portfolio</a>
+        <a class="tab" href="/board">Kanban Board</a>
+        <a class="tab" href="/cockpit">ITIL Cockpit</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="quality-mode">Read only</span>
+    </nav>
+
+    <header class="now-head project-head">
+      <div>
+        <span class="now-kicker">Project manager workspace</span>
+        <h2 id="projects-heading">Portfolio, projects, and Agile flow</h2>
+        <p>Current protected observations, explicit missing inputs, and one-click evidence. No person or team ranking.</p>
+      </div>
+      <a class="quality-preview-button" href="/board">Open separate legacy board</a>
+    </header>
+
+    <form id="project-context" class="project-context" aria-label="Portfolio workspace context">
+      <label>Role
+        <select id="project-role" name="role">
+          <option value="project-manager">Project manager</option>
+          <option value="operator">Operator</option>
+          <option value="architect">Architect</option>
+        </select>
+      </label>
+      <label>Presentation
+        <select id="project-silo" name="selected_silo">
+          <option value="">Portfolio and flow</option>
+          <option value="portfolio">Portfolio only</option>
+          <option value="flow">Agile flow only</option>
+          <option value="itil">ITIL and SRE</option>
+          <option value="delivery">Engineering delivery</option>
+          <option value="architecture">Architecture and CMDB</option>
+          <option value="fleet">Fleet runtime</option>
+          <option value="ai">AI and models</option>
+          <option value="economy">Economy</option>
+          <option value="governance">Governance and data quality</option>
+          <option value="legal">Legal program</option>
+          <option value="corpus">Corpus pipeline</option>
+          <option value="operator">Operator and shell</option>
+        </select>
+      </label>
+      <label>Truth
+        <select id="project-truth" name="truth">
+          <option value="">All truth states</option>
+          <option value="current">Current</option>
+          <option value="stale">Stale</option>
+          <option value="partial">Partial</option>
+          <option value="unavailable">Unavailable</option>
+          <option value="unreachable">Unreachable</option>
+          <option value="unknown">Unknown</option>
+          <option value="not_applicable">Not applicable</option>
+        </select>
+      </label>
+      <p><strong>Scope</strong> Whole authorized estate</p>
+      <p><strong>Window</strong> Latest source observation</p>
+      <p><strong>Baseline</strong> None projected</p>
+    </form>
+
+    <section class="project-summary" aria-label="Current flow snapshot">
+      <article><span>Current in-progress</span><strong id="summary-in-progress">Loading</strong><small>Status exactly in_progress. Not canonical WIP.</small></article>
+      <article><span>Current blocked</span><strong id="summary-blocked">Loading</strong><small>Status exactly blocked. Not blocked time.</small></article>
+      <article><span>Historical flow metrics</span><strong id="summary-history">Unknown</strong><small>No protected transition history.</small></article>
+      <article><span>Dependency paths</span><strong id="summary-dependencies">Unknown</strong><small>Bounded folded path evidence.</small></article>
+    </section>
+
+    <section class="project-panel" aria-labelledby="measurement-heading">
+      <div class="quality-heading">
+        <div><h2 id="measurement-heading">Measurement and traceability</h2><p>Every requested signal shows its definition, sample boundary, window, exclusions, and evidence.</p></div>
+        <span id="project-status" class="quality-mode" role="status" aria-live="polite">Loading</span>
+      </div>
+      <div class="project-table-wrap">
+        <table id="project-table">
+          <caption>Portfolio, project, Agile flow, dependency, milestone, risk, and forecast input measurements</caption>
+          <thead><tr><th scope="col">Area and signal</th><th scope="col">Result and truth</th><th scope="col">Definition</th><th scope="col">Sample and population</th><th scope="col">Window</th><th scope="col">Exclusions</th><th scope="col">Source and evidence</th></tr></thead>
+          <tbody id="project-rows"><tr><td colspan="7"><div class="spinner" aria-label="Loading portfolio evidence"></div></td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="records-heading">
+      <div class="quality-heading"><div><h2 id="records-heading">Owner record traceability</h2><p>Bounded folded records only. Titles, descriptions, acceptance criteria, metadata, links, and raw events are excluded.</p></div><span id="record-status" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table id="record-table"><caption>Traceable folded project owner records</caption><thead><tr><th scope="col">Record</th><th scope="col">Kind and classification</th><th scope="col">Status and priority</th><th scope="col">Record owner</th><th scope="col">Record state</th><th scope="col">Relationships</th><th scope="col">Created and updated</th><th scope="col">Evidence</th></tr></thead><tbody id="record-rows"><tr><td colspan="8"><div class="spinner" aria-label="Loading owner records"></div></td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="dependencies-heading">
+      <div class="quality-heading"><div><h2 id="dependencies-heading">Dependency and milestone paths</h2><p>Direct folded edges with explicit orphan, conflict, human-gate, and stale-knowledge states.</p></div><span id="dependency-status" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table id="dependency-table"><caption>Direct dependency path classifications</caption><thead><tr><th scope="col">Path</th><th scope="col">Endpoint owners</th><th scope="col">Target status</th><th scope="col">Stale</th><th scope="col">Orphaned</th><th scope="col">Conflicted</th><th scope="col">Human gated</th><th scope="col">Evidence</th></tr></thead><tbody id="dependency-rows"><tr><td colspan="8"><div class="spinner" aria-label="Loading dependency paths"></div></td></tr></tbody></table></div>
+      <h3>Milestone records</h3>
+      <div class="project-table-wrap"><table id="milestone-table"><caption>Explicitly classified milestone records and dependency path conditions</caption><thead><tr><th scope="col">Record and path</th><th scope="col">Owner</th><th scope="col">Status and path conditions</th><th scope="col">Created</th><th scope="col">Updated</th><th scope="col">Evidence</th></tr></thead><tbody id="milestone-rows"><tr><td colspan="6"><div class="spinner" aria-label="Loading milestone records"></div></td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-boundary" aria-labelledby="velocity-heading">
+      <h2 id="velocity-heading">Velocity boundary</h2>
+      <p><strong>Unavailable.</strong> Velocity is local planning context only. Never compare teams or rank people by activity, cards, tokens, commits, cost, or Joules.</p>
+      <p>The board link above is a separate legacy source view. It is not scope-bound evidence for this protected workspace.</p>
+    </section>
+  </div>
+
+  <dialog id="project-evidence" aria-labelledby="project-evidence-title">
+    <form method="dialog" class="quality-dialog project-evidence-dialog">
+      <div class="quality-dialog-head">
+        <div><span class="quality-mode">Read-only evidence</span><h2 id="project-evidence-title">Measurement evidence</h2></div>
+        <button class="quality-close" value="close" aria-label="Close measurement evidence">Close</button>
+      </div>
+      <div id="project-evidence-body"></div>
+      <p class="quality-preview-note">No refresh, authorization, ranking, forecast, mutation, or dispatch occurs here.</p>
+    </form>
+  </dialog>
+
+  <script type="module" src="/static/js/projects.js"></script>
+</body>
+</html>
