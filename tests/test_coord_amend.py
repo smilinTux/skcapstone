@@ -73,7 +73,7 @@ def test_skcoord_dependency_requires_scheduled_reconcile_policy():
     skcoord = next(requirement for requirement in requirements if requirement.name == "skcoord")
 
     assert "0.1.27" not in skcoord.specifier
-    assert "0.1.32" in skcoord.specifier
+    assert "0.1.36" in skcoord.specifier
 
 
 def test_current_acceptance_criteria_delegates_to_card_store_fold(tmp_path, monkeypatch):

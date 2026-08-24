@@ -27,8 +27,10 @@ def register_coord_commands(main: click.Group) -> None:
         """
 
     from .coord_amend import register_coord_amend_commands
+    from .portfolio_plan_cmd import register_portfolio_plan_command
 
     register_coord_amend_commands(coord)
+    register_portfolio_plan_command(coord)
 
     @coord.command("status")
     @click.option("--home", default=AGENT_HOME, type=click.Path())

@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card ccbe1a37: add the read-only `coord portfolio-plan` shadow CLI.**
+  The command accepts one frozen, typed JSON input on stdin or from a file and
+  emits the exact deterministic SKCoord proposal. Expected abstention succeeds
+  by default, while `--strict` exits nonzero for automation. It has no board,
+  model, queue, claim, or mutation path.
+
 - **Card 90b5b277 (epic c880017b): `sknoded` grows a read-only operator-plane
   HTTP surface, P1 of the `skoperator.remote/v1` migration
   (`docs/OPERATOR_PLANE_REMOTE_STANDARD.md`, PR #179).** `sknoded` now serves
