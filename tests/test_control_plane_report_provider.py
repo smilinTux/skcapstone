@@ -69,7 +69,10 @@ def test_report_provider_receives_exact_context_scope_and_verifier(tmp_path: Pat
 
 
 def test_report_detail_is_get_only_etagged_and_uses_provider(tmp_path: Path):
-    rig = Rig(target="/api/v1/reports/rpt-example-report")
+    rig = Rig(
+        target="/api/v1/reports/rpt-example-report",
+        capability="skdashboard.reports.read",
+    )
 
     class Provider:
         def read_snapshot(self, context, snapshot_id, home, *, currentness_verifier):

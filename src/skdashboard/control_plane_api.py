@@ -966,7 +966,10 @@ def routes(
         Route("/api/v1/architecture/projection", protected(architecture, "skdashboard.read")),
         Route("/api/v1/governance/projection", protected(governance, "skdashboard.read")),
         Route("/api/v1/reports/projection", protected(reports, "skdashboard.read")),
-        Route("/api/v1/reports/{snapshot_id}", protected(report_snapshot, "skdashboard.read")),
+        Route(
+            "/api/v1/reports/{snapshot_id}",
+            protected(report_snapshot, "skdashboard.reports.read"),
+        ),
         Route("/api/v1/board/summary", protected(board, "skdashboard.read")),
         Route("/api/v1/fleet/summary", protected(fleet, "skdashboard.read")),
         Route("/api/v1/economy/summary", protected(economy, "skdashboard.read")),

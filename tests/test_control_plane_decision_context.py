@@ -78,13 +78,14 @@ class Rig:
         self,
         subject: str = "human@example.test",
         target: str = "/api/v1/overview",
+        capability: str = "skdashboard.read",
     ) -> None:
         self.principal = Principal(principal_id=subject, subject=subject, kind="human")
         self.binding = ControlPlaneBinding(
             principal=self.principal,
             node_id="chiap04",
             purpose="control-plane reporting",
-            capability="skdashboard.read",
+            capability=capability,
             target=target,
             resource_type="skdashboard.control_plane.projection",
             resource_id="overview",
@@ -101,7 +102,7 @@ class Rig:
                 (
                     IssuerGrant(
                         fingerprint=signer.issuer_fingerprint,
-                        capabilities=frozenset({"skdashboard.read"}),
+                        capabilities=frozenset({capability}),
                         audiences=frozenset({"skdashboard"}),
                         principal_kinds=frozenset({"human"}),
                     ),
