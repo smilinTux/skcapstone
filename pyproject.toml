@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
 ]
 dependencies = [
-    "capauth>=0.3.6",
+    "capauth>=0.3.7",
     "skcoord>=0.1.28",
     "skcapstone>=0.15.0",
     "starlette>=0.40",

@@ -9,6 +9,7 @@ import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol
 from uuid import uuid4
 
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -20,6 +21,12 @@ MAX_BEARER_BYTES = 64 * 1024
 ALLOWED_BROWSER_ORIGINS = frozenset(
     {"http://10.0.0.139:7778", "http://100.81.238.58:7778"}
 )
+
+
+class ControlPlaneInvocationFactory(Protocol):
+    """Build trusted invocation facts without consulting bearer claims."""
+
+    def __call__(self, request, capability: str, target: str): ...
 
 
 def _now() -> str:
@@ -201,7 +208,162 @@ def _capauth_authorize(home: Path, bearer: str, capability: str, target: str) ->
         return False
 
 
-def routes(home: Path, *, board_reader, health_reader, authorizer=None):
+def _clear_decision(request) -> None:
+    try:
+        del request.state.control_plane_decision
+    except (AttributeError, KeyError):
+        pass
+
+
+def _typed_context(
+    request,
+    bearer: str,
+    capability: str,
+    target: str,
+    *,
+    decision_authorizer,
+    invocation_factory: ControlPlaneInvocationFactory,
+):
+    """Return one exact sanitized CapAuth context or fail closed."""
+
+    from capauth import (
+        ClientKind,
+        ControlPlaneAuthorizationResultV1,
+        ControlPlaneInvocationV1,
+        DecisionCode,
+        DecisionState,
+        SanitizedControlPlaneDecisionV1,
+    )
+
+    invocation = invocation_factory(request, capability, target)
+    if type(invocation) is not ControlPlaneInvocationV1:
+        return None
+    boundary = invocation.boundary
+    observed_origin = request.headers.get("origin")
+    if boundary.client_kind is ClientKind.BROWSER:
+        if observed_origin is None or boundary.origin != observed_origin:
+            return None
+    elif observed_origin is not None:
+        return None
+    result = decision_authorizer.authorize(bearer, invocation)
+    if type(result) is not ControlPlaneAuthorizationResultV1:
+        return None
+    if (
+        not result.allow
+        or result.state is not DecisionState.ALLOW
+        or result.code is not DecisionCode.ALLOW
+        or type(result.context) is not SanitizedControlPlaneDecisionV1
+    ):
+        return None
+    # Revalidate even model_construct output before it reaches request state.
+    context = SanitizedControlPlaneDecisionV1(
+        **{
+            name: getattr(result.context, name)
+            for name in SanitizedControlPlaneDecisionV1.model_fields
+        }
+    )
+    binding = context.binding
+    if (
+        context.boundary != boundary
+        or binding.node_id != invocation.node_id
+        or binding.purpose != invocation.purpose
+        or binding.audience != invocation.audience
+        or binding.capability != capability
+        or binding.target != target
+        or binding.resource_type != invocation.resource_type
+        or binding.resource_id != invocation.resource_id
+        or context.capauth_decision.correlation_id != invocation.correlation_id
+        or context.joined_decision.scope != binding.capability_scope()
+    ):
+        return None
+    now = datetime.now(timezone.utc)
+    if not context.issued_at <= now < context.expires_at:
+        return None
+    return context
+
+
+def _protected_handler(
+    handler,
+    capability: str,
+    *,
+    authorize,
+    decision_authorizer,
+    invocation_factory,
+    counters,
+):
+    async def wrapped(request):
+        _clear_decision(request)
+        origin = request.headers.get("origin")
+        if origin is not None and origin not in ALLOWED_BROWSER_ORIGINS:
+            counters["denied"] += 1
+            response = _error(request, 403, "ORIGIN_DENIED", "browser origin is not allowed")
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        header = request.headers.get("authorization", "")
+        if not header.startswith("Bearer ") or header.count(" ") != 1:
+            counters["denied"] += 1
+            response = _error(request, 401, "UNAUTHORIZED", "a bearer capability is required")
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        bearer = header[7:]
+        if not bearer or len(bearer.encode()) > MAX_BEARER_BYTES:
+            counters["denied"] += 1
+            response = _error(request, 401, "UNAUTHORIZED", "the bearer capability is invalid")
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        if decision_authorizer is not None:
+            try:
+                context = _typed_context(
+                    request,
+                    bearer,
+                    capability,
+                    request.url.path,
+                    decision_authorizer=decision_authorizer,
+                    invocation_factory=invocation_factory,
+                )
+            except Exception:
+                context = None
+            if context is None:
+                counters["denied"] += 1
+                response = _error(
+                    request, 403, "FORBIDDEN", "the capability decision denied access"
+                )
+                response.headers["Cache-Control"] = "no-store"
+                return response
+            request.state.control_plane_decision = context
+        else:
+            try:
+                allowed = authorize(bearer, capability, request.url.path)
+            except Exception:
+                allowed = False
+            if not allowed:
+                counters["denied"] += 1
+                response = _error(
+                    request, 403, "FORBIDDEN", "the capability decision denied access"
+                )
+                response.headers["Cache-Control"] = "no-store"
+                return response
+        try:
+            response = await handler(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        finally:
+            _clear_decision(request)
+
+    return wrapped
+
+
+def routes(
+    home: Path,
+    *,
+    board_reader,
+    health_reader,
+    authorizer=None,
+    decision_authorizer=None,
+    invocation_factory: ControlPlaneInvocationFactory | None = None,
+):
+    if (decision_authorizer is None) != (invocation_factory is None):
+        raise ValueError("typed control-plane authorization requires both injected components")
     hits: dict[str, deque[float]] = defaultdict(deque)
     counters = {"requests": 0, "denied": 0}
     authorize = authorizer or (
@@ -228,39 +390,16 @@ def routes(home: Path, *, board_reader, health_reader, authorizer=None):
         return wrapped
 
     def protected(handler, capability: str):
-        async def wrapped(request):
-            origin = request.headers.get("origin")
-            if origin is not None and origin not in ALLOWED_BROWSER_ORIGINS:
-                counters["denied"] += 1
-                response = _error(request, 403, "ORIGIN_DENIED", "browser origin is not allowed")
-                response.headers["Cache-Control"] = "no-store"
-                return response
-            header = request.headers.get("authorization", "")
-            if not header.startswith("Bearer ") or header.count(" ") != 1:
-                counters["denied"] += 1
-                response = _error(request, 401, "UNAUTHORIZED", "a bearer capability is required")
-                response.headers["Cache-Control"] = "no-store"
-                return response
-            bearer = header[7:]
-            if not bearer or len(bearer.encode()) > MAX_BEARER_BYTES:
-                counters["denied"] += 1
-                response = _error(request, 401, "UNAUTHORIZED", "the bearer capability is invalid")
-                response.headers["Cache-Control"] = "no-store"
-                return response
-            try:
-                allowed = authorize(bearer, capability, request.url.path)
-            except Exception:
-                allowed = False
-            if not allowed:
-                counters["denied"] += 1
-                response = _error(request, 403, "FORBIDDEN", "the capability decision denied access")
-                response.headers["Cache-Control"] = "no-store"
-                return response
-            response = await handler(request)
-            response.headers["Cache-Control"] = "no-store"
-            return response
-
-        return limited(wrapped)
+        return limited(
+            _protected_handler(
+                handler,
+                capability,
+                authorize=authorize,
+                decision_authorizer=decision_authorizer,
+                invocation_factory=invocation_factory,
+                counters=counters,
+            )
+        )
 
     async def health(request):
         raw = health_reader(home)

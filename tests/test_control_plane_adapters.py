@@ -215,7 +215,9 @@ def test_default_readers_keep_populations_and_measurement_lanes_separate(tmp_pat
     ), patch("skdashboard.dashboard_skcounter.get_ai_usage", side_effect=usage), patch(
         "skcapstone.skjoule.JouleEngine.get_network_stats", return_value=stats
     ):
-        local = _local_readers(tmp_path, board_data=board)
+        local = _local_readers(
+            tmp_path, board_data=board, default_observed_at=NOW.isoformat()
+        )
         readers = {
             adapter_id: reader if isinstance(reader, Reader) else Reader(payload=reader())
             for adapter_id, reader in local.items()
@@ -312,7 +314,9 @@ def test_empty_or_malformed_owner_folds_never_become_current_zero(tmp_path: Path
         "errors": [],
     }
     with patch("skdashboard.dashboard_fleet.get_drift", return_value=empty_fleet):
-        local = _local_readers(tmp_path, board_data={})["skcapstone.fleet"]
+        local = _local_readers(
+            tmp_path, board_data={}, default_observed_at=NOW.isoformat()
+        )["skcapstone.fleet"]
         items = project_estate(
             {"skcapstone.fleet": Reader(payload=local())}, now=NOW
         )

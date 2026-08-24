@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a separate typed CapAuth control-plane authorization lane that exposes
+  only an attributable sanitized decision during the protected handler call.
+
 - Added the bounded SKCP-20 scope workspace with server-enforced pre-reader
   validation, safe deep links, expiring local saved views, presentation-only
   cross-filters, and an accessible read-only command palette.
