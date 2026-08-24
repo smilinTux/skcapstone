@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added bounded, read-only cross-estate observation adapters with explicit
+  owners, populations, query budgets, watermarks, classifications, freshness,
+  coverage, and fail-closed unavailable states.
+
 - Added an independent PASS R5 review of the F13 fail-closed preview repair,
   approval authority projection, real Chrome accessibility behavior, and all
   29 forward dependency gates while preserving pre-gate topology drift.
