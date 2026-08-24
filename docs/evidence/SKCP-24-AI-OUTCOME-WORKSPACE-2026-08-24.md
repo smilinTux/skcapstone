@@ -52,14 +52,14 @@ python -m pytest tests/test_control_plane_ai_workspace.py \
   tests/test_control_plane_architecture_workspace.py \
   tests/test_dashboard_link_accessibility.py \
   tests/test_session_adapter.py -q
-33 passed in 4.48s
+34 passed in 4.47s
 ```
 
 Full repository tests:
 
 ```text
 python -m pytest tests/ -q
-483 passed, 6 warnings in 32.84s
+491 passed, 6 warnings in 31.78s
 
 ruff check src/ tests/
 All checks passed!
@@ -95,11 +95,11 @@ the protected read route and proved:
 Evidence artifacts:
 
 ```text
-/tmp/skcp24-ai-cdp-final.json
-sha256:16d7df35b380f62e8a7a87a9aa6ae7f294df834570d9e1223b1385cc32216d09
+/tmp/skcp24-ai-repin-v169.json
+sha256:24d6025a2f86852df8e484ab4537049600303f6941457e82372e2c71cd073afe
 
 /tmp/skcp24-ai-outcomes-rereview.png
-sha256:3a8e958aacd9c76cc671d719c47a2148c6c936e54ec311c25f7a4ba4ba0965da
+sha256:1706b313297880d285360b0ce5ac0d038928a840a3b5cefb972b2367efe47ed5
 ```
 
 ## Known limitations
