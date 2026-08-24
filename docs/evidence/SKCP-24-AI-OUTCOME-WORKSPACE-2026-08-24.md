@@ -8,9 +8,9 @@ projection. It adds no API route, mutation, credential flow, deployment, or
 external action.
 
 The combined integration review used exact `origin/main`
-`82541d95db709bc564e8c52f6a3b99ea9bdbfe76`, pre-correction HEAD
-`8e74b89565a0f83f372948f724f6f4a1431a2c60`, and tree
-`093ae1f2d07b1b78a21875437cc22f8e90f4648c`.
+`7299700a0e62e32d11756bde0dd578ec0acd5597`, pre-correction HEAD
+`51618eda07bf19a8a8fd22e803cedf7bea4f4949`, and tree
+`337ad8622e5e476dc2e0f2266b0dd809fbc14fc1`.
 
 The implementation keeps these observations separate:
 
@@ -95,8 +95,8 @@ the protected read route and proved:
 Evidence artifacts:
 
 ```text
-/tmp/skcp24-ai-repin-v169.json
-sha256:24d6025a2f86852df8e484ab4537049600303f6941457e82372e2c71cd073afe
+/tmp/skcp24-ai-repin-v170.json
+sha256:d68997dc4d6e2ec55898489b2675afa3fd5cc86fafc0506e6ae8fd36170842db
 
 /tmp/skcp24-ai-outcomes-rereview.png
 sha256:1706b313297880d285360b0ce5ac0d038928a840a3b5cefb972b2367efe47ed5

@@ -181,7 +181,7 @@ try {
   assert.equal(exceptions.length, 0, JSON.stringify(exceptions));
   assert.equal(requests.filter((request) => request.method !== "GET").length, 0);
   assert.equal(requests.filter((request) => !request.url.startsWith(`http://127.0.0.1:${port}/`)).length, 0);
-  const result = { result: "PASS", base: "82541d95", budgetRows: 11, registry: true, keyboard: true, focusReturn: true, axNames: true, lightContrast, darkContrast, reducedMotion: true, responsive: [390, 320], delayedPurge: true, unauthorizedPurge: true, forbiddenPurge: true, staleResponseBlocked: true, requests: requests.length, writes: 0, external: 0, exceptions: 0 };
+  const result = { result: "PASS", base: "7299700a", budgetRows: 11, registry: true, keyboard: true, focusReturn: true, axNames: true, lightContrast, darkContrast, reducedMotion: true, responsive: [390, 320], delayedPurge: true, unauthorizedPurge: true, forbiddenPurge: true, staleResponseBlocked: true, requests: requests.length, writes: 0, external: 0, exceptions: 0 };
   console.log(JSON.stringify(result));
   socket.close();
 } finally {
