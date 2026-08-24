@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added frozen `/api/v1` read-only health, overview, board, fleet, Economy, and
+  event projections with bounded pagination, ETags, explicit partial states,
+  and reconnect-safe server-sent events.
+
 - Added an independent FAIL R3 review after an unknown authorization-preview
   URL state rendered ready and false V2/H5/R4 provenance contradicted H4.
 
