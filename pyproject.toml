@@ -26,6 +26,9 @@ dependencies = [
     "uvicorn>=0.30",
 ]
 
+[project.scripts]
+skdashboard-read-only = "skdashboard.read_only:main"
+
 
 [project.urls]
 Homepage = "https://github.com/smilinTux/skdashboard"
