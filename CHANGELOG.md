@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an independent PASS R5 review of the F13 fail-closed preview repair,
+  approval authority projection, real Chrome accessibility behavior, and all
+  29 forward dependency gates while preserving pre-gate topology drift.
+
 - Added frozen `/api/v1` read-only health, overview, board, fleet, Economy, and
   event projections with bounded pagination, ETags, explicit partial states,
   and reconnect-safe server-sent events.
