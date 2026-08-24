@@ -7,13 +7,11 @@ from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse, JSONResponse
-from starlette.routing import Mount, Route
-from starlette.staticfiles import StaticFiles
+from starlette.routing import Route
 
 from .control_plane_api import ALLOWED_BROWSER_ORIGINS
 from .control_plane_api import routes as control_plane_routes
 from .dashboard import _get_agent_status, _get_board_state
-from .skdashboard_manifest import skdashboard_module_manifest
 
 ALLOWED_BIND_HOSTS = frozenset({"127.0.0.1", "10.0.0.139", "100.81.238.58"})
 
@@ -27,7 +25,19 @@ def create_read_only_app(home: Path, *, authorizer=None) -> Starlette:
         return HTMLResponse((static_dir / "read_only.html").read_text(encoding="utf-8"))
 
     async def manifest(request):
-        return JSONResponse(skdashboard_module_manifest(str(request.base_url)))
+        base = str(request.base_url).rstrip("/")
+        return JSONResponse(
+            {
+                "schemaVersion": "1.1",
+                "id": "skdashboard-read-only",
+                "name": "SK Control Plane",
+                "grade": "B",
+                "entry": {"url": f"{base}/"},
+                "nav": {"icon": "dashboard", "order": 40, "label": "Control Plane"},
+                "auth": {"audience": "skdashboard", "scopes": ["skdashboard.read"]},
+                "health": f"{base}/api/v1/health",
+            }
+        )
 
     routes = [Route("/", index), Route("/.well-known/skworld-module.json", manifest)]
     routes.extend(
@@ -38,7 +48,6 @@ def create_read_only_app(home: Path, *, authorizer=None) -> Starlette:
             authorizer=authorizer,
         )
     )
-    routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))
     return Starlette(routes=routes)
 
 

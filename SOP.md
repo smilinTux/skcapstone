@@ -277,13 +277,13 @@ skdashboard-read-only --host 10.0.0.139 --port 7778
 skdashboard-read-only --host 100.81.238.58 --port 7778
 ```
 
-The dedicated runtime mounts only `/`, `/static`, the public module manifest,
-`/api/v1` read projections and events, and `/metrics`. It has no POST route and
-does not mount capability handout, queue, assistant, CMDB mutation, or legacy
-privileged endpoints. Its bind-host allowlist rejects wildcard and public
-addresses before uvicorn starts. Roll back by stopping the two dedicated
-instances and restoring the previously pinned package revision. Do not replace
-the named binds with `0.0.0.0`.
+The dedicated runtime mounts only its inline `/` page, the public read-only
+module manifest, `/api/v1` read projections and events, and `/metrics`. It does
+not mount the legacy static tree, any POST route, capability handout, queue,
+assistant, CMDB mutation, operator action, or legacy privileged endpoint. Its
+bind-host allowlist rejects wildcard and public addresses before uvicorn starts.
+Roll back by stopping the two dedicated instances and restoring the previously
+pinned package revision. Do not replace the named binds with `0.0.0.0`.
 
 | Property | Value |
 |---|---|

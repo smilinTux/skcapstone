@@ -23,6 +23,10 @@ def test_approved_surfaces_exist_and_legacy_privilege_is_absent(tmp_path: Path) 
     client = _client(tmp_path)
     assert client.get("/").status_code == 200
     assert client.get("/.well-known/skworld-module.json").status_code == 200
+    manifest = client.get("/.well-known/skworld-module.json").json()
+    assert manifest["health"].endswith("/api/v1/health")
+    assert manifest["auth"] == {"audience": "skdashboard", "scopes": ["skdashboard.read"]}
+    assert "operator" not in manifest
     assert client.get("/api/v1/health").status_code == 200
     headers = {"Authorization": "Bearer test", "Origin": "http://10.0.0.139:7778"}
     assert client.get("/api/v1/overview", headers=headers).status_code == 200
@@ -35,6 +39,13 @@ def test_approved_surfaces_exist_and_legacy_privilege_is_absent(tmp_path: Path) 
         "/api/cmdb/apply",
         "/api/cmdb/seed",
         "/api/models/advertise",
+        "/static/assistant.html",
+        "/static/cmdb.html",
+        "/static/models.html",
+        "/static/js/api.js",
+        "/static/js/assistant.js",
+        "/static/js/cmdb.js",
+        "/static/js/ai_compose.js",
     ):
         assert client.get(path).status_code == 404
         assert client.post(path).status_code == 404

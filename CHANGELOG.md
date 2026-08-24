@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Remove legacy static clients and operator-action metadata from the dedicated read-only runtime.
+
 - Add a dedicated `skdashboard-read-only` runtime that mounts only the control-plane UI, manifest, read APIs, SSE, health, static assets, and bounded metrics.
 
 ### Added
