@@ -185,9 +185,7 @@ def test_malformed_typed_result_closes_returned_verifier() -> None:
 
     class Malformed:
         def authorize_with_currentness(self, bearer, invocation):
-            result, verifier = rig.authorizer.authorize_with_currentness(
-                bearer, invocation
-            )
+            result, verifier = rig.authorizer.authorize_with_currentness(bearer, invocation)
             captured["result"] = result
             captured["verifier"] = verifier
             return result, verifier, None
