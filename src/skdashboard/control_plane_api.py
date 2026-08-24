@@ -362,7 +362,7 @@ def _protected_handler(
                 state = getattr(resolved, "state", None)
                 if state in {"corrupt", "unavailable"}:
                     counters["denied"] += 1
-                    response = _error(request, 503, "SESSION_UNAVAILABLE", "session authorization is temporarily unavailable")
+                    response = _error(request, 503, "SESSION_UNAVAILABLE", "session authorization is temporarily unavailable", retryable=True)
                     response.headers["Retry-After"] = "5"
                     response.headers["Cache-Control"] = "no-store"
                     return response
