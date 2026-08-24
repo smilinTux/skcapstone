@@ -2,7 +2,7 @@
 
 Card: `cb8796b0`
 Verdict: `FAIL`
-Reviewed revision: `d06cdc881ac4ff58a498a47d8add4b12f062567e`
+Reviewed revision: `4acb11829a3d1a578e629fb4dee23e171ea15acb`
 Candidate release: `v0.1.29`
 Authoritative source receipt release: `v0.1.34`
 Human attestation release: `v0.1.36`
@@ -38,6 +38,10 @@ were not rewritten or treated as current approval sources.
   `b3636c0017f5f3289094873b0ebed03806fbaa3bbc92bc705e03e0f7c32037c9`
 - Concurrent proposed V2 receipt SHA-256:
   `bf1c9d48c7721857d19f522a7aa36780f0a9fdb6cfa2c5a7bd6317c25fd213d3`
+- H5 V2 attestation document SHA-256:
+  `84c99131840cebcc07cdea6d0020527107a92354d0ef2edf4a3d1a673da8fbe7`
+- R4 V2 review document SHA-256:
+  `16b3842c8c957c6b3ef3c392b5c289a24aede0d571bb663f17726e331a9bb459`
 
 All 20 V1.1.3 candidate, predecessor, artifact, and lineage hash checks
 matched. All 132 local JSON references resolved. The active compatibility,
@@ -52,16 +56,22 @@ verbatim, and authorizes only review `cb8796b0`. The earlier REJECT event is
 preserved as history. The later exact H4 attestation and current folded
 `decision=ATTEST` supersede it without deleting any event.
 
-The V2 receipt merged concurrently at the reviewed revision is not authority.
-Its status is `proposed_for_exact_human_attestation`; H5 `8a2331a2` and R4
-`526bb17f` remain backlog. No implementation root depends on R4.
+The V2 receipt, H5 attestation, and R4 PASS merged concurrently are not
+authority. The H5 document quotes a supposed human statement that does not
+appear in the authoritative conversation. That statement says V2 contains the
+human's exact extended approval text and V1 remains rejected. The actual later
+human statement says the initial expanded quote was not verbatim, attests V1
+receipt SHA-256 `d6c5a024...`, and limits authority to R3 `cb8796b0`. The user
+did not authorize H5 `8a2331a2` or R4 `526bb17f`.
 
-However, V2 labels the later exact H4 attestation
+V2 labels the later exact H4 attestation
 `invalidated_by_prior_human_rejection`. Its evidence document repeats that
-claim, and the changelog calls V2 corrected. A prior decision cannot invalidate
-a later explicit attestation. These merged statements contradict the exact H4
-source order and are unsafe current-main provenance, even though V2 remains
-unapproved. This review does not treat V2 as authority.
+claim, the changelog calls V2 corrected, and H5 now falsely presents that V2
+text as exactly human-attested. A prior decision cannot invalidate a later
+explicit attestation. These merged statements contradict the exact H4 source
+order and are unsafe current-main provenance. This review does not treat V2 or
+H5 as authority. R4 repeats the unsupported attribution as a premise, so its
+PASS cannot repair or supersede the missing human source authority.
 
 ## Blocking finding F1: unknown preview state becomes ready
 
@@ -90,6 +100,21 @@ remain unknown, unavailable, denied, or disabled. It cannot become ready.
 
 The prototype still does not dispatch an action, but a false ready state is an
 authorization-boundary defect and prevents R3 from passing.
+
+## Blocking finding F2: unsupported H5 attribution reverses H4
+
+Current main contains an H5 attestation document whose quoted human statement
+is absent from the authoritative conversation. It asserts that V2 contains the
+human's exact extended approval text, rejects V1, and authorizes H5 and R4.
+Those claims directly conflict with the later exact human H4 attestation of V1
+and its R3-only authority boundary.
+
+The unsupported statement was folded into H5 `8a2331a2` as `decision=ATTEST`
+and H5 was completed. R4 `526bb17f` then published PASS and completed by
+treating that unsupported statement as exact human attestation. This is a
+concrete provenance and authorization-boundary failure. Repository, test,
+review, or board state cannot create human authority that the source
+conversation did not grant.
 
 ## Browser controls that passed
 
@@ -126,31 +151,36 @@ versions, policies, or current exact approvals.
 - F11 `2632ebc5`: `done`.
 - H4 `651f68fc`: `done`, folded current decision `ATTEST`.
 - R3 `cb8796b0`: in progress during review.
+- H5 `8a2331a2`: `done` with the unsupported V2 attribution.
+- R4 `526bb17f`: `done` with PASS based on the unsupported H5 attribution.
 - All 29 implementation roots: `backlog`.
 - All 29 roots contain `cb8796b0` exactly once.
 - All 29 roots retain historical review gate `39085b32` exactly once.
 - Zero implementation roots were eligible.
 
-The concurrent V2 implementation card is done, but its H5 and R4 gates remain
-backlog and do not authorize V2 or any implementation root.
+The concurrent V2 implementation, H5, and R4 cards are done. Neither H5 nor R4
+has source authority, and no implementation root may treat their state as
+authorization.
 
 ## Verification
 
 - Focused source, attestation, candidate, F9, contract, architecture, and UX
-  suite: `67 passed`.
-- Full repository suite: `334 passed`.
+  suite: `76 passed`.
+- Full repository suite: `336 passed`.
 - Ruff check: passed.
-- Reviewed V1, H4, F9, and contract test formatting: passed.
-- The proposed V2 test is not Ruff-format clean. It remains unmodified.
+- Ruff format check: failed on 25 pre-existing files, including the proposed
+  V2 and unsupported H5 tests. They remain unmodified.
 - Git diff scope and prohibited-path checks: passed before publication.
 
 ## Verdict and authority boundary
 
 `FAIL`. The exact V1 source receipt and H4 attestation pass, and the contract,
 truth, no-dispatch, accessibility, contrast, and dependency controls otherwise
-hold. The unknown preview-state counterexample presents authorization as ready,
-and current main also contains an unapproved V2 provenance claim that reverses
-the exact H4 event order.
+hold. The unknown preview-state counterexample presents authorization as ready.
+Current main also contains an unsupported H5 human attribution that treats V2
+as attested, rejects the authoritative V1 source, and reverses the exact H4
+event order. R4 compounds that failure by publishing PASS from the unsupported
+H5 premise.
 
 This FAIL authorizes only publication and linkage of this review result. It
 does not authorize a repair, implementation, deployment, activation, restart,
