@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKDashboard | Reliability</title>
+  <link rel="stylesheet" href="/static/css/board.css">
+  <link rel="stylesheet" href="/static/css/cockpit.css">
+  <link rel="stylesheet" href="/static/css/overview.css">
+  <link rel="stylesheet" href="/static/css/projects.css">
+  <link rel="stylesheet" href="/static/css/reliability.css">
+</head>
+<body>
+  <div class="wrap">
+    <nav class="topbar sidebar" aria-label="Dashboard sections">
+      <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
+      <div class="tabs">
+        <a class="tab" href="/control-plane/now">Now</a>
+        <a class="tab" href="/control-plane/portfolio?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Portfolio</a>
+        <a class="tab" href="/control-plane/schedule?role=project-manager&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all&amp;lens=roadmap&amp;timezone=UTC">Schedule</a>
+        <a class="tab active" href="/control-plane/reliability?role=operator&amp;scope=estate&amp;window=latest&amp;baseline=none&amp;service=all">Reliability</a>
+      </div>
+      <div class="spacer"></div><span class="quality-mode">Read only</span>
+    </nav>
+
+    <header class="now-head project-head">
+      <div><span class="now-kicker">ITIL and SRE workspace</span><h2>Service levels, change health, PIR, and KEDB</h2><p>User-facing reliability evidence and traceable legacy lifecycle records. Unknown remains distinct from zero.</p></div>
+      <span id="reliability-status" class="quality-mode" role="status" aria-live="polite">Loading</span>
+    </header>
+
+    <form id="reliability-context" class="project-context reliability-context" aria-label="Reliability workspace context">
+      <label>Role<select id="reliability-role"><option value="operator">Operator</option><option value="architect">Architect</option><option value="service-owner">Service owner</option></select></label>
+      <p><strong>Scope</strong> Whole authorized estate</p><p><strong>Service</strong> All visible services</p><p><strong>Window</strong> Latest projection</p><p><strong>Baseline</strong> None</p>
+    </form>
+
+    <section id="reliability-summary" class="project-summary" aria-label="Reliability summary">
+      <article><span>Availability SLI</span><strong>Loading</strong><small>User-facing measurement only.</small></article>
+      <article><span>Approved SLO</span><strong>Loading</strong><small>No target is inferred.</small></article>
+      <article><span>Error budget</span><strong>Loading</strong><small>Requires SLI and approved SLO.</small></article>
+      <article><span>Change success</span><strong>Loading</strong><small>Verified success versus failed only.</small></article>
+    </section>
+
+    <section class="project-panel" aria-labelledby="metrics-title">
+      <div class="quality-heading"><div><h2 id="metrics-title">Service and ITIL measurements</h2><p>Numerator, denominator, sample, window, classification, exclusions, legacy coverage, and evidence are explicit.</p></div></div>
+      <div class="project-table-wrap"><table><caption>Reliability metric evidence</caption><thead><tr><th scope="col">Measurement</th><th scope="col">Result and truth</th><th scope="col">Numerator and denominator</th><th scope="col">Sample and window</th><th scope="col">Classification</th><th scope="col">Exclusions</th><th scope="col">Legacy coverage and evidence</th></tr></thead><tbody id="reliability-metric-rows"><tr><td colspan="7">Loading measurements.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="breach-title">
+      <div class="quality-heading"><div><h2 id="breach-title">Open response-target exceptions</h2><p>The full eligible population supplies the breach count. This table is only a capped display.</p></div><span id="breach-count" class="quality-mode">Loading</span></div>
+      <div class="project-table-wrap"><table><caption>Most urgent open incident response-target exceptions</caption><thead><tr><th scope="col">Legacy alias</th><th scope="col">Title</th><th scope="col">Severity</th><th scope="col">Service</th><th scope="col">Time remaining</th><th scope="col">State</th></tr></thead><tbody id="reliability-breach-rows"><tr><td colspan="6">Loading exceptions.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="lineage-title">
+      <div class="quality-heading"><div><h2 id="lineage-title">Incident, Problem, KEDB, and change lineage</h2><p>INC, PRB, and CHG values are provenance aliases, not new canonical domain types.</p></div></div>
+      <div class="project-table-wrap"><table><caption>Traceable lifecycle lineage</caption><thead><tr><th scope="col">Legacy alias</th><th scope="col">Record and state</th><th scope="col">Links</th><th scope="col">CAB and validation</th><th scope="col">Deployment and verification</th><th scope="col">PIR and rollback</th></tr></thead><tbody id="reliability-lineage-rows"><tr><td colspan="6">Loading lifecycle evidence.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-panel" aria-labelledby="kedb-title">
+      <div class="quality-heading"><div><h2 id="kedb-title">Known Error Database evidence</h2><p>Root-cause and workaround availability are shown without exposing their content.</p></div></div>
+      <div class="project-table-wrap"><table><caption>KEDB linkage and evidence availability</caption><thead><tr><th scope="col">Entry</th><th scope="col">Title</th><th scope="col">Problem link</th><th scope="col">Permanent fix change</th><th scope="col">Root cause</th><th scope="col">Workaround</th></tr></thead><tbody id="reliability-kedb-rows"><tr><td colspan="6">Loading KEDB evidence.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="project-boundary"><h2>No-write boundary</h2><p>This workspace does not approve CAB decisions, validate, schedule, deploy, verify, close, roll back, mutate owner records, or dispatch an external action. Use the owner workflow under separate authorization.</p></section>
+  </div>
+  <script type="module" src="/static/js/reliability.js"></script>
+</body>
+</html>

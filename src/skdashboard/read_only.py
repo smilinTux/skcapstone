@@ -83,10 +83,15 @@ def create_read_only_app(
     invocation_factory=None,
     project_provider=None,
     schedule_provider=None,
+    reliability_provider=None,
 ) -> Starlette:
     """Build the least-privilege app without importing legacy route tables."""
 
     static_dir = Path(__file__).parent / "static"
+    if reliability_provider is None and decision_authorizer is not None:
+        from .dashboard_itil import ReliabilityProjectionProvider
+
+        reliability_provider = ReliabilityProjectionProvider()
 
     async def index(_request):
         return HTMLResponse((static_dir / "read_only.html").read_text(encoding="utf-8"))
@@ -117,6 +122,7 @@ def create_read_only_app(
             invocation_factory=invocation_factory,
             project_provider=project_provider,
             schedule_provider=schedule_provider,
+            reliability_provider=reliability_provider,
         )
     )
     app = Starlette(routes=routes)
