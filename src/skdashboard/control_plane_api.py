@@ -81,6 +81,7 @@ def _envelope(
     *,
     observed_at=None,
     truth_state=None,
+    scope=None,
 ):
     projected_at = _now()
     truth = truth_state or ("partial" if errors else ("current" if items else "unknown"))
@@ -89,7 +90,7 @@ def _envelope(
         "schema_version": SCHEMA_VERSION,
         "request_id": request_id,
         "source_owner": owner,
-        "scope": {},
+        "scope": dict(scope or {}),
         "freshness": {
             "truth_state": truth,
             "visibility": _visibility(),
@@ -231,23 +232,33 @@ def routes(home: Path, *, board_reader, health_reader, authorizer=None):
             origin = request.headers.get("origin")
             if origin is not None and origin not in ALLOWED_BROWSER_ORIGINS:
                 counters["denied"] += 1
-                return _error(request, 403, "ORIGIN_DENIED", "browser origin is not allowed")
+                response = _error(request, 403, "ORIGIN_DENIED", "browser origin is not allowed")
+                response.headers["Cache-Control"] = "no-store"
+                return response
             header = request.headers.get("authorization", "")
             if not header.startswith("Bearer ") or header.count(" ") != 1:
                 counters["denied"] += 1
-                return _error(request, 401, "UNAUTHORIZED", "a bearer capability is required")
+                response = _error(request, 401, "UNAUTHORIZED", "a bearer capability is required")
+                response.headers["Cache-Control"] = "no-store"
+                return response
             bearer = header[7:]
             if not bearer or len(bearer.encode()) > MAX_BEARER_BYTES:
                 counters["denied"] += 1
-                return _error(request, 401, "UNAUTHORIZED", "the bearer capability is invalid")
+                response = _error(request, 401, "UNAUTHORIZED", "the bearer capability is invalid")
+                response.headers["Cache-Control"] = "no-store"
+                return response
             try:
                 allowed = authorize(bearer, capability, request.url.path)
             except Exception:
                 allowed = False
             if not allowed:
                 counters["denied"] += 1
-                return _error(request, 403, "FORBIDDEN", "the capability decision denied access")
-            return await handler(request)
+                response = _error(request, 403, "FORBIDDEN", "the capability decision denied access")
+                response.headers["Cache-Control"] = "no-store"
+                return response
+            response = await handler(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
 
         return limited(wrapped)
 
@@ -339,7 +350,23 @@ def routes(home: Path, *, board_reader, health_reader, authorizer=None):
     async def overview(request):
         from .control_plane_adapters import default_readers, project_estate
         from .control_plane_quality import project_data_quality
+        from .control_plane_scope import (
+            ProtectedScopeDenied,
+            ScopeQueryError,
+            parse_now_scope,
+        )
 
+        try:
+            scope = parse_now_scope(request.query_params)
+        except ProtectedScopeDenied:
+            return _error(
+                request,
+                403,
+                "PROTECTED_SCOPE_DENIED",
+                "protected scope is not available",
+            )
+        except ScopeQueryError as exc:
+            return _error(request, 400, "INVALID_SCOPE", str(exc))
         items = project_estate(default_readers(home))
         errors = [
             f"{item['adapter_id']}: {error['code']}"
@@ -355,7 +382,14 @@ def routes(home: Path, *, board_reader, health_reader, authorizer=None):
         quality = project_data_quality(items)
         return _response(
             request,
-            _envelope(request, "skdashboard", [*items, quality], errors, truth_state=truth),
+            _envelope(
+                request,
+                "skdashboard",
+                [*items, quality],
+                errors,
+                truth_state=truth,
+                scope=scope.as_dict(),
+            ),
         )
 
     async def events(request):

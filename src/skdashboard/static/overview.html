@@ -34,7 +34,10 @@
         <h2>Now</h2>
         <p>Decisions, material change, and evidence across the authorized SK estate.</p>
       </div>
-      <span class="quality-mode">Read only</span>
+      <div class="now-head-actions">
+        <button class="quality-preview-button" id="command-trigger" type="button" aria-haspopup="dialog">Search <kbd>Ctrl K</kbd></button>
+        <span class="quality-mode">Read only</span>
+      </div>
     </header>
 
     <form class="now-context" id="now-context" aria-label="Now workspace context">
@@ -57,17 +60,49 @@
       <label>Service
         <select id="now-service" name="service"><option value="all">All authorized silos</option></select>
       </label>
+      <label>Silo filter
+        <select id="now-selected-silo" name="selected_silo">
+          <option value="">All silos</option>
+          <option value="portfolio">Portfolio and projects</option><option value="flow">Agile flow</option>
+          <option value="itil">ITIL and SRE</option><option value="delivery">Engineering delivery</option>
+          <option value="architecture">Architecture and CMDB</option><option value="fleet">Fleet runtime</option>
+          <option value="ai">AI and models</option><option value="economy">Economy</option>
+          <option value="governance">Governance and data quality</option><option value="legal">Legal program</option>
+          <option value="corpus">Corpus pipeline</option><option value="operator">Operator and shell</option>
+        </select>
+      </label>
+      <label>Truth filter
+        <select id="now-truth" name="truth">
+          <option value="">All truth states</option><option value="current">Current</option>
+          <option value="stale">Stale</option><option value="partial">Partial</option>
+          <option value="unavailable">Unavailable</option><option value="unreachable">Unreachable</option>
+          <option value="unknown">Unknown</option><option value="not_applicable">Not applicable</option>
+        </select>
+      </label>
     </form>
+
+    <section class="saved-view-bar" aria-label="Saved views and share link">
+      <label>Saved views and recent scopes
+        <select id="saved-view-select"><option value="">Current unsaved view</option></select>
+      </label>
+      <button class="quality-preview-button" id="save-view" type="button">Save view</button>
+      <button class="quality-preview-button" id="remove-view" type="button" disabled>Remove view</button>
+      <button class="quality-preview-button" id="share-view" type="button">Copy safe link</button>
+      <input id="share-link" class="share-link" aria-label="Safe share link" readonly>
+      <span id="saved-view-status" class="saved-view-status" role="status" aria-live="polite">Unsaved view. Saved views expire after 24 hours.</span>
+    </section>
 
     <section class="now-status-grid" aria-label="Decision and AI status">
       <article class="now-status-card" aria-labelledby="decision-heading">
         <span class="now-kicker">Decision queue</span>
+        <span class="context-summary" data-context-summary>Whole authorized estate</span>
         <h2 id="decision-heading">No decision projection available</h2>
         <p>The read envelope contains source observations, not a typed decision queue. No decision is inferred from work status.</p>
         <a class="quality-preview-button" href="/board">Open source board</a>
       </article>
       <article class="now-status-card ai-abstention" aria-labelledby="ai-heading">
         <span class="now-kicker">AI brief</span>
+        <span class="context-summary" data-context-summary>Whole authorized estate</span>
         <h2 id="ai-heading">AI abstained</h2>
         <p>No authorized typed insight or recommendation is present in this response. The dashboard will not invent one from aggregate metrics.</p>
         <dl class="ai-fields">
@@ -86,7 +121,7 @@
     <section class="estate-pulse" aria-labelledby="estate-heading">
       <div class="quality-heading">
         <div>
-          <h2 id="estate-heading">Estate pulse</h2>
+          <h2 id="estate-heading" tabindex="-1">Estate pulse</h2>
           <p>12 approved silos from 16 bounded adapters. Every row has one-click evidence.</p>
         </div>
         <span id="estate-count" class="quality-mode">Loading</span>
@@ -100,8 +135,10 @@
       </div>
     </section>
 
-    <!-- Legacy operational tiles remain available during breadth-first migration. -->
-    <div class="tilerow" id="tiles"></div>
+    <div id="legacy-overview">
+      <!-- Legacy operational tiles remain available only at the unfiltered estate scope. -->
+      <div class="tilerow" id="tiles"></div>
+    </div>
 
     <section class="quality-strip" aria-labelledby="quality-heading">
       <div class="quality-heading">
@@ -117,20 +154,22 @@
       <div id="quality-issues" class="quality-issues"></div>
     </section>
 
-    <div class="ov-grid">
-      <div class="card">
-        <h2>Active work <a class="more" href="/board">board →</a></h2>
-        <div class="cbody" id="active-tasks"><div class="spinner"></div></div>
+    <div id="legacy-details">
+      <div class="ov-grid">
+        <div class="card">
+          <h2>Active work <a class="more" href="/board">board →</a></h2>
+          <div class="cbody" id="active-tasks"><div class="spinner"></div></div>
+        </div>
+        <div class="card">
+          <h2>Recent activity <a class="more" href="/cockpit">cockpit →</a></h2>
+          <div class="cbody feed" id="activity"><div class="spinner"></div></div>
+        </div>
       </div>
-      <div class="card">
-        <h2>Recent activity <a class="more" href="/cockpit">cockpit →</a></h2>
-        <div class="cbody feed" id="activity"><div class="spinner"></div></div>
-      </div>
-    </div>
 
-    <div class="card" style="margin-top:14px">
-      <h2>Agent health</h2>
-      <div class="cbody" id="agent-health"><div class="spinner"></div></div>
+      <div class="card" style="margin-top:14px">
+        <h2>Agent health</h2>
+        <div class="cbody" id="agent-health"><div class="spinner"></div></div>
+      </div>
     </div>
   </div>
 
@@ -171,6 +210,19 @@
       </div>
       <p>An authorized typed insight and recommendation must include evidence, best-practice reference, confidence, uncertainty, counter-indicators, alternatives, expected impact, risk, and preconditions.</p>
       <p class="quality-preview-note">No proposal exists, so no action preview or authorization control is available. No dispatch is possible.</p>
+    </form>
+  </dialog>
+
+  <dialog id="command-palette" aria-labelledby="command-title">
+    <form method="dialog" class="quality-dialog command-dialog">
+      <div class="quality-dialog-head">
+        <div><span class="quality-mode">Read-only navigation</span><h2 id="command-title">Search this authorized view</h2></div>
+        <button class="quality-close" value="close" aria-label="Close command search">Close</button>
+      </div>
+      <label class="command-label" for="command-search">Search scopes, metrics, workspaces, evidence, reports, and previews</label>
+      <input id="command-search" class="command-search" role="combobox" aria-autocomplete="list" aria-controls="command-results" aria-expanded="true" autocomplete="off">
+      <div id="command-results" class="command-results" role="listbox" aria-label="Command results"></div>
+      <p id="command-status" class="quality-preview-note" role="status" aria-live="polite">Commands use only the current verified projection. Reports are unavailable in this slice.</p>
     </form>
   </dialog>
 
