@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an independent FAIL review after a concurrent machine-readable source
+  receipt introduced a different, unattested approval transcription.
+
 - Added a machine-readable exact-source approval receipt with explicit
   normalization, unknown metadata, and append-only attribution supersession.
 
