@@ -7,6 +7,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Card 90b5b277 (epic c880017b): `sknoded` grows a read-only operator-plane
+  HTTP surface, P1 of the `skoperator.remote/v1` migration
+  (`docs/OPERATOR_PLANE_REMOTE_STANDARD.md`, PR #179).** `sknoded` now serves
+  `/operator/v1/{healthz,readyz,apps,apps/{app}/explain,apps/{app}/observe,
+  observe (SSE watch),estate,apps/{app}/act (reserved)}` on port 9392,
+  tailnet-bind only, never `0.0.0.0`/`::`. Gated OFF by default behind
+  `SKOPERATOR_HTTP` (unset, a node behaves byte-identically to before this
+  surface existed, and `sknoded.main_loop` never imports the new module's
+  heavy dependencies); a one-shot `--once` report pass never starts it
+  regardless of the gate. Auth is capauth end to end: a detached PGP request
+  signature (`X-SK-Fingerprint`/`X-SK-Timestamp`/`X-SK-Nonce`/`X-SK-Signature`
+  over `method\npath\nsha256(body)\ntimestamp\nnonce`, pinned to the claimed
+  fingerprint's OWN key, never "any trusted key") establishes identity, then
+  `capauth.authz.decide()` (the shipped PDP, not a new scheme) checks
+  `operator.observe` / `operator.act` / `operator.estate.read` -- observe
+  never implies act. The observe tree is GET-only and freeze-independent by
+  construction: `apps`/`explain`/`observe`/`estate` never read
+  `store.is_frozen`, reusing `operator_seat.eyes`'s already freeze-proof
+  cli/seat lanes rather than `operator_seat.loop`'s freeze-gated pass, so
+  `skcapstone atlas eyes` keeps working exactly as it does today while
+  frozen. Failure taxonomy stays three distinct, never-healthy families
+  (`Unreachable`/`Unknown`/`Unauthorized`, `REASON_FAMILY` asserted
+  exhaustive by tests): a genuine cli/seat lane disagreement renders that
+  condition `Unknown (LaneConflict)` rather than picking a winner. `act`
+  exists only as a reserved, always-`501` path (checks freeze server-side on
+  every call, gated on the separate `operator.act` scope) -- no actuation
+  ships in this card. Registered port 9392 in `docs/PORTS.md` and
+  `FLEET_RESERVED_PORTS`. `fleet/signing.py` gained `roster_by_fingerprint()`
+  and `own_fingerprint()` (additive) so a claimed identity can be pinned to
+  its own key rather than "any roster key verifies".
+
 ### Fixed
 
 - **Card 90b5b277: skdashboard, fleet, and skbrain made observable (ATLAS
@@ -49,6 +82,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Net result: `skcapstone atlas eyes` now reports zero BLIND rows (down
     from 1), zero CONFLICT rows, and zero lane-conflict (`!=`) lines, with
     `fleet` newly enumerable via `skoperator apps list`/`apps ratify`.
+- `skcapstone coord claim --force` now retains its compatibility spelling but
+  cannot bypass incomplete, unknown, review, or human dependency gates. The
+  CLI returns a concise nonzero refusal listing every blocking ID (card
+  54cd56f2).
 
 - **Card 504d0046: the 10 lying ATLAS Eyes lane conflicts, root-caused and
   fixed; `atlas eyes` now reports zero CONFLICT rows.** ATLAS Eyes' first real

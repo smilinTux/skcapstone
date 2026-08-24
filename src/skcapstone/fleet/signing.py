@@ -158,6 +158,62 @@ def _fingerprint_of(path: Path) -> str | None:
         return None
 
 
+def _fingerprint_of_armored(armored: str) -> str | None:
+    """The fingerprint of an in-memory armored key blob, or None when unreadable."""
+    try:
+        import pgpy
+
+        key, _ = pgpy.PGPKey.from_blob(armored)
+        return str(key.fingerprint).replace(" ", "")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def own_fingerprint() -> str | None:
+    """This seat's own signing-key fingerprint, or None when unresolvable.
+
+    Used to stamp ``signer_fpr`` on a self-signed payload (e.g. an
+    ``skoperator.observation/v1`` envelope) so a consumer can look the
+    signer up in the trust roster without re-deriving it from the
+    signature itself.
+    """
+    home = _capauth_home()
+    if home is None:
+        return None
+    public = home / "identity" / "public.asc"
+    if not public.exists():
+        return None
+    return _fingerprint_of(public)
+
+
+def roster_by_fingerprint() -> dict[str, str]:
+    """The local trust roster indexed by fingerprint.
+
+    :func:`load_roster` answers "does ANY trusted key verify this signature".
+    A caller that has been handed a CLAIMED identity (e.g. an
+    ``X-SK-Fingerprint`` request header, per
+    ``docs/OPERATOR_PLANE_REMOTE_STANDARD.md`` section 6) needs the stronger
+    question: "does THIS SPECIFIC claimed key verify it". Answering that with
+    ``load_roster()`` plus a check "did any key match" would accept a
+    signature made by key A while the request claims identity B, silently
+    laundering an unrelated valid signature into someone else's identity.
+    This index lets a caller pin the verification to the one key the request
+    claims, so mismatch := either "unknown fingerprint" or "signature does
+    not verify against that fingerprint's own key", never a stray match.
+
+    Keys that fail fingerprint extraction (corrupt, unparseable, pgpy
+    missing) are silently excluded rather than raising: an unreadable key
+    can never be looked up by fingerprint anyway, so it is equivalent to not
+    being in the roster.
+    """
+    result: dict[str, str] = {}
+    for armored in load_roster():
+        fingerprint = _fingerprint_of_armored(armored)
+        if fingerprint:
+            result[fingerprint] = armored
+    return result
+
+
 def _keypair_matches(home: Path) -> bool:
     """True when private.asc and public.asc in a home are the SAME key.
 

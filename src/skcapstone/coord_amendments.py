@@ -28,6 +28,41 @@ from .card_store import CardStore, card_store_write_enabled
 VALID_PRIORITIES = ("critical", "high", "medium", "low")
 
 
+def add_dependency(
+    home: Path,
+    task_id: str,
+    dependency_id: str,
+    agent: str = "",
+    reason: str = "",
+) -> bool:
+    """Append an idempotent, attributed dependency amendment.
+
+    The immutable task/core birth record remains unchanged. The SKCoord fold
+    applies the added gate at read and claim time, including through the legacy
+    projection used by the CardStore rollback switch.
+    """
+    from .card_store import add_dependency as append_dependency
+
+    return append_dependency(
+        Path(home).expanduser(), task_id, dependency_id, agent=agent, reason=reason
+    )
+
+
+def remove_dependency(
+    home: Path,
+    task_id: str,
+    dependency_id: str,
+    agent: str = "",
+    reason: str = "",
+) -> bool:
+    """Append an attributed dependency removal as a reversible rollback."""
+    from .card_store import remove_dependency as append_removal
+
+    return append_removal(
+        Path(home).expanduser(), task_id, dependency_id, agent=agent, reason=reason
+    )
+
+
 def reprioritize(home: Path, task_id: str, priority: str, agent: str = "") -> None:
     """Append a folded priority amendment for a card.
 

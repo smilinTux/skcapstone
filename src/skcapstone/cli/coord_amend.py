@@ -20,6 +20,50 @@ from ._common import AGENT_HOME, console
 def register_coord_amend_commands(coord: click.Group) -> None:
     """Register the folded amendment verbs on the coord command group."""
 
+    @coord.command("add-dependency")
+    @click.argument("task_id")
+    @click.option("--dependency", "dependency_id", required=True, help="Completed gate card ID.")
+    @click.option("--reason", required=True, help="Governance reason retained in the audit event.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_add_dependency(task_id, dependency_id, reason, home, agent):
+        """Append an idempotent dependency gate without rewriting card birth facts."""
+        from ..coord_amendments import add_dependency
+        from ._validators import validate_task_id
+
+        validate_task_id(task_id)
+        validate_task_id(dependency_id)
+        try:
+            changed = add_dependency(
+                Path(home).expanduser(), task_id, dependency_id, agent or "", reason
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        outcome = "Added" if changed else "Already present"
+        console.print(f"\n  [green]{outcome} dependency {dependency_id} on {task_id}.[/]\n")
+
+    @coord.command("remove-dependency")
+    @click.argument("task_id")
+    @click.option("--dependency", "dependency_id", required=True, help="Gate card ID to remove.")
+    @click.option("--reason", required=True, help="Rollback reason retained in the audit event.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    def coord_remove_dependency(task_id, dependency_id, reason, home, agent):
+        """Append a reversible dependency rollback without rewriting card birth facts."""
+        from ..coord_amendments import remove_dependency
+        from ._validators import validate_task_id
+
+        validate_task_id(task_id)
+        validate_task_id(dependency_id)
+        try:
+            changed = remove_dependency(
+                Path(home).expanduser(), task_id, dependency_id, agent or "", reason
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        outcome = "Removed" if changed else "Already absent"
+        console.print(f"\n  [green]{outcome} dependency {dependency_id} on {task_id}.[/]\n")
+
     @coord.command("reprioritize")
     @click.argument("task_id")
     @click.option(

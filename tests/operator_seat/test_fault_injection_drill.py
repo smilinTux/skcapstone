@@ -8,12 +8,58 @@ correctly demonstrated the gap).
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
 from skcapstone.fleet import drill as fleet_drill
 from skcapstone.operator_seat import fault_injection_drill as drill
+
+
+def _capauth_signer_prerequisite_available() -> bool:
+    """Return whether this pytest wrapper has a protected passphrase source.
+
+    The standalone drill remains fail closed and performs the real signing
+    attempt. This wrapper must not read a key or passphrase merely to decide
+    whether CI can exercise a protected local identity.
+    """
+    if os.environ.get("CAPAUTH_PASSPHRASE"):
+        return True
+    configured = os.environ.get("CAPAUTH_PASSPHRASE_FILE")
+    credentials_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+    path = (
+        Path(configured).expanduser()
+        if configured
+        else Path(credentials_dir) / "capauth-passphrase" if credentials_dir else None
+    )
+    if path is None:
+        return False
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and not stat.S_ISLNK(metadata.st_mode)
+        and metadata.st_uid == os.getuid()
+        and not metadata.st_mode & 0o077
+        and metadata.st_size > 0
+    )
+
+
+def test_capauth_signer_prerequisite_requires_a_protected_source(monkeypatch, tmp_path):
+    monkeypatch.delenv("CAPAUTH_PASSPHRASE", raising=False)
+    monkeypatch.delenv("CAPAUTH_PASSPHRASE_FILE", raising=False)
+    monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)
+    assert not _capauth_signer_prerequisite_available()
+
+    source = tmp_path / "passphrase"
+    source.write_text("test-only", encoding="utf-8")
+    source.chmod(0o600)
+    monkeypatch.setenv("CAPAUTH_PASSPHRASE_FILE", str(source))
+    assert _capauth_signer_prerequisite_available()
 
 
 def test_refuses_a_root_inside_the_sovereign_tree():
@@ -33,6 +79,10 @@ def test_refuses_traversal_into_the_sovereign_tree():
         drill.guard_drill_root(sneaky)
 
 
+@pytest.mark.skipif(
+    not _capauth_signer_prerequisite_available(),
+    reason="requires a protected CapAuth PGP signer passphrase source",
+)
 def test_full_drill_runs_clean_against_an_isolated_root(tmp_path):
     root = tmp_path / "atlas-drill-fleet"
     report = drill.run_all(root, keep_root=True)

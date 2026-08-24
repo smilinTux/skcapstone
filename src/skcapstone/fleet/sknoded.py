@@ -210,10 +210,25 @@ def main_loop(
     runs every `actuation_interval` seconds (default 30, spec 3.3). The
     converge pass re-reads the freeze flag and the node's actuate opt-in
     every time, so both are live level-triggered gates.
+
+    The operator-plane HTTP surface (P1, ``docs/OPERATOR_PLANE_REMOTE_STANDARD.md``)
+    starts here too, ONLY when ``once`` is False (a one-shot report-and-exit
+    invocation has no business opening a persistent listening port) AND the
+    ``SKOPERATOR_HTTP`` gate is truthy. Unset (the default on every node
+    today), this branch does not even import ``operator_http`` -- the module
+    pulls in the whole operator seat lazily, and a report-only node pays
+    nothing for a surface it never turns on. A bind failure (bad/absent
+    Tailscale IP) is logged and otherwise ignored: it disables the SURFACE,
+    never the self-report loop this function exists to run.
     """
     from .converge import ACTUATION_INTERVAL_S, converge_once
 
     act_every = ACTUATION_INTERVAL_S if actuation_interval is None else actuation_interval
+    if not once:
+        from . import operator_http
+
+        if operator_http.http_enabled():
+            operator_http.start_background(paths, node)
     last_report = 0.0
     while True:
         now = time.time()

@@ -63,7 +63,7 @@ def test_text_output_leads_with_joules():
     from datetime import datetime, timezone
 
     apc = _require_autopilot_cost()
-    JOULE_PER_USD, record_run = apc.JOULE_PER_USD, apc.record_run
+    joule_per_usd, record_run = apc.JOULE_PER_USD, apc.record_run
 
     from skcapstone.cli import main
 
@@ -80,7 +80,7 @@ def test_text_output_leads_with_joules():
 
     result = CliRunner().invoke(main, ["autopilot-cost"])
     assert result.exit_code == 0
-    joules = round(3.5 * JOULE_PER_USD)
+    joules = round(3.5 * joule_per_usd)
     assert f"{joules:,} J" in result.output
     assert "($3.50)" in result.output
     assert result.output.index(f"{joules:,} J") < result.output.index("($3.50)")
@@ -90,7 +90,7 @@ def test_json_out_reports_recorded_run():
     from datetime import datetime, timezone
 
     apc = _require_autopilot_cost()
-    JOULE_PER_USD, record_run = apc.JOULE_PER_USD, apc.record_run
+    joule_per_usd, record_run = apc.JOULE_PER_USD, apc.record_run
 
     from skcapstone.cli import main
 
@@ -110,10 +110,10 @@ def test_json_out_reports_recorded_run():
     data = json.loads(result.output)
     assert data["today"]["cost_usd"] == 3.5
     assert data["today"]["tokens"] == 1000
-    assert data["today"]["joules"] == round(3.5 * JOULE_PER_USD)
+    assert data["today"]["joules"] == round(3.5 * joule_per_usd)
     assert data["by_repo"]["skrender"]["runs"] == 1
-    assert data["by_repo"]["skrender"]["joules"] == round(3.5 * JOULE_PER_USD)
-    assert data["cap_joules"] == round(data["cap_usd"] * JOULE_PER_USD)
+    assert data["by_repo"]["skrender"]["joules"] == round(3.5 * joule_per_usd)
+    assert data["cap_joules"] == round(data["cap_usd"] * joule_per_usd)
 
 
 def test_friendly_message_when_skharness_unavailable(monkeypatch):

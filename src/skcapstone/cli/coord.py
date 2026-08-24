@@ -194,13 +194,13 @@ def register_coord_commands(main: click.Group) -> None:
         "--force",
         is_flag=True,
         default=False,
-        help="Claim even when the task's dependencies are not all done.",
+        help="Compatibility flag. Dependency, review, and human gates still cannot be bypassed.",
     )
     def coord_claim(task_id, home, agent, force):
         """Claim a task for an agent.
 
-        A task whose dependencies are not all done is blocked: the claim is
-        refused unless --force is passed.
+        A task whose dependencies are not all done is blocked. The compatibility
+        --force flag cannot bypass dependency, review, or human gates.
         """
         from ..coordination import Board
 
@@ -229,9 +229,32 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
-        ag = board.complete_task(agent, task_id)
+        try:
+            ag = board.complete_task(agent, task_id)
+        except ValueError as e:
+            console.print(f"\n  [red]Error:[/] {e}\n")
+            sys.exit(1)
         # board.complete_task() automatically mints Joules via _mint_joules_for_task
         console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
+
+    @coord.command("release-claim")
+    @click.argument("task_id")
+    @click.option("--owner", required=True, help="Exact current claim owner.")
+    @click.option("--agent", required=True, help="Audited release actor.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_release_claim(task_id, owner, agent, home):
+        """Release one active claim without completing the task."""
+        from ..coordination import Board
+
+        validate_task_id(task_id)
+        validate_agent_name(owner)
+        validate_agent_name(agent)
+        try:
+            changed = Board(Path(home).expanduser()).release_claim(owner, task_id, actor=agent)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        outcome = "Released" if changed else "Already released"
+        console.print(f"\n  [green]{outcome} claim on {task_id} owned by {owner}.[/]\n")
 
     @coord.command("score")
     @click.argument("task_id")
