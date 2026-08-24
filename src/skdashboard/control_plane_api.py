@@ -19,7 +19,7 @@ SCHEMA_VERSION = "1.1.0"
 MAX_LIMIT = 200
 MAX_BEARER_BYTES = 64 * 1024
 ALLOWED_BROWSER_ORIGINS = frozenset(
-    {"http://10.0.0.139:7778", "http://100.81.238.58:7778"}
+    {"https://10.0.0.139:7778", "https://100.81.238.58:7778"}
 )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from urllib.parse import quote
 
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse, JSONResponse
@@ -14,6 +15,64 @@ from .control_plane_api import routes as control_plane_routes
 from .dashboard import _get_agent_status, _get_board_state
 
 ALLOWED_BIND_HOSTS = frozenset({"127.0.0.1", "10.0.0.139", "100.81.238.58"})
+HSTS_POLICY = "max-age=31536000"
+
+
+class SecureTransportMiddleware:
+    """Deny unnamed hosts and enforce HTTPS response transport."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = {key.lower(): value for key, value in scope["headers"]}
+        authority = headers.get(b"host", b"").decode("ascii", "ignore")
+        host = authority.rsplit(":", 1)[0].lower()
+        if host not in ALLOWED_BIND_HOSTS:
+            await _plain_response(send, 400, b"named host required")
+            return
+        if scope["scheme"] != "https":
+            path = quote(scope.get("path", "/"), safe="/%:@")
+            query = scope.get("query_string", b"")
+            location = f"https://{authority}{path}".encode()
+            if query:
+                location += b"?" + query
+            await _plain_response(send, 308, b"HTTPS required", [(b"location", location)])
+            return
+
+        async def secure_send(message):
+            if message["type"] == "http.response.start":
+                secured = [(b"strict-transport-security", HSTS_POLICY.encode())]
+                for key, value in message.get("headers", []):
+                    if key.lower() == b"set-cookie":
+                        value = _secure_host_only_cookie(value)
+                    secured.append((key, value))
+                message["headers"] = secured
+            await send(message)
+
+        await self.app(scope, receive, secure_send)
+
+
+async def _plain_response(send, status: int, body: bytes, headers=()):
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"text/plain; charset=utf-8"), *headers],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+def _secure_host_only_cookie(value: bytes) -> bytes:
+    parts = [part.strip() for part in value.decode("latin-1").split(";")]
+    attributes = [part for part in parts[1:] if not part.lower().startswith("domain=")]
+    if not any(part.lower() == "secure" for part in attributes):
+        attributes.append("Secure")
+    return "; ".join([parts[0], *attributes]).encode("latin-1")
 
 
 def create_read_only_app(
@@ -58,7 +117,9 @@ def create_read_only_app(
             project_provider=project_provider,
         )
     )
-    return Starlette(routes=routes)
+    app = Starlette(routes=routes)
+    app.add_middleware(SecureTransportMiddleware)
+    return app
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -66,13 +127,28 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--home", type=Path, default=Path.home() / ".skcapstone")
     parser.add_argument("--host", required=True, choices=sorted(ALLOWED_BIND_HOSTS))
     parser.add_argument("--port", type=int, default=7778)
+    parser.add_argument("--tls-certfile", type=Path, required=True)
+    parser.add_argument("--tls-keyfile", type=Path, required=True)
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
 
     import uvicorn
 
-    uvicorn.run(create_read_only_app(args.home), host=args.host, port=args.port)
+    uvicorn.run(
+        create_read_only_app(args.home),
+        host=args.host,
+        port=args.port,
+        ssl_certfile=str(args.tls_certfile),
+        ssl_keyfile=str(args.tls_keyfile),
+    )
 
 
-__all__ = ["ALLOWED_BIND_HOSTS", "ALLOWED_BROWSER_ORIGINS", "create_read_only_app", "main"]
+__all__ = [
+    "ALLOWED_BIND_HOSTS",
+    "ALLOWED_BROWSER_ORIGINS",
+    "HSTS_POLICY",
+    "SecureTransportMiddleware",
+    "create_read_only_app",
+    "main",
+]

@@ -17,7 +17,7 @@ from skdashboard.dashboard import create_app
 ROOT = Path(__file__).parents[1]
 HEADERS = {
     "Authorization": "Bearer valid-read",
-    "Origin": "http://10.0.0.139:7778",
+    "Origin": "https://10.0.0.139:7778",
 }
 
 

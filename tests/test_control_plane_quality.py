@@ -15,7 +15,7 @@ from skdashboard.dashboard_overview import get_overview_home
 ROOT = Path(__file__).parents[1]
 READ_HEADERS = {
     "Authorization": "Bearer quality-read",
-    "Origin": "http://10.0.0.139:7778",
+    "Origin": "https://10.0.0.139:7778",
 }
 
 

@@ -11,8 +11,8 @@ from starlette.testclient import TestClient
 from skdashboard.control_plane_api import _capauth_authorize
 from skdashboard.dashboard import create_app
 
-LAN_ORIGIN = "http://10.0.0.139:7778"
-TAILNET_ORIGIN = "http://100.81.238.58:7778"
+LAN_ORIGIN = "https://10.0.0.139:7778"
+TAILNET_ORIGIN = "https://100.81.238.58:7778"
 READ_HEADERS = {"Authorization": "Bearer valid-read", "Origin": LAN_ORIGIN}
 EVENT_HEADERS = {"Authorization": "Bearer valid-events", "Origin": TAILNET_ORIGIN}
 

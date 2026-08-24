@@ -26,7 +26,7 @@ from skdashboard.dashboard import create_app
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
 READ_HEADERS = {
     "Authorization": "Bearer valid-read",
-    "Origin": "http://10.0.0.139:7778",
+    "Origin": "https://10.0.0.139:7778",
 }
 
 
