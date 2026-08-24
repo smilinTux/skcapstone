@@ -1,8 +1,8 @@
 # SKCP-00 V1.1.3 independent rereview
 
 Card: `39085b32`
-Verdict: `PASS`
-Reviewed revision: `224bc2e076e2aec38b30531695108a6bc889f2c3`
+Verdict: `FAIL`
+Reviewed revision: `975bcbdfb2f7ce2afab3a1fb4149bdad1cb5ed3c`
 Candidate release: `v0.1.29`
 
 ## Scope and independence
@@ -21,6 +21,8 @@ while reaching the verdict.
   `846ce6853fd386d549b7e2b4d5d7d1c1d985411be4529b6ca9a7c4fd8b42242c`
 - Approval record SHA-256:
   `7e4a84c70beb394c58493acb8e5e89ccfae24423dfeaee2351c17cd1fa5efc86`
+- Approval attribution correction SHA-256:
+  `d34be0489b202e548ea6dfb033185a30ab3211b349c8de70701331b800d4f58d`
 - F9 schedule SHA-256:
   `b1f05fd98aa1d9dc940302321efcf57b5209a8020a1cff02ab658b3e5ec0911e`
 - F9 wireframe SHA-256:
@@ -33,6 +35,24 @@ while reaching the verdict.
 Every manifest artifact and local JSON reference resolved at the reviewed
 revision. The V1.1.3 amendment truthfully records both retained historical PNG
 lineage artifacts without altering predecessor bytes.
+
+## Blocking finding R1: contradictory human attribution
+
+Concurrent PR #37 merged while this review was running. Its append-only
+approval correction says the human owner did not type the PNG confirmation and
+revision language in the first approval record. It then labels different,
+shorter text as the verbatim human approval.
+
+That correction conflicts with the exact approval presented to this review,
+which includes the manifest hash, release, merge revision, explicit archived
+PNG confirmation, narrow authorization, and explicit non-authorizations. The
+repository now contains two incompatible claims about the human owner's exact
+words. Cryptographic hashes cannot resolve contradictory attribution.
+
+The correction must itself be superseded through an append-only, exact-source
+record. No existing approval or correction byte should be rewritten or
+deleted. Until that repair is independently reviewed, the exact human approval
+chain is not internally consistent and this review cannot PASS.
 
 ## Truth-state challenge
 
@@ -100,8 +120,9 @@ every declared implementation dependency is complete.
 
 ## Verdict
 
-`PASS`. The exact V1.1.3 candidate and approval close the lineage
-contradiction and the F9 repair closes the schedule visibility defect. This
-verdict authorizes only completion of review card `39085b32`. It does not
-authorize deployment, activation, restart, external action, protected Matter
-access, board reconciliation, or a safety-gate bypass.
+`FAIL`. The candidate hashes, schedule truth repair, contract behavior, and
+browser challenge pass, but blocking finding R1 leaves the human approval
+attribution internally contradictory. Review card `39085b32` must remain in
+review. This verdict does not authorize deployment, activation, restart,
+external action, protected Matter access, board reconciliation, or a
+safety-gate bypass.
