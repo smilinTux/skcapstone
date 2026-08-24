@@ -401,7 +401,9 @@ def aggregate_reader(
     )
 
 
-def _local_readers(home: Path, *, board_data: dict) -> dict[str, Callable[[], dict]]:
+def _local_readers(
+    home: Path, *, board_data: dict, default_observed_at: str | None = None
+) -> dict[str, Callable[[], dict]]:
     """Reuse existing read models without crossing protected source boundaries."""
     readers: dict[str, Callable[[], dict]] = {}
     summary = board_data.get("summary")
@@ -417,18 +419,19 @@ def _local_readers(home: Path, *, board_data: dict) -> dict[str, Callable[[], di
         and all(isinstance(agent, dict) and isinstance(agent.get("state"), str) for agent in agents)
     ):
         readers["skcapstone.portfolio"] = aggregate_reader(
-            {key: summary.get(key, 0) for key in ("total", "open", "in_progress", "done")}
+            {key: summary.get(key, 0) for key in ("total", "open", "in_progress", "done")},
+            observed_at=default_observed_at,
         )
         readers["skcoord.flow"] = aggregate_reader({
             "open": summary.get("open", 0),
             "in_progress": summary.get("in_progress", 0),
             "done": summary.get("done", 0),
             "blocked": sum(task.get("status") == "blocked" for task in tasks),
-        })
+        }, observed_at=default_observed_at)
         readers["skcoord.agent_presence"] = aggregate_reader({
             "total_agents": len(agents),
             "active_agents": sum(agent.get("state") == "active" for agent in agents),
-        })
+        }, observed_at=default_observed_at)
 
     from . import dashboard_cmdb, dashboard_fleet, dashboard_itil, dashboard_skcounter
 
@@ -507,6 +510,7 @@ def _local_readers(home: Path, *, board_data: dict) -> dict[str, Callable[[], di
             reporting=summary.get("graded", 0),
             errors=["partial"] if raw.get("errors") else [],
             has_observations=bool(summary["graded"] or summary["skipped"]),
+            observed_at=default_observed_at,
         )()
 
     def usage(lane: str) -> dict:
@@ -572,6 +576,7 @@ def _local_readers(home: Path, *, board_data: dict) -> dict[str, Callable[[], di
                 "active_agents": stats.active_agents,
             },
             has_observations=bool(balances),
+            observed_at=default_observed_at,
         )()
 
     readers.update({
