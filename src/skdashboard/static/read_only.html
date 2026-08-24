@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SK Control Plane</title>
+  <style>
+    body{max-width:1100px;margin:2rem auto;padding:0 1rem;background:#0b1020;color:#e7ecff;font:16px system-ui}
+    h1{margin-bottom:.25rem} .muted{color:#aab5d6} label{display:block;margin:1.5rem 0 .5rem}
+    input,button{font:inherit;padding:.65rem;border-radius:.4rem;border:1px solid #526089;background:#151d36;color:#fff}
+    input{width:min(45rem,95%)} button{cursor:pointer} pre{overflow:auto;padding:1rem;background:#11182d;border-radius:.5rem}
+  </style>
+</head>
+<body>
+  <h1>SK Control Plane</h1>
+  <p class="muted">Read-only. The bearer stays in memory and is never stored.</p>
+  <label for="token">Short-lived CapAuth bearer</label>
+  <input id="token" type="password" autocomplete="off" spellcheck="false">
+  <button id="load" type="button">Load overview</button>
+  <pre id="result" aria-live="polite">Health check pending...</pre>
+  <script>
+    const out=document.getElementById("result");
+    async function show(path, headers={}){const r=await fetch(path,{headers});const t=await r.text();out.textContent=`${r.status} ${r.statusText}\n${t}`;}
+    show("/api/v1/health").catch(()=>{out.textContent="Health unavailable"});
+    document.getElementById("load").addEventListener("click",()=>{const token=document.getElementById("token").value;show("/api/v1/overview",{Authorization:`Bearer ${token}`}).catch(()=>{out.textContent="Overview unavailable"});});
+  </script>
+</body>
+</html>
