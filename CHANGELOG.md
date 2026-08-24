@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the live read-only `Now` workspace at `/control-plane/now`, grouping 16
+  bounded adapters into 12 truthful estate silos with one-click evidence,
+  persistent supported context, explicit unknown baselines, and AI abstention.
+
 - Accepted only the canonical base64url CapAuth bearer transport at the
   control-plane PEP while retaining strict malformed-token denial.
 

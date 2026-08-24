@@ -7,11 +7,19 @@ const IS_ID = (s) => /^(inc-|prb-|chg-|[0-9a-f]{6,})/i.test(s || "");
 
 const SEV_VAR = { sev1: "sev1", sev2: "sev2", sev3: "sev3", sev4: "sev4" };
 
+let loadEpoch = 0;
+
 async function load() {
-  loadQuality();
+  const epoch = ++loadEpoch;
+  const protectedReady = await loadQuality(epoch);
+  if (protectedReady !== true) return;
   let d;
   try { d = await getJSON("/api/overview"); }
-  catch (e) { document.getElementById("tiles").innerHTML = `<div class="emptymsg">${esc(e.message)}</div>`; return; }
+  catch (e) {
+    if (epoch === loadEpoch) clearLegacyOverview(`Legacy overview unavailable: ${e.message}`);
+    return;
+  }
+  if (epoch !== loadEpoch) return;
   renderTiles(d);
   renderActive(d.active_tasks || []);
   renderActivity(d.activity || []);
@@ -23,6 +31,136 @@ const QUALITY_ICON = {
   unreachable: "×", unknown: "?", not_applicable: "○",
 };
 
+const ESTATE_SILOS = [
+  { id: "portfolio", label: "Portfolio and projects", adapters: ["skcapstone.portfolio"], metric: "portfolio.blocked_objectives@1.0.0" },
+  { id: "flow", label: "Agile flow", adapters: ["skcoord.flow", "skcoord.agent_presence"], metric: "flow.review_coverage@1.0.0" },
+  { id: "itil", label: "ITIL and SRE", adapters: ["skcapstone.itil"], metric: "itil.change_classification_coverage@1.0.0" },
+  { id: "delivery", label: "Engineering delivery", adapters: ["skcapstone.service_release"], metric: "engineering.delivery_signals_current@1.0.0" },
+  { id: "architecture", label: "Architecture and CMDB", adapters: ["cmdb.configuration"], metric: "architecture.drift_signals@1.0.0" },
+  { id: "fleet", label: "Fleet runtime", adapters: ["skcapstone.fleet"], metric: "fleet.reporting_nodes@1.0.0" },
+  { id: "ai", label: "AI and models", adapters: ["skcounter.harness", "skgateway.observed"], metric: "ai.accepted_outcome_rate@1.0.0" },
+  { id: "economy", label: "Economy", adapters: ["skperf.aggregate", "skjoule.wallet"], metric: "economy.cost_per_accepted_outcome@1.0.0", metricSource: "skcounter.harness" },
+  { id: "governance", label: "Governance and data quality", adapters: ["capauth.policy"], metric: "governance.definition_coverage@1.0.0" },
+  { id: "legal", label: "Legal program", adapters: ["sklegal.global"], metric: "legal.global_program_status@1.0.0" },
+  { id: "corpus", label: "Corpus pipeline", adapters: ["hammertime.pipeline"], metric: "corpus.approved_release_health@1.0.0" },
+  { id: "operator", label: "Operator and shell", adapters: ["atlas.conditions", "skos.discovery"], metric: "operator.ready_condition_forecast@1.0.0" },
+];
+
+const STATE_ORDER = { unavailable: 0, unreachable: 1, unknown: 2, partial: 3, stale: 4, not_applicable: 5, current: 6 };
+let estateEvidence = new Map();
+
+function initializeContext() {
+  const query = new URLSearchParams(location.search);
+  const role = ["operator", "project-manager", "architect"].includes(query.get("role")) ? query.get("role") : "operator";
+  document.getElementById("now-role").value = role;
+  const writeUrl = () => {
+    const url = new URL(location.href);
+    url.pathname = "/control-plane/now";
+    url.search = new URLSearchParams({
+      role: document.getElementById("now-role").value,
+      scope: "estate", window: "latest", baseline: "none", service: "all",
+    }).toString();
+    history.replaceState({}, "", url);
+  };
+  document.getElementById("now-context").addEventListener("change", () => {
+    writeUrl();
+    load();
+  });
+  writeUrl();
+}
+
+function combinedState(items) {
+  const states = [...new Set(items.map((item) => item.truth_state))];
+  if (states.length === 1) return states[0];
+  if (states.includes("partial")) return "partial";
+  if (states.includes("stale") && states.every((state) => ["current", "stale", "not_applicable"].includes(state))) return "stale";
+  if (states.some((state) => ["current", "stale"].includes(state)) && states.some((state) => STATE_ORDER[state] <= STATE_ORDER.unknown)) return "partial";
+  return states.reduce((worst, state) => STATE_ORDER[state] < STATE_ORDER[worst] ? state : worst, "current");
+}
+
+function aggregateValue(item, key) {
+  const value = item && item.aggregate && item.aggregate[key];
+  return value == null ? "Unknown" : String(value);
+}
+
+function signalFor(id, items) {
+  const first = items[0];
+  const second = items[1];
+  const signals = {
+    portfolio: () => `${aggregateValue(first, "open")} open, ${aggregateValue(first, "in_progress")} in progress, ${aggregateValue(first, "done")} done`,
+    flow: () => `${aggregateValue(first, "blocked")} blocked, ${aggregateValue(first, "in_progress")} in progress, ${aggregateValue(second, "active_agents")} active agents`,
+    itil: () => `${aggregateValue(first, "open_incidents")} open incidents, SEV1 ${aggregateValue(first, "sev1")}, SEV2 ${aggregateValue(first, "sev2")}, ${aggregateValue(first, "awaiting_cab")} awaiting CAB`,
+    delivery: () => `${aggregateValue(first, "services")} services, ${aggregateValue(first, "releases")} release observations`,
+    architecture: () => `${aggregateValue(first, "total")} CIs, ${aggregateValue(first, "degraded")} degraded, ${aggregateValue(first, "stale")} stale`,
+    fleet: () => `${aggregateValue(first, "graded")} graded, ${aggregateValue(first, "error")} errors, ${aggregateValue(first, "warn")} warnings`,
+    ai: () => `Harness ${aggregateValue(first, "observation_count")} observations; gateway ${aggregateValue(second, "observation_count")} observations`,
+    economy: () => `${aggregateValue(first, "regressions")} performance regressions; ${aggregateValue(second, "total_supply")} Joule supply`,
+    governance: () => `${aggregateValue(first, "denials")} policy denials; policy evidence ${aggregateValue(first, "available")}`,
+    legal: () => first.aggregate ? `${aggregateValue(first, "matters")} matter-free aggregate records; deadline pressure ${aggregateValue(first, "deadline_pressure")}` : "Policy-filtered aggregate unavailable",
+    corpus: () => `${aggregateValue(first, "approved_releases")} approved releases; ${aggregateValue(first, "pipeline_failures")} pipeline failures`,
+    operator: () => `${aggregateValue(first, "open_conditions")} open conditions, ${aggregateValue(first, "ready_actions")} ready-action observations; ${aggregateValue(second, "discovered")} SKOS modules`,
+  };
+  return signals[id]();
+}
+
+function coverageFor(items) {
+  return items.map((item) => {
+    const coverage = item.coverage || {};
+    const sample = Number.isInteger(coverage.reporting) && Number.isInteger(coverage.expected)
+      ? `${coverage.reporting} of ${coverage.expected}` : "unavailable";
+    return `${item.adapter_id} (${item.population}): ${sample}`;
+  }).join("; ");
+}
+
+function renderEstate(items) {
+  const observations = items.filter((item) => item.adapter_id);
+  const byId = new Map(observations.map((item) => [item.adapter_id, item]));
+  const complete = ESTATE_SILOS.every((silo) => silo.adapters.every((adapter) => byId.has(adapter)));
+  const rows = document.getElementById("estate-rows");
+  if (!complete || observations.length !== 16) {
+    return false;
+  }
+  estateEvidence = new Map();
+  rows.innerHTML = ESTATE_SILOS.map((silo) => {
+    const sources = silo.adapters.map((adapter) => byId.get(adapter));
+    const state = combinedState(sources);
+    const owners = [...new Set(sources.map((item) => item.owner))].join(" + ");
+    const visibility = sources.some((item) => item.visibility.state === "policy_filtered") ? "Policy filtered" : "Visible";
+    const metricSource = silo.metricSource || silo.adapters[0];
+    const metricSourceHere = silo.adapters.includes(metricSource);
+    estateEvidence.set(silo.id, { ...silo, sources, state, owners, visibility, metricSource, metricSourceHere });
+    return `<tr data-silo="${esc(silo.id)}" data-source-count="${sources.length}">
+      <td><strong>${esc(silo.label)}</strong><small>Owner: ${esc(owners)}</small></td>
+      <td><span class="truth-badge ${esc(state)}"><b aria-hidden="true">${QUALITY_ICON[state]}</b>${esc(state.replace("_", " "))}</span><small>${esc(visibility)}</small></td>
+      <td><strong>${esc(signalFor(silo.id, sources))}</strong><small>Source aggregate only; no AI inference</small></td>
+      <td><span class="mono">${esc(silo.metric)}</span><small>definition only; result not projected</small><small>scope estate; window latest; registry source ${esc(metricSource)}${metricSourceHere ? "" : "; source observation appears in another silo"}</small><small>${esc(coverageFor(sources))}</small></td>
+      <td><strong>Unknown</strong><small>No comparable baseline is projected</small></td>
+      <td><button class="quality-preview-button estate-evidence-button" type="button" data-silo="${esc(silo.id)}" aria-label="Evidence for ${esc(silo.label)}">Evidence</button></td>
+    </tr>`;
+  }).join("");
+  document.getElementById("estate-count").textContent = "12 silos | 16 sources";
+  rows.querySelectorAll(".estate-evidence-button").forEach((button) => button.addEventListener("click", () => openEstateEvidence(button.dataset.silo, button)));
+  return true;
+}
+
+function openEstateEvidence(siloId, trigger) {
+  const evidence = estateEvidence.get(siloId);
+  if (!evidence) return;
+  const sourceRows = evidence.sources.map((item) => `<tr><th scope="row" class="mono">${esc(item.adapter_id)}@${esc(item.adapter_version)}</th><td>${esc(item.truth_state)}</td><td>${esc(item.observed_at || "Not observed")}</td><td class="mono">${esc((item.watermark && item.watermark.value) || "Unavailable")}</td><td>${esc((item.errors || []).map((error) => `${error.code}: ${error.message}`).join("; ") || "None")}</td></tr>`).join("");
+  document.getElementById("estate-evidence-title").textContent = `${evidence.label} evidence`;
+  document.getElementById("estate-evidence-body").innerHTML = `<dl>
+    <div><dt>Metric definition</dt><dd class="mono">${esc(evidence.metric)}</dd></div>
+    <div><dt>Metric registry source</dt><dd class="mono">${esc(evidence.metricSource)}${evidence.metricSourceHere ? "" : "; projected under another silo, so no result is associated here"}</dd></div>
+    <div><dt>Scope and window</dt><dd>Whole authorized estate; latest source observation; no comparable baseline</dd></div>
+    <div><dt>Truth and visibility</dt><dd>${esc(evidence.state)}; ${esc(evidence.visibility)}</dd></div>
+    <div><dt>Sample</dt><dd>${esc(coverageFor(evidence.sources))}</dd></div>
+    <div><dt>Uncertainty</dt><dd>Material change and causality are not projected. Conflicting or missing source evidence remains unresolved.</dd></div>
+  </dl><div class="estate-table-wrap"><table><caption>Source provenance</caption><thead><tr><th scope="col">Source</th><th scope="col">Truth</th><th scope="col">Observed</th><th scope="col">Watermark</th><th scope="col">Errors</th></tr></thead><tbody>${sourceRows}</tbody></table></div>`;
+  const dialog = document.getElementById("estate-evidence");
+  dialog._trigger = trigger;
+  dialog.showModal();
+}
+
 function coverageText(coverage) {
   if (!coverage || coverage.percent == null) return "Coverage unavailable";
   if (coverage.population === "declared_sources") {
@@ -31,17 +169,42 @@ function coverageText(coverage) {
   return `${coverage.reporting} of ${coverage.expected} reporting (${coverage.percent}%)`;
 }
 
-async function loadQuality() {
-  const summary = document.getElementById("quality-summary");
-  const issues = document.getElementById("quality-issues");
+function clearLegacyOverview(message) {
+  document.getElementById("tiles").innerHTML = `<div class="emptymsg">${esc(message)}</div>`;
+  document.getElementById("active-tasks").innerHTML = `<div class="emptymsg">Unavailable</div>`;
+  document.getElementById("activity").innerHTML = `<div class="emptymsg">Unavailable</div>`;
+  document.getElementById("agent-health").innerHTML = `<div class="emptymsg">Unavailable</div>`;
+}
+
+function clearProtectedEstate(message) {
+  estateEvidence = new Map();
+  for (const id of ["estate-evidence", "quality-preview"]) {
+    const dialog = document.getElementById(id);
+    if (dialog.open) dialog.close();
+  }
+  document.getElementById("estate-evidence-title").textContent = "Estate evidence unavailable";
+  document.getElementById("estate-evidence-body").replaceChildren();
+  document.getElementById("quality-preview-body").replaceChildren();
+  document.getElementById("estate-rows").innerHTML = `<tr><td colspan="6" class="quality-empty">${esc(message)} No silo is assumed healthy.</td></tr>`;
+  document.getElementById("estate-count").textContent = "Unavailable";
+  document.getElementById("quality-summary").innerHTML = `<span class="truth-badge unavailable"><b aria-hidden="true">!</b> Unavailable</span><span>${esc(message)}</span>`;
+  document.getElementById("quality-issues").innerHTML = `<p class="quality-empty">Protected data-quality evidence is unavailable. No source is assumed healthy.</p>`;
+  clearLegacyOverview("Protected estate evidence unavailable");
+}
+
+async function loadQuality(epoch) {
   try {
     const response = await getJSON("/api/v1/overview");
+    if (epoch !== loadEpoch) return null;
     const quality = response.items.find((item) => item.projection_type === "data_quality");
     if (!quality) throw new Error("Data-quality projection unavailable");
+    if (!renderEstate(response.items)) throw new Error("Expected 16 bounded adapter observations");
     renderQuality(quality);
+    return true;
   } catch (error) {
-    summary.innerHTML = `<span class="truth-badge unavailable"><b>!</b> Unavailable</span><span>${esc(error.message)}</span>`;
-    issues.innerHTML = `<p class="quality-empty">Data-quality evidence could not be observed. No source is assumed healthy.</p>`;
+    if (epoch !== loadEpoch) return null;
+    clearProtectedEstate(`Protected estate evidence is unavailable: ${error.message}.`);
+    return false;
   }
 }
 
@@ -180,6 +343,17 @@ function connectSSE() {
   es.addEventListener("error", () => { dot.classList.remove("on"); text.textContent = "reconnecting"; });
 }
 
+initializeContext();
+document.getElementById("ai-boundary-button").addEventListener("click", (event) => {
+  const dialog = document.getElementById("ai-boundary");
+  dialog._trigger = event.currentTarget;
+  dialog.showModal();
+});
+for (const dialog of document.querySelectorAll("dialog")) {
+  dialog.addEventListener("close", () => {
+    if (dialog._trigger) dialog._trigger.focus();
+  });
+}
 initPanel(() => load());   // card detail panel (edit/notes/AI); reload on change
 load();
 connectSSE();
