@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an independent PASS review of the append-only V1.1.3 approval
+  attribution supersession and its unchanged predecessor chain.
+
 - Added an append-only supersession that preserves the exact current V1.1.3
   approval and resolves the contradictory PR #37 attribution claim.
 
