@@ -26,6 +26,9 @@ class Tokens:
             "scope": "skdashboard.read skdashboard.events.read",
         }
 
+    async def revoke(self, refresh_token):
+        self.revoked = refresh_token
+
 
 def adapter(tmp_path: Path, clock=lambda: 1_000, tokens=None):
     key = tmp_path / "session.key"
@@ -191,6 +194,25 @@ def test_consistent_encrypted_backup_recovers_after_restart(tmp_path):
     )
     restored.cookies.update(client.cookies)
     assert restored.get("/api/v1/overview", headers={"Origin": ORIGIN}).status_code == 200
+
+
+def test_login_transactions_are_bounded_and_pruned(tmp_path):
+    session = adapter(tmp_path)
+    client = TestClient(create_read_only_app(tmp_path, session_adapter=session), base_url=ORIGIN)
+    responses = [client.get("/auth/login", follow_redirects=False) for _ in range(17)]
+    assert responses[-1].status_code == 429
+    with session._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM login_transactions").fetchone()[0] == 16
+
+
+def test_logout_requires_upstream_revocation(tmp_path):
+    tokens = Tokens()
+    session = adapter(tmp_path, tokens=tokens)
+    client = TestClient(create_read_only_app(tmp_path, session_adapter=session), base_url=ORIGIN)
+    login(client)
+    csrf = client.get("/auth/session").json()["csrf_token"]
+    assert client.post("/auth/logout", headers={"Origin": ORIGIN, "X-CSRF-Token": csrf}).status_code == 204
+    assert tokens.revoked == "refresh-1"
 
 
 def test_only_bounded_session_post_route_is_added(tmp_path):
