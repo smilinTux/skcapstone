@@ -158,7 +158,15 @@ def _response(request, body: dict):
     def source_projection(value):
         if isinstance(value, dict):
             return {
-                key: source_projection(item)
+                key: source_projection(
+                    {
+                        child_key: child_value
+                        for child_key, child_value in item.items()
+                        if child_key not in {"capauth_decision_id", "expires_at"}
+                    }
+                    if key == "policy_decision" and isinstance(item, dict)
+                    else item
+                )
                 for key, item in value.items()
                 if key not in {"projected_at", "observed_at", "age_seconds", "request_id"}
             }
@@ -209,6 +217,18 @@ def _capauth_authorize(home: Path, bearer: str, capability: str, target: str) ->
 
 
 def _clear_decision(request) -> None:
+    verifier = getattr(request.state, "control_plane_currentness_verifier", None)
+    try:
+        from capauth import ControlPlaneCurrentnessVerifier
+
+        if type(verifier) is ControlPlaneCurrentnessVerifier:
+            verifier.close()
+    except Exception:
+        pass
+    try:
+        del request.state.control_plane_currentness_verifier
+    except (AttributeError, KeyError):
+        pass
     try:
         del request.state.control_plane_decision
     except (AttributeError, KeyError):
@@ -229,6 +249,7 @@ def _typed_context(
     from capauth import (
         ClientKind,
         ControlPlaneAuthorizationResultV1,
+        ControlPlaneCurrentnessVerifier,
         ControlPlaneInvocationV1,
         DecisionCode,
         DecisionState,
@@ -245,8 +266,26 @@ def _typed_context(
             return None
     elif observed_origin is not None:
         return None
-    result = decision_authorizer.authorize(bearer, invocation)
+    verifier = None
+    authorize_with_currentness = getattr(
+        decision_authorizer, "authorize_with_currentness", None
+    )
+    if callable(authorize_with_currentness):
+        issued = authorize_with_currentness(bearer, invocation)
+        if type(issued) is not tuple or len(issued) != 2:
+            if type(issued) in {tuple, list}:
+                for value in issued:
+                    if type(value) is ControlPlaneCurrentnessVerifier:
+                        value.close()
+            return None
+        result, verifier = issued
+        if type(verifier) is not ControlPlaneCurrentnessVerifier:
+            return None
+    else:
+        result = decision_authorizer.authorize(bearer, invocation)
     if type(result) is not ControlPlaneAuthorizationResultV1:
+        if type(verifier) is ControlPlaneCurrentnessVerifier:
+            verifier.close()
         return None
     if (
         not result.allow
@@ -254,14 +293,26 @@ def _typed_context(
         or result.code is not DecisionCode.ALLOW
         or type(result.context) is not SanitizedControlPlaneDecisionV1
     ):
+        if type(verifier) is ControlPlaneCurrentnessVerifier:
+            verifier.close()
         return None
-    # Revalidate even model_construct output before it reaches request state.
-    context = SanitizedControlPlaneDecisionV1(
-        **{
-            name: getattr(result.context, name)
-            for name in SanitizedControlPlaneDecisionV1.model_fields
-        }
-    )
+    try:
+        # Revalidate even model_construct output before it reaches request state.
+        validated = SanitizedControlPlaneDecisionV1(
+            **{
+                name: getattr(result.context, name)
+                for name in SanitizedControlPlaneDecisionV1.model_fields
+            }
+        )
+    except Exception:
+        if type(verifier) is ControlPlaneCurrentnessVerifier:
+            verifier.close()
+        return None
+    if validated != result.context:
+        if type(verifier) is ControlPlaneCurrentnessVerifier:
+            verifier.close()
+        return None
+    context = result.context
     binding = context.binding
     if (
         context.boundary != boundary
@@ -275,11 +326,15 @@ def _typed_context(
         or context.capauth_decision.correlation_id != invocation.correlation_id
         or context.joined_decision.scope != binding.capability_scope()
     ):
+        if type(verifier) is ControlPlaneCurrentnessVerifier:
+            verifier.close()
         return None
     now = datetime.now(timezone.utc)
     if not context.issued_at <= now < context.expires_at:
+        if type(verifier) is ControlPlaneCurrentnessVerifier:
+            verifier.close()
         return None
-    return context
+    return context, verifier
 
 
 def _protected_handler(
@@ -313,7 +368,7 @@ def _protected_handler(
             return response
         if decision_authorizer is not None:
             try:
-                context = _typed_context(
+                authority = _typed_context(
                     request,
                     bearer,
                     capability,
@@ -322,15 +377,18 @@ def _protected_handler(
                     invocation_factory=invocation_factory,
                 )
             except Exception:
-                context = None
-            if context is None:
+                authority = None
+            if authority is None:
                 counters["denied"] += 1
                 response = _error(
                     request, 403, "FORBIDDEN", "the capability decision denied access"
                 )
                 response.headers["Cache-Control"] = "no-store"
                 return response
+            context, verifier = authority
             request.state.control_plane_decision = context
+            if verifier is not None:
+                request.state.control_plane_currentness_verifier = verifier
         else:
             try:
                 allowed = authorize(bearer, capability, request.url.path)
@@ -361,9 +419,12 @@ def routes(
     authorizer=None,
     decision_authorizer=None,
     invocation_factory: ControlPlaneInvocationFactory | None = None,
+    project_provider=None,
 ):
     if (decision_authorizer is None) != (invocation_factory is None):
         raise ValueError("typed control-plane authorization requires both injected components")
+    if project_provider is not None and decision_authorizer is None:
+        raise ValueError("project projection requires typed control-plane authorization")
     hits: dict[str, deque[float]] = defaultdict(deque)
     counters = {"requests": 0, "denied": 0}
     authorize = authorizer or (
@@ -506,25 +567,47 @@ def routes(
             )
         except ScopeQueryError as exc:
             return _error(request, 400, "INVALID_SCOPE", str(exc))
-        items = project_estate(default_readers(home))
+        from skcoord.authorized_card_snapshot import (
+            AuthorizedCardScopeV1,
+            unavailable_authorized_card_snapshot,
+        )
+
+        adapter_items = project_estate(default_readers(home))
+        project_scope = AuthorizedCardScopeV1(
+            role=scope.role,
+            scope=scope.scope,
+            service=scope.service,
+            window=scope.window,
+            baseline=scope.baseline,
+        )
+        context = getattr(request.state, "control_plane_decision", None)
+        verifier = getattr(request.state, "control_plane_currentness_verifier", None)
+        project = unavailable_authorized_card_snapshot(project_scope)
+        if project_provider is not None and context is not None and verifier is not None:
+            project = project_provider.read(
+                context,
+                project_scope,
+                home,
+                currentness_verifier=verifier,
+            )
         errors = [
-            f"{item['adapter_id']}: {error['code']}"
-            for item in items
+            f"{item.get('adapter_id', item.get('projection_type', 'source'))}: {error['code']}"
+            for item in [*adapter_items, project]
             for error in item["errors"]
         ]
-        states = {item["truth_state"] for item in items}
+        states = {item["truth_state"] for item in [*adapter_items, project]}
         truth = (
             "current"
             if states == {"current"}
             else ("unavailable" if states == {"unavailable"} else "partial")
         )
-        quality = project_data_quality(items)
+        quality = project_data_quality(adapter_items)
         return _response(
             request,
             _envelope(
                 request,
                 "skdashboard",
-                [*items, quality],
+                [*adapter_items, project, quality],
                 errors,
                 truth_state=truth,
                 scope=scope.as_dict(),

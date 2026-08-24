@@ -422,6 +422,7 @@ function buildCommands() {
     { category: "Scopes", label: "Whole authorized estate", kind: "scope" },
     { category: "Reports", label: "Reports unavailable in this slice", kind: "disabled", disabled: true },
     { category: "Workspaces", label: "Now workspace", kind: "workspace", href: "/control-plane/now" },
+    { category: "Workspaces", label: "Portfolio project workspace", kind: "workspace", href: `/control-plane/portfolio?${safeSearch({ ...currentContext, saved_view: "" }, { includeSavedView: false })}` },
     { category: "Workspaces", label: "ITIL Cockpit", kind: "workspace", href: "/cockpit" },
     { category: "Workspaces", label: "Assets and CMDB", kind: "workspace", href: "/cmdb" },
     { category: "Workspaces", label: "Kanban Board", kind: "workspace", href: "/board" },

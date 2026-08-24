@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the protected read-only Portfolio workspace at
+  `/control-plane/portfolio`, with attributable owner records, bounded
+  dependency and milestone evidence, honest Unknown states, and real-browser
+  keyboard and responsive qualification.
+
 - Added a separate typed CapAuth control-plane authorization lane that exposes
   only an attributable sanitized decision during the protected handler call.
 
