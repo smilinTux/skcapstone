@@ -4,7 +4,7 @@ Date: 2026-08-24
 
 Card: `da097cbb`
 
-Base main: `3eac42cf7b1552c559ab3003329bb795499ff680`
+Base main: `cdaff529c6ecff842ddce6499ab2047c0ef3bd6b`
 
 ## Delivered slice
 
@@ -34,8 +34,8 @@ terminal lifecycle edge.
 ## Qualification
 
 - Focused reliability tests: 7 passed.
-- Changed-boundary tests: 36 passed.
-- Full repository suite: 442 passed with 6 existing deprecation warnings.
+- Rebased changed-boundary tests: 39 passed.
+- Full repository suite: 446 passed with 6 existing deprecation warnings.
 - Ruff over `src/` and `tests/`: passed.
 - JavaScript syntax checks over every static script and qualification script:
   passed.
