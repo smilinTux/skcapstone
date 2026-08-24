@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an append-only V1.1.2 schedule supplement and V2.1 wireframe that keep
+  policy visibility separate from source truth and make closed dialogs inert.
+
 - Recorded the human owner's exact-hash approval of the V1.1.2 control-plane
   candidate and its dependency-gated implementation authorization.
 
