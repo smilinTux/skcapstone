@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add an opt-in encrypted server-side OIDC session adapter for the dedicated
+  read-only runtime, with opaque browser cookies, PKCE, CSRF, bounded refresh,
+  and per-request reuse of the existing CapAuth PEP.
+
 - Enforce exact named HTTPS origins, HTTP redirects, HSTS, Secure host-only
   cookie transport, and mandatory TLS inputs in the disabled read-only runtime.
 

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SK Control Plane</title>
+  <style>
+    body{max-width:1100px;margin:2rem auto;padding:0 1rem;background:#0b1020;color:#e7ecff;font:16px system-ui}
+    h1{margin-bottom:.25rem}.muted{color:#aab5d6}button,a{font:inherit}button{padding:.65rem;border-radius:.4rem;border:1px solid #526089;background:#151d36;color:#fff;cursor:pointer}pre{overflow:auto;padding:1rem;background:#11182d;border-radius:.5rem}
+  </style>
+</head>
+<body>
+  <h1>SK Control Plane</h1>
+  <p class="muted">Read-only. CapAuth credentials remain encrypted on the server.</p>
+  <a href="/auth/login"><button type="button">Sign in</button></a>
+  <button id="load" type="button">Load overview</button>
+  <pre id="result" aria-live="polite">Health check pending...</pre>
+  <script>
+    const out=document.getElementById("result");
+    async function show(path){const r=await fetch(path);const t=await r.text();out.textContent=`${r.status} ${r.statusText}\n${t}`;}
+    show("/api/v1/health").catch(()=>{out.textContent="Health unavailable"});
+    document.getElementById("load").addEventListener("click",()=>{show("/api/v1/overview").catch(()=>{out.textContent="Overview unavailable"});});
+  </script>
+</body>
+</html>

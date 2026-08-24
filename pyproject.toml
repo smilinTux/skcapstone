@@ -20,6 +20,9 @@ classifiers = [
 ]
 dependencies = [
     "capauth>=0.3.8",
+    "cryptography>=42",
+    "httpx>=0.27",
+    "PyJWT[crypto]>=2.8",
     "skcoord>=0.1.40",
     "skcapstone>=0.15.0",
     "starlette>=0.40",
