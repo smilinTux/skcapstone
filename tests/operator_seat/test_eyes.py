@@ -188,6 +188,25 @@ def test_resolve_cli_lane_no_cli_declared_is_unchanged():
     assert lane["state"] == "no-cli"
 
 
+def test_resolve_cli_lane_explicit_cli_none_and_no_endpoint_is_graceful():
+    # PR #185 registers "fleet" with cli=None ON PURPOSE (inventing a cli
+    # string would trade "no registration" for a lying "cli-error"). The v2
+    # precedence resolution must treat an explicit None the same as an
+    # absent key, never raise, and never mistake it for a malformed spec.
+    spec = {
+        "name": "fleet",
+        "cli": None,
+        "endpoint": None,
+        "node": None,
+        "transport": None,
+        "contractVersion": 1,
+        "conditions": [],
+    }
+    lane = eyes.resolve_cli_lane(spec, [], PWT, local_node="node-anywhere")
+    assert lane["state"] == "no-cli"
+    assert lane["conditions"] == []
+
+
 def test_assess_threads_local_node_into_cli_lane_resolution(tmp_path):
     # End-to-end: a v2 app homed elsewhere shows up as remote-node, not BLIND
     # from a crash and not silently executed.
