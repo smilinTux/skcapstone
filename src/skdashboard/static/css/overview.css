@@ -30,6 +30,19 @@
 .hstat .hn{font-size:18px;font-weight:700;}
 .hstat .hl{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);}
 .spinner{width:18px;height:18px;border:2px solid var(--hair);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:16px auto;}
+.quality-strip{margin-bottom:14px;background:var(--panel);border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadowc);padding:14px 15px;}
+.quality-heading,.quality-issue-title,.quality-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+.quality-heading h2,.quality-dialog h2{margin:0;font-size:14px;}.quality-heading p{margin:4px 0 0;color:var(--ink3);font-size:11.5px;}
+.quality-mode{flex:none;padding:3px 8px;border:1px solid var(--hair);border-radius:999px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;}
+.quality-summary{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--hair2);}
+.quality-coverage{display:flex;flex-direction:column;font-size:12px;}.quality-coverage span{color:var(--ink3);font-size:10.5px;margin-top:2px;}
+.truth-counts{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;}.truth-badge{display:inline-flex;align-items:center;gap:5px;border:1px solid currentColor;border-radius:999px;padding:2px 7px;font-size:10.5px;font-weight:700;text-transform:capitalize;white-space:nowrap;}
+.truth-badge.current{color:var(--done)}.truth-badge.stale,.truth-badge.partial{color:var(--high)}.truth-badge.unavailable,.truth-badge.unreachable{color:var(--crit)}.truth-badge.unknown,.truth-badge.not_applicable{color:var(--ink3)}
+.quality-issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:9px;margin-top:12px;}.quality-issue{border:1px solid var(--hair2);border-radius:9px;background:var(--panel2);padding:10px;min-width:0;}
+.quality-issue dl,.quality-dialog dl{margin:9px 0;display:grid;gap:6px}.quality-issue dl div,.quality-dialog dl div{display:grid;grid-template-columns:105px 1fr;gap:8px;min-width:0}.quality-issue dt,.quality-dialog dt{color:var(--ink3);font-size:10.5px}.quality-issue dd,.quality-dialog dd{margin:0;font-size:11px;overflow-wrap:anywhere;}
+.quality-preview-button,.quality-close{min-height:36px;border:1px solid var(--accent);border-radius:7px;background:transparent;color:var(--accent);font:inherit;font-size:11px;font-weight:700;padding:6px 10px;cursor:pointer;}.quality-preview-button:focus-visible,.quality-close:focus-visible{outline:3px solid var(--accent);outline-offset:2px;}
+.quality-empty{margin:0;color:var(--ink3);font-size:12px}.quality-dialog{min-width:min(520px,calc(100vw - 32px));padding:18px;color:var(--ink);background:var(--panel);}.quality-dialog-head{align-items:center}.quality-preview-note{padding:9px;border:1px solid var(--high);border-radius:7px;font-size:11px;}dialog::backdrop{background:rgb(0 0 0/.58)}
 @keyframes spin{to{transform:rotate(360deg);}}
 @media(prefers-reduced-motion:reduce){.spinner{animation:none;}}
-@media(max-width:980px){.tilerow{grid-template-columns:repeat(2,1fr);}.ov-grid{grid-template-columns:1fr;}}
+@media(max-width:980px){.tilerow{grid-template-columns:repeat(2,1fr);}.ov-grid{grid-template-columns:1fr;}.quality-summary{align-items:flex-start;flex-direction:column}.truth-counts{justify-content:flex-start;}}
+@media(max-width:560px){.tilerow{grid-template-columns:1fr}.quality-issues{grid-template-columns:1fr}.quality-issue dl div,.quality-dialog dl div{grid-template-columns:1fr;gap:2px}}

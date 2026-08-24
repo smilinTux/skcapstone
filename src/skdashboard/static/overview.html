@@ -31,6 +31,20 @@
     <!-- operational summary tiles (each links to its detail tab) -->
     <div class="tilerow" id="tiles"></div>
 
+    <section class="quality-strip" aria-labelledby="quality-heading">
+      <div class="quality-heading">
+        <div>
+          <h2 id="quality-heading">Data quality</h2>
+          <p>Cross-estate evidence health. Missing evidence is never shown as zero or healthy.</p>
+        </div>
+        <span class="quality-mode">Preview only</span>
+      </div>
+      <div id="quality-summary" class="quality-summary" role="status" aria-live="polite">
+        <div class="spinner" aria-label="Loading data quality"></div>
+      </div>
+      <div id="quality-issues" class="quality-issues"></div>
+    </section>
+
     <div class="ov-grid">
       <div class="card">
         <h2>Active work <a class="more" href="/board">board →</a></h2>
@@ -51,6 +65,20 @@
   <div class="overlay" id="overlay"></div>
   <aside class="panel" id="panel" aria-hidden="true"></aside>
   <div class="toast" id="toast"></div>
+
+  <dialog id="quality-preview" aria-labelledby="quality-preview-title">
+    <form method="dialog" class="quality-dialog">
+      <div class="quality-dialog-head">
+        <div>
+          <span class="quality-mode">No dispatch</span>
+          <h2 id="quality-preview-title">Refresh preview</h2>
+        </div>
+        <button class="quality-close" value="close" aria-label="Close refresh preview">Close</button>
+      </div>
+      <div id="quality-preview-body"></div>
+      <p class="quality-preview-note">This preview does not refresh, remediate, queue, or authorize anything.</p>
+    </form>
+  </dialog>
 
   <script type="module" src="/static/js/overview.js"></script>
 </body>

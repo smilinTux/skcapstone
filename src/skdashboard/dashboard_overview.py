@@ -53,7 +53,7 @@ def get_overview_home(home: Path) -> dict:
     try:
         cmdb = dc.get_overview(home)
     except Exception:  # noqa: BLE001
-        cmdb = {"total": 0, "health": {}}
+        cmdb = {"error": "CMDB overview unavailable"}
 
     agent = {}
     try:
@@ -78,10 +78,18 @@ def get_overview_home(home: Path) -> dict:
         },
         "active_tasks": active_tasks[:12],
         "itil": {
+            "available": not bool(itil.get("error")) and isinstance(itil.get("kpis"), dict),
             "kpis": itil.get("kpis", {}),
             "breaches": len([b for b in itil.get("breach_risk", []) if b.get("over")]),
             "cab": len(itil.get("cab_queue", [])),
         },
-        "cmdb": {"total": cmdb.get("total", 0), "health": cmdb.get("health", {})},
+        "cmdb": {
+            "available": not bool(cmdb.get("error"))
+            and isinstance(cmdb.get("total"), int)
+            and isinstance(cmdb.get("health"), dict)
+            and bool(cmdb.get("total") or cmdb.get("last_successful_reconciliation")),
+            "total": cmdb.get("total"),
+            "health": cmdb.get("health", {}),
+        },
         "activity": itil.get("activity", [])[:8],
     }
