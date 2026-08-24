@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the human owner's exact H4 attestation of the authoritative V1.1.3
+  approval source receipt and its narrow independent-review scope.
+
 - Added an independent FAIL review after a concurrent machine-readable source
   receipt introduced a different, unattested approval transcription.
 
