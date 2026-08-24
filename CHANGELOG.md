@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Recorded the human owner's exact-hash approval of the V1.1.3 lineage
+  correction candidate while preserving all deployment and action gates.
+
 - Added an append-only V1.1.3 lineage correction candidate that truthfully
   records the retained historical PNG bytes without changing approved history.
 
