@@ -74,14 +74,18 @@ class Owner:
 
 
 class Rig:
-    def __init__(self, subject: str = "human@example.test") -> None:
+    def __init__(
+        self,
+        subject: str = "human@example.test",
+        target: str = "/api/v1/overview",
+    ) -> None:
         self.principal = Principal(principal_id=subject, subject=subject, kind="human")
         self.binding = ControlPlaneBinding(
             principal=self.principal,
             node_id="chiap04",
             purpose="control-plane reporting",
             capability="skdashboard.read",
-            target="/api/v1/overview",
+            target=target,
             resource_type="skdashboard.control_plane.projection",
             resource_id="overview",
             owner_policy_revision=REVISION,
