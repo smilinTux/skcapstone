@@ -52,14 +52,14 @@ python -m pytest tests/test_control_plane_ai_workspace.py \
   tests/test_control_plane_architecture_workspace.py \
   tests/test_dashboard_link_accessibility.py \
   tests/test_session_adapter.py -q
-34 passed in 4.47s
+34 passed in 4.51s
 ```
 
 Full repository tests:
 
 ```text
 python -m pytest tests/ -q
-491 passed, 6 warnings in 31.78s
+491 passed, 6 warnings in 32.64s
 
 ruff check src/ tests/
 All checks passed!
