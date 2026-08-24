@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SKDashboard — Overview</title>
+  <title>SKDashboard | Now</title>
   <link rel="stylesheet" href="/static/css/board.css">
   <link rel="stylesheet" href="/static/css/cockpit.css">
   <link rel="stylesheet" href="/static/css/overview.css">
@@ -13,7 +13,7 @@
     <div class="topbar sidebar" role="navigation" aria-label="Dashboard sections">
       <div class="brand"><div class="glyph">SK</div><h1>SKDashboard</h1></div>
       <div class="tabs">
-        <a class="tab active" data-nav="home" href="/">Overview</a>
+        <a class="tab active" data-nav="home" href="/control-plane/now">Now</a>
         <a class="tab" data-nav="cockpit" href="/cockpit">ITIL Cockpit</a>
         <a class="tab" data-nav="cmdb" href="/cmdb">Assets (CMDB)</a>
         <a class="tab" data-nav="board" href="/board">Kanban Board</a>
@@ -28,7 +28,79 @@
       <span class="who mono" id="who">operator</span>
     </div>
 
-    <!-- operational summary tiles (each links to its detail tab) -->
+    <header class="now-head">
+      <div>
+        <span class="now-kicker">AI-first control plane</span>
+        <h2>Now</h2>
+        <p>Decisions, material change, and evidence across the authorized SK estate.</p>
+      </div>
+      <span class="quality-mode">Read only</span>
+    </header>
+
+    <form class="now-context" id="now-context" aria-label="Now workspace context">
+      <label>Role
+        <select id="now-role" name="role">
+          <option value="operator">Operator</option>
+          <option value="project-manager">Project manager</option>
+          <option value="architect">Architect</option>
+        </select>
+      </label>
+      <label>Scope
+        <select id="now-scope" name="scope"><option value="estate">Whole authorized estate</option></select>
+      </label>
+      <label>Window
+        <select id="now-window" name="window"><option value="latest">Latest source observation</option></select>
+      </label>
+      <label>Baseline
+        <select id="now-baseline" name="baseline"><option value="none">No comparable baseline</option></select>
+      </label>
+      <label>Service
+        <select id="now-service" name="service"><option value="all">All authorized silos</option></select>
+      </label>
+    </form>
+
+    <section class="now-status-grid" aria-label="Decision and AI status">
+      <article class="now-status-card" aria-labelledby="decision-heading">
+        <span class="now-kicker">Decision queue</span>
+        <h2 id="decision-heading">No decision projection available</h2>
+        <p>The read envelope contains source observations, not a typed decision queue. No decision is inferred from work status.</p>
+        <a class="quality-preview-button" href="/board">Open source board</a>
+      </article>
+      <article class="now-status-card ai-abstention" aria-labelledby="ai-heading">
+        <span class="now-kicker">AI brief</span>
+        <h2 id="ai-heading">AI abstained</h2>
+        <p>No authorized typed insight or recommendation is present in this response. The dashboard will not invent one from aggregate metrics.</p>
+        <dl class="ai-fields">
+          <div><dt>Evidence</dt><dd>Bounded observations and quality projection only</dd></div>
+          <div><dt>Best practice</dt><dd>Typed proposals require evidence, uncertainty, and counter-indicators</dd></div>
+          <div><dt>Confidence</dt><dd>Not calculated</dd></div>
+          <div><dt>Uncertainty</dt><dd>Outcome and causal evidence are not projected</dd></div>
+          <div><dt>Counter-indicators</dt><dd>Not evaluated without a typed proposal</dd></div>
+          <div><dt>Alternatives</dt><dd>Inspect one-click evidence before proposing work</dd></div>
+          <div><dt>Impact, risk, preconditions</dt><dd>No impact estimate. False confidence is the primary risk. An authorized typed proposal is required.</dd></div>
+        </dl>
+        <button class="quality-preview-button" id="ai-boundary-button" type="button">View AI boundary</button>
+      </article>
+    </section>
+
+    <section class="estate-pulse" aria-labelledby="estate-heading">
+      <div class="quality-heading">
+        <div>
+          <h2 id="estate-heading">Estate pulse</h2>
+          <p>12 approved silos from 16 bounded adapters. Every row has one-click evidence.</p>
+        </div>
+        <span id="estate-count" class="quality-mode">Loading</span>
+      </div>
+      <div class="estate-table-wrap">
+        <table id="estate-table">
+          <caption>Authorized high-level estate signals with metric context and evidence</caption>
+          <thead><tr><th scope="col">Silo and owner</th><th scope="col">Truth</th><th scope="col">High-level signal</th><th scope="col">Metric context</th><th scope="col">Material change</th><th scope="col"><span class="sr-only">Evidence</span></th></tr></thead>
+          <tbody id="estate-rows"><tr><td colspan="6"><div class="spinner" aria-label="Loading estate pulse"></div></td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Legacy operational tiles remain available during breadth-first migration. -->
     <div class="tilerow" id="tiles"></div>
 
     <section class="quality-strip" aria-labelledby="quality-heading">
@@ -77,6 +149,28 @@
       </div>
       <div id="quality-preview-body"></div>
       <p class="quality-preview-note">This preview does not refresh, remediate, queue, or authorize anything.</p>
+    </form>
+  </dialog>
+
+  <dialog id="estate-evidence" aria-labelledby="estate-evidence-title">
+    <form method="dialog" class="quality-dialog evidence-dialog">
+      <div class="quality-dialog-head">
+        <div><span class="quality-mode">Read-only evidence</span><h2 id="estate-evidence-title">Estate evidence</h2></div>
+        <button class="quality-close" value="close" aria-label="Close estate evidence">Close</button>
+      </div>
+      <div id="estate-evidence-body"></div>
+      <p class="quality-preview-note">This view does not refresh, remediate, queue, authorize, or dispatch anything.</p>
+    </form>
+  </dialog>
+
+  <dialog id="ai-boundary" aria-labelledby="ai-boundary-title">
+    <form method="dialog" class="quality-dialog">
+      <div class="quality-dialog-head">
+        <div><span class="quality-mode">Proposal boundary</span><h2 id="ai-boundary-title">No recommendation to preview</h2></div>
+        <button class="quality-close" value="close" aria-label="Close AI boundary">Close</button>
+      </div>
+      <p>An authorized typed insight and recommendation must include evidence, best-practice reference, confidence, uncertainty, counter-indicators, alternatives, expected impact, risk, and preconditions.</p>
+      <p class="quality-preview-note">No proposal exists, so no action preview or authorization control is available. No dispatch is possible.</p>
     </form>
   </dialog>
 

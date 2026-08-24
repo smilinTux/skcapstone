@@ -1831,6 +1831,7 @@ def create_app(home: Path, *, control_plane_authorizer=None):
 
     routes = [
         Route("/", index),
+        Route("/control-plane/now", index),
         Route("/index.html", index),
         Route("/models", _page("models.html")),
         Route("/api/models", api_models_get),
