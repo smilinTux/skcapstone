@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Recorded the human owner's exact-hash attestation of the corrected V1.1.3
+  approval source receipt v2 and continued rejection of v1.
+
 - Added a corrected v2 approval source receipt containing the exact extended
   V1.1.3 approval and preserving the human rejection of v1.
 
