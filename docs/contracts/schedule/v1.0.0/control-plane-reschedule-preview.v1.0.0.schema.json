@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.skworld.local/skdashboard/schedule/v1.0.0/control-plane-reschedule-preview.v1.0.0.schema.json",
+  "title": "SKDashboard exact reschedule preview version 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "preview_id", "preview_hash", "status", "source_projection_id", "source_projection_version", "base_projection_hash", "base_hash_exact", "scenario_id", "scenario_hash", "proposal", "policy_decision_ref", "expires_at", "non_executing", "writes_owner_records"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "preview_id": {"type": "string", "pattern": "^rsp-[a-z0-9][a-z0-9-]{7,95}$"},
+    "preview_hash": {"$ref": "control-plane-schedule-projection.v1.0.0.schema.json#/$defs/hash"},
+    "status": {"enum": ["ready", "stale", "denied", "needs_information", "conflict", "expired"]},
+    "source_projection_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "source_projection_version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "base_projection_hash": {"$ref": "control-plane-schedule-projection.v1.0.0.schema.json#/$defs/hash"},
+    "base_hash_exact": {"type": "boolean"},
+    "scenario_id": {"type": "string", "pattern": "^scn-[a-z0-9][a-z0-9-]{7,95}$"},
+    "scenario_hash": {"$ref": "control-plane-schedule-projection.v1.0.0.schema.json#/$defs/hash"},
+    "proposal": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item_id", "field", "before", "after", "evidence_refs"],
+        "properties": {
+          "item_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "field": {"enum": ["planned_start", "planned_target", "dependency_lag", "sequence"]},
+          "before": {},
+          "after": {},
+          "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 512}}
+        }
+      }
+    },
+    "policy_decision_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "denial_reasons": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 500}},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "non_executing": {"const": true},
+    "writes_owner_records": {"const": false}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ready"}}, "required": ["status"]},
+      "then": {"properties": {"base_hash_exact": {"const": true}, "proposal": {"minItems": 1}}}
+    },
+    {
+      "if": {"properties": {"base_hash_exact": {"const": false}}, "required": ["base_hash_exact"]},
+      "then": {"properties": {"status": {"const": "stale"}, "proposal": {"maxItems": 0}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "denied"}}, "required": ["status"]},
+      "then": {"required": ["denial_reasons"], "properties": {"denial_reasons": {"minItems": 1}, "proposal": {"maxItems": 0}}}
+    }
+  ]
+}

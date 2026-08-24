@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.skworld.local/skdashboard/schedule/v1.0.0/control-plane-schedule-projection.v1.0.0.schema.json",
+  "title": "SKDashboard schedule projection version 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "projection_id", "projection_version", "projection_hash", "scope", "display_timezone", "observed_at", "projected_at", "truth_state", "visibility", "source_watermarks", "items", "dependencies", "overlays", "cycle_analysis", "critical_path", "individual_ranking_prohibited", "errors"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "projection_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "projection_version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "projection_hash": {"$ref": "#/$defs/hash"},
+    "scope": {"$ref": "#/$defs/scope"},
+    "display_timezone": {"$ref": "#/$defs/timezone"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "projected_at": {"type": "string", "format": "date-time"},
+    "truth_state": {"$ref": "#/$defs/truth_state"},
+    "visibility": {"$ref": "#/$defs/visibility"},
+    "source_watermarks": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/watermark"}},
+    "items": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/item"}},
+    "dependencies": {"type": "array", "maxItems": 20000, "items": {"$ref": "#/$defs/dependency"}},
+    "overlays": {"type": "array", "maxItems": 5000, "items": {"$ref": "#/$defs/overlay"}},
+    "cycle_analysis": {"$ref": "#/$defs/cycle_analysis"},
+    "critical_path": {"$ref": "#/$defs/critical_path"},
+    "individual_ranking_prohibited": {"const": true},
+    "errors": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 500}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"truth_state": {"const": "current"}}, "required": ["truth_state"]},
+      "then": {"properties": {"errors": {"maxItems": 0}}}
+    },
+    {
+      "if": {"properties": {"cycle_analysis": {"properties": {"state": {"const": "cycles_detected"}}, "required": ["state"]}}, "required": ["cycle_analysis"]},
+      "then": {"properties": {"critical_path": {"properties": {"state": {"const": "unavailable"}}, "required": ["state"]}}}
+    }
+  ],
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "timezone": {"type": "string", "minLength": 1, "maxLength": 64, "description": "IANA timezone name used for display. Instants are UTC date-time values."},
+    "truth_state": {"enum": ["current", "stale", "partial", "unavailable", "unreachable", "unknown", "not_applicable"]},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role"],
+      "properties": {
+        "role": {"enum": ["portfolio", "project_manager", "architect", "service", "team"]},
+        "portfolio_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "service_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "team_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "tenant_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "environment": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    },
+    "visibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "authorization"],
+      "properties": {
+        "state": {"enum": ["visible", "policy_filtered", "unauthorized", "redacted", "unknown"]},
+        "authorization": {"enum": ["authorized", "denied", "unknown"]},
+        "policy_decision_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "visible"}}, "required": ["state"]},
+          "then": {"properties": {"authorization": {"const": "authorized"}}}
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["policy_filtered", "unauthorized", "redacted", "unknown"]}}, "required": ["state"]},
+          "then": {"required": ["reason"], "properties": {"authorization": {"enum": ["denied", "unknown"]}}}
+        },
+        {
+          "if": {"properties": {"authorization": {"const": "denied"}}, "required": ["authorization"]},
+          "then": {"required": ["policy_decision_ref"]}
+        }
+      ]
+    },
+    "watermark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "value"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1, "maxLength": 128},
+        "value": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "date_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "instant"],
+      "properties": {
+        "state": {"enum": ["known", "unknown", "unavailable", "policy_filtered", "not_applicable"]},
+        "instant": {"type": ["string", "null"], "format": "date-time"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "known"}}, "required": ["state"]},
+          "then": {"properties": {"instant": {"type": "string", "format": "date-time"}}}
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["unknown", "unavailable", "policy_filtered", "not_applicable"]}}, "required": ["state"]},
+          "then": {"required": ["reason"], "properties": {"instant": {"type": "null"}}}
+        }
+      ]
+    },
+    "dates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_start", "baseline_target", "planned_start", "planned_target", "actual_start", "actual_finish"],
+      "properties": {
+        "baseline_start": {"$ref": "#/$defs/date_value"},
+        "baseline_target": {"$ref": "#/$defs/date_value"},
+        "planned_start": {"$ref": "#/$defs/date_value"},
+        "planned_target": {"$ref": "#/$defs/date_value"},
+        "actual_start": {"$ref": "#/$defs/date_value"},
+        "actual_finish": {"$ref": "#/$defs/date_value"}
+      }
+    },
+    "variance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "seconds"],
+      "properties": {
+        "state": {"enum": ["known", "unknown", "unavailable", "not_applicable"]},
+        "seconds": {"type": ["integer", "null"]},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "known"}}, "required": ["state"]},
+          "then": {"properties": {"seconds": {"type": "integer"}}}
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["unknown", "unavailable", "not_applicable"]}}, "required": ["state"]},
+          "then": {"required": ["reason"], "properties": {"seconds": {"type": "null"}}}
+        }
+      ]
+    },
+    "rollup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "eligible_children", "included_children", "start", "end", "progress", "exclusions"],
+      "properties": {
+        "state": {"enum": ["complete", "partial", "unavailable", "not_applicable"]},
+        "eligible_children": {"type": "integer", "minimum": 0},
+        "included_children": {"type": "integer", "minimum": 0},
+        "start": {"$ref": "#/$defs/date_value"},
+        "end": {"$ref": "#/$defs/date_value"},
+        "progress": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "progress_basis": {"type": "string", "minLength": 1, "maxLength": 256},
+        "exclusions": {"type": "array", "maxItems": 256, "items": {"type": "string", "minLength": 1, "maxLength": 500}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "complete"}}, "required": ["state"]},
+          "then": {"properties": {"exclusions": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"state": {"const": "partial"}}, "required": ["state"]},
+          "then": {"properties": {"exclusions": {"minItems": 1}}}
+        }
+      ],
+      "description": "Complete parent dates use earliest eligible child start and latest eligible child end. Progress uses visible eligible children only."
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "title", "item_type", "owner_service_id", "status", "truth_state", "visibility", "dates", "baseline_variance", "progress", "progress_basis", "rollup", "source_watermarks", "evidence_refs"],
+      "properties": {
+        "item_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "item_type": {"enum": ["outcome", "project", "epic", "release", "milestone", "work_package", "team", "service", "architecture_migration", "itil_change_window"]},
+        "owner_service_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "service_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"type": "string", "minLength": 1, "maxLength": 64},
+        "truth_state": {"$ref": "#/$defs/truth_state"},
+        "visibility": {"$ref": "#/$defs/visibility"},
+        "dates": {"$ref": "#/$defs/dates"},
+        "baseline_variance": {"$ref": "#/$defs/variance"},
+        "progress": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "progress_basis": {"type": "string", "minLength": 1, "maxLength": 256},
+        "rollup": {"$ref": "#/$defs/rollup"},
+        "source_watermarks": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/watermark"}},
+        "evidence_refs": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 512}}
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dependency_id", "source_item_id", "target_item_id", "edge_type", "direction", "lag_seconds", "truth_state", "visibility", "blocker_state", "cycle_state", "evidence_refs"],
+      "properties": {
+        "dependency_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "source_item_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "target_item_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+        "edge_type": {"enum": ["finish_to_start", "start_to_start", "finish_to_finish", "start_to_finish", "unknown"]},
+        "direction": {"enum": ["known", "unknown"]},
+        "lag_seconds": {"type": ["integer", "null"]},
+        "truth_state": {"$ref": "#/$defs/truth_state"},
+        "visibility": {"$ref": "#/$defs/visibility"},
+        "blocker_state": {"enum": ["blocking", "not_blocking", "unknown"]},
+        "cycle_state": {"enum": ["acyclic", "cycle_member", "unknown"]},
+        "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 512}}
+      }
+    },
+    "overlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overlay_id", "overlay_type", "owner_service_id", "start", "end", "truth_state", "visibility", "conflict_state", "evidence_refs"],
+      "properties": {
+        "overlay_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "overlay_type": {"enum": ["itil_change_window", "blackout", "architecture_migration", "architecture_deprecation"]},
+        "owner_service_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "start": {"$ref": "#/$defs/date_value"},
+        "end": {"$ref": "#/$defs/date_value"},
+        "truth_state": {"$ref": "#/$defs/truth_state"},
+        "visibility": {"$ref": "#/$defs/visibility"},
+        "conflict_state": {"enum": ["clear", "conflict", "unknown"]},
+        "evidence_refs": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 512}}
+      }
+    },
+    "cycle_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "cycle_item_ids", "evidence_refs"],
+      "properties": {
+        "state": {"enum": ["acyclic", "cycles_detected", "unavailable"]},
+        "cycle_item_ids": {"type": "array", "uniqueItems": true, "maxItems": 10000, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "evidence_refs": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 512}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "cycles_detected"}}, "required": ["state"]},
+          "then": {"properties": {"cycle_item_ids": {"minItems": 1}, "evidence_refs": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"state": {"const": "acyclic"}}, "required": ["state"]},
+          "then": {"properties": {"cycle_item_ids": {"maxItems": 0}}}
+        }
+      ]
+    },
+    "critical_path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "item_ids", "reasons"],
+      "properties": {
+        "state": {"enum": ["available", "unavailable", "not_applicable"]},
+        "item_ids": {"type": "array", "uniqueItems": true, "maxItems": 10000, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "reasons": {"type": "array", "maxItems": 128, "items": {"enum": ["dependency_cycle", "missing_required_dates", "unknown_edge_direction", "inaccessible_required_node", "conflicting_blackout", "not_applicable"]}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "available"}}, "required": ["state"]},
+          "then": {"properties": {"reasons": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"state": {"const": "unavailable"}}, "required": ["state"]},
+          "then": {"properties": {"item_ids": {"maxItems": 0}, "reasons": {"minItems": 1}}}
+        }
+      ]
+    }
+  }
+}
