@@ -1910,6 +1910,11 @@ def create_app(home: Path):
         Route("/fleet", _page("fleet.html")),
         Route("/api/fleet/drift", api_fleet_drift),
     ]
+    from .control_plane_api import routes as control_plane_routes
+
+    routes.extend(
+        control_plane_routes(home, board_reader=_get_board_state, health_reader=_get_agent_status)
+    )
     if static_dir.exists():
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir))))
 

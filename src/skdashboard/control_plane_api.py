@@ -1,0 +1,280 @@
+"""Frozen v1 read-only control-plane projections."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
+
+from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.routing import Route
+
+SCHEMA_VERSION = "1.1.0"
+MAX_LIMIT = 200
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _error(request, status: int, code: str, message: str, *, retryable: bool = False):
+    request_id = request.headers.get("x-request-id", "")[:128] or uuid4().hex
+    return JSONResponse(
+        {"code": code, "message": message, "retryable": retryable, "request_id": request_id},
+        status_code=status,
+    )
+
+
+def _limit(request) -> int:
+    raw = request.query_params.get("limit", "50")
+    try:
+        limit = int(raw)
+    except ValueError as exc:
+        raise ValueError("limit must be an integer") from exc
+    if not 1 <= limit <= MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
+    return limit
+
+
+def _cursor(raw: str | None) -> int:
+    if not raw:
+        return 0
+    if len(raw) > 512:
+        raise ValueError("cursor is too long")
+    try:
+        decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("ascii")
+        prefix, value = decoded.split(":", 1)
+        if prefix != "v1":
+            raise ValueError
+        offset = int(value)
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("cursor is invalid") from exc
+    if offset < 0:
+        raise ValueError("cursor is invalid")
+    return offset
+
+
+def _encode_cursor(offset: int) -> str:
+    return base64.urlsafe_b64encode(f"v1:{offset}".encode()).decode().rstrip("=")
+
+
+def _visibility() -> dict:
+    # SKCP-02 adds capability authorization. Until then, this local read plane
+    # is explicitly visible and never manufactures a policy decision.
+    return {"state": "visible", "authorization": "authorized"}
+
+
+def _envelope(request, owner: str, items: list[dict], errors: list[str], *, observed_at=None):
+    projected_at = _now()
+    truth = "partial" if errors else ("current" if items else "unknown")
+    request_id = request.headers.get("x-request-id", "")[:128] or uuid4().hex
+    envelope = {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id,
+        "source_owner": owner,
+        "scope": {},
+        "freshness": {
+            "truth_state": truth,
+            "visibility": _visibility(),
+            "observed_at": observed_at or projected_at,
+            "projected_at": projected_at,
+            "ttl_seconds": 60,
+            "age_seconds": 0,
+        },
+        "visibility": _visibility(),
+        "metrics": [],
+        "items": items,
+        "errors": [
+            {
+                "code": "SOURCE_PARTIAL",
+                "message": str(message)[:500],
+                "retryable": True,
+                "request_id": request_id,
+            }
+            for message in errors[:64]
+        ],
+    }
+    if not items and not errors:
+        envelope["errors"] = [{
+            "code": "SOURCE_UNKNOWN",
+            "message": "The source returned no observations",
+            "retryable": True,
+            "request_id": request_id,
+        }]
+    return envelope
+
+
+def _page(request, owner: str, items: list[dict], errors: list[str], *, observed_at=None):
+    limit = _limit(request)
+    offset = _cursor(request.query_params.get("cursor"))
+    if offset > len(items):
+        raise ValueError("cursor is outside the result set")
+    page_items = items[offset : offset + limit]
+    result = _envelope(request, owner, page_items, errors, observed_at=observed_at)
+    next_offset = offset + len(page_items)
+    result["page"] = {
+        "limit": limit,
+        "next_cursor": _encode_cursor(next_offset) if next_offset < len(items) else None,
+        "has_more": next_offset < len(items),
+    }
+    return result
+
+
+def _response(request, body: dict):
+    serialized = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    # Request IDs and projection clocks are delivery metadata, not source
+    # changes. Hash only the bounded projection so conditional GETs are useful.
+    projection = {
+        key: body.get(key)
+        for key in ("schema_version", "source_owner", "scope", "metrics", "items", "page", "errors")
+    }
+    for error in projection.get("errors") or []:
+        error.pop("request_id", None)
+    etag_bytes = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
+    etag = f'"{hashlib.sha256(etag_bytes).hexdigest()}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return Response(serialized, media_type="application/json", headers={"ETag": etag})
+
+
+def routes(home: Path, *, board_reader, health_reader):
+    hits: dict[str, deque[float]] = defaultdict(deque)
+
+    def limited(handler):
+        async def wrapped(request):
+            now = time.monotonic()
+            key = request.client.host if request.client else "local"
+            recent = hits[key]
+            while recent and recent[0] <= now - 60:
+                recent.popleft()
+            if len(recent) >= 120:
+                response = _error(request, 429, "RATE_LIMITED", "read rate limit exceeded", retryable=True)
+                response.headers["Retry-After"] = "60"
+                return response
+            recent.append(now)
+            return await handler(request)
+
+        return wrapped
+
+    async def health(request):
+        raw = health_reader(home)
+        errors = [raw["error"]] if raw.get("error") else []
+        safe = [] if errors else [{
+            "component": "skcapstone",
+            "state": raw.get("consciousness", "unknown").lower(),
+            "pillars": raw.get("pillars", {}),
+        }]
+        return _response(request, _envelope(request, "skcapstone", safe, errors))
+
+    async def board(request):
+        try:
+            raw = board_reader(home)
+            errors = [raw["error"]] if raw.get("error") else []
+            items = [
+                {
+                    "task_id": item.get("id"),
+                    "title": item.get("title"),
+                    "priority": item.get("priority"),
+                    "status": item.get("status"),
+                    "claimed_by": item.get("claimed_by"),
+                }
+                for item in raw.get("tasks", [])
+            ]
+            return _response(request, _page(request, "skcoord", items, errors))
+        except ValueError as exc:
+            return _error(request, 400, "INVALID_QUERY", str(exc))
+
+    async def fleet(request):
+        from . import dashboard_fleet
+
+        try:
+            raw = dashboard_fleet.get_drift(home, alert=False)
+            errors = [str(value) for value in raw.get("errors", [])]
+            items = [
+                {
+                    "node_id": node.get("node"),
+                    "state": node.get("severity", "unknown"),
+                    "counts": node.get("counts", {}),
+                }
+                for node in raw.get("nodes", [])
+            ] + [
+                {
+                    "node_id": node.get("node"),
+                    "state": "unknown",
+                    "reason_code": node.get("reason_code", "ungraded"),
+                }
+                for node in raw.get("skipped", [])
+            ]
+            return _response(request, _page(request, "skcapstone.fleet", items, errors))
+        except ValueError as exc:
+            return _error(request, 400, "INVALID_QUERY", str(exc))
+
+    async def economy(request):
+        from . import dashboard_skcounter
+
+        try:
+            lane = request.query_params.get("measurement_lane", "harness_reported")
+            if lane not in dashboard_skcounter.LANES:
+                raise ValueError("measurement_lane is invalid")
+            raw = dashboard_skcounter.get_ai_usage(
+                home,
+                {"lane": lane, "from": request.query_params.get("from", ""), "to": request.query_params.get("to", "")},
+            )
+            summary = raw.get("summary", {})
+            coverage = raw.get("coverage", {})
+            cost = summary.get("cost_usd") if summary.get("cost_state") == "available" else None
+            items = [{
+                "measurement_lane": raw.get("selected_lane"),
+                "available_lanes": raw.get("available_lanes", []),
+                "tokens": {key: summary.get(key, 0) for key in dashboard_skcounter.TOKEN_FIELDS},
+                "cost_usd": cost,
+                "cost_state": summary.get("cost_state", "unavailable"),
+                "collectors": raw.get("collectors", []),
+                "expected_nodes": coverage.get("expected_nodes", 0),
+                "reporting_nodes": coverage.get("reporting_nodes", 0),
+                "missing_nodes": coverage.get("missing_nodes", []),
+            }]
+            return _response(
+                request,
+                _page(request, "skcounter", items, [str(x) for x in raw.get("errors", [])], observed_at=raw.get("generated_at")),
+            )
+        except ValueError as exc:
+            return _error(request, 400, "INVALID_QUERY", str(exc))
+
+    async def overview(request):
+        board_data = board_reader(home)
+        errors = [board_data["error"]] if board_data.get("error") else []
+        items = [] if errors else [{"board": board_data.get("summary", {})}]
+        return _response(request, _envelope(request, "skdashboard", items, errors))
+
+    async def events(request):
+        raw_cursor = request.query_params.get("cursor") or request.headers.get("last-event-id")
+        topics = [value for value in request.query_params.get("topics", "").split(",") if value]
+        try:
+            if len(topics) > 16 or any(len(value) > 64 for value in topics):
+                raise ValueError("topics exceed the bounded contract")
+            if raw_cursor:
+                _cursor(raw_cursor)
+        except ValueError as exc:
+            return _error(request, 400, "INVALID_QUERY", str(exc))
+
+        async def stream():
+            if raw_cursor:
+                yield "event: reset-required\ndata: {\"reason\":\"replay window unavailable\"}\n\n"
+            yield ": heartbeat\n\n"
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
+    return [
+        Route("/api/v1/health", limited(health)),
+        Route("/api/v1/overview", limited(overview)),
+        Route("/api/v1/board/summary", limited(board)),
+        Route("/api/v1/fleet/summary", limited(fleet)),
+        Route("/api/v1/economy/summary", limited(economy)),
+        Route("/api/v1/events", limited(events)),
+    ]
