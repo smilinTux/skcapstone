@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the protected read-only Architecture workspace at
+  `/control-plane/architecture`, with explicit DORA and owner-source Unknown
+  states, CMDB blast-radius evidence, verified drift, and approved SKPerf aggregates.
+
 - Added deterministic aggregate throughput forecasts, dependency sensitivity
   against exact schedule projections, and typed calibration abstention.
 

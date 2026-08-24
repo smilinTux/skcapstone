@@ -431,6 +431,7 @@ def routes(
     schedule_provider=None,
     reliability_provider=None,
     session_resolver=None,
+    architecture_provider=None,
 ):
     if (decision_authorizer is None) != (invocation_factory is None):
         raise ValueError("typed control-plane authorization requires both injected components")
@@ -438,6 +439,7 @@ def routes(
         project_provider is not None
         or schedule_provider is not None
         or reliability_provider is not None
+        or architecture_provider is not None
     ) and decision_authorizer is None:
         raise ValueError("owner projection requires typed control-plane authorization")
     hits: dict[str, deque[float]] = defaultdict(deque)
@@ -732,6 +734,63 @@ def routes(
             return Response(status_code=304, headers={"ETag": etag})
         return Response(serialized, media_type="application/json", headers={"ETag": etag})
 
+    async def architecture(request):
+        allowed = {"role", "scope", "window", "baseline", "service", "environment"}
+        pairs = list(request.query_params.multi_items())
+        if (
+            any(key not in allowed or not value or len(value) > 128 for key, value in pairs)
+            or len({key for key, _value in pairs}) != len(pairs)
+        ):
+            return _error(
+                request,
+                400,
+                "INVALID_ARCHITECTURE_SCOPE",
+                "unsupported architecture scope",
+            )
+        query = dict(pairs)
+        if (
+            query.get("role") not in {"architect", "operator", "service-owner"}
+            or query.get("scope") != "estate"
+            or query.get("window") != "latest"
+            or query.get("baseline") != "none"
+            or query.get("service") != "all"
+            or query.get("environment") != "all"
+        ):
+            return _error(
+                request,
+                400,
+                "INVALID_ARCHITECTURE_SCOPE",
+                "unsupported architecture scope",
+            )
+        context = getattr(request.state, "control_plane_decision", None)
+        verifier = getattr(request.state, "control_plane_currentness_verifier", None)
+        if architecture_provider is None or context is None or verifier is None:
+            return _error(
+                request,
+                503,
+                "ARCHITECTURE_UNAVAILABLE",
+                "the authorized architecture projection is unavailable",
+                retryable=True,
+            )
+        projection = architecture_provider.read(
+            context,
+            query,
+            home,
+            currentness_verifier=verifier,
+        )
+        if not isinstance(projection, dict):
+            return _error(
+                request,
+                503,
+                "ARCHITECTURE_UNAVAILABLE",
+                "invalid architecture projection",
+            )
+        serialized = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
+        etag = f'"{hashlib.sha256(serialized).hexdigest()}"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return Response(serialized, media_type="application/json", headers={"ETag": etag})
+
     async def events(request):
         raw_cursor = request.query_params.get("cursor") or request.headers.get("last-event-id")
         topics = [value for value in request.query_params.get("topics", "").split(",") if value]
@@ -769,6 +828,7 @@ def routes(
         Route("/api/v1/overview", protected(overview, "skdashboard.read")),
         Route("/api/v1/schedule/projection", protected(schedule, "skdashboard.read")),
         Route("/api/v1/reliability/projection", protected(reliability, "skdashboard.read")),
+        Route("/api/v1/architecture/projection", protected(architecture, "skdashboard.read")),
         Route("/api/v1/board/summary", protected(board, "skdashboard.read")),
         Route("/api/v1/fleet/summary", protected(fleet, "skdashboard.read")),
         Route("/api/v1/economy/summary", protected(economy, "skdashboard.read")),
