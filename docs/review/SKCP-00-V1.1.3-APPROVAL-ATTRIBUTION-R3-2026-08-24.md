@@ -69,8 +69,9 @@ nonexecuting preview controls, keyboard-safe dialogs, and no dispatch.
 
 ## Verification
 
-- Approval-chain, candidate, schedule, and contract suite: `46 passed`.
-- Full repository suite: `325 passed`.
+- Approval-chain, source-receipt, candidate, schedule, and contract suite:
+  `50 passed`.
+- Full repository suite: `329 passed`.
 - Ruff: passed.
 - Exact hash recomputation: passed.
 - ASCII and forbidden-dash checks: passed.
