@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added deterministic aggregate throughput forecasts, dependency sensitivity
+  against exact schedule projections, and typed calibration abstention.
+
 - Added the protected read-only Reliability workspace at
   `/control-plane/reliability`, with explicit service-level Unknown states,
   full-denominator ITIL metrics, and traceable change, PIR, and KEDB evidence.
