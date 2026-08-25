@@ -93,14 +93,10 @@ jobs:
           # release tag. Exact qualification pins belong in the separate
           # operator constraints file, not public package metadata.
           python - <<'PY'
-          import tomllib
           from pathlib import Path
 
-          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
-          requirements = list(project.get("dependencies", ()))
-          for values in project.get("optional-dependencies", {}).values():
-              requirements.extend(values)
-          direct = [requirement for requirement in requirements if " @ " in requirement]
+          lines = Path("pyproject.toml").read_text(encoding="utf-8").splitlines()
+          direct = [line.strip().rstrip(",") for line in lines if line.lstrip().startswith('"') and " @ " in line]
           if direct:
               raise SystemExit("::error::PyPI rejects direct URL requirements: " + ", ".join(direct))
           PY

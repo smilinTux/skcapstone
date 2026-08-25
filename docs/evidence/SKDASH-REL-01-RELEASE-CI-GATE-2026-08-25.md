@@ -65,6 +65,10 @@ Local metadata-repair qualification:
 - isolated `0.1.83` wheel and source build: passed
 - `twine check` and wheel `Requires-Dist` inspection: passed with no direct URL
 
+The first R3 pull-request run failed honestly on Python 3.10 because the new
+test imported the Python 3.11 `tomllib` module. The repair uses only `pathlib`
+and quoted requirement-line inspection in both the test and workflow guard.
+
 A failed, cancelled, skipped, or superseded main CI run must produce no patch
 tag. Qualification compares tag targets and workflow timestamps without
 creating any tag by hand.
