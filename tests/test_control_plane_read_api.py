@@ -15,6 +15,7 @@ LAN_ORIGIN = "https://10.0.0.139:7778"
 TAILNET_ORIGIN = "https://100.81.238.58:7778"
 READ_HEADERS = {"Authorization": "Bearer valid-read", "Origin": LAN_ORIGIN}
 EVENT_HEADERS = {"Authorization": "Bearer valid-events", "Origin": TAILNET_ORIGIN}
+OIDC_FINGERPRINT = "a" * 40
 
 
 def _authorizer(bearer: str, capability: str, _target: str) -> bool:
@@ -28,7 +29,7 @@ def _app(home: Path):
     return create_app(home, control_plane_authorizer=_authorizer)
 
 
-def _canonical_bearer(scope: str) -> str:
+def _canonical_bearer(scope: str, *, subject: str = OIDC_FINGERPRINT) -> str:
     from capauth.tokens import SignedToken, TokenPayload, TokenType, export_token
 
     issued = datetime.now(timezone.utc)
@@ -37,7 +38,7 @@ def _canonical_bearer(scope: str) -> str:
             token_id="a" * 64,
             token_type=TokenType.CAPABILITY,
             issuer="B" * 40,
-            subject="human@example.test",
+            subject=subject,
             capabilities=[scope],
             issued_at=issued,
             expires_at=issued + timedelta(minutes=1),
@@ -190,6 +191,39 @@ def test_canonical_capauth_transport_reaches_signature_and_pdp_for_all_routes(
     assert response.status_code == 200
     assert verify.call_count == 3
     assert decide.call_count == 3
+
+
+def test_oidc_fingerprint_is_canonicalized_before_policy_decision(tmp_path: Path) -> None:
+    bearer = _canonical_bearer("skdashboard.read")
+
+    def allow_canonical_device(subject, *_args, **_kwargs):
+        return SimpleNamespace(allow=subject == f"device:{OIDC_FINGERPRINT}")
+
+    with patch("capauth.tokens.verify_audience_token", return_value=True), patch(
+        "capauth.authz.decide", side_effect=allow_canonical_device
+    ) as decide:
+        assert _capauth_authorize(
+            tmp_path, bearer, "skdashboard.read", "/api/v1/overview"
+        )
+    assert decide.call_args.args[0] == f"device:{OIDC_FINGERPRINT}"
+
+
+def test_non_fingerprint_oidc_subject_is_denied_before_policy_decision(
+    tmp_path: Path,
+) -> None:
+    malformed = ("human@example.test", "a" * 39, "g" * 40, f"device:{OIDC_FINGERPRINT}")
+    with patch("capauth.tokens.verify_audience_token", return_value=True) as verify, patch(
+        "capauth.authz.decide", return_value=SimpleNamespace(allow=True)
+    ) as decide:
+        for subject in malformed:
+            assert not _capauth_authorize(
+                tmp_path,
+                _canonical_bearer("skdashboard.read", subject=subject),
+                "skdashboard.read",
+                "/api/v1/overview",
+            )
+    assert verify.call_count == len(malformed)
+    decide.assert_not_called()
 
 
 def test_noncanonical_capauth_transport_is_denied_before_crypto(tmp_path: Path) -> None:

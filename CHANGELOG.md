@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Canonicalize verified CapAuth OIDC fingerprint subjects to their device identity
+  before current dashboard policy evaluation.
+
 - Read CapAuth authorization-code IdP discovery from its canonical `/oidc`
   endpoint instead of the incompatible legacy root PGP discovery document.
 
