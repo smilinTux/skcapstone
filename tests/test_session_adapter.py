@@ -331,7 +331,7 @@ def test_oidc_issuer_and_nonce_failures_are_distinct(monkeypatch):
     def handler(request):
         if request.url.path == "/oidc/token":
             return httpx.Response(200, json={"id_token": "opaque"}, request=request)
-        if request.url.path == "/.well-known/openid-configuration":
+        if request.url.path == "/oidc/.well-known/openid-configuration":
             return httpx.Response(
                 200,
                 json={"issuer": metadata_issuer[0], "jwks_uri": issuer + "/oidc/jwks.json"},
@@ -354,6 +354,48 @@ def test_oidc_issuer_and_nonce_failures_are_distinct(monkeypatch):
     monkeypatch.setattr(jwt, "decode", lambda *_args, **_kwargs: {"nonce": "wrong"})
     with pytest.raises(OIDCExchangeError, match="nonce_mismatch"):
         asyncio.run(client.exchange({"grant_type": "authorization_code"}, expected_nonce="n"))
+
+
+def test_oidc_uses_capauth_idp_discovery_not_legacy_pgp_discovery(monkeypatch):
+    real_client = httpx.AsyncClient
+    issuer = "https://capauth.example"
+    requested_paths = []
+
+    def handler(request):
+        requested_paths.append(request.url.path)
+        if request.url.path == "/oidc/token":
+            return httpx.Response(200, json={"id_token": "opaque"}, request=request)
+        if request.url.path == "/.well-known/openid-configuration":
+            return httpx.Response(
+                200,
+                json={"issuer": "https://legacy-pgp.example", "jwks_uri": issuer + "/jwks"},
+                request=request,
+            )
+        if request.url.path == "/oidc/.well-known/openid-configuration":
+            return httpx.Response(
+                200,
+                json={"issuer": issuer, "jwks_uri": issuer + "/oidc/jwks.json"},
+                request=request,
+            )
+        return httpx.Response(200, json={"keys": [{"kid": "one"}]}, request=request)
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(jwt, "get_unverified_header", lambda _token: {"kid": "one"})
+    monkeypatch.setattr(jwt.PyJWK, "from_dict", lambda _key: type("Key", (), {"key": object()})())
+    monkeypatch.setattr(jwt, "decode", lambda *_args, **_kwargs: {"nonce": "n"})
+
+    client = OIDCClient(SessionConfig(issuer, f"{ORIGIN}/auth/callback", "s"))
+    result = asyncio.run(
+        client.exchange({"grant_type": "authorization_code"}, expected_nonce="n")
+    )
+
+    assert result == {"id_token": "opaque"}
+    assert "/oidc/.well-known/openid-configuration" in requested_paths
+    assert "/.well-known/openid-configuration" not in requested_paths
 
 
 def test_callback_returns_reference_and_logs_only_safe_denial(tmp_path, caplog):

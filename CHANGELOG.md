@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Read CapAuth authorization-code IdP discovery from its canonical `/oidc`
+  endpoint instead of the incompatible legacy root PGP discovery document.
+
 - Preserve fail-closed OIDC callback errors while logging only allowlisted failure
   categories with a browser-safe correlation reference.
 

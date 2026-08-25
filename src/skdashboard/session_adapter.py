@@ -122,7 +122,7 @@ class OIDCClient:
                 result = response.json()
                 if expected_nonce is not None:
                     discovery = await client.get(
-                        f"{self.config.issuer}/.well-known/openid-configuration"
+                        f"{self.config.issuer}/oidc/.well-known/openid-configuration"
                     )
                     discovery.raise_for_status()
                     metadata = discovery.json()
