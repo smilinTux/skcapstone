@@ -255,7 +255,8 @@ def register_itil_commands(main: click.Group) -> None:
     )
     @click.option("--note", default="", help="Timeline note")
     @click.option("--resolution", default=None, help="Resolution summary")
-    def incident_update(incident_id, agent, new_status, severity, note, resolution):
+    @click.option("--managed-by", default=None, help="Assign incident management to an agent")
+    def incident_update(incident_id, agent, new_status, severity, note, resolution, managed_by):
         """Update an incident status or metadata."""
         from ..itil import ITILManager
 
@@ -268,6 +269,7 @@ def register_itil_commands(main: click.Group) -> None:
                 severity=severity,
                 note=note,
                 resolution_summary=resolution,
+                managed_by=managed_by,
             )
             # An illegal transition is recorded as a conflicted event and folded
             # away, leaving status unchanged. Without this check the command

@@ -83,6 +83,10 @@ TOOLS: list[Tool] = [
                     "type": "string",
                 },
                 "note": {"description": "Timeline note", "type": "string"},
+                "managed_by": {
+                    "description": "Assign incident management to an agent",
+                    "type": "string",
+                },
                 "related_problem_id": {
                     "description": "Link to a related problem record",
                     "type": "string",
@@ -541,6 +545,7 @@ async def _handle_itil_incident_update(args: dict) -> list[TextContent]:
             note=args.get("note", ""),
             resolution_summary=args.get("resolution_summary"),
             related_problem_id=args.get("related_problem_id"),
+            managed_by=args.get("managed_by"),
         )
         return _json_response(
             {

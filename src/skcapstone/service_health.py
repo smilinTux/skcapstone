@@ -632,7 +632,7 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
             source="service_health",
             affected_services=[svc_name],
             impact=f"Service unreachable: {error_info}",
-            managed_by="lumina",
+            managed_by="jarvis",
             created_by="service_health",
             tags=["auto-detected", "service-health"],
             failure_class=failure_class,

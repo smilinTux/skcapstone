@@ -15,6 +15,7 @@ def _isolate(tmp_path: Path, monkeypatch) -> None:
     """Redirect ITIL + GTD storage to a tmp dir (no ~/.skcapstone writes)."""
     monkeypatch.setattr(skcapstone, "SHARED_ROOT", str(tmp_path))
     monkeypatch.setattr(_helpers, "SHARED_ROOT", str(tmp_path))
+    monkeypatch.setattr("skcapstone.service_health._may_file_incidents", lambda: True)
 
 
 def test_repeated_down_creates_one_incident_with_no_still_down_notes(tmp_path: Path):
@@ -30,6 +31,7 @@ def test_repeated_down_creates_one_incident_with_no_still_down_notes(tmp_path: P
 
     # Exactly one incident - no duplicates from repeated cycles.
     assert len(incidents) == 1
+    assert incidents[0].managed_by == "jarvis"
     # And the timeline never accumulated recurring "still down" churn.
     still_down = [e for e in incidents[0].timeline if "still down" in (e.get("note") or "")]
     assert still_down == []
