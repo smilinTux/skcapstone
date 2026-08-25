@@ -7,6 +7,7 @@ from starlette.testclient import TestClient
 from test_control_plane_decision_context import ORIGIN, Rig
 
 from skdashboard.dashboard import create_app
+from skdashboard.forecast import ThroughputPeriod, forecast
 
 NOW = datetime.now(timezone.utc)
 HASH = "sha256:" + "a" * 64
@@ -108,13 +109,13 @@ def test_schedule_forecast_provider_is_protected_and_fails_closed(tmp_path: Path
         def read(self, context, query, home, *, currentness_verifier):
             assert context.binding == rig.binding
             assert home == tmp_path
-            return {"schema_version": "1.0.0", "artifact_kind": "aggregate_schedule_forecast", "state": "abstained", "method": "aggregate_throughput_bootstrap_monte_carlo", "calculation_owner": "deterministic_engine", "assumptions": [], "exclusions": [], "completion_quantiles_periods": {"p50": None, "p85": None, "p95": None}, "writes_owner_records": False}
+            return forecast([ThroughputPeriod(f"p{index}", NOW.date() + timedelta(days=index * 7), NOW.date() + timedelta(days=(index + 1) * 7), 1) for index in range(6)], cohort="fixture", scope="estate", remaining_work=1, seed=1)
 
     app = create_app(tmp_path, control_plane_decision_authorizer=rig.authorizer, control_plane_invocation_factory=rig.factory, control_plane_schedule_forecast_provider=Provider())
     path = "/api/v1/schedule/forecasts?role=project-manager&scope=estate&window=latest&baseline=none&service=all&lens=gantt&timezone=UTC"
     response = TestClient(app).get(path, headers={"Authorization": f"Bearer {rig.bearer}", "Origin": ORIGIN})
     assert response.status_code == 200
-    assert response.json()["state"] == "abstained"
+    assert response.json()["state"] == "ready"
 
     unavailable = TestClient(create_app(tmp_path, control_plane_authorizer=lambda *_: True)).get(path, headers={"Authorization": "Bearer legacy"})
     assert unavailable.status_code == 503

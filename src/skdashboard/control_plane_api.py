@@ -925,6 +925,18 @@ def routes(
             and result.get("method") == "aggregate_throughput_bootstrap_monte_carlo"
             and result.get("calculation_owner") == "deterministic_engine"
             and result.get("state") in {"ready", "abstained"}
+            and isinstance(result.get("cohort"), str)
+            and isinstance(result.get("scope"), str)
+            and result.get("method_discrimination") == {"throughput_forecast": "probabilistic aggregate flow in periods", "date_critical_path": "not calculated or blended by this artifact"}
+            and isinstance(result.get("history_window"), dict)
+            and set(result["history_window"]) == {"start", "end"}
+            and all(value is None or isinstance(value, str) for value in result["history_window"].values())
+            and isinstance(result.get("sample_periods"), int)
+            and (result.get("period_cadence_days") is None or isinstance(result.get("period_cadence_days"), int))
+            and isinstance(result.get("remaining_work"), int)
+            and isinstance(result.get("iterations"), int)
+            and isinstance(result.get("seed"), int)
+            and result.get("individual_ranking_prohibited") is True
             and isinstance(result.get("assumptions"), list)
             and all(isinstance(item, str) for item in result["assumptions"])
             and isinstance(exclusions, list)
