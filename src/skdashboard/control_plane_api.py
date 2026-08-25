@@ -915,7 +915,10 @@ def routes(
             "remaining_work", "iterations", "seed", "assumptions", "exclusions", "individual_ranking_prohibited",
             "completion_quantiles_periods", "milestone_confidence", "writes_owner_records",
         }
-        quantiles = result.get("completion_quantiles_periods") if isinstance(result, dict) else None
+        if not isinstance(result, dict):
+            return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "invalid schedule forecast")
+        quantiles = result.get("completion_quantiles_periods")
+        exclusions = result.get("exclusions")
         typed = (
             result.get("schema_version") == "1.0.0"
             and result.get("artifact_kind") == "aggregate_schedule_forecast"
@@ -924,12 +927,13 @@ def routes(
             and result.get("state") in {"ready", "abstained"}
             and isinstance(result.get("assumptions"), list)
             and all(isinstance(item, str) for item in result["assumptions"])
-            and isinstance(result.get("exclusions"), list)
+            and isinstance(exclusions, list)
+            and all(isinstance(item, dict) and set(item) == {"period_id", "timing_basis", "reason"} and all(isinstance(value, str) for value in item.values()) for item in exclusions)
             and isinstance(quantiles, dict)
             and set(quantiles) == {"p50", "p85", "p95"}
             and all(value is None or isinstance(value, int) for value in quantiles.values())
         )
-        if not isinstance(result, dict) or result.get("writes_owner_records") is not False or set(result) - allowed_keys or not typed:
+        if result.get("writes_owner_records") is not False or set(result) - allowed_keys or not typed:
             return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "invalid schedule forecast")
         return _response(request, result)
 
