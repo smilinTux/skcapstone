@@ -193,6 +193,26 @@ def test_session_capability_issuer_cannot_reuse_session_access_token(tmp_path):
     assert response.status_code == 401
 
 
+def test_session_capability_issuer_rejects_browser_bearer_and_absent_session(tmp_path):
+    session = adapter(tmp_path)
+    minted = []
+    client = TestClient(
+        create_read_only_app(
+            tmp_path,
+            session_adapter=session,
+            session_capability_issuer=lambda *_: minted.append(True) or "internal",
+            authorizer=lambda *_: True,
+        ),
+        base_url=ORIGIN,
+    )
+    assert client.get(
+        "/api/v1/overview",
+        headers={"Origin": ORIGIN, "Authorization": "Bearer browser-token"},
+    ).status_code == 401
+    assert client.get("/api/v1/overview", headers={"Origin": ORIGIN}).status_code == 401
+    assert minted == []
+
+
 def test_legacy_refresh_reservation_without_timestamp_is_recovered(tmp_path):
     now = [1_000]
     tokens = Tokens()

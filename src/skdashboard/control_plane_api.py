@@ -479,6 +479,11 @@ def _protected_handler(
             response.headers["Cache-Control"] = "no-store"
             return response
         header = request.headers.get("authorization", "")
+        if session_capability_issuer is not None and header:
+            counters["denied"] += 1
+            response = _error(request, 401, "UNAUTHORIZED", "a browser bearer is not accepted")
+            response.headers["Cache-Control"] = "no-store"
+            return response
         if session_resolver is not None and not header:
             try:
                 resolved = await session_resolver(request)
@@ -497,7 +502,7 @@ def _protected_handler(
                     return response
                 if session_capability_issuer is None:
                     bearer = getattr(resolved, "access_token", resolved)
-                else:
+                elif state == "authenticated":
                     bearer = session_capability_issuer(
                         request, resolved, capability, request.url.path
                     )
@@ -505,6 +510,8 @@ def _protected_handler(
                         bearer = await bearer
                     if bearer == getattr(resolved, "access_token", None):
                         bearer = None
+                else:
+                    bearer = None
             except Exception:
                 bearer = None
             if bearer:
