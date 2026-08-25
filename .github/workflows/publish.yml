@@ -2,34 +2,36 @@ name: Publish to PyPI
 
 on:
   push:
-    branches: ["main"]
     tags: ["v*"]
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
-# Trusted Publishing (OIDC) — configure a PyPI pending publisher for this project:
+# Trusted Publishing (OIDC): configure a PyPI pending publisher for this project:
 #   owner=smilinTux  workflow=publish.yml  environment=pypi
 # No PyPI token is used. A tagged release only needs to build + pass twine check.
 concurrency:
-  # Never let two releases race: a second push to main waits rather than
+  # Never let two release gates race: a later CI completion waits rather than
   # computing the same "next" tag from a stale view of the tag list.
   group: publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   # ---------------------------------------------------------------------- #
-  # Cut the release tag. Only on a push to main; skipped on a tag push.
+  # Cut the release tag only after CI succeeds for the current main commit.
   # ---------------------------------------------------------------------- #
   tag:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      tagged: ${{ steps.bump.outputs.tagged }}
-      version: ${{ steps.bump.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,12 +39,25 @@ jobs:
           # every run would compute v0.0.1.
           fetch-depth: 0
           fetch-tags: true
-      - id: bump
-        name: Cut the next patch tag if HEAD is not already tagged
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Cut the next patch tag if current main is not already tagged
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          target_sha="${{ github.event.workflow_run.head_sha }}"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          current_main="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$target_sha" != "$current_main" ]; then
+            echo "CI succeeded for a superseded main commit; nothing to release."
+            exit 0
+          fi
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$head_sha" != "$target_sha" ]; then
+            echo "::error::checked out commit does not match the successful CI commit"
+            exit 1
+          fi
 
           # Use the HIGHEST v-tag in the repo, not `git describe`.
           #
@@ -52,13 +67,10 @@ jobs:
           # 0.0.1 and then 0.0.2, both BELOW the existing 0.1.0. A release must
           # never be able to go backwards, so rank all tags by version instead.
           latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)"
-          head_sha="$(git rev-parse HEAD)"
-
           # Any release tag AT HEAD means nothing new to ship, even if it is
           # not the highest one (ranking means the highest may sit elsewhere).
           if [ -n "$(git tag --points-at HEAD -l 'v[0-9]*.[0-9]*.[0-9]*')" ]; then
             echo "HEAD is already tagged; nothing to release."
-            echo "tagged=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -75,22 +87,20 @@ jobs:
           echo "Cutting $next at ${head_sha:0:8} (previous: ${latest:-none})"
           git tag -a "$next" -m "release: $next from main"
           git push origin "$next"
-          echo "tagged=true" >> "$GITHUB_OUTPUT"
-          echo "version=${next#v}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: [tag]
     # `always()` is required because `needs` on a SKIPPED job would otherwise
-    # skip this one on the tag-push path.
+    # skip this one when the successful CI gate pushes the tag.
     if: >-
       always() && !cancelled() &&
-      (needs.tag.result == 'skipped' || needs.tag.outputs.tagged == 'true')
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          # setuptools-scm derives the version from the tag, so the tag the job
-          # above just pushed must be visible here or the build would produce a
+          # setuptools-scm derives the version from this tag. Full history must
+          # be visible here or the build would produce a
           # dev version with a local segment (+g<sha>), which PyPI rejects.
           fetch-depth: 0
           fetch-tags: true
@@ -100,15 +110,9 @@ jobs:
         # feature-branch tips and pushing them. This is the server-side backstop:
         # it holds no matter what any developer's clone does.
         #
-        # Override with the ALLOW_OFF_MAIN_RELEASE repository variable if a
-        # release ever legitimately needs to come off a maintenance branch.
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
-          if [ "${{ vars.ALLOW_OFF_MAIN_RELEASE }}" = "1" ]; then
-            echo "ALLOW_OFF_MAIN_RELEASE=1 is set; skipping the on-main check."
-            exit 0
-          fi
           git fetch --no-tags origin main:refs/remotes/origin/main
           if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
             echo "OK: ${GITHUB_REF_NAME} (${GITHUB_SHA:0:8}) is on main."
@@ -123,8 +127,6 @@ jobs:
       - name: Assert the version to publish is a real release
         # A dev/local version (.devN, +g<sha>, 0.0.0) is rejected by PyPI with a
         # 400, and by then the tag has already been cut. Fail here instead.
-        env:
-          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}
         run: |
           set -euo pipefail
           python -m pip install --upgrade setuptools_scm >/dev/null
@@ -137,8 +139,6 @@ jobs:
           esac
       - run: python -m pip install --upgrade build twine
       - run: python -m build
-        env:
-          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}
       - run: python -m twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
@@ -147,11 +147,7 @@ jobs:
 
   pypi-publish:
     needs: build
-    # A job skip propagates THROUGH the graph, not one level. `tag` is skipped
-    # on the tag-push path, `build` survives it with always(), but a bare
-    # `needs: build` here still evaluates to skipped. With a tags-only trigger
-    # `tag` can never run, so this job could never run either and a tagged
-    # release would build cleanly and publish nothing (skcoord #6).
+    # Publish only the artifact built by the gated tag-push run.
     if: >-
       always() && !cancelled() && needs.build.result == 'success'
     runs-on: ubuntu-latest
