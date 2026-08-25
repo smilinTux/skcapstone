@@ -97,6 +97,13 @@ function render() {
   });
 }
 
+function renderForecast(forecast) {
+  const ranges = document.getElementById("schedule-forecast-ranges");
+  document.getElementById("schedule-forecast-state").textContent = forecast.state;
+  document.getElementById("schedule-forecast-meta").textContent = `${forecast.method} | ${forecast.sample_periods} periods | ${forecast.history_window.start || "unknown"} to ${forecast.history_window.end || "unknown"}`;
+  ranges.textContent = forecast.state === "ready" ? `P50 ${forecast.completion_quantiles_periods.p50}, P85 ${forecast.completion_quantiles_periods.p85}, P95 ${forecast.completion_quantiles_periods.p95} periods. Aggregate flow only, not a critical-path date.` : `Unavailable: ${forecast.abstention_reason}`;
+}
+
 function openDetail(id, trigger) {
   const item = projection.items.find((candidate) => candidate.item_id === id);
   if (!item) return;
@@ -113,6 +120,7 @@ async function load() {
   try {
     projection = await getJSON(`/api/v1/schedule/projection?${query()}`);
     render();
+    try { renderForecast(await getJSON(`/api/v1/schedule/forecasts?${query()}`)); } catch (_error) { document.getElementById("schedule-forecast-state").textContent = "unavailable"; document.getElementById("schedule-forecast-meta").textContent = "No authorized calibrated forecast provider."; }
     if (context.selected_item) openDetail(context.selected_item, document.querySelector(`[data-detail="${CSS.escape(context.selected_item)}"]`));
   } catch (error) {
     document.getElementById("schedule-status").textContent = `Unavailable: ${error.message}`;

@@ -54,6 +54,10 @@
     </div>
 
     <section id="schedule-warning" class="project-boundary" hidden aria-live="assertive"></section>
+    <section class="project-panel" aria-labelledby="schedule-forecast-title">
+      <div class="quality-heading"><div><h2 id="schedule-forecast-title">Flow forecast</h2><p id="schedule-forecast-meta">Loading calibrated aggregate forecast.</p></div><span id="schedule-forecast-state" class="quality-mode">Loading</span></div>
+      <div id="schedule-forecast-ranges" role="status" aria-live="polite">No forecast value is inferred.</div>
+    </section>
     <section id="schedule-visual" class="project-panel schedule-visual" aria-labelledby="schedule-visual-title">
       <div class="quality-heading"><div><h2 id="schedule-visual-title">Roadmap</h2><p id="schedule-meta">Loading exact schedule projection.</p></div><span id="schedule-truth" class="quality-mode">Loading</span></div>
       <div id="schedule-rows" class="schedule-rows" role="list" aria-label="Schedule visual rows"></div>
