@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+from copy import deepcopy
 from pathlib import Path
 from urllib.parse import quote
 
@@ -16,6 +18,18 @@ from .dashboard import _get_agent_status, _get_board_state
 
 ALLOWED_BIND_HOSTS = frozenset({"127.0.0.1", "10.0.0.139", "100.81.238.58"})
 HSTS_POLICY = "max-age=31536000"
+
+
+class CallbackAccessLogFilter(logging.Filter):
+    """Remove OIDC callback query values from Uvicorn access records."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5:
+            path = args[2]
+            if isinstance(path, str) and path.partition("?")[0] == "/auth/callback":
+                record.args = (*args[:2], "/auth/callback", *args[3:])
+        return True
 
 
 class SecureTransportMiddleware:
@@ -195,6 +209,18 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     import uvicorn
+    from uvicorn.config import LOGGING_CONFIG
+
+    log_config = deepcopy(LOGGING_CONFIG)
+    log_config["filters"] = {
+        **log_config.get("filters", {}),
+        "redact_oidc_callback": {"()": CallbackAccessLogFilter},
+    }
+    access_handler = log_config["handlers"]["access"]
+    access_handler["filters"] = [
+        *access_handler.get("filters", []),
+        "redact_oidc_callback",
+    ]
 
     uvicorn.run(
         create_read_only_app(args.home, session_adapter=session_adapter),
@@ -202,12 +228,14 @@ def main(argv: list[str] | None = None) -> None:
         port=args.port,
         ssl_certfile=str(args.tls_certfile),
         ssl_keyfile=str(args.tls_keyfile),
+        log_config=log_config,
     )
 
 
 __all__ = [
     "ALLOWED_BIND_HOSTS",
     "ALLOWED_BROWSER_ORIGINS",
+    "CallbackAccessLogFilter",
     "HSTS_POLICY",
     "SecureTransportMiddleware",
     "create_read_only_app",

@@ -1,10 +1,18 @@
+import io
+import logging
 from pathlib import Path
 
 from starlette.responses import Response
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from skdashboard.read_only import ALLOWED_BIND_HOSTS, HSTS_POLICY, create_read_only_app, main
+from skdashboard.read_only import (
+    ALLOWED_BIND_HOSTS,
+    HSTS_POLICY,
+    CallbackAccessLogFilter,
+    create_read_only_app,
+    main,
+)
 
 LAN_ORIGIN = "https://10.0.0.139:7778"
 TAILNET_ORIGIN = "https://100.81.238.58:7778"
@@ -112,7 +120,52 @@ def test_launcher_requires_exact_tls_files_without_persistent_transport_state(
     assert observed["host"] == "10.0.0.139"
     assert observed["ssl_certfile"] == "/run/credentials/skdashboard.crt"
     assert observed["ssl_keyfile"] == "/run/credentials/skdashboard.key"
+    access_handler = observed["log_config"]["handlers"]["access"]
+    assert "redact_oidc_callback" in access_handler["filters"]
     assert list(tmp_path.iterdir()) == []
+
+
+def test_callback_access_log_filter_is_sensitive_and_callback_only() -> None:
+    output = io.StringIO()
+    handler = logging.StreamHandler(output)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger = logging.Logger("test.uvicorn.access")
+    logger.handlers = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+
+    callback = (
+        "/auth/callback?code=CODE_SENTINEL&state=STATE_SENTINEL"
+        "&nonce=NONCE_SENTINEL&code_challenge=PKCE_SENTINEL&token=TOKEN_SENTINEL"
+    )
+    logger.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1", "GET", callback, "1.1", 400)
+    assert "CODE_SENTINEL" in output.getvalue()
+
+    output.seek(0)
+    output.truncate()
+    handler.addFilter(CallbackAccessLogFilter())
+    logger.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1", "GET", callback, "1.1", 400)
+    logger.info(
+        '%s - "%s %s HTTP/%s" %d',
+        "127.0.0.1",
+        "GET",
+        "/api/v1/health?failure=UNRELATED_SENTINEL",
+        "1.1",
+        503,
+    )
+
+    captured = output.getvalue()
+    assert 'GET /auth/callback HTTP/1.1" 400' in captured
+    for secret in (
+        "CODE_SENTINEL",
+        "STATE_SENTINEL",
+        "NONCE_SENTINEL",
+        "PKCE_SENTINEL",
+        "TOKEN_SENTINEL",
+    ):
+        assert secret not in captured
+    assert "/api/v1/health?failure=UNRELATED_SENTINEL" in captured
+    assert captured.endswith('HTTP/1.1" 503\n')
 
 
 def test_protected_routes_keep_auth_and_origin_denials(tmp_path: Path) -> None:
