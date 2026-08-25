@@ -1,0 +1,22 @@
+=== qualify_control_plane_reliability_cdp.mjs ===
+SKCP-22 CDP PASS: 11 metrics, breach denominator 10, lifecycle/PIR/KEDB, keyboard role, 390/320, zero writes/external/exceptions
+=== qualify_control_plane_architecture_cdp.mjs ===
+SKCP-23 CDP PASS: 15 metrics, 3 CIs, 2 edges, exception-to-CI detail, keyboard, 390/320, zero writes/external/exceptions
+=== qualify_control_plane_governance_cdp.mjs ===
+SKCP-25 CDP PASS: 13 definitions, 16 sources, 8 distinct finding classes, append-only history, keyboard, 390/320, zero writes/external/exceptions
+=== qualify_control_plane_reports_cdp.mjs ===
+SKCP-32 CDP PASS: 2 immutable reports, supersession, typed AI provenance, no-value comparison, keyboard, 390/320, zero writes/external/exceptions
+=== qualify_control_plane_preview_cdp.mjs ===
+{
+  "result": "PASS",
+  "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+  "failClosedUrlCases": 4,
+  "declaredStates": 6,
+  "explicitReadyTrigger": "PASS",
+  "nonGetRequestsAfterClick": 0,
+  "externalRequestsAfterClick": 0,
+  "runtimeExceptions": 0
+}
+=== navigation contrast pytest ===
+......                                                                   [100%]
+6 passed in 1.52s
