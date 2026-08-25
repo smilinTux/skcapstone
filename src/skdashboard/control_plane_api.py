@@ -605,6 +605,7 @@ def routes(
     invocation_factory: ControlPlaneInvocationFactory | None = None,
     project_provider=None,
     schedule_provider=None,
+    schedule_forecast_provider=None,
     reliability_provider=None,
     session_resolver=None,
     architecture_provider=None,
@@ -616,6 +617,7 @@ def routes(
     if (
         project_provider is not None
         or schedule_provider is not None
+        or schedule_forecast_provider is not None
         or reliability_provider is not None
         or architecture_provider is not None
         or governance_provider is not None
@@ -884,6 +886,70 @@ def routes(
         if request.headers.get("if-none-match") == etag:
             return Response(status_code=304, headers={"ETag": etag})
         return Response(serialized, media_type="application/json", headers={"ETag": etag})
+
+    async def schedule_forecasts(request):
+        from capauth import DecisionState
+
+        allowed = {"role", "scope", "window", "baseline", "service", "lens", "timezone"}
+        pairs = list(request.query_params.multi_items())
+        if any(key not in allowed or not value or len(value) > 128 for key, value in pairs) or len({key for key, _value in pairs}) != len(pairs):
+            return _error(request, 400, "INVALID_SCHEDULE_SCOPE", "unsupported schedule scope")
+        query = dict(pairs)
+        if query.get("role") not in {"project-manager", "operator", "architect", "service", "team"} or query.get("scope") != "estate" or query.get("window") != "latest" or query.get("baseline") != "none" or query.get("service") != "all" or query.get("lens") not in {"roadmap", "gantt", "flow"} or not query.get("timezone"):
+            return _error(request, 400, "INVALID_SCHEDULE_SCOPE", "unsupported schedule scope")
+        context = getattr(request.state, "control_plane_decision", None)
+        verifier = getattr(request.state, "control_plane_currentness_verifier", None)
+        if schedule_forecast_provider is None or context is None or verifier is None:
+            return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
+        try:
+            if verifier.check_before_owner_read(context) is not DecisionState.ALLOW:
+                return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
+            result = schedule_forecast_provider.read(context, query, home, currentness_verifier=verifier)
+            if verifier.check_after_owner_read(context) is not DecisionState.ALLOW:
+                return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
+        except Exception:
+            return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
+        allowed_keys = {
+            "schema_version", "artifact_kind", "state", "abstention_reason", "method", "calculation_owner",
+            "method_discrimination", "cohort", "scope", "history_window", "sample_periods", "period_cadence_days",
+            "remaining_work", "iterations", "seed", "assumptions", "exclusions", "individual_ranking_prohibited",
+            "completion_quantiles_periods", "milestone_confidence", "writes_owner_records",
+        }
+        if not isinstance(result, dict):
+            return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "invalid schedule forecast")
+        quantiles = result.get("completion_quantiles_periods")
+        exclusions = result.get("exclusions")
+        typed = (
+            result.get("schema_version") == "1.0.0"
+            and result.get("artifact_kind") == "aggregate_schedule_forecast"
+            and result.get("method") == "aggregate_throughput_bootstrap_monte_carlo"
+            and result.get("calculation_owner") == "deterministic_engine"
+            and result.get("state") in {"ready", "abstained"}
+            and isinstance(result.get("cohort"), str)
+            and isinstance(result.get("scope"), str)
+            and result.get("method_discrimination") == {"throughput_forecast": "probabilistic aggregate flow in periods", "date_critical_path": "not calculated or blended by this artifact"}
+            and isinstance(result.get("history_window"), dict)
+            and set(result["history_window"]) == {"start", "end"}
+            and all(value is None or isinstance(value, str) for value in result["history_window"].values())
+            and isinstance(result.get("sample_periods"), int)
+            and (result.get("period_cadence_days") is None or isinstance(result.get("period_cadence_days"), int))
+            and isinstance(result.get("remaining_work"), int)
+            and isinstance(result.get("iterations"), int)
+            and isinstance(result.get("seed"), int)
+            and result.get("individual_ranking_prohibited") is True
+            and isinstance(result.get("assumptions"), list)
+            and all(isinstance(item, str) for item in result["assumptions"])
+            and isinstance(exclusions, list)
+            and all(isinstance(item, dict) and set(item) == {"period_id", "timing_basis", "reason"} and all(isinstance(value, str) for value in item.values()) for item in exclusions)
+            and isinstance(quantiles, dict)
+            and set(quantiles) == {"p50", "p85", "p95"}
+            and all(value is None or isinstance(value, int) for value in quantiles.values())
+        )
+        ready = typed and result.get("state") == "ready" and result.get("abstention_reason") is None and all(type(value) is int for value in quantiles.values()) and quantiles["p50"] <= quantiles["p85"] <= quantiles["p95"] and (result.get("milestone_confidence") is None or isinstance(result.get("milestone_confidence"), float) and 0 <= result["milestone_confidence"] <= 1)
+        abstained = typed and result.get("state") == "abstained" and isinstance(result.get("abstention_reason"), str) and bool(result["abstention_reason"]) and result.get("milestone_confidence") is None and all(value is None for value in quantiles.values())
+        if result.get("writes_owner_records") is not False or set(result) - allowed_keys or not (ready or abstained):
+            return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "invalid schedule forecast")
+        return _response(request, result)
 
     async def reliability(request):
         allowed = {"role", "scope", "window", "baseline", "service"}
@@ -1225,6 +1291,7 @@ def routes(
         Route("/api/v1/health", limited(health)),
         Route("/api/v1/overview", protected(overview, "skdashboard.read")),
         Route("/api/v1/schedule/projection", protected(schedule, "skdashboard.read")),
+        Route("/api/v1/schedule/forecasts", protected(schedule_forecasts, "skdashboard.read")),
         Route("/api/v1/reliability/projection", protected(reliability, "skdashboard.read")),
         Route("/api/v1/architecture/projection", protected(architecture, "skdashboard.read")),
         Route("/api/v1/governance/projection", protected(governance, "skdashboard.read")),

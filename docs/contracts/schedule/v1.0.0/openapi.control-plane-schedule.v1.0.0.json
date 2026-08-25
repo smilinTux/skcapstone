@@ -48,6 +48,26 @@
         }
       }
     },
+    "/schedule/insights": {
+      "get": {
+        "operationId": "getReadOnlyScheduleInsights",
+        "summary": "Read evidence-grounded schedule insights without an action",
+        "description": "Returns evidence and uncertainty for a forecast. It cannot reschedule or write owner-system records.",
+        "security": [{"capability": ["skdashboard.schedule.read"]}],
+        "parameters": [
+          {"name": "forecast_ref", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 512}},
+          {"$ref": "#/components/parameters/ProjectionVersion"}
+        ],
+        "responses": {
+          "200": {"description": "Read-only schedule insights", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "control-plane-schedule-insight.v1.0.0.schema.json"}}}}},
+          "400": {"$ref": "#/components/responses/Error"},
+          "401": {"$ref": "#/components/responses/Error"},
+          "403": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"},
+          "503": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
     "/schedule/reschedule-previews": {
       "post": {
         "operationId": "previewExactReschedule",
