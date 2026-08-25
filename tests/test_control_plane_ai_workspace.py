@@ -109,14 +109,17 @@ def test_ai_workspace_real_chrome_purges_delayed_401_and_403_responses() -> None
         shutil.which("google-chrome") or shutil.which("google-chrome-stable")
     ):
         pytest.skip("Node or Chrome is unavailable for the AI CDP qualification")
-    result = subprocess.run(
-        ["node", "scripts/qualify_control_plane_ai_cdp.mjs"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    try:
+        result = subprocess.run(
+            ["node", "scripts/qualify_control_plane_ai_cdp.mjs"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.CalledProcessError as exc:
+        pytest.fail(f"AI CDP qualification exited {exc.returncode}: {(exc.stderr or '')[-4000:]}")
     evidence = json.loads(result.stdout.strip())
     assert evidence == {
         "result": "PASS",
@@ -138,6 +141,7 @@ def test_ai_workspace_real_chrome_purges_delayed_401_and_403_responses() -> None
         "writes": 0,
         "external": 0,
         "exceptions": 0,
+        "scratchCleaned": True,
     }
     assert evidence["lightContrast"] >= 4.5
     assert evidence["darkContrast"] >= 4.5
