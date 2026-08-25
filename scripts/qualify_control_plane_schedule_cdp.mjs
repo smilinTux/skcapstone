@@ -44,8 +44,11 @@ class Provider:
         assert currentness_verifier.check_before_owner_read(context).value == "allow"
         assert currentness_verifier.check_after_owner_read(context).value == "allow"
         return {**projection, "display_timezone":query["timezone"]}
+class ForecastProvider:
+    def read(self, context, query, home, *, currentness_verifier):
+        return {"schema_version":"1.0.0","artifact_kind":"aggregate_schedule_forecast","state":"ready","method":"aggregate_throughput_bootstrap_monte_carlo","calculation_owner":"deterministic_engine","method_discrimination":{"throughput_forecast":"probabilistic aggregate flow in periods","date_critical_path":"not calculated or blended by this artifact"},"cohort":"fixture","scope":"estate","history_window":{"start":"2026-08-01","end":"2026-08-22"},"sample_periods":6,"period_cadence_days":7,"remaining_work":3,"iterations":1,"seed":1,"assumptions":[],"exclusions":[],"individual_ranking_prohibited":True,"abstention_reason":None,"completion_quantiles_periods":{"p50":1,"p85":2,"p95":3},"milestone_confidence":None,"writes_owner_records":False}
 from skdashboard.dashboard import create_app
-app = create_app(Path(${JSON.stringify(home)}), control_plane_decision_authorizer=rig.authorizer, control_plane_invocation_factory=rig.factory, control_plane_schedule_provider=Provider())
+app = create_app(Path(${JSON.stringify(home)}), control_plane_decision_authorizer=rig.authorizer, control_plane_invocation_factory=rig.factory, control_plane_schedule_provider=Provider(), control_plane_schedule_forecast_provider=ForecastProvider())
 uvicorn.run(app, host="127.0.0.1", port=${port}, log_level="error")
 `;
   const pythonPath = [path.join(repo, "src"), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
@@ -75,6 +78,7 @@ uvicorn.run(app, host="127.0.0.1", port=${port}, log_level="error")
     await send("Network.setExtraHTTPHeaders", { headers: { Authorization: `Bearer ${fs.readFileSync(bearerFile, "utf8")}`, Origin: "https://10.0.0.139:7778" } });
     await send("Page.navigate", { url: `http://127.0.0.1:${port}/control-plane/schedule?role=project-manager&scope=estate&window=latest&baseline=none&service=all&lens=roadmap&timezone=UTC` });
     await waitFor(async () => evaluate("document.querySelectorAll('.schedule-row').length === 2").catch(() => false), "Schedule did not render");
+    await waitFor(async () => evaluate("document.getElementById('schedule-forecast-state').textContent === 'unavailable' && document.getElementById('schedule-forecast-ranges').textContent.includes('Unavailable')").catch(() => false), "Forecast panel did not fail closed");
     for (const lens of ["roadmap", "gantt", "flow"]) {
       await evaluate(`document.getElementById("schedule-lens").value=${JSON.stringify(lens)};document.getElementById("schedule-lens").dispatchEvent(new Event("change",{bubbles:true}))`);
       await waitFor(async () => evaluate(`new URL(location.href).searchParams.get("lens") === ${JSON.stringify(lens)} && document.querySelectorAll('.schedule-row').length === 2`).catch(() => false), `Lens ${lens} did not synchronize`);
