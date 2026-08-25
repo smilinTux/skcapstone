@@ -69,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added disabled-by-default immutable report delivery simulation with exact
+  approval binding, destination verification, source rights, retention,
+  redaction, transactional outbox, bounded retries, cancellation, content-free
+  receipts, and append-only audit evidence without an external connector.
+
 - Added a same-origin, allowlisted, schema-validating read-only control-plane
   client, deterministic public-synthetic fixture server, and MCP resources for
   projections and immutable report snapshots without MCP tools or command access.

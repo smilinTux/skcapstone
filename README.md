@@ -74,6 +74,24 @@ runtime may not yet serve it, and older overview projections may use scope
 fields outside the frozen V1.1 schema. The client intentionally fails closed
 in either case instead of accepting an unvalidated response.
 
+## Report delivery simulation
+
+`skdashboard.report_delivery.ReportDeliveryService` is an offline,
+disabled-by-default development simulation over immutable report snapshots.
+Drafts do not create an outbox message. Activation requires an exact report
+hash, audience, destination, classification, source-rights reference, purpose,
+retention period, redaction profile, unexpired destination verification,
+unexpired approval, and a caller-injected policy allow decision for
+`skdashboard.reports.deliver.simulate`.
+
+The service stores only bounded delivery metadata, transactional outbox state,
+content-free simulation receipts, and append-only audit references in a local
+mode `0600` SQLite database. Only the built-in deterministic
+`SimulationDestination` is accepted. There is no HTTP, UI, MCP, network,
+connector, production destination, account, or deployment surface. Protected
+Tenant or Matter reports fail closed and remain in the SKLegal external-action
+state machine.
+
 ## ATLAS operator cockpit
 
 `/cockpit` includes a read-only operator plane backed by
