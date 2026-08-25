@@ -13,15 +13,16 @@ release completed before a Python 3.12 CI job reported failure.
 The repaired workflow uses GitHub's native `workflow_run` event. Its tag job
 runs only after the named CI workflow succeeds for `main`, checks out that
 exact tested SHA, and refuses to tag it if a newer main commit has superseded
-it. The tag push is the only event that builds and publishes. Manual dispatch
-and the off-main ancestry override are absent.
+it. The same gated workflow checks out the exact new tag, builds it, and
+publishes it. Manual dispatch, tag-push triggering, and the off-main ancestry
+override are absent.
 
 ## Sensitivity and checks
 
 `test_release_waits_for_successful_current_main_ci` failed against the prior
 workflow because no CI completion trigger existed. It passes only when the
-successful-CI condition, exact tested SHA, current-main guard, tag-only build
-path, and absence of manual dispatch are all present.
+successful-CI condition, exact tested SHA, current-main guard, same-run build
+path, and absence of manual dispatch and tag-push triggering are all present.
 
 Source qualification on 2026-08-25:
 
@@ -35,8 +36,14 @@ Source qualification on 2026-08-25:
 
 The pull request must produce no tag because pull-request CI is not a
 successful main workflow run. After merge, the exact main CI run must finish
-successfully before the next patch tag is created. The workflow run triggered
-by that tag may then build, pass `twine check`, and publish once.
+successfully before the next patch tag is created. That same workflow must
+then build the exact tag, pass `twine check`, and publish once.
+
+The first qualification exposed that a tag pushed with `GITHUB_TOKEN` does not
+trigger another workflow. It correctly created `v0.1.80` at
+`5abf88032da9137c7eb1bc96947b89bbd0c17bf2`, but no build or publish run
+started and PyPI returned 404 for version `0.1.80`. The tag remains immutable.
+The follow-up repair removes reliance on a second workflow event.
 
 A failed, cancelled, skipped, or superseded main CI run must produce no patch
 tag. Qualification compares tag targets and workflow timestamps without
