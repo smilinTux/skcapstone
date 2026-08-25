@@ -1,8 +1,6 @@
 name: Publish to PyPI
 
 on:
-  push:
-    tags: ["v*"]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -32,6 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tagged: ${{ steps.bump.outputs.tagged }}
+      version: ${{ steps.bump.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,7 +41,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           ref: ${{ github.event.workflow_run.head_sha }}
-      - name: Cut the next patch tag if current main is not already tagged
+      - id: bump
+        name: Cut the next patch tag if current main is not already tagged
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -51,6 +53,7 @@ jobs:
           current_main="$(git rev-parse refs/remotes/origin/main)"
           if [ "$target_sha" != "$current_main" ]; then
             echo "CI succeeded for a superseded main commit; nothing to release."
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           head_sha="$(git rev-parse HEAD)"
@@ -71,6 +74,7 @@ jobs:
           # not the highest one (ranking means the highest may sit elsewhere).
           if [ -n "$(git tag --points-at HEAD -l 'v[0-9]*.[0-9]*.[0-9]*')" ]; then
             echo "HEAD is already tagged; nothing to release."
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -87,14 +91,12 @@ jobs:
           echo "Cutting $next at ${head_sha:0:8} (previous: ${latest:-none})"
           git tag -a "$next" -m "release: $next from main"
           git push origin "$next"
+          echo "tagged=true" >> "$GITHUB_OUTPUT"
+          echo "version=${next#v}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: [tag]
-    # `always()` is required because `needs` on a SKIPPED job would otherwise
-    # skip this one when the successful CI gate pushes the tag.
-    if: >-
-      always() && !cancelled() &&
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    if: needs.tag.outputs.tagged == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,22 +106,24 @@ jobs:
           # dev version with a local segment (+g<sha>), which PyPI rejects.
           fetch-depth: 0
           fetch-tags: true
+          ref: v${{ needs.tag.outputs.version }}
       - name: Refuse to publish a tag that is not on main
         # The local pre-push hook is a symlink into each clone's working tree, so
         # a clone that has not pulled the main-only fix keeps cutting tags at
         # feature-branch tips and pushing them. This is the server-side backstop:
         # it holds no matter what any developer's clone does.
         #
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
+          release_tag="v${{ needs.tag.outputs.version }}"
+          release_sha="$(git rev-list -n 1 "$release_tag")"
           git fetch --no-tags origin main:refs/remotes/origin/main
-          if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
-            echo "OK: ${GITHUB_REF_NAME} (${GITHUB_SHA:0:8}) is on main."
+          if git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main; then
+            echo "OK: $release_tag (${release_sha:0:8}) is on main."
             exit 0
           fi
-          echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA:0:8}, which is NOT on main. Refusing to publish."
-          echo "::error::A tag cut off a feature branch must not become a release. Delete the tag, merge to main, and let the main push cut the release."
+          echo "::error::$release_tag points at ${release_sha:0:8}, which is NOT on main. Refusing to publish."
+          echo "::error::Preserve the unpublished tag as evidence, merge the change, and let successful main CI cut the next release."
           exit 1
       - uses: actions/setup-python@v5
         with:
@@ -127,6 +131,8 @@ jobs:
       - name: Assert the version to publish is a real release
         # A dev/local version (.devN, +g<sha>, 0.0.0) is rejected by PyPI with a
         # 400, and by then the tag has already been cut. Fail here instead.
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}
         run: |
           set -euo pipefail
           python -m pip install --upgrade setuptools_scm >/dev/null
@@ -139,6 +145,8 @@ jobs:
           esac
       - run: python -m pip install --upgrade build twine
       - run: python -m build
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}
       - run: python -m twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
@@ -147,7 +155,7 @@ jobs:
 
   pypi-publish:
     needs: build
-    # Publish only the artifact built by the gated tag-push run.
+    # Publish only the artifact built by the successful main-CI release run.
     if: >-
       always() && !cancelled() && needs.build.result == 'success'
     runs-on: ubuntu-latest
