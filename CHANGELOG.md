@@ -70,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an opt-in internal session capability issuer for the read-only runtime.
+  It mints a fresh protected-request bearer and rejects reuse of the browser
+  session access token.
+
 - Added a read-only Gantt Flow forecast panel with protected deterministic
   aggregate quantiles and an explicit unavailable state when forecast evidence
   cannot be safely projected.

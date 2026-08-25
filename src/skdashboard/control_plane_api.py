@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import time
 from collections import defaultdict, deque
@@ -466,6 +467,7 @@ def _protected_handler(
     invocation_factory,
     counters,
     session_resolver=None,
+    session_capability_issuer=None,
     require_stream_context=False,
 ):
     async def wrapped(request):
@@ -477,6 +479,11 @@ def _protected_handler(
             response.headers["Cache-Control"] = "no-store"
             return response
         header = request.headers.get("authorization", "")
+        if session_capability_issuer is not None and header:
+            counters["denied"] += 1
+            response = _error(request, 401, "UNAUTHORIZED", "a browser bearer is not accepted")
+            response.headers["Cache-Control"] = "no-store"
+            return response
         if session_resolver is not None and not header:
             try:
                 resolved = await session_resolver(request)
@@ -493,7 +500,18 @@ def _protected_handler(
                     response.headers["Retry-After"] = "5"
                     response.headers["Cache-Control"] = "no-store"
                     return response
-                bearer = getattr(resolved, "access_token", resolved)
+                if session_capability_issuer is None:
+                    bearer = getattr(resolved, "access_token", resolved)
+                elif state == "authenticated":
+                    bearer = session_capability_issuer(
+                        request, resolved, capability, request.url.path
+                    )
+                    if inspect.isawaitable(bearer):
+                        bearer = await bearer
+                    if bearer == getattr(resolved, "access_token", None):
+                        bearer = None
+                else:
+                    bearer = None
             except Exception:
                 bearer = None
             if bearer:
@@ -608,6 +626,7 @@ def routes(
     schedule_forecast_provider=None,
     reliability_provider=None,
     session_resolver=None,
+    session_capability_issuer=None,
     architecture_provider=None,
     governance_provider=None,
     report_provider=None,
@@ -659,6 +678,7 @@ def routes(
                 invocation_factory=invocation_factory,
                 counters=counters,
                 session_resolver=session_resolver,
+                session_capability_issuer=session_capability_issuer,
                 require_stream_context=require_stream_context,
             )
         )
