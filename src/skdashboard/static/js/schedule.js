@@ -117,14 +117,18 @@ function openDetail(id, trigger) {
 
 async function load() {
   document.getElementById("schedule-status").textContent = "Loading";
+  document.getElementById("schedule-forecast-state").textContent = "unavailable";
+  document.getElementById("schedule-forecast-meta").textContent = "No authorized calibrated forecast provider.";
+  document.getElementById("schedule-forecast-ranges").textContent = "Unavailable: no forecast value is inferred.";
   try {
     projection = await getJSON(`/api/v1/schedule/projection?${query()}`);
     render();
-    try { renderForecast(await getJSON(`/api/v1/schedule/forecasts?${query()}`)); } catch (_error) { document.getElementById("schedule-forecast-state").textContent = "unavailable"; document.getElementById("schedule-forecast-meta").textContent = "No authorized calibrated forecast provider."; }
+    try { renderForecast(await getJSON(`/api/v1/schedule/forecasts?${query()}`)); } catch (_error) { document.getElementById("schedule-forecast-ranges").textContent = "Unavailable: no authorized calibrated forecast provider."; }
     if (context.selected_item) openDetail(context.selected_item, document.querySelector(`[data-detail="${CSS.escape(context.selected_item)}"]`));
   } catch (error) {
     document.getElementById("schedule-status").textContent = `Unavailable: ${error.message}`;
     document.getElementById("schedule-rows").innerHTML = `<p>No schedule value is inferred.</p>`;
+    document.getElementById("schedule-forecast-ranges").textContent = "Unavailable: no forecast value is inferred.";
   }
 }
 
