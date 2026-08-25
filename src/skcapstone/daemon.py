@@ -725,7 +725,8 @@ class ComponentManager:
             if dark_reason:
                 self._alert_headless(
                     f"agent-dark: {name}",
-                    f"Daemon component '{name}' went dark: {dark_reason}. Watchdog will attempt restart.",
+                    f"Daemon component '{name}' went dark: {dark_reason}. "
+                    "Watchdog will attempt restart.",
                     dedup_key=f"agent-dark:{name}",
                 )
 
@@ -746,7 +747,9 @@ class ComponentManager:
                     # Strongest daemon-down signal: the watchdog is out of retries.
                     self._alert_headless(
                         f"daemon-down: {name}",
-                        f"Daemon component '{name}' is down: exceeded {recent} restart attempts in {self.RESTART_WINDOW}s. Watchdog gave up; manual intervention needed.",
+                        f"Daemon component '{name}' is down: exceeded {recent} restart "
+                        f"attempts in {self.RESTART_WINDOW}s. Watchdog gave up; manual "
+                        "intervention needed.",
                         dedup_key=f"daemon-down:{name}",
                     )
                 continue
