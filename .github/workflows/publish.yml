@@ -88,6 +88,23 @@ jobs:
             next="v${major}.${minor}.$((patch + 1))"
           done
 
+          # PyPI rejects direct URL requirements even though build and
+          # `twine check` accept them. Refuse them before creating an immutable
+          # release tag. Exact qualification pins belong in the separate
+          # operator constraints file, not public package metadata.
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          requirements = list(project.get("dependencies", ()))
+          for values in project.get("optional-dependencies", {}).values():
+              requirements.extend(values)
+          direct = [requirement for requirement in requirements if " @ " in requirement]
+          if direct:
+              raise SystemExit("::error::PyPI rejects direct URL requirements: " + ", ".join(direct))
+          PY
+
           echo "Cutting $next at ${head_sha:0:8} (previous: ${latest:-none})"
           git tag -a "$next" -m "release: $next from main"
           git push origin "$next"

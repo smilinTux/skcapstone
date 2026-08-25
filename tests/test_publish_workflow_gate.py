@@ -1,7 +1,11 @@
 from pathlib import Path
 
+import tomllib
+
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
+PYPROJECT = ROOT / "pyproject.toml"
+QUALIFIED_REQUIREMENTS = ROOT / "requirements-qualified.txt"
 
 
 def _job(text: str, name: str, next_name: str | None = None) -> str:
@@ -34,3 +38,23 @@ def test_release_waits_for_successful_current_main_ci() -> None:
     assert "ref: v${{ needs.tag.outputs.version }}" in build
     assert "github.event_name == 'push'" not in build
     assert "startsWith(github.ref, 'refs/tags/')" not in build
+
+    metadata_guard = (
+        'direct = [requirement for requirement in requirements if " @ " in requirement]'
+    )
+    assert metadata_guard in tag
+    assert tag.index(metadata_guard) < tag.index('git tag -a "$next"')
+
+
+def test_public_metadata_is_pypi_safe_and_exact_qualification_pin_is_retained() -> None:
+    project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
+    requirements = list(project.get("dependencies", ()))
+    for values in project.get("optional-dependencies", {}).values():
+        requirements.extend(values)
+
+    assert "capauth>=0.3.8" in requirements
+    assert not [requirement for requirement in requirements if " @ " in requirement]
+    assert QUALIFIED_REQUIREMENTS.read_text(encoding="utf-8").splitlines()[-1] == (
+        "capauth @ git+https://github.com/smilinTux/capauth.git"
+        "@56b161415748f4c3e2bea0e7fad98c6d104376de"
+    )

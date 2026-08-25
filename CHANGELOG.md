@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep public package metadata installable from PyPI while preserving the exact
+  reviewed CapAuth source revision in an explicit qualification constraint, and
+  reject direct URL requirements before creating an immutable release tag.
+
 - Recover legacy refresh reservations that predate the reservation timestamp.
 
 - Gate automatic patch tags and PyPI publication on successful CI for the exact

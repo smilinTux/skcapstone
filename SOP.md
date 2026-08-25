@@ -207,16 +207,22 @@ This repo has **two release surfaces, and only one of them is complete.**
 
 ### Library release (complete)
 
-`.github/workflows/publish.yml` owns it. On a push to `main`, the `tag` job ranks every
-`v*.*.*` tag with `sort -V`, takes the highest, and cuts the next patch tag (it never
-uses `git describe`, because describe only sees ancestor tags and once restarted the
-sequence at 0.0.1 below an existing 0.1.0). The `build` job refuses to publish a tag
-that is not an ancestor of `origin/main` (override: repository variable
-`ALLOW_OFF_MAIN_RELEASE=1`), and refuses any version containing `dev`, `+`, or `0.0.0`.
-`pypi-publish` uploads via PyPI Trusted Publishing (OIDC, environment `pypi`), with no
-token. Both `build` and `pypi-publish` carry `always() && !cancelled()` guards because a
-skipped job propagates through the whole graph, not one level: a bare `needs:` there
-once made a tagged release build cleanly and publish nothing.
+`.github/workflows/publish.yml` owns it. A completed successful `CI` run for the exact
+current `main` SHA starts the release workflow. The `tag` job ranks every `v*.*.*` tag
+with `sort -V`, rejects public package metadata containing direct URL requirements,
+and then cuts the next patch tag. The same gated workflow checks out that exact tag,
+verifies its main ancestry and release version, builds it, and uploads it through PyPI
+Trusted Publishing. There is no manual dispatch or off-main override.
+
+Public metadata depends on `capauth>=0.3.8`. To reproduce the exact reviewed CapAuth
+source stack from a repository checkout, apply the separate operator constraint:
+
+```bash
+python -m pip install -c requirements-qualified.txt .
+```
+
+The constraint is intentionally not public distribution metadata because PyPI rejects
+direct URL requirements. Updating it requires a new qualification review.
 
 **Do not push tags by hand.** The push to `main` cuts the tag.
 

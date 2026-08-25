@@ -45,6 +45,26 @@ trigger another workflow. It correctly created `v0.1.80` at
 started and PyPI returned 404 for version `0.1.80`. The tag remains immutable.
 The follow-up repair removes reliance on a second workflow event.
 
+The second qualification created `v0.1.81` only after green CI and built the
+exact tag successfully. PyPI then rejected its direct CapAuth VCS requirement
+with HTTP 400. Concurrent main commit `d23031b3283aefa7d9d66806b7ba3999953c288d`
+repeated that result as `v0.1.82`. Neither version was published and both tags
+remain immutable evidence.
+
+The metadata repair restores the public `capauth>=0.3.8` requirement, retains
+the exact reviewed CapAuth commit in `requirements-qualified.txt`, and adds a
+pre-tag workflow guard that rejects any direct URL in required or optional
+dependencies. The guard runs before `git tag`, so this known PyPI policy
+failure cannot strand another release tag.
+
+Local metadata-repair qualification:
+
+- sensitivity check with the direct VCS requirement restored: 1 failed as expected
+- repaired complete test suite: 546 passed with 8 inherited deprecation warnings
+- Ruff, format, YAML parse, diff, and new-text character checks: passed
+- isolated `0.1.83` wheel and source build: passed
+- `twine check` and wheel `Requires-Dist` inspection: passed with no direct URL
+
 A failed, cancelled, skipped, or superseded main CI run must produce no patch
 tag. Qualification compares tag targets and workflow timestamps without
 creating any tag by hand.

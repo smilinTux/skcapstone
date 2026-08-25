@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
 ]
 dependencies = [
-    "capauth @ git+https://github.com/smilinTux/capauth.git@56b161415748f4c3e2bea0e7fad98c6d104376de",
+    "capauth>=0.3.8",
     "cryptography>=42",
     "httpx>=0.27",
     "jsonschema>=4.23",
