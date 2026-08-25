@@ -573,7 +573,8 @@ class TestSidebarNav:
     """
 
     # Every page carries the same section nav; keep the destinations pinned.
-    NAV_LINKS = ("/cockpit", "/cmdb", "/board", "/assistant", "/trust")
+    # Home's canonical destination is /control-plane/now on every page, not "/".
+    NAV_LINKS = ("/control-plane/now", "/cockpit", "/cmdb", "/board", "/assistant", "/trust")
     PAGES = ("/", "/board", "/cockpit", "/cmdb", "/assistant", "/trust")
 
     def _client(self, agent_home):
@@ -594,8 +595,7 @@ class TestSidebarNav:
         client = self._client(agent_home)
         for path in self.PAGES:
             body = client.get(path).text
-            home_link = "/control-plane/now" if path == "/" else "/"
-            for link in (*self.NAV_LINKS, home_link):
+            for link in self.NAV_LINKS:
                 assert f'href="{link}"' in body, f"{path} lost nav link {link}"
 
     def test_stylesheet_positions_rail_on_left(self, agent_home):
