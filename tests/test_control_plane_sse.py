@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from test_control_plane_decision_context import ORIGIN
 from test_control_plane_decision_context import Rig as DecisionRig
 
 from skdashboard import dashboard, dashboard_kanban
-from skdashboard.control_plane_api import _stream_policy_boundary, _typed_context
+from skdashboard.control_plane_api import _stream_policy_boundary, _StreamAuthority, _typed_context
 from skdashboard.dashboard import create_app
 from skdashboard.dashboard_kanban import (
     PUBLIC_STREAM_LANE,
@@ -132,6 +133,173 @@ def test_reconnect_topics_concurrent_consumers_and_slow_consumer_are_bounded() -
         subscription.close()
 
 
+def _stream_authority(rig):
+    request = type(
+        "Request",
+        (),
+        {
+            "headers": {"origin": ORIGIN},
+            "url": type("URL", (), {"path": "/api/v1/events"})(),
+        },
+    )()
+    context, verifier = _typed_context(
+        request,
+        rig.bearer,
+        "skdashboard.events.read",
+        "/api/v1/events",
+        decision_authorizer=rig.authorizer,
+        invocation_factory=rig.factory,
+    )
+    return _StreamAuthority(rig.authorizer, context, verifier, _stream_policy_boundary(context))
+
+
+def _protected_http_stream(tmp_path, monkeypatch, rig, mutate):
+    bus = Bus()
+    monkeypatch.setattr(dashboard_kanban, "BUS", bus)
+
+    async def finite_stream(subscription, *, authority, currentness_seconds):
+        del currentness_seconds
+        stream = stream_sse(
+            subscription,
+            heartbeat_seconds=0,
+            currentness_seconds=0,
+            authority=authority,
+        )
+        yield await anext(stream)
+        mutate(authority)
+        bus.publish({"type": "board", "secret": "never"}, boundary=authority._boundary)
+        yield await anext(stream)
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+
+    monkeypatch.setattr(dashboard_kanban, "stream_sse", finite_stream)
+    response = TestClient(
+        create_app(
+            tmp_path,
+            control_plane_decision_authorizer=rig.authorizer,
+            control_plane_invocation_factory=rig.factory,
+        )
+    ).get(
+        "/api/v1/events",
+        headers={"Authorization": f"Bearer {rig.bearer}", "Origin": ORIGIN},
+    )
+    assert response.status_code == 200
+    assert response.text == (
+        ': heartbeat\n\nevent: reset-required\ndata: {"reason":"authority unavailable"}\n\n'
+    )
+    assert "never" not in response.text
+    assert bus.subscriber_count == 0
+
+
+def test_signed_expiry_stops_idle_http_stream_and_cleans_without_late_payload() -> None:
+    async def run() -> None:
+        now = [datetime.now(timezone.utc)]
+        rig = DecisionRig(
+            target="/api/v1/events",
+            capability="skdashboard.events.read",
+            resource_type="tenant",
+            resource_id="tenant-a",
+            ttl_seconds=1,
+            clock=lambda: now[0],
+        )
+        authority = _stream_authority(rig)
+        bus = Bus()
+        subscription = bus.open_stream(boundary="protected")
+        body = stream_sse(
+            subscription,
+            heartbeat_seconds=0.02,
+            currentness_seconds=0.01,
+            authority=authority,
+        )
+        assert await anext(body) == ": heartbeat\n\n"
+        now[0] += timedelta(seconds=2)
+        late = bus.publish({"type": "board", "secret": "never"}, boundary="protected")
+        terminal = await anext(body)
+        assert bus.subscriber_count == 0
+        assert terminal == 'event: reset-required\ndata: {"reason":"authority unavailable"}\n\n'
+        assert late.data not in terminal
+        with pytest.raises(StopAsyncIteration):
+            await anext(body)
+        assert bus.subscriber_count == 0
+
+    asyncio.run(run())
+
+
+def test_signed_expiry_http_response_has_no_late_event_and_cleans(tmp_path, monkeypatch) -> None:
+    now = [datetime.now(timezone.utc)]
+    rig = DecisionRig(
+        target="/api/v1/events",
+        capability="skdashboard.events.read",
+        resource_type="tenant",
+        resource_id="tenant-a",
+        ttl_seconds=1,
+        clock=lambda: now[0],
+    )
+    _protected_http_stream(
+        tmp_path,
+        monkeypatch,
+        rig,
+        lambda _authority: now.__setitem__(0, now[0] + timedelta(seconds=2)),
+    )
+
+
+def test_revoked_or_unavailable_currentness_stops_http_stream_and_cleans() -> None:
+    async def run(mode) -> None:
+        rig = DecisionRig(
+            target="/api/v1/events",
+            capability="skdashboard.events.read",
+            resource_type="tenant",
+            resource_id="tenant-a",
+        )
+        authority = _stream_authority(rig)
+        bus = Bus()
+        subscription = bus.open_stream(boundary="protected")
+        body = stream_sse(subscription, heartbeat_seconds=0, authority=authority)
+        assert await anext(body) == ": heartbeat\n\n"
+        mode(rig, authority)
+        late = bus.publish({"type": "board", "secret": "never"}, boundary="protected")
+        terminal = await anext(body)
+        assert bus.subscriber_count == 0
+        assert terminal == 'event: reset-required\ndata: {"reason":"authority unavailable"}\n\n'
+        assert late.data not in terminal
+        with pytest.raises(StopAsyncIteration):
+            await anext(body)
+        assert bus.subscriber_count == 0
+
+    def revoke(rig, authority):
+        rig.revocations.revoke(authority._prior.credential_digest)
+
+    def unavailable(_rig, authority):
+        authority._capauth._revocations = type(
+            "Unavailable", (), {"snapshot": lambda *_: (_ for _ in ()).throw(OSError())}
+        )()
+
+    asyncio.run(run(revoke))
+    asyncio.run(run(unavailable))
+
+
+def test_revoked_and_unavailable_currentness_http_responses_are_payload_free(
+    tmp_path, monkeypatch
+) -> None:
+    for mutate in (
+        lambda rig, authority: rig.revocations.revoke(authority._prior.credential_digest),
+        lambda _rig, authority: setattr(
+            authority._capauth,
+            "_revocations",
+            type("Unavailable", (), {"snapshot": lambda *_: (_ for _ in ()).throw(OSError())})(),
+        ),
+    ):
+        rig = DecisionRig(
+            target="/api/v1/events",
+            capability="skdashboard.events.read",
+            resource_type="tenant",
+            resource_id="tenant-a",
+        )
+        _protected_http_stream(
+            tmp_path, monkeypatch, rig, lambda authority: mutate(rig, authority)
+        )
+
+
 def test_heartbeat_cancellation_and_producer_failure_cleanup() -> None:
     async def run() -> None:
         bus = Bus(stream_id="d" * 32)
@@ -228,7 +396,8 @@ def test_typed_http_sse_isolates_tenant_caller_and_resumes_same_boundary(
     bus = Bus(stream_id="3" * 32)
     monkeypatch.setattr(dashboard_kanban, "BUS", bus)
 
-    async def finite_stream(subscription):
+    async def finite_stream(subscription, *, authority, currentness_seconds):
+        del currentness_seconds
         try:
             if subscription.reset is not None:
                 yield "event: reset-required\n\n"
@@ -236,6 +405,7 @@ def test_typed_http_sse_isolates_tenant_caller_and_resumes_same_boundary(
                 yield f"event: {event.event}\ndata: {event.data}\n\n"
         finally:
             subscription.close()
+            authority.close()
 
     monkeypatch.setattr(dashboard_kanban, "stream_sse", finite_stream)
     caller_a = DecisionRig(

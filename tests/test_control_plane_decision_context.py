@@ -81,8 +81,15 @@ class Rig:
         capability: str = "skdashboard.read",
         resource_type: str = "skdashboard.control_plane.projection",
         resource_id: str | None = "overview",
+        *,
+        ttl_seconds: int = 120,
+        clock=None,
+        revocations=None,
     ) -> None:
         self.principal = Principal(principal_id=subject, subject=subject, kind="human")
+        self.ttl_seconds = ttl_seconds
+        self.now = clock() if clock is not None else NOW
+        clock = clock or (lambda: self.now)
         self.binding = ControlPlaneBinding(
             principal=self.principal,
             node_id="chiap04",
@@ -92,12 +99,10 @@ class Rig:
             resource_type=resource_type,
             resource_id=resource_id,
             owner_policy_revision=REVISION,
-            expires_at=NOW + timedelta(minutes=2),
+            expires_at=self.now + timedelta(seconds=ttl_seconds),
         )
         signer = Signer()
-
-        def clock():
-            return NOW
+        self.revocations = revocations or InMemoryRevocationBackend()
 
         capability = CapabilityAuthorizer(
             trusted_issuers=StaticTrustedIssuerBackend(
@@ -111,7 +116,7 @@ class Rig:
                 )
             ),
             principals=InMemoryPrincipalPolicyBackend((self.principal,)),
-            revocations=InMemoryRevocationBackend(),
+            revocations=self.revocations,
             replay=InMemoryReplayBackend(clock=clock),
             audit=InMemoryAuditSink(),
             signature_verifier=signer,
@@ -131,7 +136,7 @@ class Rig:
             self.issuer.issue_root(
                 principal=self.principal,
                 scope=self.binding.capability_scope(),
-                ttl_seconds=120,
+                ttl_seconds=self.ttl_seconds,
             )
         )
 

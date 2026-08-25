@@ -20,6 +20,7 @@ MAX_LIMIT = 200
 MAX_BEARER_BYTES = 64 * 1024
 TENANT_RESOURCE_TYPE = "tenant"
 ALLOWED_BROWSER_ORIGINS = frozenset({"https://10.0.0.139:7778", "https://100.81.238.58:7778"})
+SSE_CURRENTNESS_SECONDS = 1
 
 
 class ControlPlaneInvocationFactory(Protocol):
@@ -387,6 +388,75 @@ def _stream_policy_boundary(context) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+class _StreamAuthority:
+    """Keep one signed CapAuth decision current for a protected SSE iterator."""
+
+    def __init__(self, authorizer, context, verifier, boundary) -> None:
+        self._authorizer = authorizer
+        self._context = context
+        self._verifier = verifier
+        self._boundary = boundary
+        self._capauth = verifier._authorizer
+        self._presented = verifier._presented
+        self._request = verifier._request
+        self._prior = verifier._prior
+        self._receipt = None
+
+    def check(self) -> bool:
+        from capauth import DecisionState, join_policy_decisions
+
+        context = self._context
+        if context is None or datetime.now(timezone.utc) >= context.expires_at:
+            self.close()
+            return False
+        try:
+            first = self._authorizer._owner_decision(context.binding, self._prior)
+            if self._verifier is not None:
+                verifier, self._verifier = self._verifier, None
+                allowed = (
+                    verifier.check_before_owner_read(context) is DecisionState.ALLOW
+                    and verifier.check_after_owner_read(context) is DecisionState.ALLOW
+                )
+                verifier.close()
+                if not allowed:
+                    raise ValueError
+            else:
+                current = self._capauth.revalidate_current(
+                    self._presented, self._request, self._prior, self._receipt
+                )
+                self._receipt = None
+                if current is not self._prior:
+                    raise ValueError
+            second = self._authorizer._owner_decision(context.binding, self._prior)
+            if (
+                first is None
+                or first != second
+                or join_policy_decisions(context.binding, self._prior, second)
+                != context.joined_decision
+                or _stream_policy_boundary(context) != self._boundary
+            ):
+                raise ValueError
+            self._receipt = self._capauth._mint_currentness_receipts(
+                self._presented, self._request, self._prior, count=1
+            )[0]
+        except Exception:
+            self.close()
+            return False
+        return True
+
+    def close(self) -> None:
+        verifier, self._verifier = self._verifier, None
+        if verifier is not None:
+            verifier.close()
+        if self._receipt is not None:
+            self._capauth.discard_currentness_receipts((self._receipt,))
+            self._receipt = None
+        self._presented = None
+        self._request = None
+        self._prior = None
+        self._context = None
+
+
 def _protected_handler(
     handler,
     capability: str,
@@ -461,7 +531,11 @@ def _protected_handler(
             context, verifier = authority
             if require_stream_context:
                 try:
-                    request.state.control_plane_stream_boundary = _stream_policy_boundary(context)
+                    boundary = _stream_policy_boundary(context)
+                    request.state.control_plane_stream_boundary = boundary
+                    request.state.control_plane_stream_authority = _StreamAuthority(
+                        decision_authorizer, context, verifier, boundary
+                    )
                 except (TypeError, ValueError):
                     if verifier is not None:
                         verifier.close()
@@ -475,7 +549,7 @@ def _protected_handler(
                     response.headers["Cache-Control"] = "no-store"
                     return response
             request.state.control_plane_decision = context
-            if verifier is not None:
+            if verifier is not None and not require_stream_context:
                 request.state.control_plane_currentness_verifier = verifier
         else:
             if require_stream_context:
@@ -499,13 +573,21 @@ def _protected_handler(
                 )
                 response.headers["Cache-Control"] = "no-store"
                 return response
+        response = None
         try:
             response = await handler(request)
             response.headers["Cache-Control"] = "no-store"
             return response
         finally:
+            authority = getattr(request.state, "control_plane_stream_authority", None)
+            if authority is not None and not isinstance(response, StreamingResponse):
+                authority.close()
             try:
                 del request.state.control_plane_stream_boundary
+            except (AttributeError, KeyError):
+                pass
+            try:
+                del request.state.control_plane_stream_authority
             except (AttributeError, KeyError):
                 pass
             _clear_decision(request)
@@ -1113,7 +1195,11 @@ def routes(
             )
 
         return StreamingResponse(
-            stream_sse(subscription),
+            stream_sse(
+                subscription,
+                authority=request.state.control_plane_stream_authority,
+                currentness_seconds=SSE_CURRENTNESS_SECONDS,
+            ),
             media_type="text/event-stream",
             headers={
                 "X-Accel-Buffering": "no",

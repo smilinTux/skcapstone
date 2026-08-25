@@ -647,29 +647,65 @@ async def stream_sse(
     subscription: StreamSubscription,
     *,
     heartbeat_seconds: float = SSE_HEARTBEAT_SECONDS,
+    authority=None,
+    currentness_seconds: float | None = None,
 ):
-    """Serialize one bounded subscription until reset or cancellation."""
+    """Serialize one bounded subscription until reset, authority loss, or cancellation."""
 
     def frame(event: StreamEvent) -> str:
         return f"id: {event.event_id}\nevent: {event.event}\ndata: {event.data}\n\n"
 
+    def authority_is_current() -> bool:
+        return authority is None or authority.check()
+
+    def authority_reset() -> str:
+        subscription.close()
+        return 'event: reset-required\ndata: {"reason":"authority unavailable"}\n\n'
+
+    if currentness_seconds is None:
+        currentness_seconds = heartbeat_seconds
+    timeout = min(heartbeat_seconds, currentness_seconds)
+    elapsed = heartbeat_seconds
     try:
         if subscription.reset is not None:
+            if not authority_is_current():
+                yield authority_reset()
+                return
             yield (
                 "event: reset-required\n"
                 f"data: {json.dumps({'reason': subscription.reset.reason}, separators=(',', ':'))}\n\n"
             )
+            if not authority_is_current():
+                yield authority_reset()
+                return
             yield ": heartbeat\n\n"
             return
         for event in subscription.replay:
+            if not authority_is_current():
+                yield authority_reset()
+                return
             yield frame(event)
+        if not authority_is_current():
+            yield authority_reset()
+            return
         yield ": heartbeat\n\n"
+        elapsed = 0
         while subscription.queue is not None:
             try:
-                item = await asyncio.wait_for(subscription.queue.get(), timeout=heartbeat_seconds)
+                item = await asyncio.wait_for(subscription.queue.get(), timeout=timeout)
             except asyncio.TimeoutError:
+                elapsed += timeout
+                if not authority_is_current():
+                    yield authority_reset()
+                    return
+                if elapsed < heartbeat_seconds:
+                    continue
+                elapsed = 0
                 yield ": heartbeat\n\n"
                 continue
+            if not authority_is_current():
+                yield authority_reset()
+                return
             if isinstance(item, StreamReset):
                 yield (
                     "event: reset-required\n"
@@ -679,6 +715,8 @@ async def stream_sse(
             yield frame(item)
     finally:
         subscription.close()
+        if authority is not None:
+            authority.close()
 
 
 BUS = Bus()
