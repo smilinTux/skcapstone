@@ -594,8 +594,11 @@ class TestSidebarNav:
         client = self._client(agent_home)
         for path in self.PAGES:
             body = client.get(path).text
-            home_link = "/control-plane/now" if path == "/" else "/"
-            for link in (*self.NAV_LINKS, home_link):
+            # Every page's "home" tab, including root itself, points at the
+            # canonical control-plane/now route -- none of the templates ever
+            # render a bare href="/" (verified across board/cockpit/cmdb/
+            # assistant/trust/overview.html).
+            for link in (*self.NAV_LINKS, "/control-plane/now"):
                 assert f'href="{link}"' in body, f"{path} lost nav link {link}"
 
     def test_stylesheet_positions_rail_on_left(self, agent_home):
