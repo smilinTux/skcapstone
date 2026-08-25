@@ -1,12 +1,23 @@
+import asyncio
 import os
+import ssl
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+import jwt
+import pytest
 from cryptography.fernet import Fernet
 from starlette.testclient import TestClient
 
 from skdashboard.read_only import create_read_only_app
-from skdashboard.session_adapter import COOKIE_NAME, EncryptedSessionAdapter, SessionConfig
+from skdashboard.session_adapter import (
+    COOKIE_NAME,
+    EncryptedSessionAdapter,
+    OIDCClient,
+    OIDCExchangeError,
+    SessionConfig,
+)
 
 ORIGIN = "https://10.0.0.139:7778"
 
@@ -257,3 +268,112 @@ def test_launcher_session_configuration_is_all_or_nothing(tmp_path, monkeypatch)
         ]
     )
     assert any(route.path == "/auth/login" for route in observed["app"].routes)
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [("grant_not_current", "grant_not_current"), ("token=must-not-leak", "unknown")],
+)
+def test_oidc_http_failure_keeps_only_allowlisted_detail(monkeypatch, detail, expected):
+    real_client = httpx.AsyncClient
+
+    def handler(request):
+        return httpx.Response(403, json={"detail": detail}, request=request)
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    client = OIDCClient(SessionConfig("https://capauth.example", f"{ORIGIN}/auth/callback", "s"))
+    with pytest.raises(OIDCExchangeError) as caught:
+        asyncio.run(client.exchange({"grant_type": "authorization_code"}))
+    assert (caught.value.category, caught.value.status_code, caught.value.detail) == (
+        "upstream_denied",
+        403,
+        expected,
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure", "category"),
+    [("tls", "tls_unavailable"), ("network", "network_unavailable"), ("timeout", "upstream_timeout")],
+)
+def test_oidc_transport_failures_are_distinct(monkeypatch, failure, category):
+    real_client = httpx.AsyncClient
+
+    def handler(request):
+        if failure == "tls":
+            try:
+                raise ssl.SSLError("certificate failed")
+            except ssl.SSLError as exc:
+                raise httpx.ConnectError("connect failed", request=request) from exc
+        if failure == "timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
+        raise httpx.ConnectError("connect failed", request=request)
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    client = OIDCClient(SessionConfig("https://capauth.example", f"{ORIGIN}/auth/callback", "s"))
+    with pytest.raises(OIDCExchangeError, match=category) as caught:
+        asyncio.run(client.exchange({"grant_type": "authorization_code"}))
+    assert caught.value.category == category
+
+
+def test_oidc_issuer_and_nonce_failures_are_distinct(monkeypatch):
+    real_client = httpx.AsyncClient
+    issuer = "https://capauth.example"
+    metadata_issuer = ["https://wrong.example"]
+
+    def handler(request):
+        if request.url.path == "/oidc/token":
+            return httpx.Response(200, json={"id_token": "opaque"}, request=request)
+        if request.url.path == "/.well-known/openid-configuration":
+            return httpx.Response(
+                200,
+                json={"issuer": metadata_issuer[0], "jwks_uri": issuer + "/oidc/jwks.json"},
+                request=request,
+            )
+        return httpx.Response(200, json={"keys": [{"kid": "one"}]}, request=request)
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    client = OIDCClient(SessionConfig(issuer, f"{ORIGIN}/auth/callback", "s"))
+    with pytest.raises(OIDCExchangeError, match="issuer_mismatch"):
+        asyncio.run(client.exchange({"grant_type": "authorization_code"}, expected_nonce="n"))
+
+    metadata_issuer[0] = issuer
+    monkeypatch.setattr(jwt, "get_unverified_header", lambda _token: {"kid": "one"})
+    monkeypatch.setattr(jwt.PyJWK, "from_dict", lambda _key: type("Key", (), {"key": object()})())
+    monkeypatch.setattr(jwt, "decode", lambda *_args, **_kwargs: {"nonce": "wrong"})
+    with pytest.raises(OIDCExchangeError, match="nonce_mismatch"):
+        asyncio.run(client.exchange({"grant_type": "authorization_code"}, expected_nonce="n"))
+
+
+def test_callback_returns_reference_and_logs_only_safe_denial(tmp_path, caplog):
+    class DeniedTokens(Tokens):
+        async def exchange(self, values, *, expected_nonce=None):
+            raise OIDCExchangeError(
+                "upstream_denied", status_code=403, detail="grant_not_current"
+            )
+
+    session = adapter(tmp_path, tokens=DeniedTokens())
+    client = TestClient(create_read_only_app(tmp_path, session_adapter=session), base_url=ORIGIN)
+    with caplog.at_level("WARNING", logger="skdashboard.session_adapter"):
+        query, response = login(client)
+    body = response.json()
+    assert response.status_code == 403
+    assert body["error"] == "authentication_denied"
+    assert len(body["reference"]) == 16
+    assert body["reference"] in caplog.text
+    assert "category=upstream_denied status=403 detail=grant_not_current" in caplog.text
+    assert query["state"][0] not in caplog.text
+    assert "one-use-code" not in caplog.text
+    assert "test-secret" not in caplog.text
+    assert response.headers["cache-control"] == "no-store"

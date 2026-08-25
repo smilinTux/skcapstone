@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve fail-closed OIDC callback errors while logging only allowlisted failure
+  categories with a browser-safe correlation reference.
+
 - Mark corrupt and unavailable session authorization responses as retryable.
 
 - Preserve typed unavailable and corrupt durable-session states for retryable authorization responses.

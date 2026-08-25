@@ -5,9 +5,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import secrets
 import sqlite3
+import ssl
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +28,58 @@ SESSION_TTL = 8 * 60 * 60
 LOGIN_TTL = 5 * 60
 MAX_LOGIN_GLOBAL = 128
 MAX_LOGIN_SOURCE = 16
+
+logger = logging.getLogger(__name__)
+
+_SAFE_OAUTH_DETAILS = frozenset(
+    {
+        "configuration_unavailable",
+        "enrollment_not_current",
+        "grant_not_current",
+        "invalid_client",
+        "invalid_grant",
+        "rate_limited",
+        "signer_unavailable",
+        "state_unavailable",
+        "unsupported_grant_type",
+    }
+)
+
+
+class OIDCExchangeError(RuntimeError):
+    """A credential-free description of an OIDC exchange failure."""
+
+    def __init__(
+        self,
+        category: str,
+        *,
+        status_code: int | None = None,
+        detail: str = "unknown",
+    ) -> None:
+        super().__init__(category)
+        self.category = category
+        self.status_code = status_code
+        self.detail = detail
+
+
+def _safe_oauth_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return "unknown"
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return detail if detail in _SAFE_OAUTH_DETAILS else "unknown"
+
+
+def _is_tls_error(error: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ssl.SSLError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _digest(value: str) -> str:
@@ -61,38 +115,61 @@ class OIDCClient:
 
     async def exchange(self, values: dict[str, str], *, expected_nonce: str | None = None) -> dict:
         values = {**values, "client_id": "skdashboard", "client_secret": self.config.client_secret}
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(f"{self.config.issuer}/oidc/token", data=values)
-            response.raise_for_status()
-            result = response.json()
-            if expected_nonce is not None:
-                discovery = await client.get(
-                    f"{self.config.issuer}/.well-known/openid-configuration"
-                )
-                discovery.raise_for_status()
-                metadata = discovery.json()
-                if metadata.get("issuer") != self.config.issuer:
-                    raise ValueError("issuer mismatch")
-                keys_response = await client.get(metadata["jwks_uri"])
-                keys_response.raise_for_status()
-                header = jwt.get_unverified_header(result["id_token"])
-                matches = [
-                    key
-                    for key in keys_response.json()["keys"]
-                    if key.get("kid") == header.get("kid")
-                ]
-                if len(matches) != 1:
-                    raise ValueError("signing key unavailable")
-                claims = jwt.decode(
-                    result["id_token"],
-                    jwt.PyJWK.from_dict(matches[0]).key,
-                    algorithms=["RS256"],
-                    audience="skdashboard",
-                    issuer=self.config.issuer,
-                    options={"require": ["exp", "iat", "iss", "aud", "sub", "nonce"]},
-                )
-                if not secrets.compare_digest(str(claims["nonce"]), expected_nonce):
-                    raise ValueError("nonce mismatch")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(f"{self.config.issuer}/oidc/token", data=values)
+                response.raise_for_status()
+                result = response.json()
+                if expected_nonce is not None:
+                    discovery = await client.get(
+                        f"{self.config.issuer}/.well-known/openid-configuration"
+                    )
+                    discovery.raise_for_status()
+                    metadata = discovery.json()
+                    if metadata.get("issuer") != self.config.issuer:
+                        raise OIDCExchangeError("issuer_mismatch")
+                    keys_response = await client.get(metadata["jwks_uri"])
+                    keys_response.raise_for_status()
+                    try:
+                        header = jwt.get_unverified_header(result["id_token"])
+                        matches = [
+                            key
+                            for key in keys_response.json()["keys"]
+                            if key.get("kid") == header.get("kid")
+                        ]
+                        if len(matches) != 1:
+                            raise OIDCExchangeError("signing_key_unavailable")
+                        claims = jwt.decode(
+                            result["id_token"],
+                            jwt.PyJWK.from_dict(matches[0]).key,
+                            algorithms=["RS256"],
+                            audience="skdashboard",
+                            issuer=self.config.issuer,
+                            options={"require": ["exp", "iat", "iss", "aud", "sub", "nonce"]},
+                        )
+                    except OIDCExchangeError:
+                        raise
+                    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
+                        raise OIDCExchangeError("token_validation_failed") from exc
+                    if not secrets.compare_digest(str(claims["nonce"]), expected_nonce):
+                        raise OIDCExchangeError("nonce_mismatch")
+        except OIDCExchangeError:
+            raise
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            category = "upstream_denied" if 400 <= status_code < 500 else "upstream_unavailable"
+            raise OIDCExchangeError(
+                category,
+                status_code=status_code,
+                detail=_safe_oauth_detail(exc.response),
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise OIDCExchangeError("upstream_timeout") from exc
+        except httpx.TransportError as exc:
+            category = "tls_unavailable" if _is_tls_error(exc) else "network_unavailable"
+            raise OIDCExchangeError(category) from exc
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise OIDCExchangeError("upstream_response_invalid") from exc
         return result
 
     async def revoke(self, refresh_token: str) -> None:
@@ -232,8 +309,14 @@ class EncryptedSessionAdapter:
                 expected_nonce=transaction["nonce"],
             )
             record = self._validate_token_response(token, now)
+        except OIDCExchangeError as exc:
+            return self._authentication_failure(
+                exc.category, status_code=exc.status_code, detail=exc.detail
+            )
+        except (InvalidToken, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return self._authentication_failure("local_response_invalid")
         except Exception:
-            return JSONResponse({"error": "authentication_unavailable"}, status_code=503)
+            return self._authentication_failure("internal_unavailable")
         handle, csrf = _opaque(), _opaque()
         record["csrf"] = csrf
         record["expires_at"] = now + SESSION_TTL
@@ -253,6 +336,31 @@ class EncryptedSessionAdapter:
             max_age=SESSION_TTL,
         )
         return response
+
+    def _authentication_failure(
+        self,
+        category: str,
+        *,
+        status_code: int | None = None,
+        detail: str = "unknown",
+    ) -> JSONResponse:
+        reference = secrets.token_hex(8)
+        logger.warning(
+            "oidc_callback_failed reference=%s category=%s status=%s detail=%s",
+            reference,
+            category,
+            status_code if status_code is not None else "none",
+            detail,
+        )
+        denied = status_code is not None and 400 <= status_code < 500
+        return JSONResponse(
+            {
+                "error": "authentication_denied" if denied else "authentication_unavailable",
+                "reference": reference,
+            },
+            status_code=403 if denied else 503,
+            headers={"Cache-Control": "no-store"},
+        )
 
     def _validate_token_response(self, token: dict, now: int) -> dict:
         required = {"access_token", "refresh_token", "expires_in", "scope", "token_type"}
@@ -391,4 +499,11 @@ class EncryptedSessionAdapter:
         return response
 
 
-__all__ = ["COOKIE_NAME", "EncryptedSessionAdapter", "SessionConfig", "SessionResolution"]
+__all__ = [
+    "COOKIE_NAME",
+    "EncryptedSessionAdapter",
+    "OIDCClient",
+    "OIDCExchangeError",
+    "SessionConfig",
+    "SessionResolution",
+]
