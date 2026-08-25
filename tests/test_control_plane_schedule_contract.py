@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / "docs" / "contracts" / "schedule" / "v1.0.0"
 EXPECTED = {
     "control-plane-reschedule-preview.v1.0.0.schema.json",
+    "control-plane-schedule-insight.v1.0.0.schema.json",
     "control-plane-schedule-projection.v1.0.0.schema.json",
     "control-plane-schedule-scenario.v1.0.0.schema.json",
     "openapi.control-plane-schedule.v1.0.0.json",
@@ -283,6 +284,21 @@ def test_reschedule_preview_requires_exact_version_hash_and_no_execution() -> No
         invalid[field] = value
         with pytest.raises(ValidationError):
             validator.validate(invalid)
+
+
+def test_schedule_insight_is_evidence_grounded_and_never_an_action() -> None:
+    validator = _validator("control-plane-schedule-insight.v1.0.0.schema.json")
+    insight = {
+        "schema_version": "1.0.0", "insight_id": "insight-1", "forecast_ref": "forecast://1",
+        "state": "available", "risk": "dependency slip", "support_evidence": ["evidence://1"],
+        "counter_evidence": ["evidence://2"], "uncertainty": ["sample variance"],
+        "affected_outcomes": ["milestone://1"], "alternatives": ["hold capacity"],
+        "expected_impact": "one period", "action": "none", "writes_owner_records": False,
+    }
+    validator.validate(insight)
+    invalid = dict(insight, action="reschedule")
+    with pytest.raises(ValidationError):
+        validator.validate(invalid)
 
 
 def test_contract_forbids_individual_productivity_ranking() -> None:

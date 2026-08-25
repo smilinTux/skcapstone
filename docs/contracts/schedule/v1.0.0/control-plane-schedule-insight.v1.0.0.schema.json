@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.skworld.local/skdashboard/schedule/v1.0.0/control-plane-schedule-insight.v1.0.0.schema.json",
+  "title": "SKDashboard read-only schedule insight version 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "insight_id", "forecast_ref", "state", "risk", "support_evidence", "counter_evidence", "uncertainty", "affected_outcomes", "alternatives", "expected_impact", "action", "writes_owner_records"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "insight_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "forecast_ref": {"type": "string", "minLength": 1, "maxLength": 512},
+    "state": {"enum": ["available", "abstained"]},
+    "risk": {"type": ["string", "null"]},
+    "support_evidence": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "counter_evidence": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "uncertainty": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "affected_outcomes": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "alternatives": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "expected_impact": {"type": ["string", "null"]},
+    "abstention_reason": {"type": "string", "minLength": 1},
+    "action": {"const": "none"},
+    "writes_owner_records": {"const": false}
+  },
+  "allOf": [{
+    "if": {"properties": {"state": {"const": "abstained"}}, "required": ["state"]},
+    "then": {"required": ["abstention_reason"], "properties": {"risk": {"const": null}, "expected_impact": {"const": null}}}
+  }]
+}
