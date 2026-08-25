@@ -53,6 +53,13 @@ The follow-up keeps all assertions and polling cadence unchanged. Only Chrome
 startup receives a bounded 30-second readiness window, with a 60-second outer
 subprocess limit. No test retry or skip is added.
 
+Follow-up local results:
+
+- real-Chrome qualifier: 5 of 5 passed
+- focused workspace tests: 4 passed
+- complete suite: 546 passed with 8 inherited deprecation warnings
+- full Ruff, Python format, Node syntax, and diff checks: passed
+
 Rollback is a normal reviewed revert. It restores only the qualifier and test
 wrapper, but it also restores the reproduced fixed-port collision and hidden
 diagnostics, so rollback is not a safe operational workaround.
