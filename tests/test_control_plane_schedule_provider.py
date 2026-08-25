@@ -108,7 +108,7 @@ def test_schedule_forecast_provider_is_protected_and_fails_closed(tmp_path: Path
         def read(self, context, query, home, *, currentness_verifier):
             assert context.binding == rig.binding
             assert home == tmp_path
-            return {"state": "abstained", "writes_owner_records": False, "query": query}
+            return {"state": "abstained", "writes_owner_records": False}
 
     app = create_app(tmp_path, control_plane_decision_authorizer=rig.authorizer, control_plane_invocation_factory=rig.factory, control_plane_schedule_forecast_provider=Provider())
     path = "/api/v1/schedule/forecasts?role=project-manager&scope=estate&window=latest&baseline=none&service=all&lens=gantt&timezone=UTC"
@@ -133,3 +133,11 @@ def test_schedule_forecast_rejects_unsafe_or_unavailable_provider_output(tmp_pat
     response = TestClient(app).get(path, headers={"Authorization": f"Bearer {rig.bearer}", "Origin": ORIGIN})
     assert response.status_code == 503
     assert response.json()["code"] == "SCHEDULE_FORECAST_UNAVAILABLE"
+
+    class Bypass:
+        def read(self, *_args, **_kwargs):
+            return {"mutation": True, "reschedule": {"owner_operation": "move_date"}, "writes_owner_records": False}
+
+    app = create_app(tmp_path, control_plane_decision_authorizer=rig.authorizer, control_plane_invocation_factory=rig.factory, control_plane_schedule_forecast_provider=Bypass())
+    response = TestClient(app).get(path, headers={"Authorization": f"Bearer {rig.fresh_bearer()}", "Origin": ORIGIN})
+    assert response.status_code == 503

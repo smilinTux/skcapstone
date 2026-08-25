@@ -909,8 +909,13 @@ def routes(
                 return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
         except Exception:
             return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
-        forbidden = {"action", "external_action", "dispatch", "execute", "execution"}
-        if not isinstance(result, dict) or result.get("writes_owner_records") is not False or forbidden.intersection(result):
+        allowed_keys = {
+            "schema_version", "artifact_kind", "state", "abstention_reason", "method", "calculation_owner",
+            "method_discrimination", "cohort", "scope", "history_window", "sample_periods", "period_cadence_days",
+            "remaining_work", "iterations", "seed", "assumptions", "exclusions", "individual_ranking_prohibited",
+            "completion_quantiles_periods", "milestone_confidence", "writes_owner_records",
+        }
+        if not isinstance(result, dict) or result.get("writes_owner_records") is not False or set(result) - allowed_keys:
             return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "invalid schedule forecast")
         return _response(request, result)
 
