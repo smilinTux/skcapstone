@@ -4,13 +4,21 @@
   "title": "SKDashboard read-only schedule insight version 1.0.0",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "insight_id", "forecast_ref", "state", "risk", "support_evidence", "counter_evidence", "uncertainty", "affected_outcomes", "alternatives", "expected_impact", "action", "writes_owner_records"],
+  "required": ["schema_version", "insight_id", "forecast_ref", "target_id", "state", "truth_state", "policy_reference", "source_versions", "engine_provenance", "model_provenance", "reproducibility_key", "risk", "explanation", "support_evidence", "counter_evidence", "uncertainty", "affected_outcomes", "alternatives", "expected_impact", "action", "writes_owner_records"],
   "properties": {
     "schema_version": {"const": "1.0.0"},
     "insight_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "forecast_ref": {"type": "string", "minLength": 1, "maxLength": 512},
+    "target_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "state": {"enum": ["available", "abstained"]},
+    "truth_state": {"enum": ["current", "stale", "partial", "unavailable", "unreachable", "unknown"]},
+    "policy_reference": {"type": "string", "minLength": 1, "maxLength": 512},
+    "source_versions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+    "engine_provenance": {"type": "string", "minLength": 1, "maxLength": 512},
+    "model_provenance": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+    "reproducibility_key": {"type": "string", "minLength": 1, "maxLength": 512},
     "risk": {"type": ["string", "null"]},
+    "explanation": {"type": ["string", "null"]},
     "support_evidence": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "counter_evidence": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "uncertainty": {"type": "array", "items": {"type": "string", "minLength": 1}},
@@ -23,6 +31,19 @@
   },
   "allOf": [{
     "if": {"properties": {"state": {"const": "abstained"}}, "required": ["state"]},
-    "then": {"required": ["abstention_reason"], "properties": {"risk": {"const": null}, "expected_impact": {"const": null}}}
+    "then": {
+      "required": ["abstention_reason"],
+      "properties": {
+        "risk": {"const": null}, "explanation": {"const": null}, "expected_impact": {"const": null}, "model_provenance": {"const": null},
+        "support_evidence": {"maxItems": 0}, "counter_evidence": {"maxItems": 0}, "uncertainty": {"maxItems": 0}, "affected_outcomes": {"maxItems": 0}, "alternatives": {"maxItems": 0}
+      }
+    },
+    "else": {
+      "not": {"required": ["abstention_reason"]},
+      "properties": {
+        "risk": {"type": "string", "minLength": 1}, "explanation": {"type": "string", "minLength": 1}, "expected_impact": {"type": "string", "minLength": 1}, "model_provenance": {"type": "string", "minLength": 1},
+        "support_evidence": {"minItems": 1}, "counter_evidence": {"minItems": 1}, "uncertainty": {"minItems": 1}, "affected_outcomes": {"minItems": 1}, "alternatives": {"minItems": 1}
+      }
+    }
   }]
 }

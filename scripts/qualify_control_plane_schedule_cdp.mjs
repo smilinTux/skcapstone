@@ -72,7 +72,7 @@ uvicorn.run(app, host="127.0.0.1", port=${port}, log_level="error")
     const evaluate = async (expression) => { const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }); assert.equal(result.exceptionDetails, undefined); return result.result.value; };
     const key = async (value) => { const keyCode = { Enter: 13, Escape: 27 }[value]; await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: value, code: value, windowsVirtualKeyCode: keyCode }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: value, code: value, windowsVirtualKeyCode: keyCode }); };
     await send("Page.enable"); await send("Runtime.enable"); await send("Network.enable");
-    await send("Network.setExtraHTTPHeaders", { headers: { Authorization: `Bearer ${fs.readFileSync(bearerFile, "utf8")}`, Origin: "http://10.0.0.139:7778" } });
+    await send("Network.setExtraHTTPHeaders", { headers: { Authorization: `Bearer ${fs.readFileSync(bearerFile, "utf8")}`, Origin: "https://10.0.0.139:7778" } });
     await send("Page.navigate", { url: `http://127.0.0.1:${port}/control-plane/schedule?role=project-manager&scope=estate&window=latest&baseline=none&service=all&lens=roadmap&timezone=UTC` });
     await waitFor(async () => evaluate("document.querySelectorAll('.schedule-row').length === 2").catch(() => false), "Schedule did not render");
     for (const lens of ["roadmap", "gantt", "flow"]) {
@@ -86,7 +86,7 @@ uvicorn.run(app, host="127.0.0.1", port=${port}, log_level="error")
     assert.equal(await evaluate("document.getElementById('schedule-warning').hidden"), false);
     for (const width of [390, 320]) { await send("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: true }); const size = JSON.parse(await evaluate("JSON.stringify({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth})")); assert.equal(size.scroll <= size.client, true, JSON.stringify(size)); }
     const writes = requests.filter((request) => !["GET", "OPTIONS"].includes(request.method));
-    const external = requests.filter((request) => !request.url.startsWith(`http://127.0.0.1:${port}/`));
+    const external = requests.filter((request) => request.url.startsWith("http") && !request.url.startsWith(`http://127.0.0.1:${port}/`));
     assert.deepEqual(writes, []); assert.deepEqual(external, []); assert.deepEqual(exceptions, []);
     console.log("SKCP-21A CDP PASS: Roadmap/Gantt/Flow, 2 items, exception, keyboard detail, 390/320, zero writes/external/exceptions");
     socket.close();

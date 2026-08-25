@@ -289,8 +289,10 @@ def test_reschedule_preview_requires_exact_version_hash_and_no_execution() -> No
 def test_schedule_insight_is_evidence_grounded_and_never_an_action() -> None:
     validator = _validator("control-plane-schedule-insight.v1.0.0.schema.json")
     insight = {
-        "schema_version": "1.0.0", "insight_id": "insight-1", "forecast_ref": "forecast://1",
-        "state": "available", "risk": "dependency slip", "support_evidence": ["evidence://1"],
+        "schema_version": "1.0.0", "insight_id": "insight-1", "forecast_ref": "forecast://1", "target_id": "release-1",
+        "state": "available", "truth_state": "current", "policy_reference": "policy://schedule/allow", "source_versions": ["schedule:v1"],
+        "engine_provenance": "engine://forecast/v1", "model_provenance": "model://schedule-explainer/v1", "reproducibility_key": "sha256:" + "b" * 64,
+        "risk": "dependency slip", "explanation": "A blocker lies on the frozen path.", "support_evidence": ["evidence://1"],
         "counter_evidence": ["evidence://2"], "uncertainty": ["sample variance"],
         "affected_outcomes": ["milestone://1"], "alternatives": ["hold capacity"],
         "expected_impact": "one period", "action": "none", "writes_owner_records": False,
@@ -299,6 +301,18 @@ def test_schedule_insight_is_evidence_grounded_and_never_an_action() -> None:
     invalid = dict(insight, action="reschedule")
     with pytest.raises(ValidationError):
         validator.validate(invalid)
+
+    ambiguous = dict(insight, risk=None, explanation=None, expected_impact=None, support_evidence=[], counter_evidence=[], uncertainty=[], affected_outcomes=[], alternatives=[], abstention_reason="insufficient evidence")
+    with pytest.raises(ValidationError):
+        validator.validate(ambiguous)
+
+    abstained = dict(ambiguous, state="abstained", model_provenance=None)
+    validator.validate(abstained)
+    for field in ("abstention_reason", "truth_state", "policy_reference", "source_versions", "engine_provenance", "reproducibility_key"):
+        invalid = dict(abstained)
+        invalid.pop(field)
+        with pytest.raises(ValidationError):
+            validator.validate(invalid)
 
 
 def test_contract_forbids_individual_productivity_ranking() -> None:
