@@ -187,6 +187,7 @@ def _capauth_authorize(home: Path, bearer: str, capability: str, target: str) ->
     """Verify one bounded audience token and its current CapAuth policy."""
 
     try:
+        from capauth import canonical_subject
         from capauth.authz import decide
         from capauth.tokens import has_scope, import_token, verify_audience_token
 
@@ -204,8 +205,11 @@ def _capauth_authorize(home: Path, bearer: str, capability: str, target: str) ->
             or not verify_audience_token(token, "skdashboard", home=home)
         ):
             return False
+        if len(payload.subject) not in {40, 64}:
+            return False
+        policy_subject = canonical_subject(f"device:{payload.subject}")
         decision = decide(
-            payload.subject,
+            policy_subject,
             capability,
             resource={"target": target},
             context={"service": "skdashboard-api"},
