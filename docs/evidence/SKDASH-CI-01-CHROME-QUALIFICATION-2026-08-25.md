@@ -32,6 +32,16 @@ Qualification must prove that the harness passes while port `17884` remains
 occupied, then pass repeated focused runs and the complete suite. CI remains
 authoritative for Python 3.10 and 3.12.
 
+Local results:
+
+- fixed-port sensitivity before repair: exit 1 with `Dashboard did not start`
+- repaired qualifier while port `17884` stayed occupied: 5 of 5 passed
+- forced Chrome failure: expected test failure named stage `Chrome startup`
+- focused workspace tests: 4 passed
+- complete suite: 546 passed with 8 inherited deprecation warnings
+- full Ruff, Python format, Node syntax, and diff checks: passed
+- recent scratch created by this qualifier after success or failure: none
+
 Rollback is a normal reviewed revert. It restores only the qualifier and test
 wrapper, but it also restores the reproduced fixed-port collision and hidden
 diagnostics, so rollback is not a safe operational workaround.
