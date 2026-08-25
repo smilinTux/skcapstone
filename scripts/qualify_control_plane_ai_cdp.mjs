@@ -20,7 +20,7 @@ async function waitFor(check, message) {
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "skcp24-ai-home-"));
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "skcp24-ai-cdp-"));
-const port = 17884;
+const portFile = path.join(home, "server.port");
 const python = `
 import asyncio
 import json
@@ -62,7 +62,16 @@ class Boundary:
         if role == "architect" or (role == "operator" and counts[role] > 1):
             await asyncio.sleep(0.35)
         await app(scope, receive, send)
-uvicorn.run(Boundary(), host="127.0.0.1", port=${port}, log_level="error")
+async def serve():
+    server = uvicorn.Server(uvicorn.Config(Boundary(), host="127.0.0.1", port=0, log_level="error"))
+    task = asyncio.create_task(server.serve())
+    while not server.started:
+        if task.done():
+            await task
+        await asyncio.sleep(0.01)
+    Path(${JSON.stringify(portFile)}).write_text(str(server.servers[0].sockets[0].getsockname()[1]))
+    await task
+asyncio.run(serve())
 `;
 const server = spawn(process.env.PYTHON || "python", ["-c", python], {
   cwd: repo,
@@ -74,8 +83,25 @@ const chrome = spawn(process.env.CHROME_PATH || "/usr/bin/google-chrome", [
   `--user-data-dir=${profile}`, "about:blank",
 ], { stdio: "ignore" });
 
+let stage = "dashboard startup";
+let result;
+const stop = async (child) => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill("SIGTERM");
+  await Promise.race([exited, sleep(2000)]);
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await exited;
+  }
+};
+
 try {
+  await waitFor(() => fs.existsSync(portFile), "Dashboard did not publish its assigned port");
+  const port = Number(fs.readFileSync(portFile, "utf8"));
+  assert.ok(Number.isInteger(port) && port > 0 && port < 65536, "Dashboard published an invalid port");
   await waitFor(async () => fetch(`http://127.0.0.1:${port}/control-plane/ai`).then((response) => response.ok).catch(() => false), "Dashboard did not start");
+  stage = "Chrome startup";
   const active = path.join(profile, "DevToolsActivePort");
   await waitFor(() => fs.existsSync(active), "Chrome did not start");
   const chromePort = fs.readFileSync(active, "utf8").trim().split("\n")[0];
@@ -114,6 +140,7 @@ try {
   await send("Page.enable"); await send("Runtime.enable"); await send("Network.enable"); await send("Accessibility.enable");
   await send("Network.setExtraHTTPHeaders", { headers: { Authorization: "Bearer skcp24-cdp", Origin: "https://10.0.0.139:7778" } });
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  stage = "initial render";
   await send("Page.navigate", { url: `http://127.0.0.1:${port}/control-plane/ai?role=operator&scope=estate&window=latest&baseline=none&service=all` });
   await waitFor(async () => evaluate("document.querySelectorAll('.ai-lane').length === 3").catch(() => false), "Initial lanes did not render");
   assert.equal(await evaluate("document.querySelectorAll('#ai-quality-rows tr').length"), 11);
@@ -150,12 +177,14 @@ try {
   assert.equal(await evaluate("document.getElementById('ai-detail').open"), false);
   assert.equal(await evaluate("document.activeElement.dataset.dimension"), "Client");
   const screenshot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-  fs.writeFileSync("/tmp/skcp24-ai-outcomes-rereview.png", screenshot.data, "base64");
+  fs.writeFileSync(path.join(home, "ai-outcomes.png"), screenshot.data, "base64");
 
+  stage = "delayed authorized purge";
   await selectRole("architect");
   assert.equal(await purged(), true, "Prior authorized DOM survived a delayed fetch");
   await waitFor(async () => evaluate("document.querySelectorAll('.ai-lane').length === 3").catch(() => false), "Delayed authorized response did not render");
 
+  stage = "401 purge";
   await selectRole("project-manager");
   try {
     await waitFor(async () => evaluate("document.getElementById('ai-status').innerText === 'UNAVAILABLE'").catch(() => false), "401 did not fail closed");
@@ -165,12 +194,14 @@ try {
   }
   assert.equal(await purged(), true, "401 retained protected DOM");
 
+  stage = "stale response purge";
   await selectRole("operator");
   assert.equal(await purged(), true, "Reload did not purge protected DOM");
   await evaluate(`history.pushState({}, "", "/control-plane/ai?role=operator&scope=estate&window=latest&baseline=none&service=all&selected_silo=ai"); window.dispatchEvent(new PopStateEvent("popstate"));`);
   await sleep(500);
   assert.equal(await purged(), true, "Invalid popstate allowed an older response to repaint");
 
+  stage = "403 purge";
   await evaluate(`history.replaceState({}, "", "/control-plane/ai?role=operator&scope=estate&window=latest&baseline=none&service=all")`);
   await selectRole("architect");
   await waitFor(async () => evaluate("document.getElementById('ai-status').innerText === 'UNAVAILABLE'").catch(() => false), "403 did not fail closed");
@@ -181,10 +212,15 @@ try {
   assert.equal(exceptions.length, 0, JSON.stringify(exceptions));
   assert.equal(requests.filter((request) => request.method !== "GET").length, 0);
   assert.equal(requests.filter((request) => !request.url.startsWith(`http://127.0.0.1:${port}/`)).length, 0);
-  const result = { result: "PASS", base: "7299700a", budgetRows: 11, registry: true, keyboard: true, focusReturn: true, axNames: true, lightContrast, darkContrast, reducedMotion: true, responsive: [390, 320], delayedPurge: true, unauthorizedPurge: true, forbiddenPurge: true, staleResponseBlocked: true, requests: requests.length, writes: 0, external: 0, exceptions: 0 };
-  console.log(JSON.stringify(result));
+  result = { result: "PASS", base: "7299700a", budgetRows: 11, registry: true, keyboard: true, focusReturn: true, axNames: true, lightContrast, darkContrast, reducedMotion: true, responsive: [390, 320], delayedPurge: true, unauthorizedPurge: true, forbiddenPurge: true, staleResponseBlocked: true, requests: requests.length, writes: 0, external: 0, exceptions: 0 };
   socket.close();
+} catch (error) {
+  console.error(JSON.stringify({ stage, error: error instanceof Error ? error.message : String(error), serverExit: server.exitCode, chromeExit: chrome.exitCode }));
+  throw error;
 } finally {
-  server.kill("SIGTERM");
-  chrome.kill("SIGTERM");
+  await Promise.all([stop(server), stop(chrome)]);
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true });
 }
+assert.equal(fs.existsSync(home) || fs.existsSync(profile), false, "Qualification scratch survived cleanup");
+console.log(JSON.stringify({ ...result, scratchCleaned: true }));

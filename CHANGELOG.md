@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Make the real-Chrome AI qualification use an OS-assigned port, report its
+  exact failed stage safely, stop child processes, and remove its own scratch.
+
 - Keep public package metadata installable from PyPI while preserving the exact
   reviewed CapAuth source revision in an explicit qualification constraint, and
   reject direct URL requirements before creating an immutable release tag.
