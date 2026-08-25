@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Redact OIDC callback query values from Uvicorn access logs while preserving
+  callback paths, response status, safe application references, and failure categories.
+
 - Canonicalize verified CapAuth OIDC fingerprint subjects to their device identity
   before current dashboard policy evaluation.
 
