@@ -88,6 +88,19 @@ jobs:
             next="v${major}.${minor}.$((patch + 1))"
           done
 
+          # PyPI rejects direct URL requirements even though build and
+          # `twine check` accept them. Refuse them before creating an immutable
+          # release tag. Exact qualification pins belong in the separate
+          # operator constraints file, not public package metadata.
+          python - <<'PY'
+          from pathlib import Path
+
+          lines = Path("pyproject.toml").read_text(encoding="utf-8").splitlines()
+          direct = [line.strip().rstrip(",") for line in lines if line.lstrip().startswith('"') and " @ " in line]
+          if direct:
+              raise SystemExit("::error::PyPI rejects direct URL requirements: " + ", ".join(direct))
+          PY
+
           echo "Cutting $next at ${head_sha:0:8} (previous: ${latest:-none})"
           git tag -a "$next" -m "release: $next from main"
           git push origin "$next"

@@ -1,0 +1,4 @@
+# Preserve the exact CapAuth revision from the reviewed qualification stack.
+# Public package metadata stays PyPI-compatible; operators apply this constraint
+# explicitly when reproducing that exact source qualification.
+capauth @ git+https://github.com/smilinTux/capauth.git@56b161415748f4c3e2bea0e7fad98c6d104376de
