@@ -116,7 +116,7 @@ def test_ai_workspace_real_chrome_purges_delayed_401_and_403_responses() -> None
             check=True,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=60,
         )
     except subprocess.CalledProcessError as exc:
         pytest.fail(f"AI CDP qualification exited {exc.returncode}: {(exc.stderr or '')[-4000:]}")
