@@ -52,7 +52,13 @@ def _canonical_bearer(scope: str, *, subject: str = OIDC_FINGERPRINT) -> str:
 def test_v1_board_is_bounded_etagged_and_read_only(tmp_path: Path) -> None:
     board = {
         "tasks": [
-            {"id": str(i), "title": f"Task {i}", "priority": "high", "status": "open", "claimed_by": None}
+            {
+                "id": str(i),
+                "title": f"Task {i}",
+                "priority": "high",
+                "status": "open",
+                "claimed_by": None,
+            }
             for i in range(3)
         ],
         "summary": {"total": 3, "done": 0, "open": 3, "in_progress": 0},
@@ -62,16 +68,23 @@ def test_v1_board_is_bounded_etagged_and_read_only(tmp_path: Path) -> None:
         # The route captures its adapter at app construction, so replace the
         # read method at its source and prove no Board mutation API is touched.
         pass
-    with patch("skcoord.coordination.Board.get_task_views") as reads, patch(
-        "skcoord.coordination.Board.load_agents", return_value=[]
-    ), patch("skcoord.coordination.Board.claim", side_effect=AssertionError("mutation"), create=True):
+    with (
+        patch("skcoord.coordination.Board.get_task_views") as reads,
+        patch("skcoord.coordination.Board.load_agents", return_value=[]),
+        patch(
+            "skcoord.coordination.Board.claim", side_effect=AssertionError("mutation"), create=True
+        ),
+    ):
         reads.return_value = []
         response = TestClient(app).get("/api/v1/board/summary?limit=1", headers=READ_HEADERS)
     assert response.status_code == 200
     assert response.json()["schema_version"] == "1.1.0"
     assert response.json()["freshness"]["truth_state"] == "unknown"
     assert response.headers["etag"]
-    assert TestClient(app).get("/api/v1/board/summary?limit=201", headers=READ_HEADERS).status_code == 400
+    assert (
+        TestClient(app).get("/api/v1/board/summary?limit=201", headers=READ_HEADERS).status_code
+        == 400
+    )
 
 
 def test_v1_source_failure_is_partial_not_healthy(tmp_path: Path) -> None:
@@ -88,7 +101,16 @@ def test_v1_economy_keeps_unavailable_cost_distinct_from_zero(tmp_path: Path) ->
         "generated_at": "2026-08-23T00:00:00Z",
         "selected_lane": "harness_reported",
         "available_lanes": ["harness_reported"],
-        "summary": {"input": 2, "output": 3, "cache_read": 0, "cache_write": 0, "reasoning": 0, "total": 5, "cost_usd": 0.0, "cost_state": "unavailable"},
+        "summary": {
+            "input": 2,
+            "output": 3,
+            "cache_read": 0,
+            "cache_write": 0,
+            "reasoning": 0,
+            "total": 5,
+            "cost_usd": 0.0,
+            "cost_state": "unavailable",
+        },
         "collectors": [],
         "coverage": {"expected_nodes": 1, "reporting_nodes": 0, "missing_nodes": ["node-a"]},
         "errors": [],
@@ -102,7 +124,10 @@ def test_v1_economy_keeps_unavailable_cost_distinct_from_zero(tmp_path: Path) ->
 
 
 def test_v1_fleet_disables_alert_side_effects(tmp_path: Path) -> None:
-    with patch("skdashboard.dashboard_fleet.get_drift", return_value={"nodes": [], "skipped": [], "errors": []}) as read:
+    with patch(
+        "skdashboard.dashboard_fleet.get_drift",
+        return_value={"nodes": [], "skipped": [], "errors": []},
+    ) as read:
         response = TestClient(_app(tmp_path)).get("/api/v1/fleet/summary", headers=READ_HEADERS)
     assert response.status_code == 200
     read.assert_called_once_with(tmp_path, alert=False)
@@ -115,9 +140,14 @@ def test_v1_etag_and_sse_reconnect_contract(tmp_path: Path) -> None:
     assert unchanged.status_code == 304
     cursor = "djE6MQ"
     stream = client.get(f"/api/v1/events?cursor={cursor}", headers=EVENT_HEADERS)
-    assert "event: reset-required" in stream.text
-    assert ": heartbeat" in stream.text
-    assert client.get("/api/v1/events?topics=" + ",".join(["x"] * 17), headers=EVENT_HEADERS).status_code == 400
+    assert stream.status_code == 403
+    assert stream.json()["message"] == "typed Tenant and caller context is required"
+    assert (
+        client.get(
+            "/api/v1/events?topics=" + ",".join(["x"] * 17), headers=EVENT_HEADERS
+        ).status_code
+        == 403
+    )
 
 
 def test_unknown_and_wrong_method_never_catch_all_success(tmp_path: Path) -> None:
@@ -152,7 +182,7 @@ def test_protected_reads_and_equivalent_sse_fail_closed(tmp_path: Path) -> None:
 def test_named_origins_and_exact_capabilities_preserve_legitimate_reads(tmp_path: Path) -> None:
     client = TestClient(_app(tmp_path))
     assert client.get("/api/v1/overview", headers=READ_HEADERS).status_code == 200
-    assert client.get("/api/v1/events", headers=EVENT_HEADERS).status_code == 200
+    assert client.get("/api/v1/events?cursor=djE6MQ", headers=EVENT_HEADERS).status_code == 403
     assert client.get("/api/v1/events", headers=READ_HEADERS).status_code == 403
 
 
@@ -174,9 +204,10 @@ def test_canonical_capauth_transport_reaches_signature_and_pdp_for_all_routes(
 ) -> None:
     read = _canonical_bearer("skdashboard.read")
     events = _canonical_bearer("skdashboard.events.read")
-    with patch("capauth.tokens.verify_audience_token", return_value=True) as verify, patch(
-        "capauth.authz.decide", return_value=SimpleNamespace(allow=True)
-    ) as decide:
+    with (
+        patch("capauth.tokens.verify_audience_token", return_value=True) as verify,
+        patch("capauth.authz.decide", return_value=SimpleNamespace(allow=True)) as decide,
+    ):
         client = TestClient(create_app(tmp_path))
         for path in ("/api/v1/overview", "/metrics"):
             response = client.get(
@@ -185,12 +216,13 @@ def test_canonical_capauth_transport_reaches_signature_and_pdp_for_all_routes(
             )
             assert response.status_code == 200
         response = client.get(
-            "/api/v1/events",
+            "/api/v1/events?cursor=djE6MQ",
             headers={"Authorization": f"Bearer {events}", "Origin": TAILNET_ORIGIN},
         )
-    assert response.status_code == 200
-    assert verify.call_count == 3
-    assert decide.call_count == 3
+    assert response.status_code == 403
+    assert response.json()["message"] == "typed Tenant and caller context is required"
+    assert verify.call_count == 2
+    assert decide.call_count == 2
 
 
 def test_oidc_fingerprint_is_canonicalized_before_policy_decision(tmp_path: Path) -> None:
@@ -230,12 +262,11 @@ def test_noncanonical_capauth_transport_is_denied_before_crypto(tmp_path: Path) 
     canonical = _canonical_bearer("skdashboard.read")
     decoded = base64.urlsafe_b64decode(canonical).decode()
     unsafe = (decoded, canonical.rstrip("="), canonical + "\n", "%%%%")
-    with patch("capauth.tokens.verify_audience_token", return_value=True) as verify, patch(
-        "capauth.authz.decide", return_value=SimpleNamespace(allow=True)
-    ) as decide:
+    with (
+        patch("capauth.tokens.verify_audience_token", return_value=True) as verify,
+        patch("capauth.authz.decide", return_value=SimpleNamespace(allow=True)) as decide,
+    ):
         for bearer in unsafe:
-            assert not _capauth_authorize(
-                tmp_path, bearer, "skdashboard.read", "/api/v1/overview"
-            )
+            assert not _capauth_authorize(tmp_path, bearer, "skdashboard.read", "/api/v1/overview")
     verify.assert_not_called()
     decide.assert_not_called()

@@ -18,9 +18,8 @@ from starlette.routing import Route
 SCHEMA_VERSION = "1.1.0"
 MAX_LIMIT = 200
 MAX_BEARER_BYTES = 64 * 1024
-ALLOWED_BROWSER_ORIGINS = frozenset(
-    {"https://10.0.0.139:7778", "https://100.81.238.58:7778"}
-)
+TENANT_RESOURCE_TYPE = "tenant"
+ALLOWED_BROWSER_ORIGINS = frozenset({"https://10.0.0.139:7778", "https://100.81.238.58:7778"})
 
 
 class ControlPlaneInvocationFactory(Protocol):
@@ -120,12 +119,14 @@ def _envelope(
         ],
     }
     if not items and not errors:
-        envelope["errors"] = [{
-            "code": "SOURCE_UNKNOWN",
-            "message": "The source returned no observations",
-            "retryable": True,
-            "request_id": request_id,
-        }]
+        envelope["errors"] = [
+            {
+                "code": "SOURCE_UNKNOWN",
+                "message": "The source returned no observations",
+                "retryable": True,
+                "request_id": request_id,
+            }
+        ]
     return envelope
 
 
@@ -151,10 +152,19 @@ def _response(request, body: dict):
     # changes. Hash only the bounded projection so conditional GETs are useful.
     projection = {
         key: body.get(key)
-        for key in ("schema_version", "source_owner", "scope", "metrics", "items", "page", "errors")
+        for key in (
+            "schema_version",
+            "source_owner",
+            "scope",
+            "metrics",
+            "items",
+            "page",
+            "errors",
+        )
     }
     for error in projection.get("errors") or []:
         error.pop("request_id", None)
+
     def source_projection(value):
         if isinstance(value, dict):
             return {
@@ -271,9 +281,7 @@ def _typed_context(
     elif observed_origin is not None:
         return None
     verifier = None
-    authorize_with_currentness = getattr(
-        decision_authorizer, "authorize_with_currentness", None
-    )
+    authorize_with_currentness = getattr(decision_authorizer, "authorize_with_currentness", None)
     if callable(authorize_with_currentness):
         issued = authorize_with_currentness(bearer, invocation)
         if type(issued) is not tuple or len(issued) != 2:
@@ -341,6 +349,44 @@ def _typed_context(
     return context, verifier
 
 
+def _stream_policy_boundary(context) -> str:
+    """Return an opaque exact Tenant/caller boundary from typed CapAuth context."""
+    from capauth import SanitizedControlPlaneDecisionV1
+
+    if type(context) is not SanitizedControlPlaneDecisionV1:
+        raise TypeError("protected SSE requires typed authorization context")
+    binding = context.binding
+    joined = context.joined_decision
+    scopes = (binding.capability_scope(), context.capauth_decision.scope, joined.scope)
+    resource_types = {
+        binding.resource_type,
+        joined.resource_type,
+        *(scope.resource_type for scope in scopes),
+    }
+    tenant_ids = {
+        binding.resource_id,
+        joined.resource_id,
+        *(scope.resource_id for scope in scopes),
+    }
+    if resource_types != {TENANT_RESOURCE_TYPE} or len(tenant_ids) != 1 or None in tenant_ids:
+        raise ValueError("protected SSE requires one exact typed authenticated Tenant")
+    tenant_id = binding.resource_id
+    facts = {
+        "tenant": tenant_id,
+        "principal": binding.principal.model_dump(mode="json"),
+        "agent_id": binding.agent_id,
+        "node_id": binding.node_id,
+        "purpose": binding.purpose,
+        "audience": binding.audience,
+        "capability": binding.capability,
+        "target": binding.target,
+        "resource_type": binding.resource_type,
+        "owner_policy_revision": binding.owner_policy_revision,
+    }
+    encoded = json.dumps(facts, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _protected_handler(
     handler,
     capability: str,
@@ -350,6 +396,7 @@ def _protected_handler(
     invocation_factory,
     counters,
     session_resolver=None,
+    require_stream_context=False,
 ):
     async def wrapped(request):
         _clear_decision(request)
@@ -366,7 +413,13 @@ def _protected_handler(
                 state = getattr(resolved, "state", None)
                 if state in {"corrupt", "unavailable"}:
                     counters["denied"] += 1
-                    response = _error(request, 503, "SESSION_UNAVAILABLE", "session authorization is temporarily unavailable", retryable=True)
+                    response = _error(
+                        request,
+                        503,
+                        "SESSION_UNAVAILABLE",
+                        "session authorization is temporarily unavailable",
+                        retryable=True,
+                    )
                     response.headers["Retry-After"] = "5"
                     response.headers["Cache-Control"] = "no-store"
                     return response
@@ -406,10 +459,35 @@ def _protected_handler(
                 response.headers["Cache-Control"] = "no-store"
                 return response
             context, verifier = authority
+            if require_stream_context:
+                try:
+                    request.state.control_plane_stream_boundary = _stream_policy_boundary(context)
+                except (TypeError, ValueError):
+                    if verifier is not None:
+                        verifier.close()
+                    counters["denied"] += 1
+                    response = _error(
+                        request,
+                        403,
+                        "FORBIDDEN",
+                        "typed Tenant and caller context is required",
+                    )
+                    response.headers["Cache-Control"] = "no-store"
+                    return response
             request.state.control_plane_decision = context
             if verifier is not None:
                 request.state.control_plane_currentness_verifier = verifier
         else:
+            if require_stream_context:
+                counters["denied"] += 1
+                response = _error(
+                    request,
+                    403,
+                    "FORBIDDEN",
+                    "typed Tenant and caller context is required",
+                )
+                response.headers["Cache-Control"] = "no-store"
+                return response
             try:
                 allowed = authorize(bearer, capability, request.url.path)
             except Exception:
@@ -426,6 +504,10 @@ def _protected_handler(
             response.headers["Cache-Control"] = "no-store"
             return response
         finally:
+            try:
+                del request.state.control_plane_stream_boundary
+            except (AttributeError, KeyError):
+                pass
             _clear_decision(request)
 
     return wrapped
@@ -461,9 +543,7 @@ def routes(
     hits: dict[str, deque[float]] = defaultdict(deque)
     counters = {"requests": 0, "denied": 0}
     authorize = authorizer or (
-        lambda bearer, capability, target: _capauth_authorize(
-            home, bearer, capability, target
-        )
+        lambda bearer, capability, target: _capauth_authorize(home, bearer, capability, target)
     )
 
     def limited(handler):
@@ -474,7 +554,9 @@ def routes(
             while recent and recent[0] <= now - 60:
                 recent.popleft()
             if len(recent) >= 120:
-                response = _error(request, 429, "RATE_LIMITED", "read rate limit exceeded", retryable=True)
+                response = _error(
+                    request, 429, "RATE_LIMITED", "read rate limit exceeded", retryable=True
+                )
                 response.headers["Retry-After"] = "60"
                 return response
             recent.append(now)
@@ -483,7 +565,7 @@ def routes(
 
         return wrapped
 
-    def protected(handler, capability: str):
+    def protected(handler, capability: str, *, require_stream_context=False):
         return limited(
             _protected_handler(
                 handler,
@@ -493,17 +575,24 @@ def routes(
                 invocation_factory=invocation_factory,
                 counters=counters,
                 session_resolver=session_resolver,
+                require_stream_context=require_stream_context,
             )
         )
 
     async def health(request):
         raw = health_reader(home)
         errors = [raw["error"]] if raw.get("error") else []
-        safe = [] if errors else [{
-            "component": "skcapstone",
-            "state": raw.get("consciousness", "unknown").lower(),
-            "pillars": raw.get("pillars", {}),
-        }]
+        safe = (
+            []
+            if errors
+            else [
+                {
+                    "component": "skcapstone",
+                    "state": raw.get("consciousness", "unknown").lower(),
+                    "pillars": raw.get("pillars", {}),
+                }
+            ]
+        )
         return _response(request, _envelope(request, "skcapstone", safe, errors))
 
     async def board(request):
@@ -558,25 +647,39 @@ def routes(
                 raise ValueError("measurement_lane is invalid")
             raw = dashboard_skcounter.get_ai_usage(
                 home,
-                {"lane": lane, "from": request.query_params.get("from", ""), "to": request.query_params.get("to", "")},
+                {
+                    "lane": lane,
+                    "from": request.query_params.get("from", ""),
+                    "to": request.query_params.get("to", ""),
+                },
             )
             summary = raw.get("summary", {})
             coverage = raw.get("coverage", {})
             cost = summary.get("cost_usd") if summary.get("cost_state") == "available" else None
-            items = [{
-                "measurement_lane": raw.get("selected_lane"),
-                "available_lanes": raw.get("available_lanes", []),
-                "tokens": {key: summary.get(key, 0) for key in dashboard_skcounter.TOKEN_FIELDS},
-                "cost_usd": cost,
-                "cost_state": summary.get("cost_state", "unavailable"),
-                "collectors": raw.get("collectors", []),
-                "expected_nodes": coverage.get("expected_nodes", 0),
-                "reporting_nodes": coverage.get("reporting_nodes", 0),
-                "missing_nodes": coverage.get("missing_nodes", []),
-            }]
+            items = [
+                {
+                    "measurement_lane": raw.get("selected_lane"),
+                    "available_lanes": raw.get("available_lanes", []),
+                    "tokens": {
+                        key: summary.get(key, 0) for key in dashboard_skcounter.TOKEN_FIELDS
+                    },
+                    "cost_usd": cost,
+                    "cost_state": summary.get("cost_state", "unavailable"),
+                    "collectors": raw.get("collectors", []),
+                    "expected_nodes": coverage.get("expected_nodes", 0),
+                    "reporting_nodes": coverage.get("reporting_nodes", 0),
+                    "missing_nodes": coverage.get("missing_nodes", []),
+                }
+            ]
             return _response(
                 request,
-                _page(request, "skcounter", items, [str(x) for x in raw.get("errors", [])], observed_at=raw.get("generated_at")),
+                _page(
+                    request,
+                    "skcounter",
+                    items,
+                    [str(x) for x in raw.get("errors", [])],
+                    observed_at=raw.get("generated_at"),
+                ),
             )
         except ValueError as exc:
             return _error(request, 400, "INVALID_QUERY", str(exc))
@@ -650,18 +753,24 @@ def routes(
 
     async def schedule(request):
         allowed = {
-            "role", "scope", "window", "baseline", "service", "lens",
-            "timezone", "selected_item",
+            "role",
+            "scope",
+            "window",
+            "baseline",
+            "service",
+            "lens",
+            "timezone",
+            "selected_item",
         }
         pairs = list(request.query_params.multi_items())
-        if (
-            any(key not in allowed or not value or len(value) > 128 for key, value in pairs)
-            or len({key for key, _value in pairs}) != len(pairs)
-        ):
+        if any(key not in allowed or not value or len(value) > 128 for key, value in pairs) or len(
+            {key for key, _value in pairs}
+        ) != len(pairs):
             return _error(request, 400, "INVALID_SCHEDULE_SCOPE", "unsupported schedule scope")
         query = dict(pairs)
         if (
-            query.get("role") not in {"project-manager", "operator", "architect", "service", "team"}
+            query.get("role")
+            not in {"project-manager", "operator", "architect", "service", "team"}
             or query.get("scope") != "estate"
             or query.get("window") != "latest"
             or query.get("baseline") != "none"
@@ -697,10 +806,9 @@ def routes(
     async def reliability(request):
         allowed = {"role", "scope", "window", "baseline", "service"}
         pairs = list(request.query_params.multi_items())
-        if (
-            any(key not in allowed or not value or len(value) > 128 for key, value in pairs)
-            or len({key for key, _value in pairs}) != len(pairs)
-        ):
+        if any(key not in allowed or not value or len(value) > 128 for key, value in pairs) or len(
+            {key for key, _value in pairs}
+        ) != len(pairs):
             return _error(
                 request,
                 400,
@@ -753,10 +861,9 @@ def routes(
     async def architecture(request):
         allowed = {"role", "scope", "window", "baseline", "service", "environment"}
         pairs = list(request.query_params.multi_items())
-        if (
-            any(key not in allowed or not value or len(value) > 128 for key, value in pairs)
-            or len({key for key, _value in pairs}) != len(pairs)
-        ):
+        if any(key not in allowed or not value or len(value) > 128 for key, value in pairs) or len(
+            {key for key, _value in pairs}
+        ) != len(pairs):
             return _error(
                 request,
                 400,
@@ -810,10 +917,9 @@ def routes(
     async def governance(request):
         allowed = {"role", "scope", "window", "baseline", "service"}
         pairs = list(request.query_params.multi_items())
-        if (
-            any(key not in allowed or not value or len(value) > 128 for key, value in pairs)
-            or len({key for key, _value in pairs}) != len(pairs)
-        ):
+        if any(key not in allowed or not value or len(value) > 128 for key, value in pairs) or len(
+            {key for key, _value in pairs}
+        ) != len(pairs):
             return _error(
                 request,
                 400,
@@ -864,12 +970,20 @@ def routes(
         return Response(serialized, media_type="application/json", headers={"ETag": etag})
 
     async def reports(request):
-        allowed = {"role", "scope", "window", "baseline", "service", "report_type", "snapshot", "compare"}
+        allowed = {
+            "role",
+            "scope",
+            "window",
+            "baseline",
+            "service",
+            "report_type",
+            "snapshot",
+            "compare",
+        }
         pairs = list(request.query_params.multi_items())
-        if (
-            any(key not in allowed or not value or len(value) > 128 for key, value in pairs)
-            or len({key for key, _value in pairs}) != len(pairs)
-        ):
+        if any(key not in allowed or not value or len(value) > 128 for key, value in pairs) or len(
+            {key for key, _value in pairs}
+        ) != len(pairs):
             return _error(request, 400, "INVALID_REPORT_SCOPE", "unsupported report scope")
         query = dict(pairs)
         if (
@@ -880,8 +994,13 @@ def routes(
             or query.get("service") != "all"
             or query.get("report_type", "all")
             not in {
-                "all", "daily_operations", "weekly_portfolio", "sprint_flow",
-                "monthly_service", "monthly_ai_economy", "quarterly_strategy",
+                "all",
+                "daily_operations",
+                "weekly_portfolio",
+                "sprint_flow",
+                "monthly_service",
+                "monthly_ai_economy",
+                "quarterly_strategy",
                 "ad_hoc_evidence",
             }
         ):
@@ -889,15 +1008,27 @@ def routes(
         context = getattr(request.state, "control_plane_decision", None)
         verifier = getattr(request.state, "control_plane_currentness_verifier", None)
         if report_provider is None or context is None or verifier is None:
-            return _error(request, 503, "REPORTS_UNAVAILABLE", "the authorized report projection is unavailable", retryable=True)
-        try:
-            projection = report_provider.read(
-                context, query, home, currentness_verifier=verifier
+            return _error(
+                request,
+                503,
+                "REPORTS_UNAVAILABLE",
+                "the authorized report projection is unavailable",
+                retryable=True,
             )
+        try:
+            projection = report_provider.read(context, query, home, currentness_verifier=verifier)
         except KeyError:
-            return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+            return _error(
+                request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found"
+            )
         except ValueError:
-            return _error(request, 503, "REPORTS_UNAVAILABLE", "the immutable report store is unavailable", retryable=True)
+            return _error(
+                request,
+                503,
+                "REPORTS_UNAVAILABLE",
+                "the immutable report store is unavailable",
+                retryable=True,
+            )
         if not isinstance(projection, dict):
             return _error(request, 503, "REPORTS_UNAVAILABLE", "invalid report projection")
         serialized = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
@@ -909,19 +1040,31 @@ def routes(
     async def report_snapshot(request):
         snapshot_id = request.path_params.get("snapshot_id", "")
         if len(snapshot_id) > 96:
-            return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+            return _error(
+                request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found"
+            )
         context = getattr(request.state, "control_plane_decision", None)
         verifier = getattr(request.state, "control_plane_currentness_verifier", None)
         if report_provider is None or context is None or verifier is None:
-            return _error(request, 503, "REPORTS_UNAVAILABLE", "the authorized report snapshot is unavailable", retryable=True)
+            return _error(
+                request,
+                503,
+                "REPORTS_UNAVAILABLE",
+                "the authorized report snapshot is unavailable",
+                retryable=True,
+            )
         try:
             snapshot = report_provider.read_snapshot(
                 context, snapshot_id, home, currentness_verifier=verifier
             )
         except KeyError:
-            return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+            return _error(
+                request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found"
+            )
         except ValueError:
-            return _error(request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found")
+            return _error(
+                request, 404, "REPORT_NOT_FOUND", "the immutable report snapshot was not found"
+            )
         if not isinstance(snapshot, dict):
             return _error(request, 503, "REPORTS_UNAVAILABLE", "invalid report snapshot")
         serialized = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
@@ -931,22 +1074,52 @@ def routes(
         return Response(serialized, media_type="application/json", headers={"ETag": etag})
 
     async def events(request):
-        raw_cursor = request.query_params.get("cursor") or request.headers.get("last-event-id")
-        topics = [value for value in request.query_params.get("topics", "").split(",") if value]
+        from .dashboard_kanban import BUS, SSE_HEARTBEAT_SECONDS, stream_sse
+
+        cursor_query = request.query_params.get("cursor")
+        cursor_header = request.headers.get("last-event-id")
+        raw_cursor = cursor_query or cursor_header
+        topics = tuple(
+            value for value in request.query_params.get("topics", "").split(",") if value
+        )
         try:
+            if cursor_query and cursor_header and cursor_query != cursor_header:
+                raise ValueError("resume cursors disagree")
             if len(topics) > 16 or any(len(value) > 64 for value in topics):
                 raise ValueError("topics exceed the bounded contract")
-            if raw_cursor:
+            boundary = request.state.control_plane_stream_boundary
+            try:
+                subscription = BUS.open_stream(raw_cursor, topics, boundary=boundary)
+            except ValueError:
+                # Frozen v1 accepted its pagination-shaped placeholder cursor;
+                # it remains an unavailable replay window, not a malformed query.
+                if not raw_cursor:
+                    raise
                 _cursor(raw_cursor)
+                from .dashboard_kanban import StreamReset, StreamSubscription
+
+                subscription = StreamSubscription(
+                    BUS, (), None, boundary, StreamReset("replay window unavailable")
+                )
         except ValueError as exc:
             return _error(request, 400, "INVALID_QUERY", str(exc))
+        except RuntimeError:
+            return _error(
+                request,
+                503,
+                "STREAM_CAPACITY_REACHED",
+                "event stream capacity reached",
+                retryable=True,
+            )
 
-        async def stream():
-            if raw_cursor:
-                yield "event: reset-required\ndata: {\"reason\":\"replay window unavailable\"}\n\n"
-            yield ": heartbeat\n\n"
-
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            stream_sse(subscription),
+            media_type="text/event-stream",
+            headers={
+                "X-Accel-Buffering": "no",
+                "X-Heartbeat-Interval": str(SSE_HEARTBEAT_SECONDS),
+            },
+        )
 
     async def metrics(_request):
         lines = [
@@ -977,6 +1150,9 @@ def routes(
         Route("/api/v1/board/summary", protected(board, "skdashboard.read")),
         Route("/api/v1/fleet/summary", protected(fleet, "skdashboard.read")),
         Route("/api/v1/economy/summary", protected(economy, "skdashboard.read")),
-        Route("/api/v1/events", protected(events, "skdashboard.events.read")),
+        Route(
+            "/api/v1/events",
+            protected(events, "skdashboard.events.read", require_stream_context=True),
+        ),
         Route("/metrics", protected(metrics, "skdashboard.read")),
     ]

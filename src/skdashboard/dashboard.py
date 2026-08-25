@@ -1039,7 +1039,7 @@ def create_app(
             return _gate_deny(decision["reason"])
         result = dk.apply_mutation(home, card_id, action, actor, **body)
         if result.get("ok"):
-            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor})
+            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor}, public=True)
         return _json(result)
 
     def _queue_gate(request, *, resource, mode, actor):
@@ -1120,7 +1120,7 @@ def create_app(
         result["capability"] = decision["reason"]
         result["authz_via"] = decision["via"]
         if result.get("ok"):
-            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": requester})
+            dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": requester}, public=True)
         return _json(result)
 
     async def api_queue_ai(request):
@@ -1294,7 +1294,7 @@ def create_app(
             subject="human",
         )
         chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor_id})
+        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor_id}, public=True)
         return _json(
             {
                 "submitted": True,
@@ -1370,7 +1370,7 @@ def create_app(
             checks=result["checks"],
         )
         chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor})
+        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor}, public=True)
         return _json(
             {
                 "validated": True,
@@ -1418,7 +1418,7 @@ def create_app(
             )
             mgr._append_event(mgr.changes_dir, rid, actor, "unschedule", note=body.get("note", ""))
             chg = mgr._fold_record(mgr.changes_dir, rid, Change)
-            dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor})
+            dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor}, public=True)
             return _json({"unscheduled": was_scheduled, "id": chg.id, "status": chg.status.value})
 
         deploy_mode = body.get("deploy_mode") or "confirm"
@@ -1477,7 +1477,7 @@ def create_app(
                 status_code=409,
                 media_type="application/json",
             )
-        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor})
+        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor}, public=True)
         return _json(
             {
                 "scheduled": True,
@@ -1531,7 +1531,7 @@ def create_app(
         }
         path = mgr.cab_dir / f"{rid}-{actor}.arm.json"
         atomic_write_text(path, json.dumps(arm, indent=2) + "\n")
-        dk.BUS.publish({"type": "card_changed", "id": rid, "actor": actor})
+        dk.BUS.publish({"type": "card_changed", "id": rid, "actor": actor}, public=True)
         return _json({"armed": True, "id": rid, "agent": actor, "path": str(path)})
 
     async def api_change_verify(request):
@@ -1627,7 +1627,7 @@ def create_app(
                 status_code=409,
                 media_type="application/json",
             )
-        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor})
+        dk.BUS.publish({"type": "card_changed", "id": chg.id, "actor": actor}, public=True)
         return _json(
             {
                 "verified": True,

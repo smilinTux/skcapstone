@@ -79,6 +79,8 @@ class Rig:
         subject: str = "human@example.test",
         target: str = "/api/v1/overview",
         capability: str = "skdashboard.read",
+        resource_type: str = "skdashboard.control_plane.projection",
+        resource_id: str | None = "overview",
     ) -> None:
         self.principal = Principal(principal_id=subject, subject=subject, kind="human")
         self.binding = ControlPlaneBinding(
@@ -87,8 +89,8 @@ class Rig:
             purpose="control-plane reporting",
             capability=capability,
             target=target,
-            resource_type="skdashboard.control_plane.projection",
-            resource_id="overview",
+            resource_type=resource_type,
+            resource_id=resource_id,
             owner_policy_revision=REVISION,
             expires_at=NOW + timedelta(minutes=2),
         )
@@ -121,8 +123,12 @@ class Rig:
             allowed_origins=frozenset({ORIGIN}),
             clock=clock,
         )
-        self.bearer = export_control_plane_bearer(
-            CapabilityIssuer(signer, clock=clock).issue_root(
+        self.issuer = CapabilityIssuer(signer, clock=clock)
+        self.bearer = self.fresh_bearer()
+
+    def fresh_bearer(self) -> str:
+        return export_control_plane_bearer(
+            self.issuer.issue_root(
                 principal=self.principal,
                 scope=self.binding.capability_scope(),
                 ttl_seconds=120,
