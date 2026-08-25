@@ -888,6 +888,8 @@ def routes(
         return Response(serialized, media_type="application/json", headers={"ETag": etag})
 
     async def schedule_forecasts(request):
+        from capauth import DecisionState
+
         allowed = {"role", "scope", "window", "baseline", "service", "lens", "timezone"}
         pairs = list(request.query_params.multi_items())
         if any(key not in allowed or not value or len(value) > 128 for key, value in pairs) or len({key for key, _value in pairs}) != len(pairs):
@@ -899,8 +901,16 @@ def routes(
         verifier = getattr(request.state, "control_plane_currentness_verifier", None)
         if schedule_forecast_provider is None or context is None or verifier is None:
             return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
-        result = schedule_forecast_provider.read(context, query, home, currentness_verifier=verifier)
-        if not isinstance(result, dict):
+        try:
+            if verifier.check_before_owner_read(context) is not DecisionState.ALLOW:
+                return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
+            result = schedule_forecast_provider.read(context, query, home, currentness_verifier=verifier)
+            if verifier.check_after_owner_read(context) is not DecisionState.ALLOW:
+                return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
+        except Exception:
+            return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "the authorized schedule forecast is unavailable", retryable=True)
+        forbidden = {"action", "external_action", "dispatch", "execute", "execution"}
+        if not isinstance(result, dict) or result.get("writes_owner_records") is not False or forbidden.intersection(result):
             return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "invalid schedule forecast")
         return _response(request, result)
 
