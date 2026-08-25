@@ -945,7 +945,9 @@ def routes(
             and set(quantiles) == {"p50", "p85", "p95"}
             and all(value is None or isinstance(value, int) for value in quantiles.values())
         )
-        if result.get("writes_owner_records") is not False or set(result) - allowed_keys or not typed:
+        ready = result.get("state") == "ready" and result.get("abstention_reason") is None and (result.get("milestone_confidence") is None or isinstance(result.get("milestone_confidence"), float) and 0 <= result["milestone_confidence"] <= 1)
+        abstained = result.get("state") == "abstained" and isinstance(result.get("abstention_reason"), str) and bool(result["abstention_reason"]) and result.get("milestone_confidence") is None and all(value is None for value in quantiles.values())
+        if result.get("writes_owner_records") is not False or set(result) - allowed_keys or not typed or not (ready or abstained):
             return _error(request, 503, "SCHEDULE_FORECAST_UNAVAILABLE", "invalid schedule forecast")
         return _response(request, result)
 
