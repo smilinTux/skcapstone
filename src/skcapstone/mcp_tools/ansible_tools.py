@@ -1,5 +1,10 @@
 """Ansible playbook runner tool - run_ansible_playbook.
 
+Check mode only. A live run (no --check) is refused: this surface has no
+freeze check, no capauth check, no ITIL requirement, and no allowlist of
+playbooks or inventories (see coord card e51a3e7e, SKW-AUTONOMY-E4). Until
+the full authorization gate lands, dry_run=true is the only accepted mode.
+
 Streams stdout/stderr lines to the activity feed SSE queue as
 ``ansible.playbook.line`` / ``ansible.playbook.stderr`` events.
 Stores the exit code and play-recap summary in agent memory with
@@ -21,17 +26,30 @@ from ._helpers import _error_response, _home, _json_response
 
 logger = logging.getLogger(__name__)
 
+# Live runs are refused until the full authorization gate (actuation-ready,
+# allowlisted playbook root, approved ITIL change id) lands. Tracked by
+# coord card e51a3e7e (SKW-AUTONOMY-E4). Check mode stays free: dry
+# inspection should never require an authorization.
+_LIVE_RUN_REFUSED = (
+    "Live ansible-playbook runs are refused. This tool currently supports "
+    "check mode only (dry_run=true). A live run requires actuation "
+    "readiness, an allowlisted playbook root, and an approved ITIL change "
+    "id naming the playbook, none of which exist yet. See coord card "
+    "e51a3e7e (SKW-AUTONOMY-E4). Pass dry_run=true to run in check mode."
+)
+
 TOOLS: list[Tool] = [
     Tool(
         name="run_ansible_playbook",
         description=(
-            "Run an Ansible playbook via ansible-playbook subprocess. "
-            "Streams stdout lines to the activity feed SSE queue as "
-            "ansible.playbook.line events (stderr lines as "
+            "Run an Ansible playbook via ansible-playbook subprocess, in "
+            "check mode only (--check, no changes applied). Live runs are "
+            "refused pending the authorization gate tracked by coord card "
+            "e51a3e7e. Streams stdout lines to the activity feed SSE queue "
+            "as ansible.playbook.line events (stderr lines as "
             "ansible.playbook.stderr). Stores exit code and play-recap "
-            "summary in agent memory with tag=ansible-run. "
-            "dry_run=true adds --check (no changes applied). "
-            "Requires ansible-playbook binary in PATH."
+            "summary in agent memory with tag=ansible-run. dry_run must be "
+            "true. Requires ansible-playbook binary in PATH."
         ),
         inputSchema={
             "type": "object",
@@ -57,8 +75,10 @@ TOOLS: list[Tool] = [
                 "dry_run": {
                     "type": "boolean",
                     "description": (
-                        "If true, pass --check so ansible-playbook simulates changes "
-                        "without applying them (default: false)"
+                        "Must be true. Live runs (dry_run=false) are refused "
+                        "pending the authorization gate tracked by coord card "
+                        "e51a3e7e; check mode (--check) is the only supported "
+                        "mode right now."
                     ),
                 },
             },
@@ -84,6 +104,16 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
     if not inventory:
         return _error_response("inventory is required")
 
+    # --- check-mode-only guard (coord card e51a3e7e) ---
+    # dry_run is the sole switch controlling whether --check is passed to
+    # ansible-playbook below; refusing here when it is not True means a live
+    # run can never be constructed by this handler, argument smuggling
+    # included, because cmd is always built from a fixed argv list handed
+    # straight to asyncio.create_subprocess_exec (no shell, no string
+    # interpolation of the full command line).
+    if not dry_run:
+        return _error_response(_LIVE_RUN_REFUSED)
+
     # Require ansible-playbook binary in PATH
     if not shutil.which("ansible-playbook"):
         return _error_response(
@@ -102,8 +132,10 @@ async def _handle_run_ansible_playbook(args: dict) -> list[TextContent]:
         "-i",
         inventory,
     ]
-    if dry_run:
-        cmd.append("--check")
+    # dry_run is required True at this point (guarded above); --check is
+    # appended unconditionally so cmd construction does not depend on that
+    # variable staying true for the rest of the function.
+    cmd.append("--check")
     if extra_vars:
         cmd.extend(["--extra-vars", json.dumps(extra_vars)])
 
