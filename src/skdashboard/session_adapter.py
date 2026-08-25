@@ -28,6 +28,7 @@ SESSION_TTL = 8 * 60 * 60
 LOGIN_TTL = 5 * 60
 MAX_LOGIN_GLOBAL = 128
 MAX_LOGIN_SOURCE = 16
+REFRESH_RESERVATION_TTL = 30
 
 logger = logging.getLogger(__name__)
 
@@ -431,12 +432,15 @@ class EncryptedSessionAdapter:
                 current_record = self._open(current["encrypted"])
             except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
                 return SessionResolution("corrupt")
-            if current_record.get("refreshing"):
+            refreshing_at = current_record.get("refreshing_at")
+            if current_record.get("refreshing") and type(refreshing_at) is int and (
+                now - refreshing_at < REFRESH_RESERVATION_TTL
+            ):
                 return SessionResolution("unavailable")
-            old_encrypted = current["encrypted"]
             old_encrypted = current["encrypted"]
             reserved = dict(record)
             reserved["refreshing"] = True
+            reserved["refreshing_at"] = now
             reserved_encrypted = self._seal(reserved)
             changed = connection.execute(
                 "UPDATE sessions SET encrypted = ? WHERE handle_hash = ? AND encrypted = ?",

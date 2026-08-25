@@ -8,6 +8,7 @@ import httpx
 import jwt
 import pytest
 from cryptography.fernet import Fernet
+from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from skdashboard.read_only import create_read_only_app
@@ -17,6 +18,7 @@ from skdashboard.session_adapter import (
     OIDCClient,
     OIDCExchangeError,
     SessionConfig,
+    _digest,
 )
 
 ORIGIN = "https://10.0.0.139:7778"
@@ -144,6 +146,43 @@ def test_refresh_rotates_server_credentials_and_pep_runs_each_request(tmp_path):
         {"grant_type": "refresh_token", "refresh_token": "refresh-1"},
         None,
     )
+
+
+def test_legacy_refresh_reservation_without_timestamp_is_recovered(tmp_path):
+    now = [1_000]
+    tokens = Tokens()
+    session = adapter(tmp_path, clock=lambda: now[0], tokens=tokens)
+    client = TestClient(
+        create_read_only_app(
+            tmp_path,
+            session_adapter=session,
+            authorizer=lambda *_: True,
+        ),
+        base_url=ORIGIN,
+    )
+    login(client)
+    handle = client.cookies.get(COOKIE_NAME)
+    with session._connect() as connection:
+        row = connection.execute(
+            "SELECT encrypted FROM sessions WHERE handle_hash = ?",
+            (_digest(handle),),
+        ).fetchone()
+        legacy = session._open(row["encrypted"])
+        legacy["refreshing"] = True
+        legacy.pop("refreshing_at", None)
+        connection.execute(
+            "UPDATE sessions SET encrypted = ? WHERE handle_hash = ?",
+            (session._seal(legacy), _digest(handle)),
+        )
+    now[0] = 1_300
+    request = Request(
+        {
+            "type": "http",
+            "headers": [(b"cookie", f"{COOKIE_NAME}={handle}".encode())],
+        }
+    )
+    assert asyncio.run(session.resolve(request)).state == "authenticated"
+    assert len(tokens.calls) == 2
 
 
 def test_csrf_logout_and_corrupt_store_fail_closed(tmp_path):

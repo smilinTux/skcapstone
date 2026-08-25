@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Recover legacy refresh reservations that predate the reservation timestamp.
+
 - Gate automatic patch tags and PyPI publication on successful CI for the exact
   current main commit, build and publish inside that same gated workflow, and
   provide no manual-dispatch or off-main ancestry bypass.
