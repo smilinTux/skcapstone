@@ -9,8 +9,8 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-async function waitFor(check, message) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+async function waitFor(check, message, attempts = 200) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (await check()) return;
     await sleep(50);
   }
@@ -103,7 +103,7 @@ try {
   await waitFor(async () => fetch(`http://127.0.0.1:${port}/control-plane/ai`).then((response) => response.ok).catch(() => false), "Dashboard did not start");
   stage = "Chrome startup";
   const active = path.join(profile, "DevToolsActivePort");
-  await waitFor(() => fs.existsSync(active), "Chrome did not start");
+  await waitFor(() => fs.existsSync(active), "Chrome did not start", 600);
   const chromePort = fs.readFileSync(active, "utf8").trim().split("\n")[0];
   const targets = await fetch(`http://127.0.0.1:${chromePort}/json/list`).then((response) => response.json());
   const socket = new WebSocket(targets.find((target) => target.type === "page").webSocketDebuggerUrl);
