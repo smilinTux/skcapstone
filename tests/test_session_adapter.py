@@ -148,6 +148,51 @@ def test_refresh_rotates_server_credentials_and_pep_runs_each_request(tmp_path):
     )
 
 
+def test_session_capability_issuer_mints_fresh_internal_bearers(tmp_path):
+    session = adapter(tmp_path)
+    minted = []
+
+    async def issuer(_request, resolved, capability, target):
+        assert resolved.access_token == "access-1"
+        minted.append((capability, target))
+        return f"internal-{len(minted)}"
+
+    seen = []
+    client = TestClient(
+        create_read_only_app(
+            tmp_path,
+            session_adapter=session,
+            session_capability_issuer=issuer,
+            authorizer=lambda bearer, *_: seen.append(bearer) or True,
+        ),
+        base_url=ORIGIN,
+    )
+    login(client)
+    assert client.get("/api/v1/overview", headers={"Origin": ORIGIN}).status_code == 200
+    assert client.get("/api/v1/overview", headers={"Origin": ORIGIN}).status_code == 200
+    assert minted == [
+        ("skdashboard.read", "/api/v1/overview"),
+        ("skdashboard.read", "/api/v1/overview"),
+    ]
+    assert seen == ["internal-1", "internal-2"]
+
+
+def test_session_capability_issuer_cannot_reuse_session_access_token(tmp_path):
+    session = adapter(tmp_path)
+    client = TestClient(
+        create_read_only_app(
+            tmp_path,
+            session_adapter=session,
+            session_capability_issuer=lambda _request, resolved, *_: resolved.access_token,
+            authorizer=lambda *_: True,
+        ),
+        base_url=ORIGIN,
+    )
+    login(client)
+    response = client.get("/api/v1/overview", headers={"Origin": ORIGIN})
+    assert response.status_code == 401
+
+
 def test_legacy_refresh_reservation_without_timestamp_is_recovered(tmp_path):
     now = [1_000]
     tokens = Tokens()
