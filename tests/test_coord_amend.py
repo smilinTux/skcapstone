@@ -69,17 +69,17 @@ def _assert_authoritative_criteria(tmp_path, task_id: str, expected: list[str]) 
     assert view.task.acceptance_criteria == expected
 
 
-def test_skcoord_dependency_requires_cardstore_home_guard_release():
+def test_skcoord_dependency_requires_status_absence_parity_release():
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     requirements = [Requirement(value) for value in project["project"]["dependencies"]]
     skcoord = next(requirement for requirement in requirements if requirement.name == "skcoord")
 
-    assert Version("0.1.43") not in skcoord.specifier
-    assert Version("0.1.44") in skcoord.specifier
+    assert Version("0.1.44") not in skcoord.specifier
+    assert Version("0.1.46") in skcoord.specifier
 
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "pytest.yml").read_text(encoding="utf-8")
-    assert '"skcoord==0.1.44"' in workflow
-    assert 'Version(version("skcoord")) == Version("0.1.44")' in workflow
+    assert '"skcoord==0.1.46"' in workflow
+    assert 'Version(version("skcoord")) == Version("0.1.46")' in workflow
 
 
 @pytest.mark.parametrize("mode", [None, "1", "dual", "0", "off", "false", "no"])
