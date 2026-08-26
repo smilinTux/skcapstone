@@ -1,4 +1,8 @@
-"""Tests for the WebSocket streaming endpoint added to the daemon."""
+"""Tests for the WebSocket streaming endpoint added to the daemon.
+
+NOTE: These tests create real WebSocket connections via TCP sockets.
+They require the network stack and bind to a TCP port.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,10 @@ import socket
 import struct
 import time
 from unittest.mock import patch
+
+import pytest
+
+pytestmark = pytest.mark.network
 
 from skcapstone.daemon import (
     DaemonConfig,

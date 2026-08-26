@@ -155,6 +155,10 @@ asyncio_mode = "strict"
 markers = [
     "integration: cross-component test requiring real services/network (excluded from default CI unit run)",
     "e2e: live end-to-end test requiring an installed skcapstone CLI / running daemon (excluded from default CI unit run)",
+    "network: test requiring network stack or socket operations (bind, connect, listen) (excluded from default hermetic run)",
+    "docker: test requiring Docker daemon (excluded from default hermetic run)",
+    "systemd: test requiring systemd interaction (excluded from default hermetic run)",
+    "syncthing: test requiring Syncthing process (excluded from default hermetic run)",
     "asyncio: mark an async test to be run by pytest-asyncio (registered here so --strict-markers passes even before the plugin loads)",
 ]
 

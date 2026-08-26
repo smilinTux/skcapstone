@@ -1,6 +1,6 @@
 name: pytest
 
-# Honest unit-test CI for skcapstone.
+# Honest hermetic unit-test CI for skcapstone.
 #
 # - Installs the package with ALL optional sovereign extras + dev tools so the
 #   full test tree imports cleanly (capauth, sksecurity, skmemory[skvector],
@@ -8,11 +8,12 @@ name: pytest
 #   See [project.optional-dependencies] in pyproject.toml.
 # - Runs pytest on Python 3.11 and 3.12 (the supported runtime floor per
 #   CLAUDE.md: "Python 3.11+").
-# - Excludes integration / live (e2e) tests HONESTLY via pytest markers
-#   (registered in [tool.pytest.ini_options]) using `-m "not integration and
-#   not e2e"` plus `--strict-markers`. These tests need real services, network,
-#   or an installed CLI / running daemon and cannot run on a clean runner.
-#   Nothing here is masked with `|| true` — a real failure fails the job.
+# - Excludes non-hermetic tests HONESTLY via pytest markers (registered in
+#   [tool.pytest.ini_options]) using `-m "not integration and not e2e and not
+#   network"` plus `--strict-markers`. These tests need real services, network
+#   stack, sockets, or an installed CLI / running daemon and cannot run on a
+#   clean runner. Nothing here is masked with `|| true` — a real failure fails
+#   the job.
 
 on:
   push:
@@ -142,11 +143,11 @@ jobs:
             "skdashboard @ git+https://github.com/smilinTux/skdashboard" \
             "skharness @ git+https://github.com/smilinTux/skharness"
 
-      - name: Run unit tests (exclude integration + e2e via markers)
+      - name: Run hermetic tests (exclude integration + e2e + network via markers)
         run: |
           python -m pytest tests/ \
             --strict-markers \
-            -m "not integration and not e2e" \
+            -m "not integration and not e2e and not network" \
             --cov=skcapstone --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage
@@ -155,3 +156,58 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
+
+  qualification:
+    # Qualification lane: runs the full test matrix including integration, e2e,
+    # and network-dependent tests. This job requires Docker and other services.
+    # It runs only on push to main, not on PRs, and is not required for branch
+    # protection. Use the local script for development qualification:
+    #   bash scripts/test-qualification.sh
+    name: qualification tests (full matrix)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install system deps (Docker, libfuse)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse-dev
+          # Docker is pre-installed on GitHub Actions runners
+          docker info
+
+      - name: Install package with all extras + dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,dev]"
+
+      - name: Install extracted siblings from source
+        run: |
+          pip install --force-reinstall --no-deps --no-cache-dir \
+            "skcoord @ git+https://github.com/smilinTux/skcoord" \
+            "skdashboard @ git+https://github.com/smilinTux/skdashboard" \
+            "skharness @ git+https://github.com/smilinTux/skharness"
+
+      - name: Run qualification tests (full matrix)
+        run: |
+          bash scripts/test-qualification.sh
+
+      - name: Upload qualification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-receipt-py${{ matrix.python-version }}
+          path: .skcapstone/test-receipt-*.json
+          retention-days: 30
