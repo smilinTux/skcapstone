@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from click.testing import CliRunner
+import pytest
 
 from skcapstone.cli import main
 from skcapstone.coordination import AgentFile, Board, Task
@@ -132,3 +133,36 @@ def test_coord_maintain_runs_both_sweeps(tmp_path):
     assert result.exit_code == 0, result.output
     assert "mt1" in board.archived_ids()  # done archived
     assert "mt2" in board.archived_ids()  # stale-open archived
+
+
+def test_coord_kanban_json_uses_folded_dependencies(tmp_path):
+    """Kanban must render the authoritative dependency amendment fold."""
+    import json
+
+    from skcapstone.card_store import CardCore, CardStore
+
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="gate0002", title="Incomplete gate"))
+    store.create(CardCore(id="target02", title="Folded dependency target"))
+    store.append_event(
+        "target02",
+        "add_dependency",
+        "governance",
+        dependency="gate0002",
+        reason="test gate",
+    )
+
+    result = CliRunner().invoke(main, ["coord", "kanban", "--home", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0, result.output
+    grid = json.loads(result.output)
+    cards = [
+        card
+        for columns in grid.values()
+        for column_cards in columns.values()
+        for card in column_cards
+    ]
+    target = next(card for card in cards if card["id"] == "target02")
+    assert target["dependencies"] == ["gate0002"]
+    with pytest.raises(ValueError, match="incomplete dependencies: gate0002"):
+        Board(tmp_path).claim_task("worker", "target02")
