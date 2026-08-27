@@ -168,7 +168,13 @@ def is_voided(home: Path, task_id: str) -> bool:
     return void_record(home, task_id) is not None
 
 
-def void_card(home: Path, task_id: str, reason: str, agent: str = "") -> None:
+def void_card(
+    home: Path,
+    task_id: str,
+    reason: str,
+    agent: str = "",
+    force_terminal: bool = False,
+) -> None:
     """Void a mistakenly created card without completing it (card 325a737f).
 
     Appends a writer-attributed ``void`` event (the audit record, with the
@@ -186,14 +192,51 @@ def void_card(home: Path, task_id: str, reason: str, agent: str = "") -> None:
         reason: Why the card is being voided (required for audit).
         agent: Writer attribution (empty defaults to ``mcp``/host).
 
+    A COMPLETED card is refused by default, because voiding it does nothing.
+
+    The mechanism, measured rather than assumed: ``CardStore.fold`` has no
+    handler for the ``void`` action at all. It handles ``archive`` and
+    ``reopen`` and ignores ``void`` entirely. Voiding is therefore expressed by
+    archiving the card off the active board, never by its folded status, and
+    ``is_voided`` is a separate audit lookup. On a card that has already
+    completed there is nothing left to archive off the board, so the whole
+    operation becomes a no-op that still reports success.
+
+    Measured 2026-08-27: three cards marked complete while their own verdict read
+    BLOCKED (2c35d28b, ae993252, e5d5748f) were voided. All three commands
+    reported success. All three still folded to done, each carrying one void
+    event that no reader of the folded state will ever see.
+
+    ``force_terminal`` records the void anyway, as an audit trace only. The fold
+    still reports the card done, and the caller is expected to say so.
+
+    Args:
+        home: Shared skcapstone root (``~/.skcapstone``).
+        task_id: The card/task ID to void.
+        reason: Why the card is being voided (required for audit).
+        agent: Writer attribution (empty defaults to ``mcp``/host).
+        force_terminal: Record an audit-only void on an already-completed card.
+
     Raises:
-        ValueError: If ``reason`` is empty or the card is already voided.
+        ValueError: If ``reason`` is empty, the card is already voided, or the
+            card is already complete and ``force_terminal`` is not set.
     """
     if not reason:
         raise ValueError("a void reason is required")
     home = Path(home).expanduser()
     if is_voided(home, task_id):
         raise ValueError(f"card {task_id} is already voided")
+    if not force_terminal:
+        from skcoord.card import Column
+
+        folded = CardStore(home).fold(task_id)
+        if folded is not None and folded.status == Column.DONE:
+            raise ValueError(
+                f"card {task_id} is already complete; voiding it would append an "
+                "event the fold discards, and the card would still read done. "
+                "Supersede it with a replacement card, or pass force_terminal to "
+                "record an audit-only void that does NOT change the folded state."
+            )
     CardStore(home).append_event(task_id, "void", agent or "mcp", reason=reason)
 
     from .coordination import Board

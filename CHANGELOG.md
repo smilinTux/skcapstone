@@ -14,6 +14,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   The hex-only pattern rejected all 314 such cards in the live store, so
   `coord release-claim` could not release a claim on an incident, problem or
   change card at all.
+- `coord void` now refuses an already-completed card instead of appending an
+  event the fold discards while reporting success. `CardStore.fold` has no
+  handler for the `void` action at all, so voiding is expressed by archival and
+  degrades to a no-op on a card that has already completed. `--force-terminal`
+  records an audit-only void and states plainly that the card still folds to done.
 
 ### Added
 

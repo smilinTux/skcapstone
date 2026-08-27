@@ -124,7 +124,14 @@ def register_coord_amend_commands(coord: click.Group) -> None:
     @click.option("--reason", required=True, help="Why the card is being voided (audit).")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_void(task_id, reason, home, agent):
+    @click.option(
+        "--force-terminal",
+        is_flag=True,
+        default=False,
+        help="Record an audit-only void on an already-completed card. The fold "
+        "will STILL report the card done.",
+    )
+    def coord_void(task_id, reason, home, agent, force_terminal):
         """Void a mistakenly created card WITHOUT completing it.
 
         Appends a writer-attributed void event and archives the card: it
@@ -136,7 +143,16 @@ def register_coord_amend_commands(coord: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         try:
-            void_card(home_path, task_id, reason, agent or "")
+            void_card(home_path, task_id, reason, agent or "", force_terminal=force_terminal)
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
-        console.print(f"\n  [green]Voided {task_id}.[/] [dim]{reason}[/]\n")
+        if force_terminal:
+            console.print(
+                f"\n  [yellow]Recorded an audit-only void on {task_id}.[/] "
+                f"[dim]{reason}[/]\n"
+                "  [yellow]The card is complete and terminal states are sticky, so "
+                "it STILL folds to done.[/]\n"
+                "  [dim]Nothing downstream will see this card as withdrawn.[/]\n"
+            )
+        else:
+            console.print(f"\n  [green]Voided {task_id}.[/] [dim]{reason}[/]\n")
