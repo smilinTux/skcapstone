@@ -33,6 +33,7 @@ if not _LIFECYCLE_OK:
     assess=write_report=None
 
 HOST=os.uname().nodename
+SKC=os.path.expanduser("~/.skenv/bin/skcapstone")
 TARGET=int(os.environ.get("SKFLEET_TARGET","8"))
 MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","4"))
 DRY = "--go" not in sys.argv
@@ -142,6 +143,73 @@ for _L in LANES:
 free=sum(_L["free"] for _L in LANES)
 log(d,"SLOTS|%s|%s|total_free=%d"%(HOST,
     " ".join("%s=%d/%d"%(L["name"],len(L["busy"]),L["target"]) for L in LANES),free))
+
+# ---- worker liveness -------------------------------------------------------
+# A claim used to be reaped from elapsed time alone, which is wrong in both
+# directions at once. skcoord's detector will not look at a claim younger than
+# 24h, so when workers were killed on 2026-08-27 the board sat frozen behind 89
+# claims held by processes that no longer existed: ready=0 with 146 open cards
+# and every slot free. Lowering that constant only trades the failure over, since
+# a two hour floor yanks a card out from under a worker that is still running it.
+#
+# Time was only ever standing in for the question that actually matters, which is
+# whether the process is still there. Each host can answer that for its own
+# workers by reading tmux, and no host could see any other host's answer. So each
+# run now publishes the cards it is running, into evidence/ where Syncthing shares
+# it (.stignore excludes logs/, metrics/ and heartbeats/, not evidence/).
+LIVE = os.path.join(HOME, ".skcapstone/evidence/fleet-live")
+LIVE_FRESH = 30 * 60      # a report older than this says nothing about now
+CLAIM_GRACE = 300         # one full rotation period, so every host has reported
+# Reaping needs a quorum, because a card running on chiap04 is invisible in
+# chiap08's report. During a rollout the first host to publish is the ONLY
+# reporting host, and without this floor it would read every other host's live
+# worker as absent and reap all of them. Below quorum the reaper does nothing.
+REAP_QUORUM = 3
+KNOWN_HOST_TTL = 24 * 3600   # a host silent this long has left the fleet
+
+def publish_live(sessions):
+    """Record which cards this host is running, for every other host to read."""
+    cards = sorted({s[len(L["prefix"]):] for L in LANES
+                    for s in sessions if s.startswith(L["prefix"])})
+    try:
+        os.makedirs(LIVE, exist_ok=True)
+        p = os.path.join(LIVE, HOST + ".json")
+        tmp = p + ".new"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"host": HOST, "ts": time.time(), "cards": cards}, fh)
+        os.replace(tmp, p)          # atomic, so a reader never sees a half file
+    except OSError as exc:
+        log(d, "WARN|%s|could not publish liveness: %s" % (HOST, exc))
+    return cards
+
+def live_report():
+    """Return (oldest_recent_report, cards_running, reporting_host_count).
+
+    The first value is the OLDEST report among currently reporting hosts, not the
+    newest, and that choice is the whole safety property. A claim may only be
+    reaped once EVERY reporting host has published since it was made, because a
+    card running on chiap04 is invisible in chiap08's report. Taking the newest
+    would let the first host to start publishing reap every other host's live
+    workers, which is precisely the outage this code exists to prevent.
+    """
+    hosts = {}
+    running = set()
+    now = time.time()
+    for p in glob.glob(os.path.join(LIVE, "*.json")):
+        try:
+            with open(p, encoding="utf-8") as fh:
+                snap = json.load(fh)
+            ts = float(snap.get("ts") or 0)
+        except (OSError, ValueError, TypeError):
+            continue
+        if now - ts > LIVE_FRESH:
+            continue
+        hosts[str(snap.get("host") or p)] = ts
+        running.update(str(c) for c in (snap.get("cards") or ()))
+    return (min(hosts.values()) if hosts else 0.0), running, len(hosts)
+
+publish_live(sessions)
+
 if free==0:
     log(d,"NOOP|%s|all slots busy"%HOST); sys.exit(0)
 
@@ -626,6 +694,80 @@ def itil_terminal(cid):
             if e.get("kind")=="status" and e.get("to"): state=e["to"]
         return state in TERMINAL
     return False
+
+
+# ---- reap claims whose worker is provably gone -----------------------------
+# The rule is an observation, never an age: some host published a report AFTER
+# this claim was made, and no host reports the card as running. With no fresh
+# report the reaper does nothing at all, so a Syncthing stall or a stopped fleet
+# can never become a mass release. skcoord's 24h detector stays as the slow
+# backstop for anything this cannot see.
+#
+# Only ephemeral one-shot workers are eligible. A named agent (jarvis, lumina) or
+# a human may hold a claim deliberately for as long as they like.
+_EPHEMERAL_OWNER = re.compile(r"^(pi|codex|glm)[-_]")
+
+def _current_claim(cid):
+    """The claim in force now, as (owner, epoch), or (None, 0)."""
+    owner = None
+    ts = 0.0
+    for e in event_rows(cid):
+        a = e.get("action")
+        if a == "claim":
+            owner = e.get("agent") or e.get("owner") or e.get("actor") or e.get("by")
+            raw = str(e.get("ts") or e.get("timestamp") or "")
+            try:
+                ts = datetime.datetime.fromisoformat(
+                    raw.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                ts = 0.0
+        elif a in ("release_claim", "unassign", "complete", "void", "archive"):
+            owner, ts = None, 0.0
+    return owner, ts
+
+def reap_dead_claims():
+    """Return claimed cards whose worker no host reports running."""
+    oldest, running, nhosts = live_report()
+    # A host that is merely between runs must still be counted, or the quorum
+    # check passes while its workers are invisible. A host that is GONE must
+    # eventually stop counting, or one decommissioned machine blocks reaping for
+    # the whole fleet forever. KNOWN_HOST_TTL separates the two.
+    _cut = time.time() - KNOWN_HOST_TTL
+    known = sum(1 for f in glob.glob(os.path.join(LIVE, "*.json"))
+                if os.path.getmtime(f) >= _cut)
+    if not oldest or nhosts < REAP_QUORUM or nhosts < known:
+        log(d, "REAP|%s|below quorum (reporting=%d known=%d need>=%d); reaped nothing"
+            % (HOST, nhosts, known, REAP_QUORUM))
+        return 0
+    freed = 0
+    for cd in sorted(glob.glob(CARDS + "/*")):
+        cid = os.path.basename(cd)
+        if not os.path.exists(os.path.join(cd, "core.json")):
+            continue
+        if lifecycle_state(cid) != "claimed":
+            continue
+        owner, cts = _current_claim(cid)
+        if not owner or not _EPHEMERAL_OWNER.match(str(owner)):
+            continue
+        if cid in running:
+            continue                      # a host says this is running right now
+        if oldest < cts + CLAIM_GRACE:
+            continue                      # some host has not reported since the claim
+        r = subprocess.run(
+            [SKC, "coord", "release-claim", cid, "--owner", str(owner),
+             "--agent", "fleet-liveness-reaper"],
+            capture_output=True, text=True)
+        if r.returncode == 0:
+            _rows.pop(cid, None)          # the fold below must re-read from disk
+            freed += 1
+            log(d, "REAPED|%s|%s|%s|no host reports this card running" % (HOST, cid, owner))
+        else:
+            log(d, "REAP_FAILED|%s|%s|%s" % (HOST, cid, (r.stderr or "").strip()[:120]))
+    log(d, "REAP|%s|released=%d hosts_reporting=%d cards_running=%d"
+        % (HOST, freed, nhosts, len(running)))
+    return freed
+
+reap_dead_claims()
 
 _PINNED_IDS=set()
 pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; pinned_elsewhere=0
