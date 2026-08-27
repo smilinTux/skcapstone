@@ -19,6 +19,7 @@ from skcapstone.card_store import CardCore, CardStore
 from skcapstone.changelog import generate_changelog
 from skcapstone.cli.coord import register_coord_commands
 from skcapstone.coord_amendments import is_voided, void_record
+from skcapstone.card import Column
 from skcapstone.coordination import Board, Task
 from skcapstone.mcp_tools import coord_card_tools
 
@@ -122,6 +123,23 @@ def test_void_twice_is_refused(tmp_path):
     assert "already voided" in result.output
 
 
+def test_void_completed_card_refuses_without_writing_and_fold_stays_complete(tmp_path):
+    _seed(tmp_path, "voiddone1")
+    store = CardStore(tmp_path)
+    store.append_event("voiddone1", "complete", "worker")
+    event_count = len(store._read_events("voiddone1"))
+
+    result = CliRunner().invoke(_main(), _void_args("voiddone1", tmp_path))
+
+    assert result.exit_code != 0
+    assert "completed card voiddone1 cannot be voided" in result.output
+    assert "superseding card" in result.output
+    assert len(store._read_events("voiddone1")) == event_count
+    folded = store.fold("voiddone1")
+    assert folded is not None and folded.status == Column.DONE
+    assert folded.meta["terminal_action"] == "complete"
+
+
 # -- MCP twin -----------------------------------------------------------------
 
 
@@ -148,3 +166,20 @@ async def test_mcp_void_requires_reason(tmp_path, monkeypatch):
     result = await coord_card_tools._handle_coord_void({"task_id": "void0mcq"})
     assert "error" in _parse(result)
     assert is_voided(tmp_path, "void0mcq") is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_void_completed_card_refuses_without_writing(tmp_path, monkeypatch):
+    monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
+    _seed(tmp_path, "void0mcd")
+    store = CardStore(tmp_path)
+    store.append_event("void0mcd", "complete", "worker")
+    event_count = len(store._read_events("void0mcd"))
+
+    result = await coord_card_tools._handle_coord_void(
+        {"task_id": "void0mcd", "reason": "mistake", "agent": "lumina"}
+    )
+
+    assert "completed card void0mcd cannot be voided" in _parse(result)["error"]
+    assert len(store._read_events("void0mcd")) == event_count
+    assert store.fold("void0mcd").status == Column.DONE

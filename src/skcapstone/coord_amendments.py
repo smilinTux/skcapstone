@@ -164,8 +164,18 @@ def void_record(home: Path, task_id: str) -> dict | None:
 
 
 def is_voided(home: Path, task_id: str) -> bool:
-    """True when the card has a void event in its store log."""
-    return void_record(home, task_id) is not None
+    """True when the card folds to the terminal void state."""
+    card = CardStore(Path(home).expanduser()).fold(task_id)
+    return card is not None and card.meta.get("terminal_action") == "void"
+
+
+def terminal_action(home: Path, task_id: str) -> str | None:
+    """Return the folded lifecycle terminal action, if any."""
+    card = CardStore(Path(home).expanduser()).fold(task_id)
+    if card is None:
+        raise ValueError(f"card {task_id} not found")
+    action = card.meta.get("terminal_action")
+    return action if action in {"complete", "void"} else None
 
 
 def void_card(home: Path, task_id: str, reason: str, agent: str = "") -> None:
@@ -192,9 +202,18 @@ def void_card(home: Path, task_id: str, reason: str, agent: str = "") -> None:
     if not reason:
         raise ValueError("a void reason is required")
     home = Path(home).expanduser()
-    if is_voided(home, task_id):
+    current_terminal = terminal_action(home, task_id)
+    if current_terminal == "complete":
+        raise ValueError(
+            f"completed card {task_id} cannot be voided; create a superseding card "
+            "or record a correction evidence event instead"
+        )
+    if current_terminal == "void":
         raise ValueError(f"card {task_id} is already voided")
     CardStore(home).append_event(task_id, "void", agent or "mcp", reason=reason)
+    folded = CardStore(home).fold(task_id)
+    if folded is None or folded.meta.get("terminal_action") != "void":
+        raise RuntimeError(f"void transition for {task_id} was not applied")
 
     from .coordination import Board
 
