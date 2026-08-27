@@ -797,7 +797,19 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_link(task_id, key, value, home, agent):
         """Attach a link (pr/commit/doc/...) to a card."""
+        from ..blocked_verdict import validate_blocked_verdict
         from ..card import CardEvent, CardEventLog
+
+        # A BLOCKED verdict takes a card out of circulation. It must therefore
+        # say what would put it back. Measured on the live board 2026-08-27: of
+        # 39 open cards whose latest outcome was BLOCKED, 18 were the literal
+        # word and 20 more named no blocked_on at all, so that pool could not
+        # drain. The contract was already in the worker brief; asking was not
+        # enough, so it is refused here at the write path.
+        try:
+            validate_blocked_verdict(key, value)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
 
         home_path = Path(home).expanduser()
         try:

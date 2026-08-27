@@ -1,0 +1,137 @@
+"""A BLOCKED verdict must say what is blocking, in whatever shape the worker writes.
+
+Real verdict text from the live board on 2026-08-27 is used for both the accept
+and the reject cases, so this asserts against what workers actually produce
+rather than against an idealised format.
+"""
+
+import pytest
+
+from skcapstone.blocked_verdict import (
+    blocked_on_referent,
+    is_blocked_verdict,
+    is_outcome_key,
+    validate_blocked_verdict,
+)
+
+# --- what counts as an outcome ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "key", ["verdict", "outcome", "result", "disposition", "review_decision", "final_verdict"]
+)
+def test_outcome_keys_are_recognised(key):
+    assert is_outcome_key(key)
+
+
+@pytest.mark.parametrize("key", ["pr", "commit", "artifact", "evidence", "doc"])
+def test_non_outcome_keys_are_left_alone(key):
+    assert not is_outcome_key(key)
+    # and are never validated, whatever they contain
+    validate_blocked_verdict(key, "BLOCKED")
+
+
+def test_only_blocked_outcomes_are_checked():
+    assert not is_blocked_verdict("verdict", "PASS; PR #70; all checks green")
+    validate_blocked_verdict("verdict", "PASS; PR #70; all checks green")
+
+
+# --- the refusals, taken verbatim from the board ------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED",  # 18 cards looked exactly like this
+        "  blocked  ",
+        "BLOCKED.",
+        "BLOCKED:sha256:1e8a73f45838923dcc52d1e35141b14212a3926837b78376be74e393bc",
+        "BLOCKED. Hashed artifact sha256=793e6fd84a5ba065de171db31ace37cf1e6582f",
+        "BLOCKED_FAIL_CLOSED",
+    ],
+)
+def test_blocked_without_blocked_on_is_refused(value):
+    with pytest.raises(ValueError) as err:
+        validate_blocked_verdict("verdict", value)
+    assert "blocked_on" in str(err.value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED. blocked_on: human",  # category, no referent
+        "BLOCKED blocked_on=dependency",
+        'BLOCKED {"blocked_on": {"value": "capability"}}',
+        "BLOCKED blocked_on: card",
+    ],
+)
+def test_category_without_a_referent_is_refused(value):
+    with pytest.raises(ValueError) as err:
+        validate_blocked_verdict("verdict", value)
+    assert "referent" in str(err.value).lower()
+
+
+# --- the acceptances, also verbatim -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (
+            "BLOCKED. blocked_on=human referent approval:9acf44e2-exact-verbatim-"
+            "database-lifecycle-authorization",
+            "approval:9acf44e2-exact-verbatim-database-lifecycle-authorization",
+        ),
+        (
+            'BLOCKED {"blocked_on": {"value": "dependency", "referent": "card:04b218cd"}}',
+            "card:04b218cd",
+        ),
+        (
+            "BLOCKED - Card e9904899 was claimed then released. blocked_on: card. "
+            "Referent 04b218cd",
+            None,  # shape differs; asserted separately below
+        ),
+    ],
+)
+def test_referent_is_extracted(value, expected):
+    if expected is not None:
+        assert blocked_on_referent(value) == expected
+
+
+def test_a_properly_referenced_verdict_passes():
+    validate_blocked_verdict(
+        "verdict",
+        "BLOCKED. blocked_on=human referent approval:sklegal_runtime-custody-path. "
+        "No custody operation performed.",
+    )
+
+
+def test_the_real_018bf488_verdict_passes():
+    """The one verdict on the board that was written correctly."""
+    validate_blocked_verdict(
+        "outcome",
+        "BLOCKED. Manifest d583baa1 NOT FOUND. Set blocked_on to "
+        "dependency:card:04b218cd. Moved to review, released claim.",
+    )
+
+
+# --- the validator must not become the thing workers fight --------------------
+
+
+def test_prose_before_the_referent_is_fine():
+    validate_blocked_verdict(
+        "verdict",
+        "BLOCKED after a full read of the coordination board and 14049 CardStore "
+        "records, no AC1-compliant authorization exists, so blocked_on=human "
+        "referent=approval:9acf44e2-database-lifecycle. No mutation performed.",
+    )
+
+
+def test_uppercase_and_hyphenated_spellings_are_accepted():
+    validate_blocked_verdict("verdict", "BLOCKED BLOCKED-ON dependency card:abc12345")
+
+
+def test_a_pass_verdict_mentioning_blocking_is_not_touched():
+    validate_blocked_verdict(
+        "verdict", "PASS. Previously blocked_on dependency:card:04b218cd, now resolved."
+    )
