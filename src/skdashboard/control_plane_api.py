@@ -6,8 +6,9 @@ import base64
 import hashlib
 import inspect
 import json
+import threading
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -22,6 +23,59 @@ MAX_BEARER_BYTES = 64 * 1024
 TENANT_RESOURCE_TYPE = "tenant"
 ALLOWED_BROWSER_ORIGINS = frozenset({"https://10.0.0.139:7778", "https://100.81.238.58:7778"})
 SSE_CURRENTNESS_SECONDS = 1
+PROJECTION_ETAG_TTL_SECONDS = 60
+PROJECTION_ETAG_MAX_ENTRIES = 64
+
+_projection_generations: dict[str, int] = defaultdict(int)
+_projection_generation_lock = threading.Lock()
+
+
+class _ProjectionETagCache:
+    """Bound matching conditional reads without retaining response data."""
+
+    def __init__(self, home: Path) -> None:
+        self._home = str(Path(home).resolve())
+        self._entries: OrderedDict[str, tuple[str, float, int]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def matches(self, key: str, presented: str | None) -> str | None:
+        """Return the current matching ETag without recomputing its projection."""
+        if not presented:
+            return None
+        now = time.monotonic()
+        with _projection_generation_lock:
+            generation = _projection_generations[self._home]
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            etag, expires_at, stored_generation = entry
+            if expires_at <= now or stored_generation != generation:
+                self._entries.pop(key, None)
+                return None
+            self._entries.move_to_end(key)
+            return etag if presented == etag else None
+
+    def remember(self, key: str, etag: str) -> None:
+        """Remember only one bounded validator, never owner projection content."""
+        with _projection_generation_lock:
+            generation = _projection_generations[self._home]
+        with self._lock:
+            self._entries[key] = (
+                etag,
+                time.monotonic() + PROJECTION_ETAG_TTL_SECONDS,
+                generation,
+            )
+            self._entries.move_to_end(key)
+            while len(self._entries) > PROJECTION_ETAG_MAX_ENTRIES:
+                self._entries.popitem(last=False)
+
+
+def invalidate_control_plane_projections(home: Path) -> None:
+    """Invalidate process-local ETags after an accepted owner mutation."""
+    key = str(Path(home).resolve())
+    with _projection_generation_lock:
+        _projection_generations[key] += 1
 
 
 class ControlPlaneInvocationFactory(Protocol):
@@ -643,17 +697,18 @@ def routes(
         or report_provider is not None
     ) and decision_authorizer is None:
         raise ValueError("owner projection requires typed control-plane authorization")
-    hits: dict[str, deque[float]] = defaultdict(deque)
+    hits: dict[tuple[str, str], deque[float]] = defaultdict(deque)
     counters = {"requests": 0, "denied": 0}
+    projection_etags = _ProjectionETagCache(home)
     authorize = authorizer or (
         lambda bearer, capability, target: _capauth_authorize(home, bearer, capability, target)
     )
 
-    def limited(handler):
+    def limited(handler, *, rate_class: str = "common"):
         async def wrapped(request):
             now = time.monotonic()
-            key = request.client.host if request.client else "local"
-            recent = hits[key]
+            client = request.client.host if request.client else "local"
+            recent = hits[(rate_class, client)]
             while recent and recent[0] <= now - 60:
                 recent.popleft()
             if len(recent) >= 120:
@@ -668,7 +723,13 @@ def routes(
 
         return wrapped
 
-    def protected(handler, capability: str, *, require_stream_context=False):
+    def protected(
+        handler,
+        capability: str,
+        *,
+        require_stream_context=False,
+        rate_class: str = "common",
+    ):
         return limited(
             _protected_handler(
                 handler,
@@ -680,7 +741,8 @@ def routes(
                 session_resolver=session_resolver,
                 session_capability_issuer=session_capability_issuer,
                 require_stream_context=require_stream_context,
-            )
+            ),
+            rate_class=rate_class,
         )
 
     async def health(request):
@@ -701,7 +763,24 @@ def routes(
 
     async def board(request):
         try:
-            raw = board_reader(home)
+            limit = _limit(request)
+            cursor = request.query_params.get("cursor")
+            authorization = request.headers.get("authorization", "")
+            cache_key = "|".join(
+                (
+                    request.url.path,
+                    request.url.query,
+                    request.headers.get("origin", ""),
+                    hashlib.sha256(authorization.encode()).hexdigest(),
+                )
+            )
+            matched = projection_etags.matches(
+                cache_key, request.headers.get("if-none-match")
+            )
+            if matched is not None:
+                return Response(status_code=304, headers={"ETag": matched})
+
+            raw = board_reader(home, limit=limit, cursor=cursor)
             errors = [raw["error"]] if raw.get("error") else []
             items = [
                 {
@@ -713,8 +792,17 @@ def routes(
                 }
                 for item in raw.get("tasks", [])
             ]
-            return _response(request, _page(request, "skcoord", items, errors))
-        except ValueError as exc:
+            if "page" in raw:
+                result = _envelope(request, "skcoord", items, errors)
+                result["page"] = raw["page"]
+            else:
+                # Compatibility for injected readers predating the bounded owner contract.
+                result = _page(request, "skcoord", items, errors)
+            response = _response(request, result)
+            if response.status_code in {200, 304} and response.headers.get("etag"):
+                projection_etags.remember(cache_key, response.headers["etag"])
+            return response
+        except (TypeError, ValueError) as exc:
             return _error(request, 400, "INVALID_QUERY", str(exc))
 
     async def fleet(request):
@@ -1308,7 +1396,7 @@ def routes(
         return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
     return [
-        Route("/api/v1/health", limited(health)),
+        Route("/api/v1/health", limited(health, rate_class="critical")),
         Route("/api/v1/overview", protected(overview, "skdashboard.read")),
         Route("/api/v1/schedule/projection", protected(schedule, "skdashboard.read")),
         Route("/api/v1/schedule/forecasts", protected(schedule_forecasts, "skdashboard.read")),
@@ -1318,7 +1406,11 @@ def routes(
         Route("/api/v1/reports/projection", protected(reports, "skdashboard.read")),
         Route(
             "/api/v1/reports/{snapshot_id}",
-            protected(report_snapshot, "skdashboard.reports.read"),
+            protected(
+                report_snapshot,
+                "skdashboard.reports.read",
+                rate_class="critical",
+            ),
         ),
         Route("/api/v1/board/summary", protected(board, "skdashboard.read")),
         Route("/api/v1/fleet/summary", protected(fleet, "skdashboard.read")),
@@ -1327,5 +1419,8 @@ def routes(
             "/api/v1/events",
             protected(events, "skdashboard.events.read", require_stream_context=True),
         ),
-        Route("/metrics", protected(metrics, "skdashboard.read")),
+        Route(
+            "/metrics",
+            protected(metrics, "skdashboard.read", rate_class="critical"),
+        ),
     ]

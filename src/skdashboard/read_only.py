@@ -14,7 +14,7 @@ from starlette.routing import Route
 
 from .control_plane_api import ALLOWED_BROWSER_ORIGINS
 from .control_plane_api import routes as control_plane_routes
-from .dashboard import _get_agent_status, _get_board_state
+from .dashboard import _bounded_board_reader, _get_agent_status
 
 ALLOWED_BIND_HOSTS = frozenset({"127.0.0.1", "10.0.0.139", "100.81.238.58"})
 HSTS_POLICY = "max-age=31536000"
@@ -148,7 +148,7 @@ def create_read_only_app(
     routes.extend(
         control_plane_routes(
             home,
-            board_reader=_get_board_state,
+            board_reader=_bounded_board_reader(home),
             health_reader=_get_agent_status,
             authorizer=authorizer,
             decision_authorizer=decision_authorizer,

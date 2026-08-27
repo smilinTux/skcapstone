@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Bound board reads to the requested page plus one cursor sentinel, reuse matching
+  conditional validators without repeating owner work, invalidate validators after
+  accepted card mutations, and isolate health rate capacity from common reads.
+
 - Make the real-Chrome AI qualification use an OS-assigned port, allow a
   bounded slow Chrome startup, report its exact failed stage safely, stop child
   processes, and remove its own scratch.

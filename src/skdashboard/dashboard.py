@@ -21,6 +21,8 @@ Usage:
 
 from __future__ import annotations
 
+import bisect
+import hashlib
 import json
 import logging
 import os
@@ -39,6 +41,7 @@ DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 #: health picture does not change second-to-second, so a short TTL is safe.
 _DOCTOR_CACHE_TTL = 30.0
 _doctor_cache: dict = {"ts": 0.0, "home": None, "report": None}
+_board_readers: dict[Path, _BoundedBoardReader] = {}
 
 # ---------------------------------------------------------------------------
 # Capability names for the write routes that are NOT queue-a-run and NOT a
@@ -382,6 +385,83 @@ def _get_doctor_report(home: Path) -> dict:
         return {"error": str(exc)}
     cache.update(ts=now, home=home, report=report)
     return report
+
+
+class _BoundedBoardReader:
+    """Keep a deterministic task-id index and fold only one requested page."""
+
+    def __init__(self, home: Path) -> None:
+        from skcoord.card_store import CardStore
+        from skcoord.coordination import TaskViewReadBatch, TaskViewReadScope
+
+        self._home = Path(home)
+        # CardStore task and epic identifiers are eight lowercase hex digits;
+        # ITIL records are explicitly prefixed. Build only the lexical keyset
+        # here and defer every fold to the requested ``limit + 1`` page.
+        self._card_ids = tuple(
+            card_id
+            for card_id in CardStore(self._home).list_card_ids()
+            if len(card_id) == 8
+            and all(character in "0123456789abcdef" for character in card_id)
+        )
+        encoded = json.dumps(self._card_ids, separators=(",", ":")).encode()
+        self._population_state = hashlib.sha256(encoded).hexdigest()
+
+        def read_page(after: str | None, count: int) -> TaskViewReadBatch:
+            start = 0 if after is None else bisect.bisect_right(self._card_ids, after)
+            return TaskViewReadBatch(
+                self._card_ids[start : start + count], self._population_state
+            )
+
+        self._scope = TaskViewReadScope(
+            authorization_scope="skdashboard:board-summary",
+            read_page=read_page,
+        )
+
+    def __call__(self, home: Path, *, limit: int, cursor: str | None = None) -> dict:
+        """Return one ``limit + 1``-bounded CardStore page for the read API."""
+        from skcoord.coordination import Board
+
+        if Path(home) != self._home:
+            return {"error": "board owner scope does not match this dashboard"}
+        page = Board(self._home).get_task_view_page(
+            self._scope, limit=limit, cursor=cursor
+        )
+        return {
+            "tasks": [
+                {
+                    "id": view.task.id,
+                    "title": view.task.title,
+                    "priority": view.task.priority.value,
+                    "status": view.status.value,
+                    "claimed_by": view.claimed_by,
+                    "tags": view.task.tags,
+                }
+                for view in page.items
+            ],
+            "page": {
+                "limit": limit,
+                "next_cursor": page.next_cursor,
+                "has_more": page.has_more,
+            },
+            "population_state": page.population_state,
+            "eligible_records_touched": page.eligible_records_touched,
+        }
+
+
+def _bounded_board_reader(home: Path) -> _BoundedBoardReader:
+    """Return one process-local owner index until an accepted mutation."""
+    key = Path(home).resolve()
+    reader = _board_readers.get(key)
+    if reader is None:
+        reader = _BoundedBoardReader(key)
+        _board_readers[key] = reader
+    return reader
+
+
+def _invalidate_bounded_board_reader(home: Path) -> None:
+    """Discard the owner index after an accepted dashboard card mutation."""
+    _board_readers.pop(Path(home).resolve(), None)
 
 
 def _get_board_state(home: Path) -> dict:
@@ -768,6 +848,7 @@ def create_app(
     home: Path,
     *,
     control_plane_authorizer=None,
+    control_plane_board_reader=None,
     control_plane_decision_authorizer=None,
     control_plane_invocation_factory=None,
     control_plane_project_provider=None,
@@ -1040,6 +1121,10 @@ def create_app(
             return _gate_deny(decision["reason"])
         result = dk.apply_mutation(home, card_id, action, actor, **body)
         if result.get("ok"):
+            from .control_plane_api import invalidate_control_plane_projections
+
+            _invalidate_bounded_board_reader(home)
+            invalidate_control_plane_projections(home)
             dk.BUS.publish({"type": "card_changed", "id": card_id, "actor": actor}, public=True)
         return _json(result)
 
@@ -1959,7 +2044,7 @@ def create_app(
     routes.extend(
         control_plane_routes(
             home,
-            board_reader=_get_board_state,
+            board_reader=control_plane_board_reader or _bounded_board_reader(home),
             health_reader=_get_agent_status,
             authorizer=control_plane_authorizer,
             decision_authorizer=control_plane_decision_authorizer,

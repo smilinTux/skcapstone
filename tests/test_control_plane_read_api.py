@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import base64
+import bisect
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from skcoord.card import Card, Column, Kind
+from skcoord.card_store import CardStore
+from skcoord.coordination import Board, TaskViewReadBatch, TaskViewReadScope
 from starlette.testclient import TestClient
 
 from skdashboard.control_plane_api import _capauth_authorize
@@ -49,6 +55,49 @@ def _canonical_bearer(scope: str, *, subject: str = OIDC_FINGERPRINT) -> str:
     return base64.urlsafe_b64encode(export_token(token).encode()).decode("ascii")
 
 
+def _bounded_board_reader(counter: dict[str, int]):
+    card_ids = tuple(f"synthetic-{index:05d}" for index in range(10_000))
+    population = hashlib.sha256(json.dumps(card_ids).encode()).hexdigest()
+
+    def read(home: Path, *, limit: int, cursor: str | None = None) -> dict:
+        def owner_page(after: str | None, count: int) -> TaskViewReadBatch:
+            counter["calls"] += 1
+            start = 0 if after is None else bisect.bisect_right(card_ids, after)
+            selected = card_ids[start : start + count]
+            counter["records"] += len(selected)
+            return TaskViewReadBatch(selected, population)
+
+        scope = TaskViewReadScope("public-synthetic:board", owner_page)
+        page = Board(home).get_task_view_page(scope, limit=limit, cursor=cursor)
+        return {
+            "tasks": [
+                {
+                    "id": view.task.id,
+                    "title": view.task.title,
+                    "priority": view.task.priority.value,
+                    "status": view.status.value,
+                    "claimed_by": view.claimed_by,
+                }
+                for view in page.items
+            ],
+            "page": {
+                "limit": limit,
+                "next_cursor": page.next_cursor,
+                "has_more": page.has_more,
+            },
+        }
+
+    return read
+
+
+def _bounded_app(home: Path, counter: dict[str, int]):
+    return create_app(
+        home,
+        control_plane_authorizer=_authorizer,
+        control_plane_board_reader=_bounded_board_reader(counter),
+    )
+
+
 def test_v1_board_is_bounded_etagged_and_read_only(tmp_path: Path) -> None:
     board = {
         "tasks": [
@@ -87,9 +136,114 @@ def test_v1_board_is_bounded_etagged_and_read_only(tmp_path: Path) -> None:
     )
 
 
+def test_limit_one_touches_only_page_plus_cursor_record(tmp_path: Path) -> None:
+    counter = {"calls": 0, "records": 0}
+
+    def fold(_store, card_id):
+        return Card(
+            id=card_id,
+            kind=Kind.TASK,
+            title=card_id,
+            status=Column.BACKLOG,
+            swimlane="feature",
+            source="cards",
+        )
+
+    with patch.object(CardStore, "fold", fold):
+        response = TestClient(_bounded_app(tmp_path, counter)).get(
+            "/api/v1/board/summary?limit=1", headers=READ_HEADERS
+        )
+
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+    assert response.json()["page"]["has_more"] is True
+    assert counter == {"calls": 1, "records": 2}
+
+
+def test_production_board_reader_defers_folds_to_page_plus_one(tmp_path: Path) -> None:
+    from skdashboard.dashboard import _BoundedBoardReader
+
+    card_ids = tuple(f"{index:08x}" for index in range(10_000))
+    folds: list[str] = []
+
+    def fold(_store, card_id):
+        folds.append(card_id)
+        return Card(
+            id=card_id,
+            kind=Kind.TASK,
+            title=card_id,
+            status=Column.BACKLOG,
+            swimlane="feature",
+            source="cards",
+        )
+
+    with patch.object(CardStore, "list_card_ids", return_value=list(card_ids)), patch.object(
+        CardStore, "fold", fold
+    ), patch.object(
+        CardStore,
+        "list_cards",
+        side_effect=AssertionError("full CardStore fold is forbidden"),
+    ):
+        reader = _BoundedBoardReader(tmp_path)
+        result = reader(tmp_path, limit=1)
+
+    assert len(result["tasks"]) == 1
+    assert result["eligible_records_touched"] == 2
+    assert folds == ["00000000", "00000001"]
+
+
+def test_matching_etag_avoids_owner_recomputation(tmp_path: Path) -> None:
+    counter = {"calls": 0, "records": 0}
+
+    def fold(_store, card_id):
+        return Card(
+            id=card_id,
+            kind=Kind.TASK,
+            title=card_id,
+            status=Column.BACKLOG,
+            swimlane="feature",
+            source="cards",
+        )
+
+    with patch.object(CardStore, "fold", fold):
+        client = TestClient(_bounded_app(tmp_path, counter))
+        first = client.get("/api/v1/board/summary?limit=1", headers=READ_HEADERS)
+        unchanged = client.get(
+            "/api/v1/board/summary?limit=1",
+            headers={**READ_HEADERS, "If-None-Match": first.headers["etag"]},
+        )
+
+    assert first.status_code == 200
+    assert unchanged.status_code == 304
+    assert counter == {"calls": 1, "records": 2}
+
+
+def test_common_read_saturation_cannot_rate_limit_health(tmp_path: Path) -> None:
+    counter = {"calls": 0, "records": 0}
+
+    def board_reader(_home: Path, *, limit: int, cursor: str | None = None) -> dict:
+        del cursor
+        counter["calls"] += 1
+        return {"tasks": [], "page": {"limit": limit, "next_cursor": None, "has_more": False}}
+
+    app = create_app(
+        tmp_path,
+        control_plane_authorizer=_authorizer,
+        control_plane_board_reader=board_reader,
+    )
+    client = TestClient(app)
+    for _ in range(120):
+        assert client.get("/api/v1/board/summary?limit=1", headers=READ_HEADERS).status_code == 200
+
+    assert client.get("/api/v1/health").status_code == 200
+
+
 def test_v1_source_failure_is_partial_not_healthy(tmp_path: Path) -> None:
-    with patch("skdashboard.dashboard._get_board_state", return_value={"error": "offline"}):
-        app = _app(tmp_path)
+    app = create_app(
+        tmp_path,
+        control_plane_authorizer=_authorizer,
+        control_plane_board_reader=lambda _home, **_query: {"error": "offline"},
+    )
     response = TestClient(app).get("/api/v1/board/summary", headers=READ_HEADERS)
     body = response.json()
     assert body["freshness"]["truth_state"] == "partial"
