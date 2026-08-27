@@ -15,7 +15,15 @@ import click
 # ---------------------------------------------------------------------------
 
 _AGENT_NAME_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?$")
-_TASK_ID_RE = re.compile(r"^[0-9a-fA-F\-]+$")
+# Card IDs are bare hex (c969dfb8) OR an ITIL-kind prefix plus hex
+# (inc-0e190b2f, prb-41b9fb96, chg-...). The hex-only pattern rejected every
+# prefixed ID, which meant `coord release-claim` could not release a claim on
+# any incident, problem or change card. Measured on 2026-08-27: 303 inc-, 8
+# chg- and 3 prb- cards in the CardStore were unreachable by that command, and
+# 10 of them were holding dead claims that could not be freed. The prefix is
+# kept deliberately narrow (three lowercase letters) so this stays a validator,
+# not an open door.
+_TASK_ID_RE = re.compile(r"^(?:[a-z]{3}-)?[0-9a-fA-F\-]+$")
 _SOUL_NAME_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-_]*[a-zA-Z0-9])?$")
 
 
@@ -39,14 +47,15 @@ def validate_agent_name(name: str) -> str:
 
 
 def validate_task_id(task_id: str) -> str:
-    """Validate a task ID: hex characters and hyphens only, 1-64 chars."""
+    """Validate a task ID: optional 3-letter kind prefix, then hex and hyphens."""
     if not task_id or len(task_id) > 64:
         raise click.BadParameter(
             f"Task ID must be 1-64 characters, got {len(task_id) if task_id else 0}."
         )
     if not _TASK_ID_RE.match(task_id):
         raise click.BadParameter(
-            f"Task ID '{task_id}' is invalid. Use only hex characters (0-9, a-f) and hyphens."
+            f"Task ID '{task_id}' is invalid. Use hex characters (0-9, a-f) and "
+            "hyphens, optionally after a three-letter kind prefix such as inc- or prb-."
         )
     return task_id
 

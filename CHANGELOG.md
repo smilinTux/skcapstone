@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+
+### Fixed
+
+- `validate_task_id` now accepts ITIL-prefixed card IDs (`inc-`, `prb-`, `chg-`).
+  The hex-only pattern rejected all 314 such cards in the live store, so
+  `coord release-claim` could not release a claim on an incident, problem or
+  change card at all.
+
 ### Added
 
 - **Card 2ff077b8: report leaf-eligible coordination work.** `coord status`
