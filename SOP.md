@@ -196,7 +196,7 @@ The canonical event, redaction, cursor/gap, multi-node, and command-receipt desi
 in SKHarness at `docs/architecture/live-agent-observation-and-control.md`. SKCapstone
 does not create a second activity or control store.
 
-**⚠️ coordination / ITIL / cards no longer live here.** `skcoord>=0.1.44` is a **hard
+**⚠️ coordination / ITIL / cards no longer live here.** `skcoord>=0.1.46` is a **hard
 runtime dependency** (`pyproject.toml`), and `skcapstone.coordination`,
 `skcapstone.card_store`, and `skcapstone.itil` are **transparent re-export shims** over
 `skcoord.*` (the CR-4.1 extraction). Each aliases the real module into `sys.modules`, so
@@ -737,7 +737,7 @@ checks:
   - name: ci.yml still runs NO tests, as section 4 warns
     run: ! grep -qE '^\s+run:.*pytest' .github/workflows/ci.yml
   - name: skcoord is still a hard dep and coordination is still a shim over it
-    run: grep -qxF '    "skcoord>=0.1.44",' pyproject.toml && grep -qxF 'import skcoord.coordination as _src' src/skcapstone/coordination.py && grep -qxF 'sys.modules[__name__] = _src' src/skcapstone/coordination.py
+    run: grep -qxF '    "skcoord>=0.1.46",' pyproject.toml && grep -qxF 'import skcoord.coordination as _src' src/skcapstone/coordination.py && grep -qxF 'sys.modules[__name__] = _src' src/skcapstone/coordination.py
   - name: SKCAPSTONE_HOME is still the real home override, per section 6
     run: grep -qxF 'AGENT_HOME = os.environ.get("SKCAPSTONE_HOME", _default_home())' src/skcapstone/__init__.py
   - name: Codex and Pi loaders still export skenv and default Codex YOLO mode

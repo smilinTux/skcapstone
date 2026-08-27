@@ -35,6 +35,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Card c0b5fdbf: require `skcoord>=0.1.46` for CardStore parity.** The
+  runtime and registry test contracts now require the release that treats a
+  status-less legacy birth record as completed when its CardStore chain is
+  complete, preventing false parity mismatch and open-drift alerts.
+
 - **Card 9ccc42ec: align parity and board reads with the authoritative fold.**
   Parity alerts no longer recommend automatic legacy-to-store reconciliation,
   and status plus kanban regressions prove they expose the same folded
