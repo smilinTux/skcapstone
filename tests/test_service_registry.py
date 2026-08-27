@@ -26,15 +26,43 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_registered_service_appears(home: Path):
     sdk.register_service("myservice", pid_file=str(home / "x.pid"))
-    names = {r["name"] for r in service_health.check_all_services()}
-    assert "myservice" in names
+    row = next(r for r in service_health.check_all_services() if r["name"] == "myservice")
+    assert row["endpoint"] == f"pid://{home / 'x.pid'}"
+    assert row["vantage_point"]
+    assert row["probed_from"]
 
 
 def test_registry_entry_without_targets_is_unknown(home: Path):
     sdk.register_service("bare")  # no health_url, no pid_file
     row = next(r for r in service_health.check_all_services() if r["name"] == "bare")
     assert row["status"] == "unknown"
-    assert "without" in (row["error"] or "")
+    assert "endpoint or vantage_point" in (row["error"] or "")
+
+
+def test_service_is_not_probed_from_wrong_vantage(home: Path, monkeypatch) -> None:
+    sdk.register_service(
+        "remote-only",
+        health_url="https://service.example/health",
+        vantage_point="chiap99",
+    )
+    calls: list[str] = []
+    original_http_check = service_health._http_check
+
+    def recording_http_check(name: str, *args, **kwargs):
+        calls.append(name)
+        return original_http_check(name, *args, **kwargs)
+
+    monkeypatch.setattr(service_health, "_http_check", recording_http_check)
+
+    row = next(
+        r for r in service_health.check_all_services() if r["name"] == "remote-only"
+    )
+
+    assert row["status"] == "unknown"
+    assert row["endpoint"] == "https://service.example/health"
+    assert row["vantage_point"] == "chiap99"
+    assert row["probed_from"] != "chiap99"
+    assert "remote-only" not in calls
 
 
 def test_empty_registry_no_extra_rows(home: Path):
