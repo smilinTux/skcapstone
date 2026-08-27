@@ -112,8 +112,12 @@ def register_coord_amend_commands(coord: click.Group) -> None:
         try:
             amend_criteria(home_path, task_id, list(criteria), agent or "")
             folded = current_acceptance_criteria(home_path, task_id)
-        except ValueError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from None
+        if folded != list(criteria):
+            raise click.ClickException(
+                f"criteria amendment for card {task_id} failed read-after-write verification"
+            )
         console.print(f"\n  [green]Amended criteria on {task_id} ({len(folded)} criterion/a).[/]")
         for c in folded:
             console.print(f"    [dim]- {c}[/]")

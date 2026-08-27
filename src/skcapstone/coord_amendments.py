@@ -108,9 +108,24 @@ def amend_criteria(home: Path, task_id: str, criteria: list[str], agent: str = "
     if not criteria:
         raise ValueError("at least one criterion is required")
     home = Path(home).expanduser()
-    CardStore(home).append_event(
-        task_id, "amend_criteria", agent or "mcp", criteria=list(criteria)
-    )
+    expected = list(criteria)
+    store = CardStore(home)
+    store.append_event(task_id, "amend_criteria", agent or "mcp", criteria=expected)
+
+    # Do not trust the append call as proof that the amendment landed. This
+    # command historically returned success while the event sink discarded the
+    # write. Read the authoritative fold back and fail loudly unless it exposes
+    # the exact replacement list. Besides catching a no-op writer, this catches
+    # an installed skcoord version that can append the event but cannot fold it.
+    folded = store.fold(task_id)
+    if folded is None:
+        raise ValueError(f"card {task_id} has no foldable core after criteria amendment")
+    actual = list(folded.acceptance_criteria)
+    if actual != expected:
+        raise RuntimeError(
+            f"criteria amendment for card {task_id} did not persist: "
+            f"authoritative fold returned {actual!r}, expected {expected!r}"
+        )
 
 
 def _base_acceptance_criteria(home: Path, task_id: str) -> list[str]:

@@ -244,6 +244,36 @@ def test_amend_criteria_replaces_the_folded_list(tmp_path, monkeypatch):
     assert _core_text(tmp_path, "ac000001") == before
 
 
+def test_amend_criteria_fails_loudly_when_append_does_not_reach_independent_fold(
+    tmp_path, monkeypatch
+):
+    _seed(tmp_path, "acnooped", criteria=["original"])
+    monkeypatch.setattr(CardStore, "append_event", lambda *args, **kwargs: {})
+
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "amend-criteria",
+            "acnooped",
+            "--home",
+            str(tmp_path),
+            "--criteria",
+            "claimed replacement",
+            "--agent",
+            "lumina",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "did not persist" in result.output
+    assert "Amended criteria" not in result.output
+    # Different read path from append_event: the board projection folds the
+    # store and must retain the old value when the writer silently does nothing.
+    view = next(view for view in Board(tmp_path).get_task_views() if view.task.id == "acnooped")
+    assert view.task.acceptance_criteria == ["original"]
+
+
 def test_amend_criteria_is_reversible_by_reapplying(tmp_path):
     _seed(tmp_path, "ac000002", criteria=["original"])
     runner = CliRunner()
@@ -262,6 +292,25 @@ def test_amend_criteria_requires_at_least_one_criterion(tmp_path):
     )
     assert result.exit_code != 0
     assert current_acceptance_criteria(tmp_path, "ac000003") == []
+
+
+def test_amend_criteria_rejects_unknown_card_without_creating_event_log(tmp_path):
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "amend-criteria",
+            "unknown1",
+            "--home",
+            str(tmp_path),
+            "--criteria",
+            "replacement",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "no foldable core" in result.output
+    assert not (CardStore(tmp_path).cards_dir / "unknown1").exists()
 
 
 def test_amend_criteria_event_is_writer_attributed(tmp_path):
