@@ -1,0 +1,9 @@
+now	FAIL	10677ms
+portfolio	FAIL	10064ms
+reliability	FAIL	10081ms
+architecture	FAIL	10106ms
+ai	PASS	3449ms
+governance	FAIL	10091ms
+reports	FAIL	10088ms
+preview	PASS	723ms
+quality	FAIL	8748ms

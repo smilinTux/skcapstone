@@ -1,0 +1,3 @@
+Error: Estate pulse did not render: {"estate":"Protected estate evidence is unavailable: /api/v1/overview?role=architect&scope=estate&window=latest&baseline=none&service=all -> 403. No silo is assumed healthy.","count":"UNAVAILABLE","quality":"!\nUnavailable\nProtected estate evidence is unavailable: /api/v1/overview?role=architect&scope=estate&window=latest&baseline=none&service=all -> 403.","url":"http://127.0.0.1:17879/control-plane/now?role=architect&scope=estate&window=latest&baseline=none&service=all"} []
+    at waitFor (file:///home/skuser01/work/skdashboard/scripts/qualify_control_plane_now_cdp.mjs:18:9)
+    at async qualify (file:///home/skuser01/work/skdashboard/scripts/qualify_control_plane_now_cdp.mjs:155:7)

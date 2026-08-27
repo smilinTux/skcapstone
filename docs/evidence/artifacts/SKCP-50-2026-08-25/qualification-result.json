@@ -1,0 +1,18 @@
+{
+  "card_id": "83a8c40b",
+  "verdict": "BLOCKED",
+  "revision": "436b094b86f422c7eaf94ebbbd98b846e7f3a6af",
+  "passing": {
+    "landmark_routes": 7,
+    "ai_outcomes_qualifier": "PASS",
+    "authorization_preview_qualifier": "PASS"
+  },
+  "blocking": [
+    "Now and data-quality fixtures returned HTTP 403",
+    "Portfolio, Reliability, Architecture, Governance, and Reports fixture startup failed",
+    "full mobile tablet desktop zoom reduced-motion reviewed screenshot matrix missing",
+    "complete manual screen-reader and WCAG 2.2 AA evidence missing",
+    "complete common-task time and interaction-count evidence missing"
+  ],
+  "report": "docs/evidence/SKCP-50-BROWSER-QUALIFICATION-2026-08-25.md"
+}

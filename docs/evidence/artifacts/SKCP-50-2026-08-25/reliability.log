@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "<string>", line 8, in <module>
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/skuser01/work/skdashboard/tests/test_control_plane_decision_context.py", line 8, in <module>
+    import pytest
+ModuleNotFoundError: No module named 'pytest'
+Error: Bearer fixture was not created
+    at waitFor (file:///home/skuser01/work/skdashboard/scripts/qualify_control_plane_reliability_cdp.mjs:17:9)
+    at async qualify (file:///home/skuser01/work/skdashboard/scripts/qualify_control_plane_reliability_cdp.mjs:66:5)

@@ -1,0 +1,101 @@
+{
+  "result": "PASS",
+  "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/146.0.0.0 Safari/537.36",
+  "matrix": [
+    {
+      "route": "/control-plane/now",
+      "title": "SKDashboard | Now",
+      "mainLandmarks": 1,
+      "navigationLandmarks": 1,
+      "h1": [
+        "SKDashboard"
+      ],
+      "focusName": "Now",
+      "focusVisible": true,
+      "axMain": 1,
+      "axNavigation": 1
+    },
+    {
+      "route": "/control-plane/portfolio?role=project-manager&scope=estate&window=latest&baseline=none&service=all",
+      "title": "SKDashboard | Portfolio",
+      "mainLandmarks": 1,
+      "navigationLandmarks": 1,
+      "h1": [
+        "SKDashboard"
+      ],
+      "focusName": "Now",
+      "focusVisible": true,
+      "axMain": 1,
+      "axNavigation": 1
+    },
+    {
+      "route": "/control-plane/reliability?role=operator&scope=estate&window=latest&baseline=none&service=all",
+      "title": "SKDashboard | Reliability",
+      "mainLandmarks": 1,
+      "navigationLandmarks": 1,
+      "h1": [
+        "SKDashboard"
+      ],
+      "focusName": "Now",
+      "focusVisible": true,
+      "axMain": 1,
+      "axNavigation": 1
+    },
+    {
+      "route": "/control-plane/architecture?role=architect&scope=estate&window=latest&baseline=none&service=all&environment=all",
+      "title": "SKDashboard | Architecture",
+      "mainLandmarks": 1,
+      "navigationLandmarks": 1,
+      "h1": [
+        "SKDashboard"
+      ],
+      "focusName": "Now",
+      "focusVisible": true,
+      "axMain": 1,
+      "axNavigation": 1
+    },
+    {
+      "route": "/control-plane/ai?role=operator&scope=estate&window=latest&baseline=none&service=all",
+      "title": "SKDashboard | AI outcomes",
+      "mainLandmarks": 1,
+      "navigationLandmarks": 1,
+      "h1": [
+        "SKDashboard"
+      ],
+      "focusName": "Now",
+      "focusVisible": true,
+      "axMain": 1,
+      "axNavigation": 1
+    },
+    {
+      "route": "/control-plane/governance?role=governance&scope=estate&window=latest&baseline=none&service=all",
+      "title": "SKDashboard | Governance",
+      "mainLandmarks": 1,
+      "navigationLandmarks": 1,
+      "h1": [
+        "SKDashboard"
+      ],
+      "focusName": "Now",
+      "focusVisible": true,
+      "axMain": 1,
+      "axNavigation": 1
+    },
+    {
+      "route": "/control-plane/reports?role=project-manager&scope=estate&window=latest&baseline=none&service=all&report_type=all",
+      "title": "SKDashboard | Reports",
+      "mainLandmarks": 1,
+      "navigationLandmarks": 1,
+      "h1": [
+        "SKDashboard"
+      ],
+      "focusName": "Now",
+      "focusVisible": true,
+      "axMain": 1,
+      "axNavigation": 1
+    }
+  ],
+  "nonGetRequests": 0,
+  "externalHttpRequests": 0,
+  "runtimeExceptions": 0
+}
+elapsed=1.03

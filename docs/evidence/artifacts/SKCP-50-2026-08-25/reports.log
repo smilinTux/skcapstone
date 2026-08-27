@@ -1,0 +1,3 @@
+Error: Report fixture was not created
+    at waitFor (file:///home/skuser01/work/skdashboard/scripts/qualify_control_plane_reports_cdp.mjs:12:147)
+    at async qualify (file:///home/skuser01/work/skdashboard/scripts/qualify_control_plane_reports_cdp.mjs:52:5)

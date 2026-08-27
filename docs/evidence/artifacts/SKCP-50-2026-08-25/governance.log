@@ -1,0 +1,3 @@
+Error: Bearer fixture was not created
+    at waitFor (file:///home/skuser01/work/skdashboard/scripts/qualify_control_plane_governance_cdp.mjs:17:9)
+    at async qualify (file:///home/skuser01/work/skdashboard/scripts/qualify_control_plane_governance_cdp.mjs:60:5)
