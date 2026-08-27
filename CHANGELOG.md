@@ -181,6 +181,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+
+- Pinned `skcoord` at one version across `pyproject.toml`, the pytest workflow's
+  registry-contract step, and `SOP.md`, and made the guard test derive the
+  expected version from `pyproject.toml` instead of naming its own. The CI pin
+  had sat at 0.1.44 while skcoord released through 0.1.53, and because
+  `tests/test_coord_amend.py` runs once against the pinned registry wheel and
+  again against skcoord from git main, the two steps began asserting opposite
+  contracts and no assertion in that file could satisfy both.
+- `test_coord_amend` now asserts malformed criteria are surfaced loudly on the
+  store-read path (projected as an `UNREADABLE`, critical, labelled card with an
+  attributable source) rather than asserting the whole board refuses. skcoord
+  0.1.51 changed `KanbanBoard.cards()` to degrade one unreadable card instead of
+  failing closed. Legacy-read selectors still assert the board refuses outright.
 - **Card `5b57816b`: recovered service incidents now resolve without masking
   recurring failures.** Generic service health resolves only its own incidents
   after an authority-node `up` result, and the Syncthing guard resolves only
