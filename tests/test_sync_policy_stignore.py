@@ -168,6 +168,11 @@ def test_every_template_pattern_evaluates_supported() -> None:
         "deep/nested/file.tmp",
         "heartbeats/node.json",
         "capauth/security/tokens/op.token",
+        "users/casey/.codex/auth.json",
+        "users/casey/.codex/sessions/2026/chat.jsonl",
+        "users/casey/AppData/Roaming/ChatGPT/Cookies",
+        "users/casey/AppData/Local/Packages/OpenAI.Codex/LocalState/session.db",
+        "run/skcapstone-mcp-slots/skcapstone-0.lock",
     ],
 )
 def test_template_covers_canonical_private_and_runtime_paths(probe: str) -> None:

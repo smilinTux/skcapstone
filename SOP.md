@@ -508,7 +508,7 @@ Casey's cluster sets Jarvis); generic source and service definitions stay identi
 **Coding-agent harnesses and default MCP topology.** `skcapstone register` supports
 Codex and Pi alongside the other detected clients. Their generated context loaders
 prepend `~/.skenv/bin`, export the resolved SK profile, and default
-`SK_CODEX_YOLO=1` for Codex. Pi uses `pi-mcp-extension` plus
+`SK_CODEX_YOLO=0` for Codex. Pi uses `pi-mcp-extension` plus
 `~/.pi/agent/mcp.json`. The default MCP set is deliberately only `skcapstone-mcp` and
 `skmemory-mcp`: CapAuth operations are already exposed through SKCapstone, while
 SKWhisper remains a background context producer rather than a duplicate stdio server.
@@ -531,7 +531,7 @@ See [`docs/MCP_TOPOLOGY.md`](./docs/MCP_TOPOLOGY.md).
 | `SKCAPSTONE_ROOT` / `SKCAPSTONE_SHARED_ROOT` | backwards-compatible aliases; both default to `SKCAPSTONE_HOME`, neither moves the home on its own |
 | `SKAGENT` / `SKCAPSTONE_AGENT` | agent name (`SKAGENT` wins); enables the multi-agent household layout **and selects the daemon port** (§5) |
 | `SK_DEFAULT_AGENT` | explicit node/profile fallback used only when no active-agent variable is set |
-| `SK_CODEX_YOLO` | Codex permission-mode flag; generated SK loaders default it to `1` unless explicitly overridden |
+| `SK_CODEX_YOLO` | Codex permission-mode flag; generated SK loaders default it to `0`; `1` is an explicit dangerous override |
 | `SKCAPSTONE_PORT` | overrides the package `DEFAULT_PORT` (default `9383`) |
 | `OLLAMA_HOST` | Ollama API base (default `http://localhost:11434`) |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY` / `MOONSHOT_API_KEY` / `NVIDIA_API_KEY` | enable the corresponding cloud backend (presence = availability) |
@@ -740,8 +740,8 @@ checks:
     run: grep -qxF '    "skcoord>=0.1.44",' pyproject.toml && grep -qxF 'import skcoord.coordination as _src' src/skcapstone/coordination.py && grep -qxF 'sys.modules[__name__] = _src' src/skcapstone/coordination.py
   - name: SKCAPSTONE_HOME is still the real home override, per section 6
     run: grep -qxF 'AGENT_HOME = os.environ.get("SKCAPSTONE_HOME", _default_home())' src/skcapstone/__init__.py
-  - name: Codex and Pi loaders still export skenv and default Codex YOLO mode
-    run: grep -qF 'export PATH="$HOME/.skenv/bin:$PATH"' src/skcapstone/codex_setup.py && grep -qF 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' src/skcapstone/codex_setup.py && grep -qF 'def ensure_pi_setup(' src/skcapstone/codex_setup.py
+  - name: Codex and Pi loaders export skenv and default Codex approvals on
+    run: grep -qF 'export PATH="$HOME/.skenv/bin:$PATH"' src/skcapstone/codex_setup.py && grep -qF 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-0}"' src/skcapstone/codex_setup.py && grep -qF 'def ensure_pi_setup(' src/skcapstone/codex_setup.py
   - name: ambiguous multi-agent installs are never resolved alphabetically
     run: grep -qF 'return candidates[0] if len(candidates) == 1 else None' src/skcapstone/__init__.py && ! grep -qF 'DEFAULT_AGENT = (os.environ.get("SK_DEFAULT_AGENT") or "lumina")' src/skcapstone/__init__.py
 -->

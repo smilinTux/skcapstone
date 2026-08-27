@@ -280,7 +280,7 @@ class TestCheckCodex:
         assert loader.stat().st_mode & 0o100
         loader_text = loader.read_text(encoding="utf-8")
         assert 'export PATH="$HOME/.skenv/bin:$PATH"' in loader_text
-        assert 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' in loader_text
+        assert 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-0}"' in loader_text
         agents_text = agents.read_text(encoding="utf-8")
         assert "SKCAPSTONE_CODEX_AGENT_CONTEXT_START" in agents_text
         assert "jarvis" in agents_text
@@ -303,7 +303,7 @@ class TestCheckCodex:
 
         updated = loader.read_text(encoding="utf-8")
         assert updated != custom_loader
-        assert 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' in updated
+        assert 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-0}"' in updated
 
     def test_pi_setup_creates_global_context_and_loader(self, tmp_path, monkeypatch):
         pi_home = tmp_path / ".pi" / "agent"

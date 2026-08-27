@@ -84,6 +84,21 @@ daemon.pid
 logs
 
 // --- Runtime / session state (node-local, large, not source of truth) ---
+// ChatGPT and Codex authentication, session databases, caches, logs, and MCP
+// lifecycle locks are physical-host state. They must be regenerated or
+// acquired on each host and must never cross a Syncthing folder boundary.
+**/.codex/auth.json
+**/.codex/sessions
+**/.codex/log
+**/.codex/cache
+**/ChatGPT/Cookies
+**/ChatGPT/Local Storage
+**/ChatGPT/Session Storage
+**/ChatGPT/IndexedDB
+**/ChatGPT/Cache
+**/ChatGPT/Code Cache
+**/OpenAI.Codex/LocalState
+**/skcapstone-mcp-slots
 sessions
 conversations
 backups
