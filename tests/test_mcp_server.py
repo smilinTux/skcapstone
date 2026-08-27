@@ -81,7 +81,8 @@ class TestToolListing:
         # + coord_describe / coord_label / coord_link   (card 61b97e22)
         # + coord_reprioritize / coord_amend_criteria   (card e78fd954)
         # + coord_void                                  (card 325a737f)
-        # - ansible playbook runner tool         (removed, see CHANGELOG: ungated subprocess, zero live consumers)
+        # - ansible playbook runner tool         (removed: ungated subprocess,
+        #                                         zero live consumers; see CHANGELOG)
         #
         # Bump this WITH the commit that adds or removes a tool. It drifted three
         # behind once and kept main red, which is worse than useless: a count
@@ -546,6 +547,38 @@ class TestSyncTools:
 class TestTrusteeTools:
     """Tests for trustee_* MCP tools."""
 
+    @pytest.fixture(autouse=True)
+    def _provision_actuation_gate(
+        self, initialized_agent_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Model an authenticated caller with readiness and PDP allow."""
+        from skcapstone.fleet import store as fleet_store
+        from skcapstone.fleet.paths import FleetPaths
+
+        paths = FleetPaths(root=initialized_agent_home / "fleet")
+        writer = fleet_store.Writer(role="operator", node="test-node", identity="test")
+        fleet_store.set_frozen(paths, False, writer=writer, reason="test fixture provisioning")
+
+        class _AllowDecision:
+            allow = True
+            reason = "test fixture: always allow"
+
+        monkeypatch.setattr(
+            "skcapstone.trustee_actuation.resolve_subject",
+            lambda: "test-fingerprint",
+        )
+        monkeypatch.setattr("capauth.decide", lambda *args, **kwargs: _AllowDecision())
+
+    @staticmethod
+    def _approved_change(home: Path) -> str:
+        """Create the approved ITIL prerequisite required by rotation."""
+        from skcapstone.itil import ITILManager
+
+        manager = ITILManager(home)
+        change = manager.propose_change(title="rotate for MCP test", managed_by="atlas")
+        manager.submit_cab_vote(change.id, agent="human", decision="approved")
+        return change.id
+
     def _setup_deployment(self, home: Path) -> str:
         """Create a test deployment and return its ID."""
         from datetime import datetime, timezone
@@ -680,10 +713,15 @@ class TestTrusteeTools:
     async def test_trustee_rotate(self, initialized_agent_home: Path):
         """trustee_rotate snapshots and redeploys."""
         deploy_id = self._setup_deployment(initialized_agent_home)
+        change_id = self._approved_change(initialized_agent_home)
         with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
             result = await call_tool(
                 "trustee_rotate",
-                {"deployment_id": deploy_id, "agent_name": "worker-1"},
+                {
+                    "deployment_id": deploy_id,
+                    "agent_name": "worker-1",
+                    "change_id": change_id,
+                },
             )
         parsed = _extract_json(result)
         assert parsed["deployment_id"] == deploy_id

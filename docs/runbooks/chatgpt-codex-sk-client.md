@@ -8,10 +8,10 @@ acceptance, updates, rollback, and the failure modes proven by the `chiap04` and
 
 **Status:** operational canary procedure<br>
 **Owner:** SKCapstone<br>
-**Last verified:** 2026-08-21<br>
+**Last verified:** 2026-08-26<br>
 **Change evidence:** approved change `chg-a76c0aee`; remediation
-`648f62e4`; coordination cards `5a8822dc`, `29ba6bea`, `df0c6c26`, and
-`8b9ee8b3`
+`648f62e4`; coordination cards `5a8822dc`, `29ba6bea`, `e120c4ba`,
+`df0c6c26`, and `8b9ee8b3`
 
 Official OpenAI references:
 
@@ -343,6 +343,37 @@ Linux user:
 wsl -d Ubuntu
 ```
 
+If `wsl -d Ubuntu` fails with `HCS_E_SERVICE_NOT_AVAILABLE`, do not repair the
+distro, unregister it, or reinstall it. First inspect the Windows feature state
+from elevated PowerShell:
+
+```powershell
+Get-WindowsOptionalFeature -Online `
+  -FeatureName Microsoft-Windows-Subsystem-Linux,VirtualMachinePlatform |
+  Select-Object FeatureName, State
+```
+
+Enable only a missing feature and leave restart timing to the approved change
+window:
+
+```powershell
+Enable-WindowsOptionalFeature -Online `
+  -FeatureName Microsoft-Windows-Subsystem-Linux -All -NoRestart
+Enable-WindowsOptionalFeature -Online `
+  -FeatureName VirtualMachinePlatform -All -NoRestart
+```
+
+`EnablePending` means the repair is not complete. Schedule one Windows reboot,
+then require `wsl --status`, `wsl --list --verbose`, and the following command
+to pass before claiming WSL or MCP acceptance:
+
+```powershell
+wsl -d Ubuntu -- uname -srmo
+```
+
+A registered Ubuntu distro is not proof that the virtualization platform can
+start it.
+
 Inside WSL, keep SK repositories under the Linux home for performance and
 permission consistency:
 
@@ -362,9 +393,26 @@ From PowerShell or Windows Terminal:
 winget install --id 9PLM9XGG6VKS -s msstore
 ```
 
+Verify the exact Store identity, version, and Start-menu registration without
+opening application data:
+
+```powershell
+winget list --id 9PLM9XGG6VKS --source msstore
+winget show --id 9PLM9XGG6VKS --source msstore
+Get-StartApps | Where-Object Name -eq 'ChatGPT'
+Get-AppxPackage OpenAI.Codex |
+  Select-Object Name, Version, Publisher, Architecture
+```
+
 Open **ChatGPT** from Start and complete sign-in. The Store package may use an
 internal package name containing `OpenAI.Codex`; the Start-menu display name is
 ChatGPT.
+
+On `chiwk12`, read-only verification on 2026-08-26 found Store product ID
+`9PLM9XGG6VKS`, package `OpenAI.Codex` version `26.820.7780.0`, and a registered
+Start entry named `ChatGPT`. Launch in the interactive Windows desktop session
+was also verified. Local human ChatGPT sign-in and WSL agent selection remain separate
+acceptance gates; package launch does not satisfy either one.
 
 ### 5.3 Switch the app agent and terminal to WSL
 
@@ -539,6 +587,12 @@ protected SKMemory environment file at process start.
 
 ## 7. Acceptance procedure
 
+Record each host as `PASS`, `PARTIAL`, or `BLOCKED`; do not collapse package
+installation, desktop sign-in, WSL startup, MCP execution, and human acceptance
+into one boolean. `chiwk12` is `PARTIAL` as of 2026-08-26: the official Store
+package installs and launches, while the WSL feature repair is pending a reboot
+and local sign-in is still human-gated.
+
 ### 7.1 Runtime ownership
 
 On Linux:
@@ -659,6 +713,18 @@ Then rerun sections 6 and 7. Restart ChatGPT only after the CLI acceptance is
 green. Do not restart every terminal or shut down WSL as a substitute for
 targeted service and app restarts.
 
+Update the Windows package through the same Microsoft Store source used for
+installation:
+
+```powershell
+winget upgrade --id 9PLM9XGG6VKS --source msstore
+```
+
+Record the before and after package versions. Microsoft Store reinstall is not
+a tested downgrade path; do not describe uninstall/reinstall as rollback. A
+rollback claim requires a separately exercised, version-pinned procedure or an
+explicit finding that the Store channel does not expose the prior version.
+
 ### 8.3 Configuration rollback
 
 Restore only the files captured before the change:
@@ -725,10 +791,10 @@ codex mcp remove skcomms
 
 ## 11. Canary evidence and known gaps
 
-| Host | Platform | Accepted result |
-|---|---|---|
-| `chiap04` | Official Linux desktop package | Linux app-server; four SK MCP entries; Jarvis ritual and SKWhisper context loaded |
-| `chiwk12` | Windows Store app with Ubuntu WSL2 agent | Windows-backed Codex home; WSL-native MCP children; Jarvis / `jarvis-unhinged` / OOF 100%; wrapped SKMemory health confirmed `PGVectorBackend` and `AGEGraphBackend`; Windows Terminal preserved during app restart |
+| Host | Platform | Current evidence | Acceptance state |
+|---|---|---|---|
+| `chiap04` | Official Linux desktop package | Rechecked 2026-08-26: ChatGPT `26.818.22352` is running; the official repository offers `26.820.60940`; Codex CLI `0.148.0` is present; all four SK MCP entries are enabled; the bootstrap resolves `jarvis` with the Jarvis soul loaded; and wrapped SKMemory health reports healthy PGVector and AGE backends | Partial until the current two-host read/write and human acceptance record is attached to card `5a8822dc` |
+| `chiwk12` | Windows Store app; Ubuntu WSL2 intended | Rechecked 2026-08-26: official Store product `9PLM9XGG6VKS`, package version `26.820.7780.0`, Start registration, and interactive-session launch pass. Ubuntu remains registered, but WSL startup is blocked until the enabled Windows features finish one reboot; local ChatGPT sign-in is pending | Blocked on approved reboot, post-reboot WSL/MCP validation, and local human sign-in |
 
 Known implementation gaps:
 
@@ -743,6 +809,11 @@ Known implementation gaps:
    accepted desktop compatibility profile exposes four. Resolve that drift by
    ownership/delegation policy before declaring four servers the fleet-wide
    default.
+4. `chiwk12` cannot yet run WSL-native MCP acceptance. The Windows Subsystem
+   for Linux feature is enabled and Virtual Machine Platform is `EnablePending`;
+   one approved reboot and a fresh WSL2 validation are required. Do not complete
+   cards `e120c4ba`, `df0c6c26`, `bfbb2986`, or `5a8822dc` from pre-reboot
+   evidence.
 
 When any gap is fixed, update this runbook and its acceptance commands in the
 same change. Do not leave a manual workaround as invisible tribal knowledge.

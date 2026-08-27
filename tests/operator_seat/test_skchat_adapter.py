@@ -13,6 +13,11 @@ def _paths(tmp_path):
     return FleetPaths(root=tmp_path / "fleet")
 
 
+def _provision_ready(paths):
+    writer = store.Writer(role="operator", node="test-node", identity="test")
+    store.set_frozen(paths, False, writer=writer, reason="test fixture provisioning")
+
+
 def _ok_runner(cmd):
     import subprocess
 
@@ -163,6 +168,7 @@ def test_default_probe_depth_reflects_unified_outbox(monkeypatch, tmp_path):
 
 def test_act_restart_daemon_calls_systemd(tmp_path):
     paths = _paths(tmp_path)
+    _provision_ready(paths)
     calls = []
 
     def runner(cmd):
@@ -178,6 +184,7 @@ def test_act_restart_daemon_calls_systemd(tmp_path):
 
 def test_act_restart_bridge_uses_per_agent_unit(tmp_path):
     paths = _paths(tmp_path)
+    _provision_ready(paths)
     calls = []
     res = skchat_adapter.skchat_act(
         paths,

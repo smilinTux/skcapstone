@@ -400,6 +400,30 @@ def test_open_count_no_longer_overcounts_archived(tmp_path):
     assert open_ids == {"oc4", "oc5"}
 
 
+def _stamp_legacy_status(home, status="open"):
+    """Give legacy task records an explicit ``status`` field.
+
+    skcoord 0.1.46 changed parity semantics (skcoord card 9ccc42ec, commit
+    eba11a9 "fix(parity): ignore absent legacy lifecycle fields"): a legacy task
+    whose record does not physically carry ``status`` is now UNKNOWN rather than
+    a disagreement, so status-less immutable birth records no longer inflate the
+    parity open-count alert or make complete CardStore chains look stale.
+
+    Board.create_task writes exactly such a status-less birth record, and there
+    is no public setter for the field, so a fixture that wants to exercise parity
+    drift has to stamp it. Without this the fixtures below assert against records
+    the new contract deliberately declines to count, and they measure nothing.
+    """
+    import json
+
+    from skcapstone.coordination import Board
+
+    for path in Board(home).tasks_dir.glob("*.json"):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["status"] = status
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
 def test_parity_open_count_alert(tmp_path, monkeypatch):
     """PARITY ALERT: parity_check must flag when the store-served open count
     diverges from legacy beyond the threshold."""
@@ -414,6 +438,8 @@ def test_parity_open_count_alert(tmp_path, monkeypatch):
     # 4 legacy-only tasks the store has never seen -> store undercounts open by 4
     for i in range(1, 5):
         board.create_task(Task(id=f"al{i}", title=f"drift{i}", created_by="o"))
+    # parity only counts legacy records that physically carry status
+    _stamp_legacy_status(tmp_path, "open")
     par = parity_check(tmp_path, open_drift_threshold=2)
     assert par["open_legacy"] == 5
     assert par["open_store"] == 1
@@ -475,6 +501,8 @@ def test_reconcile_repairs_agent_file_claim_drift(tmp_path):
             agent="lumina", current_task="rc1", claimed_tasks=["rc1"], completed_tasks=["rc2"]
         )
     )
+    # parity only counts legacy records that physically carry status
+    _stamp_legacy_status(tmp_path, "open")
     pre = parity_check(tmp_path)
     assert pre["mismatches"], "fixture must drift before reconcile"
 

@@ -20,6 +20,11 @@ def _paths(tmp_path):
     return FleetPaths(root=tmp_path / "fleet")
 
 
+def _provision_ready(paths):
+    writer = store.Writer(role="operator", node="test-node", identity="test")
+    store.set_frozen(paths, False, writer=writer, reason="test fixture provisioning")
+
+
 def _capture_runner(calls):
     def runner(cmd):
         calls.append(cmd)
@@ -65,6 +70,7 @@ def test_merged_explain_unions_both_action_catalogs():
 
 def test_honor_skchat_records_itil_and_actuates(tmp_path):
     paths = _paths(tmp_path)
+    _provision_ready(paths)
     calls = []
     itil = _FakeITIL()
     apply_fn = act_dispatch.build_apply_fn(
@@ -86,6 +92,7 @@ def test_honor_skchat_records_itil_and_actuates(tmp_path):
 
 def test_honor_fleet_annotates_then_actuates(tmp_path):
     paths = _paths(tmp_path)
+    _provision_ready(paths)
     # Seed a fleet Service object so fleet_act can annotate its spec.
     seat = store.Writer(role="operator", node="n", identity="operator", agent_seat=True)
     store.write_spec(paths, "service", "svc-x", {"unit": "svc-x.service"}, writer=seat)

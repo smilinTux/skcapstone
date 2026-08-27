@@ -15,6 +15,11 @@ def _paths(tmp_path):
     return FleetPaths(root=tmp_path / "fleet")
 
 
+def _provision_ready(paths):
+    writer = store.Writer(role="operator", node="test-node", identity="test")
+    store.set_frozen(paths, False, writer=writer, reason="test fixture provisioning")
+
+
 def _ok_runner(cmd):
     import subprocess
 
@@ -207,6 +212,7 @@ def test_default_probe_failure_is_unknown(monkeypatch):
 
 def test_act_restart_hostd_calls_systemd(tmp_path):
     paths = _paths(tmp_path)
+    _provision_ready(paths)
     calls = []
     res = skcode_adapter.skcode_act(
         paths,
