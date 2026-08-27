@@ -135,3 +135,39 @@ def test_a_pass_verdict_mentioning_blocking_is_not_touched():
     validate_blocked_verdict(
         "verdict", "PASS. Previously blocked_on dependency:card:04b218cd, now resolved."
     )
+
+
+# --- a referent must be checkable, not merely present -------------------------
+
+
+def test_card_category_rejects_an_acceptance_criterion_referent():
+    """Observed live on 16bbc6fe: correctly shaped, completely unactionable."""
+    with pytest.raises(ValueError) as err:
+        validate_blocked_verdict("verdict", "BLOCKED blocked_on=card referent=ac:1")
+    assert "card id" in str(err.value)
+    assert "ac:1" in str(err.value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED blocked_on=dependency referent=card:04b218cd",
+        "BLOCKED blocked_on=card referent=inc-0e190b2f",
+        "BLOCKED blocked_on=card referent=prb-41b9fb96",
+        'BLOCKED {"blocked_on": {"value": "dependency", "referent": "04b218cd"}}',
+    ],
+)
+def test_card_category_accepts_real_card_ids(value):
+    validate_blocked_verdict("verdict", value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED blocked_on=human referent=approval:sklegal_runtime-custody-path",
+        "BLOCKED blocked_on=capability referent=capability:durable-v2-feature-router",
+    ],
+)
+def test_human_and_capability_keep_free_form_referents(value):
+    """Demanding an id here would push workers back toward saying nothing."""
+    validate_blocked_verdict("verdict", value)

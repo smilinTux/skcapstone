@@ -18,6 +18,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   at all, so that pool could not drain. Only outcome-shaped keys with a value
   beginning BLOCKED are validated; PASS verdicts and pr/commit/artifact links are
   untouched. Shape is deliberately tolerant: JSON, prose and key=value all pass.
+  A referent for  or  must now be an actual card id: a claim
+  that another card is in the way is only checkable if that card is named.
+   is refused.  and  keep
+  free-form referents, since an approval name has no id and demanding one would
+  push workers back toward recording nothing.
 - `validate_task_id` now accepts ITIL-prefixed card IDs (`inc-`, `prb-`, `chg-`).
   The hex-only pattern rejected all 314 such cards in the live store, so
   `coord release-claim` could not release a claim on an incident, problem or

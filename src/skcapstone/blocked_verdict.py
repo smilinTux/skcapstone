@@ -98,6 +98,15 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9][\w:.\-/@]{2,}")
 #: mistaken for a referent.
 _REFERENT_WINDOW = 80
 
+#: Categories whose referent must identify an actual card on the board.
+#: `dependency` and `card` both assert "something else on the board is in the
+#: way", and that claim is only checkable if the something else is named.
+_CARD_CATEGORIES = {"dependency", "card"}
+
+#: A card id: eight or more hex characters, optionally behind an ITIL kind
+#: prefix (inc-, prb-, chg-). Accepts a `card:` qualifier in front.
+_CARD_ID_RE = re.compile(r"(?:card[:\s]+)?(?:[a-z]{3}-)?[0-9a-f]{8,}\b", re.IGNORECASE)
+
 
 def is_outcome_key(key: str) -> bool:
     """True when this link key records a card's outcome."""
@@ -159,10 +168,34 @@ def validate_blocked_verdict(key: str, value: str) -> None:
             "A verdict that stops a card without saying why removes it from the "
             "pool and leaves nobody able to return it."
         )
-    if blocked_on_referent(text) is None:
+    referent = blocked_on_referent(text)
+    if referent is None:
         raise ValueError(
             "blocked_on names no referent. A category on its own is not "
             "actionable: say WHICH dependency, WHICH card, WHICH decision, or "
             "WHICH capability is missing. "
             f"Categories are: {', '.join(_CATEGORIES)}."
         )
+    # A referent for `dependency` or `card` must identify a real card. Anything
+    # else makes the claim uncheckable: nobody can act on "blocked by card ac:1",
+    # because ac:1 is an acceptance criterion, not a card, and no query returns
+    # it. Observed on the live board 2026-08-27 on card 16bbc6fe, which satisfied
+    # the shape of this validator while remaining exactly as unactionable as the
+    # bare BLOCKED verdicts it was written to replace.
+    #
+    # human and capability keep free-form referents on purpose: an approval name
+    # or a missing capability has no id, and demanding one would push workers
+    # back toward saying nothing.
+    anchor = _BLOCKED_ON_RE.search(text)
+    tail = text[anchor.end() :] if anchor else text
+    cat = _CATEGORY_RE.search(tail)
+    if cat and cat.group(1).lower() in _CARD_CATEGORIES:
+        if not _CARD_ID_RE.search(referent):
+            raise ValueError(
+                f"blocked_on={cat.group(1).lower()} needs a card id, not "
+                f"{referent!r}. Name the card that is in the way, for example "
+                "blocked_on=dependency referent=card:04b218cd or "
+                "referent=inc-0e190b2f. If the blocker is not a card, use "
+                "blocked_on=human or blocked_on=capability instead, which take "
+                "free-form referents."
+            )
