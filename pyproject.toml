@@ -40,7 +40,14 @@ dependencies = [
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",
     "rich>=13.0,<14.0",
-    "skcoord>=0.1.44",
+    # Floor at the contract skcapstone actually targets, not at whatever was
+    # current when the dep was first added. skcoord cuts a patch tag on every
+    # push to its main, and twice on 2026-08-27 a release changed a contract
+    # skcapstone asserts, landing as a red main that blocked every open PR:
+    # 0.1.46 changed parity absence semantics, 0.1.51 changed KanbanBoard.cards()
+    # from failing closed to degrading one unreadable card. Neither was announced
+    # because neither had to be: the floor was 0.1.44 and anything satisfied it.
+    "skcoord>=0.1.53",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]

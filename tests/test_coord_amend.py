@@ -69,17 +69,46 @@ def _assert_authoritative_criteria(tmp_path, task_id: str, expected: list[str]) 
     assert view.task.acceptance_criteria == expected
 
 
-def test_skcoord_dependency_requires_cardstore_home_guard_release():
+def test_skcoord_pins_agree_between_pyproject_and_ci():
+    """The declared floor and the CI registry pin must be the SAME version.
+
+    tests/test_coord_amend.py runs twice in the pytest workflow: once against the
+    registry wheel that step force-installs, and again against skcoord from git
+    main. If those implement different contracts, no assertion in this file can
+    satisfy both and the job is unwinnable by anyone.
+
+    This test used to hardcode the version in a third place, which is precisely
+    how the drift became invisible: the CI pin sat at 0.1.44 while skcoord
+    released through 0.1.53, and this test kept asserting 0.1.44 was correct. On
+    2026-08-27 skcoord 0.1.51 changed KanbanBoard.cards() from failing closed on
+    malformed criteria to degrading the one unreadable card, the two CI steps
+    began asserting opposite behaviours, and every open PR went red without
+    having touched the code.
+
+    So it now derives the expected version from pyproject and asserts CI matches,
+    rather than naming a version of its own. Bumping skcoord is then a two-file
+    change that this test verifies, instead of a three-file change where forgetting
+    the third is silent.
+    """
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     requirements = [Requirement(value) for value in project["project"]["dependencies"]]
     skcoord = next(requirement for requirement in requirements if requirement.name == "skcoord")
 
-    assert Version("0.1.43") not in skcoord.specifier
-    assert Version("0.1.44") in skcoord.specifier
+    floors = [Version(spec.version) for spec in skcoord.specifier if spec.operator in (">=", "==")]
+    assert floors, "skcoord must declare an explicit floor, not float on any release"
+    declared = max(floors)
+
+    # the floor is a real gate: the release below it must be excluded
+    below = Version(f"{declared.major}.{declared.minor}.{max(declared.micro - 1, 0)}")
+    assert below not in skcoord.specifier
+    assert declared in skcoord.specifier
 
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "pytest.yml").read_text(encoding="utf-8")
-    assert '"skcoord==0.1.44"' in workflow
-    assert 'Version(version("skcoord")) == Version("0.1.44")' in workflow
+    assert f'"skcoord=={declared}"' in workflow, (
+        f"CI registry pin must equal the pyproject floor {declared}; "
+        "a stale pin makes the two test runs assert different contracts"
+    )
+    assert f'Version(version("skcoord")) == Version("{declared}")' in workflow
 
 
 @pytest.mark.parametrize("mode", [None, "1", "dual", "0", "off", "false", "no"])

@@ -57,10 +57,23 @@ jobs:
       # This check runs before any Git source reinstall so a sibling checkout
       # cannot hide a stale registry artifact. SKCapstone release candidates
       # require the published skcoord lifecycle and criteria-fold contract.
+      #
+      # KEEP THIS VERSION EQUAL TO THE skcoord FLOOR IN pyproject.toml.
+      # tests/test_coord_amend.py runs TWICE in this job: once here against the
+      # pinned registry wheel, and again at the end against skcoord from git
+      # main. If those two versions implement different contracts, no assertion
+      # in that file can satisfy both and the job is unwinnable.
+      #
+      # That is not hypothetical. This pin sat at 0.1.44 while skcoord released
+      # through 0.1.53, going nine releases stale. On 2026-08-27 skcoord 0.1.51
+      # changed KanbanBoard.cards() from failing closed on malformed criteria to
+      # degrading the one unreadable card, so this step asserted the old
+      # behaviour while the source-overlay step asserted the new one. Every open
+      # PR went red and none of them had touched the code.
       - name: Verify registry skcoord contract before source overlay
         run: |
           python -m pip install --force-reinstall --no-deps --no-cache-dir \
-            --only-binary=:all: "skcoord==0.1.44"
+            --only-binary=:all: "skcoord==0.1.53"
           python -m pip show skcoord
           python - <<'PY'
           import os
@@ -74,7 +87,7 @@ jobs:
           from skcoord.coordination import Board
           from skcoord.lifecycle import audit_lifecycle, repair_lifecycle, transition_task
 
-          assert Version(version("skcoord")) == Version("0.1.44")
+          assert Version(version("skcoord")) == Version("0.1.53")
           assert callable(audit_lifecycle)
           assert callable(repair_lifecycle)
           assert callable(transition_task)
