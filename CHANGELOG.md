@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card bcb58c60: govern host-local Codex MCP registration.** SKCapstone now
+  reconciles its managed Codex MCP entries idempotently from bounded, non-secret
+  host overlays. Safe approval and timeout defaults, a host-local stdio process
+  ceiling, secret and live-state sync exclusions, and lifecycle qualification
+  tests define the portable client boundary.
+
 - **Card 2ff077b8: report leaf-eligible coordination work.** `coord status`
   now distinguishes unowned, dependency-complete leaf work from the broader
   open count. Human gates, parent and sprint containers, superseded cards,
