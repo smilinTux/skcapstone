@@ -237,8 +237,12 @@ async def _handle_coord_amend_criteria(args: dict) -> list[TextContent]:
     try:
         amend_criteria(home, task_id, list(criteria), args.get("agent", "") or "")
         folded = current_acceptance_criteria(home, task_id)
-    except ValueError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         return _error_response(str(exc))
+    if folded != list(criteria):
+        return _error_response(
+            f"criteria amendment for card {task_id} failed read-after-write verification"
+        )
     return _json_response(
         {
             "amended": True,

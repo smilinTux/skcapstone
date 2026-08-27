@@ -383,6 +383,23 @@ async def test_mcp_amend_criteria(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mcp_amend_criteria_reports_silent_append_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
+    _seed(tmp_path, "acnoopmcp", criteria=["original"])
+    monkeypatch.setattr(CardStore, "append_event", lambda *args, **kwargs: {})
+
+    result = await coord_card_tools._handle_coord_amend_criteria(
+        {"task_id": "acnoopmcp", "criteria": ["claimed replacement"]}
+    )
+
+    assert "did not persist" in _parse(result)["error"]
+    view = next(
+        view for view in Board(tmp_path).get_task_views() if view.task.id == "acnoopmcp"
+    )
+    assert view.task.acceptance_criteria == ["original"]
+
+
+@pytest.mark.asyncio
 async def test_mcp_amend_criteria_requires_criteria(tmp_path, monkeypatch):
     monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
     _seed(tmp_path, "ac0000mcq")
