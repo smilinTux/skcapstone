@@ -108,8 +108,15 @@ def test_every_card_store_selector_projects_current_criteria(tmp_path, monkeypat
     assert (CardStore(tmp_path).cards_dir / "criteria9" / "core.json").read_bytes() == core_before
 
 
-@pytest.mark.parametrize("mode", [None, "1", "dual", "0", "off", "false", "no"])
-def test_every_card_store_selector_fails_closed_on_malformed_criteria(tmp_path, monkeypatch, mode):
+# Legacy-read selectors still refuse the board outright. Store-read selectors
+# degrade the one bad card instead, since skcoord 0.1.51 (skcoord #52,
+# "fix(cardstore): isolate unreadable card folds") made KanbanBoard.cards() pass
+# degrade_unreadable=True so one corrupt stream cannot blank the whole board.
+_LEGACY_READ_SELECTORS = ["dual", "0", "off", "false", "no"]
+_STORE_READ_SELECTORS = [None, "1"]
+
+
+def _seed_malformed_criteria(tmp_path, monkeypatch, mode):
     monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
     _seed(tmp_path, "badcriteria", criteria=["birth criterion"])
     CardStore(tmp_path).append_event("badcriteria", "amend_criteria", "uptake-test", criteria=[])
@@ -118,8 +125,42 @@ def test_every_card_store_selector_fails_closed_on_malformed_criteria(tmp_path, 
     else:
         monkeypatch.setenv("SKCOORD_CARD_STORE", mode)
 
+
+@pytest.mark.parametrize("mode", _LEGACY_READ_SELECTORS)
+def test_legacy_read_selectors_fail_closed_on_malformed_criteria(tmp_path, monkeypatch, mode):
+    _seed_malformed_criteria(tmp_path, monkeypatch, mode)
+
     with pytest.raises(ValueError, match="criteria"):
         KanbanBoard(tmp_path).cards()
+
+
+@pytest.mark.parametrize("mode", _STORE_READ_SELECTORS)
+def test_store_read_selectors_surface_malformed_criteria_loudly(tmp_path, monkeypatch, mode):
+    """The card must never project as if it were healthy.
+
+    The safety property this file has always asserted is that malformed criteria
+    cannot pass silently. Criteria are what "done" is measured against, so a card
+    whose criteria were dropped must not look like an ordinary card.
+
+    skcoord 0.1.51 changed HOW that is enforced on the store-read path, from
+    refusing the whole board to degrading the single bad card. The property still
+    holds, and this asserts it in the new form rather than deleting it: the card
+    is projected as UNREADABLE, flagged critical, labelled, and carries the
+    reason. What is NOT acceptable, and what this test would catch, is the card
+    appearing with its criteria quietly emptied.
+    """
+    _seed_malformed_criteria(tmp_path, monkeypatch, mode)
+
+    cards = KanbanBoard(tmp_path).cards()
+    bad = next(card for card in cards if card.id == "badcriteria")
+
+    assert bad.meta.get("unreadable") is True
+    assert "unreadable" in bad.labels
+    assert bad.title.startswith("UNREADABLE")
+    assert bad.priority == "critical"
+    assert "criteria" in str(bad.meta.get("reason", "")).lower()
+    # and the failure is attributable, not anonymous
+    assert bad.meta.get("source") == "cards/badcriteria"
 
 
 def test_criteria_projection_assertion_is_sensitive_to_fold_bypass(tmp_path, monkeypatch):
