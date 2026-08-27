@@ -469,10 +469,10 @@ def register_coord_commands(main: click.Group) -> None:
         )
         if par["open_alert"]:
             console.print(
-                f"  [bold red]PARITY ALERT: store-served open-count diverges "
-                f"from legacy by {par['open_drift']} "
-                f"(> {par['open_drift_threshold']}). Run 'coord migrate' then "
-                f"'coord reconcile --apply' to converge.[/]"
+                f"  [bold red]PARITY ALERT: comparable open-count diverges "
+                f"by {par['open_drift']} (> {par['open_drift_threshold']}). "
+                f"No automatic remediation is safe. Inspect the named fields "
+                f"and choose the authoritative direction explicitly.[/]"
             )
         for m in par["mismatches"][:show]:
             console.print(f"    [yellow]{m['id']}[/]: {m['diff']}")
