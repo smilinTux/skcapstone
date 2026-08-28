@@ -361,12 +361,107 @@ def lifecycle_state(cid):
 #     outcome events. Evidence-only logic would never see it.
 _EVID_DIR = os.path.join(HOME, ".skcapstone/coordination/card_events")
 _OUTCOME_KEYS = ("verdict", "result", "disposition", "review_decision")
+_LAUNCH_HOST_RE = re.compile(r"(?:^|\s)host=([A-Za-z0-9_.-]+)(?=\s|$)")
 
 def _fold_key(k):
     k = str(k or "").strip().lower().replace("-", "_")
     k = re.sub(r"_?20\d{6}t?\d{0,6}z?", "", k)
     k = re.sub(r"_[0-9a-f]{8,64}$", "", k)
     return re.sub(r"__+", "_", k).strip("_")
+
+
+def _parse_launch_host(value: object) -> str | None:
+    """Read a physical host from a durable launch link value."""
+    match = _LAUNCH_HOST_RE.search(str(value or ""))
+    return match.group(1) if match else None
+
+
+def _read_durable_launch_hosts(event_dir: str) -> dict[str, tuple[str, str]]:
+    """Return the latest durable launch host and source for each card."""
+    launches = {}
+    for path in sorted(glob.glob(os.path.join(event_dir, "*.jsonl"))):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for line_number, line in enumerate(fh, 1):
+                    try:
+                        event = json.loads(line)
+                    except Exception:
+                        continue
+                    if event.get("action") != "link":
+                        continue
+                    if _fold_key(event.get("link_key")) != "launch":
+                        continue
+                    card_id = str(event.get("card_id") or "")
+                    host = _parse_launch_host(event.get("link_value"))
+                    if not card_id or not host:
+                        continue
+                    order = (
+                        str(event.get("ts") or ""),
+                        str(event.get("writer") or ""),
+                        str(event.get("event_id") or ""),
+                    )
+                    previous = launches.get(card_id)
+                    if previous is None or order > previous[0]:
+                        source = "%s:%d" % (os.path.basename(path), line_number)
+                        launches[card_id] = (order, host, source)
+        except OSError:
+            continue
+    return {card_id: (row[1], row[2]) for card_id, row in launches.items()}
+
+
+_launch_hosts = None
+
+
+def _durable_launch_hosts() -> dict[str, tuple[str, str]]:
+    global _launch_hosts
+    if _launch_hosts is None:
+        _launch_hosts = _read_durable_launch_hosts(_EVID_DIR)
+    return _launch_hosts
+
+
+def _is_review_card(core: dict, labels: list[str]) -> bool:
+    title = str(core.get("title") or "").upper()
+    folded = {str(label).strip().lower() for label in labels}
+    return (
+        "[REVIEW]" in title
+        or "review" in folded
+        or "independent-review" in folded
+    )
+
+
+def _review_preparer_host(
+    card_id: str, core: dict, labels: list[str]
+) -> tuple[str | None, str]:
+    """Resolve one review subject to its durable physical launch host."""
+    if not _is_review_card(core, labels):
+        return None, "not_review"
+    dependencies = folded_dependencies(card_id, core)
+    if len(dependencies) != 1:
+        return None, "dependency_count_%d" % len(dependencies)
+    preparer_id = str(dependencies[0])
+    launch = _durable_launch_hosts().get(preparer_id)
+    if not launch:
+        return None, "launch_missing_%s" % preparer_id
+    host, source = launch
+    return host, "%s@%s" % (preparer_id, source)
+
+
+def _review_host_disposition(
+    card_id: str, preparer_host: str | None, current_host: str
+) -> tuple[str, str | None]:
+    """Return this host's review disposition and deterministic distinct owner."""
+    if not preparer_host:
+        return "assignable", None
+    candidates = [host for host in ROTATION_HOSTS if host != preparer_host]
+    if not candidates:
+        return "defer_same_host", None
+    slot = int(hashlib.sha256(card_id.encode()).hexdigest()[:8], 16)
+    owner = candidates[slot % len(candidates)]
+    if current_host == preparer_host:
+        return "defer_same_host", owner
+    if current_host == owner:
+        return "owned", owner
+    return "other_host", owner
 
 _outcomes = None
 _label_events = None
@@ -1111,7 +1206,9 @@ if not DRY:
 
 _NOT_CLAIMABLE = {"not-claimable", "sprint-container"}
 _PINNED_IDS=set()
-pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; not_claimable_skipped=0; pinned_elsewhere=0
+_REVIEW_OWNER_HOST={}
+_REVIEW_PREPARER={}
+pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; not_claimable_skipped=0; pinned_elsewhere=0; skipped_review_host_distinctness=0
 for cd in sorted(glob.glob(CARDS+"/*")):
     cid=os.path.basename(cd)
     core_p=os.path.join(cd,"core.json")
@@ -1169,6 +1266,16 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     deps=folded_dependencies(cid,core)
     if any(not _dep_satisfied(str(dp)) for dp in deps):
         blocked+=1; continue          # <-- the defect fixed here
+    preparer_host, preparer_source = _review_preparer_host(cid, core, labels)
+    disposition, review_owner = _review_host_disposition(cid, preparer_host, HOST)
+    if preparer_host:
+        _REVIEW_PREPARER[cid] = (preparer_host, preparer_source)
+        _REVIEW_OWNER_HOST[cid] = review_owner
+    if disposition == "defer_same_host":
+        skipped_review_host_distinctness += 1
+        log(d, "REVIEW_HOST_DEFERRED|%s|card=%s preparer_host=%s source=%s "
+               "reason=same_physical_host" %
+            (HOST, cid, preparer_host, preparer_source))
     # narrow to the owning host when the card names one that actually runs workers
     _pin = host_pin(core,labels)
     if _pin and _pin != HOST:
@@ -1204,8 +1311,8 @@ pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))
 lc={0:0,1:0,2:0}
 for x in pool: lc[x[0]]+=1
 top=pool[0][4] if pool else 0
-log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d top_unblocks=%d"
-      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,top))
+log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d review_host_distinctness=%d foreign=%d not_claimable=%d top_unblocks=%d"
+      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,skipped_review_host_distinctness,foreign_skipped,not_claimable_skipped,top))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
@@ -1219,6 +1326,8 @@ def owns(cid):
     # pinned to chiap08 but hashed into chiap02's slice means NO host takes it.
     if cid in _PINNED_IDS:
         return True
+    if cid in _REVIEW_OWNER_HOST:
+        return _REVIEW_OWNER_HOST[cid] == HOST
     return int(hashlib.sha256(cid.encode()).hexdigest()[:8],16)%_NHOST==off
 owned=[x for x in pool if owns(x[2])]
 
@@ -1412,7 +1521,13 @@ for _LANE,(_,_,cid,core,_nb) in picks:
         continue
     r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",workspace,"bash","-lc",inner])
     ok = r.returncode==0 and sess in sh("tmux","ls","-F","#{session_name}").split()
-    log(d,"%s|%s|%s|%s|lane=%s|model=%s"%("LAUNCHED" if ok else "LAUNCH_FAILED",HOST,sess,cid,_LANE["name"],model))
+    launch_detail = "lane=%s|model=%s" % (_LANE["name"], model)
+    if _is_review_card(core, folded_labels(cid, core)):
+        preparer_host, preparer_source = _REVIEW_PREPARER.get(
+            cid, (None, "durable_launch_unknown"))
+        launch_detail += "|preparer_host=%s|preparer_host_source=%s" % (
+            preparer_host or "unknown", preparer_source)
+    log(d,"%s|%s|%s|%s|%s"%("LAUNCHED" if ok else "LAUNCH_FAILED",HOST,sess,cid,launch_detail))
     if not ok:
         subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,"--agent",name],
                        capture_output=True,text=True)
