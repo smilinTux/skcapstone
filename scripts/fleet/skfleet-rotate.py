@@ -33,7 +33,7 @@ if not _LIFECYCLE_OK:
     assess=write_report=None
 
 HOST=os.uname().nodename
-ROTATION_HOSTS=("chiap01", "chiap02", "chiap03")
+ROTATION_HOSTS=("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
 SKC=os.path.expanduser("~/.skenv/bin/skcapstone")
 TARGET=8
 MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
@@ -154,6 +154,16 @@ LANES=[
      "target":8},
     {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","glm-4.6"),
      "target":0 if glm_held else 3},
+    # Restored. needs_escalation() still exists and still marks a card whose
+    # worker reported blocked_on=capability, but the lane it routes to had been
+    # dropped, so those cards were marked for a destination that did not exist
+    # and could never be placed at all. 13 cards were in that state.
+    #
+    # It takes ONLY escalation cards and escalation cards go ONLY here, so the
+    # stronger model is never spent on work the cheap lanes can do.
+    {"name":"escalate","prefix":"esc-auto-",
+     "model":os.environ.get("SKFLEET_ESC_MODEL", ESC_MODEL if "ESC_MODEL" in dir() else "gpt-5.6-sol"),
+     "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
 ]
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
