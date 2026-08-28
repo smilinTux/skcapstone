@@ -1,8 +1,8 @@
 # GLM nine-worker wave admission candidate
 
-Card: `9ca6efd6`
+Cards: `9ca6efd6`, authority repair `35e539d1`
 
-Status: no-action candidate for distinct review. This document is not authorization to cut over, clear a hold, or launch a worker.
+Status: repaired no-action candidate for distinct review. This document is not authorization to cut over, clear a hold, or launch a worker.
 
 ## Evidence reproduced before design
 
@@ -24,15 +24,16 @@ The RCA establishes that host-local selector decisions cannot enforce a fleet-wi
 
 `src/skcapstone/fleet/glm_admission.py` is deliberately not connected to a CLI, timer, selector, launcher, gateway, or provider. It can only publish a reservation ledger.
 
-1. Only a caller asserting local host `chiap08` can enter admission. Host selectors have no dispatch entry point.
-2. A chiap08-local advisory `flock` covers ledger read, evidence validation, monotonicity validation, and replacement.
-3. The existing ledger must be present, current, schema-exact, owned by chiap08, and internally valid. Missing, malformed, stale, conflicting, live, or non-monotonic state denies admission.
-4. A complete generation can advance by exactly one. A live generation is never refilled.
-5. One wave has exactly nine bindings, exactly three for each of chiap01, chiap02, and chiap03. Card, host-distinct agent, session, claim, and absolute workspace identities must each be nonempty and distinct.
-6. All three hosts must be reachable, report zero `glm-auto` sessions, and have fresh timestamps.
-7. Two frozen, read-only zai samples must be exactly five seconds apart, fresh, and both report `active=0, queued=0`.
-8. The exact hold generation and SHA-256 are checked twice under the lock. An active hold or a changed hold denies admission. Thus the currently active hold causes zero publication and zero dispatch.
-9. Publication serializes canonical JSON, writes a temporary file in the ledger directory, fsyncs it, renames it over the ledger, and fsyncs the directory.
+1. The operating system hostname is normalized to lowercase without a trailing dot and must equal `chiap08`. Callers cannot supply authority identity. Host selectors have no dispatch entry point.
+2. Compile-time paths `/var/lib/skcapstone-local/glm-admission/admission.lock` and `/var/lib/skcapstone-local/glm-admission/generation.json` are outside Syncthing state. Callers cannot override either path.
+3. The authority directory must be a physical, owner-controlled mode-0700 directory. Lock and ledger opens reject symlinks, non-regular files, extra hard links, foreign ownership, and modes other than 0600. The existing ledger must be present, current, schema-exact, owned by chiap08, and internally valid.
+4. A chiap08-local advisory `flock` covers ledger read, evidence validation, monotonicity validation, and replacement. Before atomic replace, the writer proves the ledger inode is the one validated under the lock. Missing, malformed, stale, conflicting, live, replaced, or non-monotonic state denies admission.
+5. A complete generation can advance by exactly one. A live generation is never refilled.
+6. One wave has exactly nine bindings, exactly three for each of chiap01, chiap02, and chiap03. Card, host-distinct agent, session, claim, and absolute workspace identities must each be nonempty and distinct.
+7. All three hosts must be reachable, report zero `glm-auto` sessions, and have fresh timestamps.
+8. Two frozen, read-only zai samples must be exactly five seconds apart, fresh, and both report `active=0, queued=0`.
+9. The exact hold generation and SHA-256 are checked twice under the lock. An active hold or a changed hold denies admission. Thus the currently active hold causes zero publication and zero dispatch.
+10. Publication serializes canonical JSON, writes an owner-only temporary regular file in the ledger directory, fsyncs it, atomically renames it over the verified ledger, and fsyncs the directory.
 
 The module contains no network client, inference request, provider request, subprocess launch, tmux operation, or dispatch callback.
 
@@ -48,7 +49,9 @@ The module contains no network client, inference request, provider request, subp
 - hold change while the lock is held;
 - partial host reachability;
 - tenth-worker denial and duplicate custody denial;
-- non-chiap08 denial and active-hold zero publication.
+- physical chiap03 spoof denial and active-hold zero publication;
+- impossible caller authority, ledger, and lock overrides;
+- symlink and non-regular lock and ledger denial.
 
 ## No-action cutover packet
 

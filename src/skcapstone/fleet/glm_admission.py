@@ -10,6 +10,8 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import socket
+import stat
 import tempfile
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -18,6 +20,9 @@ from pathlib import Path
 from typing import Callable, Literal, NoReturn, Sequence
 
 AUTHORITY_HOST = "chiap08"
+AUTHORITY_DIRECTORY = Path("/var/lib/skcapstone-local/glm-admission")
+LOCK_PATH = AUTHORITY_DIRECTORY / "admission.lock"
+LEDGER_PATH = AUTHORITY_DIRECTORY / "generation.json"
 WORKER_HOSTS = ("chiap01", "chiap02", "chiap03")
 SCHEMA = "skcapstone.glm-wave-ledger.v1"
 SAMPLE_SEPARATION_SECONDS = 5
@@ -170,13 +175,99 @@ def _validate_snapshot(snapshot: AdmissionSnapshot, now: datetime) -> None:
         _deny("zai queue is not idle")
 
 
-def _load_ledger(path: Path, now: datetime) -> dict[str, object]:
-    """Load and strictly validate an existing generation ledger."""
+def _physical_hostname() -> str:
+    """Return the normalized hostname reported by the operating system."""
 
     try:
-        raw = path.read_text(encoding="utf-8")
-        ledger = json.loads(raw)
+        hostname = socket.gethostname()
+    except OSError:
+        _deny("physical hostname unavailable")
+    if not isinstance(hostname, str):
+        _deny("physical hostname unavailable")
+    return hostname.lower().rstrip(".")
+
+
+def _safe_authority_directory() -> int:
+    """Open the fixed local directory after strict ownership and type checks."""
+
+    try:
+        lexical = Path(os.path.abspath(AUTHORITY_DIRECTORY))
+        if AUTHORITY_DIRECTORY != lexical or AUTHORITY_DIRECTORY.resolve(strict=True) != lexical:
+            _deny("unsafe authority directory")
+        metadata = AUTHORITY_DIRECTORY.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            _deny("unsafe authority directory")
+        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+            _deny("unsafe authority directory ownership or mode")
+        fd = os.open(
+            AUTHORITY_DIRECTORY,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o700
+            or (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+        ):
+            os.close(fd)
+            _deny("unsafe authority directory")
+        return fd
+    except AdmissionDenied:
+        raise
+    except OSError:
+        _deny("unsafe authority directory")
+
+
+def _validate_regular_file(fd: int, name: str) -> os.stat_result:
+    """Require one owner-only, non-symlink regular file."""
+
+    metadata = os.fstat(fd)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+    ):
+        _deny(f"unsafe {name} file")
+    return metadata
+
+
+def _open_lock(directory_fd: int) -> int:
+    """Open or create the fixed lock without following a symlink."""
+
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(LOCK_PATH.name, flags, 0o600, dir_fd=directory_fd)
+        _validate_regular_file(fd, "lock")
+        return fd
+    except AdmissionDenied:
+        try:
+            os.close(fd)
+        except (NameError, OSError):
+            pass
+        raise
+    except OSError:
+        _deny("unsafe lock file")
+
+
+def _load_ledger(directory_fd: int, now: datetime) -> tuple[dict[str, object], os.stat_result]:
+    """Load and strictly validate the fixed generation ledger."""
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(LEDGER_PATH.name, flags, dir_fd=directory_fd)
+        metadata = _validate_regular_file(fd, "ledger")
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            fd = -1
+            ledger = json.load(stream)
+    except AdmissionDenied:
+        if "fd" in locals() and fd >= 0:
+            os.close(fd)
+        raise
     except (OSError, UnicodeError, json.JSONDecodeError):
+        if "fd" in locals() and fd >= 0:
+            os.close(fd)
         _deny("missing or malformed ledger")
     if not isinstance(ledger, dict) or set(ledger) != {
         "schema",
@@ -215,44 +306,58 @@ def _load_ledger(path: Path, now: datetime) -> dict[str, object]:
             _deny("invalid live worker bindings")
     elif workers:
         _deny("complete ledger retains workers")
-    return ledger
+    return ledger, metadata
 
 
-def _atomic_replace(path: Path, value: dict[str, object], crash_hook: CrashHook | None) -> None:
-    """Serialize, temp-write, fsync, replace, and fsync the parent directory."""
+def _atomic_replace(
+    directory_fd: int,
+    previous: os.stat_result,
+    value: dict[str, object],
+    crash_hook: CrashHook | None,
+) -> None:
+    """Safely replace the fixed ledger and fsync its local directory."""
 
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    fd, temporary = tempfile.mkstemp(prefix=f".{LEDGER_PATH.name}.", dir=AUTHORITY_DIRECTORY)
+    temporary_name = Path(temporary).name
     try:
+        os.fchmod(fd, 0o600)
+        _validate_regular_file(fd, "temporary ledger")
         with os.fdopen(fd, "wb") as stream:
+            fd = -1
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
+        current = os.stat(LEDGER_PATH.name, dir_fd=directory_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or (current.st_dev, current.st_ino) != (previous.st_dev, previous.st_ino)
+        ):
+            _deny("ledger changed before atomic replace")
         if crash_hook:
             crash_hook("before_rename")
-        os.replace(temporary, path)
-        temporary = ""
+        os.replace(
+            temporary_name,
+            LEDGER_PATH.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        temporary_name = ""
         if crash_hook:
             crash_hook("after_rename")
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        os.fsync(directory_fd)
     finally:
-        if temporary:
+        if fd >= 0:
+            os.close(fd)
+        if temporary_name:
             try:
-                os.unlink(temporary)
+                os.unlink(temporary_name, dir_fd=directory_fd)
             except FileNotFoundError:
                 pass
 
 
 def admit_wave(
     *,
-    authority_host: str,
-    ledger_path: Path,
-    lock_path: Path,
     proposed_generation: int,
     bindings: Sequence[WorkerBinding],
     snapshot_reader: SnapshotReader,
@@ -261,40 +366,46 @@ def admit_wave(
 ) -> dict[str, object]:
     """Atomically reserve one entire wave, or deny without any dispatch action."""
 
-    if authority_host != AUTHORITY_HOST:
-        _deny("only chiap08 may write or dispatch")
+    if _physical_hostname() != AUTHORITY_HOST:
+        _deny("physical host is not chiap08")
     if now.tzinfo is None or now.utcoffset() != timezone.utc.utcoffset(now):
         _deny("now must be UTC")
     _validate_bindings(bindings)
-    lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with lock_path.open("a+b") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        ledger = _load_ledger(ledger_path, now)
-        if ledger["status"] == "live":
-            _deny("live generation is never refilled")
-        if proposed_generation != ledger["generation"] + 1:
-            _deny("non-monotonic proposed generation")
+    directory_fd = _safe_authority_directory()
+    try:
+        lock_fd = _open_lock(directory_fd)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            ledger, previous = _load_ledger(directory_fd, now)
+            if ledger["status"] == "live":
+                _deny("live generation is never refilled")
+            if proposed_generation != ledger["generation"] + 1:
+                _deny("non-monotonic proposed generation")
 
-        first = snapshot_reader()
-        _validate_snapshot(first, now)
-        second = snapshot_reader()
-        _validate_snapshot(second, now)
-        if second.hold != first.hold:
-            _deny("hold changed during admission")
-        if second.hosts != first.hosts or second.queue_samples != first.queue_samples:
-            _deny("conflicting admission snapshot")
+            first = snapshot_reader()
+            _validate_snapshot(first, now)
+            second = snapshot_reader()
+            _validate_snapshot(second, now)
+            if second.hold != first.hold:
+                _deny("hold changed during admission")
+            if second.hosts != first.hosts or second.queue_samples != first.queue_samples:
+                _deny("conflicting admission snapshot")
 
-        replacement: dict[str, object] = {
-            "schema": SCHEMA,
-            "authority_host": AUTHORITY_HOST,
-            "generation": proposed_generation,
-            "status": "live",
-            "updated_at": now.isoformat().replace("+00:00", "Z"),
-            "hold": {
-                "generation": first.hold.generation,
-                "sha256": first.hold.sha256,
-            },
-            "workers": [asdict(binding) for binding in bindings],
-        }
-        _atomic_replace(ledger_path, replacement, crash_hook)
-        return replacement
+            replacement: dict[str, object] = {
+                "schema": SCHEMA,
+                "authority_host": AUTHORITY_HOST,
+                "generation": proposed_generation,
+                "status": "live",
+                "updated_at": now.isoformat().replace("+00:00", "Z"),
+                "hold": {
+                    "generation": first.hold.generation,
+                    "sha256": first.hold.sha256,
+                },
+                "workers": [asdict(binding) for binding in bindings],
+            }
+            _atomic_replace(directory_fd, previous, replacement, crash_hook)
+            return replacement
+        finally:
+            os.close(lock_fd)
+    finally:
+        os.close(directory_fd)

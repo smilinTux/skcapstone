@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.fleet import glm_admission
 from skcapstone.fleet.glm_admission import (
     AUTHORITY_HOST,
     SCHEMA,
@@ -29,12 +30,18 @@ HOSTS = ("chiap01", "chiap02", "chiap03")
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Turn any accidental network operation into an immediate test failure."""
+def isolated_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide a fixed local authority directory and forbid all network access."""
 
     def forbidden(*args: object, **kwargs: object) -> None:
         raise AssertionError("network access is forbidden")
 
+    authority = tmp_path
+    authority.chmod(0o700)
+    monkeypatch.setattr(glm_admission, "AUTHORITY_DIRECTORY", authority)
+    monkeypatch.setattr(glm_admission, "LOCK_PATH", authority / "admission.lock")
+    monkeypatch.setattr(glm_admission, "LEDGER_PATH", authority / "generation.json")
+    monkeypatch.setattr(socket, "gethostname", lambda: "CHIAP08.")
     monkeypatch.setattr(socket, "socket", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
 
@@ -118,6 +125,7 @@ def write_genesis(path: Path, *, updated_at: datetime = NOW, generation: int = 0
         + "\n",
         encoding="utf-8",
     )
+    path.chmod(0o600)
 
 
 def run_admission(
@@ -132,9 +140,6 @@ def run_admission(
 
     frozen = evidence or snapshot()
     return admit_wave(
-        authority_host=AUTHORITY_HOST,
-        ledger_path=root / "generation.json",
-        lock_path=root / "admission.lock",
         proposed_generation=generation,
         bindings=proposed or bindings(),
         snapshot_reader=lambda: frozen,
@@ -189,6 +194,7 @@ def test_malformed_missing_stale_and_non_monotonic_ledgers_deny(tmp_path: Path) 
     with pytest.raises(AdmissionDenied, match="missing or malformed"):
         run_admission(tmp_path)
     ledger.write_text("{not json\n", encoding="utf-8")
+    ledger.chmod(0o600)
     with pytest.raises(AdmissionDenied, match="missing or malformed"):
         run_admission(tmp_path)
     write_genesis(ledger, updated_at=NOW - timedelta(seconds=31))
@@ -244,9 +250,6 @@ def test_hold_change_during_locked_decision_denies(tmp_path: Path) -> None:
     observations = iter((snapshot(), snapshot(hold_generation="hold-8")))
     with pytest.raises(AdmissionDenied, match="hold changed"):
         admit_wave(
-            authority_host=AUTHORITY_HOST,
-            ledger_path=ledger,
-            lock_path=tmp_path / "admission.lock",
             proposed_generation=1,
             bindings=bindings(),
             snapshot_reader=lambda: next(observations),
@@ -276,22 +279,67 @@ def test_tenth_worker_and_duplicate_custody_are_denied(tmp_path: Path) -> None:
         run_admission(tmp_path, proposed=tuple(duplicate))
 
 
-def test_non_authority_and_active_hold_cause_zero_publication(tmp_path: Path) -> None:
-    """Host selectors and an active hold have no candidate dispatch path."""
+def test_non_authority_and_active_hold_cause_zero_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Physical non-authority hosts and an active hold publish nothing."""
 
     ledger = tmp_path / "generation.json"
     write_genesis(ledger)
     old_bytes = ledger.read_bytes()
-    with pytest.raises(AdmissionDenied, match="only chiap08"):
-        admit_wave(
-            authority_host="chiap02",
-            ledger_path=ledger,
-            lock_path=tmp_path / "admission.lock",
-            proposed_generation=1,
-            bindings=bindings(),
-            snapshot_reader=lambda: snapshot(),
-            now=NOW,
-        )
+    monkeypatch.setattr(socket, "gethostname", lambda: "chiap03")
+    with pytest.raises(AdmissionDenied, match="physical host is not chiap08"):
+        run_admission(tmp_path)
+    monkeypatch.setattr(socket, "gethostname", lambda: "chiap08")
     with pytest.raises(AdmissionDenied, match="hold is active"):
         run_admission(tmp_path, evidence=snapshot(active_hold=True))
     assert ledger.read_bytes() == old_bytes
+
+
+def test_caller_authority_and_path_overrides_are_impossible(tmp_path: Path) -> None:
+    """The public admission interface accepts no authority or path overrides."""
+
+    write_genesis(tmp_path / "generation.json")
+    required = {
+        "proposed_generation": 1,
+        "bindings": bindings(),
+        "snapshot_reader": lambda: snapshot(),
+        "now": NOW,
+    }
+    for name, value in (
+        ("authority_host", "chiap08"),
+        ("ledger_path", tmp_path / "alternate.json"),
+        ("lock_path", tmp_path / "alternate.lock"),
+    ):
+        with pytest.raises(TypeError, match=name):
+            admit_wave(**required, **{name: value})
+
+
+@pytest.mark.parametrize("name", ["generation.json", "admission.lock"])
+def test_symlink_authority_files_fail_closed(tmp_path: Path, name: str) -> None:
+    """Neither fixed authority file may be a symlink."""
+
+    ledger = tmp_path / "generation.json"
+    write_genesis(ledger)
+    target = tmp_path / "target"
+    target.write_text("not authority state", encoding="utf-8")
+    path = tmp_path / name
+    if path.exists():
+        path.unlink()
+    path.symlink_to(target)
+    with pytest.raises(AdmissionDenied, match="unsafe|missing or malformed"):
+        run_admission(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["generation.json", "admission.lock"])
+def test_non_regular_authority_files_fail_closed(tmp_path: Path, name: str) -> None:
+    """Neither fixed authority file may be a directory or special file."""
+
+    ledger = tmp_path / "generation.json"
+    write_genesis(ledger)
+    path = tmp_path / name
+    if path.exists():
+        path.unlink()
+    path.mkdir(mode=0o700)
+    with pytest.raises(AdmissionDenied, match="unsafe|missing or malformed"):
+        run_admission(tmp_path)
