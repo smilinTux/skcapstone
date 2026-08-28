@@ -33,14 +33,16 @@ if not _LIFECYCLE_OK:
     assess=write_report=None
 
 HOST=os.uname().nodename
+ROTATION_HOSTS=("chiap01", "chiap02", "chiap03")
 SKC=os.path.expanduser("~/.skenv/bin/skcapstone")
-TARGET=int(os.environ.get("SKFLEET_TARGET","8"))
-MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","4"))
+TARGET=8
+MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
 DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
 CARDS=os.path.join(HOME,".skcapstone/cards")
 EVID=os.path.join(HOME,".skcapstone/evidence/fleet-rotation")
 PI="/home/skuser01/.npm-global/bin/pi"
+ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
 STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -101,6 +103,10 @@ except BlockingIOError:
 
 d=os.path.join(EVID,STAMP)
 
+if HOST not in ROTATION_HOSTS:
+    log(d,"NOOP|%s|host is outside the authorized chiap01-chiap03 worker fleet"%HOST)
+    sys.exit(0)
+
 # Mandatory read-only graph validation precedes slot and assignment decisions.
 # The report is the exact machine-readable assignment exclusion contract.
 try:
@@ -119,7 +125,12 @@ try:
     # which are all derived from shared data and on which every host agrees.
     _classes = assessment.get("classes", {}) or {}
     _local_only = {r.get("card_id") for r in _classes.get("unclaimable_cards", []) if r.get("card_id")}
-    excluded=set(assessment["excluded_card_ids"]) - _local_only
+    # The volatile identity class names its repair card as tracking_card. That
+    # card is the work that removes the defect and must remain assignable; only
+    # the generated drift records belong in the exclusion set.
+    _tracking = {r.get("card_id") for r in _classes.get("volatile_ci_identity", [])
+                 if r.get("card_id") and r.get("reason")=="tracking_card"}
+    excluded=set(assessment["excluded_card_ids"]) - _local_only - _tracking
     log(d,"LIFECYCLE|%s|report=%s sha256=%s counts=%s excluded=%d"
         %(HOST,report_path,assessment["content_sha256"],json.dumps(assessment["counts"],sort_keys=True,separators=(",",":")),len(excluded)))
 except Exception as exc:
@@ -128,24 +139,24 @@ except Exception as exc:
 
 # a slot IS a live ephemeral worker; -p workers exit when finished
 sessions=sh("tmux","ls","-F","#{session_name}").split()
+GLM_HOLD_PATH=os.path.join(HOME,".skcapstone/evidence/fleet-glm-dispatch-hold.json")
+glm_held=False
+try:
+    with open(GLM_HOLD_PATH,encoding="utf-8") as _fh:
+        glm_held=bool(json.load(_fh).get("active"))
+except (OSError,ValueError,TypeError):
+    pass
 # Two worker lanes. GLM sat unused for six hours because the rotation only managed
 # codex-auto-* sessions, so the z.ai account received no traffic at all while nine
 # idle legacy glm panes did nothing. A lane is a prefix, a model alias, a target.
 LANES=[
     {"name":"codex","prefix":"codex-auto-","model":"sk-codex",
-     "target":int(os.environ.get("SKFLEET_TARGET","8"))},
+     "target":8},
     {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","glm-4.6"),
-     "target":int(os.environ.get("SKFLEET_GLM_TARGET","3"))},
-    # The escalation lane. A worker that reports blocked_on=capability is saying the
-    # card is solvable and it was not able to solve it, which is the signal to route
-    # the card to a stronger model rather than to a person. Nothing acted on that
-    # signal: the lane a card got was decided purely by which slot was free, so a
-    # capability refusal simply returned the card to the same model that had already
-    # refused it. Measured 2026-08-27: all 8 capability-blocked cards had run on codex,
-    # two of them five times and one eight times, re-deriving the same verdict.
-    {"name":"escalate","prefix":"esc-auto-","model":os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol"),
-     "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
+     "target":0 if glm_held else 3},
 ]
+if glm_held:
+    log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
     _L["busy"]=[s for s in sessions if s.startswith(_L["prefix"])]
     _L["free"]=max(0,_L["target"]-len(_L["busy"]))
@@ -247,6 +258,7 @@ if free==0:
 # cycle forever: measured 78 of 162 launches wasted, 48 percent, before this gate.
 _launched=collections.Counter()
 _launched_at={}
+_strong_launched_at={}
 for _f in glob.glob(os.path.join(EVID,"*","actions.log")):
     try:
         _launch_epoch=datetime.datetime.strptime(Path(_f).parent.name,"%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
@@ -259,6 +271,8 @@ for _f in glob.glob(os.path.join(EVID,"*","actions.log")):
                 if len(_p)>=4:
                     _launched[_p[3]]+=1
                     _launched_at[_p[3]]=max(_launched_at.get(_p[3],0),_launch_epoch)
+                    if "model=%s"%ESC_MODEL in _p:
+                        _strong_launched_at[_p[3]]=max(_strong_launched_at.get(_p[3],0),_launch_epoch)
     except OSError: pass
 # A card claimed and then RELEASED is open again and must be assignable. The prior
 # filter excluded any card with a claim action anywhere in history, making
@@ -410,6 +424,21 @@ def folded_labels(cid,core):
             labels=[item for item in labels if item!=label]
     return labels
 
+_NON_IMPLEMENTATION_LABELS = {
+    "planning-only-container",
+    "do-not-claim-as-implementation",
+    "human-gate",
+    "human-decision-recorded-no-action",
+    "no-action-authorized",
+}
+
+def non_implementation(core, labels):
+    folded={str(item).strip().lower().replace("_", "-") for item in labels}
+    if folded & _NON_IMPLEMENTATION_LABELS:
+        return True
+    blob=(str(core.get("title") or "")+" "+json.dumps(labels)).upper()
+    return "[HUMAN]" in blob
+
 def _latest_material_change(cid, verdict_ts):
     threshold=_ts_epoch(verdict_ts); latest=0
     for event in event_rows(cid):
@@ -483,6 +512,11 @@ def _still_assignable(cid):
     if st != "open": return False
     try: core=json.load(open(os.path.join(CARDS,cid,"core.json")))
     except Exception: return False
+    labels=folded_labels(cid,core)
+    if non_implementation(core,labels): return False
+    if "foreign-project" in {str(item).strip().lower() for item in labels}: return False
+    pin=host_pin(core,labels)
+    if pin and pin != HOST: return False
     return not any(not _dep_satisfied(dep) for dep in folded_dependencies(cid,core,fresh=True))
 
 _BLOCKED_CATEGORIES = ("dependency", "card", "human", "capability")
@@ -497,6 +531,8 @@ _BLOCKED_FILLER = set(_BLOCKED_CATEGORIES) | {
 
 _PIPE_VERDICT_RE = re.compile(
     r"^\s*BLOCKED\s*\|\s*(dependency|card|human|capability)\s*\|\s*([^|]+)", re.I)
+_CAPABILITY_BLOCK_RE = re.compile(
+    r"blocked[_\s-]?on[=: |]+\s*capability\b|^\s*BLOCKED\s*\|\s*capability\b", re.I)
 
 def _verdict_is_actionable(val):
     """True if a BLOCKED verdict names a category AND the thing it refers to.
@@ -552,6 +588,17 @@ def blocked_backoff(cid):
     # with nothing recorded the launch-attempt rule below parks it anyway. There
     # is always a counter that ends the loop.
     if ts and re.match(r"^\s*BLOCKED", val, re.I) and _verdict_is_actionable(val):
+        # Capability is a routing signal, not a dependency or approval hold. It
+        # must reach needs_escalation() below, which preferentially assigns it to
+        # Codex. After that stronger route has also returned capability, park the
+        # card until authored state changes so the fleet does not loop forever.
+        if _CAPABILITY_BLOCK_RE.search(str(val)):
+            strong_at=_strong_launched_at.get(cid,0)
+            if strong_at and _ts_epoch(ts)>=strong_at:
+                change=_latest_material_change(cid,ts)
+                if not change: return True
+                return strong_at>=change
+            return False
         change=_latest_material_change(cid,ts)
         if not change: return True
         return _launched_at.get(cid,0) >= change
@@ -655,7 +702,6 @@ def awaiting_review(cid):
 # chiap04 added 2026-08-27 after provisioning tmux 3.4 and pi 0.84.3 and a
 # 30G swapfile. 16 open cards name it, mostly the ChatGPT desktop client work,
 # which can only be done on the host running that desktop.
-ROTATION_HOSTS = ("chiap01", "chiap02", "chiap03", "chiap08", "chiap04")
 KNOWN_HOSTS = ROTATION_HOSTS + ("chiap04", "chiap08", "chiwk11", "chiwk12", "noroc2027")
 
 def host_pin(core,labels):
@@ -1084,13 +1130,13 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     #   f0940676 [SKGW-REPLICA-ADOPTION-PACKET][REVIEW] Prepare no-action human ...
     # Those three PREPARE a packet for a human. They are not themselves gates, and
     # a starved pool cannot afford to skip work because of a word in its title.
-    if "[HUMAN]" in blob: continue
+    if non_implementation(core,labels): continue
     # Cards belonging to a different project that merely share this board. Casey's
     # GREG-BREAK-HOUSE tree is 35 cards and our fleet spent 33 claims on it between
     # 2026-08-26 and 2026-08-27 before anyone noticed it was not our work. The label
     # is deliberately generic rather than a GBH string match, so the next foreign
     # tree can be fenced by labelling it instead of by editing this file.
-    if "foreign-project" in labels: foreign_skipped+=1; continue
+    if "foreign-project" in {str(item).strip().lower() for item in labels}: foreign_skipped+=1; continue
     if title.startswith("CMDB drift"): continue
     deps=folded_dependencies(cid,core)
     if any(not _dep_satisfied(str(dp)) for dp in deps):
@@ -1137,8 +1183,8 @@ log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d i
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
 # shared and claims land continuously, so the pools drift and strides collide.
 # A hash partition is stable no matter what the local pool looks like.
-off={"chiap01":0,"chiap02":1,"chiap03":2,"chiap08":3,"chiap04":4}.get(HOST,0)
-_NHOST=5
+off={"chiap01":0,"chiap02":1,"chiap03":2}.get(HOST,0)
+_NHOST=3
 def owns(cid):
     # A host-pinned card is owned by its pinned host, full stop. Letting the hash
     # partition also apply would strand any card whose pin and hash slice disagree:
@@ -1148,32 +1194,13 @@ def owns(cid):
     return int(hashlib.sha256(cid.encode()).hexdigest()[:8],16)%_NHOST==off
 owned=[x for x in pool if owns(x[2])]
 
-# ---- work stealing -----------------------------------------------------------
-# The hash partition gives each card exactly one owner, which keeps two hosts off
-# the same card without any coordination. Its failure mode is idleness: when a
-# host's own slice is empty it sits with free slots while other slices hold work,
-# and when a host is DOWN its entire slice is stranded with nobody able to take it.
-#
-# Measured 2026-08-27, with chiap04 rebooting for a memory upgrade: 8 workable
-# cards fleet-wide, of which chiap03 owned ZERO while holding 11 free slots. Four
-# of the eight belonged to the host that was down. Every host logged NOOP.
-#
-# So: take your own slice first, always. Only when it is EMPTY and slots are free
-# does a host steal from the global pool. Each host starts at a different offset,
-# so two idle hosts do not converge on the same card, and _still_assignable
-# re-reads the card from disk immediately before launch, which closes the
-# remaining window. Stealing is logged, because a host working outside its own
-# partition should be visible and not something discovered later in a claim
-# conflict.
-_stolen = 0
-if not owned and free > 0:
-    _unowned = [x for x in pool if not owns(x[2])]
-    if _unowned:
-        _k = off % len(_unowned)
-        owned = _unowned[_k:] + _unowned[:_k]
-        _stolen = len(owned)
-        log(d, "STEAL|%s|own slice empty, %d free slot(s); taking from the global pool "
-               "starting at offset %d of %d" % (HOST, free, _k, len(_unowned)))
+# Never steal another host's hash slice without an authoritative shared lock.
+# Syncthing propagation is not a compare-and-swap primitive. Measured 2026-08-28:
+# all three hosts stole review card 334b8d63 and claimed it within 350 ms under
+# one identity before any claim reached the other hosts. Stable ownership may
+# leave capacity idle when the pool is tiny, but it preserves one card, one claim,
+# one identity, and one worker. Safe work stealing requires a separate centralized
+# admission design.
 _ESCALATE_LABEL="needs-stronger-model"
 
 _CAPABILITY_VERDICT_RE = re.compile(
@@ -1222,9 +1249,10 @@ while _i<len(owned) and len(picks)<MAX_LAUNCH:
     _card=owned[_i]; _i+=1
     _esc=needs_escalation(_card[2], _card[3])
     _lane=None
-    for lane in lane_order:
+    card_lane_order=(sorted(LANES,key=lambda lane:0 if lane["name"]=="codex" else 1)
+                     if _esc else lane_order)
+    for lane in card_lane_order:
         if remaining[lane["name"]]<=0: continue
-        if _esc != (lane["name"]=="escalate"): continue
         _lane=lane; break
     if _lane is None:
         if _esc: _esc_waiting+=1
@@ -1240,9 +1268,10 @@ raced=0
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_nb) in picks:
     ac="\n".join("  %d. %s"%(i+1,x) for i,x in enumerate(core.get("acceptance_criteria") or []))
-    brief=("Work only SKCapstone card %s. Claim it first with a supported command. "
-      "If the claim fails because another agent holds it, or the card has an incomplete dependency, "
-      "say so and stop rather than working it anyway.\n\n"
+    brief=("Work only SKCapstone card %s. The fleet selector has already claimed it "
+      "for your exact agent identity. Verify that ownership before working and never "
+      "claim or substitute another card. If ownership is absent, or a dependency is "
+      "incomplete, say so and stop rather than working it anyway.\n\n"
       "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n"
       "CONSTRAINTS (standing rails, non-negotiable):\n"
       "- CardStore is append-only. Build JSON with a serializer and parse every line before appending. Never concatenate strings into JSON.\n"
@@ -1257,6 +1286,8 @@ for _LANE,(_,_,cid,core,_nb) in picks:
       "  WAKE-02 enablement, live_execution, or automerge.\n"
       "- You may not write a human_signoff or flip repository visibility.\n"
       "- Clean up a worktree or branch ONLY after its work is pushed to a remote.\n"
+      "- Start repository work by creating a card-specific branch and git worktree "
+      "inside SKFLEET_WORKSPACE. Never modify a shared or live checkout.\n"
       "\n"
       "\n"
       "BLOCKED VERDICT CONTRACT, mandatory whenever your verdict is BLOCKED:\n"
@@ -1319,22 +1350,44 @@ for _LANE,(_,_,cid,core,_nb) in picks:
       "If the card needs no repository change, say so explicitly in your verdict so the\n"
       "absence of a PR is a recorded decision rather than an omission.\n"
       "- Never use an em dash or en dash.\n") % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac)
-    name="pi-%s-%s"%(_LANE["name"],cid); sess="%s%s"%(_LANE["prefix"],cid)
+    name="pi-%s-%s-%s"%(_LANE["name"],HOST,cid); sess="%s%s"%(_LANE["prefix"],cid)
+    model=ESC_MODEL if _LANE["name"]=="codex" and needs_escalation(cid,core) else _LANE["model"]
+    workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
+    os.makedirs(workspace,exist_ok=True)
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
-    inner=('env SKAGENT=%s SKCAPSTONE_AGENT=%s %s --approve --name %s '
-           '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1'
-           % (name,name,PI,name,_LANE["model"],bf,lf))
+    # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
+    # returns normally. Releasing only after the Pi command leaves a dead claim
+    # in that case and drains the assignable pool. Keep worker output separate
+    # from lifecycle cleanup so an interrupted zero-output launch does not become
+    # false reporting evidence merely because release-claim printed something.
+    inner=('release_claim() { %s coord release-claim %s --owner %s --agent %s '
+           '>/dev/null 2>&1 || true; }; '
+           'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
+           'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
+           '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1; '
+           'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
+           % (SKC,cid,name,name,name,name,workspace,PI,name,model,bf,lf))
     if DRY:
-        log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|%s"%(HOST,sess,cid,_LANE["name"],str(core.get("title"))[:40])); continue
+        log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
     # last-moment re-check: the pool may be a minute old by now
     if not _still_assignable(cid):
         raced += 1
         log(d,"SKIPPED_RACED|%s|%s|%s|another writer finished or claimed it since the pool was built"%(HOST,sess,cid))
         continue
-    r=subprocess.run(["tmux","new-session","-d","-s",sess,"bash","-lc",inner])
+    claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
+    claimed_owner,_claimed_at=_current_claim_fresh(cid)
+    if claim.returncode!=0 or claimed_owner!=name:
+        raced += 1
+        detail=(claim.stderr or claim.stdout or "claim not visible in CardStore fold").strip()[:140]
+        log(d,"CLAIM_FAILED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
+        continue
+    r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",workspace,"bash","-lc",inner])
     ok = r.returncode==0 and sess in sh("tmux","ls","-F","#{session_name}").split()
-    log(d,"%s|%s|%s|%s|lane=%s"%("LAUNCHED" if ok else "LAUNCH_FAILED",HOST,sess,cid,_LANE["name"]))
+    log(d,"%s|%s|%s|%s|lane=%s|model=%s"%("LAUNCHED" if ok else "LAUNCH_FAILED",HOST,sess,cid,_LANE["name"],model))
+    if not ok:
+        subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,"--agent",name],
+                       capture_output=True,text=True)
     time.sleep(2)
 
 # republish after launching, because the first publish is a snapshot of the
