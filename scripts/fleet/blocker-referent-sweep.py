@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from skcapstone.blocker_referent import card_dir_lookup, find_returnable  # noqa: E402
 
 LABEL = "blocker-now-done"
+
+
+def skcapstone_bin() -> str:
+    """The CLI is installed in the SK venv, which is not on a service PATH."""
+    found = shutil.which("skcapstone")
+    if found:
+        return found
+    venv = os.path.expanduser("~/.skenv/bin/skcapstone")
+    return venv if os.path.exists(venv) else "skcapstone"
 
 
 def main() -> int:
@@ -72,7 +82,7 @@ def main() -> int:
     labelled = 0
     for card_id in returnable:
         result = subprocess.run(
-            ["skcapstone", "coord", "label", card_id, LABEL, "--agent", args.agent],
+            [skcapstone_bin(), "coord", "label", card_id, LABEL, "--agent", args.agent],
             capture_output=True,
         )
         if result.returncode == 0:
