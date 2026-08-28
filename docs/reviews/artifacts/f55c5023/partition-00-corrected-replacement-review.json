@@ -65,7 +65,7 @@
     "result": "PASS_NO_ACTION_ONLY",
     "supported_append_only_commands_proposed": []
   },
-  "review_pr": null,
+  "review_pr": "https://github.com/smilinTux/skcapstone/pull/248",
   "reviewed_commit": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
   "reviewed_path": "docs/reviews/artifacts/a743f500/partition-00-corrected-replacement.json",
   "reviewed_pr": "https://github.com/smilinTux/skcapstone/pull/244",
