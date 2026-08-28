@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import socket
 from collections import Counter
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -179,18 +181,29 @@ def test_disabled_default_and_exact_physical_host(
     """Missing enablement is no-action and a spoofed non-chiap08 host is denied."""
 
     monkeypatch.setattr(snapshots, "enabled", lambda: False)
-    assert glm_consumer.consume_once(generation=1) is None
+    assert glm_consumer.consume_once() is None
     monkeypatch.setattr(socket, "gethostname", lambda: "chiap08.example")
     with pytest.raises(ConsumerDenied, match="physical host is not chiap08"):
-        glm_consumer.consume_once(generation=1)
+        glm_consumer.consume_once()
 
 
-def test_public_interface_rejects_authority_and_path_spoofing() -> None:
-    """Callers cannot supply authority, snapshot, lock, ledger, or state paths."""
+def test_public_interface_has_no_injection_parameters() -> None:
+    """The public boundary has no generation, adapter, time, or path injection."""
 
-    for name in ("authority_host", "snapshot_path", "lock_path", "ledger_path", "state_path"):
+    assert inspect.signature(glm_consumer.consume_once).parameters == {}
+    for name in (
+        "generation",
+        "coordinator",
+        "backend",
+        "now",
+        "authority_host",
+        "snapshot_path",
+        "lock_path",
+        "ledger_path",
+        "state_path",
+    ):
         with pytest.raises(TypeError, match=name):
-            glm_consumer.consume_once(generation=1, **{name: "/tmp/spoof"})
+            glm_consumer.consume_once(**{name: "/tmp/spoof"})
 
 
 def test_exact_cardinality_distribution_and_distinct_custody(
@@ -246,6 +259,32 @@ def test_queue_and_429_stop_before_claims(tmp_path: Path, monkeypatch: pytest.Mo
         with pytest.raises(ConsumerDenied, match="queue pressure or 429"):
             run_launch(tmp_path, monkeypatch, evidence, coordinator=coord)
         assert coord.claimed == []
+
+
+@pytest.mark.parametrize("host", ("chiap02", "chiap03"))
+@pytest.mark.parametrize(
+    "pressures",
+    (
+        (PressureSample(0, 1), PressureSample(0, 0)),
+        (PressureSample(1, 0), PressureSample(1, 0)),
+    ),
+)
+def test_remote_host_pressure_stops_before_claims(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+    pressures: tuple[PressureSample, PressureSample],
+) -> None:
+    """Pressure appearing only on chiap02 or chiap03 fails closed."""
+
+    evidence = tuple(
+        replace(report, pressure_samples=pressures) if report.host == host else report
+        for report in bundle()
+    )
+    coord = FakeCoordinator()
+    with pytest.raises(ConsumerDenied, match="queue pressure or 429"):
+        run_launch(tmp_path, monkeypatch, evidence, coordinator=coord)
+    assert coord.claimed == []
 
 
 def test_partial_launch_rolls_back_releases_claims_and_preserves_transcripts(

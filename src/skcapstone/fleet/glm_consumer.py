@@ -270,7 +270,7 @@ def _launch_wave(
     if not snapshots.enabled():
         _deny("consumer is disabled")
     bundle = snapshots.read_bundle()
-    if must_stop(bundle[0].pressure_samples):
+    if any(must_stop(report.pressure_samples) for report in bundle):
         _deny("queue pressure or 429 stopped the wave")
     selected = _select_cards(bundle)
     claimed: list[tuple[str, str]] = []
@@ -319,25 +319,22 @@ def _launch_wave(
         raise ConsumerDenied(f"wave failed closed: {exc}{detail}") from exc
 
 
-def consume_once(
-    *,
-    generation: int,
-    coordinator: ClaimCoordinator | None = None,
-    backend: WaveBackend | None = None,
-    now: datetime | None = None,
-) -> tuple[WorkerBinding, ...] | None:
+def consume_once() -> tuple[WorkerBinding, ...] | None:
     """Consume one fixed-path wave; absent enablement returns without action."""
 
     if _physical_hostname() != AUTHORITY_HOST:
         _deny("physical host is not chiap08")
+    coordinator = CommandClaimCoordinator()
+    backend = FixedWorkerBackend()
     if not snapshots.enabled():
         return None
-    instant = now or datetime.now(timezone.utc)
+    enablement = snapshots.load_json(ENABLE_PATH, "consumer enablement")
+    generation = snapshots.integer(enablement["generation"], "consumer generation")
     return _launch_wave(
         generation=generation,
-        now=instant,
-        coordinator=coordinator or CommandClaimCoordinator(),
-        backend=backend or FixedWorkerBackend(),
+        now=datetime.now(timezone.utc),
+        coordinator=coordinator,
+        backend=backend,
     )
 
 
@@ -345,11 +342,7 @@ def main() -> int:
     """Run the fixed generation supplied by the owner-only enablement file."""
 
     try:
-        if not snapshots.enabled():
-            return 0
-        enablement = snapshots.load_json(ENABLE_PATH, "consumer enablement")
-        generation = snapshots.integer(enablement["generation"], "consumer generation")
-        consume_once(generation=generation)
+        consume_once()
         return 0
     except ConsumerDenied:
         return 1
