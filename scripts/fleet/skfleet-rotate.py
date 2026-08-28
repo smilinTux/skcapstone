@@ -45,6 +45,56 @@ PI="/home/skuser01/.npm-global/bin/pi"
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
 STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+_EVIDENCE_STAMP_RE=re.compile(r"^\d{8}T\d{6}Z$")
+
+
+def _rotation_batch_dir(root: str, host: str, stamp: str) -> str:
+    """Return one collision-free evidence directory for a validated host."""
+    if host not in ROTATION_HOSTS:
+        raise ValueError("host is outside the rotation fleet")
+    if not _EVIDENCE_STAMP_RE.fullmatch(stamp):
+        raise ValueError("invalid rotation evidence timestamp")
+    return os.path.join(root, "%s_%s" % (host, stamp))
+
+
+def _rotation_batch_epoch(name: str) -> float:
+    """Read an epoch from either a legacy or host-prefixed batch name."""
+    stamp=name.rsplit("_",1)[-1]
+    if not _EVIDENCE_STAMP_RE.fullmatch(stamp):
+        return 0
+    return datetime.datetime.strptime(stamp,"%Y%m%dT%H%M%SZ").replace(
+        tzinfo=datetime.timezone.utc).timestamp()
+
+
+def _rotation_action_logs(root: str) -> list[str]:
+    """List every legacy and host-prefixed action log exactly once."""
+    return sorted(set(glob.glob(os.path.join(root,"*","actions.log"))))
+
+
+def _read_launch_history(
+    root: str,
+) -> tuple[collections.Counter[str], dict[str, float], dict[str, float]]:
+    """Fold launch counts and times from both evidence naming generations."""
+    launched=collections.Counter(); launched_at={}; strong_launched_at={}
+    for path in _rotation_action_logs(root):
+        launch_epoch=_rotation_batch_epoch(Path(path).parent.name)
+        try:
+            with open(path,encoding="utf-8",errors="replace") as source:
+                for line in source:
+                    if not line.startswith("LAUNCHED|"):
+                        continue
+                    parts=line.strip().split("|")
+                    if len(parts)<4:
+                        continue
+                    card_id=parts[3]
+                    launched[card_id]+=1
+                    launched_at[card_id]=max(launched_at.get(card_id,0),launch_epoch)
+                    if "model=%s"%ESC_MODEL in parts:
+                        strong_launched_at[card_id]=max(
+                            strong_launched_at.get(card_id,0),launch_epoch)
+        except OSError:
+            continue
+    return launched,launched_at,strong_launched_at
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
@@ -101,11 +151,10 @@ try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError:
     print("  rotation already running on %s"%HOST); sys.exit(0)
 
-d=os.path.join(EVID,STAMP)
-
 if HOST not in ROTATION_HOSTS:
-    log(d,"NOOP|%s|host is outside the authorized chiap01-chiap03 worker fleet"%HOST)
+    print("  NOOP|%s|host is outside the rotation fleet"%HOST)
     sys.exit(0)
+d=_rotation_batch_dir(EVID,HOST,STAMP)
 
 # Mandatory read-only graph validation precedes slot and assignment decisions.
 # The report is the exact machine-readable assignment exclusion contract.
@@ -266,24 +315,7 @@ if free==0:
 # claimed by a worker (closed ITIL incident, id namespace the board rejects, or
 # already assigned elsewhere). Without this, the same card is relaunched every
 # cycle forever: measured 78 of 162 launches wasted, 48 percent, before this gate.
-_launched=collections.Counter()
-_launched_at={}
-_strong_launched_at={}
-for _f in glob.glob(os.path.join(EVID,"*","actions.log")):
-    try:
-        _launch_epoch=datetime.datetime.strptime(Path(_f).parent.name,"%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
-    except ValueError:
-        _launch_epoch=0
-    try:
-        for _l in open(_f,encoding="utf-8",errors="replace"):
-            if _l.startswith("LAUNCHED|"):
-                _p=_l.strip().split("|")
-                if len(_p)>=4:
-                    _launched[_p[3]]+=1
-                    _launched_at[_p[3]]=max(_launched_at.get(_p[3],0),_launch_epoch)
-                    if "model=%s"%ESC_MODEL in _p:
-                        _strong_launched_at[_p[3]]=max(_strong_launched_at.get(_p[3],0),_launch_epoch)
-    except OSError: pass
+_launched,_launched_at,_strong_launched_at=_read_launch_history(EVID)
 # A card claimed and then RELEASED is open again and must be assignable. The prior
 # filter excluded any card with a claim action anywhere in history, making
 # release_claim a one-way door: every card a worker released became permanently
@@ -791,9 +823,8 @@ def _shared_launch_attempts(cid):
         _shared_launch_cache = {}
         cutoff = time.time() - _LAUNCH_TTL_H * 3600
         try:
-            for stamp in os.listdir(_ROTATION_EVID):
-                d = os.path.join(_ROTATION_EVID, stamp)
-                log = os.path.join(d, "actions.log")
+            for log in _rotation_action_logs(_ROTATION_EVID):
+                d = os.path.dirname(log)
                 try:
                     if os.stat(d).st_mtime < cutoff:
                         continue          # aged out: exclusion self-heals
