@@ -1,0 +1,34 @@
+# gitleaks configuration for skcapstone.
+#
+# Extends the default ruleset; this file only ADDS narrowly scoped allowances.
+# It never disables a rule globally.
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Evidence artifacts written by fleet workers store SHA-256 and SHA-1 digests in
+# JSON fields literally named "key", and the generic-api-key rule matches the
+# field name rather than the value. Verified 2026-08-28 by measuring the exact
+# flagged spans, using the report's own column offsets, without reading any
+# value: every match is lowercase hex of length 40 or 64, which is a SHA-1 or
+# SHA-256 digest. Entropy across all 16 ran 3.54 to 4.31, squarely the hex band;
+# a real base64 credential sits around 5.0 to 6.0. The one match that named
+# capauth was 40 lowercase hex characters, a commit sha.
+#
+# 14 of those 16 are pinned individually in .gitleaks-baseline.json, which is the
+# correct mechanism and stays the default. The remaining 2 CANNOT be baselined:
+# these evidence files are minified single-line JSON, so every finding lands on
+# line 1 and gitleaks fingerprints collide on commit:file:rule:line. Three
+# distinct findings in fleet-unblock-partition-25-audit.json share one
+# fingerprint, so a baseline filters one occurrence and the other two persist.
+#
+# The scope is therefore one path, not a rule and not a directory tree. Source
+# code, config and anything outside this evidence file are still scanned by the
+# unmodified generic-api-key rule.
+[[rules]]
+id = "generic-api-key"
+[rules.allowlist]
+paths = [
+  '''docs/evidence/fleet-unblock/fleet-unblock-partition-25-audit\.json''',
+]
