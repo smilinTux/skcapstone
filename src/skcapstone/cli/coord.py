@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -236,6 +237,26 @@ def register_coord_commands(main: click.Group) -> None:
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
+
+        # A review card must have said something before it can be closed. Without
+        # this, completing one marks the parent as reviewed while leaving no record
+        # of what was found, and silence reads as approval. Measured 2026-08-28:
+        # 39 of 317 completed review cards had recorded no verdict at all.
+        from ..review_verdict import validate_review_completion
+
+        _title = ""
+        _core = home_path / "cards" / task_id / "core.json"
+        if _core.exists():
+            try:
+                _title = str(json.loads(_core.read_text()).get("title") or "")
+            except (ValueError, OSError):
+                _title = ""
+        try:
+            validate_review_completion(task_id, _title, home_path)
+        except ValueError as e:
+            console.print(f"\n  [red]Refused:[/] {e}\n")
+            sys.exit(1)
+
         board = Board(home_path)
         try:
             ag = board.complete_task(agent, task_id)

@@ -10,6 +10,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `coord complete` now refuses to complete a REVIEW card that has recorded no
+  verdict. A review exists to produce a judgement, and completing one silently
+  marks its parent as reviewed while leaving no record of what was found, which
+  reads as approval. Measured 2026-08-28: of 317 completed review cards, 39 had
+  recorded nothing at all. `a93fd881` had exactly three structural events, claim,
+  claim, complete, and zero evidence rows. Part of that 39 is an ordering race
+  rather than permanent silence: `a93fd881` was observed reading
+  complete-with-no-verdict and then `PASS` a minute later, because the worker
+  completed first and recorded second. Requiring the verdict first removes that
+  window. Any verdict satisfies the rule, including BLOCKED; it requires that one
+  exists, it does not judge it.
+
 
 - `coord link` now refuses a BLOCKED verdict that does not record `blocked_on`
   with a category (dependency, card, human, capability) AND the exact thing it
