@@ -10,6 +10,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `coord link` now refuses a `blocked_on=card` verdict that names a criterion but
+  not the contradiction. The rule is narrow: it applies only when `criterion=` is
+  present, which is the tell that the refusal concerns a criterion rather than
+  another card. `blocked_on=card referent=inc-0e190b2f` names a different card,
+  is self-explanatory, and is unaffected, as are `dependency`, `human` and
+  `capability`. Measured 2026-08-28: of 16 open cards refused with
+  `blocked_on=card`, 13 recorded only a pointer such as
+  `referent=card:95e192fd criterion=ac:5` written on card `95e192fd` itself, so
+  the card named itself as its own blocker. None could be amended without
+  inventing a diagnosis. The 3 that stated a contradiction were actionable at
+  once and two were repaired the same hour.
+
 
 - `coord link` now refuses a BLOCKED verdict that does not record `blocked_on`
   with a category (dependency, card, human, capability) AND the exact thing it
