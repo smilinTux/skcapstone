@@ -136,7 +136,7 @@
   ],
   "repository": {
     "branch": "chore/7985186a-immutable-review",
-    "pull_request": "PENDING"
+    "pull_request": "https://github.com/smilinTux/skcapstone/pull/250"
   },
   "reviewer_identity": "pi-codex-7985186a",
   "schema": "skcapstone.immutable_replacement_independent_review.v1",
