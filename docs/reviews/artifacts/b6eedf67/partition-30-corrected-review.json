@@ -1,0 +1,144 @@
+{
+  "acceptance": {
+    "ac1": "PASS: PR 244 bytes, shared bytes, manifest declaration, and sidecar all reproduce SHA-256 783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458.",
+    "ac2": "PASS: all three correction-ledger entries were reproduced against structural CardStore bytes and separate direct evidence events without forbidden inference.",
+    "ac3": "BLOCKED: remedy for 03bf6be6 is neither no action nor an exact supported append-only command with explicit authority and preconditions.",
+    "ac4": "PASS: this hashed review records exact BLOCKED and is prepared for jarvis and lumina notification."
+  },
+  "actions_applied_to_audited_cards": [],
+  "attempted": [
+    "Verified exact card ownership and absence of dependencies before repository work.",
+    "Downloaded the artifact from PR 244 head and compared it byte-for-byte with the manifest shared path.",
+    "Parsed the artifact, manifest, sidecars, superseded report, and prior blocked review with JSON parsers and recomputed hashes.",
+    "Reproduced all three correction ledger before and after values and inspected structural plus direct evidence events.",
+    "Inspected all six remedy-bearing records and checked supported coord command help and guarded release implementation."
+  ],
+  "blocked_on": {
+    "referent": "ac:3",
+    "type": "card"
+  },
+  "blocked_review_reproduction": {
+    "path": "/home/skuser01/.skcapstone/evidence/work/3ad01333/review-verdict-pi-codex-3ad01333.json",
+    "sha256": "51899693d6ae9d68b3797ef53bf37204e3168424d3813ea6b64d04601926b6b4",
+    "verdict": "BLOCKED"
+  },
+  "commands_executed_from_proposals": [],
+  "correction_checks": [
+    {
+      "before_reproduced": true,
+      "card_id": "289315d7",
+      "corrected_classification": "terminal_void",
+      "corrected_nonterminal": false,
+      "evidence_finding": "No direct evidence verdict is recorded. Void is structural and is not treated as PASS or FAIL.",
+      "remedy_check": "PASS: exact no-action remedy preserves terminal void.",
+      "result": "PASS",
+      "sources": [
+        {
+          "path": "/home/skuser01/.skcapstone/cards/289315d7/core.json",
+          "sha256": "eba967fe954f7fafa28ade6df90b1f289686e0d26db1d5ff3f64bccc0e85df3e"
+        },
+        {
+          "path": "/home/skuser01/.skcapstone/cards/289315d7/events/codex-root@chiap08.jsonl",
+          "sha256": "3dbb0df9772943dea1c5a5ccfd74900881749a269bf3b4845c9a05bc9fbd6632"
+        }
+      ],
+      "structural_finding": "Explicit void then archive events make the card terminal despite folded backlog status."
+    },
+    {
+      "before_reproduced": true,
+      "card_id": "96d65096",
+      "corrected_classification": "terminal_void",
+      "corrected_nonterminal": false,
+      "evidence_finding": "No direct Chef approval or evidence verdict is recorded. Void is structural and is not treated as evidence authority.",
+      "remedy_check": "PASS: exact no-action remedy preserves terminal void.",
+      "result": "PASS",
+      "sources": [
+        {
+          "path": "/home/skuser01/.skcapstone/cards/96d65096/core.json",
+          "sha256": "408942c57e29fe2fd183a0fbe29f44fa0b142f5f80602e073a65160d483cebf6"
+        },
+        {
+          "path": "/home/skuser01/.skcapstone/cards/96d65096/events/codex-skgw-root@chiap08.jsonl",
+          "sha256": "ba11ea341d0d4172e4a3bfb33c3fc561759d7bd15af05ed8ad87b6838ec3f22c"
+        },
+        {
+          "path": "/home/skuser01/.skcapstone/cards/e82c379e/events/codex-skgw-root@chiap08.jsonl",
+          "sha256": "ee8ef4bbc4613f0256b190bbeb58dea8a3a2e0cf41ada7185a359f401f2c3a6f"
+        }
+      ],
+      "structural_finding": "Explicit void then archive events make the machine-created human-gate card terminal. Dependency e82c379e is also explicitly voided and archived."
+    },
+    {
+      "before_reproduced": true,
+      "card_id": "84cee038",
+      "corrected_classification": "claim_projection_inconsistency_unproven_stale",
+      "corrected_nonterminal": true,
+      "evidence_finding": "A direct BLOCKED note and verdict-bearing event exists independently of lifecycle and links.",
+      "remedy_check": "PASS: release-claim is a supported append-only command, is proposal-only, names authorized lifecycle authority, and states current-liveness, owner, and revision preconditions.",
+      "result": "PASS",
+      "sources": [
+        {
+          "path": "/home/skuser01/.skcapstone/cards/84cee038/core.json",
+          "sha256": "c45f72afc9f9774bba2b1f8cee73d5e22a27d0595039485cf8e24bd5f2835873"
+        },
+        {
+          "path": "/home/skuser01/.skcapstone/cards/84cee038/events/codex-terra-84cee038-reconcile@chiap08.jsonl",
+          "sha256": "00a6afff0078db4fe7579fd39291256d0535cce5d76dc43bd6a8d7e6e4cbe196"
+        },
+        {
+          "path": "/home/skuser01/.skcapstone/cards/84cee038/events/skuser01@chiap03.jsonl",
+          "sha256": "8dc1de33231e587f856db172ae97b8a84b7a633df2639b441376e324b5b41704"
+        }
+      ],
+      "structural_finding": "Folded owner is skuser01 at claim revision 79a7b93ef6564fa5bf149cc3cd16dfbb. Current liveness absence is not proven. The stale release link concerns prior owner pi-glm-84cee038."
+    }
+  ],
+  "method": {
+    "evidence_store": "Read direct verdict and note events separately from structural state.",
+    "forbidden_inferences_observed": [
+      "no verdict inferred from lifecycle",
+      "no verdict inferred from labels",
+      "no verdict inferred from dependencies",
+      "no verdict inferred from links"
+    ],
+    "join_key": "exact card_id only",
+    "structural_store": "Folded core.json with append-only card events and archive events."
+  },
+  "publication_pr": "https://github.com/smilinTux/skcapstone/pull/252",
+  "remedy_inventory": {
+    "blocked": [
+      {
+        "card_id": "03bf6be6",
+        "finding": "The remedy says to append remove_dependency/add_dependency transitions as applicable after authoritative replacement review. It supplies no exact command, dependency target, authority, or complete preconditions. This is an unsupported vague pseudo-action under acceptance criterion 3."
+      }
+    ],
+    "passed": [
+      "289315d7 no action",
+      "96d65096 no action",
+      "84cee038 exact guarded release-claim proposal",
+      "357ba8f4 retain blocked pending Chef authority",
+      "aba8ec0d retain blocked pending Chef authority"
+    ],
+    "records_with_remedies": 6
+  },
+  "repository_or_external_action_applied_to_audited_cards": false,
+  "review_card_id": "b6eedf67",
+  "reviewer": "pi-codex-b6eedf67",
+  "schema": "skcapstone.fleet_unblock.corrected_review.v1",
+  "source_card_id": "a743f500",
+  "source_pr": {
+    "artifact_path": "docs/reviews/artifacts/a743f500/partition-30-corrected-replacement.json",
+    "artifact_sha256": "783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458",
+    "head": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
+    "manifest_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/manifest.json",
+    "manifest_sha256": "07ec3c58abf34eb4137d8586ec659fa381dacdf5117a9dca3eca84d41cb92433",
+    "shared_copy_identical_to_pr": true,
+    "shared_copy_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-30-corrected-replacement.json",
+    "url": "https://github.com/smilinTux/skcapstone/pull/244"
+  },
+  "superseded_report": {
+    "path": "/home/skuser01/.skcapstone/evidence/work/5e1cb2f8/fleet-unblock-partition-30.json",
+    "sha256": "f490368b6ffdb62f897f3f1ba4cdd27615d9d15a276747c73a54b14ee8181d53"
+  },
+  "verdict": "BLOCKED"
+}
