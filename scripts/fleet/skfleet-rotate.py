@@ -954,6 +954,13 @@ def _acts_fresh_rows(cid):
 _fleet_launch_claims = None
 
 
+def _launch_claim_fields(owner, claim_revision, successful):
+    """Render exact claim provenance only for a successful fleet launch."""
+    if not successful or not owner or not claim_revision:
+        return ""
+    return "|owner=%s|claim_revision=%s" % (owner, claim_revision)
+
+
 def _fleet_launch_provenance(cid, owner, claim_revision):
     """Whether a successful fleet launch recorded this exact claim generation."""
     global _fleet_launch_claims
@@ -1450,8 +1457,7 @@ for _LANE,(_,_,cid,core,_nb) in picks:
         continue
     r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",workspace,"bash","-lc",inner])
     ok = r.returncode==0 and sess in sh("tmux","ls","-F","#{session_name}").split()
-    launch_identity=("|owner=%s|claim_revision=%s"%(name,claimed_revision or "")
-                     if ok else "")
+    launch_identity=_launch_claim_fields(name,claimed_revision,ok)
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
         (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))

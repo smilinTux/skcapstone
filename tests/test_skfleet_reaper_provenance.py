@@ -135,6 +135,16 @@ def test_manual_claim_with_no_exact_launch_generation_is_preserved(tmp_path: Pat
     assert any(message.startswith("REAP_UNPROVEN|") for message in messages)
 
 
+def test_successful_launch_records_exact_claim_generation() -> None:
+    """Only a successful launch renders owner and revision provenance."""
+    fields = _load_functions("_launch_claim_fields")["_launch_claim_fields"]
+    assert fields("pi-codex-chiap02-deadbeef", "revision-1", True) == (
+        "|owner=pi-codex-chiap02-deadbeef|claim_revision=revision-1"
+    )
+    assert fields("pi-codex-chiap02-deadbeef", "revision-1", False) == ""
+    assert fields("pi-codex-chiap02-deadbeef", "", True) == ""
+
+
 def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
     tmp_path: Path,
 ) -> None:
