@@ -847,6 +847,54 @@ def _record_ineffective(cid):
         pass
 
 
+def _current_claim_fresh(cid):
+    """The claim in force RIGHT NOW, read from disk, bypassing the run cache.
+
+    event_rows memoizes per run. A card can be claimed several times in the
+    seconds between the pool being built and a release being issued, so the cached
+    owner is not necessarily the owner CardStore will accept.
+
+    Observed 2026-08-28 on ec202fdc, which took four claims in eight seconds:
+      03:40:33 claim pi-codex   03:40:38 claim pi-codex
+      03:40:41 claim pi-glm     03:40:49 claim pi-glm
+    The release was refused with "CardStore owner conflict for ec202fdc: expected
+    pi-glm-ec202fdc" because the cached read still named the codex owner. This is
+    the same defect _acts_fresh exists to solve for the stale pool, applied to the
+    claim owner.
+    """
+    owner = None
+    ts = 0.0
+    for e in _acts_fresh_rows(cid):
+        a = e.get("action")
+        if a == "claim":
+            owner = e.get("agent") or e.get("owner") or e.get("actor") or e.get("by")
+            raw = str(e.get("ts") or e.get("timestamp") or "")
+            try:
+                ts = datetime.datetime.fromisoformat(
+                    raw.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                ts = 0.0
+        elif a in ("release_claim", "unassign", "complete", "void", "archive"):
+            owner, ts = None, 0.0
+    return owner, ts
+
+
+def _acts_fresh_rows(cid):
+    """Every event for a card, straight from disk."""
+    ev = os.path.join(CARDS, cid, "events")
+    out = []
+    if os.path.isdir(ev):
+        for f in os.listdir(ev):
+            try:
+                for l in open(os.path.join(ev, f), encoding="utf-8", errors="replace"):
+                    try: out.append(json.loads(l))
+                    except Exception: pass
+            except OSError:
+                pass
+    out.sort(key=lambda e: (str(e.get("ts") or ""), e.get("seq") or 0))
+    return out
+
+
 def reap_dead_claims():
     """Return claimed cards whose worker no host reports running."""
     oldest, running, nhosts = live_report()
@@ -878,8 +926,17 @@ def reap_dead_claims():
             continue                      # releasing it does nothing; see above
         if oldest < cts + CLAIM_GRACE:
             continue                      # some host has not reported since the claim
+        # Re-read the owner from disk immediately before releasing. The pool was
+        # built seconds to minutes ago and the card may have been re-claimed since.
+        fresh_owner, fresh_ts = _current_claim_fresh(cid)
+        if not fresh_owner:
+            continue                      # released by someone else in the meantime
+        if fresh_owner != owner:
+            log(d, "REAP_RECLAIMED|%s|%s|was %s now %s; leaving it alone this tick"
+                % (HOST, cid, owner, fresh_owner))
+            continue
         r = subprocess.run(
-            [SKC, "coord", "release-claim", cid, "--owner", str(owner),
+            [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner),
              "--agent", "fleet-liveness-reaper"],
             capture_output=True, text=True)
         if r.returncode == 0:
@@ -896,6 +953,10 @@ def reap_dead_claims():
             freed += 1
             log(d, "REAPED|%s|%s|%s|no host reports this card running" % (HOST, cid, owner))
         else:
+            # A release that keeps failing is a divergence, not a transient. Record
+            # it after the first failure so it does not retry every five minutes
+            # forever, which is how 2b614910 accumulated 455 pointless calls.
+            _record_ineffective(cid)
             log(d, "REAP_FAILED|%s|%s|%s" % (HOST, cid, (r.stderr or "").strip()[:120]))
     log(d, "REAP|%s|released=%d hosts_reporting=%d cards_running=%d ineffective=%d"
         % (HOST, freed, nhosts, len(running), len(_load_ineffective())))
