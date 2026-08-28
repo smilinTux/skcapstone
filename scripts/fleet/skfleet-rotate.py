@@ -864,12 +864,20 @@ _EPHEMERAL_OWNER = re.compile(r"^(pi|codex|glm)[-_]")
 
 def _current_claim(cid):
     """The claim in force now, as (owner, epoch), or (None, 0)."""
+    owner, ts, _revision = _claim_identity(event_rows(cid))
+    return owner, ts
+
+
+def _claim_identity(rows):
+    """Fold rows into the current owner, timestamp, and claim revision."""
     owner = None
     ts = 0.0
-    for e in event_rows(cid):
+    revision = None
+    for e in rows:
         a = e.get("action")
         if a == "claim":
             owner = e.get("agent") or e.get("owner") or e.get("actor") or e.get("by")
+            revision = e.get("claim_revision") or e.get("event_id")
             raw = str(e.get("ts") or e.get("timestamp") or "")
             try:
                 ts = datetime.datetime.fromisoformat(
@@ -877,8 +885,8 @@ def _current_claim(cid):
             except ValueError:
                 ts = 0.0
         elif a in ("release_claim", "unassign", "complete", "void", "archive"):
-            owner, ts = None, 0.0
-    return owner, ts
+            owner, ts, revision = None, 0.0, None
+    return owner, ts, revision
 
 def _load_ineffective():
     try:
@@ -918,21 +926,13 @@ def _current_claim_fresh(cid):
     the same defect _acts_fresh exists to solve for the stale pool, applied to the
     claim owner.
     """
-    owner = None
-    ts = 0.0
-    for e in _acts_fresh_rows(cid):
-        a = e.get("action")
-        if a == "claim":
-            owner = e.get("agent") or e.get("owner") or e.get("actor") or e.get("by")
-            raw = str(e.get("ts") or e.get("timestamp") or "")
-            try:
-                ts = datetime.datetime.fromisoformat(
-                    raw.replace("Z", "+00:00")).timestamp()
-            except ValueError:
-                ts = 0.0
-        elif a in ("release_claim", "unassign", "complete", "void", "archive"):
-            owner, ts = None, 0.0
+    owner, ts, _revision = _current_claim_identity_fresh(cid)
     return owner, ts
+
+
+def _current_claim_identity_fresh(cid):
+    """Return the current claim owner, timestamp, and exact revision."""
+    return _claim_identity(_acts_fresh_rows(cid))
 
 
 def _acts_fresh_rows(cid):
@@ -949,6 +949,39 @@ def _acts_fresh_rows(cid):
                 pass
     out.sort(key=lambda e: (str(e.get("ts") or ""), e.get("seq") or 0))
     return out
+
+
+_fleet_launch_claims = None
+
+
+def _fleet_launch_provenance(cid, owner, claim_revision):
+    """Whether a successful fleet launch recorded this exact claim generation."""
+    global _fleet_launch_claims
+    if not cid or not owner or not claim_revision:
+        return False
+    if _fleet_launch_claims is None:
+        _fleet_launch_claims = set()
+        for path in glob.glob(os.path.join(EVID, "*", "actions*.log")):
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        if not line.startswith("LAUNCHED|"):
+                            continue
+                        parts = line.strip().split("|")
+                        if len(parts) < 5:
+                            continue
+                        fields = dict(
+                            part.split("=", 1) for part in parts[4:] if "=" in part
+                        )
+                        launch_owner = fields.get("owner")
+                        launch_revision = fields.get("claim_revision")
+                        if launch_owner and launch_revision:
+                            _fleet_launch_claims.add(
+                                (parts[3], launch_owner, launch_revision)
+                            )
+            except OSError:
+                continue
+    return (str(cid), str(owner), str(claim_revision)) in _fleet_launch_claims
 
 
 def reap_dead_claims():
@@ -984,12 +1017,17 @@ def reap_dead_claims():
             continue                      # some host has not reported since the claim
         # Re-read the owner from disk immediately before releasing. The pool was
         # built seconds to minutes ago and the card may have been re-claimed since.
-        fresh_owner, fresh_ts = _current_claim_fresh(cid)
+        fresh_owner, fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
         if not fresh_owner:
             continue                      # released by someone else in the meantime
         if fresh_owner != owner:
             log(d, "REAP_RECLAIMED|%s|%s|was %s now %s; leaving it alone this tick"
                 % (HOST, cid, owner, fresh_owner))
+            continue
+        if not _fleet_launch_provenance(cid, fresh_owner, fresh_revision):
+            log(d, "REAP_UNPROVEN|%s|%s|%s|claim revision %s has no exact successful "
+                   "fleet launch record; leaving it for the stale-claim path"
+                % (HOST, cid, fresh_owner, fresh_revision or "missing"))
             continue
         r = subprocess.run(
             [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner),
@@ -1404,7 +1442,7 @@ for _LANE,(_,_,cid,core,_nb) in picks:
         log(d,"SKIPPED_RACED|%s|%s|%s|another writer finished or claimed it since the pool was built"%(HOST,sess,cid))
         continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
-    claimed_owner,_claimed_at=_current_claim_fresh(cid)
+    claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
     if claim.returncode!=0 or claimed_owner!=name:
         raced += 1
         detail=(claim.stderr or claim.stdout or "claim not visible in CardStore fold").strip()[:140]
@@ -1412,7 +1450,11 @@ for _LANE,(_,_,cid,core,_nb) in picks:
         continue
     r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",workspace,"bash","-lc",inner])
     ok = r.returncode==0 and sess in sh("tmux","ls","-F","#{session_name}").split()
-    log(d,"%s|%s|%s|%s|lane=%s|model=%s"%("LAUNCHED" if ok else "LAUNCH_FAILED",HOST,sess,cid,_LANE["name"],model))
+    launch_identity=("|owner=%s|claim_revision=%s"%(name,claimed_revision or "")
+                     if ok else "")
+    launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
+    log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
+        (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))
     if not ok:
         subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,"--agent",name],
                        capture_output=True,text=True)
