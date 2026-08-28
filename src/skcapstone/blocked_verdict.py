@@ -141,6 +141,7 @@ def states_a_contradiction(value: str) -> bool:
         return False
     return bool(_CONTRADICTION_RE.search(text))
 
+
 #: A referent identifies a thing: a card id, an approval name, a path-like token.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][\w:.\-/@]{2,}")
 

@@ -176,6 +176,7 @@ def test_human_and_capability_keep_free_form_referents(value):
 
 # --- a card refusal must say WHY, not only WHICH criterion --------------------
 
+
 def test_card_refusal_pointing_at_its_own_card_is_refused():
     """The exact shape 13 of 16 live refusals had on 2026-08-28.
 
