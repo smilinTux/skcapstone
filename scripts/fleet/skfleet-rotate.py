@@ -167,6 +167,24 @@ log(d,"SLOTS|%s|%s|total_free=%d"%(HOST,
 # run now publishes the cards it is running, into evidence/ where Syncthing shares
 # it (.stignore excludes logs/, metrics/ and heartbeats/, not evidence/).
 LIVE = os.path.join(HOME, ".skcapstone/evidence/fleet-live")
+# Cards whose claim cannot be released because the stores disagree about it. The
+# CardStore fold reads `claimed` while the legacy coordination/tasks store already
+# considers it released, so `coord release-claim` answers "Already released",
+# exits 0, and writes nothing. The reaper then sees a claimed card again next tick
+# and tries again, forever.
+#
+# Measured 2026-08-28: 2b614910 had been reaped 455 times, ec202fdc 435 and
+# d9552c4c 434, none of which ever produced a release_claim event. 2b614910 has
+# exactly three events in its whole history: describe, claim, move.
+#
+# Recorded in the SHARED evidence dir so one host discovering it spares the other
+# four, and so the divergence is visible rather than buried in a repeating log
+# line that reads like successful work.
+# NOT inside LIVE: the quorum check counts *.json there as reporting hosts, and a
+# bookkeeping file dropped in that directory is counted as a sixth host, which
+# pushes reporting below known and disables reaping fleetwide. Observed within
+# one tick of adding it. It lives one level up.
+_INEFFECTIVE_PATH = os.path.join(HOME, ".skcapstone/evidence/reap-ineffective.json")
 LIVE_FRESH = 30 * 60      # a report older than this says nothing about now
 CLAIM_GRACE = 300         # one full rotation period, so every host has reported
 # Reaping needs a quorum, because a card running on chiap04 is invisible in
@@ -806,6 +824,29 @@ def _current_claim(cid):
             owner, ts = None, 0.0
     return owner, ts
 
+def _load_ineffective():
+    try:
+        with open(_INEFFECTIVE_PATH, encoding="utf-8") as fh:
+            return {str(x) for x in json.load(fh).get("cards") or ()}
+    except (OSError, ValueError):
+        return set()
+
+
+def _record_ineffective(cid):
+    known = _load_ineffective()
+    if cid in known:
+        return
+    known.add(cid)
+    try:
+        os.makedirs(os.path.dirname(_INEFFECTIVE_PATH), exist_ok=True)
+        tmp = _INEFFECTIVE_PATH + ".new"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"cards": sorted(known)}, fh)
+        os.replace(tmp, _INEFFECTIVE_PATH)
+    except OSError:
+        pass
+
+
 def reap_dead_claims():
     """Return claimed cards whose worker no host reports running."""
     oldest, running, nhosts = live_report()
@@ -821,6 +862,7 @@ def reap_dead_claims():
             % (HOST, nhosts, known, REAP_QUORUM))
         return 0
     freed = 0
+    _ineffective = _load_ineffective()
     for cd in sorted(glob.glob(CARDS + "/*")):
         cid = os.path.basename(cd)
         if not os.path.exists(os.path.join(cd, "core.json")):
@@ -832,6 +874,8 @@ def reap_dead_claims():
             continue
         if cid in running:
             continue                      # a host says this is running right now
+        if cid in _ineffective:
+            continue                      # releasing it does nothing; see above
         if oldest < cts + CLAIM_GRACE:
             continue                      # some host has not reported since the claim
         r = subprocess.run(
@@ -840,12 +884,21 @@ def reap_dead_claims():
             capture_output=True, text=True)
         if r.returncode == 0:
             _rows.pop(cid, None)          # the fold below must re-read from disk
+            # A zero exit is not proof the claim moved. When the two stores
+            # disagree the CLI answers "Already released" and writes nothing, so
+            # confirm against the fold rather than trusting the return code.
+            if lifecycle_state(cid) == "claimed":
+                _record_ineffective(cid)
+                log(d, "REAP_INEFFECTIVE|%s|%s|%s|release reported success but the "
+                       "card is still claimed; CardStore and the legacy task store "
+                       "disagree, needs repair" % (HOST, cid, owner))
+                continue
             freed += 1
             log(d, "REAPED|%s|%s|%s|no host reports this card running" % (HOST, cid, owner))
         else:
             log(d, "REAP_FAILED|%s|%s|%s" % (HOST, cid, (r.stderr or "").strip()[:120]))
-    log(d, "REAP|%s|released=%d hosts_reporting=%d cards_running=%d"
-        % (HOST, freed, nhosts, len(running)))
+    log(d, "REAP|%s|released=%d hosts_reporting=%d cards_running=%d ineffective=%d"
+        % (HOST, freed, nhosts, len(running), len(_load_ineffective())))
     return freed
 
 reap_dead_claims()
