@@ -8,6 +8,7 @@ rather than against an idealised format.
 import pytest
 
 from skcapstone.blocked_verdict import (
+    states_where_the_work_is,
     states_a_contradiction,
     blocked_on_referent,
     is_blocked_verdict,
@@ -103,7 +104,8 @@ def test_a_properly_referenced_verdict_passes():
     validate_blocked_verdict(
         "verdict",
         "BLOCKED. blocked_on=human referent approval:sklegal_runtime-custody-path. "
-        "No custody operation performed.",
+        "No custody operation performed. Attempted the custody read; no repository "
+        "change, so no PR.",
     )
 
 
@@ -124,7 +126,8 @@ def test_prose_before_the_referent_is_fine():
         "verdict",
         "BLOCKED after a full read of the coordination board and 14049 CardStore "
         "records, no AC1-compliant authorization exists, so blocked_on=human "
-        "referent=approval:9acf44e2-database-lifecycle. No mutation performed.",
+        "referent=approval:9acf44e2-database-lifecycle. No mutation performed, and "
+        "no repository change, so no PR.",
     )
 
 
@@ -153,8 +156,8 @@ def test_card_category_rejects_an_acceptance_criterion_referent():
     "value",
     [
         "BLOCKED blocked_on=dependency referent=card:04b218cd",
-        "BLOCKED blocked_on=card referent=inc-0e190b2f",
-        "BLOCKED blocked_on=card referent=prb-41b9fb96",
+        "BLOCKED blocked_on=card referent=inc-0e190b2f. Attempted it; no repository change, so no PR.",
+        "BLOCKED blocked_on=card referent=prb-41b9fb96. Attempted it; no repository change, so no PR.",
         'BLOCKED {"blocked_on": {"value": "dependency", "referent": "04b218cd"}}',
     ],
 )
@@ -165,8 +168,8 @@ def test_card_category_accepts_real_card_ids(value):
 @pytest.mark.parametrize(
     "value",
     [
-        "BLOCKED blocked_on=human referent=approval:sklegal_runtime-custody-path",
-        "BLOCKED blocked_on=capability referent=capability:durable-v2-feature-router",
+        "BLOCKED blocked_on=human referent=approval:sklegal_runtime-custody-path. Attempted it; no repository change, so no PR.",
+        "BLOCKED blocked_on=capability referent=capability:durable-v2-feature-router. Attempted it; no repository change, so no PR.",
     ],
 )
 def test_human_and_capability_keep_free_form_referents(value):
@@ -195,12 +198,13 @@ def test_card_refusal_pointing_at_its_own_card_is_refused():
     "value",
     [
         "BLOCKED blocked_on=card referent=card:bb11e415 criterion=ac:2. AC2 requires "
-        "live install and restart while the standing rails prohibit deploy.",
+        "live install and restart while the standing rails prohibit deploy. "
+        "Attempted the preflight; no repository change, so no PR.",
         "BLOCKED blocked_on=card referent=card:27bb08c0 criterion=ac:1, which is "
         "circular because it demands evidence of every acceptance statement "
-        "including itself.",
+        "including itself. Attempted the review; no repository change, so no PR.",
         "BLOCKED blocked_on=card referent=card:63971b3b criterion=ac:2, the exact "
-        "required archives are absent.",
+        "required archives are absent. Attempted recovery; no repository change, so no PR.",
     ],
 )
 def test_card_refusal_that_states_the_contradiction_passes(value):
@@ -211,8 +215,8 @@ def test_card_refusal_that_states_the_contradiction_passes(value):
     "value",
     [
         "BLOCKED blocked_on=dependency referent=card:04b218cd",
-        "BLOCKED blocked_on=human referent=approval:sklegal_runtime-custody-path",
-        "BLOCKED blocked_on=capability referent=ac:1",
+        "BLOCKED blocked_on=human referent=approval:sklegal_runtime-custody-path. Attempted it; no repository change, so no PR.",
+        "BLOCKED blocked_on=capability referent=ac:1. Attempted it; no repository change, so no PR.",
     ],
 )
 def test_other_categories_do_not_need_a_contradiction(value):
@@ -257,5 +261,65 @@ def test_short_spelling_with_a_contradiction_passes():
     validate_blocked_verdict(
         "verdict",
         "BLOCKED|blocked_on=card|referent=card:abc12345|ac=3|the criterion requires "
-        "frozen bytes that are absent from every host",
+        "frozen bytes that are absent from every host. Attempted recovery; no "
+        "repository change, so no PR.",
     )
+
+
+# --- warm handover ------------------------------------------------------------
+
+
+def test_dependency_is_exempt_from_the_resume_requirement():
+    """Its referent already IS the resume condition.
+
+    "blocked_on=dependency referent=card:04b218cd" tells a successor exactly when
+    to try again, and the referent rule has already forced that id to be real.
+    """
+    validate_blocked_verdict("verdict", "BLOCKED blocked_on=dependency referent=card:04b218cd")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED blocked_on=human referent=approval:sklegal-custody",
+        "BLOCKED blocked_on=capability referent=ac:1",
+        "BLOCKED blocked_on=card referent=card:16bbc6fe ac:2, AC2 requires deploy "
+        "while the rails prohibit it",
+    ],
+)
+def test_other_categories_must_say_how_to_resume(value):
+    with pytest.raises(ValueError) as err:
+        validate_blocked_verdict("verdict", value)
+    assert "handover" in str(err.value).lower() or "where any live work" in str(err.value)
+
+
+def test_a_full_handover_passes():
+    validate_blocked_verdict(
+        "verdict",
+        "BLOCKED blocked_on=human referent=approval:dd659b4c-post-retirement. "
+        "Verified the retirement evidence on b0796dca and reproduced its hash. "
+        "No repository change, so no PR. Resume once the authorization names this card.",
+    )
+
+
+def test_explicit_none_satisfies_the_work_location_rule():
+    """An explicit none is a good answer; silence is not.
+
+    Silence is indistinguishable from having produced something and not saying
+    where it is, which is how commits 229336b2 and 22a36166 were recorded as
+    permanently unverifiable while a valid bundle sat in the evidence directory.
+    """
+    assert states_where_the_work_is("no repository change, so no PR")
+    assert states_where_the_work_is("produced no candidate")
+    assert not states_where_the_work_is("the criterion could not be satisfied")
+
+
+def test_a_branch_or_bundle_satisfies_the_work_location_rule():
+    assert states_where_the_work_is("candidate on branch fix/x-y at commit 7362a6ba74c9")
+    assert states_where_the_work_is("durable candidate bundle at evidence/work/x/candidate.bundle")
+    assert states_where_the_work_is("https://github.com/smilinTux/skcapstone/pull/209")
+
+
+def test_pass_verdicts_are_untouched_by_handover_rules():
+    validate_blocked_verdict("verdict", "PASS. all green")
+    validate_blocked_verdict("verdict", "PASS_FOR_REVIEW. PR #70")

@@ -10,6 +10,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- A BLOCKED verdict must now leave a warm handover: what was attempted or what to
+  do next, and where any live work sits, including an explicit "none". `dependency`
+  is exempt, and only `dependency`, because its referent already IS the resume
+  condition. Measured 2026-08-28 across 198 blocked cards: 7% said what was
+  attempted, 3% said where the work was, and 0% said how to resume, so every
+  successor re-paid its predecessor's discovery. The structural half was already
+  better than that: 66% left evidence at the derivable path
+  `evidence/work/<card_id>/` and none of it was empty, so artifacts were findable
+  while their meaning was not.
+
 - The `blocked_on=card` contradiction rule now recognises the short criterion
   spelling. A criterion is named as `criterion=ac:2` but also bare as `ac=2` or
   `|ac:2|` inside a pipe-delimited verdict, and matching only the long form let
