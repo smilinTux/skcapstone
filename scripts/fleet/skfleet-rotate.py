@@ -468,6 +468,9 @@ _BLOCKED_FILLER = set(_BLOCKED_CATEGORIES) | {
     "true", "false",
 }
 
+_PIPE_VERDICT_RE = re.compile(
+    r"^\s*BLOCKED\s*\|\s*(dependency|card|human|capability)\s*\|\s*([^|]+)", re.I)
+
 def _verdict_is_actionable(val):
     """True if a BLOCKED verdict names a category AND the thing it refers to.
 
@@ -484,6 +487,16 @@ def _verdict_is_actionable(val):
     below after three tries.
     """
     text = str(val or "")
+    # Workers also write the verdict pipe-delimited, as BLOCKED|category|referent.
+    # That names a category AND a referent, which is everything this function is
+    # asking for, and it was being rejected purely on punctuation. Measured
+    # 2026-08-27: BLOCKED|card|ac:1|bf3ffd12 read as unexplained, so the card got
+    # no backoff, went round again, and re-derived the identical verdict. A
+    # validator that refuses a truthful verdict on format teaches workers to
+    # fight the validator instead of to explain themselves.
+    pipe = _PIPE_VERDICT_RE.match(text)
+    if pipe and pipe.group(2).strip():
+        return True
     anchor = _BLOCKED_ON_RE.search(text)
     if not anchor:
         return False
@@ -495,6 +508,8 @@ def _verdict_is_actionable(val):
             if cand and cand.lower() not in _BLOCKED_FILLER:
                 return True
     return False
+
+_PASS_RE = re.compile(r"^\s*PASS(_FOR_REVIEW)?\b", re.I)
 
 def blocked_backoff(cid):
     """True if this card should stay out of the pool for now."""
@@ -532,9 +547,66 @@ def blocked_backoff(cid):
     #
     # _reporting_launches already skips zero-byte worker logs and ages out
     # evidence past a TTL, which is exactly the right test here.
-    if launch_attempts(cid) >= 3 and lifecycle_state(cid)!="complete":
+    #
+    # A card that RECORDED A PASS has something to show, and the counter above is
+    # explicitly about having nothing to show. Measured 2026-08-27: 8 cards whose
+    # latest outcome was PASS_FOR_REVIEW were parked here at exactly 3 launches,
+    # reported to the operator inside blocked_backoff as though they had refused.
+    # They had not refused, they had succeeded and were waiting on review. Parking
+    # them is right, since re-running finished work wastes a slot; calling them
+    # blocked is not, because it hides completed candidates in a bucket the
+    # operator reads as failures.
+    if ts and _PASS_RE.match(str(val or "")):
         return True
+    if launch_attempts(cid) >= 3 and lifecycle_state(cid)!="complete":
+        # ...unless the world changed since the last attempt. Without this the
+        # counter is a one-way door: nothing resets it, so a card parked here is
+        # parked forever no matter what happens to it afterwards. That is the
+        # same black hole as an infinite relaunch, just pointing the other way,
+        # and it is worse because it is silent.
+        #
+        # Measured 2026-08-27: 24 cards sat here on unexplained refusals. Their
+        # blocker had since been removed (the NIGHT-HANDOFF freeze was lifted)
+        # and the estate had started REFUSING to write a bare BLOCKED at all, so
+        # a re-run would now be forced to explain itself. Neither fact could
+        # reach them, because the only path back was through a verdict they were
+        # not able to record in the first place.
+        #
+        # A material change is a real, authored event: a dependency added,
+        # removed or completed, or a label applied. It is not free: something
+        # must actually happen to the card to buy it another attempt.
+        change = _material_change_since(cid, _launched_at.get(cid, 0))
+        if not change:
+            return True
+        return _launched_at.get(cid, 0) >= change
     return False
+
+
+def _material_change_since(cid, epoch):
+    """Latest material change strictly after `epoch`, or 0 if there is none."""
+    latest = 0
+    for event in event_rows(cid):
+        if event.get("action") in ("add_dependency", "remove_dependency"):
+            latest = max(latest, _ts_epoch(event.get("ts")))
+    for dep in folded_dependencies(cid):
+        if lifecycle_state(dep) != "complete":
+            continue
+        for event in event_rows(dep):
+            if event.get("action") == "complete":
+                latest = max(latest, _ts_epoch(event.get("ts")))
+    for event in _load_label_events().get(cid, []):
+        latest = max(latest, _ts_epoch(event.get("ts")))
+    return latest if latest > epoch else 0
+
+
+def awaiting_review(cid):
+    """True if this card produced a candidate and is waiting on a reviewer.
+
+    Reported separately from blocked_backoff so that work which SUCCEEDED is not
+    counted as work that refused.
+    """
+    ts, val = _load_outcomes().get(cid, (None, None))
+    return bool(ts and _PASS_RE.match(str(val or "")))
 
 # ---- host pinning ------------------------------------------------------------
 # Some cards only work on the host that holds the asset. The skdashboard-read-only
@@ -770,7 +842,7 @@ def reap_dead_claims():
 reap_dead_claims()
 
 _PINNED_IDS=set()
-pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; pinned_elsewhere=0
+pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; pinned_elsewhere=0
 for cd in sorted(glob.glob(CARDS+"/*")):
     cid=os.path.basename(cd)
     core_p=os.path.join(cd,"core.json")
@@ -779,7 +851,13 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     if cid in excluded: continue
     if unclaimable(cid): skipped_unclaimable+=1; continue
     if itil_terminal(cid): skipped_terminal+=1; continue
-    if blocked_backoff(cid): skipped_blocked+=1; continue
+    if blocked_backoff(cid):
+        # Split the two, because one of them is success. A card that recorded
+        # PASS_FOR_REVIEW is waiting on a reviewer, not refusing to work, and
+        # reporting it as blocked hides a finished candidate in the failure count.
+        if awaiting_review(cid): skipped_review+=1
+        else: skipped_blocked+=1
+        continue
     try: core=json.load(open(core_p))
     except: continue
     if core.get("kind") not in ("task","incident","problem"): continue
@@ -840,8 +918,8 @@ pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))
 lc={0:0,1:0,2:0}
 for x in pool: lc[x[0]]+=1
 top=pool[0][4] if pool else 0
-log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d pinned_elsewhere=%d foreign=%d top_unblocks=%d"
-      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,pinned_elsewhere,foreign_skipped,top))
+log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d top_unblocks=%d"
+      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,top))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
