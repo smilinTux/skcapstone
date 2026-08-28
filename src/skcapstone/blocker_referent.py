@@ -27,6 +27,24 @@ its own.
 
 SAFE BY DEFAULT. Reports without mutating unless given --go, because returning
 a card puts it back in front of a worker and that should be a deliberate act.
+
+ON CONCURRENCY, AND WHY THE RACE IS LEFT IN. The once-per-verdict guard reads a
+card's label and then writes it, and those two steps are not atomic across
+hosts: SKCoord provides host-local card locks and writer-local transition IDs,
+not global compare-and-append. Five hosts run this on a timer, so two can both
+observe a card as unlabelled and both label it.
+
+That race is real and is deliberately tolerated, because its consequence is
+bounded to a redundant event. Labels are a set, so a doubly-labelled card is
+labelled once. There is one card, so it returns to the pool once. No verdict is
+rewritten, no approval is discharged, and nothing is cleared: this flags for
+reconciliation and a reader still judges the evidence. The cost of losing the
+race is a duplicate add_label line in a log.
+
+Eliminating it would mean building fleet-wide compare-and-append, a primitive
+nothing else here needs, to prevent a duplicate log entry. If the failure mode
+were a lost verdict or a twice-discharged approval this would be the wrong call
+and the guard would need a real lock.
 """
 
 from __future__ import annotations
