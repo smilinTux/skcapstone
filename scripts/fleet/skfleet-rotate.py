@@ -864,12 +864,20 @@ _EPHEMERAL_OWNER = re.compile(r"^(pi|codex|glm)[-_]")
 
 def _current_claim(cid):
     """The claim in force now, as (owner, epoch), or (None, 0)."""
+    owner, ts, _revision = _claim_identity(event_rows(cid))
+    return owner, ts
+
+
+def _claim_identity(rows):
+    """Fold rows into the current owner, timestamp, and claim revision."""
     owner = None
     ts = 0.0
-    for e in event_rows(cid):
+    revision = None
+    for e in rows:
         a = e.get("action")
         if a == "claim":
             owner = e.get("agent") or e.get("owner") or e.get("actor") or e.get("by")
+            revision = e.get("claim_revision")
             raw = str(e.get("ts") or e.get("timestamp") or "")
             try:
                 ts = datetime.datetime.fromisoformat(
@@ -877,8 +885,8 @@ def _current_claim(cid):
             except ValueError:
                 ts = 0.0
         elif a in ("release_claim", "unassign", "complete", "void", "archive"):
-            owner, ts = None, 0.0
-    return owner, ts
+            owner, ts, revision = None, 0.0, None
+    return owner, ts, revision
 
 def _load_ineffective():
     try:
@@ -918,21 +926,13 @@ def _current_claim_fresh(cid):
     the same defect _acts_fresh exists to solve for the stale pool, applied to the
     claim owner.
     """
-    owner = None
-    ts = 0.0
-    for e in _acts_fresh_rows(cid):
-        a = e.get("action")
-        if a == "claim":
-            owner = e.get("agent") or e.get("owner") or e.get("actor") or e.get("by")
-            raw = str(e.get("ts") or e.get("timestamp") or "")
-            try:
-                ts = datetime.datetime.fromisoformat(
-                    raw.replace("Z", "+00:00")).timestamp()
-            except ValueError:
-                ts = 0.0
-        elif a in ("release_claim", "unassign", "complete", "void", "archive"):
-            owner, ts = None, 0.0
+    owner, ts, _revision = _current_claim_identity_fresh(cid)
     return owner, ts
+
+
+def _current_claim_identity_fresh(cid):
+    """Return the current claim owner, timestamp, and exact revision."""
+    return _claim_identity(_acts_fresh_rows(cid))
 
 
 def _acts_fresh_rows(cid):
@@ -949,6 +949,60 @@ def _acts_fresh_rows(cid):
                 pass
     out.sort(key=lambda e: (str(e.get("ts") or ""), e.get("seq") or 0))
     return out
+
+
+_fleet_launch_claims = None
+
+
+def _launch_claim_fields(owner, claim_revision, successful):
+    """Render exact claim provenance only for a successful fleet launch."""
+    if not successful or not owner or not claim_revision:
+        return ""
+    return "|owner=%s|claim_revision=%s" % (owner, claim_revision)
+
+
+def _fleet_launch_provenance(cid, owner, claim_revision):
+    """Whether exactly one strict launch recorded this exact claim generation."""
+    global _fleet_launch_claims
+    if not cid or not owner or not claim_revision:
+        return False
+    if _fleet_launch_claims is None:
+        _fleet_launch_claims = collections.Counter()
+        for path in glob.glob(os.path.join(EVID, "*", "actions*.log")):
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        if not line.startswith("LAUNCHED|"):
+                            continue
+                        parts = line.strip().split("|")
+                        if len(parts) != 8 or not all(parts[1:4]):
+                            continue
+                        expected = ("lane", "model", "owner", "claim_revision")
+                        fields = []
+                        for part, key in zip(parts[4:], expected):
+                            actual, separator, value = part.partition("=")
+                            if separator != "=" or actual != key or not value:
+                                break
+                            fields.append(value)
+                        if len(fields) != len(expected):
+                            continue
+                        lane, _model, launch_owner, launch_revision = fields
+                        session_prefix = {
+                            "codex": "codex-auto-",
+                            "glm": "glm-auto-",
+                            "escalate": "esc-auto-",
+                        }.get(lane)
+                        if (
+                            parts[1] not in ROTATION_HOSTS
+                            or session_prefix is None
+                            or parts[2] != session_prefix + parts[3]
+                            or launch_owner != f"pi-{lane}-{parts[1]}-{parts[3]}"
+                        ):
+                            continue
+                        _fleet_launch_claims[(parts[3], launch_owner, launch_revision)] += 1
+            except OSError:
+                continue
+    return _fleet_launch_claims[(str(cid), str(owner), str(claim_revision))] == 1
 
 
 def reap_dead_claims():
@@ -984,15 +1038,21 @@ def reap_dead_claims():
             continue                      # some host has not reported since the claim
         # Re-read the owner from disk immediately before releasing. The pool was
         # built seconds to minutes ago and the card may have been re-claimed since.
-        fresh_owner, fresh_ts = _current_claim_fresh(cid)
+        fresh_owner, fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
         if not fresh_owner:
             continue                      # released by someone else in the meantime
         if fresh_owner != owner:
             log(d, "REAP_RECLAIMED|%s|%s|was %s now %s; leaving it alone this tick"
                 % (HOST, cid, owner, fresh_owner))
             continue
+        if not _fleet_launch_provenance(cid, fresh_owner, fresh_revision):
+            log(d, "REAP_UNPROVEN|%s|%s|%s|claim revision %s has no exact successful "
+                   "fleet launch record; leaving it for the stale-claim path"
+                % (HOST, cid, fresh_owner, fresh_revision or "missing"))
+            continue
         r = subprocess.run(
             [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner),
+             "--expected-claim-revision", str(fresh_revision),
              "--agent", "fleet-liveness-reaper"],
             capture_output=True, text=True)
         if r.returncode == 0:
@@ -1384,18 +1444,6 @@ for _LANE,(_,_,cid,core,_nb) in picks:
     os.makedirs(workspace,exist_ok=True)
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
-    # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
-    # returns normally. Releasing only after the Pi command leaves a dead claim
-    # in that case and drains the assignable pool. Keep worker output separate
-    # from lifecycle cleanup so an interrupted zero-output launch does not become
-    # false reporting evidence merely because release-claim printed something.
-    inner=('release_claim() { %s coord release-claim %s --owner %s --agent %s '
-           '>/dev/null 2>&1 || true; }; '
-           'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
-           'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
-           '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1; '
-           'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
-           % (SKC,cid,name,name,name,name,workspace,PI,name,model,bf,lf))
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
     # last-moment re-check: the pool may be a minute old by now
@@ -1404,17 +1452,33 @@ for _LANE,(_,_,cid,core,_nb) in picks:
         log(d,"SKIPPED_RACED|%s|%s|%s|another writer finished or claimed it since the pool was built"%(HOST,sess,cid))
         continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
-    claimed_owner,_claimed_at=_current_claim_fresh(cid)
-    if claim.returncode!=0 or claimed_owner!=name:
+    claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
+    if claim.returncode!=0 or claimed_owner!=name or not claimed_revision:
         raced += 1
-        detail=(claim.stderr or claim.stdout or "claim not visible in CardStore fold").strip()[:140]
+        detail=(claim.stderr or claim.stdout or
+                "claim not visible with an explicit revision in CardStore fold").strip()[:140]
         log(d,"CLAIM_FAILED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
+    # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
+    # returns normally. Releasing only after the Pi command leaves a dead claim
+    # in that case and drains the assignable pool. Bind cleanup to this exact
+    # claim generation so it cannot release a newer same-owner worker.
+    inner=('release_claim() { %s coord release-claim %s --owner %s '
+           '--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; '
+           'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
+           'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
+           '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1; '
+           'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
+           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,bf,lf))
     r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",workspace,"bash","-lc",inner])
     ok = r.returncode==0 and sess in sh("tmux","ls","-F","#{session_name}").split()
-    log(d,"%s|%s|%s|%s|lane=%s|model=%s"%("LAUNCHED" if ok else "LAUNCH_FAILED",HOST,sess,cid,_LANE["name"],model))
+    launch_identity=_launch_claim_fields(name,claimed_revision,ok)
+    launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
+    log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
+        (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))
     if not ok:
-        subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,"--agent",name],
+        subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
+                        "--expected-claim-revision",claimed_revision,"--agent",name],
                        capture_output=True,text=True)
     time.sleep(2)
 
