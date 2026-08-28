@@ -496,3 +496,53 @@ def test_a_closed_card_with_a_stale_block_is_still_reported(tmp_path):
     )
     assert [r["card"] for r in find_stale_blocks(tmp_path)] == ["aaa"]
     assert find_stale_blocks(tmp_path, is_open=lambda c: False) == []
+
+
+# --- ready for review is not a pass -------------------------------------------
+
+from skcapstone.blocker_referent import is_discharging_pass  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["PASS_FOR_INDEPENDENT_REVIEW", "PASS_READY_FOR_INDEPENDENT_REREVIEW", "PASS-FOR-REVIEW"],
+)
+def test_work_awaiting_its_own_review_does_not_discharge_a_block(value):
+    assert not is_discharging_pass(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["PASS", "PASS. verified clean.", "PASS|exact-one-file-format-repair|all-CI-green"],
+)
+def test_a_completed_pass_discharges(value):
+    assert is_discharging_pass(value)
+
+
+def test_a_provisional_pass_leaves_the_block_standing(tmp_path):
+    """6dd21df9 reached PASS_FOR_INDEPENDENT_REVIEW; its review then blocked."""
+    write_events(
+        tmp_path,
+        [
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T09:42:00",
+                "link_key": "result",
+                "link_value": "BLOCKED",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T09:42:01",
+                "link_key": "followup_repair",
+                "link_value": "6dd21df9",
+                "action": "link",
+            },
+            {
+                "card_id": "6dd21df9",
+                "ts": "2026-08-23T09:54:53",
+                "link_key": "result",
+                "link_value": "PASS_FOR_INDEPENDENT_REVIEW",
+            },
+        ],
+    )
+    assert find_stale_blocks(tmp_path) == []

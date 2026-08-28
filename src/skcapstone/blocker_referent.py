@@ -225,6 +225,22 @@ def _verdict_head(value: str) -> str:
     return head.strip().split()[0].upper() if head.strip() else ""
 
 
+#: A verdict that only declares work READY for review. It is not a pass and
+#: must never discharge a block: 6dd21df9 records PASS_FOR_INDEPENDENT_REVIEW
+#: and its own independent review, 335c91c6, then blocked. Treating the first
+#: as a pass would have reported ae993252's block as stale while the review it
+#: was waiting on had actually failed.
+_PROVISIONAL_PASS_RE = re.compile(r"^PASS[_-](FOR|READY)", re.IGNORECASE)
+
+
+def is_discharging_pass(value: str) -> bool:
+    """True only for a completed PASS, not one awaiting its own review."""
+    head = _verdict_head(value)
+    if not head.startswith("PASS"):
+        return False
+    return not _PROVISIONAL_PASS_RE.match(head)
+
+
 def latest_outcomes(home: Path) -> dict[str, tuple[str, str]]:
     """Every card's most recent outcome, as {card_id: (timestamp, value)}."""
     latest: dict[str, tuple[str, str]] = {}
@@ -308,7 +324,7 @@ def find_stale_blocks(home: Path, is_open=None, label: str = "successor-passed")
             if not hit:
                 continue
             t_stamp, t_verdict = hit
-            if _verdict_head(t_verdict).startswith("PASS") and t_stamp > stamp:
+            if is_discharging_pass(t_verdict) and t_stamp > stamp:
                 stale.append(
                     {
                         "card": card_id,
