@@ -973,11 +973,34 @@ if not owned and free > 0:
                "starting at offset %d of %d" % (HOST, free, _k, len(_unowned)))
 _ESCALATE_LABEL="needs-stronger-model"
 
+_CAPABILITY_VERDICT_RE = re.compile(
+    r"blocked_on[=: |]+\s*capability\b|^\s*BLOCKED\s*\|\s*capability\b", re.I)
+
 def needs_escalation(cid, core=None):
-    """True if this card has exhausted the ordinary lanes and needs a stronger model."""
+    """True if this card has exhausted the ordinary lanes and needs a stronger model.
+
+    Two ways to qualify, and the second is the one that matters.
+
+    A LABEL is explicit and stays supported, because a human may know a card needs
+    the strong model before any worker has tried it.
+
+    A RECORDED CAPABILITY REFUSAL qualifies on its own, with no label. That value
+    means "this is solvable and I could not solve it", which is already the exact
+    signal the brief asks workers to send, and requiring someone to then hand-apply
+    a label to act on it is a routing rule that only works when a person is
+    watching. It was not: on 2026-08-28 all 8 capability-blocked cards had been
+    handed back to the model that refused them, one of them eight times, because
+    nothing converted the signal into a routing decision.
+    """
     try: labels=folded_labels(cid, core or {})
-    except Exception: return False
-    return _ESCALATE_LABEL in {str(x).strip().lower() for x in (labels or [])}
+    except Exception: labels=[]
+    if _ESCALATE_LABEL in {str(x).strip().lower() for x in (labels or [])}:
+        return True
+    try:
+        _ts, _val = _load_outcomes().get(cid, (None, None))
+    except Exception:
+        return False
+    return bool(_ts and _CAPABILITY_VERDICT_RE.search(str(_val or "")))
 
 picks=[]; _i=0
 remaining={lane["name"]:lane["free"] for lane in LANES}
