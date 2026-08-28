@@ -1099,8 +1099,9 @@ def close_reviewed_parents():
 if not DRY:
     close_reviewed_parents()
 
+_NOT_CLAIMABLE = {"not-claimable", "sprint-container"}
 _PINNED_IDS=set()
-pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; pinned_elsewhere=0
+pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; not_claimable_skipped=0; pinned_elsewhere=0
 for cd in sorted(glob.glob(CARDS+"/*")):
     cid=os.path.basename(cd)
     core_p=os.path.join(cd,"core.json")
@@ -1137,6 +1138,23 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     # is deliberately generic rather than a GBH string match, so the next foreign
     # tree can be fenced by labelling it instead of by editing this file.
     if "foreign-project" in {str(item).strip().lower() for item in labels}: foreign_skipped+=1; continue
+    # A card the board has explicitly marked unworkable. Sprint containers say so
+    # in their own descriptions, e.g. 9535bc80: "Planning and review container
+    # only. Do not claim as implementation work." The tags existed and the rotation
+    # had never read them. 28 cards carry one.
+    #
+    # 2b614910 is the consequence: a sprint-container tagged not-claimable that a
+    # worker claimed on 2026-08-22 and never released. The Board claim store has no
+    # record of it, correctly, so `coord release-claim` answers "Already released"
+    # and the CardStore claim cannot be cleared through a supported command at all.
+    # The reaper then retried it 455 times.
+    #
+    # Skipping these stops the fleet spending slots on work it has been told not to
+    # do, and stops it manufacturing claims that nothing can release.
+    _nc = {str(x).strip().lower() for x in (labels or ())} | \
+          {str(x).strip().lower() for x in (core.get("tags") or ())}
+    if _NOT_CLAIMABLE & _nc:
+        not_claimable_skipped += 1; continue
     if title.startswith("CMDB drift"): continue
     deps=folded_dependencies(cid,core)
     if any(not _dep_satisfied(str(dp)) for dp in deps):
@@ -1176,8 +1194,8 @@ pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))
 lc={0:0,1:0,2:0}
 for x in pool: lc[x[0]]+=1
 top=pool[0][4] if pool else 0
-log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d top_unblocks=%d"
-      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,top))
+log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d top_unblocks=%d"
+      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,top))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
