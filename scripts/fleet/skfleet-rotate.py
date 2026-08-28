@@ -48,6 +48,21 @@ STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
+def _coord_task_claimable(core):
+    """Return whether the task-only coord claim command accepts this card kind."""
+    return core.get("kind") == "task"
+
+def _classify_claim_outcome(still_assignable, returncode=None,
+                            claimed_owner=None, expected_owner=None):
+    """Classify a final assignability check and the following claim result."""
+    if not still_assignable:
+        return "raced"
+    if returncode is None:
+        return "ready"
+    if returncode != 0 or claimed_owner != expected_owner:
+        return "claim_refused"
+    return "claimed"
+
 _rows={}
 def event_rows(cid):
     if cid in _rows: return _rows[cid]
@@ -1129,6 +1144,11 @@ for cd in sorted(glob.glob(CARDS+"/*")):
         continue
     try: core=json.load(open(core_p))
     except: continue
+    # coord claim is a task command. ITIL incidents and problems have their own
+    # lifecycle and must not be sent through a command that rejects their IDs.
+    if not _coord_task_claimable(core): continue
+    # Keep the closed kind allowlist as a stable integration seam for adjacent
+    # selector guards. The task-only check above is the stricter claim boundary.
     if core.get("kind") not in ("task","incident","problem"): continue
     title=str(core.get("title") or "")
     labels=folded_labels(cid,core)
@@ -1199,6 +1219,8 @@ for cd in glob.glob(CARDS+"/*"):
     for dep in folded_dependencies(ocid,oc):
         unblocks[str(dep)]=unblocks.get(str(dep),0)+1
 for row in pool: row.append(unblocks.get(row[2],0))
+pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
+log(d,"POOL_IDS|%s|ids=%s"%(HOST,pool_ids))
 # lane, then most-unblocking first, then priority, then stable id
 pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))
 lc={0:0,1:0,2:0}
@@ -1292,7 +1314,7 @@ if _esc_waiting:
 if not picks:
     log(d,"NOOP|%s|no dependency-clear cards"%HOST); sys.exit(0)
 
-raced=0
+raced=0; claim_refused=0
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_nb) in picks:
     ac="\n".join("  %d. %s"%(i+1,x) for i,x in enumerate(core.get("acceptance_criteria") or []))
@@ -1399,16 +1421,18 @@ for _LANE,(_,_,cid,core,_nb) in picks:
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
     # last-moment re-check: the pool may be a minute old by now
-    if not _still_assignable(cid):
+    if _classify_claim_outcome(_still_assignable(cid)) == "raced":
         raced += 1
         log(d,"SKIPPED_RACED|%s|%s|%s|another writer finished or claimed it since the pool was built"%(HOST,sess,cid))
         continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at=_current_claim_fresh(cid)
-    if claim.returncode!=0 or claimed_owner!=name:
-        raced += 1
+    claim_outcome=_classify_claim_outcome(
+        True, claim.returncode, claimed_owner, name)
+    if claim_outcome == "claim_refused":
+        claim_refused += 1
         detail=(claim.stderr or claim.stdout or "claim not visible in CardStore fold").strip()[:140]
-        log(d,"CLAIM_FAILED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
+        log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
     r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",workspace,"bash","-lc",inner])
     ok = r.returncode==0 and sess in sh("tmux","ls","-F","#{session_name}").split()
@@ -1437,3 +1461,5 @@ except Exception as _exc:
 
 if raced:
     log(d,"RACED|%s|%d card(s) finished between pool build and launch"%(HOST,raced))
+if claim_refused:
+    log(d,"CLAIM_REFUSED_TOTAL|%s|%d claim command(s) refused or not visible in the authoritative fold"%(HOST,claim_refused))
