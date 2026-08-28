@@ -1,0 +1,104 @@
+{
+  "actions_executed": [],
+  "audited_card_repairs_applied": false,
+  "blocked_on": {
+    "referent": "ac:3",
+    "type": "card"
+  },
+  "blocked_review": {
+    "path": "/home/skuser01/.skcapstone/evidence/work/567e6b09/BLOCKED-review.json",
+    "result": "MATCH",
+    "sha256": "f84ea516f634c8ee118d2b094673c3d5fad4f95a0a07f652e68e900269040e12"
+  },
+  "correction_ledger_verification": [
+    {
+      "card_id": "9535bc80",
+      "defect_type": "omitted_verdict",
+      "direct_evidence_source": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+      "result": "PASS",
+      "structural_source": "/home/skuser01/.skcapstone/cards/9535bc80/core.json",
+      "verified_verdict": "BLOCKED"
+    },
+    {
+      "card_id": "f10a0e73",
+      "defect_type": "omitted_verdicts_and_unsafe_transition",
+      "direct_evidence_sources": [
+        "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:13",
+        "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:18"
+      ],
+      "replacement_remedy": "NO_ACTION_PROPOSED",
+      "result": "PASS",
+      "structural_source": "/home/skuser01/.skcapstone/cards/f10a0e73/core.json",
+      "verified_blocked_on": {
+        "referent": "ac:2",
+        "type": "card"
+      },
+      "verified_verdict": "BLOCKED"
+    }
+  ],
+  "external_actions_applied": false,
+  "ownership": {
+    "claim_event_id": "fc70c61f8e4f4622a39adb52a2caf63c",
+    "owner": "pi-codex-6c418ad3",
+    "verified": true
+  },
+  "publication": {
+    "branch": "chore/6c418ad3-partition-11-review",
+    "pr_url": "https://github.com/smilinTux/skcapstone/pull/245"
+  },
+  "reason": "Acceptance criterion 3 requires either no action or exact supported append-only commands with explicit authority and preconditions. Three proposed remedies are prose pseudo-actions and do not satisfy that contract.",
+  "remedy_verification": {
+    "blocking_findings": [
+      {
+        "card_id": "0994c010",
+        "finding": "The proposed remedy is prose, not an exact supported append-only command. It does not name an authorized writer and uses the undefined operation append an evidence event."
+      },
+      {
+        "card_id": "5236382f",
+        "finding": "The proposed remedy is prose, not an exact supported append-only command. It does not provide command syntax, an authorized writer, or a machine-checkable approval precondition."
+      },
+      {
+        "card_id": "65e00fd9",
+        "finding": "The proposed remedy is prose, not an exact supported append-only command. It mixes human approval, lifecycle refresh, and void suggestions without exact command syntax, explicit command authority, and machine-checkable preconditions."
+      }
+    ],
+    "compliant_no_action_cards": [
+      "9535bc80",
+      "f10a0e73"
+    ],
+    "result": "BLOCKED",
+    "supported_cli_checked": [
+      "skcapstone coord link <task_id> <key> <value> --agent <writer>",
+      "skcapstone coord move <task_id> <column> --agent <writer>",
+      "skcapstone coord amend-criteria <task_id> --criteria <text> --agent <writer>",
+      "skcapstone coord complete <task_id> --agent <writer>"
+    ]
+  },
+  "review_card_id": "6c418ad3",
+  "reviewer": "pi-codex-6c418ad3",
+  "schema": "skcapstone.fleet_unblock.corrected_replacement_review.v1",
+  "source": {
+    "artifact_path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+    "expected_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+    "pr_head": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
+    "pr_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+    "pr_url": "https://github.com/smilinTux/skcapstone/pull/244",
+    "result": "MATCH",
+    "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json",
+    "shared_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c"
+  },
+  "superseded_source": {
+    "path": "/home/skuser01/.skcapstone/evidence/work/482cc241/fleet-unblock-partition-11-audit.json",
+    "result": "MATCH",
+    "sha256": "d7f5b4b0eff35c1401bef95c84a3c576f68adc3ddd54b645c742752d51afc70d"
+  },
+  "two_store_verification": {
+    "join_key": "exact card_id",
+    "parse_failures": 0,
+    "parsed_structural_and_event_json_records": 277,
+    "records": 40,
+    "result": "PASS",
+    "verdict_inference_from_lifecycle_labels_dependencies_or_links": false
+  },
+  "verdict": "BLOCKED"
+}
