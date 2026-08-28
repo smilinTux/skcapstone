@@ -32,5 +32,10 @@
     }
   ],
   "card_id": "a743f500",
+  "review_requests": {
+    "path": "docs/reviews/artifacts/a743f500/review-requests.json",
+    "sha256": "756bf01a88dd328b7726e7f4cfc0cb178c9186aa59ae403cc4d1e1362df058c5",
+    "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/review-requests.json"
+  },
   "schema": "skcapstone.fleet_unblock.corrected_manifest.v1"
 }
