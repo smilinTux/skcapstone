@@ -895,9 +895,11 @@ def _claim_identity(rows):
             revision = e.get("claim_revision")
             raw = str(e.get("ts") or e.get("timestamp") or "")
             try:
-                ts = datetime.datetime.fromisoformat(
-                    raw.replace("Z", "+00:00")).timestamp()
-            except ValueError:
+                parsed = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if parsed.tzinfo is None or parsed.utcoffset() is None:
+                    raise ValueError("claim timestamp has no timezone")
+                ts = parsed.timestamp()
+            except (ValueError, OverflowError, OSError):
                 ts = 0.0
         elif a in ("release_claim", "unassign", "complete", "void", "archive"):
             owner, ts, revision = None, 0.0, None
@@ -1042,23 +1044,51 @@ def reap_dead_claims():
             continue
         if lifecycle_state(cid) != "claimed":
             continue
-        owner, cts = _current_claim(cid)
+        owner, cts, claim_revision = _claim_identity(event_rows(cid))
         if not owner or not _EPHEMERAL_OWNER.match(str(owner)):
             continue
         if cid in running:
             continue                      # a host says this is running right now
         if cid in _ineffective:
             continue                      # releasing it does nothing; see above
+        if not claim_revision:
+            log(d, "REAP_UNPROVEN|%s|%s|%s|claim revision missing has no exact "
+                   "successful fleet launch record; leaving it for the stale-claim path"
+                % (HOST, cid, owner))
+            continue
+        if not cts:
+            log(d, "REAP_UNPROVEN|%s|%s|%s|claim timestamp invalid; leaving it "
+                   "for the stale-claim path" % (HOST, cid, owner))
+            continue
+        if cts > time.time():
+            log(d, "REAP_CLOCK_SKEW|%s|%s|%s|cached claim timestamp is in the "
+                   "future; leaving it alone this tick" % (HOST, cid, owner))
+            continue
         if oldest < cts + CLAIM_GRACE:
             continue                      # some host has not reported since the claim
-        # Re-read the owner from disk immediately before releasing. The pool was
-        # built seconds to minutes ago and the card may have been re-claimed since.
+        # Re-read the exact generation from disk immediately before releasing.
+        # The pool was built seconds to minutes ago and the same owner may have
+        # re-claimed the card since.
         fresh_owner, fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
         if not fresh_owner:
             continue                      # released by someone else in the meantime
-        if fresh_owner != owner:
-            log(d, "REAP_RECLAIMED|%s|%s|was %s now %s; leaving it alone this tick"
-                % (HOST, cid, owner, fresh_owner))
+        if fresh_owner != owner or fresh_revision != claim_revision:
+            log(d, "REAP_RECLAIMED|%s|%s|was %s revision %s now %s revision %s; "
+                   "leaving it alone this tick"
+                % (HOST, cid, owner, claim_revision, fresh_owner,
+                   fresh_revision or "missing"))
+            continue
+        if not fresh_ts:
+            log(d, "REAP_UNPROVEN|%s|%s|%s|fresh claim timestamp invalid; leaving "
+                   "it for the stale-claim path" % (HOST, cid, fresh_owner))
+            continue
+        if fresh_ts > time.time():
+            log(d, "REAP_CLOCK_SKEW|%s|%s|%s|fresh claim timestamp is in the "
+                   "future; leaving it alone this tick" % (HOST, cid, fresh_owner))
+            continue
+        if oldest < fresh_ts + CLAIM_GRACE:
+            log(d, "REAP_GRACE|%s|%s|%s|fresh claim generation remains inside "
+                   "grace; leaving it alone this tick" % (HOST, cid, fresh_owner))
             continue
         if not _fleet_launch_provenance(cid, fresh_owner, fresh_revision):
             log(d, "REAP_UNPROVEN|%s|%s|%s|claim revision %s has no exact successful "
