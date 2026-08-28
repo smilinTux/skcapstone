@@ -40,14 +40,7 @@ dependencies = [
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",
     "rich>=13.0,<14.0",
-    # Floor at the contract skcapstone actually targets, not at whatever was
-    # current when the dep was first added. skcoord cuts a patch tag on every
-    # push to its main, and twice on 2026-08-27 a release changed a contract
-    # skcapstone asserts, landing as a red main that blocked every open PR:
-    # 0.1.46 changed parity absence semantics, 0.1.51 changed KanbanBoard.cards()
-    # from failing closed to degrading one unreadable card. Neither was announced
-    # because neither had to be: the floor was 0.1.44 and anything satisfied it.
-    "skcoord>=0.1.53",
+    "skcoord>=0.1.36",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
@@ -132,7 +125,7 @@ Changelog = "https://github.com/smilinTux/skcapstone/releases"
 where = ["src"]
 
 [tool.setuptools.package-data]
-skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "defaults/.stignore", "defaults/**/.stignore", "data/*.yaml", "data/*.sh", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer", "static/*.html", "static/**/*.css", "static/**/*.js"]
+skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "defaults/.stignore", "defaults/**/.stignore", "data/*.yaml", "data/*.json", "data/*.sh", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer", "static/*.html", "static/**/*.css", "static/**/*.js"]
 
 [tool.black]
 line-length = 99

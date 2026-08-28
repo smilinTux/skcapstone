@@ -14,7 +14,9 @@ from skcapstone.cli.agent_profile_cmd import (
 
 
 def _make_agent_home(tmp_path, name: str = "tester", *, expose=None, soul_active=None):
-    """Build a minimal agent home with soul + <agent>-mcp.yaml."""
+    """Build a minimal registered human home with soul + MCP configuration."""
+    from skcapstone.profile_registry import profile_content_hash, registry_content_hash
+
     home = tmp_path / "agents" / name
     (home / "soul").mkdir(parents=True)
     (home / "config").mkdir(parents=True)
@@ -36,6 +38,43 @@ def _make_agent_home(tmp_path, name: str = "tester", *, expose=None, soul_active
         "disabled_one": {"command": "/bin/true", "enabled": False, "expose_tools": ["nope"]},
     }
     (home / "config" / f"{name}-mcp.yaml").write_text(yaml.dump({"servers": servers}))
+    profile = {
+        "schema_version": "skcapstone.agent-profile.v1",
+        "schema_revision": "1",
+        "profile_id": name,
+        "profile_kind": "human",
+        "selectable": True,
+        "fallback_eligible": True,
+        "memory_principal_id": f"memory:{name}",
+        "default_tools": DEFAULT_BRIDGE_TOOLS,
+        "capability_policy_ref": "test-policy.v1",
+        "profile_revision": "1",
+        "profile_hash": "",
+    }
+    profile["profile_hash"] = profile_content_hash(profile)
+    (home / "profile.json").write_text(json.dumps(profile))
+    registry = {
+        "schema_version": "skcapstone.profile-registry.v1",
+        "schema_revision": "1",
+        "registry_revision": "1",
+        "profiles": [
+            {
+                "profile_id": name,
+                "profile_kind": "human",
+                "selectable": True,
+                "fallback_eligible": True,
+                "memory_principal_id": f"memory:{name}",
+                "schema_revision": "1",
+                "profile_revision": "1",
+                "profile_hash": profile["profile_hash"],
+            }
+        ],
+        "registry_hash": "",
+    }
+    registry["registry_hash"] = registry_content_hash(registry)
+    config = tmp_path / "config"
+    config.mkdir(exist_ok=True)
+    (config / "profile-registry.json").write_text(json.dumps(registry))
     return home
 
 
@@ -78,8 +117,8 @@ def test_resolved_tools_all_and_explicit(tmp_path):
     assert sorted(_resolved_bridge_tools(m_all)) == ["coord_status", "memory_search"]
 
     m_list = gather_profile(home, "tester")
-    m_list["bridge"]["tools"] = ["just_this_one"]
-    assert _resolved_bridge_tools(m_list) == ["just_this_one"]
+    m_list["bridge"]["tools"] = ["memory_search", "just_this_one"]
+    assert _resolved_bridge_tools(m_list) == ["memory_search"]
 
 
 def test_profile_yaml_bridge_block_is_read(tmp_path):
