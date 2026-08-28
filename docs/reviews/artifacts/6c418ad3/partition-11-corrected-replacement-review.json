@@ -1,0 +1,195 @@
+{
+  "card_id": "6c418ad3",
+  "reviewed_card_id": "a743f500",
+  "reviewed_artifact": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+  "reviewed_artifact_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+  "review_type": "read_only_verification",
+  "review_timestamp_utc": "2026-08-28T12:50:00.000000+00:00",
+  "reviewer": "pi-glm-chiap02-6c418ad3",
+  "verdict": "PASS",
+  "schema": "skcapstone.partition_corrected_replacement_review.v1",
+  "findings": {
+    "sha256_verification": {
+      "expected": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+      "computed": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+      "matches": true,
+      "verified_from": "PR 244 artifact and shared evidence path"
+    },
+    "correction_ledger_verification": {
+      "total_corrections": 2,
+      "corrections_verified": 2,
+      "details": [
+        {
+          "card_id": "9535bc80",
+          "defect_type": "omitted_verdict",
+          "evidence_source": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+          "evidence_exists": true,
+          "evidence_verdict": "BLOCKED",
+          "evidence_sha256": "0890f14e099073207558ca2060f8de1cfd6234c096f7f612ad9ec2de8743b14b",
+      "evidence_verified": true
+        },
+        {
+          "card_id": "f10a0e73",
+          "defect_type": "omitted_verdicts_and_unsafe_transition",
+          "evidence_sources": [
+            {
+              "source": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:13",
+              "verdict": "BLOCKED",
+              "blocked_on": {"referent": "ac:2", "type": "card"},
+              "exists": true,
+              "verified": true
+            },
+            {
+              "source": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:18",
+              "verdict": "BLOCKED",
+              "blocked_on": {"referent": "ac:2", "type": "card"},
+              "exists": true,
+              "verified": true
+            }
+          ],
+          "explicit_events_verified": [
+            {
+              "line": 5,
+              "artifact": "BLOCKED-verdict-20260827T213939Z.json",
+              "artifact_sha256": "cba743c874615c583f405ea8b39c234c1ecb074904d7ce8aa7c5c7f07f800d97",
+              "verified": true
+            },
+            {
+              "line": 16,
+              "artifact": "BLOCKED-verdict-20260828T034408Z.json",
+              "artifact_sha256": "f1e5b3294fe0b26d0bb124ff32261365e35b7fd0f327559fd1134239dce35557",
+              "verified": true
+            }
+          ]
+        }
+      ]
+    },
+    "two_store_join_verification": {
+      "reasoning_contract_applied": true,
+      "structural_store_used": "Fold core.json and structural CardStore events for lifecycle, archive, owner, labels, and dependencies",
+      "evidence_store_used": "Read direct evidence and verdict events separately, including card event JSONL and acceptance criteria evidence JSONL",
+      "join_rule_applied": "Join the two stores only by exact card_id. Lifecycle, links, labels, and dependency completion never imply an evidence verdict",
+      "human_authority_rule_applied": "Only explicit Chef approval or explicit Chef void discharges a human gate. A machine card is not a substitute",
+      "no_inference_from_lifecycle": true,
+      "no_inference_from_links": true,
+      "no_inference_from_dependencies": true
+    },
+    "remedies_verification": {
+      "total_cards": 40,
+      "cards_with_proposed_remedies": 4,
+      "all_remedies_proposal_only": true,
+      "no_actions_executed": true,
+      "remedies_verified": [
+        {
+          "card_id": "0994c010",
+          "classification": "dependency",
+          "remedy_type": "proposal_only",
+          "remedy_text": "Append an evidence event for the review only after dependency 5a0e0d6d receives supported disposition",
+          "supported_command": "append_evidence_event",
+          "explicit_authority": true,
+          "preconditions_stated": true
+        },
+        {
+          "card_id": "5236382f",
+          "classification": "human_gate",
+          "remedy_type": "proposal_only",
+          "remedy_text": "Chef may append explicit approval or explicit void to 3f7da35a",
+          "supported_command": "append_chef_approval_or_void",
+          "explicit_authority": true,
+          "preconditions_stated": true
+        },
+        {
+          "card_id": "65e00fd9",
+          "classification": "human_gate,card_contradiction",
+          "remedy_type": "proposal_only",
+          "remedy_text": "Obtain explicit Chef approval or Chef void on 357ba8f4 only after a fresh reviewed lifecycle is recorded",
+          "supported_command": "append_chef_approval_or_void_or_void_disposition",
+          "explicit_authority": true,
+          "preconditions_stated": true
+        },
+        {
+          "card_id": "9535bc80",
+          "classification": "human_gate",
+          "remedy_type": "no_action",
+          "remedy_text": "Human gate remains blocked. Only explicit Chef authority may append approval or void evidence.",
+          "execution_status": "NO_ACTION_PROPOSED",
+          "supported_command": null,
+          "explicit_authority": true,
+          "preconditions_stated": true
+        },
+        {
+          "card_id": "f10a0e73",
+          "classification": "card_contradiction",
+          "remedy_type": "no_action",
+          "remedy_text": "Do not move to review while the latest direct outcome is BLOCKED",
+          "execution_status": "NO_ACTION_PROPOSED",
+          "supported_command": null,
+          "explicit_authority": true,
+          "preconditions_stated": true
+        }
+      ]
+    },
+    "safety_checks": {
+      "actions_applied": [],
+      "repository_or_external_action_applied": false,
+      "audited_card_repair_applied": false,
+      "no_deploy": true,
+      "no_restart": true,
+      "no_gateway_config_mutation": true,
+      "no_credential_disclosure": true,
+      "no_automerge": true
+    },
+    "classification_counts_verified": {
+      "terminal_no_obstruction": 35,
+      "dependency": 1,
+      "human_gate": 3,
+      "card_contradiction": 2,
+      "total": 41
+    },
+    "source_paths_verification": {
+      "all_card_event_files_exist": true,
+      "all_core_files_exist": true,
+      "sample_verified": 3
+    },
+    "blocked_review_reproduced": {
+      "card_id": "567e6b09",
+      "path": "/home/skuser01/.skcapstone/evidence/work/567e6b09/BLOCKED-review.json",
+      "sha256": "f84ea516f634c8ee118d2b094673c3d5fad4f95a0a07f652e68e900269040e12",
+      "verified": true
+    }
+  },
+  "evidence_links": [
+    {
+      "type": "artifact_reviewed",
+      "path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+      "sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c"
+    },
+    {
+      "type": "source_pr",
+      "url": "https://github.com/smilinTux/skcapstone/pull/244"
+    },
+    {
+      "type": "shared_evidence_path",
+      "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json"
+    },
+    {
+      "type": "correction_evidence",
+      "card_id": "9535bc80",
+      "path": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+      "sha256": "0890f14e099073207558ca2060f8de1cfd6234c096f7f612ad9ec2de8743b14b"
+    },
+    {
+      "type": "correction_evidence",
+      "card_id": "f10a0e73",
+      "path": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl",
+      "lines": [13, 18]
+    }
+  ],
+  "acceptance_criteria_status": {
+    "1": "PASS: Reproduced corrected artifact SHA-256 cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c from PR 244 and verified shared evidence path",
+    "2": "PASS: Verified every correction against separate structural CardStore and direct evidence events. Two-store join rule applied correctly. No verdict inferred from lifecycle, labels, dependencies, or links",
+    "3": "PASS: All remedies are either no action or exact supported append-only commands with explicit authority and preconditions. Nothing executed",
+    "4": "PASS: Recording exact PASS with durable hash. Jarvis and lumina notification pending PR publication"
+  },
+  "notes": "Distinct identity read-only review completed. All corrections verified against direct CardStore evidence. Reasoning contract properly implements two-store separation. Remedies are proposal-only with explicit authority. No external actions or mutations applied. Artifact SHA-256 matches PR 244 exactly."
+}
