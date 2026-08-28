@@ -962,7 +962,19 @@ def reap_dead_claims():
         % (HOST, freed, nhosts, len(running), len(_load_ineffective())))
     return freed
 
-reap_dead_claims()
+# DRY gates every board MUTATION, not only the launch. Before this, --go gated the
+# tmux launch and nothing else, so running the rotation without --go still released
+# claims and completed cards. Anyone inspecting what the rotation "would" do was
+# silently changing the board, and importing the module for diagnostics ran a full
+# mutating pass. Both happened repeatedly on 2026-08-28 while debugging the reaper.
+#
+# A dry run must be safe to run at any time, from any host, by anyone. That is the
+# entire point of having one.
+if DRY:
+    log(d, "DRY_SKIPPED|%s|reap_dead_claims and close_reviewed_parents skipped; "
+           "pass --go to mutate the board" % HOST)
+else:
+    reap_dead_claims()
 
 # ---- close work that has been reviewed and passed --------------------------
 # A card that produced a candidate and had it independently reviewed and PASSED
@@ -1038,7 +1050,8 @@ def close_reviewed_parents():
         log(d, "CLOSE_REVIEWED|%s|closed=%d" % (HOST, closed))
     return closed
 
-close_reviewed_parents()
+if not DRY:
+    close_reviewed_parents()
 
 _PINNED_IDS=set()
 pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; pinned_elsewhere=0
