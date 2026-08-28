@@ -434,6 +434,27 @@ def folded_labels(cid,core):
             labels=[item for item in labels if item!=label]
     return labels
 
+# ---- closed exact-label guard manifest ------------------------------------------
+# Thirteen exact labels that exclude a card from selector eligibility before
+# host ownership and lane selection. Normalized to lowercase with hyphens.
+# Substring matching is prohibited. Source: audit ea4d91a8.
+_EXACT_LABEL_GUARDS = {
+    "planning-only-container",
+    "do-not-claim-as-implementation",
+    "human-gate",
+    "human-decision-recorded-no-action",
+    "no-action-authorized",
+    "not-claimable",
+    "sprint-container",
+    "no-action",
+    "do-not-claim",
+    "human-approval-required",
+    "human-gated",
+    "human-hold-deny-for-now",
+    "reserved-no-action",
+}
+
+# Legacy set maintained for backward compatibility in the non_implementation check
 _NON_IMPLEMENTATION_LABELS = {
     "planning-only-container",
     "do-not-claim-as-implementation",
@@ -462,6 +483,140 @@ def _latest_material_change(cid, verdict_ts):
     for event in _load_label_events().get(cid,[]):
         latest=max(latest,_ts_epoch(event.get("ts")))
     return latest if latest>threshold else 0
+
+
+# ---- structural human hold dependency ---------------------------------------
+# A card that has an incomplete dependency on a human-gated card must itself be
+# excluded, even if it carries no guard label. Machine completion, supersession,
+# archive, or hash binding never discharges a human gate - only an exact verified
+# Chef approve or explicit void decision can release that dependency.
+#
+# Source: audit ea4d91a8, regression card 2209f7fe (canary executor with Chef
+# gateway cutover hold was selected and had to BLOCKED-verdict itself).
+#
+# A human hold is identified by:
+#   - The dependency card having any of the human-hold labels, OR
+#   - The dependency card's title containing [HUMAN] AND having a human decision
+#     recorded (no-action, approval-required, etc.)
+#
+# The dependency is only satisfied when:
+#   - It is complete (lifecycle state)
+#   - AND it did NOT complete BLOCKED
+#   - AND it is not a human-hold (or the human hold was explicitly released)
+#
+# A human hold is explicitly released only when:
+#   - Chef approved it (exact Chef decision recorded in evidence), OR
+#   - An explicit void decision was recorded
+
+def _has_human_hold_labels(cid, core=None):
+    """True if the card carries any human-hold labels."""
+    try:
+        if core is None:
+            core = json.load(open(os.path.join(CARDS, cid, "core.json")))
+        labels = folded_labels(cid, core)
+        normalized = {str(item).strip().lower().replace("_", "-") for item in labels}
+        human_hold_labels = {
+            "human-gate",
+            "human-decision-recorded-no-action",
+            "no-action-authorized",
+            "human-approval-required",
+            "human-gated",
+            "human-hold-deny-for-now",
+            "reserved-no-action",
+        }
+        return bool(normalized & human_hold_labels)
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _is_human_hold_card(cid):
+    """True if the card is a human-hold gate.
+
+    A card is a human hold if it either:
+    1. Carries human-hold labels, OR
+    2. Has [HUMAN] tag in title AND has a human decision recorded
+    """
+    try:
+        core = json.load(open(os.path.join(CARDS, cid, "core.json")))
+        labels = folded_labels(cid, core)
+        title = str(core.get("title", ""))
+
+        # Check for human-hold labels
+        if _has_human_hold_labels(cid, core):
+            return True
+
+        # Check for [HUMAN] tag in title
+        if "[HUMAN]" in title:
+            # A [HUMAN] tag means this card requires a human decision.
+            # If it's incomplete, it's a hold.
+            if lifecycle_state(cid) != "complete":
+                return True
+
+        return False
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _human_hold_explicitly_released(dep):
+    """True if a human hold dependency was explicitly released.
+
+    A human hold is only released by:
+    - An exact Chef approve decision in evidence, OR
+    - An explicit void decision
+
+    Machine completion, supersession, archive, or hash links do NOT count.
+    """
+    # Check for explicit void decision
+    if lifecycle_state(dep) == "void":
+        return True
+
+    # Check for Chef approve decision in evidence
+    # Chef approvals are recorded as links with link_key containing "chef" and "approve"
+    ts, val = _load_outcomes().get(dep, (None, None))
+    if val:
+        val_lower = str(val).lower()
+        # Look for explicit Chef approval patterns
+        if re.search(r"chef.*approve|approve.*chef", val_lower):
+            return True
+        # Check for explicit void decision in outcome
+        if re.match(r"^\s*void", val, re.I):
+            return True
+
+    return False
+
+
+def _has_incomplete_human_hold_dependency(cid):
+    """True if the card depends on an incomplete human-hold card.
+
+    This is the authoritative graph boundary: labels are a defense, but the
+    dependency structure is what truly blocks execution.
+    """
+    try:
+        core = json.load(open(os.path.join(CARDS, cid, "core.json")))
+    except (OSError, ValueError, TypeError):
+        return False
+
+    deps = folded_dependencies(cid, core)
+    for dep in deps:
+        # Skip dependencies that don't exist
+        if not os.path.isdir(os.path.join(CARDS, dep)):
+            continue
+
+        # If dependency is a human hold and is NOT complete, we're blocked
+        if _is_human_hold_card(dep):
+            if lifecycle_state(dep) != "complete":
+                return True  # Incomplete human hold
+
+            # Even if complete, check if it was explicitly released
+            # Machine completion doesn't discharge a human gate
+            if not _human_hold_explicitly_released(dep):
+                # The human hold completed but without explicit release
+                # This means it completed BLOCKED or without proper approval
+                ts, val = _load_outcomes().get(dep, (None, None))
+                if ts and re.match(r"^\s*BLOCKED", val, re.I):
+                    return True  # Completed BLOCKED = not released
+
+    return False
 
 
 # A dependency is satisfied only if it completed AND did not complete BLOCKED.
@@ -1111,7 +1266,7 @@ if not DRY:
 
 _NOT_CLAIMABLE = {"not-claimable", "sprint-container"}
 _PINNED_IDS=set()
-pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; not_claimable_skipped=0; pinned_elsewhere=0
+pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; not_claimable_skipped=0; pinned_elsewhere=0; skipped_exact_label_guard=0; skipped_human_hold=0
 for cd in sorted(glob.glob(CARDS+"/*")):
     cid=os.path.basename(cd)
     core_p=os.path.join(cd,"core.json")
@@ -1133,6 +1288,14 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     title=str(core.get("title") or "")
     labels=folded_labels(cid,core)
     blob=(title+" "+json.dumps(labels)).upper()
+    # ---- exact-label guard: closed manifest before host ownership and lane selection
+    # This check excludes cards carrying any of the thirteen exact guard labels.
+    # Normalization: lowercase, underscores to hyphens. No substring matching.
+    # Source: audit ea4d91a8.
+    normalized_labels = {str(item).strip().lower().replace("_", "-") for item in labels}
+    if normalized_labels & _EXACT_LABEL_GUARDS:
+        skipped_exact_label_guard += 1
+        continue
     # Match the [HUMAN] TAG, not the word anywhere in the title. The loose test
     # excluded any card whose title merely mentioned humans, which on 2026-08-27
     # was 5 cards, 3 of them ordinary agent work that had been silently skipped:
@@ -1142,6 +1305,14 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     # Those three PREPARE a packet for a human. They are not themselves gates, and
     # a starved pool cannot afford to skip work because of a word in its title.
     if non_implementation(core,labels): continue
+    # ---- structural human hold dependency check ---------------------------------
+    # Cards with incomplete human hold dependencies are excluded, even if they carry
+    # no guard label. Machine completion, supersession, archive, or hash links do not
+    # discharge a human gate - only an exact verified Chef approve or explicit void.
+    # Source: audit ea4d91a8, regression cards 2209f7fe and 62243d92.
+    if _has_incomplete_human_hold_dependency(cid):
+        skipped_human_hold += 1
+        continue
     # Cards belonging to a different project that merely share this board. Casey's
     # GREG-BREAK-HOUSE tree is 35 cards and our fleet spent 33 claims on it between
     # 2026-08-26 and 2026-08-27 before anyone noticed it was not our work. The label
@@ -1204,8 +1375,8 @@ pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))
 lc={0:0,1:0,2:0}
 for x in pool: lc[x[0]]+=1
 top=pool[0][4] if pool else 0
-log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d top_unblocks=%d"
-      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,top))
+log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d exact_label_guard=%d human_hold=%d top_unblocks=%d"
+      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,skipped_exact_label_guard,skipped_human_hold,top))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
