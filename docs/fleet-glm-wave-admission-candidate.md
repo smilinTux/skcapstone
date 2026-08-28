@@ -1,8 +1,8 @@
 # GLM nine-worker wave admission candidate
 
-Cards: `9ca6efd6`, authority repair `35e539d1`
+Cards: base `9ca6efd6` / `35e539d1`; authoritative rebuild `7f72f938`
 
-Status: repaired no-action candidate for distinct review. This document is not authorization to cut over, clear a hold, or launch a worker.
+Status: disabled-by-default no-action candidate for distinct review. This document is not authorization to cut over, create live state, clear a hold, or launch a worker. The two divergent `3ee52525` candidates were not copied or adopted.
 
 ## Evidence reproduced before design
 
@@ -30,12 +30,12 @@ The RCA establishes that host-local selector decisions cannot enforce a fleet-wi
 4. A chiap08-local advisory `flock` covers ledger read, evidence validation, monotonicity validation, and replacement. Before atomic replace, the writer proves the ledger inode is the one validated under the lock. Missing, malformed, stale, conflicting, live, replaced, or non-monotonic state denies admission.
 5. A complete generation can advance by exactly one. A live generation is never refilled.
 6. One wave has exactly nine bindings, exactly three for each of chiap01, chiap02, and chiap03. Card, host-distinct agent, session, claim, and absolute workspace identities must each be nonempty and distinct.
-7. All three hosts must be reachable, report zero `glm-auto` sessions, and have fresh timestamps.
-8. Two frozen, read-only zai samples must be exactly five seconds apart, fresh, and both report `active=0, queued=0`.
+7. All three hosts must be reachable, report zero `glm-auto` sessions, and have fresh timestamps. Each authoritative host snapshot carries its own two queue samples and 429 observation; the consumer folds all three rather than trusting a single bundle member.
+8. A 429 on any host denies admission. Two fresh samples exactly five seconds apart with positive queued work in both deny admission on any host. Invalid or stale pressure denies admission.
 9. The exact hold generation and SHA-256 are checked twice under the lock. An active hold or a changed hold denies admission. Thus the currently active hold causes zero publication and zero dispatch.
 10. Publication serializes canonical JSON, writes an owner-only temporary regular file in the ledger directory, fsyncs it, atomically renames it over the verified ledger, and fsyncs the directory.
 
-The module contains no network client, inference request, provider request, subprocess launch, tmux operation, or dispatch callback.
+`src/skcapstone/fleet/glm_consumer.py` is the disabled executable consumer. It accepts no arguments and fixes authority, coordination home, snapshot helpers, backend/model, nine card IDs, three hosts, identity/session/claim naming, and worktree paths in reviewed source. Physical chiap08 and `/etc/skcapstone/glm-admission-enabled` are both mandatory; the marker is absent by default and this card neither creates nor installs it. It reads the nine cards through CardStore, requires dependencies complete, claims via `skcapstone coord claim`, reserves the whole wave, and launches fixed SSH/tmux/pi commands. Any failure stops already launched sessions, atomically aborts the exact reservation, and uses `skcapstone coord release-claim` for all acquired claims. There is no selector, gateway, credential, inference probe, or provider canary path.
 
 ## Deterministic qualification
 
@@ -50,7 +50,10 @@ The module contains no network client, inference request, provider request, subp
 - partial host reachability;
 - tenth-worker denial and duplicate custody denial;
 - physical chiap03 spoof denial and active-hold zero publication;
-- impossible caller authority, ledger, and lock overrides;
+- impossible caller coordinator, backend, generation, authority, ledger, lock, and state overrides;
+- any-host 429 and per-host two-positive-queue-sample denial;
+- disabled marker and wrong-host denial;
+- dependency/identity fixed binding and partial-launch session/reservation/claim rollback;
 - symlink and non-regular lock and ledger denial.
 
 ## No-action cutover packet
