@@ -53,6 +53,42 @@ The module contains no network client, inference request, provider request, subp
 - impossible caller authority, ledger, and lock overrides;
 - symlink and non-regular lock and ledger denial.
 
+## Disabled consumer and launcher candidate
+
+`skfleet-glm-consumer` is now an installed console entry point to
+`src/skcapstone/fleet/glm_consumer.py`. It remains disabled when the fixed
+owner-only `/var/lib/skcapstone-local/glm-admission/consumer.enabled.json`
+file is absent. It accepts no path or authority arguments, requires the
+physical hostname to be exactly `chiap08`, and reads the three fixed
+`chiap01`/`chiap02`/`chiap03` snapshot files. Snapshot files are read-only,
+owner-mode 0600, non-symlink regular files with strict schemas. The consumer
+contains no provider or inference client.
+
+The consumer selects only dependency-verdict `PASS`, unclaimed, non-human
+cards, exactly three assigned by each snapshot host. Recorded claims are
+excluded even when their timestamp is old; stale ownership is never stolen.
+It obtains claims through supported `skcapstone coord claim` and releases
+through supported `skcapstone coord release-claim`. Derived worker agent,
+session, claim, host, card, and worktree bindings are all distinct before the
+unchanged `admit_wave` reservation is called.
+
+Launch is delegated only to the fixed local
+`/usr/local/libexec/skcapstone-glm-worker-control` contract: stage nine
+non-running workers with fixed transcript paths, then `commit-wave` once.
+Anything other than all nine expected live session identities triggers
+`stop-wave` and releases all supported claims. Stop never asks the controller
+to remove transcripts. Any observed 429, or positive queue in both consecutive
+samples, stops before claims or dispatch. The hold is read-only and is passed
+to reviewed admission; no hold-clear operation exists. Neither the worker
+controller nor enablement/state directories are created by this candidate.
+
+Focused zero-provider tests use in-memory claim and launch adapters while
+forbidding socket/process access. They cover disabled default, host/path spoof
+rejection, cardinality and distribution, duplicate custody, stale claims,
+non-PASS and human exclusions, queue/429 stop, partial rollback, transcript
+preservation, supported release, active hold, unsafe files, and malformed
+snapshots.
+
 ## No-action cutover packet
 
 No cutover is requested by this card. A later, separately authorized and reviewed change would have to satisfy every item below before any integration work:
