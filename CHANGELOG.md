@@ -10,6 +10,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card 168d5a4f: fence fleet claim release by exact generation.** The fast
+  reaper now accepts exactly one strict launcher record for the current card,
+  fleet owner and explicit claim revision. Missing revisions, malformed or
+  duplicate launch records, and mismatched generations fail closed. The
+  `coord release-claim` mutation now requires the caller's expected revision
+  and checks it while the board and card locks are held, so a newer claim held
+  by the same deterministic fleet owner cannot be released by an older worker.
+
 - The `blocked_on=card` contradiction rule now recognises the short criterion
   spelling. A criterion is named as `criterion=ac:2` but also bare as `ac=2` or
   `|ac:2|` inside a pipe-delimited verdict, and matching only the long form let
