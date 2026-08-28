@@ -1,0 +1,201 @@
+{
+  "acceptance_criteria": {
+    "ac1": "PASS",
+    "ac2": "PASS",
+    "ac3": "PASS",
+    "ac4": "PASS"
+  },
+  "action_boundary": {
+    "audited_card_repair_applied": false,
+    "commands_executed": [],
+    "external_action_applied": false,
+    "result": "PASS",
+    "source_actions_applied": []
+  },
+  "card_id": "b6eedf67",
+  "correction_checks": [
+    {
+      "card_id": "289315d7",
+      "direct_evidence_verification": {
+        "derived_from_lifecycle": false,
+        "finding": "No direct verdict event is present in the card event stream. NOT_RECORDED is retained. The structural void is not converted into PASS, FAIL, or BLOCKED.",
+        "normalized": "NOT_RECORDED"
+      },
+      "ledger_defect": "omitted_void_and_wrong_obstruction",
+      "remedy_verification": {
+        "execution_status": "NO_ACTION_PROPOSED",
+        "finding": "The corrected record proposes no command and preserves the explicit terminal events.",
+        "result": "PASS"
+      },
+      "result": "PASS",
+      "structural_verification": {
+        "finding": "The append-only card event stream contains explicit void and archive events at lines 2 and 3. The separate legacy archive stream also contains the card. Folded status remains backlog, but the explicit void and archive events establish terminal structural disposition without implying an evidence verdict.",
+        "sources": [
+          {
+            "path": "/home/skuser01/.skcapstone/cards/289315d7/core.json",
+            "sha256": "eba967fe954f7fafa28ade6df90b1f289686e0d26db1d5ff3f64bccc0e85df3e"
+          },
+          {
+            "lines": "2-3",
+            "path": "/home/skuser01/.skcapstone/cards/289315d7/events/codex-root@chiap08.jsonl",
+            "sha256": "3dbb0df9772943dea1c5a5ccfd74900881749a269bf3b4845c9a05bc9fbd6632"
+          },
+          {
+            "lines": "59",
+            "path": "/home/skuser01/.skcapstone/coordination/archive/chiap08.jsonl",
+            "sha256": "d53597ff5fdcc3457549a433131c12db446e9dc22bcb7c921a3b12de2c6a7abe"
+          }
+        ]
+      }
+    },
+    {
+      "card_id": "96d65096",
+      "direct_evidence_verification": {
+        "derived_from_lifecycle": false,
+        "finding": "No direct Chef approval, Chef void, or evidence verdict event is present. NOT_RECORDED is retained. The correction closes only the obsolete card structurally and does not infer approval from title, label, dependency, archive, or link state.",
+        "normalized": "NOT_RECORDED"
+      },
+      "ledger_defect": "omitted_void_and_wrong_obstruction",
+      "remedy_verification": {
+        "execution_status": "NO_ACTION_PROPOSED",
+        "finding": "The corrected record proposes no command and preserves the explicit terminal events.",
+        "result": "PASS"
+      },
+      "result": "PASS",
+      "structural_verification": {
+        "finding": "The append-only card event stream contains explicit void and archive events at lines 1 and 2. The separate legacy archive stream also contains the card. This is a terminal structural disposition. It does not assert that a Chef approved the canary.",
+        "sources": [
+          {
+            "path": "/home/skuser01/.skcapstone/cards/96d65096/core.json",
+            "sha256": "408942c57e29fe2fd183a0fbe29f44fa0b142f5f80602e073a65160d483cebf6"
+          },
+          {
+            "lines": "1-2",
+            "path": "/home/skuser01/.skcapstone/cards/96d65096/events/codex-skgw-root@chiap08.jsonl",
+            "sha256": "ba11ea341d0d4172e4a3bfb33c3fc561759d7bd15af05ed8ad87b6838ec3f22c"
+          },
+          {
+            "lines": "25",
+            "path": "/home/skuser01/.skcapstone/coordination/archive/chiap08.jsonl",
+            "sha256": "d53597ff5fdcc3457549a433131c12db446e9dc22bcb7c921a3b12de2c6a7abe"
+          }
+        ]
+      }
+    },
+    {
+      "card_id": "84cee038",
+      "direct_evidence_verification": {
+        "derived_from_lifecycle": false,
+        "finding": "A separate direct note event records BLOCKED for missing provenance and parent red evidence. The normalized BLOCKED verdict comes from that note, not from current lifecycle, labels, links, or dependency state. The folded reconciliation-verdict link is corroborative only.",
+        "normalized": "BLOCKED",
+        "sources": [
+          {
+            "lines": "2",
+            "path": "/home/skuser01/.skcapstone/cards/84cee038/events/codex-terra-84cee038-reconcile@chiap08.jsonl",
+            "sha256": "00a6afff0078db4fe7579fd39291256d0535cce5d76dc43bd6a8d7e6e4cbe196"
+          }
+        ]
+      },
+      "ledger_defect": "unproven_stale_claim",
+      "remedy_verification": {
+        "authority": "authorized lifecycle actor",
+        "command": "skcapstone coord release-claim 84cee038 --owner skuser01 --agent <authorized-actor>",
+        "execution_status": "PROPOSAL_ONLY_NOT_EXECUTED",
+        "preconditions": [
+          "Fresh fleet liveness evidence proves that owner skuser01 has no live worker.",
+          "Folded owner is still skuser01.",
+          "The command validates the current claim revision before append."
+        ],
+        "result": "PASS",
+        "support_verification": {
+          "finding": "Installed CLI exposes release-claim with required exact owner and audited agent arguments. Board.release_claim obtains current_claim_precondition before mirroring an append-only release event.",
+          "sources": [
+            {
+              "lines": "269-287",
+              "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcapstone/cli/coord.py",
+              "sha256": "9e8fb44f4908d0f1fdb92715363c9fad7e0e602448909cd1fd9628e6002c4e0b"
+            },
+            {
+              "lines": "1920-1977",
+              "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcoord/coordination.py",
+              "sha256": "da70d5b38863a94955949a6c156d13a5f0cd4a2eb59a944775abbed6d76a72c6"
+            }
+          ]
+        }
+      },
+      "result": "PASS",
+      "structural_verification": {
+        "finding": "The folded card has current owner skuser01 and claim revision 79a7b93ef6564fa5bf149cc3cd16dfbb. The prior stale release event names pi-glm-84cee038, not skuser01. Current owner projection inconsistency alone does not prove worker absence, so stale claim is correctly withdrawn.",
+        "sources": [
+          {
+            "path": "/home/skuser01/.skcapstone/cards/84cee038/core.json",
+            "sha256": "c45f72afc9f9774bba2b1f8cee73d5e22a27d0595039485cf8e24bd5f2835873"
+          },
+          {
+            "lines": "1",
+            "path": "/home/skuser01/.skcapstone/cards/84cee038/events/skuser01@chiap03.jsonl",
+            "sha256": "8dc1de33231e587f856db172ae97b8a84b7a633df2639b441376e324b5b41704"
+          },
+          {
+            "lines": "1",
+            "path": "/home/skuser01/.skcapstone/cards/84cee038/events/lumina@chiap08.jsonl",
+            "sha256": "d8d3b397bb1e99595652a38e539c0ed4f5d2698de9c46691e715d274b7f1e40f"
+          },
+          {
+            "lines": "1-6",
+            "path": "/home/skuser01/.skcapstone/cards/84cee038/events/pi-glm-84cee038@chiap02.jsonl",
+            "sha256": "03a090d5ffd944df1d1ff14320a2d97e96fc21c5ae2e14f20423fc9467a1b3b5"
+          }
+        ]
+      }
+    }
+  ],
+  "input_hashes": {
+    "blocked_review": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/3ad01333/review-verdict-pi-codex-3ad01333.json",
+      "sha256": "51899693d6ae9d68b3797ef53bf37204e3168424d3813ea6b64d04601926b6b4"
+    },
+    "superseded_report": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/5e1cb2f8/fleet-unblock-partition-30.json",
+      "sha256": "f490368b6ffdb62f897f3f1ba4cdd27615d9d15a276747c73a54b14ee8181d53"
+    }
+  },
+  "ledger_coverage": {
+    "card_ids": [
+      "289315d7",
+      "96d65096",
+      "84cee038"
+    ],
+    "expected_entries": 3,
+    "result": "PASS",
+    "verified_entries": 3
+  },
+  "reviewer": "pi-codex-b6eedf67",
+  "schema": "skcapstone.fleet_unblock.corrected_replacement_review.v1",
+  "source_identity": {
+    "manifest": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/manifest.json",
+      "sha256": "07ec3c58abf34eb4137d8586ec659fa381dacdf5117a9dca3eca84d41cb92433"
+    },
+    "manifest_declared_sha256": "783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458",
+    "pr": "https://github.com/smilinTux/skcapstone/pull/244",
+    "pr_bytes_equal_shared_bytes": true,
+    "pr_head_commit": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
+    "pr_path": "docs/reviews/artifacts/a743f500/partition-30-corrected-replacement.json",
+    "sha256": "783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458",
+    "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-30-corrected-replacement.json"
+  },
+  "two_store_contract": {
+    "evidence_store": "direct verdict-bearing note or acceptance evidence events inspected separately",
+    "join_key": "exact card_id only",
+    "prohibited_inferences_confirmed_absent": [
+      "lifecycle to verdict",
+      "label to verdict",
+      "dependency to verdict",
+      "link alone to verdict"
+    ],
+    "result": "PASS",
+    "structural_store": "core.json, per-card append-only structural events, CardStore fold, and legacy archive projection"
+  },
+  "verdict": "PASS"
+}
