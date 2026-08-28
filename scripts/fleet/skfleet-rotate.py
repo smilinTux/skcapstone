@@ -136,6 +136,15 @@ LANES=[
      "target":int(os.environ.get("SKFLEET_TARGET","8"))},
     {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","glm-4.6"),
      "target":int(os.environ.get("SKFLEET_GLM_TARGET","3"))},
+    # The escalation lane. A worker that reports blocked_on=capability is saying the
+    # card is solvable and it was not able to solve it, which is the signal to route
+    # the card to a stronger model rather than to a person. Nothing acted on that
+    # signal: the lane a card got was decided purely by which slot was free, so a
+    # capability refusal simply returned the card to the same model that had already
+    # refused it. Measured 2026-08-27: all 8 capability-blocked cards had run on codex,
+    # two of them five times and one eight times, re-deriving the same verdict.
+    {"name":"escalate","prefix":"esc-auto-","model":os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol"),
+     "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
 ]
 for _L in LANES:
     _L["busy"]=[s for s in sessions if s.startswith(_L["prefix"])]
@@ -962,17 +971,42 @@ if not owned and free > 0:
         _stolen = len(owned)
         log(d, "STEAL|%s|own slice empty, %d free slot(s); taking from the global pool "
                "starting at offset %d of %d" % (HOST, free, _k, len(_unowned)))
+_ESCALATE_LABEL="needs-stronger-model"
+
+def needs_escalation(cid, core=None):
+    """True if this card has exhausted the ordinary lanes and needs a stronger model."""
+    try: labels=folded_labels(cid, core or {})
+    except Exception: return False
+    return _ESCALATE_LABEL in {str(x).strip().lower() for x in (labels or [])}
+
 picks=[]; _i=0
 remaining={lane["name"]:lane["free"] for lane in LANES}
 lane_order=sorted(LANES,key=lambda lane:0 if lane["name"]=="glm" else 1)
+_esc_waiting=0
+# Lane affinity, in both directions. An escalation card may go ONLY to the escalate
+# lane, because returning it to a lane that already refused it just re-derives the
+# same verdict. The escalate lane takes ONLY escalation cards, because the strong
+# model is a scarce budget and must not be spent on work the cheap lanes can do.
+#
+# A card with no compatible free lane is SKIPPED, not allowed to end the loop. The
+# earlier version broke out entirely when the head card could not be placed, which
+# with lane affinity would let one waiting escalation card starve every ordinary
+# card queued behind it.
 while _i<len(owned) and len(picks)<MAX_LAUNCH:
-    progressed=False
+    _card=owned[_i]; _i+=1
+    _esc=needs_escalation(_card[2], _card[3])
+    _lane=None
     for lane in lane_order:
         if remaining[lane["name"]]<=0: continue
-        picks.append((lane,owned[_i])); _i+=1
-        remaining[lane["name"]]-=1; progressed=True
-        if _i>=len(owned) or len(picks)>=MAX_LAUNCH: break
-    if not progressed: break
+        if _esc != (lane["name"]=="escalate"): continue
+        _lane=lane; break
+    if _lane is None:
+        if _esc: _esc_waiting+=1
+        continue
+    picks.append((_lane,_card)); remaining[_lane["name"]]-=1
+if _esc_waiting:
+    log(d,"ESCALATE_QUEUED|%s|%d card(s) need the stronger model; escalate lane full"
+        %(HOST,_esc_waiting))
 if not picks:
     log(d,"NOOP|%s|no dependency-clear cards"%HOST); sys.exit(0)
 
