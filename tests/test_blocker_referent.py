@@ -145,3 +145,52 @@ def test_the_legacy_key_value_layout_is_still_read(tmp_path):
     ])
     returnable, _, _ = _sweep(tmp_path, {"c818148b": True})
     assert returnable == ["aaa"]
+
+
+# --- returning once per blocked verdict, not once per run ---------------------
+
+def test_a_card_already_returned_for_this_verdict_is_not_returned_again(tmp_path):
+    """The sweep must be safe to run on a timer.
+
+    Labelling does not erase the historical BLOCKED verdict, so without this
+    the same cards come back every single run and their backoff resets forever.
+    """
+    write_events(tmp_path, [
+        {"card_id": "aaa", "ts": "2026-08-28T10:00:00+00:00", "link_key": "verdict",
+         "link_value": "BLOCKED. blocked_on=card referent=card:c818148b"},
+        {"card_id": "aaa", "ts": "2026-08-28T11:00:00+00:00",
+         "action": "add_label", "label": "blocker-now-done"},
+    ])
+    returnable, _, _ = find_returnable(
+        tmp_path, is_done=lambda p: True, is_open=lambda c: True
+    )
+    assert returnable == []
+
+
+def test_a_card_blocked_again_after_being_returned_is_returned_again(tmp_path):
+    """A NEW refusal after the label is a new situation and must be eligible."""
+    write_events(tmp_path, [
+        {"card_id": "aaa", "ts": "2026-08-28T10:00:00+00:00", "link_key": "verdict",
+         "link_value": "BLOCKED. blocked_on=card referent=card:11111111"},
+        {"card_id": "aaa", "ts": "2026-08-28T11:00:00+00:00",
+         "action": "add_label", "label": "blocker-now-done"},
+        {"card_id": "aaa", "ts": "2026-08-28T12:00:00+00:00", "link_key": "verdict",
+         "link_value": "BLOCKED. blocked_on=card referent=card:22222222"},
+    ])
+    returnable, _, _ = find_returnable(
+        tmp_path, is_done=lambda p: True, is_open=lambda c: True
+    )
+    assert returnable == ["aaa"]
+
+
+def test_an_unrelated_label_does_not_suppress_a_return(tmp_path):
+    write_events(tmp_path, [
+        {"card_id": "aaa", "ts": "2026-08-28T10:00:00+00:00", "link_key": "verdict",
+         "link_value": "BLOCKED. blocked_on=card referent=card:c818148b"},
+        {"card_id": "aaa", "ts": "2026-08-28T11:00:00+00:00",
+         "action": "add_label", "label": "deps-clear-rerun"},
+    ])
+    returnable, _, _ = find_returnable(
+        tmp_path, is_done=lambda p: True, is_open=lambda c: True
+    )
+    assert returnable == ["aaa"]

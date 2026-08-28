@@ -84,7 +84,7 @@ def cited_referents(value: str) -> list[str]:
     return [m.group(1).lower() for m in _REFERENT_RE.finditer(str(value or ""))]
 
 
-def latest_blocked_verdicts(home: Path) -> dict[str, str]:
+def _latest_blocked(home: Path) -> dict[str, tuple[str, str]]:
     """Map card id to its most recent BLOCKED verdict text.
 
     A card that was blocked and later passed must not appear here, so this
@@ -118,13 +118,47 @@ def latest_blocked_verdicts(home: Path) -> dict[str, str]:
                 if prev is None or stamp >= prev[0]:
                     latest[str(card_id)] = (stamp, value)
     return {
-        cid: value
-        for cid, (_stamp, value) in latest.items()
+        cid: (stamp, value)
+        for cid, (stamp, value) in latest.items()
         if _BLOCKED_RE.match(value or "")
     }
 
 
-def find_returnable(home: Path, is_done, is_open) -> tuple[list[str], int, int]:
+def latest_blocked_verdicts(home: Path) -> dict[str, str]:
+    """Map card id to its most recent BLOCKED verdict text."""
+    return {cid: value for cid, (_stamp, value) in _latest_blocked(home).items()}
+
+
+def last_labelled(home: Path, label: str) -> dict[str, str]:
+    """Map card id to the last time `label` was applied to it.
+
+    Labels are written to the coordination evidence store as add_label events,
+    not to the card's own event log, which is the same two-store split that has
+    caught this codebase before.
+    """
+    seen: dict[str, str] = {}
+    events = home / "coordination" / "card_events"
+    for path in sorted(glob.glob(str(events / "*.jsonl"))):
+        with open(path, errors="ignore") as fh:
+            for line in fh:
+                if label not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("action") != "add_label" or event.get("label") != label:
+                    continue
+                card_id = str(event.get("card_id") or "")
+                stamp = str(event.get("ts") or "")
+                if card_id and stamp > seen.get(card_id, ""):
+                    seen[card_id] = stamp
+    return seen
+
+
+def find_returnable(
+    home: Path, is_done, is_open, label: str = "blocker-now-done"
+) -> tuple[list[str], int, int]:
     """Cards whose every cited blocker has completed.
 
     Args:
@@ -132,6 +166,10 @@ def find_returnable(home: Path, is_done, is_open) -> tuple[list[str], int, int]:
         is_done: Callable taking an 8-hex prefix, returning True if that card is
             DONE, False if not, and None if no such card exists.
         is_open: Callable taking a card id, returning True if it is still open.
+        label: The return label. A card already carrying it from AFTER its
+            current verdict has been returned for that verdict and is skipped,
+            so the sweep is safe to run on a timer. A NEW refusal recorded
+            after the label makes the card eligible again.
 
     Returns:
         (returnable card ids, count still blocked, count citing a missing card)
@@ -139,8 +177,14 @@ def find_returnable(home: Path, is_done, is_open) -> tuple[list[str], int, int]:
     returnable: list[str] = []
     still_blocked = 0
     missing = 0
-    for card_id, verdict in latest_blocked_verdicts(home).items():
+    labelled_at = last_labelled(home, label)
+    for card_id, (stamp, verdict) in _latest_blocked(home).items():
         if not is_open(card_id):
+            continue
+        # Already returned for THIS refusal. Labelling does not erase the
+        # verdict, so without this the same cards return on every run and
+        # their backoff resets forever.
+        if labelled_at.get(card_id, "") >= stamp and labelled_at.get(card_id):
             continue
         referents = cited_referents(verdict)
         if not referents:
