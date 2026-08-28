@@ -8,6 +8,7 @@ rather than against an idealised format.
 import pytest
 
 from skcapstone.blocked_verdict import (
+    states_a_contradiction,
     blocked_on_referent,
     is_blocked_verdict,
     is_outcome_key,
@@ -171,3 +172,57 @@ def test_card_category_accepts_real_card_ids(value):
 def test_human_and_capability_keep_free_form_referents(value):
     """Demanding an id here would push workers back toward saying nothing."""
     validate_blocked_verdict("verdict", value)
+
+
+# --- a card refusal must say WHY, not only WHICH criterion --------------------
+
+def test_card_refusal_pointing_at_its_own_card_is_refused():
+    """The exact shape 13 of 16 live refusals had on 2026-08-28.
+
+    The card names ITSELF as the blocker, which satisfies the card-id rule while
+    saying nothing, and puts the real information in a criterion= field that
+    nothing checks.
+    """
+    with pytest.raises(ValueError) as err:
+        validate_blocked_verdict(
+            "verdict", "BLOCKED blocked_on=card referent=card:95e192fd criterion=ac:5"
+        )
+    assert "contradiction" in str(err.value).lower()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED blocked_on=card referent=card:bb11e415 criterion=ac:2. AC2 requires "
+        "live install and restart while the standing rails prohibit deploy.",
+        "BLOCKED blocked_on=card referent=card:27bb08c0 criterion=ac:1, which is "
+        "circular because it demands evidence of every acceptance statement "
+        "including itself.",
+        "BLOCKED blocked_on=card referent=card:63971b3b criterion=ac:2, the exact "
+        "required archives are absent.",
+    ],
+)
+def test_card_refusal_that_states_the_contradiction_passes(value):
+    validate_blocked_verdict("verdict", value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED blocked_on=dependency referent=card:04b218cd",
+        "BLOCKED blocked_on=human referent=approval:sklegal_runtime-custody-path",
+        "BLOCKED blocked_on=capability referent=ac:1",
+    ],
+)
+def test_other_categories_do_not_need_a_contradiction(value):
+    """Only `card` gains this rule.
+
+    Naming a blocking card IS the explanation. Naming a criterion is not, because
+    the only fix is to rewrite that criterion.
+    """
+    validate_blocked_verdict("verdict", value)
+
+
+def test_states_a_contradiction_rejects_a_bare_pointer():
+    assert not states_a_contradiction("criterion=ac:5")
+    assert states_a_contradiction("ac:2 requires deploy while the rails prohibit it")

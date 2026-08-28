@@ -90,6 +90,57 @@ _NOT_A_REFERENT = (
 
 _CATEGORY_RE = re.compile(r"\b(%s)\b" % "|".join(_CATEGORIES), re.IGNORECASE)
 
+#: A `card` refusal says a criterion cannot be satisfied AS WRITTEN. That claim is
+#: only actionable if it also says WHY, because the fix is to rewrite the criterion
+#: and nobody can rewrite what they cannot see is wrong.
+#:
+#: MEASURED ON THE LIVE BOARD, 2026-08-28. Of 16 open cards refused with
+#: blocked_on=card, 13 recorded nothing but a pointer:
+#:
+#:     BLOCKED blocked_on=card referent=card:95e192fd criterion=ac:5
+#:
+#: That names which criterion and not one word about what is wrong with it. Those
+#: 13 could not be amended without inventing a diagnosis, so they sat. The 3 that
+#: did explain themselves were fixable immediately, and two were fixed the same
+#: hour: one criterion was circular, requiring evidence of every acceptance
+#: statement including itself, and one asked a worker to "prove whether" something
+#: was possible, which gave a correct negative finding no way to pass.
+#:
+#: The worker brief already asks for this: "Choose card only when you can quote the
+#: criterion and state the contradiction." Asking was not enough, so this refuses
+#: at the write path, exactly as the referent rule does.
+_CONTRADICTION_RE = re.compile(
+    r"\b(requires?|required|prohibit\w*|forbid\w*|contradict\w*|conflict\w*|"
+    r"absent|missing|does not exist|do not exist|never|cannot|can not|unsatisfiable|"
+    r"impossible|because|while|whereas|but the|no such|not present|undefined|"
+    r"circular|ambiguous)\b",
+    re.IGNORECASE,
+)
+
+#: How much text past the pointer counts as an explanation attempt. A verdict that
+#: is nothing but `blocked_on=card referent=ac:2` has no room for one.
+_MIN_CONTRADICTION_CHARS = 24
+
+#: The tell that a `card` refusal is about a CRITERION rather than about another
+#: card. `blocked_on=card referent=inc-0e190b2f` names a different card and is
+#: self-explanatory. `blocked_on=card referent=card:<self> criterion=ac:5` is not:
+#: the referent points at the card writing it, and the real claim hides in a field
+#: nothing validates. When criterion= is present, the contradiction is mandatory.
+_CRITERION_RE = re.compile(r"criterion\s*[=:]\s*ac\s*:?\s*\d+", re.IGNORECASE)
+
+
+def states_a_contradiction(value: str) -> bool:
+    """True when a `card` refusal says what is wrong, not only which criterion.
+
+    Deliberately generous about wording. Any of the ordinary ways a person
+    explains an impossibility counts, because the goal is a usable sentence, not
+    a particular phrasing. What it rejects is the bare pointer.
+    """
+    text = str(value or "")
+    if len(text.strip()) < _MIN_CONTRADICTION_CHARS:
+        return False
+    return bool(_CONTRADICTION_RE.search(text))
+
 #: A referent identifies a thing: a card id, an approval name, a path-like token.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][\w:.\-/@]{2,}")
 
@@ -199,3 +250,39 @@ def validate_blocked_verdict(key: str, value: str) -> None:
                 "blocked_on=human or blocked_on=capability instead, which take "
                 "free-form referents."
             )
+    # A `card` refusal must also say WHY, not only WHICH criterion.
+    #
+    # The two rules interact badly without this, and the board shows it. The brief
+    # tells a worker to write `card referent ac:<n>`; the rule above demands a card
+    # id instead. A worker satisfies both by naming ITS OWN card as the blocker and
+    # putting the real information in a `criterion=` field that nothing checks:
+    #
+    #     BLOCKED blocked_on=card referent=card:95e192fd criterion=ac:5
+    #                                            ^ on card 95e192fd itself
+    #
+    # That passes, and says nothing. Measured 2026-08-28: 13 of 16 card refusals had
+    # exactly this shape, and none could be amended without inventing a diagnosis.
+    # The 3 that explained themselves were actionable immediately, and two were
+    # fixed within the hour: one criterion was circular, demanding evidence of every
+    # acceptance statement including itself, and one asked a worker to "prove
+    # whether" something held, which gave a correct negative finding no way to pass.
+    #
+    # So a card refusal must carry a sentence a person can act on. dependency does
+    # not need this: naming a blocking card IS the explanation. Naming a criterion
+    # is not, because the only fix is to rewrite that criterion, and nobody can
+    # rewrite a fault they cannot see.
+    if (
+        cat
+        and cat.group(1).lower() == "card"
+        and _CRITERION_RE.search(text)
+        and not states_a_contradiction(text)
+    ):
+        raise ValueError(
+            "blocked_on=card names a criterion but not the contradiction. Say WHY "
+            "it cannot be satisfied as written: state what the criterion requires "
+            "that is impossible, absent, or self-referential. For example: "
+            "blocked_on=card referent=card:16bbc6fe criterion=ac:2, AC2 requires "
+            "install and restart while the standing rails prohibit deploy. A bare "
+            "criterion=ac:N cannot be acted on, because the only fix is to rewrite "
+            "that criterion."
+        )
