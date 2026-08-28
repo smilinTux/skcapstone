@@ -120,6 +120,7 @@ skcapstone-mcp = "skcapstone.mcp_server:main"
 crush = "skcapstone.crush_shim:main"
 skfleet = "skcapstone.fleet.cli:main"
 skoperator = "skcapstone.operator_seat.cli:main"
+skcapstone-glm-admission = "skcapstone.fleet.glm_consumer:main"
 
 [project.urls]
 Homepage = "https://skcapstone.io"
