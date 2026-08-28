@@ -1210,5 +1210,22 @@ for _LANE,(_,_,cid,core,_nb) in picks:
     log(d,"%s|%s|%s|%s|lane=%s"%("LAUNCHED" if ok else "LAUNCH_FAILED",HOST,sess,cid,_LANE["name"]))
     time.sleep(2)
 
+# republish after launching, because the first publish is a snapshot of the
+# sessions that existed when this tick STARTED. Publishing only there means a host
+# never reports the workers it just launched until its next tick, five minutes
+# later, so for those five minutes those cards are invisible to every other host.
+#
+# The reaper reaps on "no host reports this card running". A card nobody reports is
+# a card that looks dead, and CLAIM_GRACE alone was carrying the whole burden of
+# not acting on that. Observed 2026-08-28: every host published cards=0 while
+# chiap01 ran 3 workers and chiap03 ran 2, purely because each had launched them
+# after its own publish.
+#
+# Re-reading tmux here costs one subprocess and closes the window.
+try:
+    publish_live(sh("tmux","ls","-F","#{session_name}").split())
+except Exception as _exc:
+    log(d,"WARN|%s|could not republish liveness after launching: %s"%(HOST,_exc))
+
 if raced:
     log(d,"RACED|%s|%d card(s) finished between pool build and launch"%(HOST,raced))
