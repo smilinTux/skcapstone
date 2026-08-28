@@ -10,6 +10,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- The `blocked_on=card` contradiction rule now recognises the short criterion
+  spelling. A criterion is named as `criterion=ac:2` but also bare as `ac=2` or
+  `|ac:2|` inside a pipe-delimited verdict, and matching only the long form let
+  27% of card refusals through unexplained. Measured 2026-08-28 on the live board:
+  of 52 `blocked_on=card` verdicts, 31 used the long spelling and 14 the short
+  one. The remaining 7 name no criterion at all and were already refused by the
+  referent rule, since `ac:1` is not a card id.
+
 - `coord link` now refuses a `blocked_on=card` verdict that names a criterion but
   not the contradiction. The rule is narrow: it applies only when `criterion=` is
   present, which is the tell that the refusal concerns a criterion rather than

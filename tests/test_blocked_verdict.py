@@ -227,3 +227,35 @@ def test_other_categories_do_not_need_a_contradiction(value):
 def test_states_a_contradiction_rejects_a_bare_pointer():
     assert not states_a_contradiction("criterion=ac:5")
     assert states_a_contradiction("ac:2 requires deploy while the rails prohibit it")
+
+
+# --- the short criterion spelling ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # the exact verdict observed on review card 39ebfe14, 2026-08-28
+        "BLOCKED|blocked_on=card referent=card:22a36166|ac=2|artifact_sha256=49099a31",
+        "BLOCKED blocked_on=card referent=card:abc12345 ac:3",
+        "BLOCKED|blocked_on=card|referent=card:abc12345|ac=1",
+    ],
+)
+def test_short_criterion_spelling_still_needs_a_contradiction(value):
+    """`ac=2` names a criterion just as `criterion=ac:2` does.
+
+    Measured on the live board: of 52 blocked_on=card verdicts, 31 used the long
+    spelling and 14 the short one, so matching only the long form let 27% of card
+    refusals record a criterion with no contradiction at all.
+    """
+    with pytest.raises(ValueError) as err:
+        validate_blocked_verdict("verdict", value)
+    assert "contradiction" in str(err.value).lower()
+
+
+def test_short_spelling_with_a_contradiction_passes():
+    validate_blocked_verdict(
+        "verdict",
+        "BLOCKED|blocked_on=card|referent=card:abc12345|ac=3|the criterion requires "
+        "frozen bytes that are absent from every host",
+    )

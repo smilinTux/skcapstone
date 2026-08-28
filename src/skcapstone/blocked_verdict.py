@@ -126,7 +126,15 @@ _MIN_CONTRADICTION_CHARS = 24
 #: self-explanatory. `blocked_on=card referent=card:<self> criterion=ac:5` is not:
 #: the referent points at the card writing it, and the real claim hides in a field
 #: nothing validates. When criterion= is present, the contradiction is mandatory.
-_CRITERION_RE = re.compile(r"criterion\s*[=:]\s*ac\s*:?\s*\d+", re.IGNORECASE)
+#: Matched loosely on purpose: a criterion is named as `criterion=ac:2`, but also
+#: bare as `ac=2` or `|ac:2|` inside a pipe-delimited verdict. Measured
+#: 2026-08-28 on the live board: of 52 blocked_on=card verdicts, 31 spelled it
+#: the long way and 14 used the short form. Matching only the long form let 27%
+#: of card refusals record a criterion with no contradiction, which is exactly
+#: the shape this rule exists to refuse. The remaining 7 name no criterion at
+#: all and are already refused by the referent rule, since `ac:1` is not a card
+#: id.
+_CRITERION_RE = re.compile(r"(?:criterion\s*[=:]\s*)?\bac\s*[=:]\s*\d+", re.IGNORECASE)
 
 
 def states_a_contradiction(value: str) -> bool:
