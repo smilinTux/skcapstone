@@ -140,6 +140,28 @@ def test_five_host_candidate_inventory_counts_unique_ids(tmp_path: Path) -> None
     assert 'grep "POOL_IDS|"' in WATCH.read_text(encoding="utf-8")
 
 
+def test_escalation_only_sessions_keep_distribution_watch_up(tmp_path: Path) -> None:
+    """Both host probes count escalation workers instead of reporting zero."""
+    source = WATCH.read_text(encoding="utf-8")
+    probe = 'grep -Ec "^(codex-auto-|glm-auto-|esc-auto-)"'
+    assert source.count(probe) == 2
+    assert 'grep -Ec "^(codex-auto-|glm-auto-)"' not in source
+
+    count = subprocess.run(
+        ["grep", "-Ec", "^(codex-auto-|glm-auto-|esc-auto-)"],
+        input="esc-auto-deadbeef\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert count.stdout.strip() == "1"
+
+    records = _sample_records()
+    records["CHIAP01_RECORD"] = records["CHIAP01_RECORD"].replace("0|", "1|", 1)
+    output = _run_watch_sample(tmp_path / "escalation-only", records)
+    assert "state=up workers=1" in output
+
+
 def test_legacy_pool_is_reported_missing_without_double_counting(
     tmp_path: Path,
 ) -> None:
