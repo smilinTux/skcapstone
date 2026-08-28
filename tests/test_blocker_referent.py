@@ -462,3 +462,37 @@ def test_already_labelled_for_this_block_is_not_re_reported(tmp_path):
         ],
     )
     assert find_stale_blocks(tmp_path, is_open=lambda c: True) == []
+
+
+def test_a_closed_card_with_a_stale_block_is_still_reported(tmp_path):
+    """2c35d28b folded to DONE and still held four gates shut for five days.
+
+    A stale verdict does its damage through whoever reads it, not through the
+    card's own column, so closed cards must not be filtered out here.
+    """
+    write_events(
+        tmp_path,
+        [
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:00",
+                "link_key": "verdict",
+                "link_value": "BLOCKED.",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:01",
+                "link_key": "rereview_card",
+                "link_value": "01cf9986",
+                "action": "link",
+            },
+            {
+                "card_id": "01cf9986",
+                "ts": "2026-08-23T07:17:00",
+                "link_key": "verdict",
+                "link_value": "PASS.",
+            },
+        ],
+    )
+    assert [r["card"] for r in find_stale_blocks(tmp_path)] == ["aaa"]
+    assert find_stale_blocks(tmp_path, is_open=lambda c: False) == []

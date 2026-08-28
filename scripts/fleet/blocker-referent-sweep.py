@@ -70,7 +70,7 @@ def main() -> int:
         return is_done(str(card_id)[:8]) is False
 
     returnable, still_blocked, missing = find_returnable(home, is_done, is_open)
-    stale = find_stale_blocks(home, is_open)
+    stale = find_stale_blocks(home)  # closed cards included on purpose
 
     print("blocker-referent sweep")
     print("  returnable (every cited blocker is DONE): %d" % len(returnable))

@@ -277,12 +277,20 @@ def successor_links(home: Path) -> dict[str, list[tuple[str, str]]]:
     return out
 
 
-def find_stale_blocks(home: Path, is_open, label: str = "successor-passed") -> list[dict]:
+def find_stale_blocks(home: Path, is_open=None, label: str = "successor-passed") -> list[dict]:
     """Cards reading BLOCKED whose own named successor has since PASSED.
 
     The successor's PASS must come AFTER the block. A successor that passed
     earlier answered some previous refusal, not this one, and treating it as
     current would clear a live block on stale evidence.
+
+    Deliberately does NOT skip closed cards, which is the difference between
+    this and find_returnable. A stale verdict does its damage through whoever
+    READS it, not through the card's own column. 2c35d28b folded to DONE and
+    still held four approval gates shut for five days, because the gates read
+    its verdict and saw BLOCKED. Filtering to open cards would have hidden the
+    single worst instance on the board. is_open is accepted only so a caller
+    can narrow the scan, and is ignored by default.
     """
     outcomes = latest_outcomes(home)
     links = successor_links(home)
@@ -291,7 +299,7 @@ def find_stale_blocks(home: Path, is_open, label: str = "successor-passed") -> l
     for card_id, (stamp, verdict) in outcomes.items():
         if not _verdict_head(verdict).startswith("BLOCK"):
             continue
-        if not is_open(card_id):
+        if is_open is not None and not is_open(card_id):
             continue
         if labelled_at.get(card_id, "") >= stamp and labelled_at.get(card_id):
             continue
