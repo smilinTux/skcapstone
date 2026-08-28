@@ -1,0 +1,113 @@
+{
+  "actions_executed": [],
+  "card_id": "e9a5695c",
+  "correction_verification": [
+    {
+      "after": "card_contradiction",
+      "before": "exhausted capability",
+      "card_id": "8d43bd03",
+      "direct_evidence": {
+        "blocked_on": "card referent:ac:2",
+        "blocked_on_event": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl:372",
+        "blocked_on_writer": "pi-codex-8d43bd03",
+        "blocker_event": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl:59",
+        "verdict": "BLOCKED",
+        "verdict_artifact": "/home/skuser01/.skcapstone/evidence/work/8d43bd03/BLOCKED.md",
+        "verdict_artifact_sha256": "a5c6f0ff088aebda3d4c0af8b60a63f05687ef8aa0a304da81dea53fdd919f5c",
+        "verdict_event": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl:375"
+      },
+      "remedy_verification": {
+        "authority": "authorized card owner",
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "precondition": "Acceptance criterion contradiction is amended or explicitly accepted before rerun",
+        "result": "PASS"
+      },
+      "result": "PASS",
+      "structural_cardstore": {
+        "dependency": "eff95fb8",
+        "dependency_status": "done",
+        "owner": "pi",
+        "status": "ready"
+      }
+    },
+    {
+      "after": "blocked_contract_defect",
+      "before": "exhausted capability",
+      "card_id": "e86bf6cd",
+      "direct_evidence": {
+        "blocked_on": null,
+        "evidence_event": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl:283",
+        "evidence_writer": "pi-orgci-review-e86bf6cd",
+        "verdict": "BLOCKED: exact frozen staged bytes are unavailable on the review host",
+        "verdict_event": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl:284"
+      },
+      "remedy_verification": {
+        "authority": "authorized evidence verdict writer",
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "precondition": "Any fresh evidence verdict records its own contract compliant blocked_on event",
+        "result": "PASS"
+      },
+      "result": "PASS",
+      "structural_cardstore": {
+        "archived": true,
+        "dependencies": [],
+        "owner": null,
+        "status": "backlog"
+      }
+    }
+  ],
+  "independence": {
+    "producer_agent": "pi-codex-a743f500",
+    "review_agent": "pi-codex-e9a5695c",
+    "same_identity": false
+  },
+  "method": {
+    "evidence_join": "Direct evidence events were read from coordination/card_events separately from CardStore core and structural event streams, then joined only by exact card_id.",
+    "json_validation": {
+      "invalid_records": 0,
+      "missing_source_paths": 0,
+      "source_records_parsed": 301
+    },
+    "lifecycle_inference_used": false,
+    "links_used_as_dependencies": false,
+    "original_report_comparison": {
+      "changed_record_ids": [
+        "8d43bd03",
+        "e86bf6cd"
+      ],
+      "correction_ledger_ids": [
+        "8d43bd03",
+        "e86bf6cd"
+      ],
+      "undeclared_changed_record_ids": []
+    },
+    "structural_reproduction": {
+      "cards_compared": 53,
+      "mismatches": 0,
+      "snapshot_selection_reproduced_from_frozen_source": true
+    }
+  },
+  "no_action_attestation": [
+    "No audited card repair",
+    "No proposed command executed",
+    "No lifecycle, dependency, label, link, or ownership action on an audited card",
+    "No external, gateway, provider, deployment, restart, configuration, credential, or live execution action",
+    "No merge"
+  ],
+  "producer_artifact": {
+    "bytes": 95868,
+    "manifest_sha256": "07ec3c58abf34eb4137d8586ec659fa381dacdf5117a9dca3eca84d41cb92433",
+    "path": "docs/reviews/artifacts/a743f500/partition-19-corrected-replacement.json",
+    "pr": "https://github.com/smilinTux/skcapstone/pull/244",
+    "pr_head_commit": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
+    "pr_sha256": "5853f94c8aef8f6022af578ab1b8898b7c8cbfb276d9668d709acd6c6e6ebc00",
+    "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-19-corrected-replacement.json",
+    "shared_sha256": "5853f94c8aef8f6022af578ab1b8898b7c8cbfb276d9668d709acd6c6e6ebc00",
+    "source_identity_match": true
+  },
+  "review_scope": "Read only distinct identity review of corrected immutable partition 19 replacement and its two declared corrections",
+  "schema": "skcapstone.fleet_unblock.corrected_replacement_review.v1",
+  "verdict": "PASS"
+}
