@@ -34,7 +34,7 @@ record_candidate_pool() {
 }
 
 sample() {
-  local host out workers result pool ready total_workers=0 unavailable=0 details=""
+  local host out workers result pool total_workers=0 unavailable=0 details=""
   reset_candidate_inventory
   for host in "${hosts[@]}"; do
     if [[ "$host" == chiap08 ]]; then
@@ -47,9 +47,10 @@ sample() {
     total_workers=$((total_workers + workers))
     if [[ "$result" != success ]]; then
       unavailable=$((unavailable + 1))
-    elif [[ "$pool" =~ ready=([0-9]+) ]]; then
-      ready=${BASH_REMATCH[1]}
+    elif [[ "$pool" =~ ready=[0-9]+ ]]; then
       record_candidate_pool "$pool"
+    else
+      candidate_manifests_missing=$((candidate_manifests_missing + 1))
     fi
     details+="$host:workers=$workers,result=$result,pool=${pool:-none};"
   done
