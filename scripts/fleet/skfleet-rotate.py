@@ -40,6 +40,7 @@ MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
 DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
 CARDS=os.path.join(HOME,".skcapstone/cards")
+LEGACY_EVENTS=os.path.join(HOME,".skcapstone/coordination/card_events")
 EVID=os.path.join(HOME,".skcapstone/evidence/fleet-rotation")
 PI="/home/skuser01/.npm-global/bin/pi"
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
@@ -49,7 +50,24 @@ STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
 _rows={}
+_legacy_rows=None
+def _load_legacy_rows():
+    """Read the sanctioned legacy overlay that CardStore folds with card logs."""
+    global _legacy_rows
+    if _legacy_rows is not None: return _legacy_rows
+    _legacy_rows={}
+    for f in sorted(glob.glob(os.path.join(LEGACY_EVENTS,"*.jsonl"))):
+        try:
+            for line in open(f,encoding="utf-8",errors="replace"):
+                try: event=json.loads(line)
+                except Exception: continue
+                cid=event.get("card_id")
+                if cid: _legacy_rows.setdefault(cid,[]).append(event)
+        except OSError: pass
+    return _legacy_rows
+
 def event_rows(cid):
+    """Return the same native plus legacy event union used by CardStore.fold."""
     if cid in _rows: return _rows[cid]
     ev=os.path.join(CARDS,cid,"events"); out=[]
     if os.path.isdir(ev):
@@ -59,7 +77,8 @@ def event_rows(cid):
                     try: out.append(json.loads(l))
                     except: pass
             except OSError: pass
-    out.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", "")), str(e.get("event_id", ""))))
+    out.extend(_load_legacy_rows().get(cid,()))
+    out.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", "")), str(e.get("seq", 0))))
     _rows[cid]=out; return out
 
 def acts(cid):
