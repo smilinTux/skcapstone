@@ -1,0 +1,18 @@
+# Reviewed installation contract for card dbb89c7d.
+# Packaging installs this unit but does not enable, start, or schedule it.
+[Unit]
+Description=SKCapstone atomic nine-worker GLM admission
+ConditionHost=chiap08
+ConditionPathExists=/etc/skcapstone/glm-admission-enabled
+
+[Service]
+Type=oneshot
+User=skuser01
+Group=skuser01
+ExecStart=/home/skuser01/.skenv/bin/skcapstone-glm-admission
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/skcapstone-local/glm-admission /home/skuser01/.skcapstone/cards /home/skuser01/.skcapstone/coordination
+UMask=0077

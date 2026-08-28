@@ -21,7 +21,8 @@ from skcapstone.fleet.glm_admission import (
     HostReport,
     QueueSample,
     WorkerBinding,
-    admit_wave,
+    _abort_wave,
+    _admit_wave,
 )
 
 NOW = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
@@ -81,6 +82,9 @@ def snapshot(
     second_sample_age: int = 0,
     hold_generation: str = "hold-7",
     hold_hash: str = HOLD_HASH,
+    pressure_host: str | None = None,
+    http_429: bool = False,
+    queued: int = 0,
 ) -> AdmissionSnapshot:
     """Build frozen admission evidence without observing live systems."""
 
@@ -93,14 +97,21 @@ def snapshot(
                 reachable=host in reachable,
                 glm_auto_sessions=host_sessions,
                 observed_at=timestamp(NOW),
+                http_429=http_429 and host == pressure_host,
+                queue_samples=(
+                    QueueSample(
+                        observed_at=timestamp(second_at - timedelta(seconds=5)),
+                        active=0,
+                        queued=queued if host == pressure_host else 0,
+                    ),
+                    QueueSample(
+                        observed_at=timestamp(second_at),
+                        active=0,
+                        queued=queued if host == pressure_host else 0,
+                    ),
+                ),
             )
             for host in HOSTS
-        ),
-        queue_samples=(
-            QueueSample(
-                observed_at=timestamp(second_at - timedelta(seconds=5)), active=0, queued=0
-            ),
-            QueueSample(observed_at=timestamp(second_at), active=0, queued=0),
         ),
     )
 
@@ -139,8 +150,7 @@ def run_admission(
     """Invoke the candidate against one temporary authority directory."""
 
     frozen = evidence or snapshot()
-    return admit_wave(
-        proposed_generation=generation,
+    return _admit_wave(
         bindings=proposed or bindings(),
         snapshot_reader=lambda: frozen,
         now=NOW,
@@ -187,7 +197,25 @@ def test_unsafe_observations_deny(
     assert json.loads((tmp_path / "generation.json").read_text())["status"] == "complete"
 
 
-def test_malformed_missing_stale_and_non_monotonic_ledgers_deny(tmp_path: Path) -> None:
+@pytest.mark.parametrize("host", HOSTS)
+def test_any_host_429_denies(tmp_path: Path, host: str) -> None:
+    """A 429 reported only by any one authoritative host stops admission."""
+
+    write_genesis(tmp_path / "generation.json")
+    with pytest.raises(AdmissionDenied, match="reported 429"):
+        run_admission(tmp_path, evidence=snapshot(pressure_host=host, http_429=True))
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_two_positive_queue_samples_on_any_host_deny(tmp_path: Path, host: str) -> None:
+    """Two consecutive positive queue samples on any one host stop admission."""
+
+    write_genesis(tmp_path / "generation.json")
+    with pytest.raises(AdmissionDenied, match="positive queue persisted"):
+        run_admission(tmp_path, evidence=snapshot(pressure_host=host, queued=1))
+
+
+def test_malformed_missing_stale_ledgers_deny(tmp_path: Path) -> None:
     """No malformed or untrustworthy ledger can bootstrap a wave."""
 
     ledger = tmp_path / "generation.json"
@@ -200,9 +228,6 @@ def test_malformed_missing_stale_and_non_monotonic_ledgers_deny(tmp_path: Path) 
     write_genesis(ledger, updated_at=NOW - timedelta(seconds=31))
     with pytest.raises(AdmissionDenied, match="stale ledger"):
         run_admission(tmp_path)
-    write_genesis(ledger)
-    with pytest.raises(AdmissionDenied, match="non-monotonic proposed"):
-        run_admission(tmp_path, generation=2)
 
 
 def test_writer_crash_before_rename_preserves_old_generation(tmp_path: Path) -> None:
@@ -242,6 +267,19 @@ def test_writer_crash_after_rename_exposes_complete_live_generation(tmp_path: Pa
         run_admission(tmp_path, generation=2)
 
 
+def test_abort_exact_live_wave_atomically_releases_reservation(tmp_path: Path) -> None:
+    """Rollback changes only the exact reserved live wave to complete."""
+
+    ledger = tmp_path / "generation.json"
+    write_genesis(ledger)
+    run_admission(tmp_path)
+    result = _abort_wave(bindings(), NOW)
+    assert result["status"] == "complete"
+    assert result["workers"] == []
+    with pytest.raises(AdmissionDenied, match="does not match live"):
+        _abort_wave(bindings(), NOW)
+
+
 def test_hold_change_during_locked_decision_denies(tmp_path: Path) -> None:
     """A hold generation or hash change during admission denies publication."""
 
@@ -249,8 +287,7 @@ def test_hold_change_during_locked_decision_denies(tmp_path: Path) -> None:
     write_genesis(ledger)
     observations = iter((snapshot(), snapshot(hold_generation="hold-8")))
     with pytest.raises(AdmissionDenied, match="hold changed"):
-        admit_wave(
-            proposed_generation=1,
+        _admit_wave(
             bindings=bindings(),
             snapshot_reader=lambda: next(observations),
             now=NOW,
@@ -301,18 +338,20 @@ def test_caller_authority_and_path_overrides_are_impossible(tmp_path: Path) -> N
 
     write_genesis(tmp_path / "generation.json")
     required = {
-        "proposed_generation": 1,
         "bindings": bindings(),
         "snapshot_reader": lambda: snapshot(),
         "now": NOW,
     }
     for name, value in (
+        ("coordinator", object()),
+        ("backend", "zai"),
+        ("generation", 1),
         ("authority_host", "chiap08"),
         ("ledger_path", tmp_path / "alternate.json"),
         ("lock_path", tmp_path / "alternate.lock"),
     ):
         with pytest.raises(TypeError, match=name):
-            admit_wave(**required, **{name: value})
+            _admit_wave(**required, **{name: value})
 
 
 @pytest.mark.parametrize("name", ["generation.json", "admission.lock"])

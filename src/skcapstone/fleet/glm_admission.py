@@ -44,22 +44,24 @@ class Hold:
 
 
 @dataclass(frozen=True)
-class HostReport:
-    """Read-only host session report."""
-
-    host: str
-    reachable: bool
-    glm_auto_sessions: int
-    observed_at: str
-
-
-@dataclass(frozen=True)
 class QueueSample:
     """Read-only zai queue observation."""
 
     observed_at: str
     active: int
     queued: int
+
+
+@dataclass(frozen=True)
+class HostReport:
+    """Authoritative read-only host pressure and session report."""
+
+    host: str
+    reachable: bool
+    glm_auto_sessions: int
+    observed_at: str
+    http_429: bool
+    queue_samples: tuple[QueueSample, QueueSample]
 
 
 @dataclass(frozen=True)
@@ -80,7 +82,6 @@ class AdmissionSnapshot:
 
     hold: Hold
     hosts: tuple[HostReport, ...]
-    queue_samples: tuple[QueueSample, QueueSample]
 
 
 CrashHook = Callable[[Literal["before_rename", "after_rename"]], None]
@@ -162,17 +163,24 @@ def _validate_snapshot(snapshot: AdmissionSnapshot, now: datetime) -> None:
             _deny("stale or live glm-auto session")
         if age < 0 or age > MAX_OBSERVATION_AGE_SECONDS:
             _deny("stale host report")
-
-    first, second = snapshot.queue_samples
-    first_at = _parse_time(first.observed_at, "queue sample time")
-    second_at = _parse_time(second.observed_at, "queue sample time")
-    if (second_at - first_at).total_seconds() != SAMPLE_SEPARATION_SECONDS:
-        _deny("queue samples are not five seconds apart")
-    age = (now - second_at).total_seconds()
-    if age < 0 or age > MAX_OBSERVATION_AGE_SECONDS:
-        _deny("stale in-flight request samples")
-    if any(sample.active != 0 or sample.queued != 0 for sample in (first, second)):
-        _deny("zai queue is not idle")
+        if report.http_429:
+            _deny("authoritative host reported 429")
+        first, second = report.queue_samples
+        first_at = _parse_time(first.observed_at, "queue sample time")
+        second_at = _parse_time(second.observed_at, "queue sample time")
+        if (second_at - first_at).total_seconds() != SAMPLE_SEPARATION_SECONDS:
+            _deny("queue samples are not five seconds apart")
+        sample_age = (now - second_at).total_seconds()
+        if sample_age < 0 or sample_age > MAX_OBSERVATION_AGE_SECONDS:
+            _deny("stale in-flight request samples")
+        if first.queued > 0 and second.queued > 0:
+            _deny("positive queue persisted for two samples")
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for sample in (first, second)
+            for value in (sample.active, sample.queued)
+        ):
+            _deny("invalid queue pressure")
 
 
 def _physical_hostname() -> str:
@@ -329,9 +337,9 @@ def _atomic_replace(
             stream.flush()
             os.fsync(stream.fileno())
         current = os.stat(LEDGER_PATH.name, dir_fd=directory_fd, follow_symlinks=False)
-        if (
-            not stat.S_ISREG(current.st_mode)
-            or (current.st_dev, current.st_ino) != (previous.st_dev, previous.st_ino)
+        if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
+            previous.st_dev,
+            previous.st_ino,
         ):
             _deny("ledger changed before atomic replace")
         if crash_hook:
@@ -356,15 +364,14 @@ def _atomic_replace(
                 pass
 
 
-def admit_wave(
+def _admit_wave(
     *,
-    proposed_generation: int,
     bindings: Sequence[WorkerBinding],
     snapshot_reader: SnapshotReader,
     now: datetime,
     crash_hook: CrashHook | None = None,
 ) -> dict[str, object]:
-    """Atomically reserve one entire wave, or deny without any dispatch action."""
+    """Atomically reserve one entire wave through the private tested core."""
 
     if _physical_hostname() != AUTHORITY_HOST:
         _deny("physical host is not chiap08")
@@ -379,8 +386,7 @@ def admit_wave(
             ledger, previous = _load_ledger(directory_fd, now)
             if ledger["status"] == "live":
                 _deny("live generation is never refilled")
-            if proposed_generation != ledger["generation"] + 1:
-                _deny("non-monotonic proposed generation")
+            proposed_generation = ledger["generation"] + 1
 
             first = snapshot_reader()
             _validate_snapshot(first, now)
@@ -388,7 +394,7 @@ def admit_wave(
             _validate_snapshot(second, now)
             if second.hold != first.hold:
                 _deny("hold changed during admission")
-            if second.hosts != first.hosts or second.queue_samples != first.queue_samples:
+            if second.hosts != first.hosts:
                 _deny("conflicting admission snapshot")
 
             replacement: dict[str, object] = {
@@ -404,6 +410,42 @@ def admit_wave(
                 "workers": [asdict(binding) for binding in bindings],
             }
             _atomic_replace(directory_fd, previous, replacement, crash_hook)
+            return replacement
+        finally:
+            os.close(lock_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _reserve_wave(
+    bindings: Sequence[WorkerBinding], snapshot: AdmissionSnapshot, now: datetime
+) -> dict[str, object]:
+    """Reserve a wave from one already folded authoritative snapshot."""
+
+    return _admit_wave(bindings=bindings, snapshot_reader=lambda: snapshot, now=now)
+
+
+def _abort_wave(bindings: Sequence[WorkerBinding], now: datetime) -> dict[str, object]:
+    """Atomically mark the exact live wave complete during launch rollback."""
+
+    if _physical_hostname() != AUTHORITY_HOST:
+        _deny("physical host is not chiap08")
+    directory_fd = _safe_authority_directory()
+    try:
+        lock_fd = _open_lock(directory_fd)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            ledger, previous = _load_ledger(directory_fd, now)
+            expected = [asdict(binding) for binding in bindings]
+            if ledger["status"] != "live" or ledger["workers"] != expected:
+                _deny("rollback wave does not match live reservation")
+            replacement = {
+                **ledger,
+                "status": "complete",
+                "updated_at": now.isoformat().replace("+00:00", "Z"),
+                "workers": [],
+            }
+            _atomic_replace(directory_fd, previous, replacement, None)
             return replacement
         finally:
             os.close(lock_fd)
