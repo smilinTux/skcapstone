@@ -47,16 +47,12 @@ _BLOCKED_RE = re.compile(r"^\s*BLOCKED", re.IGNORECASE)
 
 #: Cheap line-level prefilter so a full JSON parse is only paid for lines that
 #: could carry an outcome at all.
-_OUTCOME_HINT_RE = re.compile(
-    r"verdict|outcome|result|disposition|review_decision", re.IGNORECASE
-)
+_OUTCOME_HINT_RE = re.compile(r"verdict|outcome|result|disposition|review_decision", re.IGNORECASE)
 
 #: A cited card, in the shapes workers write: `referent=card:c818148b`,
 #: `referent: c818148b`, `Referent 04b218cd`. The prefix is optional because
 #: both spellings appear on the board.
-_REFERENT_RE = re.compile(
-    r"referent[\"']?\s*[=:]?\s*[\"']?(?:card:)?([0-9a-f]{8})", re.IGNORECASE
-)
+_REFERENT_RE = re.compile(r"referent[\"']?\s*[=:]?\s*[\"']?(?:card:)?([0-9a-f]{8})", re.IGNORECASE)
 
 #: Evidence lives in the coordination store under link_key/link_value. The
 #: bare key/value spelling is a legacy layout still present in older files.
