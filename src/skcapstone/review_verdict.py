@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import glob
 import json
-import os
 import re
 from pathlib import Path
 
