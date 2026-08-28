@@ -294,3 +294,171 @@ def test_an_unrelated_label_does_not_suppress_a_return(tmp_path):
     )
     returnable, _, _ = find_returnable(tmp_path, is_done=lambda p: True, is_open=lambda c: True)
     assert returnable == ["aaa"]
+
+
+# --- a block answered by its own successor ------------------------------------
+
+from skcapstone.blocker_referent import _verdict_head, find_stale_blocks  # noqa: E402
+
+
+def test_a_pass_that_mentions_what_it_supersedes_is_still_a_pass():
+    """The bug this caused: a real PASS was reported as STILL BLOCKED."""
+    assert (
+        _verdict_head("PASS|independent-rereview=0380f134|historical-BLOCKED-superseded") == "PASS"
+    )
+    assert _verdict_head("BLOCKED blocked_on=card referent=card:abc12345") == "BLOCKED"
+
+
+def test_a_block_is_cleared_when_its_named_successor_later_passed(tmp_path):
+    write_events(
+        tmp_path,
+        [
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:00",
+                "link_key": "verdict",
+                "link_value": "BLOCKED. runbook contradicts custody",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:01",
+                "link_key": "independent_rereview",
+                "link_value": "01cf9986",
+                "action": "link",
+            },
+            {
+                "card_id": "01cf9986",
+                "ts": "2026-08-23T07:17:00",
+                "link_key": "verdict",
+                "link_value": "PASS. verified clean.",
+            },
+        ],
+    )
+    stale = find_stale_blocks(tmp_path, is_open=lambda c: True)
+    assert [r["card"] for r in stale] == ["aaa"]
+    assert stale[0]["successor"] == "01cf9986"
+
+
+def test_a_successor_that_passed_BEFORE_the_block_does_not_clear_it(tmp_path):
+    """The dangerous case: an older PASS answered a previous refusal, not this one."""
+    write_events(
+        tmp_path,
+        [
+            {
+                "card_id": "01cf9986",
+                "ts": "2026-08-23T06:00:00",
+                "link_key": "verdict",
+                "link_value": "PASS. verified clean.",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:00",
+                "link_key": "verdict",
+                "link_value": "BLOCKED. a new and different problem",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:01",
+                "link_key": "independent_rereview",
+                "link_value": "01cf9986",
+                "action": "link",
+            },
+        ],
+    )
+    assert find_stale_blocks(tmp_path, is_open=lambda c: True) == []
+
+
+def test_a_successor_that_also_blocked_does_not_clear_it(tmp_path):
+    write_events(
+        tmp_path,
+        [
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:00",
+                "link_key": "verdict",
+                "link_value": "BLOCKED.",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:01",
+                "link_key": "rereview_card",
+                "link_value": "01cf9986",
+                "action": "link",
+            },
+            {
+                "card_id": "01cf9986",
+                "ts": "2026-08-23T07:17:00",
+                "link_key": "verdict",
+                "link_value": "BLOCKED. same problem persists",
+            },
+        ],
+    )
+    assert find_stale_blocks(tmp_path, is_open=lambda c: True) == []
+
+
+def test_a_card_whose_own_latest_verdict_is_PASS_is_not_stale(tmp_path):
+    write_events(
+        tmp_path,
+        [
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:00",
+                "link_key": "verdict",
+                "link_value": "BLOCKED.",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:01",
+                "link_key": "rereview_card",
+                "link_value": "01cf9986",
+                "action": "link",
+            },
+            {
+                "card_id": "01cf9986",
+                "ts": "2026-08-23T07:17:00",
+                "link_key": "verdict",
+                "link_value": "PASS.",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-28T22:39:00",
+                "link_key": "verdict",
+                "link_value": "PASS|supersedes historical-BLOCKED",
+            },
+        ],
+    )
+    assert find_stale_blocks(tmp_path, is_open=lambda c: True) == []
+
+
+def test_already_labelled_for_this_block_is_not_re_reported(tmp_path):
+    write_events(
+        tmp_path,
+        [
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:00",
+                "link_key": "verdict",
+                "link_value": "BLOCKED.",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T07:12:01",
+                "link_key": "rereview_card",
+                "link_value": "01cf9986",
+                "action": "link",
+            },
+            {
+                "card_id": "01cf9986",
+                "ts": "2026-08-23T07:17:00",
+                "link_key": "verdict",
+                "link_value": "PASS.",
+            },
+            {
+                "card_id": "aaa",
+                "ts": "2026-08-23T08:00:00",
+                "action": "add_label",
+                "label": "successor-passed",
+            },
+        ],
+    )
+    assert find_stale_blocks(tmp_path, is_open=lambda c: True) == []

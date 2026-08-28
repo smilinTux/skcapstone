@@ -21,9 +21,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from skcapstone.blocker_referent import card_dir_lookup, find_returnable  # noqa: E402
+from skcapstone.blocker_referent import (  # noqa: E402
+    card_dir_lookup,
+    find_returnable,
+    find_stale_blocks,
+)
 
 LABEL = "blocker-now-done"
+STALE_LABEL = "successor-passed"
 
 
 def skcapstone_bin() -> str:
@@ -65,11 +70,45 @@ def main() -> int:
         return is_done(str(card_id)[:8]) is False
 
     returnable, still_blocked, missing = find_returnable(home, is_done, is_open)
+    stale = find_stale_blocks(home, is_open)
 
     print("blocker-referent sweep")
     print("  returnable (every cited blocker is DONE): %d" % len(returnable))
     print("  still genuinely blocked:                  %d" % still_blocked)
     print("  citing a card that does not exist:        %d" % missing)
+
+    if stale:
+        print("  blocks answered by their own successor:      %d" % len(stale))
+        for row in stale:
+            print(
+                "    %s blocked %s, %s %s passed %s"
+                % (
+                    row["card"],
+                    row["blocked_at"][:16],
+                    row["link"],
+                    row["successor"],
+                    row["passed_at"][:16],
+                )
+            )
+        if args.go:
+            done = 0
+            for row in stale:
+                r = subprocess.run(
+                    [
+                        skcapstone_bin(),
+                        "coord",
+                        "label",
+                        row["card"],
+                        STALE_LABEL,
+                        "--agent",
+                        args.agent,
+                    ],
+                    capture_output=True,
+                )
+                done += 1 if r.returncode == 0 else 0
+            print("  flagged %d of %d for verdict reconciliation" % (done, len(stale)))
+        else:
+            print("  dry run; --go flags these %d for verdict reconciliation" % len(stale))
 
     if not returnable:
         return 0

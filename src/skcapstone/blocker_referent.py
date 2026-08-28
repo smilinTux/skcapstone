@@ -54,6 +54,23 @@ _OUTCOME_HINT_RE = re.compile(r"verdict|outcome|result|disposition|review_decisi
 #: both spellings appear on the board.
 _REFERENT_RE = re.compile(r"referent[\"']?\s*[=:]?\s*[\"']?(?:card:)?([0-9a-f]{8})", re.IGNORECASE)
 
+#: Link keys that name the card carrying out a repair or an independent
+#: re-review of THIS card. When one of those passes, the block that named it is
+#: answered, but nothing on the board propagates that back to the parent.
+#:
+#: MEASURED 2026-08-28. Twelve cards read BLOCKED whose own named successor had
+#: already PASSED, most within fifteen minutes of the block:
+#:
+#:     72d9bfe5  blocked 07:12  independent_rereview 01cf9986 PASS 07:17
+#:     8e33f3c3  blocked 07:53  rereview_card        473f24af PASS 08:04
+#:     2ead9e49  blocked 09:48  successor_engineering f4d669ea PASS 09:58
+#:
+#: The fixes landed almost immediately. The verdicts were never updated, so the
+#: board carried days of walls that no longer existed.
+_SUCCESSOR_KEY_RE = re.compile(
+    r"(repair_card|repair|rereview|re_review|reviewed_by|successor)", re.IGNORECASE
+)
+
 #: Evidence lives in the coordination store under link_key/link_value. The
 #: bare key/value spelling is a legacy layout still present in older files.
 _KEY_FIELDS = ("link_key", "key")
@@ -193,6 +210,108 @@ def find_returnable(
         else:
             still_blocked += 1
     return sorted(returnable), still_blocked, missing
+
+
+def _verdict_head(value: str) -> str:
+    """The leading token of a verdict, uppercased.
+
+    A PASS routinely explains what it supersedes, so it contains the word
+    BLOCKED in prose. Substring matching reads those as refusals; only the
+    leading token is the verdict.
+    """
+    head = str(value or "").strip()
+    for sep in ("|", ";", ":", ",", "."):
+        head = head.split(sep)[0]
+    return head.strip().split()[0].upper() if head.strip() else ""
+
+
+def latest_outcomes(home: Path) -> dict[str, tuple[str, str]]:
+    """Every card's most recent outcome, as {card_id: (timestamp, value)}."""
+    latest: dict[str, tuple[str, str]] = {}
+    events = home / "coordination" / "card_events"
+    for path in sorted(glob.glob(str(events / "*.jsonl"))):
+        if ".bak" in path:
+            continue
+        with open(path, errors="ignore") as fh:
+            for line in fh:
+                if not _OUTCOME_HINT_RE.search(line):
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not _OUTCOME_KEY_RE.search(_first(event, _KEY_FIELDS)):
+                    continue
+                card_id = str(event.get("card_id") or "")[:8]
+                value = _first(event, _VALUE_FIELDS)
+                if not card_id or not value:
+                    continue
+                stamp = str(event.get("ts") or "")
+                if card_id not in latest or stamp >= latest[card_id][0]:
+                    latest[card_id] = (stamp, value)
+    return latest
+
+
+def successor_links(home: Path) -> dict[str, list[tuple[str, str]]]:
+    """Cards each card names as its repair or re-review, as {card: [(key, target)]}."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    events = home / "coordination" / "card_events"
+    for path in sorted(glob.glob(str(events / "*.jsonl"))):
+        if ".bak" in path:
+            continue
+        with open(path, errors="ignore") as fh:
+            for line in fh:
+                if "link" not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                key = _first(event, _KEY_FIELDS)
+                if not _SUCCESSOR_KEY_RE.search(key):
+                    continue
+                card_id = str(event.get("card_id") or "")[:8]
+                target = _first(event, _VALUE_FIELDS).strip()[:8]
+                if card_id and len(target) == 8 and target != card_id:
+                    out.setdefault(card_id, []).append((key, target))
+    return out
+
+
+def find_stale_blocks(home: Path, is_open, label: str = "successor-passed") -> list[dict]:
+    """Cards reading BLOCKED whose own named successor has since PASSED.
+
+    The successor's PASS must come AFTER the block. A successor that passed
+    earlier answered some previous refusal, not this one, and treating it as
+    current would clear a live block on stale evidence.
+    """
+    outcomes = latest_outcomes(home)
+    links = successor_links(home)
+    labelled_at = last_labelled(home, label)
+    stale: list[dict] = []
+    for card_id, (stamp, verdict) in outcomes.items():
+        if not _verdict_head(verdict).startswith("BLOCK"):
+            continue
+        if not is_open(card_id):
+            continue
+        if labelled_at.get(card_id, "") >= stamp and labelled_at.get(card_id):
+            continue
+        for key, target in links.get(card_id, []):
+            hit = outcomes.get(target)
+            if not hit:
+                continue
+            t_stamp, t_verdict = hit
+            if _verdict_head(t_verdict).startswith("PASS") and t_stamp > stamp:
+                stale.append(
+                    {
+                        "card": card_id,
+                        "blocked_at": stamp,
+                        "link": key,
+                        "successor": target,
+                        "passed_at": t_stamp,
+                    }
+                )
+                break
+    return sorted(stale, key=lambda r: r["card"])
 
 
 def card_dir_lookup(home: Path):
