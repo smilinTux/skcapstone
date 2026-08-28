@@ -241,6 +241,12 @@ def test_successful_launch_records_exact_claim_generation() -> None:
     assert fields("pi-codex-chiap02-deadbeef", "", True) == ""
 
 
+def test_every_fleet_release_call_supplies_expected_revision() -> None:
+    """The reaper, worker trap, and launch-failure path all use the fence."""
+    source = ROTATE.read_text(encoding="utf-8")
+    assert source.count("--expected-claim-revision") == 3
+
+
 def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
     tmp_path: Path,
 ) -> None:
