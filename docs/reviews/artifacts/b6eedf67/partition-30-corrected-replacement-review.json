@@ -3,7 +3,7 @@
     "ac1": "PASS",
     "ac2": "PASS",
     "ac3": "BLOCKED",
-    "ac4": "PASS after durable publication and notification recorded separately"
+    "ac4": "PASS: durable hashed review artifact published in PR 255; jarvis and lumina notification receipts are recorded in the shared evidence envelope."
   },
   "all_records_review": {
     "actions_applied": [],
@@ -59,6 +59,7 @@
     }
   ],
   "external_action_applied": false,
+  "pr_url": "https://github.com/smilinTux/skcapstone/pull/255",
   "producer_card_id": "a743f500",
   "repository_change": true,
   "review_card_id": "b6eedf67",
