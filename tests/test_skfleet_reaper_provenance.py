@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import collections
 import datetime
 import glob
 import json
@@ -11,6 +12,8 @@ import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -27,10 +30,12 @@ def _load_functions(*names: str) -> dict[str, object]:
     assert set(wanted) == set(names)
     module = ast.Module(body=[wanted[name] for name in names], type_ignores=[])
     namespace: dict[str, object] = {
+        "collections": collections,
         "datetime": datetime,
         "glob": glob,
         "json": json,
         "os": os,
+        "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
     }
     exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
@@ -41,8 +46,9 @@ def _reaper_fixture(
     *,
     card_id: str,
     owner: str,
-    claim_revision: str,
+    claim_revision: str | None,
     launch_revision: str | None,
+    launch_lines: list[str] | None = None,
 ) -> tuple[dict[str, object], list[list[str]], list[str]]:
     """Build one isolated claimed card and a fake release command."""
     cards = tmp_path / "cards"
@@ -50,9 +56,8 @@ def _reaper_fixture(
     events = card / "events"
     events.mkdir(parents=True)
     (card / "core.json").write_text("{}\n", encoding="utf-8")
-    claim = {
+    claim: dict[str, object] = {
         "action": "claim",
-        "claim_revision": claim_revision,
         "event_id": "claim-event",
         "owner": owner,
         "seq": 0,
@@ -60,6 +65,8 @@ def _reaper_fixture(
             time.time() - 900, tz=datetime.timezone.utc
         ).isoformat(),
     }
+    if claim_revision is not None:
+        claim["claim_revision"] = claim_revision
     (events / "claim.jsonl").write_text(json.dumps(claim) + "\n", encoding="utf-8")
 
     live = tmp_path / "live"
@@ -70,12 +77,17 @@ def _reaper_fixture(
     evidence = tmp_path / "evidence"
     actions = evidence / "20260828T180000Z" / "actions.log"
     actions.parent.mkdir(parents=True)
-    if launch_revision is not None:
-        actions.write_text(
-            f"LAUNCHED|chiap02|codex-auto-{card_id}|{card_id}|lane=codex"
-            f"|model=sk-codex|owner={owner}|claim_revision={launch_revision}\n",
-            encoding="utf-8",
-        )
+    if launch_lines is None:
+        launch_lines = []
+        if launch_revision is not None:
+            launch_lines.append(
+                f"LAUNCHED|chiap02|codex-auto-{card_id}|{card_id}|lane=codex"
+                f"|model=sk-codex|owner={owner}|claim_revision={launch_revision}"
+            )
+    actions.write_text(
+        "".join(f"{line}\n" for line in launch_lines),
+        encoding="utf-8",
+    )
 
     namespace = _load_functions(
         "_claim_identity",
@@ -135,6 +147,90 @@ def test_manual_claim_with_no_exact_launch_generation_is_preserved(tmp_path: Pat
     assert any(message.startswith("REAP_UNPROVEN|") for message in messages)
 
 
+def test_missing_claim_revision_is_never_replaced_by_event_id(tmp_path: Path) -> None:
+    """A legacy claim event ID is not an exact claim revision."""
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="93220ffc",
+        owner="codex-chiap08-93220ffc",
+        claim_revision=None,
+        launch_revision="claim-event",
+    )
+
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any("claim revision missing" in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    "launch_lines",
+    [
+        [
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|"
+            "owner=pi-codex-chiap02-deadbeef|claim_revision=revision-1"
+        ],
+        [
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=codex|"
+            "model=sk-codex|owner=wrong|owner=pi-codex-chiap02-deadbeef|"
+            "claim_revision=wrong|claim_revision=revision-1"
+        ],
+        [
+            "LAUNCHED|unknown|codex-auto-deadbeef|deadbeef|lane=codex|"
+            "model=sk-codex|owner=pi-codex-unknown-deadbeef|"
+            "claim_revision=revision-1"
+        ],
+        [
+            "LAUNCHED|chiap02|wrong-session|deadbeef|lane=codex|"
+            "model=sk-codex|owner=pi-codex-chiap02-deadbeef|"
+            "claim_revision=revision-1"
+        ],
+        [
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=codex|"
+            "model=sk-codex|owner=pi-codex-chiap03-deadbeef|"
+            "claim_revision=revision-1"
+        ],
+        [
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=unknown|"
+            "model=sk-codex|owner=pi-unknown-chiap02-deadbeef|"
+            "claim_revision=revision-1"
+        ],
+        [
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=codex|"
+            "model=sk-codex|owner=pi-codex-chiap02-deadbeef|"
+            "claim_revision=revision-1",
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=codex|"
+            "model=sk-codex|owner=pi-codex-chiap02-deadbeef|"
+            "claim_revision=revision-1",
+        ],
+    ],
+    ids=(
+        "minimal",
+        "duplicate-fields",
+        "unknown-host",
+        "wrong-session",
+        "wrong-owner",
+        "unknown-lane",
+        "duplicate-records",
+    ),
+)
+def test_malformed_or_duplicate_launch_evidence_fails_closed(
+    tmp_path: Path, launch_lines: list[str]
+) -> None:
+    """Only one exact launcher-schema record proves fleet provenance."""
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner="pi-codex-chiap02-deadbeef",
+        claim_revision="revision-1",
+        launch_revision=None,
+        launch_lines=launch_lines,
+    )
+
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any(message.startswith("REAP_UNPROVEN|") for message in messages)
+
+
 def test_successful_launch_records_exact_claim_generation() -> None:
     """Only a successful launch renders owner and revision provenance."""
     fields = _load_functions("_launch_claim_fields")["_launch_claim_fields"]
@@ -168,6 +264,8 @@ def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
             "deadbeef",
             "--owner",
             owner,
+            "--expected-claim-revision",
+            revision,
             "--agent",
             "fleet-liveness-reaper",
         ]
@@ -190,6 +288,21 @@ def test_quorum_and_fresh_owner_fences_still_fail_closed(tmp_path: Path) -> None
     assert released == []
 
     namespace["live_report"] = lambda: (time.time(), set(), 3)
+    namespace["_load_ineffective"] = lambda: {"deadbeef"}
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+
+    namespace["_load_ineffective"] = lambda: set()
+    namespace["live_report"] = lambda: (time.time(), {"deadbeef"}, 3)
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+
+    namespace["live_report"] = lambda: (time.time(), set(), 3)
+    namespace["_current_claim"] = lambda _card: (owner, time.time())
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+
+    namespace["_current_claim"] = lambda _card: (owner, time.time() - 900)
     namespace["_current_claim_identity_fresh"] = lambda _card: (
         "pi-codex-chiap03-deadbeef",
         time.time() - 900,
