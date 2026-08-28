@@ -1147,6 +1147,9 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     # coord claim is a task command. ITIL incidents and problems have their own
     # lifecycle and must not be sent through a command that rejects their IDs.
     if not _coord_task_claimable(core): continue
+    # Keep the closed kind allowlist as a stable integration seam for adjacent
+    # selector guards. The task-only check above is the stricter claim boundary.
+    if core.get("kind") not in ("task","incident","problem"): continue
     title=str(core.get("title") or "")
     labels=folded_labels(cid,core)
     blob=(title+" "+json.dumps(labels)).upper()
