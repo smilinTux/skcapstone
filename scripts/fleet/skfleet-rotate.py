@@ -850,6 +850,82 @@ def reap_dead_claims():
 
 reap_dead_claims()
 
+# ---- close work that has been reviewed and passed --------------------------
+# A card that produced a candidate and had it independently reviewed and PASSED
+# is finished, and nothing moved it. Measured 2026-08-28: ac2e387c carried
+# PASS_FOR_REVIEW with an independent review recorded PASS and sat open until a
+# human joined the two stores by hand. The evidence for "done" was complete and
+# spread across two files, and no code ever read them together.
+#
+# The join is deliberately strict, and every clause is load-bearing because the
+# failure mode here is exposing a FAIL as a PASS:
+#   - the parent's own latest outcome must start with PASS
+#   - a review card must NAME the parent and be COMPLETE
+#   - that review's own latest outcome must be exactly PASS, not PASS_FOR_REVIEW,
+#     which only means a candidate is ready for someone else to look at
+# A BLOCKED review, or a review that recorded nothing, leaves the parent open.
+# Measured on the same board: 2 parents qualified, 3 were held by a BLOCKED
+# review and 2 by a silent one, which is the discrimination this is for.
+_PASS_ONLY_RE = re.compile(r"^\s*PASS(?!_FOR)", re.I)
+_PASS_ANY_RE  = re.compile(r"^\s*PASS", re.I)
+_REVIEW_TITLE = "[REVIEW"
+_ID_RE = re.compile(r"\b([0-9a-f]{8})\b")
+
+def _reviews_by_parent():
+    """Map parent card id -> review card ids that name it."""
+    out = {}
+    for cd in glob.glob(CARDS + "/*"):
+        cid = os.path.basename(cd)
+        cp = os.path.join(cd, "core.json")
+        if not os.path.exists(cp): continue
+        try: core = json.load(open(cp))
+        except Exception: continue
+        title = str(core.get("title") or "")
+        if _REVIEW_TITLE not in title.upper(): continue
+        blob = title + " " + str(core.get("description") or "")
+        for mm in _ID_RE.finditer(blob):
+            pid = mm.group(1)
+            if pid != cid:
+                out.setdefault(pid, set()).add(cid)
+    return out
+
+def close_reviewed_parents():
+    """Complete cards whose independent review is complete and PASSED."""
+    outcomes = _load_outcomes()
+    closed = 0
+    for parent, reviews in _reviews_by_parent().items():
+        if not os.path.isdir(os.path.join(CARDS, parent)): continue
+        if lifecycle_state(parent) != "open": continue
+        _pts, pval = outcomes.get(parent, (None, None))
+        if not (pval and _PASS_ANY_RE.match(str(pval))): continue
+        for rev in sorted(reviews):
+            if lifecycle_state(rev) != "complete": continue
+            _rts, rval = outcomes.get(rev, (None, None))
+            rv = str(rval or "")
+            if not rv.strip() or not _PASS_ONLY_RE.match(rv):
+                continue          # BLOCKED, or said nothing: the parent stays open
+            r = subprocess.run(
+                [SKC, "coord", "link", parent, "review_join",
+                 "closed on joined evidence: own outcome %s; independent review %s "
+                 "is complete with verdict %s" % (str(pval)[:40], rev, rv[:40]),
+                 "--agent", "fleet-review-closer"],
+                capture_output=True, text=True)
+            c = subprocess.run(
+                [SKC, "coord", "complete", parent, "--agent", "fleet-review-closer"],
+                capture_output=True, text=True)
+            if c.returncode == 0:
+                _rows.pop(parent, None)
+                closed += 1
+                log(d, "CLOSED_REVIEWED|%s|%s|review=%s|%s" % (HOST, parent, rev, rv[:40]))
+            else:
+                log(d, "CLOSE_FAILED|%s|%s|%s" % (HOST, parent, (c.stderr or "").strip()[:110]))
+            break
+    if closed:
+        log(d, "CLOSE_REVIEWED|%s|closed=%d" % (HOST, closed))
+    return closed
+
+close_reviewed_parents()
+
 _PINNED_IDS=set()
 pool=[]; blocked=0; foreign_skipped=0; skipped_unclaimable=0; skipped_terminal=0; skipped_blocked=0; skipped_review=0; pinned_elsewhere=0
 for cd in sorted(glob.glob(CARDS+"/*")):
