@@ -83,6 +83,8 @@ printf '%d|%d\n' "${{#candidate_ids[@]}}" "$candidate_manifests_missing"
         env={**os.environ, "HOME": str(tmp_path)},
     )
     assert result.stdout.strip() == "3|0"
+    assert "POOL_IDS|%s|ids=%s" in ROTATE.read_text(encoding="utf-8")
+    assert 'grep "POOL_IDS|"' in WATCH.read_text(encoding="utf-8")
 
 
 def test_legacy_pool_is_reported_missing_without_double_counting(

@@ -1219,14 +1219,15 @@ for cd in glob.glob(CARDS+"/*"):
     for dep in folded_dependencies(ocid,oc):
         unblocks[str(dep)]=unblocks.get(str(dep),0)+1
 for row in pool: row.append(unblocks.get(row[2],0))
+pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
+log(d,"POOL_IDS|%s|ids=%s"%(HOST,pool_ids))
 # lane, then most-unblocking first, then priority, then stable id
 pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))
 lc={0:0,1:0,2:0}
 for x in pool: lc[x[0]]+=1
 top=pool[0][4] if pool else 0
-pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
-log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d top_unblocks=%d ids=%s"
-      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,top,pool_ids))
+log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d top_unblocks=%d"
+      %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,top))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing

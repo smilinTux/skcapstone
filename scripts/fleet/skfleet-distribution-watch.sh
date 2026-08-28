@@ -38,9 +38,9 @@ sample() {
   reset_candidate_inventory
   for host in "${hosts[@]}"; do
     if [[ "$host" == chiap08 ]]; then
-      out=$(bash -lc 'workers=$(tmux ls -F "#{session_name}" 2>/dev/null | grep -Ec "^(codex-auto-|glm-auto-)" || true); result=$(systemctl --user show skfleet-rotate.service -p Result --value); pool=$(journalctl --user -u skfleet-rotate.service -n 40 --no-pager -o cat | grep "POOL|" | tail -1); printf "%s|%s|%s\n" "$workers" "$result" "$pool"')
+      out=$(bash -lc 'workers=$(tmux ls -F "#{session_name}" 2>/dev/null | grep -Ec "^(codex-auto-|glm-auto-)" || true); result=$(systemctl --user show skfleet-rotate.service -p Result --value); pool=$(journalctl --user -u skfleet-rotate.service -n 40 --no-pager -o cat | grep "POOL|" | tail -1); pool_ids=$(journalctl --user -u skfleet-rotate.service -n 40 --no-pager -o cat | grep "POOL_IDS|" | tail -1); printf "%s|%s|%s %s\n" "$workers" "$result" "$pool" "$pool_ids"')
     else
-      out=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" 'workers=$(tmux ls -F "#{session_name}" 2>/dev/null | grep -Ec "^(codex-auto-|glm-auto-)" || true); result=$(systemctl --user show skfleet-rotate.service -p Result --value); pool=$(journalctl --user -u skfleet-rotate.service -n 40 --no-pager -o cat | grep "POOL|" | tail -1); printf "%s|%s|%s\n" "$workers" "$result" "$pool"' 2>/dev/null) || out="0|unreachable|"
+      out=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" 'workers=$(tmux ls -F "#{session_name}" 2>/dev/null | grep -Ec "^(codex-auto-|glm-auto-)" || true); result=$(systemctl --user show skfleet-rotate.service -p Result --value); pool=$(journalctl --user -u skfleet-rotate.service -n 40 --no-pager -o cat | grep "POOL|" | tail -1); pool_ids=$(journalctl --user -u skfleet-rotate.service -n 40 --no-pager -o cat | grep "POOL_IDS|" | tail -1); printf "%s|%s|%s %s\n" "$workers" "$result" "$pool" "$pool_ids"' 2>/dev/null) || out="0|unreachable|"
     fi
     IFS='|' read -r workers result pool <<<"$out"
     [[ "$workers" =~ ^[0-9]+$ ]] || workers=0
