@@ -19,6 +19,27 @@ ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 
+def _claim_event(
+    owner: str,
+    claim_revision: str,
+    timestamp: str | None,
+) -> dict[str, object]:
+    """Return one full-schema CardStore claim event."""
+    event: dict[str, object] = {
+        "event_id": f"claim-{claim_revision}",
+        "writer": owner,
+        "node": "chiap02",
+        "seq": 0,
+        "action": "claim",
+        "owner": owner,
+        "claim_revision": claim_revision,
+        "transition_id": f"transition-{claim_revision}",
+    }
+    if timestamp is not None:
+        event["ts"] = timestamp
+    return event
+
+
 def _load_functions(*names: str) -> dict[str, object]:
     """Load selected functions without executing the fleet launcher."""
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
@@ -55,18 +76,30 @@ def _reaper_fixture(
     card = cards / card_id
     events = card / "events"
     events.mkdir(parents=True)
-    (card / "core.json").write_text("{}\n", encoding="utf-8")
-    claim: dict[str, object] = {
-        "action": "claim",
-        "event_id": "claim-event",
-        "owner": owner,
-        "seq": 0,
-        "ts": datetime.datetime.fromtimestamp(
-            time.time() - 900, tz=datetime.timezone.utc
-        ).isoformat(),
+    core = {
+        "id": card_id,
+        "kind": "task",
+        "title": "Full-schema reaper fixture",
+        "description": "Synthetic task used only by the isolated test.",
+        "created_by": "pytest",
+        "created_at": "2026-08-28T18:00:00+00:00",
+        "acceptance_criteria": [],
+        "dependencies": [],
+        "initial_priority": "high",
+        "initial_swimlane": "feature",
+        "initial_labels": ["source-only"],
+        "meta": {},
     }
+    (card / "core.json").write_text(json.dumps(core) + "\n", encoding="utf-8")
+    claim = _claim_event(
+        owner,
+        claim_revision or "missing-revision",
+        datetime.datetime.fromtimestamp(time.time() - 900, tz=datetime.timezone.utc).isoformat(),
+    )
     if claim_revision is not None:
         claim["claim_revision"] = claim_revision
+    else:
+        claim.pop("claim_revision")
     (events / "claim.jsonl").write_text(json.dumps(claim) + "\n", encoding="utf-8")
 
     live = tmp_path / "live"
@@ -130,6 +163,19 @@ def _reaper_fixture(
         }
     )
     return namespace, released, messages
+
+
+def _replace_fresh_claim(
+    tmp_path: Path,
+    *,
+    owner: str,
+    claim_revision: str,
+    timestamp: str | None,
+) -> None:
+    """Replace the on-disk event seen only by the fresh CardStore read."""
+    event = _claim_event(owner, claim_revision, timestamp)
+    path = tmp_path / "cards" / "deadbeef" / "events" / "claim.jsonl"
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
 
 
 def test_manual_claim_with_no_exact_launch_generation_is_preserved(tmp_path: Path) -> None:
@@ -304,11 +350,21 @@ def test_quorum_and_fresh_owner_fences_still_fail_closed(tmp_path: Path) -> None
     assert released == []
 
     namespace["live_report"] = lambda: (time.time(), set(), 3)
-    namespace["_current_claim"] = lambda _card: (owner, time.time())
+    recent_event = _claim_event(
+        owner,
+        revision,
+        datetime.datetime.fromtimestamp(time.time(), tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["event_rows"] = lambda _card: [recent_event]
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
 
-    namespace["_current_claim"] = lambda _card: (owner, time.time() - 900)
+    old_event = _claim_event(
+        owner,
+        revision,
+        datetime.datetime.fromtimestamp(time.time() - 900, tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["event_rows"] = lambda _card: [old_event]
     namespace["_current_claim_identity_fresh"] = lambda _card: (
         "pi-codex-chiap03-deadbeef",
         time.time() - 900,
@@ -316,3 +372,182 @@ def test_quorum_and_fresh_owner_fences_still_fail_closed(tmp_path: Path) -> None
     )
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
+
+
+def test_newer_same_owner_recent_claim_gets_its_own_grace(tmp_path: Path) -> None:
+    """A fresh same-owner generation cannot inherit the cached generation's age."""
+    owner = "pi-codex-chiap02-deadbeef"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="old-revision",
+        launch_revision="new-revision",
+    )
+    old_event = _claim_event(
+        owner,
+        "old-revision",
+        datetime.datetime.fromtimestamp(time.time() - 900, tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["event_rows"] = lambda _card: [old_event]
+    _replace_fresh_claim(
+        tmp_path,
+        owner=owner,
+        claim_revision="new-revision",
+        timestamp=datetime.datetime.fromtimestamp(
+            time.time() - 30, tz=datetime.timezone.utc
+        ).isoformat(),
+    )
+
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any(message.startswith("REAP_RECLAIMED|") for message in messages)
+
+
+def test_newer_same_owner_old_claim_is_still_a_different_generation(
+    tmp_path: Path,
+) -> None:
+    """A newer revision is preserved even when its own timestamp is old."""
+    owner = "pi-codex-chiap02-deadbeef"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="old-revision",
+        launch_revision="new-revision",
+    )
+    old_event = _claim_event(
+        owner,
+        "old-revision",
+        datetime.datetime.fromtimestamp(time.time() - 1200, tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["event_rows"] = lambda _card: [old_event]
+    _replace_fresh_claim(
+        tmp_path,
+        owner=owner,
+        claim_revision="new-revision",
+        timestamp=datetime.datetime.fromtimestamp(
+            time.time() - 900, tz=datetime.timezone.utc
+        ).isoformat(),
+    )
+
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any(message.startswith("REAP_RECLAIMED|") for message in messages)
+
+
+@pytest.mark.parametrize(
+    ("boundary_offset", "expected_releases"),
+    [(-0.001, 0), (0.0, 1), (0.001, 1)],
+    ids=("just-before", "at-boundary", "after-boundary"),
+)
+def test_fresh_same_generation_uses_exact_grace_boundary(
+    tmp_path: Path,
+    boundary_offset: float,
+    expected_releases: int,
+) -> None:
+    """The fresh timestamp is releasable exactly at and after grace."""
+    owner = "pi-codex-chiap02-deadbeef"
+    revision = "same-revision"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision=revision,
+        launch_revision=revision,
+    )
+    reference = float(int(time.time()))
+    cached_event = _claim_event(
+        owner,
+        revision,
+        datetime.datetime.fromtimestamp(reference - 900, tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["event_rows"] = lambda _card: [cached_event]
+    fresh_ts = reference - namespace["CLAIM_GRACE"]
+    _replace_fresh_claim(
+        tmp_path,
+        owner=owner,
+        claim_revision=revision,
+        timestamp=datetime.datetime.fromtimestamp(fresh_ts, tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["live_report"] = lambda: (
+        fresh_ts + namespace["CLAIM_GRACE"] + boundary_offset,
+        set(),
+        3,
+    )
+
+    assert namespace["reap_dead_claims"]() == expected_releases
+    assert len(released) == expected_releases
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [None, "not-a-timestamp", "2026-08-28T20:00:00"],
+    ids=("missing", "malformed", "timezone-ambiguous"),
+)
+def test_missing_malformed_or_ambiguous_fresh_timestamp_fails_closed(
+    tmp_path: Path,
+    timestamp: str | None,
+) -> None:
+    """Only an unambiguous aware fresh claim timestamp can authorize release."""
+    owner = "pi-codex-chiap02-deadbeef"
+    revision = "same-revision"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision=revision,
+        launch_revision=revision,
+    )
+    cached_event = _claim_event(
+        owner,
+        revision,
+        datetime.datetime.fromtimestamp(time.time() - 900, tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["event_rows"] = lambda _card: [cached_event]
+    _replace_fresh_claim(
+        tmp_path,
+        owner=owner,
+        claim_revision=revision,
+        timestamp=timestamp,
+    )
+
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any("claim timestamp invalid" in message for message in messages)
+
+
+def test_future_fresh_timestamp_fails_closed_on_clock_skew(tmp_path: Path) -> None:
+    """A future claim is never aged by a future liveness report."""
+    owner = "pi-codex-chiap02-deadbeef"
+    revision = "same-revision"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision=revision,
+        launch_revision=revision,
+    )
+    reference = time.time()
+    future_ts = reference + 60
+    cached_event = _claim_event(
+        owner,
+        revision,
+        datetime.datetime.fromtimestamp(reference - 900, tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["event_rows"] = lambda _card: [cached_event]
+    _replace_fresh_claim(
+        tmp_path,
+        owner=owner,
+        claim_revision=revision,
+        timestamp=datetime.datetime.fromtimestamp(future_ts, tz=datetime.timezone.utc).isoformat(),
+    )
+    namespace["live_report"] = lambda: (
+        future_ts + namespace["CLAIM_GRACE"],
+        set(),
+        3,
+    )
+
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any(message.startswith("REAP_CLOCK_SKEW|") for message in messages)
