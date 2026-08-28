@@ -269,17 +269,36 @@ def register_coord_commands(main: click.Group) -> None:
     @coord.command("release-claim")
     @click.argument("task_id")
     @click.option("--owner", required=True, help="Exact current claim owner.")
+    @click.option(
+        "--expected-claim-revision",
+        required=True,
+        help="Exact current claim revision. A newer generation is never released.",
+    )
     @click.option("--agent", required=True, help="Audited release actor.")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_release_claim(task_id, owner, agent, home):
-        """Release one active claim without completing the task."""
+    def coord_release_claim(task_id, owner, expected_claim_revision, agent, home):
+        """Release one exact claim generation without completing the task."""
+        from skcoord.card_store import card_mutation_lock, current_claim_precondition
+        from skcoord.coordination import _board_mutation_lock
+
         from ..coordination import Board
 
         validate_task_id(task_id)
         validate_agent_name(owner)
         validate_agent_name(agent)
+        if not str(expected_claim_revision).strip():
+            raise click.ClickException("expected claim revision must not be empty")
+        home_path = Path(home).expanduser()
+        board = Board(home_path)
         try:
-            changed = Board(Path(home).expanduser()).release_claim(owner, task_id, actor=agent)
+            with _board_mutation_lock(home_path), card_mutation_lock(home_path, task_id):
+                current_revision = current_claim_precondition(home_path, task_id, owner)
+                if current_revision != expected_claim_revision:
+                    raise ValueError(
+                        f"claim revision conflict for {task_id}: expected "
+                        f"{expected_claim_revision}, current {current_revision}"
+                    )
+                changed = board._release_claim_locked(owner, task_id, actor=agent)
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
         outcome = "Released" if changed else "Already released"

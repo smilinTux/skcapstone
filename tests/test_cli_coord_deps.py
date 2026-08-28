@@ -5,6 +5,7 @@ from pathlib import Path
 
 import click
 from click.testing import CliRunner
+from skcoord.card_store import current_claim_precondition
 from skcoord.lifecycle import transition_task
 
 from skcapstone.cli.coord import register_coord_commands
@@ -167,11 +168,12 @@ def test_add_dependency_command_blocks_then_allows_after_completed_gate(tmp_path
     assert eligible.exit_code == 0, eligible.output
 
 
-def test_release_claim_command_is_owner_specific_and_idempotent(tmp_path: Path):
+def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path):
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="a1e10001", title="release target"))
     board.claim_task("probe", "a1e10001")
+    revision = current_claim_precondition(tmp_path, "a1e10001", "probe")
     runner = CliRunner()
     args = [
         "coord",
@@ -179,6 +181,8 @@ def test_release_claim_command_is_owner_specific_and_idempotent(tmp_path: Path):
         "a1e10001",
         "--owner",
         "probe",
+        "--expected-claim-revision",
+        revision,
         "--agent",
         "repair",
         "--home",
@@ -188,4 +192,84 @@ def test_release_claim_command_is_owner_specific_and_idempotent(tmp_path: Path):
     assert first.exit_code == 0, first.output
     view = next(view for view in Board(tmp_path).get_task_views() if view.task.id == "a1e10001")
     assert view.status.value == "open"
-    assert runner.invoke(_main(), args).exit_code == 0
+    assert runner.invoke(_main(), args).exit_code != 0
+
+
+def test_release_claim_requires_expected_revision(tmp_path: Path):
+    """The supported mutation boundary never accepts an owner-only release."""
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="a1e10002", title="release target"))
+    board.claim_task("probe", "a1e10002")
+
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "release-claim",
+            "a1e10002",
+            "--owner",
+            "probe",
+            "--agent",
+            "repair",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "expected-claim-revision" in result.output
+    assert current_claim_precondition(tmp_path, "a1e10002", "probe")
+
+
+def test_release_claim_preserves_newer_same_owner_generation(tmp_path: Path):
+    """An old revision cannot release a newer claim held by the same owner."""
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="a1e10003", title="release target"))
+    board.claim_task("probe", "a1e10003")
+    old_revision = current_claim_precondition(tmp_path, "a1e10003", "probe")
+    board.release_claim("probe", "a1e10003", actor="worker-exit")
+    board.claim_task("probe", "a1e10003")
+    new_revision = current_claim_precondition(tmp_path, "a1e10003", "probe")
+    assert old_revision != new_revision
+
+    runner = CliRunner()
+    stale = runner.invoke(
+        _main(),
+        [
+            "coord",
+            "release-claim",
+            "a1e10003",
+            "--owner",
+            "probe",
+            "--expected-claim-revision",
+            old_revision,
+            "--agent",
+            "fleet-liveness-reaper",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+
+    assert stale.exit_code != 0
+    assert "claim revision conflict" in stale.output
+    assert current_claim_precondition(tmp_path, "a1e10003", "probe") == new_revision
+
+    current = runner.invoke(
+        _main(),
+        [
+            "coord",
+            "release-claim",
+            "a1e10003",
+            "--owner",
+            "probe",
+            "--expected-claim-revision",
+            new_revision,
+            "--agent",
+            "fleet-liveness-reaper",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert current.exit_code == 0, current.output
