@@ -8,6 +8,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 
+### Added
+
+- A sweep that returns cards whose recorded blocker has since completed. A worker
+  records why it stopped inside its verdict, as `blocked_on=card
+  referent=card:c818148b`. That is a real blocking relationship, but it lives as
+  prose in an evidence link rather than as a dependency edge, so nothing on the
+  board watches it, and when the cited card completes the card it was blocking
+  stays blocked. Measured 2026-08-28 on the live board: of the 14 cards most often
+  cited as blockers, 7 were already DONE, and 12 open cards were waiting on
+  nothing at all. A card is returned once per verdict, not once per run, because
+  labelling does not erase the verdict and a timer would otherwise relabel the
+  same cards forever and reset their backoff on every pass. A new refusal recorded
+  after the label makes the card eligible again. Reports by default; `--go`
+  labels.
+
+
 ### Fixed
 
 - The `blocked_on=card` contradiction rule now recognises the short criterion
