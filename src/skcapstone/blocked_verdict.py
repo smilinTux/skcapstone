@@ -136,6 +136,59 @@ _MIN_CONTRADICTION_CHARS = 24
 #: id.
 _CRITERION_RE = re.compile(r"(?:criterion\s*[=:]\s*)?\bac\s*[=:]\s*\d+", re.IGNORECASE)
 
+#: A BLOCKED verdict ends this agent's turn on the card. Whoever picks it up next
+#: inherits whatever was written down and nothing else, so the verdict is the
+#: entire handover.
+#:
+#: MEASURED ON THE LIVE BOARD, 2026-08-28, across 198 BLOCKED cards:
+#:
+#:     machine-readable blocker    50%
+#:     hashed artifact             28%
+#:     what was attempted           7%
+#:     where the live work sits     3%
+#:     how to resume                0%
+#:
+#: The structural half is better than those numbers suggest: 66% left evidence at
+#: the derivable path evidence/work/<card_id>/, none of it empty, so a successor
+#: CAN find the artifacts. What no verdict carries is the expensive half, which is
+#: what was tried and what to do next. Zero of 198 said how to resume, so every
+#: successor re-pays the predecessor's discovery.
+#:
+#: The worker brief already asks for this: "Say what you attempted, so the next
+#: attempt does not re-pay your discovery." 7% complied. Asking has not worked for
+#: any convention on this board; enforcing at the write path has.
+_RESUME_RE = re.compile(
+    r"\b(attempt\w*|tried|reproduc\w*|verified|checked|ran|examined|inspected|"
+    r"to resume|to unblock|next step|next attempt|required to resume|needs?\s+\w+|"
+    r"re-?run|retry|once\b|after\b|when\b)\b",
+    re.IGNORECASE,
+)
+
+#: Where the live work sits, if anywhere. An explicit "none" is a valid and useful
+#: answer: it distinguishes "I produced nothing" from "I produced something and did
+#: not tell you", and today those two look identical from the outside.
+#:
+#: That distinction has already cost this estate real work. Commits 229336b2 and
+#: 22a36166 were recorded as permanently unverifiable because nobody knew whether
+#: bytes existed; 22a36166's candidate was later found intact in a bundle in its own
+#: evidence directory, 241 commits, simply unreferenced.
+_WORK_LOCATION_RE = re.compile(
+    r"\b(branch|commit\s+[0-9a-f]{7,}|bundle|worktree|pull/\d+|\bPR\b|"
+    r"no_pr|no\s+pr|no\s+repository\s+change|no\s+branch|nothing\s+produced|"
+    r"produced\s+no|no\s+artifact|no\s+candidate|work_location\s*[=:]\s*none)\b",
+    re.IGNORECASE,
+)
+
+
+def states_how_to_resume(value: str) -> bool:
+    """True when a refusal says what was tried or what to do next."""
+    return bool(_RESUME_RE.search(str(value or "")))
+
+
+def states_where_the_work_is(value: str) -> bool:
+    """True when a refusal says where any live work sits, including 'none'."""
+    return bool(_WORK_LOCATION_RE.search(str(value or "")))
+
 
 def states_a_contradiction(value: str) -> bool:
     """True when a `card` refusal says what is wrong, not only which criterion.
@@ -294,4 +347,37 @@ def validate_blocked_verdict(key: str, value: str) -> None:
             "install and restart while the standing rails prohibit deploy. A bare "
             "criterion=ac:N cannot be acted on, because the only fix is to rewrite "
             "that criterion."
+        )
+
+    # HANDOVER. A BLOCKED verdict hands the card to whoever comes next, and the
+    # verdict is the whole handover. These two checks apply to every category,
+    # because a successor needs the same two facts regardless of what blocked it.
+    # dependency is exempt from the resume requirement, and only dependency. Its
+    # referent IS the resume condition: "blocked_on=dependency referent=card:04b218cd"
+    # already tells a successor exactly when to try again, and the referent rule above
+    # has already forced that card id to be real. Demanding a separate resume sentence
+    # there would be asking a worker to restate what it just said.
+    #
+    # Every other category needs it. card names a criterion, which says nothing about
+    # what was tried. human names an approval, which says nothing about what state the
+    # work reached while waiting. capability says a stronger model is needed, which is
+    # exactly when knowing what was already attempted is worth most.
+    #
+    # Measured effect of the exemption on the live board: 16 of 183 refusals.
+    if cat and cat.group(1).lower() == "dependency":
+        return
+    if not states_how_to_resume(text):
+        raise ValueError(
+            "a BLOCKED verdict must leave a warm handover. Say what you ATTEMPTED "
+            "and what the next agent should do first, so the next attempt does not "
+            "re-pay your discovery. Measured 2026-08-28: 0 of 198 blocked cards "
+            "said how to resume, so every successor started from nothing."
+        )
+    if not states_where_the_work_is(text):
+        raise ValueError(
+            "a BLOCKED verdict must say WHERE any live work sits: a branch, commit, "
+            "bundle, worktree or PR. If you produced nothing, say so explicitly, for "
+            "example 'no repository change, so no PR'. An explicit none is a good "
+            "answer; silence is not, because it is indistinguishable from having "
+            "produced something and not said where it is."
         )
