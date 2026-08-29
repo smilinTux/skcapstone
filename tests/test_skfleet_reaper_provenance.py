@@ -193,9 +193,9 @@ def test_manual_claim_with_no_exact_launch_generation_is_preserved(tmp_path: Pat
     assert any(message.startswith("REAP_UNPROVEN|") for message in messages)
 
 
-def test_missing_claim_revision_is_never_replaced_by_event_id(tmp_path: Path) -> None:
-    """A legacy claim event ID is not an exact claim revision."""
-    namespace, released, messages = _reaper_fixture(
+def test_missing_claim_revision_uses_timestamp_fence_without_event_id(tmp_path: Path) -> None:
+    """A legacy claim uses its timestamp, never its event ID, as the generation fence."""
+    namespace, released, _messages = _reaper_fixture(
         tmp_path,
         card_id="93220ffc",
         owner="codex-chiap08-93220ffc",
@@ -203,9 +203,19 @@ def test_missing_claim_revision_is_never_replaced_by_event_id(tmp_path: Path) ->
         launch_revision="claim-event",
     )
 
-    assert namespace["reap_dead_claims"]() == 0
-    assert released == []
-    assert any("claim revision missing" in message for message in messages)
+    assert namespace["reap_dead_claims"]() == 1
+    assert released == [
+        [
+            "skcapstone",
+            "coord",
+            "release-claim",
+            "93220ffc",
+            "--owner",
+            "codex-chiap08-93220ffc",
+            "--agent",
+            "fleet-liveness-reaper",
+        ]
+    ]
 
 
 @pytest.mark.parametrize(
@@ -287,10 +297,10 @@ def test_successful_launch_records_exact_claim_generation() -> None:
     assert fields("pi-codex-chiap02-deadbeef", "", True) == ""
 
 
-def test_every_fleet_release_call_supplies_expected_revision() -> None:
-    """The reaper, worker trap, and launch-failure path all use the fence."""
+def test_reaper_uses_installed_release_claim_cli_shape() -> None:
+    """The live CLI accepts owner and agent, not a revision option."""
     source = ROTATE.read_text(encoding="utf-8")
-    assert source.count("--expected-claim-revision") == 3
+    assert source.count("--expected-claim-revision") == 2
 
 
 def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
@@ -316,8 +326,6 @@ def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
             "deadbeef",
             "--owner",
             owner,
-            "--expected-claim-revision",
-            revision,
             "--agent",
             "fleet-liveness-reaper",
         ]
@@ -514,7 +522,7 @@ def test_missing_malformed_or_ambiguous_fresh_timestamp_fails_closed(
 
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
-    assert any("claim timestamp invalid" in message for message in messages)
+    assert any(message.startswith("REAP_NO_TIMESTAMP|") for message in messages)
 
 
 def test_future_fresh_timestamp_fails_closed_on_clock_skew(tmp_path: Path) -> None:
