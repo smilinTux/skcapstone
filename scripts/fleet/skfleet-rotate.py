@@ -1372,10 +1372,48 @@ def needs_escalation(cid, core=None):
         return False
     return bool(_ts and _CAPABILITY_VERDICT_RE.search(str(_val or "")))
 
-picks=[]; _i=0
-remaining={lane["name"]:lane["free"] for lane in LANES}
-lane_order=sorted(LANES,key=lambda lane:0 if lane["name"]=="glm" else 1)
-_esc_waiting=0
+def _select_picks(owned, lanes, max_launch, is_escalation):
+    """Select compatible lanes with one bounded Codex opportunity.
+
+    Args:
+        owned: Cards in their existing stable, host-owned order.
+        lanes: Lane dictionaries containing names and free counts.
+        max_launch: Maximum picks allowed for this invocation.
+        is_escalation: Callback classifying a card by id and core.
+
+    Returns:
+        Ordered ``(lane, card)`` picks and the escalation wait count.
+    """
+    remaining = {lane["name"]: lane["free"] for lane in lanes}
+    by_name = {lane["name"]: lane for lane in lanes}
+    classified = [(card, is_escalation(card[2], card[3])) for card in owned]
+    reserved = None
+    if max_launch > 0 and remaining.get("codex", 0) > 0:
+        reserved = next((card for card, escalates in classified if not escalates), None)
+    picks = []
+    if reserved is not None:
+        picks.append((by_name["codex"], reserved))
+        remaining["codex"] -= 1
+
+    esc_waiting = 0
+    for card, escalates in classified:
+        if len(picks) >= max_launch:
+            break
+        if card is reserved:
+            continue
+        names = ("escalate",) if escalates else ("glm", "codex")
+        lane = next(
+            (by_name[name] for name in names if remaining.get(name, 0) > 0),
+            None,
+        )
+        if lane is None:
+            if escalates:
+                esc_waiting += 1
+            continue
+        picks.append((lane, card))
+        remaining[lane["name"]] -= 1
+    return picks, esc_waiting
+
 # Lane affinity, in both directions. An escalation card may go ONLY to the escalate
 # lane, because returning it to a lane that already refused it just re-derives the
 # same verdict. The escalate lane takes ONLY escalation cards, because the strong
@@ -1385,19 +1423,7 @@ _esc_waiting=0
 # earlier version broke out entirely when the head card could not be placed, which
 # with lane affinity would let one waiting escalation card starve every ordinary
 # card queued behind it.
-while _i<len(owned) and len(picks)<MAX_LAUNCH:
-    _card=owned[_i]; _i+=1
-    _esc=needs_escalation(_card[2], _card[3])
-    _lane=None
-    card_lane_order=(sorted(LANES,key=lambda lane:0 if lane["name"]=="codex" else 1)
-                     if _esc else lane_order)
-    for lane in card_lane_order:
-        if remaining[lane["name"]]<=0: continue
-        _lane=lane; break
-    if _lane is None:
-        if _esc: _esc_waiting+=1
-        continue
-    picks.append((_lane,_card)); remaining[_lane["name"]]-=1
+picks,_esc_waiting=_select_picks(owned,LANES,MAX_LAUNCH,needs_escalation)
 if _esc_waiting:
     log(d,"ESCALATE_QUEUED|%s|%d card(s) need the stronger model; escalate lane full"
         %(HOST,_esc_waiting))
