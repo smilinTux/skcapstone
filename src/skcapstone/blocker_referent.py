@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -129,8 +130,34 @@ class ApplyReceipt:
 
 
 def _ordered_events(home: Path) -> list[CardEvent]:
-    """Read overlay events in the same order used by the canonical fold."""
-    return sorted(CardEventLog(home).read_all(), key=lambda e: (e.ts, e.writer, e.seq))
+    """Read overlay events in canonical order with legacy link aliases."""
+    log = CardEventLog(home)
+    events: list[CardEvent] = []
+    directory_fd = log._open_existing_event_directory()
+    if directory_fd is None:
+        return events
+    try:
+        for name in sorted(os.listdir(directory_fd)):
+            if not name.endswith(".jsonl"):
+                continue
+            raw = log._read_regular_file_bytes(directory_fd, name)
+            if raw is None:
+                continue
+            for line in raw.decode("utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                    if not isinstance(row, dict):
+                        continue
+                    if not row.get("link_key"):
+                        row["link_key"] = row.get("key")
+                    if not row.get("link_value"):
+                        row["link_value"] = row.get("value")
+                    events.append(CardEvent.model_validate(row))
+                except Exception:  # noqa: BLE001 - match CardEventLog compatibility
+                    continue
+    finally:
+        os.close(directory_fd)
+    return sorted(events, key=lambda e: (e.ts, e.writer, e.seq))
 
 
 def _latest_outcomes(home: Path) -> dict[str, Verdict]:
@@ -361,7 +388,13 @@ def apply_candidate(
     label: str = LABEL,
     writer: Callable[[Path, Candidate, str, str], None] | None = None,
 ) -> ApplyReceipt:
-    """Label one candidate once while holding the supported card lock."""
+    """Label one candidate once while holding the supported host-local lock.
+
+    Two hosts can still append the same marker concurrently because SKCoord has
+    no fleet-wide compare-and-append. That race is bounded to a duplicate event:
+    labels fold as a set, the card returns once, and no verdict or approval is
+    discharged. This sweep only flags work for later reconciliation.
+    """
     home = Path(home).expanduser()
     writer = writer or _append_label
     try:

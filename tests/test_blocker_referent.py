@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import multiprocessing
 import time
 from pathlib import Path
@@ -129,7 +130,7 @@ def _seed_returnable(home: Path, target: str = "11111111", referent: str = "aaaa
             ("abcdef12",),
         ),
         (
-            "BLOCKED blocked_on=card referent=card:abcdef12 " "referent=card:1234abcd",
+            "BLOCKED blocked_on=card referent=card:abcdef12 referent=card:1234abcd",
             ("abcdef12", "1234abcd"),
         ),
     ],
@@ -503,6 +504,22 @@ def _link(home: Path, card_id: str, key: str, target: str, ts: str) -> None:
     )
 
 
+def _legacy_link(home: Path, card_id: str, key: str, value: str, ts: str) -> None:
+    path = home / "coordination" / "card_events" / "legacy.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "card_id": card_id,
+        "action": "link",
+        "key": key,
+        "value": value,
+        "writer": "legacy-reviewer",
+        "ts": ts,
+        "seq": 0,
+    }
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(row) + "\n")
+
+
 @pytest.mark.parametrize(
     "value,expected",
     [
@@ -540,7 +557,36 @@ def test_a_block_is_flagged_when_its_named_repair_later_passed(tmp_path):
     assert stale[0].successor == "bbbbbbbb"
 
 
-def test_a_pass_recorded_BEFORE_the_block_does_not_clear_it(tmp_path):
+def test_legacy_key_value_links_remain_visible_to_both_sweeps(tmp_path):
+    _card(tmp_path, "aaaaaaaa")
+    _card(tmp_path, "bbbbbbbb", done=True)
+    _legacy_link(
+        tmp_path,
+        "aaaaaaaa",
+        "verdict",
+        "BLOCKED blocked_on=card referent=card:bbbbbbbb",
+        "2026-08-23T07:12:00",
+    )
+    assert [row.card_id for row in find_returnable(tmp_path).candidates] == ["aaaaaaaa"]
+
+    _legacy_link(
+        tmp_path,
+        "aaaaaaaa",
+        "rereview_card",
+        "bbbbbbbb",
+        "2026-08-23T07:12:01",
+    )
+    _legacy_link(
+        tmp_path,
+        "bbbbbbbb",
+        "verdict",
+        "PASS verified clean",
+        "2026-08-23T07:17:00",
+    )
+    assert [row.card_id for row in find_stale_blocks(tmp_path)] == ["aaaaaaaa"]
+
+
+def test_a_pass_recorded_before_the_block_does_not_clear_it(tmp_path):
     """An earlier pass answered a previous refusal, not this one."""
     _card(tmp_path, "aaaaaaaa")
     _card(tmp_path, "bbbbbbbb", done=True)
@@ -585,7 +631,7 @@ def test_a_closed_card_with_a_stale_block_is_still_flagged(tmp_path):
     assert find_returnable(tmp_path).held.get("aaaaaaaa") == "target-DONE"
 
 
-def test_a_card_whose_own_latest_verdict_is_now_PASS_is_not_stale(tmp_path):
+def test_a_card_whose_own_latest_verdict_is_now_pass_is_not_stale(tmp_path):
     _card(tmp_path, "aaaaaaaa")
     _card(tmp_path, "bbbbbbbb", done=True)
     _outcome(tmp_path, "aaaaaaaa", "BLOCKED", "2026-08-23T07:12:00")

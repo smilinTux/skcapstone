@@ -98,7 +98,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   The write path uses the exact same `--home`, serializes same-home processes
   through the supported per-card lock, records the fixed label and exact verdict
   digest in one durable card event, preserves per-card failure details, and
-  returns nonzero after any write failure.
+  returns nonzero after any write failure. The related stale-block report keeps
+  closed cards visible, rejects `PASS_FOR_` and `PASS_READY_` review handoffs as
+  completed passes, and reads both current `link_key`/`link_value` and legacy
+  `key`/`value` events. Cross-host duplicate label events remain a documented,
+  bounded race: labels fold as a set and no verdict or approval is discharged.
 
 - **Card 2ff077b8: report leaf-eligible coordination work.** `coord status`
   now distinguishes unowned, dependency-complete leaf work from the broader
