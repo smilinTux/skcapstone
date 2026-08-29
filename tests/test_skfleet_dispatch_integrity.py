@@ -58,6 +58,58 @@ def test_claim_refusal_is_not_a_race() -> None:
     assert "CLAIM_FAILED|" not in source
 
 
+def test_pool_pass_parking_metric_is_truthful_and_selection_stays_stable() -> None:
+    """The wire rename preserves counter position and candidate selection."""
+    source = ROTATE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    pool_formats = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("POOL|%s|ready=")
+    ]
+    assert pool_formats == [
+        "POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d "
+        "unclaimable=%d itil_closed=%d blocked_backoff=%d "
+        "pass_outcome_parked=%d pinned_elsewhere=%d foreign=%d "
+        "not_claimable=%d top_unblocks=%d"
+    ]
+    assert " awaiting_review=" not in source
+
+    pool_log = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.BinOp)
+        and isinstance(node.args[1].left, ast.Constant)
+        and node.args[1].left.value == pool_formats[0]
+    )
+    counter_args = pool_log.args[1].right
+    assert isinstance(counter_args, ast.Tuple)
+    assert [ast.unparse(item) for item in counter_args.elts] == [
+        "HOST",
+        "len(pool)",
+        "lc[0]",
+        "lc[1]",
+        "lc[2]",
+        "blocked",
+        "skipped_unclaimable",
+        "skipped_terminal",
+        "skipped_blocked",
+        "skipped_review",
+        "pinned_elsewhere",
+        "foreign_skipped",
+        "not_claimable_skipped",
+        "top",
+    ]
+
+    # Keep the selector and ownership expressions explicit in this focused test.
+    assert "pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))" in source
+    assert "owned=[x for x in pool if owns(x[2])]" in source
+
+
 def _sample_records() -> dict[str, str]:
     return {
         "CHIAP01_RECORD": "0|success|POOL|chiap01|ready=2 POOL_IDS|chiap01|ids=aaaaaaaa,bbbbbbbb",
