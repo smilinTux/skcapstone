@@ -65,7 +65,6 @@
   },
   "publication": {
     "branch": "chore/6c418ad3-partition-11-review-r2",
-    "commit": "7a2178a80ddb47e6a63d9318f315aba503197174",
     "pr_url": "https://github.com/smilinTux/skcapstone/pull/294"
   },
   "remedy_review": {
