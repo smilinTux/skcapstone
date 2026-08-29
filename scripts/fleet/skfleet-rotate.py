@@ -1320,11 +1320,13 @@ log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d i
       %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,top))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
-# three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
+# hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
 # shared and claims land continuously, so the pools drift and strides collide.
 # A hash partition is stable no matter what the local pool looks like.
-off={"chiap01":0,"chiap02":1,"chiap03":2}.get(HOST,0)
-_NHOST=3
+# Each host in ROTATION_HOSTS gets a unique residue from the ordered tuple.
+_NHOST=len(ROTATION_HOSTS)
+# Derive offset from the ordered host tuple: index in ROTATION_HOSTS becomes residue.
+off=ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0
 def owns(cid):
     # A host-pinned card is owned by its pinned host, full stop. Letting the hash
     # partition also apply would strand any card whose pin and hash slice disagree:
