@@ -24,11 +24,11 @@
   },
   "evidence": {
     "review_evidence_path": "/home/skuser01/.skcapstone/evidence/work/6c418ad3/review-evidence.json",
-    "review_evidence_sha256": "80daff3dbbd960af9d226f7604e7568b14226315200f2817157bcd454db81c2d"
+    "review_evidence_sha256": "c13e3f22cb7ccc577278455c304b19d77423dc1118219e706d4134fdcc98c83d"
   },
   "repository_change": false,
-  "pr_url": null,
-  "ts": "2026-08-29T12:35:00.000000+00:00",
+  "pr_url": "https://github.com/smilinTux/skcapstone/pull/314",
+  "ts": "2026-08-29T13:48:00.000000+00:00",
   "writer": "pi-glm-chiap03-6c418ad3",
   "schema": "skcapstone.review.verdict.v1"
 }

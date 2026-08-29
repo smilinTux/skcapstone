@@ -96,7 +96,8 @@
     "no_repair_or_non_audit_action_applied": true
   },
   "overall_verdict": "PASS",
-  "ts": "2026-08-29T12:30:00.000000+00:00",
+  "pr_url": "https://github.com/smilinTux/skcapstone/pull/314",
+  "ts": "2026-08-29T13:48:00.000000+00:00",
   "writer": "pi-glm-chiap03-6c418ad3",
   "schema": "skcapstone.review.verification_evidence.v1"
 }
