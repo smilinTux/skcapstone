@@ -103,7 +103,7 @@
   "producer_card_id": "a743f500",
   "publication": {
     "branch": "fix/b6eedf67-partition-30-rereview",
-    "pr_url": "PENDING_UNTIL_CREATED"
+    "pr_url": "https://github.com/smilinTux/skcapstone/pull/297"
   },
   "remedy_contract": {
     "blocking_finding": {
