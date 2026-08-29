@@ -597,7 +597,7 @@ def _verdict_is_actionable(val):
                 return True
     return False
 
-_PASS_RE = re.compile(r"^\s*PASS(_FOR_REVIEW)?\b", re.I)
+_PASS_RE = re.compile(r"^\s*PASS(?:_FOR_(?:RE)?REVIEW)?\b", re.I)
 
 def blocked_backoff(cid):
     """True if this card should stay out of the pool for now."""

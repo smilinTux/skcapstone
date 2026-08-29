@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -108,6 +109,34 @@ def test_pool_pass_parking_metric_is_truthful_and_selection_stays_stable() -> No
     # Keep the selector and ownership expressions explicit in this focused test.
     assert "pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))" in source
     assert "owned=[x for x in pool if owns(x[2])]" in source
+
+
+def test_pass_outcome_parking_includes_rereview_and_excludes_non_pass() -> None:
+    """Only successful outcomes are recognized by the parking predicate."""
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    assignment = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_PASS_RE"
+            for target in node.targets
+        )
+    )
+    assert isinstance(assignment.value, ast.Call)
+    pattern = re.compile(ast.literal_eval(assignment.value.args[0]), re.I)
+
+    for outcome in ("PASS", "PASS detail", "PASS_FOR_REVIEW", "PASS_FOR_REREVIEW"):
+        assert pattern.match(outcome), outcome
+    for outcome in (
+        "BLOCKED",
+        "FAIL",
+        "NOT_PASS",
+        "PASSING",
+        "PASS_FOR_REVIEW_PENDING",
+        "PASS_FOR_REREVIEW_PENDING",
+    ):
+        assert not pattern.match(outcome), outcome
 
 
 def _sample_records() -> dict[str, str]:
