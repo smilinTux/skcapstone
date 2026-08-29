@@ -1,0 +1,160 @@
+{
+  "acceptance": {
+    "ac1": "PASS",
+    "ac2": "PASS",
+    "ac3": "BLOCKED",
+    "ac4": "PASS: this serializer built durable review artifact is published by the review branch and jarvis and lumina notifications are required after PR creation."
+  },
+  "actions_applied": [],
+  "attempted": [
+    "Verified folded owner pi-codex-chiap03-b6eedf67 and an empty dependency list before repository work.",
+    "Created the card specific feature branch and worktree before editing.",
+    "Reproduced PR 244 bytes from its remote head and compared them byte for byte with the manifest shared path.",
+    "Parsed every cited source path and every nonempty JSONL line before assessment.",
+    "Checked all three correction ledger entries against structural bytes and separate direct evidence bytes.",
+    "Inspected supported command help and every proposed remedy without execution."
+  ],
+  "audited_card_repair_applied": false,
+  "blocked_on": {
+    "referent": "ac:3",
+    "type": "card"
+  },
+  "correction_ledger_verification": [
+    {
+      "card_id": "289315d7",
+      "corrected_classification": "terminal_void",
+      "defect_type": "omitted_void_and_wrong_obstruction",
+      "direct_evidence": {
+        "finding": "No direct verdict is recorded. Void is not converted into an evidence verdict.",
+        "normalized": "NOT_RECORDED"
+      },
+      "nonterminal": false,
+      "remedy": {
+        "disposition": "NO_ACTION",
+        "finding": "Preserve the explicit terminal events.",
+        "result": "PASS"
+      },
+      "result": "PASS",
+      "structural_events": {
+        "archive_event_id": "342d909593a943c194e0535a690d328b",
+        "core_sha256": "eba967fe954f7fafa28ade6df90b1f289686e0d26db1d5ff3f64bccc0e85df3e",
+        "events_sha256": "3dbb0df9772943dea1c5a5ccfd74900881749a269bf3b4845c9a05bc9fbd6632",
+        "finding": "Explicit void and archive events establish terminal structural disposition.",
+        "void_event_id": "ec08e81a6cbb440bac008d445d4e17b6"
+      }
+    },
+    {
+      "card_id": "96d65096",
+      "corrected_classification": "terminal_void",
+      "defect_type": "omitted_void_and_wrong_obstruction",
+      "direct_evidence": {
+        "finding": "No Chef approval or direct verdict is recorded. Structural void is not treated as approval.",
+        "normalized": "NOT_RECORDED"
+      },
+      "nonterminal": false,
+      "remedy": {
+        "disposition": "NO_ACTION",
+        "finding": "Preserve the explicit terminal events.",
+        "result": "PASS"
+      },
+      "result": "PASS",
+      "structural_events": {
+        "archive_event_id": "69bec99995e844e9a364b0b02a93b5af",
+        "core_sha256": "408942c57e29fe2fd183a0fbe29f44fa0b142f5f80602e073a65160d483cebf6",
+        "dependency_e82c379e_events_sha256": "ee8ef4bbc4613f0256b190bbeb58dea8a3a2e0cf41ada7185a359f401f2c3a6f",
+        "events_sha256": "ba11ea341d0d4172e4a3bfb33c3fc561759d7bd15af05ed8ad87b6838ec3f22c",
+        "finding": "Explicit void and archive events establish terminal structural disposition. Dependency e82c379e is also explicitly voided and archived.",
+        "void_event_id": "2233e98fa34645be92a999d0c97e6166"
+      }
+    },
+    {
+      "card_id": "84cee038",
+      "corrected_classification": "claim_projection_inconsistency_unproven_stale",
+      "defect_type": "unproven_stale_claim",
+      "direct_evidence": {
+        "events_sha256": "00a6afff0078db4fe7579fd39291256d0535cce5d76dc43bd6a8d7e6e4cbe196",
+        "finding": "The direct BLOCKED reconciliation note is retained separately and does not prove worker absence.",
+        "normalized": "BLOCKED"
+      },
+      "nonterminal": true,
+      "remedy": {
+        "authority": "authorized lifecycle actor",
+        "command": "skcapstone coord release-claim 84cee038 --owner skuser01 --agent <authorized-actor>",
+        "disposition": "PROPOSAL_ONLY",
+        "executed": false,
+        "preconditions": [
+          "fresh fleet liveness evidence proves owner skuser01 has no live worker",
+          "folded owner remains skuser01",
+          "command validates expected claim revision"
+        ],
+        "result": "PASS"
+      },
+      "result": "PASS",
+      "structural_events": {
+        "core_sha256": "c45f72afc9f9774bba2b1f8cee73d5e22a27d0595039485cf8e24bd5f2835873",
+        "finding": "The source snapshot owner followed a claim. The cited stale release applied to prior owner pi-glm-84cee038, so current staleness was unproven.",
+        "source_snapshot_claim_events_sha256": "8dc1de33231e587f856db172ae97b8a84b7a633df2639b441376e324b5b41704",
+        "source_snapshot_claim_revision": "79a7b93ef6564fa5bf149cc3cd16dfbb",
+        "source_snapshot_owner": "skuser01"
+      }
+    }
+  ],
+  "external_action_applied": false,
+  "producer_card_id": "a743f500",
+  "publication": {
+    "branch": "fix/b6eedf67-partition-30-rereview",
+    "pr_url": "PENDING_UNTIL_CREATED"
+  },
+  "remedy_contract": {
+    "blocking_finding": {
+      "card_id": "03bf6be6",
+      "criterion": "ac:3",
+      "finding": "This is prose, not an exact supported append only command. It omits the selected command, exact target dependency transition set, required reason, explicit authority, and execution preconditions. It is also not an explicit no action disposition.",
+      "quoted_remedy": "After authoritative replacement review, append explicit remove_dependency/add_dependency transitions as applicable; do not use supersession links as dependency transitions."
+    },
+    "result": "BLOCKED",
+    "supported_help_observed": {
+      "add_dependency": "skcapstone coord add-dependency TASK_ID --dependency TEXT --reason TEXT --agent TEXT",
+      "release_claim": "skcapstone coord release-claim TASK_ID --owner TEXT --agent TEXT",
+      "remove_dependency": "skcapstone coord remove-dependency TASK_ID --dependency TEXT --reason TEXT --agent TEXT"
+    }
+  },
+  "repository_change": true,
+  "review_card_id": "b6eedf67",
+  "reviewer": "pi-codex-chiap03-b6eedf67",
+  "schema": "skcapstone.fleet_unblock.corrected_rereview.v1",
+  "source_identity": {
+    "artifact_sha256": "783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458",
+    "artifact_size": 175252,
+    "blocking_review_path": "/home/skuser01/.skcapstone/evidence/work/3ad01333/review-verdict-pi-codex-3ad01333.json",
+    "blocking_review_sha256": "51899693d6ae9d68b3797ef53bf37204e3168424d3813ea6b64d04601926b6b4",
+    "manifest_declared_artifact_sha256_matches": true,
+    "manifest_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/manifest.json",
+    "manifest_sha256": "07ec3c58abf34eb4137d8586ec659fa381dacdf5117a9dca3eca84d41cb92433",
+    "pr_blob_shared_path_byte_identical": true,
+    "pr_head": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
+    "pr_path": "docs/reviews/artifacts/a743f500/partition-30-corrected-replacement.json",
+    "pr_url": "https://github.com/smilinTux/skcapstone/pull/244",
+    "sha256_sidecar_matches": true,
+    "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-30-corrected-replacement.json",
+    "superseded_report_sha256": "f490368b6ffdb62f897f3f1ba4cdd27615d9d15a276747c73a54b14ee8181d53"
+  },
+  "two_store_validation": {
+    "evidence_store": "separate direct note, verdict, and evidence events",
+    "join_key": "exact card_id only",
+    "json_documents_parsed": 76,
+    "jsonl_files_parsed": 141,
+    "jsonl_lines_parsed": 19830,
+    "missing_source_paths": [],
+    "prohibited_inferences": [
+      "lifecycle",
+      "labels",
+      "dependencies",
+      "links"
+    ],
+    "result": "PASS",
+    "source_paths_parsed": 217,
+    "structural_store": "core.json plus structural CardStore JSONL and archive JSONL"
+  },
+  "verdict": "BLOCKED"
+}
