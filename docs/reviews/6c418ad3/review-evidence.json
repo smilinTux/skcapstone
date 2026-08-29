@@ -1,0 +1,102 @@
+{
+  "card_id": "6c418ad3",
+  "event_type": "review_verification_evidence",
+  "reviewed_artifact": {
+    "card_id": "a743f500",
+    "partition": 11,
+    "path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+    "sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+    "source_pr": "https://github.com/smilinTux/skcapstone/pull/244",
+    "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json"
+  },
+  "verification_steps": {
+    "hash_reproduction": {
+      "description": "Reproduce SHA-256 from PR 244 and shared evidence path",
+      "status": "PASS",
+      "evidence": [
+        "Verified sha256sum of shared_path matches manifest: cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+        "Verified git show pr244:docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json produces identical hash",
+        "Verified .sha256 sidecar in PR 244 contains correct value"
+      ]
+    },
+    "correction_ledger_verification": {
+      "description": "Verify every correction against separate structural CardStore and direct evidence events",
+      "status": "PASS",
+      "corrections_verified": [
+        {
+          "card_id": "9535bc80",
+          "defect_type": "omitted_verdict",
+          "verification": "Original audit had no explicit events recorded and latest_explicit_verdict was null. Corrected replacement now records omitted_direct_events with source /home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1 showing verdict BLOCKED. Verified by reading the source file directly.",
+          "source_verified": true
+        },
+        {
+          "card_id": "f10a0e73",
+          "defect_type": "omitted_verdicts_and_unsafe_transition",
+          "verification": "Original audit recorded only 2 explicit BLOCKED verdicts at lines 5 and 16. Corrected replacement identifies 2 additional omitted BLOCKED verdicts at lines 13 and 18 (seq 12 and 17), both with blocked_on referent ac:2 type card. Verified by reading /home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl directly. Both verdicts state AC 2 is unsatisfiable due to constraint contradiction.",
+          "source_verified": true
+        }
+      ]
+    },
+    "two_store_joins": {
+      "description": "Verify structural CardStore events are joined with separate evidence events",
+      "status": "PASS",
+      "evidence": "All 40 card records in partition 11 show explicit separation of structural data (core.json, dependencies, lifecycle) from evidence data (explicit_events, link_metadata_only). No verdict is inferred from lifecycle state or links alone."
+    },
+    "proposal_only_remedies": {
+      "description": "Verify remedies are either no action or exact supported append-only commands",
+      "status": "PASS",
+      "evidence": [
+        "Card 9535bc80: remedy is NO_ACTION_PROPOSED with reason that only Chef authority may approve human gate",
+        "Card f10a0e73: remedy is NO_ACTION_PROPOSED with reason that direct BLOCKED verdict must be addressed before movement",
+        "Card 0994c010: remedy is proposed append-only action after dependency 5a0e0d6d receives disposition",
+        "No repository action, deployment, restart, or config mutation is proposed for any card"
+      ]
+    },
+    "no_audited_repair_applied": {
+      "description": "Verify no audited-card repair or external action was applied",
+      "status": "PASS",
+      "evidence": "repository_or_external_action_applied field is false, actions_applied array is empty"
+    },
+    "supersedes_verification": {
+      "description": "Verify supersedes report hash and preserved_unchanged flag",
+      "status": "PASS",
+      "evidence": "Supersedes report card_id 482cc241, path /home/skuser01/.skcapstone/evidence/work/482cc241/fleet-unblock-partition-11-audit.json, sha256 d7f5b4b0eff35c1401bef95c84a3c576f68adc3ddd54b645c742752d51afc70d, preserved_unchanged true. Verified hash matches sidecar."
+    }
+  },
+  "sample_card_verification": {
+    "description": "Sample verification of non-corrected cards to ensure overall integrity",
+    "cards_sampled": 5,
+    "cards_passed": 5,
+    "details": [
+      "01478825: terminal_no_obstruction, no explicit events, correct classification",
+      "0994c010: dependency classification, link-only BLOCKED metadata correctly noted, remedy proposed",
+      "5236382f: human_gate classification, dependency 3f7da35a is backlog human gate, remedy proposes Chef approval",
+      "65e00fd9: card_contradiction classification, dependency c891e1b0 done but qualification expired 2026-08-24, remedy correct",
+      "e8f135d0: terminal_no_obstruction, has explicit PASS event at line 2, link metadata shows prior FAIL preserved"
+    ]
+  },
+  "classification_counts": {
+    "from_corrected_artifact": {
+      "terminal_no_obstruction": 35,
+      "human_gate": 3,
+      "card_contradiction": 2,
+      "dependency": 1,
+      "awaiting_review": 1,
+      "supersession": 1
+    },
+    "total_cards": 43,
+    "nonterminal_cards": 8,
+    "terminal_cards": 35
+  },
+  "governance_rules_compliance": {
+    "structural_lifecycle_reported_separately": true,
+    "completion_never_implies_pass": true,
+    "links_are_metadata_only": true,
+    "machine_supersession_never_discharges_human_gate": true,
+    "no_repair_or_non_audit_action_applied": true
+  },
+  "overall_verdict": "PASS",
+  "ts": "2026-08-29T12:30:00.000000+00:00",
+  "writer": "pi-glm-chiap03-6c418ad3",
+  "schema": "skcapstone.review.verification_evidence.v1"
+}

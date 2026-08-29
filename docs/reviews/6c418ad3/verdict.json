@@ -1,0 +1,34 @@
+{
+  "card_id": "6c418ad3",
+  "title": "[FLEET-UNBLOCK-WAVE-01-11R2][S][REVIEW] Review corrected partition 11 replacement",
+  "verdict": "PASS",
+  "reviewed_artifact": {
+    "producer_card": "a743f500",
+    "partition": 11,
+    "artifact_path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+    "artifact_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+    "pr_url": "https://github.com/smilinTux/skcapstone/pull/244"
+  },
+  "acceptance_criteria": {
+    "1_reproduce_artifact_and_hash": "PASS - Verified SHA-256 cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c from both PR 244 branch and shared evidence path /home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json",
+    "2_verify_corrections_against_separate_evidence": "PASS - Verified both correction ledger entries (9535bc80 omitted_verdict, f10a0e73 omitted_verdicts_and_unsafe_transition) by reading direct source files. All verdict sources confirmed.",
+    "3_verify_remedies_supported_append_only": "PASS - All proposed remedies are either NO_ACTION_PROPOSED or explicit append-only commands with clear authority and preconditions. No repository mutation, deployment, restart, or config changes proposed.",
+    "4_record_exact_pass_or_blocked_with_hash": "PASS - This verdict records PASS with durable hash. Notification to jarvis and lumina will follow via skmail."
+  },
+  "key_findings": {
+    "corrections_identified": 2,
+    "corrections_verified": 2,
+    "two_store_join_rule_compliance": "PASS - Structural CardStore data and evidence verdicts are kept separate with joins only by exact card_id",
+    "no_inference_from_lifecycle": "PASS - No PASS verdicts are inferred from completion status, labels, or links",
+    "human_gate_integrity": "PASS - Machine supersession never discharges HUMAN gates; only explicit Chef approval or void can"
+  },
+  "evidence": {
+    "review_evidence_path": "/home/skuser01/.skcapstone/evidence/work/6c418ad3/review-evidence.json",
+    "review_evidence_sha256": "80daff3dbbd960af9d226f7604e7568b14226315200f2817157bcd454db81c2d"
+  },
+  "repository_change": false,
+  "pr_url": null,
+  "ts": "2026-08-29T12:35:00.000000+00:00",
+  "writer": "pi-glm-chiap03-6c418ad3",
+  "schema": "skcapstone.review.verdict.v1"
+}

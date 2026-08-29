@@ -1,0 +1,29 @@
+{
+  "to": ["jarvis", "lumina"],
+  "from": "pi-glm-chiap03-6c418ad3",
+  "subject": "[FLEET-UNBLOCK-11R2] Review COMPLETE: PASS",
+  "card_id": "6c418ad3",
+  "card_title": "[FLEET-UNBLOCK-WAVE-01-11R2][S][REVIEW] Review corrected partition 11 replacement",
+  "verdict": "PASS",
+  "pr_url": "https://github.com/smilinTux/skcapstone/pull/314",
+  "reviewed_artifact": {
+    "producer_card": "a743f500",
+    "partition": 11,
+    "artifact_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+    "source_pr": "https://github.com/smilinTux/skcapstone/pull/244"
+  },
+  "evidence": {
+    "review_evidence_sha256": "80daff3dbbd960af9d226f7604e7568b14226315200f2817157bcd454db81c2d",
+    "review_evidence_path": "/home/skuser01/.skcapstone/evidence/work/6c418ad3/review-evidence.json",
+    "verdict_path": "/home/skuser01/.skcapstone/evidence/work/6c418ad3/verdict.json"
+  },
+  "acceptance_criteria_results": {
+    "1_reproduce_artifact_and_hash": "PASS",
+    "2_verify_corrections_against_separate_evidence": "PASS",
+    "3_verify_remedies_supported_append_only": "PASS",
+    "4_record_exact_pass_or_blocked_with_hash": "PASS"
+  },
+  "corrections_verified": 2,
+  "ts": "2026-08-29T12:40:00.000000+00:00",
+  "schema": "skcapstone.skmail.notification.v1"
+}
