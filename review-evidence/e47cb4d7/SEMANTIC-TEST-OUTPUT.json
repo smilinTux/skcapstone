@@ -1,0 +1,48 @@
+{
+  "already_released": {
+    "event_count_unchanged": true,
+    "exit_code": 1,
+    "output": "Error: claim revision conflict for a1e10011: expected 063e6a8513c244f9869cdfab432ce405, current None"
+  },
+  "newer_generation": {
+    "current_exit_code": 0,
+    "final_fold": {
+      "claim_revision": null,
+      "owner": null,
+      "status": "backlog"
+    },
+    "old_revision_differs": true,
+    "stale_event_count_unchanged": true,
+    "stale_exit_code": 1,
+    "stale_output": "Error: claim revision conflict for a1e10014: expected e824b8de85ed41958713fc93824d8b35, current c71595e9836949fe9832ee7686f1dcb2"
+  },
+  "owner_mismatch": {
+    "event_count_unchanged": true,
+    "exit_code": 1,
+    "fold": {
+      "claim_revision": "bd91386b6a7b486ebc0af348b5725e13",
+      "owner": "probe-owner",
+      "status": "doing"
+    },
+    "output": "Error: CardStore owner conflict for a1e10012: expected other-owner"
+  },
+  "revision_mismatch": {
+    "event_count_unchanged": true,
+    "exit_code": 1,
+    "fold": {
+      "claim_revision": "33ff4c852fac4040b144e913b8b5306c",
+      "owner": "probe-owner",
+      "status": "doing"
+    },
+    "output": "Error: claim revision conflict for a1e10013: expected 00000000000000000000000000000000, current 33ff4c852fac4040b144e913b8b5306c"
+  },
+  "success": {
+    "exit_code": 0,
+    "fold": {
+      "claim_revision": null,
+      "owner": null,
+      "status": "backlog"
+    },
+    "output": "Released claim on a1e10011 owned by probe-owner."
+  }
+}
