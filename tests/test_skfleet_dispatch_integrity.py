@@ -192,6 +192,7 @@ def test_existing_holds_reservations_capacity_and_cadence_remain() -> None:
     assert "if non_implementation(core,labels): continue" in rotate
     assert "_pin = host_pin(core,labels)" in rotate
     assert 'MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))' in rotate
-    assert 'remaining={lane["name"]:lane["free"] for lane in LANES}' in rotate
+    assert 'remaining = {lane["name"]: lane["free"] for lane in lanes}' in rotate
+    assert "picks,_esc_waiting=_select_picks(owned,LANES,MAX_LAUNCH,needs_escalation)" in rotate
     assert "hosts=(chiap01 chiap02 chiap03 chiap04 chiap08)" in watch
     assert "sleep 300" in watch
