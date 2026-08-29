@@ -9,11 +9,28 @@ import runpy
 from pathlib import Path
 from types import SimpleNamespace
 
+import click
+import pytest
+from click.testing import CliRunner
+from skcoord.card_store import CardStore
+
+from skcapstone.cli.coord import register_coord_commands
+from skcapstone.coordination import AgentFile, Board
+
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 HELPERS = runpy.run_path(str(ROOT / "tests" / "test_skfleet_reaper_provenance.py"))
 _claim_event = HELPERS["_claim_event"]
 _reaper_fixture = HELPERS["_reaper_fixture"]
+
+
+def _coord_main() -> click.Group:
+    @click.group()
+    def main():
+        pass
+
+    register_coord_commands(main)
+    return main
 
 
 def _replace_revisionless_claim(tmp_path: Path, owner: str, timestamp: str | None) -> None:
@@ -69,6 +86,7 @@ def test_revisionless_dead_claim_releases_without_revision_flag(tmp_path: Path) 
     namespace, released, _messages = _revisionless_fixture(tmp_path)
     assert namespace["reap_dead_claims"]() == 1
     assert "--expected-claim-revision" not in released[0]
+    assert "--expected-claim-timestamp" in released[0]
 
 
 def test_revisionless_same_owner_new_timestamp_is_preserved(tmp_path: Path) -> None:
@@ -175,9 +193,70 @@ def test_revisioned_claim_uses_live_cli_shape_after_fresh_fence(tmp_path: Path) 
         "deadbeef",
         "--owner",
         "pi-codex-chiap02-deadbeef",
+        "--expected-claim-revision",
+        "revision-1",
         "--agent",
         "fleet-liveness-reaper",
     ]
+
+
+@pytest.mark.parametrize(
+    ("claim_revision", "supersede", "expected_releases"),
+    [
+        ("revision-1", False, 1),
+        (None, False, 1),
+        ("revision-1", True, 0),
+        (None, True, 0),
+    ],
+    ids=(
+        "revision-current",
+        "timestamp-current",
+        "revision-newer-same-owner",
+        "timestamp-newer-same-owner",
+    ),
+)
+def test_launcher_release_fence_executes_against_real_cli(
+    tmp_path: Path,
+    claim_revision: str | None,
+    supersede: bool,
+    expected_releases: int,
+) -> None:
+    """Launcher-built fences are enforced by the real locked CLI boundary."""
+    owner = "pi-codex-chiap02-deadbeef"
+    namespace, _released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision=claim_revision,
+        launch_revision=claim_revision,
+    )
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.save_agent(AgentFile(agent=owner, current_task="deadbeef", claimed_tasks=["deadbeef"]))
+    calls: list[list[str]] = []
+
+    def run_real_cli(args: list[str], **_kwargs: object) -> SimpleNamespace:
+        calls.append(args)
+        if supersede:
+            fields = {"claim_revision": "revision-2"} if claim_revision else {}
+            CardStore(tmp_path).append_event("deadbeef", "claim", owner, owner=owner, **fields)
+        result = CliRunner().invoke(_coord_main(), [*args[1:], "--home", str(tmp_path)])
+        return SimpleNamespace(
+            returncode=result.exit_code,
+            stdout=result.output,
+            stderr=result.output if result.exit_code else "",
+        )
+
+    namespace["subprocess"] = SimpleNamespace(run=run_real_cli)
+    namespace["lifecycle_state"] = lambda card: (
+        "claimed" if CardStore(tmp_path).fold(card).owner else "open"
+    )
+
+    assert namespace["reap_dead_claims"]() == expected_releases
+    assert len(calls) == 1
+    expected_flag = "--expected-claim-revision" if claim_revision else "--expected-claim-timestamp"
+    assert expected_flag in calls[0]
+    assert (CardStore(tmp_path).fold("deadbeef").owner is None) is bool(expected_releases)
 
 
 def test_legacy_flat_list_is_read_and_pruned(tmp_path: Path) -> None:

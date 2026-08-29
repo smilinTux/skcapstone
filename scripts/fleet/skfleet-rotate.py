@@ -1179,9 +1179,15 @@ def reap_dead_claims():
                    "fleet launch record; leaving it for the stale-claim path"
                 % (HOST, cid, fresh_owner, fresh_revision or "missing"))
             continue
+        generation_fence = (
+            ["--expected-claim-timestamp",
+             datetime.datetime.fromtimestamp(fresh_ts, datetime.timezone.utc).isoformat()]
+            if unproven else
+            ["--expected-claim-revision", str(fresh_revision)]
+        )
         r = subprocess.run(
-            [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner),
-             "--agent", "fleet-liveness-reaper"],
+            [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner)]
+            + generation_fence + ["--agent", "fleet-liveness-reaper"],
             capture_output=True, text=True)
         if r.returncode == 0:
             _rows.pop(cid, None)          # the fold below must re-read from disk

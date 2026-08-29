@@ -212,6 +212,11 @@ def test_missing_claim_revision_uses_timestamp_fence_without_event_id(tmp_path: 
             "93220ffc",
             "--owner",
             "codex-chiap08-93220ffc",
+            "--expected-claim-timestamp",
+            datetime.datetime.fromtimestamp(
+                namespace["_claim_identity"](namespace["event_rows"]("93220ffc"))[1],
+                datetime.timezone.utc,
+            ).isoformat(),
             "--agent",
             "fleet-liveness-reaper",
         ]
@@ -297,10 +302,11 @@ def test_successful_launch_records_exact_claim_generation() -> None:
     assert fields("pi-codex-chiap02-deadbeef", "", True) == ""
 
 
-def test_reaper_uses_installed_release_claim_cli_shape() -> None:
-    """The live CLI accepts owner and agent, not a revision option."""
+def test_reaper_preserves_revision_fences_on_all_release_paths() -> None:
+    """Reaper, worker-exit, and launch-failure paths all carry a generation."""
     source = ROTATE.read_text(encoding="utf-8")
-    assert source.count("--expected-claim-revision") == 2
+    assert source.count("--expected-claim-revision") == 3
+    assert source.count("--expected-claim-timestamp") == 1
 
 
 def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
@@ -326,6 +332,8 @@ def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
             "deadbeef",
             "--owner",
             owner,
+            "--expected-claim-revision",
+            revision,
             "--agent",
             "fleet-liveness-reaper",
         ]
