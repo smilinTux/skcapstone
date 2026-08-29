@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 # Import the lanes module from scripts/fleet/
+# ruff: noqa: E402 - sys.path.insert must come before import
 _repo_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_repo_root / "scripts" / "fleet"))
 from lanes import (
