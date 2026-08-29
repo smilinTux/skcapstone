@@ -17,7 +17,7 @@
       "criterion_1": "PASS - Artifact SHA-256 cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c reproduced from shared path and matches PR 244",
       "criterion_2": "PASS - Both corrections (9535bc80, f10a0e73) verified against separate structural CardStore and direct evidence events",
       "criterion_3": "BLOCKED - Three cards have string remedies instead of structured command objects with required fields",
-      "criterion_4": "PENDING - Verdict being recorded now"
+      "criterion_4": "DONE - Verdict recorded with durable hash and skmail sent"
     },
     "verification_artifact": {
       "path": "/home/skuser01/.skcapstone/evidence/work/6c418ad3/verification-report-6c418ad3.json",
@@ -45,7 +45,8 @@
       }
     ],
     "actions_taken": "Read-only verification only. No audited-card repair or external action applied.",
-    "pull_request": "https://github.com/smilinTux/skcapstone/pull/244"
+    "review_pull_request": "https://github.com/smilinTux/skcapstone/pull/310",
+    "original_pr_244": "https://github.com/smilinTux/skcapstone/pull/244"
   },
   "schema": "skcapstone.fleet_unblock.review_verdict.v1"
 }
