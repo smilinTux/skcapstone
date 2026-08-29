@@ -183,7 +183,8 @@
     "ownership_verified": true,
     "ownership_evidence": "skcapstone coord status shows card 6c418ad3 IN_PROGRESS with assignee pi-glm-chiap02. Workspace name pi-glm-chiap02-6c418ad3 confirms ownership."
   },
-  "review_timestamp_utc": "2026-08-28T19:10:00Z",
+  "pull_request": "https://github.com/smilinTux/skcapstone/pull/291",
+  "review_timestamp_utc": "2026-08-28T19:15:00Z",
   "overall_verdict": "PASS",
   "schema": "skcapstone.fleet_unblock.verification_report.v1"
 }
