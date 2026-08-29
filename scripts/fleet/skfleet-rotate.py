@@ -1320,18 +1320,24 @@ log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d i
       %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,top))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
-# three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
+# hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
 # shared and claims land continuously, so the pools drift and strides collide.
 # A hash partition is stable no matter what the local pool looks like.
-off={"chiap01":0,"chiap02":1,"chiap03":2}.get(HOST,0)
-_NHOST=3
+_HOST_RESIDUES={host: residue for residue,host in enumerate(ROTATION_HOSTS)}
+def _host_owns_card(cid,host,pinned_host=None):
+    """Return whether an authorized host uniquely owns this card."""
+    if host not in _HOST_RESIDUES:
+        return False
+    if pinned_host is not None:
+        return host==pinned_host
+    residue=int(hashlib.sha256(cid.encode()).hexdigest()[:8],16)%len(ROTATION_HOSTS)
+    return residue==_HOST_RESIDUES[host]
+
 def owns(cid):
     # A host-pinned card is owned by its pinned host, full stop. Letting the hash
     # partition also apply would strand any card whose pin and hash slice disagree:
     # pinned to chiap08 but hashed into chiap02's slice means NO host takes it.
-    if cid in _PINNED_IDS:
-        return True
-    return int(hashlib.sha256(cid.encode()).hexdigest()[:8],16)%_NHOST==off
+    return _host_owns_card(cid,HOST,HOST if cid in _PINNED_IDS else None)
 owned=[x for x in pool if owns(x[2])]
 
 # Never steal another host's hash slice without an authoritative shared lock.

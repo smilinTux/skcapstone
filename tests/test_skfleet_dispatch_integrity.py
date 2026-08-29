@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -182,6 +183,38 @@ printf '%d|%d\n' "${{#candidate_ids[@]}}" "$candidate_manifests_missing"
         env={**os.environ, "HOME": str(tmp_path)},
     )
     assert result.stdout.strip() == "0|1"
+
+
+def test_five_host_partition_is_total_unique_and_view_independent() -> None:
+    """Every unpinned card has one owner across large, small, and reordered pools."""
+    hosts = ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
+    namespace = _load_functions("_host_owns_card")
+    owns = namespace["_host_owns_card"]
+    owns.__globals__.update(
+        {
+            "ROTATION_HOSTS": hosts,
+            "_HOST_RESIDUES": dict(zip(hosts, range(len(hosts)), strict=True)),
+            "hashlib": hashlib,
+        }
+    )
+
+    cards = [f"synthetic-{index:05d}" for index in range(10_000)]
+    for view in (cards, cards[:3], list(reversed(cards)), cards[::17]):
+        ownership = {card: [host for host in hosts if owns(card, host)] for card in view}
+        assert all(len(owners) == 1 for owners in ownership.values())
+        assert len(ownership) == sum(len(owners) for owners in ownership.values())
+
+    residues = {
+        int(hashlib.sha256(card.encode()).hexdigest()[:8], 16) % len(hosts) for card in cards
+    }
+    assert residues == set(range(len(hosts)))
+    assert set(owns.__globals__["_HOST_RESIDUES"].values()) == residues
+    assert all(any(owns(card, host) for card in cards) for host in hosts)
+
+    for pinned_host in hosts:
+        assert [host for host in hosts if owns("pinned-card", host, pinned_host)] == [pinned_host]
+    assert not owns("unpinned-card", "unknown-host")
+    assert not owns("pinned-card", "unknown-host", hosts[0])
 
 
 def test_existing_holds_reservations_capacity_and_cadence_remain() -> None:
