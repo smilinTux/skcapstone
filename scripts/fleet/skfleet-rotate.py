@@ -597,7 +597,7 @@ def _verdict_is_actionable(val):
                 return True
     return False
 
-_PASS_RE = re.compile(r"^\s*PASS(_FOR_REVIEW)?\b", re.I)
+_PASS_RE = re.compile(r"^\s*PASS(?:_FOR_(?:RE)?REVIEW)?\b", re.I)
 
 def blocked_backoff(cid):
     """True if this card should stay out of the pool for now."""
@@ -1316,7 +1316,7 @@ pool.sort(key=lambda x:(x[0],-x[4],x[1],x[2]))
 lc={0:0,1:0,2:0}
 for x in pool: lc[x[0]]+=1
 top=pool[0][4] if pool else 0
-log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d top_unblocks=%d"
+log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d unclaimable=%d itil_closed=%d blocked_backoff=%d pass_outcome_parked=%d pinned_elsewhere=%d foreign=%d not_claimable=%d top_unblocks=%d"
       %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,skipped_terminal,skipped_blocked,skipped_review,pinned_elsewhere,foreign_skipped,not_claimable_skipped,top))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
