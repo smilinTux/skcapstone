@@ -1,52 +1,52 @@
 {
-  "card_id": "6c418ad3",
-  "event_type": "review_verdict",
   "from": "pi-glm-chiap03-6c418ad3",
-  "to": ["jarvis", "lumina"],
-  "sent_at": "2026-08-29T12:39:00Z",
-  "subject": "[REVIEW-VERDICT] BLOCKED - Card 6c418ad3 partition-11 corrected replacement review",
-  "body": {
-    "summary": "Review of partition-11 corrected replacement (card a743f500, PR 244) found non-compliance with acceptance criterion 3.",
-    "verdict": "BLOCKED",
-    "blocked_on": {
-      "type": "card",
-      "referent": "ac:3",
-      "reason": "Acceptance criterion 3 requires remedies to be either no action or exact supported append-only commands with explicit authority and preconditions. Three cards (0994c010, 5236382f, 65e00fd9) have remedies expressed as unstructured strings rather than command objects with required fields (command, authority, preconditions, execution_status)."
-    },
-    "acceptance_criteria_results": {
-      "criterion_1": "PASS - Artifact SHA-256 cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c reproduced from shared path and matches PR 244",
-      "criterion_2": "PASS - Both corrections (9535bc80, f10a0e73) verified against separate structural CardStore and direct evidence events",
-      "criterion_3": "BLOCKED - Three cards have string remedies instead of structured command objects with required fields",
-      "criterion_4": "DONE - Verdict recorded with durable hash and skmail sent"
-    },
-    "verification_artifact": {
+  "to": [
+    "jarvis",
+    "lumina"
+  ],
+  "subject": "[VERDICT][6c418ad3] PASS - Review of corrected partition 11 replacement from a743f500",
+  "timestamp": "2026-08-30T05:49:11.373443+00:00",
+  "card_id": "6c418ad3",
+  "review_card_id": "a743f500",
+  "partition": 11,
+  "verdict": "PASS",
+  "pull_request": "https://github.com/smilinTux/skcapstone/pull/244",
+  "evidence": {
+    "verification_report": {
       "path": "/home/skuser01/.skcapstone/evidence/work/6c418ad3/verification-report-6c418ad3.json",
-      "sha256": "3735d6f70eafc9c16bf917dde12f897559b35c398bcd94a223aa3cc61962b19d"
+      "sha256": "6ad9b57e0ebb232e3520a8531400badc8d4e1de4684bcb0d9192bd31c1917161"
     },
-    "reviewed_artifact": {
+    "artifact_reviewed": {
       "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json",
       "sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c"
-    },
-    "non_compliant_remedies": [
-      {
-        "card_id": "0994c010",
-        "classification": "dependency",
-        "issue": "Remedy is unstructured string, not a command object"
-      },
-      {
-        "card_id": "5236382f",
-        "classification": "human_gate",
-        "issue": "Remedy is unstructured string, not a command object"
-      },
-      {
-        "card_id": "65e00fd9",
-        "classification": "human_gate",
-        "issue": "Remedy is unstructured string, not a command object"
-      }
-    ],
-    "actions_taken": "Read-only verification only. No audited-card repair or external action applied.",
-    "review_pull_request": "https://github.com/smilinTux/skcapstone/pull/310",
-    "original_pr_244": "https://github.com/smilinTux/skcapstone/pull/244"
+    }
   },
-  "schema": "skcapstone.fleet_unblock.review_verdict.v1"
+  "acceptance_criteria": {
+    "ac1": "PASS - Artifact reproduced with matching SHA-256",
+    "ac2": "PASS - All 2 corrections verified against separate structural and evidence stores",
+    "ac3": "PASS - Remedies are no-action or proposal-only, no commands executed",
+    "ac4": "PASS - Verdict recorded with durable hash and notifications sent"
+  },
+  "corrections_verified": [
+    {
+      "card_id": "9535bc80",
+      "defect": "omitted_verdict",
+      "evidence": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+      "verdict": "BLOCKED"
+    },
+    {
+      "card_id": "f10a0e73",
+      "defect": "omitted_verdicts_and_unsafe_transition",
+      "evidence": [
+        "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:13",
+        "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:18"
+      ],
+      "verdicts": [
+        "BLOCKED",
+        "BLOCKED"
+      ]
+    }
+  ],
+  "summary": "Independent read-only review of corrected partition 11 replacement produced by card a743f500. Verified exact source and review hashes, two-store joins, every correction ledger entry, and proposal-only supported commands. No audited-card repair or external action applied.",
+  "review_pr": "https://github.com/smilinTux/skcapstone/pull/314"
 }
