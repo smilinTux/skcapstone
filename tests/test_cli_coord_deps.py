@@ -1,11 +1,12 @@
 """Tests for dependency enforcement on `coord claim` and the blocked/unblocked
 distinction in `coord status` (card 34be7725)."""
 
+import json
 from pathlib import Path
 
 import click
 from click.testing import CliRunner
-from skcoord.card_store import current_claim_precondition
+from skcoord.card_store import CardStore, current_claim_precondition
 from skcoord.lifecycle import transition_task
 
 from skcapstone.cli.coord import register_coord_commands
@@ -195,7 +196,7 @@ def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path):
     assert runner.invoke(_main(), args).exit_code != 0
 
 
-def test_release_claim_requires_expected_revision(tmp_path: Path):
+def test_release_claim_requires_exactly_one_generation_fence(tmp_path: Path):
     """The supported mutation boundary never accepts an owner-only release."""
     board = Board(tmp_path)
     board.ensure_dirs()
@@ -218,8 +219,63 @@ def test_release_claim_requires_expected_revision(tmp_path: Path):
     )
 
     assert result.exit_code != 0
-    assert "expected-claim-revision" in result.output
+    assert "exactly one claim generation fence" in result.output
     assert current_claim_precondition(tmp_path, "a1e10002", "probe")
+
+    both = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "release-claim",
+            "a1e10002",
+            "--owner",
+            "probe",
+            "--expected-claim-revision",
+            current_claim_precondition(tmp_path, "a1e10002", "probe"),
+            "--expected-claim-timestamp",
+            "2026-08-29T10:00:00+00:00",
+            "--agent",
+            "repair",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert both.exit_code != 0
+    assert "exactly one claim generation fence" in both.output
+
+
+def test_release_claim_accepts_exact_aware_timestamp_for_revisionless_claim(
+    tmp_path: Path,
+):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="a1e10004", title="legacy release target"))
+    board.claim_task("probe", "a1e10004")
+    store = CardStore(tmp_path)
+    claim = next(event for event in store._read_events("a1e10004") if event["action"] == "claim")
+    claim.pop("claim_revision")
+    event_path = next((tmp_path / "cards" / "a1e10004" / "events").glob("*.jsonl"))
+    event_path.write_text(json.dumps(claim) + "\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "release-claim",
+            "a1e10004",
+            "--owner",
+            "probe",
+            "--expected-claim-timestamp",
+            claim["ts"],
+            "--agent",
+            "repair",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert CardStore(tmp_path).fold("a1e10004").owner is None
 
 
 def test_release_claim_preserves_newer_same_owner_generation(tmp_path: Path):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -13,6 +14,41 @@ from rich.text import Text
 
 from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name, validate_task_id
+
+
+def _parse_aware_claim_timestamp(value: str) -> datetime:
+    """Parse one exact timezone-aware claim timestamp."""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("expected claim timestamp must be valid ISO 8601") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("expected claim timestamp must include a timezone")
+    return parsed
+
+
+def _current_claim_generation(home: Path, task_id: str, owner: str) -> tuple[str | None, str]:
+    """Return the explicit revision and timestamp for the folded active claim."""
+    from skcoord.card_store import CardStore
+
+    store = CardStore(home)
+    card = store.fold(task_id)
+    if card is None:
+        raise ValueError(f"CardStore card {task_id} not found")
+    if card.owner != owner:
+        raise ValueError(f"CardStore owner conflict for {task_id}: expected {owner}")
+    marker = card.meta.get("_claim_revision")
+    for event in reversed(store._read_events(task_id)):
+        if event.get("action") != "claim":
+            continue
+        event_owner = (
+            event.get("owner") or event.get("agent") or event.get("actor") or event.get("by")
+        )
+        revision = str(event.get("claim_revision") or "").strip() or None
+        event_marker = revision or event.get("event_id")
+        if event_owner == owner and event_marker == marker:
+            return revision, str(event.get("ts") or event.get("timestamp") or "")
+    raise ValueError(f"CardStore claim generation for {task_id} was not found")
 
 
 def register_coord_commands(main: click.Group) -> None:
@@ -271,14 +307,26 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--owner", required=True, help="Exact current claim owner.")
     @click.option(
         "--expected-claim-revision",
-        required=True,
+        default=None,
         help="Exact current claim revision. A newer generation is never released.",
+    )
+    @click.option(
+        "--expected-claim-timestamp",
+        default=None,
+        help="Exact aware timestamp for a revisionless current claim.",
     )
     @click.option("--agent", required=True, help="Audited release actor.")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_release_claim(task_id, owner, expected_claim_revision, agent, home):
+    def coord_release_claim(
+        task_id,
+        owner,
+        expected_claim_revision,
+        expected_claim_timestamp,
+        agent,
+        home,
+    ):
         """Release one exact claim generation without completing the task."""
-        from skcoord.card_store import card_mutation_lock, current_claim_precondition
+        from skcoord.card_store import card_mutation_lock
         from skcoord.coordination import _board_mutation_lock
 
         from ..coordination import Board
@@ -286,18 +334,47 @@ def register_coord_commands(main: click.Group) -> None:
         validate_task_id(task_id)
         validate_agent_name(owner)
         validate_agent_name(agent)
-        if not str(expected_claim_revision).strip():
-            raise click.ClickException("expected claim revision must not be empty")
+        revision_fence = str(expected_claim_revision or "").strip() or None
+        timestamp_fence = str(expected_claim_timestamp or "").strip() or None
+        if (revision_fence is None) == (timestamp_fence is None):
+            raise click.ClickException(
+                "exactly one claim generation fence is required: revision or timestamp"
+            )
+        expected_timestamp = None
+        if timestamp_fence is not None:
+            try:
+                expected_timestamp = _parse_aware_claim_timestamp(timestamp_fence)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from None
         home_path = Path(home).expanduser()
         board = Board(home_path)
         try:
             with _board_mutation_lock(home_path), card_mutation_lock(home_path, task_id):
-                current_revision = current_claim_precondition(home_path, task_id, owner)
-                if current_revision != expected_claim_revision:
+                current_revision, current_timestamp_raw = _current_claim_generation(
+                    home_path, task_id, owner
+                )
+                if revision_fence is not None and current_revision != revision_fence:
                     raise ValueError(
                         f"claim revision conflict for {task_id}: expected "
-                        f"{expected_claim_revision}, current {current_revision}"
+                        f"{revision_fence}, current {current_revision or 'missing'}"
                     )
+                if timestamp_fence is not None:
+                    if current_revision is not None:
+                        raise ValueError(
+                            f"claim generation conflict for {task_id}: "
+                            "current claim has a revision"
+                        )
+                    try:
+                        current_timestamp = _parse_aware_claim_timestamp(current_timestamp_raw)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"current claim timestamp for {task_id} is not timezone-aware"
+                        ) from exc
+                    if current_timestamp != expected_timestamp:
+                        raise ValueError(
+                            f"claim timestamp conflict for {task_id}: expected "
+                            f"{timestamp_fence}, current {current_timestamp_raw}"
+                        )
                 changed = board._release_claim_locked(owner, task_id, actor=agent)
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None

@@ -1313,27 +1313,90 @@ def _claim_identity(rows):
             owner, ts, revision = None, 0.0, None
     return owner, ts, revision
 
-def _load_ineffective():
+#: How long a card stays on the ineffective list before the reaper tries once
+#: more. The list records "release said OK but the fold still says claimed",
+#: which is the two-store split. That condition is usually transient, so a
+#: permanent skip is the wrong shape for it.
+INEFFECTIVE_TTL = 24 * 3600
+
+
+def _read_ineffective_raw():
+    """Return {card_id: first_seen_epoch}, tolerating the old list format.
+
+    The file used to be {"cards": [id, ...]} with no timestamps. Those entries
+    are read as first_seen=0, which makes them immediately expired, which is
+    the correct treatment: they were recorded under a rule that never released
+    them and there is no evidence any of them is still stuck.
+    """
     try:
         with open(_INEFFECTIVE_PATH, encoding="utf-8") as fh:
-            return {str(x) for x in json.load(fh).get("cards") or ()}
+            raw = json.load(fh).get("cards") or {}
     except (OSError, ValueError):
-        return set()
+        return {}
+    if isinstance(raw, dict):
+        out = {}
+        for k, v in raw.items():
+            try:
+                out[str(k)] = float(v)
+            except (TypeError, ValueError):
+                out[str(k)] = 0.0
+        return out
+    return {str(x): 0.0 for x in raw}
 
 
-def _record_ineffective(cid):
-    known = _load_ineffective()
-    if cid in known:
-        return
-    known.add(cid)
+def _write_ineffective(entries):
     try:
         os.makedirs(os.path.dirname(_INEFFECTIVE_PATH), exist_ok=True)
         tmp = _INEFFECTIVE_PATH + ".new"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"cards": sorted(known)}, fh)
+            json.dump({"cards": {k: entries[k] for k in sorted(entries)}}, fh)
         os.replace(tmp, _INEFFECTIVE_PATH)
     except OSError:
         pass
+
+
+def _load_ineffective():
+    """Cards the reaper should skip, after expiring the ones that no longer apply.
+
+    This list was append-only with no removal path anywhere in the file.
+    Measured 2026-08-29: 93 entries, of which 69 were no longer claimed at all
+    (50 BACKLOG, 10 DONE, 6 READY, 3 REVIEW). The reaper was skipping 69 cards
+    to avoid a problem that had already resolved, and any card that landed here
+    was skipped for the rest of the fleet's life.
+
+    Two expiry rules, both self-correcting rather than arbitrary:
+
+      1. A card that is no longer `claimed` cannot be stuck, so the entry is
+         meaningless and goes. This is the rule that matters; it needs no clock.
+      2. An entry older than INEFFECTIVE_TTL is retried once. The two-store
+         disagreement that put it here is usually transient, and a card that is
+         still genuinely stuck will simply be re-recorded on the next attempt.
+
+    Pruning is written back, so the file shrinks instead of growing forever.
+    """
+    entries = _read_ineffective_raw()
+    if not entries:
+        return set()
+    now = time.time()
+    kept = {}
+    for cid, first_seen in entries.items():
+        if lifecycle_state(cid) != "claimed":
+            continue                      # rule 1: not stuck any more
+        if now - first_seen >= INEFFECTIVE_TTL:
+            continue                      # rule 2: earned a retry
+        kept[cid] = first_seen
+    if len(kept) != len(entries):
+        _write_ineffective(kept)
+    return set(kept)
+
+
+def _record_ineffective(cid):
+    entries = _read_ineffective_raw()
+    if cid in entries:
+        return                            # keep the ORIGINAL first_seen, so the
+                                          # TTL measures age, not last sighting
+    entries[cid] = time.time()
+    _write_ineffective(entries)
 
 
 def _current_claim_fresh(cid):
@@ -1459,11 +1522,22 @@ def reap_dead_claims():
             continue                      # a host says this is running right now
         if cid in _ineffective:
             continue                      # releasing it does nothing; see above
-        if not claim_revision:
-            log(d, "REAP_UNPROVEN|%s|%s|%s|claim revision missing has no exact "
-                   "successful fleet launch record; leaving it for the stale-claim path"
-                % (HOST, cid, owner))
-            continue
+        # A claim with no revision is NOT skipped. It used to be, deferred to a
+        # "stale-claim path" that does not exist: grep the file, the phrase
+        # appears only in the log lines that defer to it. Measured 2026-08-29
+        # across 1576 claim events, 234 carried no revision, so 15% of claims
+        # could never be reaped and simply accumulated. Twice in one night the
+        # board went to zero eligible cards with ~90 dead claims held by workers
+        # that no longer existed, and a human had to release them by hand.
+        #
+        # Such a claim takes the fallback path below: identity is compared on
+        # (owner, timestamp) instead of (owner, revision), and launch provenance
+        # is not demanded, because there is no revision to prove it against.
+        # Every other guard still applies: the owner must be fleet-ephemeral,
+        # the card must not be running on ANY reporting host, the quorum must be
+        # met, the claim must be older than CLAIM_GRACE, and a fresh re-read
+        # from disk must still agree.
+        unproven = not claim_revision
         if not cts:
             log(d, "REAP_UNPROVEN|%s|%s|%s|claim timestamp invalid; leaving it "
                    "for the stale-claim path" % (HOST, cid, owner))
@@ -1480,15 +1554,25 @@ def reap_dead_claims():
         fresh_owner, fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
         if not fresh_owner:
             continue                      # released by someone else in the meantime
-        if fresh_owner != owner or fresh_revision != claim_revision:
+        # For a revision-less claim, the timestamp is the generation marker: a
+        # re-claim by the same owner writes a new claim event with a new ts.
+        reclaimed = (fresh_owner != owner) or (
+            (fresh_ts != cts) if unproven else (fresh_revision != claim_revision)
+        )
+        if reclaimed:
             log(d, "REAP_RECLAIMED|%s|%s|was %s revision %s now %s revision %s; "
                    "leaving it alone this tick"
                 % (HOST, cid, owner, claim_revision, fresh_owner,
                    fresh_revision or "missing"))
             continue
         if not fresh_ts:
-            log(d, "REAP_UNPROVEN|%s|%s|%s|fresh claim timestamp invalid; leaving "
-                   "it for the stale-claim path" % (HOST, cid, fresh_owner))
+            # Genuinely not reapable: without a parseable timestamp there is no
+            # way to test the grace period, so releasing would be a guess. Left
+            # alone deliberately. This used to say "leaving it for the
+            # stale-claim path", which does not exist and never did.
+            log(d, "REAP_NO_TIMESTAMP|%s|%s|%s|fresh claim timestamp will not "
+                   "parse, so grace cannot be tested; left alone"
+                % (HOST, cid, fresh_owner))
             continue
         if fresh_ts > time.time():
             log(d, "REAP_CLOCK_SKEW|%s|%s|%s|fresh claim timestamp is in the "
@@ -1498,15 +1582,20 @@ def reap_dead_claims():
             log(d, "REAP_GRACE|%s|%s|%s|fresh claim generation remains inside "
                    "grace; leaving it alone this tick" % (HOST, cid, fresh_owner))
             continue
-        if not _fleet_launch_provenance(cid, fresh_owner, fresh_revision):
+        if not unproven and not _fleet_launch_provenance(cid, fresh_owner, fresh_revision):
             log(d, "REAP_UNPROVEN|%s|%s|%s|claim revision %s has no exact successful "
                    "fleet launch record; leaving it for the stale-claim path"
                 % (HOST, cid, fresh_owner, fresh_revision or "missing"))
             continue
+        generation_fence = (
+            ["--expected-claim-timestamp",
+             datetime.datetime.fromtimestamp(fresh_ts, datetime.timezone.utc).isoformat()]
+            if unproven else
+            ["--expected-claim-revision", str(fresh_revision)]
+        )
         r = subprocess.run(
-            [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner),
-             "--expected-claim-revision", str(fresh_revision),
-             "--agent", "fleet-liveness-reaper"],
+            [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner)]
+            + generation_fence + ["--agent", "fleet-liveness-reaper"],
             capture_output=True, text=True)
         if r.returncode == 0:
             _rows.pop(cid, None)          # the fold below must re-read from disk
