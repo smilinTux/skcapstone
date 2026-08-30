@@ -43,9 +43,54 @@ def _isolate_daemon_shared_root(monkeypatch, tmp_path):
 
 
 def _make_agent_home(tmp_path: Path, agent: str) -> Path:
-    """Create a minimal agent home inside tmp_path/agents/<agent>/."""
+    """Create and register a minimal eligible human profile."""
+    import json
+
+    from skcapstone.profile_registry import profile_content_hash, registry_content_hash
+
     home = tmp_path / "agents" / agent
     home.mkdir(parents=True)
+    profile = {
+        "schema_version": "skcapstone.agent-profile.v1",
+        "schema_revision": "1",
+        "profile_id": agent,
+        "profile_kind": "human",
+        "selectable": True,
+        "fallback_eligible": True,
+        "memory_principal_id": f"memory:{agent}",
+        "default_tools": [],
+        "capability_policy_ref": "test-policy.v1",
+        "profile_revision": "1",
+        "profile_hash": "",
+    }
+    profile["profile_hash"] = profile_content_hash(profile)
+    (home / "profile.json").write_text(json.dumps(profile))
+    registry_path = tmp_path / "config/profile-registry.json"
+    registry_path.parent.mkdir(exist_ok=True)
+    if registry_path.exists():
+        registry = json.loads(registry_path.read_text())
+    else:
+        registry = {
+            "schema_version": "skcapstone.profile-registry.v1",
+            "schema_revision": "1",
+            "registry_revision": "1",
+            "profiles": [],
+            "registry_hash": "",
+        }
+    registry["profiles"].append(
+        {
+            "profile_id": agent,
+            "profile_kind": "human",
+            "selectable": True,
+            "fallback_eligible": True,
+            "memory_principal_id": f"memory:{agent}",
+            "schema_revision": "1",
+            "profile_revision": "1",
+            "profile_hash": profile["profile_hash"],
+        }
+    )
+    registry["registry_hash"] = registry_content_hash(registry)
+    registry_path.write_text(json.dumps(registry))
     return home
 
 

@@ -127,7 +127,11 @@ def gather_profile(home: Path, agent: str) -> dict:
     profiles = _load_yaml(home / "config" / "model_profiles.yaml")
     model_patterns = [p.get("model_pattern") for p in (profiles.get("profiles") or [])]
 
-    # 4. Bridge curation (profile.yaml block, else the curated default)
+    # 4. Bridge curation. Authority comes only from the common registry; the
+    # legacy bridge file may narrow a healthy human profile but never grant one.
+    from ..profile_registry import resolve_profile
+
+    authority = resolve_profile(home.parent.parent, agent)
     profile_file = _load_yaml(home / PROFILE_FILENAME)
     bridge = profile_file.get("bridge") or {}
     bridge.setdefault("tools", "default")  # "default" | "all" | [list]
@@ -149,22 +153,28 @@ def gather_profile(home: Path, agent: str) -> dict:
         "model": {"profile_patterns": model_patterns},
         "mcp": {"servers": servers, "exposed_tools": sorted(set(exposed))},
         "bridge": bridge,
+        "profile_authority": authority.model_dump(),
         "skills": skills,
     }
 
 
 def _resolved_bridge_tools(manifest: dict) -> list[str]:
-    """Resolve the bridge's effective toolset from its curation setting."""
+    """Resolve tools without crossing profile identity or failure boundaries."""
+    authority = manifest.get("profile_authority", {})
+    if not authority.get("healthy") or authority.get("profile_kind") != "human":
+        return []
+    allowed = set(authority.get("default_tools") or [])
     sel = manifest.get("bridge", {}).get("tools", "default")
     exposed = set(manifest["mcp"]["exposed_tools"])
     if sel == "all":
-        return sorted(exposed) if exposed else ["(all server tools)"]
+        return sorted(allowed & exposed) if exposed else sorted(allowed)
     if isinstance(sel, list):
-        return [t for t in sel]
-    # default curated set, intersected with what's allowed (empty allow = all)
-    if exposed:
-        return [t for t in DEFAULT_BRIDGE_TOOLS if t in exposed] or DEFAULT_BRIDGE_TOOLS
-    return DEFAULT_BRIDGE_TOOLS
+        return [tool for tool in sel if tool in allowed and (not exposed or tool in exposed)]
+    return [
+        tool
+        for tool in DEFAULT_BRIDGE_TOOLS
+        if tool in allowed and (not exposed or tool in exposed)
+    ]
 
 
 def register_agent_profile_commands(main: click.Group) -> None:

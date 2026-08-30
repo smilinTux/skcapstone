@@ -96,19 +96,25 @@ def _detect_active_agent(root: str | None = None) -> str | None:
     Returns:
         The active agent name if one can be resolved, else None.
     """
+    base = Path(root or os.environ.get("SKCAPSTONE_HOME", _default_home())).expanduser()
     env_agent = (os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT", "")).strip()
     if env_agent:
-        return env_agent
+        from .profile_registry import profile_is_eligible
 
-    base = Path(root or os.environ.get("SKCAPSTONE_HOME", _default_home())).expanduser()
+        return env_agent if profile_is_eligible(base, env_agent) else None
+
     agents_dir = base / "agents"
     if not agents_dir.exists():
         return None
 
+    from .profile_registry import profile_is_eligible
+
     candidates = sorted(
         entry.name
         for entry in agents_dir.iterdir()
-        if entry.is_dir() and not entry.name.endswith("-template")
+        if entry.is_dir()
+        and not entry.name.endswith("-template")
+        and profile_is_eligible(base, entry.name, fallback=True)
     )
     if not candidates:
         return None

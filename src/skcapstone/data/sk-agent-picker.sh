@@ -47,6 +47,16 @@
 #   source ~/clawd/skcapstone-repos/skcapstone/scripts/sk-agent-picker.sh
 
 # ---------------------------------------------------------------------------
+# Common versioned profile guard. Any probe failure is an ineligible profile.
+# ---------------------------------------------------------------------------
+_sk_profile_eligible() {
+    local name="$1"
+    local mode="${2:-selectable}"
+    local root="${SKCAPSTONE_HOME:-$HOME/.skcapstone}"
+    python3 -m skcapstone.profile_registry eligible "$root" "$name" "$mode" >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
 # Core picker — returns chosen agent name on stdout, menu on stderr
 # ---------------------------------------------------------------------------
 _sk_pick_agent() {
@@ -64,7 +74,8 @@ _sk_pick_agent() {
             local name
             name=$(basename "$entry")
             # Skip template dirs, dotfiles, and non-directory entries
-            if [[ -d "$entry" && "$name" != *-template && "$name" != .* && "$name" != *.* ]]; then
+            if [[ -d "$entry" && "$name" != *-template && "$name" != .* && "$name" != *.* ]] && \
+                    _sk_profile_eligible "$name" selectable; then
                 agents+=("$name")
             fi
         done < <(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d | sort)
@@ -305,26 +316,27 @@ _sk_launch() {
     if [[ -z "$agent" && "${SK_NO_PICKER:-0}" != "1" && $non_interactive -eq 0 ]]; then
         agent=$(_sk_pick_agent)
     elif [[ -z "$agent" && $non_interactive -eq 1 ]]; then
-        # Non-interactive: take env or first agent silently
-        agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
-        if [[ -z "$agent" ]]; then
+        # Non-interactive: use an eligible explicit human or first eligible
+        # fallback human. Service and invalid profiles are never candidates.
+        local requested="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
+        if [[ -n "$requested" ]] && _sk_profile_eligible "$requested" selectable; then
+            agent="$requested"
+        else
             local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
-            if [[ -d "$agents_dir" ]]; then
-                # Prefer SK_DEFAULT_AGENT (lumina) if present, else first alphabetically.
-                local _skd="${SK_DEFAULT_AGENT:-lumina}"
-                if [[ -d "$agents_dir/$_skd" ]]; then
-                    agent="$_skd"
-                else
-                    agent=$(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '%f\n' | sort | head -1)
+            local candidate
+            while IFS= read -r candidate; do
+                if _sk_profile_eligible "$candidate" fallback; then
+                    agent="$candidate"
+                    break
                 fi
-            fi
+            done < <(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '%f\n' 2>/dev/null | sort)
         fi
     fi
 
-    # Fallback: if picker returned empty (0 agents), just use SKAGENT
-    # or launch bare if that's also unset.
-    if [[ -z "$agent" ]]; then
-        agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
+    # Explicit flags and environment values still pass the same registry guard.
+    if [[ -n "$agent" ]] && ! _sk_profile_eligible "$agent" selectable; then
+        echo "  ✖ Agent profile is not selectable: $agent" >&2
+        return 1
     fi
 
     local tool_path=""
@@ -371,14 +383,17 @@ function skswitch {
         fi
     fi
 
-    # Validate agent directory exists
+    # Validate both the directory and common profile authority.
     local agent_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents/$agent"
-    if [[ ! -d "$agent_dir" ]]; then
-        echo "Agent not found: $agent" >&2
+    if [[ ! -d "$agent_dir" ]] || ! _sk_profile_eligible "$agent" selectable; then
+        echo "Agent not found or not selectable: $agent" >&2
         echo "Available agents:" >&2
         local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
         if [[ -d "$agents_dir" ]]; then
-            find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '  %f\n' | sort >&2
+            local candidate
+            while IFS= read -r candidate; do
+                _sk_profile_eligible "$candidate" selectable && printf '  %s\n' "$candidate"
+            done < <(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '%f\n' | sort) >&2
         fi
         return 1
     fi
@@ -432,6 +447,7 @@ function pi {
 }
 
 # Export so sub-shells (tmux panes, etc.) inherit the functions
+export -f _sk_profile_eligible 2>/dev/null || true
 export -f _sk_pick_agent 2>/dev/null || true
 export -f _sk_install_command 2>/dev/null || true
 export -f _sk_find_tool_path 2>/dev/null || true
