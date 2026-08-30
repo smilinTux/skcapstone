@@ -1590,12 +1590,13 @@ def reap_dead_claims():
 # A dry run must be safe to run at any time, from any host, by anyone. That is the
 # entire point of having one.
 if DRY:
-    log(d, "DRY_SKIPPED|%s|reap_dead_claims and close_reviewed_parents skipped; "
+    log(d, "DRY_SKIPPED|%s|reap_dead_claims, open_provisional_reviews, and "
+           "close_reviewed_parents skipped; "
            "pass --go to mutate the board" % HOST)
 else:
     reap_dead_claims()
 
-# ---- close work that has been reviewed and passed --------------------------
+# ---- open provisional outcomes for review, then close reviewed work --------
 # A card that produced a candidate and had it independently reviewed and PASSED
 # is finished, and nothing moved it. Measured 2026-08-28: ac2e387c carried
 # PASS_FOR_REVIEW with an independent review recorded PASS and sat open until a
@@ -1613,11 +1614,30 @@ else:
 # review and 2 by a silent one, which is the discrimination this is for.
 _PASS_ONLY_RE = re.compile(r"^\s*PASS(?!_FOR)", re.I)
 _PASS_ANY_RE  = re.compile(r"^\s*PASS", re.I)
-_REVIEW_TITLE = "[REVIEW"
+_PROVISIONAL_PASS_RE = re.compile(r"^\s*(PASS_FOR_[A-Z_]+|PASS_READY_[A-Z_]+)\b", re.I)
+_REVIEW_TITLE_RE = re.compile(r"\[(?:REVIEW|REREVIEW)\]", re.I)
 _ID_RE = re.compile(r"\b([0-9a-f]{8})\b")
+_GOVERNOR_REFUSAL_RE = re.compile(
+    r"(?:Refusing (?:live review duplicate|third review level)|"
+    r"Governed card .* requires exactly one parent-|Review ancestry)", re.I)
+_REVIEW_REFUSALS = os.path.join(EVID, "provisional-review-refusals")
+
+def _review_parent_ids(cid, core):
+    """Return explicit parent labels, with legacy title text as a fallback."""
+    labels = folded_labels(cid, core)
+    parents = {
+        str(label)[len("parent-"):]
+        for label in labels
+        if str(label).lower().startswith("parent-")
+        and _ID_RE.fullmatch(str(label)[len("parent-"):])
+    }
+    if parents:
+        return parents
+    blob = str(core.get("title") or "") + " " + str(core.get("description") or "")
+    return {match.group(1) for match in _ID_RE.finditer(blob) if match.group(1) != cid}
 
 def _reviews_by_parent():
-    """Map parent card id -> review card ids that name it."""
+    """Map parent card id to governed review cards that name it."""
     out = {}
     for cd in glob.glob(CARDS + "/*"):
         cid = os.path.basename(cd)
@@ -1626,13 +1646,86 @@ def _reviews_by_parent():
         try: core = json.load(open(cp))
         except Exception: continue
         title = str(core.get("title") or "")
-        if _REVIEW_TITLE not in title.upper(): continue
-        blob = title + " " + str(core.get("description") or "")
-        for mm in _ID_RE.finditer(blob):
-            pid = mm.group(1)
-            if pid != cid:
-                out.setdefault(pid, set()).add(cid)
+        if not _REVIEW_TITLE_RE.search(title): continue
+        for pid in _review_parent_ids(cid, core):
+            out.setdefault(pid, set()).add(cid)
     return out
+
+def _review_card_id(parent, outcome_ts, verdict):
+    """Return one cross-host identity for one parent outcome generation."""
+    key = "fleet-review-opener-v1\0%s\0%s\0%s" % (parent, outcome_ts, verdict.upper())
+    return hashlib.sha256(key.encode()).hexdigest()[:8]
+
+def _record_review_refusal(review_id, parent, outcome_ts, verdict):
+    """Persist one stable refusal key so later rotations do not retry it."""
+    os.makedirs(_REVIEW_REFUSALS, exist_ok=True)
+    path = os.path.join(_REVIEW_REFUSALS, review_id + ".json")
+    payload = json.dumps({
+        "review_id": review_id,
+        "parent": parent,
+        "outcome_ts": outcome_ts,
+        "verdict": verdict,
+    }, sort_keys=True, separators=(",", ":")) + "\n"
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    try:
+        os.write(fd, payload.encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return True
+
+def open_provisional_reviews():
+    """Create one governed review card for each unreviewed provisional pass."""
+    outcomes = _load_outcomes()
+    reviews = _reviews_by_parent()
+    opened = 0
+    for parent, (outcome_ts, raw_verdict) in sorted(outcomes.items()):
+        if lifecycle_state(parent) != "open": continue
+        verdict = str(raw_verdict or "")
+        match = _PROVISIONAL_PASS_RE.match(verdict)
+        if not match: continue
+        if any(lifecycle_state(cid) in {"open", "claimed"}
+               for cid in reviews.get(parent, ())):
+            continue
+        token = match.group(1).upper()
+        review_id = _review_card_id(parent, str(outcome_ts or ""), token)
+        if os.path.isdir(os.path.join(CARDS, review_id)): continue
+        refusal_path = os.path.join(_REVIEW_REFUSALS, review_id + ".json")
+        if os.path.exists(refusal_path): continue
+        r = subprocess.run(
+            [SKC, "coord", "create", "--id", review_id,
+             "--title", "[REVIEW] Review provisional outcome for %s" % parent,
+             "--desc", "Independently review parent %s at outcome %s (%s)."
+             % (parent, str(outcome_ts or "unknown"), token),
+             "--priority", "high", "--tag", "parent-%s" % parent,
+             "--tag", "review", "--tag", "qwen-suitable",
+             "--by", "fleet-review-opener",
+             "--criteria", "Verify the parent acceptance criteria and evidence independently.",
+             "--criteria", "Record a leading PASS or FAIL verdict with immutable evidence."],
+            capture_output=True, text=True,
+            env=dict(os.environ, SKCOORD_CARD_STORE="1"))
+        if r.returncode == 0:
+            opened += 1
+            reviews.setdefault(parent, set()).add(review_id)
+            log(d, "OPENED_REVIEW|%s|%s|review=%s|%s" %
+                (HOST, parent, review_id, token))
+            continue
+        current = _reviews_by_parent().get(parent, set())
+        if any(lifecycle_state(cid) in {"open", "claimed"} for cid in current):
+            log(d, "OPEN_REVIEW_RACED|%s|%s|review=%s" % (HOST, parent, review_id))
+            continue
+        error = ((r.stderr or "") + " " + (r.stdout or "")).strip()
+        if _GOVERNOR_REFUSAL_RE.search(error):
+            if _record_review_refusal(review_id, parent, str(outcome_ts or ""), token):
+                log(d, "OPEN_REVIEW_REFUSED|%s|%s|review=%s|%s" %
+                    (HOST, parent, review_id, error[:110]))
+        else:
+            log(d, "OPEN_REVIEW_FAILED|%s|%s|review=%s|%s" %
+                (HOST, parent, review_id, error[:110]))
+    return opened
 
 def close_reviewed_parents():
     """Complete cards whose independent review is complete and PASSED."""
@@ -1670,6 +1763,7 @@ def close_reviewed_parents():
     return closed
 
 if not DRY:
+    open_provisional_reviews()
     close_reviewed_parents()
 
 _PINNED_IDS=set()

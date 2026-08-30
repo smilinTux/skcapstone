@@ -158,6 +158,9 @@ def register_coord_commands(main: click.Group) -> None:
 
     @coord.command("create")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--id", "task_id", default=None, help="Stable task ID for idempotent automation."
+    )
     @click.option("--title", required=True, help="Task title.")
     @click.option(
         "--desc",
@@ -172,17 +175,20 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--by", default="human", help="Creator name.")
     @click.option("--criteria", multiple=True, help="Acceptance criteria (repeatable).")
     @click.option("--dep", multiple=True, help="Dependency task IDs (repeatable).")
-    def coord_create(home, title, desc, priority, tag, by, criteria, dep):
+    def coord_create(home, task_id, title, desc, priority, tag, by, criteria, dep):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
 
         validate_agent_name(by)
+        if task_id:
+            validate_task_id(task_id)
         for d in dep:
             validate_task_id(d)
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
         task = Task(
+            **({"id": task_id} if task_id else {}),
             title=title,
             description=desc,
             priority=TaskPriority(priority),
