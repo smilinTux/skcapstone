@@ -10,6 +10,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card c90e1c78: open provisional outcomes for independent review.** Fleet
+  rotation now creates one governed review card when an open card records a
+  leading `PASS_FOR_*` or `PASS_READY_*` verdict. Stable outcome-generation IDs
+  make concurrent five-host sweeps converge, existing live review successors
+  suppress creation, and a persisted SKCoord governor refusal prevents blind
+  retries for the unchanged verdict.
+
 - A sweep that returns cards whose recorded blocker has since completed. A worker
   records why it stopped inside its verdict, as `blocked_on=card
   referent=card:c818148b`. That is a real blocking relationship, but it lives as
