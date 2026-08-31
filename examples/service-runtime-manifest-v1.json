@@ -1,0 +1,31 @@
+{
+  "schema": "skfleet-service-runtime/v1",
+  "service": "skcapstone-daemon",
+  "repository": "https://github.com/smilinTux/skcapstone.git",
+  "commit": "1111111111111111111111111111111111111111",
+  "tree": "2222222222222222222222222222222222222222",
+  "runtime_kind": "python-wheel",
+  "artifacts": [
+    {
+      "name": "skcapstone.whl",
+      "path": "/srv/skfleet/artifacts/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skcapstone.whl",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "dependency_lock": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "configuration_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "unit_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "host": "chiap03",
+  "health_probe": {
+    "kind": "exec",
+    "target": "probe:skcapstone-daemon",
+    "timeout_s": 30
+  },
+  "rollback_artifact": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "data_refs": [
+    "data:coordination"
+  ],
+  "credential_refs": [
+    "credential:skcapstone-runtime"
+  ]
+}
