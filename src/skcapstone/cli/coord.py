@@ -217,9 +217,25 @@ def register_coord_commands(main: click.Group) -> None:
             views = [v for v in views if _status_label(v) == status_filter]
 
         # Eligibility counts are needed for both the text and JSON payloads.
+        # The eligibility read is best-effort: a malformed card in the
+        # CardStore event stream must not crash the whole status command.
         from ..coord_eligibility import leaf_eligibility_counts
 
-        eligibility = leaf_eligibility_counts(home_path, {v.task.id for v in views})
+        try:
+            eligibility = leaf_eligibility_counts(home_path, {v.task.id for v in views})
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                "eligibility counts unavailable, treating malformed population as 1: %s", exc
+            )
+            from dataclasses import dataclass as _dc
+
+            @ _dc(frozen=True)
+            class _NoCounts:
+                leaves: int = 0
+                review: int = 0
+                malformed: int = 1
+
+            eligibility = _NoCounts()
 
         # Bounded + machine-readable payload. When --limit is given (or the
         # caller passes --cursor), the primary payload is bounded to at most
