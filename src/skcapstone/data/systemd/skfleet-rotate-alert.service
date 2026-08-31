@@ -1,0 +1,10 @@
+[Unit]
+Description=Consumed alert for repeated SKFleet rotation failures
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SKFLEET_ALERT_AUTHORITY=chiap08
+ExecStart=/bin/sh -c 'skfleet rotate-alert failure --unit skfleet-rotate.service --invocation "$MONITOR_INVOCATION_ID"'
+SuccessExitStatus=0

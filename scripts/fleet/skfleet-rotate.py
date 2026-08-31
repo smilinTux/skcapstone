@@ -1944,6 +1944,7 @@ if _lane_deferred:
 if _esc_waiting:
     log(d,"ESCALATE_QUEUED|%s|%d card(s) need the stronger model; escalate lane full"
         %(HOST,_esc_waiting))
+log(d,"DISPATCH_EXPECTED|%s|count=%d"%(HOST,len(picks)))
 if not picks:
     log(d,"NOOP|%s|no dependency-clear cards"%HOST); sys.exit(0)
 
