@@ -71,6 +71,11 @@
     "report_sha256": "2804a81565325ec8314db7dc3d97371a7649f625a348a3d5fa366a6e1e7aaa67",
     "verdict_sha256": "359f5602594b73018eb03fb62ea85e21a3a708ed58d75dbf527ff22c1d9e2221"
   },
+  "publication": {
+    "branch": "chore/f6a93d20-pr324-rereview",
+    "initial_commit": "d26e14df5a7e700b4f60e81fd1c820fe46b8392f",
+    "pr_url": "https://github.com/smilinTux/skcapstone/pull/328"
+  },
   "review_only": true,
   "review_verdict": "FAIL",
   "schema": "skcapstone.independent_review.v1",
