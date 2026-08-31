@@ -881,8 +881,16 @@ def _acts_fresh(cid):
         for f in os.listdir(ev):
             try:
                 for l in open(os.path.join(ev, f), encoding="utf-8", errors="replace"):
-                    try: out.append(json.loads(l))
-                    except Exception: pass
+                    try:
+                        _o = json.loads(l)
+                    except Exception:
+                        continue
+                    # Second reader, same hazard as event_rows(). A bare JSON
+                    # string parses fine and then kills the sort below. Found
+                    # 2026-08-31 when chiap04 kept failing AFTER event_rows()
+                    # was guarded: one fix on one reader was not enough.
+                    if isinstance(_o, dict):
+                        out.append(_o)
             except OSError: pass
     return out
 
