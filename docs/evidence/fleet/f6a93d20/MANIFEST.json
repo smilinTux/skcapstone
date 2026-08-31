@@ -1,0 +1,40 @@
+{
+  "card_id": "f6a93d20",
+  "files": [
+    {
+      "bytes": 5133,
+      "path": "REVIEW.md",
+      "sha256": "4439121b4ad461205f3d217c32b216697cd4d65162b28f602f4361f4551ee1f3"
+    },
+    {
+      "bytes": 58793,
+      "path": "live-interpreter-inventory.json",
+      "sha256": "5979fc7e34201b01e7172f8c27d706cff8b69783df35c901c33545ce535433d7"
+    },
+    {
+      "bytes": 23495,
+      "path": "pr-324-api.json",
+      "sha256": "2c697df671bee4d601cc56347f5ed828d3911e6c066513ad3226c351119b11a4"
+    },
+    {
+      "bytes": 71986,
+      "path": "pr-324-files.json",
+      "sha256": "5342dbb1f5e6511222ae871172393115eb58c8c6e70ae5380ae7adb1cb727988"
+    },
+    {
+      "bytes": 64475,
+      "path": "pr-324.diff",
+      "sha256": "5260f3677e07bdaa68f1d23baeffa738ab20ab6502866f0e4d26facdf1a16529"
+    },
+    {
+      "bytes": 15027,
+      "path": "review-verdict.json",
+      "sha256": "64128ea41e51046110bcf10cb017fe6e17832073d272380ed76bb10ce5e26107"
+    },
+    {
+      "bytes": 139693,
+      "path": "service-unit-inventory.json",
+      "sha256": "317070eb81064c92d1b010e4a699f60e31296a78e0f9a5c73d9d083b7f68ca78"
+    }
+  ]
+}

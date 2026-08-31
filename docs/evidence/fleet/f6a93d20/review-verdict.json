@@ -1,0 +1,387 @@
+{
+  "card_id": "f6a93d20",
+  "confirmed_minimum_service_imported_editables": 28,
+  "guard_findings": [
+    {
+      "detail": "The proposal adds only an optional ~/.local/bin/pip wrapper. Calling ~/.skenv/bin/pip install -e or ~/.skenv/bin/python -m pip install -e never invokes it.",
+      "finding": "Direct shared pip bypass",
+      "severity": "fail"
+    },
+    {
+      "detail": "SKIP_EDITABLE_GUARD=1 is a documented unvalidated bypass.",
+      "finding": "Explicit bypass",
+      "severity": "fail"
+    },
+    {
+      "detail": "PR 324 adds a script and library but no deployment, pip integration, unit integration, launcher integration, or pip policy hook.",
+      "finding": "Not installed or integrated",
+      "severity": "fail"
+    },
+    {
+      "detail": "The wrapper delegates with /usr/bin/env pip. If installed at the first pip on PATH as documented, this resolves the wrapper again.",
+      "finding": "Wrapper recursion risk",
+      "severity": "fail"
+    },
+    {
+      "detail": "The Python library recognizes only ~/.skenv. It does not recognize the service venvs for SKHarness, SKVoice, or Liberty.",
+      "finding": "Runtime coverage",
+      "severity": "fail"
+    },
+    {
+      "detail": "The Python helper allows an interpreter outside SHARED_INTERPRETERS, but this helper is not wired into pip and therefore does not enforce that distinction.",
+      "finding": "Isolated developer venv intent",
+      "severity": "pass"
+    }
+  ],
+  "mutations": "No source, PR 324, service, process, install, credential, deployment, cleanup, merge, or live configuration was mutated.",
+  "non_python_exclusions": [
+    "vllm model runtime in ~/.venv-vllm has zero editables and is unrelated to editable source policy",
+    "GNOME, PipeWire, portal, GVFS, tracker, gpg-agent, and RustDesk processes are non-Python or not SK application package runtimes",
+    "isolated skdashboard approved venv has zero editables"
+  ],
+  "observed_at": "2026-08-31T06:50:40.341331+00:00",
+  "parent_card": "ec108b74",
+  "pr": {
+    "api_diff_sha256": "5260f3677e07bdaa68f1d23baeffa738ab20ab6502866f0e4d26facdf1a16529",
+    "base": "f38e20799f06d4b76bdc867b0ad9744d8e35f027",
+    "head": "737197eec64a1ab8e2323454d223d50355266310",
+    "head_ref": "feat/ec108b74-replace-editable-installs",
+    "head_tree": "2f55b3c46af7543fa15818c94b9c00461a7d8f14",
+    "number": 324,
+    "paths": [
+      "docs/evidence/chatgpt-client/safe-restart-procedure.md",
+      "docs/evidence/chatgpt-client/terminal-closure-regression-root-cause.md",
+      "docs/fleet/editable-install-inventory-pre.json",
+      "docs/fleet/editable-install-inventory.md",
+      "docs/runbooks/chatgpt-codex-sk-client.md",
+      "scripts/pip-editable-guard.sh",
+      "src/skcapstone/fleet/editable_guard.py",
+      "src/skcapstone/sdk.py",
+      "src/skcapstone/service_health.py",
+      "tests/test_service_health_incidents.py",
+      "tests/test_service_registry.py"
+    ],
+    "state": "open",
+    "url": "https://github.com/smilinTux/skcapstone/pull/324"
+  },
+  "producer_evidence": {
+    "inventory_sha256": "db1d0032d1a2ac5f2673927c811ecf71c4d7f533edf1f68c2cb79a54adc2279b",
+    "producer_claim": "27 total in shared .skenv, only 1 service imported",
+    "reconciliation": "False. Shared .skenv alone now has 28 total entries across hosts, and service interpretation across all active runtimes confirms at least 28 service-imported editables.",
+    "report_sha256": "2804a81565325ec8314db7dc3d97371a7649f625a348a3d5fa366a6e1e7aaa67",
+    "verdict_sha256": "359f5602594b73018eb03fb62ea85e21a3a708ed58d75dbf527ff22c1d9e2221"
+  },
+  "review_only": true,
+  "review_verdict": "FAIL",
+  "schema": "skcapstone.independent_review.v1",
+  "service_imported_editables": [
+    {
+      "host": "chiap01",
+      "interpreter": "/home/skuser01/.skenv/bin/python",
+      "launch": "systemd user unit",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/skcomms",
+        "name": "skcomms",
+        "version": "0.2.17"
+      },
+      "unit": "skcomms.service"
+    },
+    {
+      "host": "chiap02",
+      "interpreter": "/home/skuser01/.skenv/bin/python",
+      "launch": "systemd user unit",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/skcomms",
+        "name": "skcomms",
+        "version": "0.2.17"
+      },
+      "unit": "skcomms.service"
+    },
+    {
+      "host": "chiap03",
+      "interpreter": "/home/skuser01/.skenv/bin/python",
+      "launch": "systemd user unit",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/skcomms",
+        "name": "skcomms",
+        "version": "0.2.17"
+      },
+      "unit": "skcomms.service"
+    },
+    {
+      "host": "chiap04",
+      "interpreter": "/home/skuser01/.skenv/bin/python",
+      "launch": "systemd user unit",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/skcomms",
+        "name": "skcomms",
+        "version": "0.2.17"
+      },
+      "unit": "skcomms.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/.skenv/bin/python",
+      "launch": "long-lived manual GNOME Terminal scope",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/skcomms",
+        "name": "skcomms",
+        "version": "0.2.16"
+      },
+      "unit": null
+    },
+    {
+      "host": "chiap01",
+      "interpreter": "/home/skuser01/.venvs/skops/bin/python",
+      "launch": "systemd user unit",
+      "package": {
+        "editable_project_location": "/home/skuser01/.local/opt/skharness-5bcecb3b",
+        "name": "skharness",
+        "version": "0.3.45.dev18+g598ea39.d20260828"
+      },
+      "unit": "skcode-hostd.service"
+    },
+    {
+      "host": "chiap01",
+      "interpreter": "/home/skuser01/skvoice-env/bin/python",
+      "launch": "systemd user unit",
+      "package": {
+        "editable_project_location": "/home/skuser01/skvoice",
+        "name": "skvoice",
+        "version": "0.1.0"
+      },
+      "unit": "skvoice.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/vendor/capauth",
+        "name": "capauth",
+        "version": "0.3.1"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/agents",
+        "name": "sklegal-agents",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/services/api",
+        "name": "sklegal-api",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/audit",
+        "name": "sklegal-audit",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/connectors/calendar",
+        "name": "sklegal-calendar",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/capauth",
+        "name": "sklegal-capauth",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/connectors/client_communication",
+        "name": "sklegal-client-communication-connector",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/connectors/base",
+        "name": "sklegal-connectors-base",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/domain",
+        "name": "sklegal-domain",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/connectors/email",
+        "name": "sklegal-email",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/connectors/filing",
+        "name": "sklegal-filing-connector",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/connectors/hammertime",
+        "name": "sklegal-hammertime",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/connectors/legal_sources",
+        "name": "sklegal-legal-sources",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/migration",
+        "name": "sklegal-migration",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/model_gateway",
+        "name": "sklegal-model-gateway",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/persistence",
+        "name": "sklegal-persistence",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/policies",
+        "name": "sklegal-policies",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/retrieval",
+        "name": "sklegal-retrieval",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/connectors/service",
+        "name": "sklegal-service-connector",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/services/worker",
+        "name": "sklegal-worker",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    },
+    {
+      "host": "chiap08",
+      "interpreter": "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python",
+      "launch": "systemd user units",
+      "package": {
+        "editable_project_location": "/home/skuser01/work/sklegal-liberty-live/packages/workflow",
+        "name": "sklegal-workflow",
+        "version": "0.1.0"
+      },
+      "unit": "sklegal-liberty-api.service and sklegal-liberty-web.service"
+    }
+  ]
+}
