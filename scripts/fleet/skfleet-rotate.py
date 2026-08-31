@@ -11,6 +11,19 @@ Fixes two defects found 03:50Z:
 import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util
 from pathlib import Path
 
+def _required_lane_target(name, env=None, default=None):
+    values = os.environ if env is None else env
+    try:
+        value = int(values.get(name, default))
+    except (TypeError, ValueError):
+        value = -1
+    if value < 0:
+        raise SystemExit(
+            "BLOCKED|%s|missing or invalid non-negative integer" % name
+        )
+    return value
+
+
 # Load this dependency-free module directly so the system Python job does not
 # initialize optional skcoord API dependencies such as CapAuth.
 _LIFECYCLE_PATH=Path(os.environ.get("SKCOORD_SRC",os.path.join(os.path.expanduser("~"),"work/skcoord/src")))/"skcoord/lifecycle_reassessment.py"
@@ -35,7 +48,9 @@ if not _LIFECYCLE_OK:
 HOST=os.uname().nodename
 ROTATION_HOSTS=("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
 SKC=os.path.expanduser("~/.skenv/bin/skcapstone")
-TARGET=8
+TARGET=_required_lane_target("SKFLEET_TARGET")
+GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")
+QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")
 MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
 DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
@@ -71,8 +86,20 @@ def event_rows(cid):
         for f in os.listdir(ev):
             try:
                 for l in open(os.path.join(ev,f),encoding="utf-8",errors="replace"):
-                    try: out.append(json.loads(l))
-                    except: pass
+                    try:
+                        _o=json.loads(l)
+                    except:
+                        continue
+                    # A worker appended four bare JSON STRINGS into card 7b7c990f's
+                    # event log (prose like "Pushed branch to origin and opened PR
+                    # #2"). json.loads accepts those, and the sort below then called
+                    # .get() on a str, so ONE malformed line crashed the rotation on
+                    # ALL FIVE HOSTS for ~40 minutes on 2026-08-30: 46 failures,
+                    # zero dispatch, and nothing alerted. ~/.skcapstone is one
+                    # Syncthing folder, so the poison reached every host in minutes.
+                    # A reader must never let one bad line stop the fleet.
+                    if isinstance(_o, dict):
+                        out.append(_o)
             except OSError: pass
     out.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", "")), str(e.get("event_id", ""))))
     _rows[cid]=out; return out
@@ -166,9 +193,12 @@ except (OSError,ValueError,TypeError):
 # idle legacy glm panes did nothing. A lane is a prefix, a model alias, a target.
 LANES=[
     {"name":"codex","prefix":"codex-auto-","model":"sk-codex",
-     "target":8},
+     "target":TARGET},
     {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","glm-4.6"),
-     "target":0 if glm_held else 3},
+     "target":0 if glm_held else GLM_TARGET},
+    {"name":"qwen","prefix":"qwen-auto-",
+     "model":os.environ.get("SKFLEET_QWEN_MODEL","qwen3.8-27b-huihui-abliterated-q4_k_m"),
+     "target":QWEN_TARGET},
     # Restored. needs_escalation() still exists and still marks a card whose
     # worker reported blocked_on=capability, but the lane it routes to had been
     # dropped, so those cards were marked for a destination that did not exist
@@ -877,6 +907,10 @@ def itil_terminal(cid):
 # a human may hold a claim deliberately for as long as they like.
 _EPHEMERAL_OWNER = re.compile(r"^(pi|codex|glm)[-_]")
 
+# Parse worker names like pi-qwen-chiap03-04acd4b0 or pi-codex-chiap08-c5454b85
+# Extract lane and host for session name validation
+_WORKER_NAME_RE = re.compile(r"^(?:pi-)?([a-z]+)-([a-z0-9]+)-([0-9a-f]{8})$")
+
 def _current_claim(cid):
     """The claim in force now, as (owner, epoch), or (None, 0)."""
     owner, ts, _revision = _claim_identity(event_rows(cid))
@@ -978,11 +1012,50 @@ def _launch_claim_fields(owner, claim_revision, successful):
     return "|owner=%s|claim_revision=%s" % (owner, claim_revision)
 
 
+def _parse_worker_lane_host(owner):
+    """Extract lane and host from a worker name.
+    
+    Returns (lane, host) or (None, None) if not a fleet worker.
+    
+    Examples:
+        pi-qwen-chiap03-04acd4b0 -> ('qwen', 'chiap03')
+        pi-codex-chiap08-c5454b85 -> ('codex', 'chiap08')
+        pi-glm-chiap02-0b7bdd0e -> ('glm', 'chiap02')
+        jarvis -> (None, None)
+    """
+    match = _WORKER_NAME_RE.match(str(owner) or "")
+    if match:
+        lane, host, card_id = match.groups()
+        return lane, host
+    return None, None
+
+
 def _fleet_launch_provenance(cid, owner, claim_revision):
-    """Whether exactly one strict launch recorded this exact claim generation."""
+    """Whether exactly one strict launch recorded this exact claim generation.
+
+    A fleet-launched worker has a LAUNCHED record that proves it was spawned
+    by the rotation system. Hand-dispatched workers (started by a human or
+    external script) do not have such records.
+
+    This function validates that the current claim corresponds to a known
+    fleet launch by matching the card ID and claim revision against the
+    launch history. The owner name may differ between the claim and the
+    launch record due to naming conventions, so we match by lane and host.
+
+    Returns True if exactly one launch record exists for this (card, revision)
+    and the owner appears to be a fleet worker. Returns False for hand-dispatched
+    workers or when no matching launch record is found.
+    """
     global _fleet_launch_claims
     if not cid or not owner or not claim_revision:
         return False
+    
+    # Parse the owner to see if it's a fleet worker
+    owner_lane, owner_host = _parse_worker_lane_host(owner)
+    if not owner_lane or not owner_host:
+        # Not a fleet worker pattern - may be hand-dispatched
+        return False
+    
     if _fleet_launch_claims is None:
         _fleet_launch_claims = collections.Counter()
         for path in glob.glob(os.path.join(EVID, "*", "actions*.log")):
@@ -1007,19 +1080,71 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
                         session_prefix = {
                             "codex": "codex-auto-",
                             "glm": "glm-auto-",
+                            "qwen": "qwen-auto-",
                             "escalate": "esc-auto-",
                         }.get(lane)
                         if (
                             parts[1] not in ROTATION_HOSTS
                             or session_prefix is None
                             or parts[2] != session_prefix + parts[3]
-                            or launch_owner != f"pi-{lane}-{parts[1]}-{parts[3]}"
                         ):
                             continue
-                        _fleet_launch_claims[(parts[3], launch_owner, launch_revision)] += 1
+                        _fleet_launch_claims[(parts[3], lane, parts[1], launch_revision)] += 1
             except OSError:
                 continue
-    return _fleet_launch_claims[(str(cid), str(owner), str(claim_revision))] == 1
+    
+    # Look for a launch that matches by card, lane, host, and revision
+    # The owner in the claim may not exactly match the launch owner,
+    # but the lane and host should align if it's the same worker
+    for (launch_cid, launch_lane, launch_host, launch_rev), count in _fleet_launch_claims.items():
+        if (launch_cid == str(cid) and 
+            launch_rev == str(claim_revision) and
+            launch_lane == owner_lane and 
+            launch_host == owner_host):
+            return count == 1
+    return False
+
+
+def _write_reap_verdict(cid, owner, claim_revision):
+    """Write a machine-readable outcome for a reaped dead claim.
+
+    The worker cannot record its own verdict because it is dead, so the
+    reaper records one on its behalf. This distinguishes a reaped card from
+    one that was never claimed at all.
+    """
+    try:
+        evid_dir = os.path.join(HOME, ".skcapstone/coordination/card_events")
+        os.makedirs(evid_dir, exist_ok=True)
+
+        # Write to a date-partitioned file
+        date_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        evid_file = os.path.join(evid_dir, f"{date_str}.jsonl")
+
+        # Build the evidence link
+        evidence = {
+            "card_id": cid,
+            "action": "link",
+            "link_key": "verdict",
+            "link_value": f"WORKER_DIED|owner={owner}|claim_revision={claim_revision}|reaper={HOST}|reaped_at={datetime.datetime.now(datetime.timezone.utc).isoformat()}",
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "writer": f"fleet-liveness-reaper-{HOST}",
+            "node": HOST,
+        }
+
+        # Append atomically
+        tmp_file = evid_file + f".{os.getpid()}.{int(time.time())}.tmp"
+        with open(tmp_file, "w", encoding="utf-8") as fh:
+            json.dump(evidence, fh, separators=(",", ":"))
+            fh.write("\n")
+        os.replace(tmp_file, evid_file)
+
+        log(d, "REAP_VERDICT|%s|%s|%s|wrote WORKER_DIED verdict for claim revision %s"
+            % (HOST, cid, owner, claim_revision))
+        return True
+    except OSError as exc:
+        log(d, "WARN|%s|%s|%s|failed to write reap verdict: %s"
+            % (HOST, cid, owner, exc))
+        return False
 
 
 def reap_dead_claims():
@@ -1032,9 +1157,11 @@ def reap_dead_claims():
     _cut = time.time() - KNOWN_HOST_TTL
     known = sum(1 for f in glob.glob(os.path.join(LIVE, "*.json"))
                 if os.path.getmtime(f) >= _cut)
-    if not oldest or nhosts < REAP_QUORUM or nhosts < known:
-        log(d, "REAP|%s|below quorum (reporting=%d known=%d need>=%d); reaped nothing"
-            % (HOST, nhosts, known, REAP_QUORUM))
+    # Require quorum AND at least one host reporting. Do NOT require ALL known
+    # hosts to report, or one stale/decommissioned host blocks reaping forever.
+    if not oldest or nhosts < REAP_QUORUM or nhosts == 0:
+        log(d, "REAP|%s|below quorum (reporting=%d need>=%d); reaped nothing"
+            % (HOST, nhosts, REAP_QUORUM))
         return 0
     freed = 0
     _ineffective = _load_ineffective()
@@ -1052,13 +1179,12 @@ def reap_dead_claims():
         if cid in _ineffective:
             continue                      # releasing it does nothing; see above
         if not claim_revision:
-            log(d, "REAP_UNPROVEN|%s|%s|%s|claim revision missing has no exact "
-                   "successful fleet launch record; leaving it for the stale-claim path"
+            log(d, "REAP_SKIP|%s|%s|%s|claim revision missing; cannot verify provenance"
                 % (HOST, cid, owner))
             continue
         if not cts:
-            log(d, "REAP_UNPROVEN|%s|%s|%s|claim timestamp invalid; leaving it "
-                   "for the stale-claim path" % (HOST, cid, owner))
+            log(d, "REAP_SKIP|%s|%s|%s|claim timestamp invalid; cannot verify provenance"
+                % (HOST, cid, owner))
             continue
         if cts > time.time():
             log(d, "REAP_CLOCK_SKEW|%s|%s|%s|cached claim timestamp is in the "
@@ -1079,8 +1205,8 @@ def reap_dead_claims():
                    fresh_revision or "missing"))
             continue
         if not fresh_ts:
-            log(d, "REAP_UNPROVEN|%s|%s|%s|fresh claim timestamp invalid; leaving "
-                   "it for the stale-claim path" % (HOST, cid, fresh_owner))
+            log(d, "REAP_SKIP|%s|%s|%s|fresh claim timestamp invalid; cannot verify provenance"
+                % (HOST, cid, fresh_owner))
             continue
         if fresh_ts > time.time():
             log(d, "REAP_CLOCK_SKEW|%s|%s|%s|fresh claim timestamp is in the "
@@ -1091,8 +1217,7 @@ def reap_dead_claims():
                    "grace; leaving it alone this tick" % (HOST, cid, fresh_owner))
             continue
         if not _fleet_launch_provenance(cid, fresh_owner, fresh_revision):
-            log(d, "REAP_UNPROVEN|%s|%s|%s|claim revision %s has no exact successful "
-                   "fleet launch record; leaving it for the stale-claim path"
+            log(d, "REAP_SKIP|%s|%s|%s|no fleet launch record for revision %s; may be hand-dispatched"
                 % (HOST, cid, fresh_owner, fresh_revision or "missing"))
             continue
         r = subprocess.run(
@@ -1111,6 +1236,8 @@ def reap_dead_claims():
                        "card is still claimed; CardStore and the legacy task store "
                        "disagree, needs repair" % (HOST, cid, owner))
                 continue
+            # Write a verdict on behalf of the dead worker
+            _write_reap_verdict(cid, fresh_owner, fresh_revision)
             freed += 1
             log(d, "REAPED|%s|%s|%s|no host reports this card running" % (HOST, cid, owner))
         else:
