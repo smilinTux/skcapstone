@@ -94,8 +94,20 @@ def event_rows(cid):
         for f in os.listdir(ev):
             try:
                 for l in open(os.path.join(ev,f),encoding="utf-8",errors="replace"):
-                    try: out.append(json.loads(l))
-                    except: pass
+                    try:
+                        _o=json.loads(l)
+                    except:
+                        continue
+                    # A worker appended four bare JSON STRINGS into card 7b7c990f's
+                    # event log (prose like "Pushed branch to origin and opened PR
+                    # #2"). json.loads accepts those, and the sort below then called
+                    # .get() on a str, so ONE malformed line crashed the rotation on
+                    # ALL FIVE HOSTS for ~40 minutes on 2026-08-30: 46 failures,
+                    # zero dispatch, and nothing alerted. ~/.skcapstone is one
+                    # Syncthing folder, so the poison reached every host in minutes.
+                    # A reader must never let one bad line stop the fleet.
+                    if isinstance(_o, dict):
+                        out.append(_o)
             except OSError: pass
     out.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", "")), str(e.get("event_id", ""))))
     _rows[cid]=out; return out
