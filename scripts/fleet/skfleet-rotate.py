@@ -1333,8 +1333,15 @@ def itil_terminal(cid):
         for f in os.listdir(d):
             try:
                 for l in open(os.path.join(d,f),encoding="utf-8",errors="replace"):
-                    try: evs.append(json.loads(l))
-                    except: pass
+                    try:
+                        _o = json.loads(l)
+                    except Exception:
+                        continue
+                    # A bare JSON string parses fine and then kills the sort that
+                    # follows. Guarded on 2026-08-31 after the SAME exception took
+                    # the fleet down twice from two different readers.
+                    if isinstance(_o, dict):
+                        evs.append(_o)
             except OSError: pass
         evs.sort(key=lambda e:(e.get("ts",""),e.get("seq",0)))
         state=None
@@ -1438,8 +1445,15 @@ def _acts_fresh_rows(cid):
         for f in os.listdir(ev):
             try:
                 for l in open(os.path.join(ev, f), encoding="utf-8", errors="replace"):
-                    try: out.append(json.loads(l))
-                    except Exception: pass
+                    try:
+                        _o = json.loads(l)
+                    except Exception:
+                        continue
+                    # A bare JSON string parses fine and then kills the sort that
+                    # follows. Guarded on 2026-08-31 after the SAME exception took
+                    # the fleet down twice from two different readers.
+                    if isinstance(_o, dict):
+                        out.append(_o)
             except OSError:
                 pass
     out.sort(key=lambda e: (str(e.get("ts") or ""), e.get("seq") or 0))
