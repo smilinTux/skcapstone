@@ -2079,12 +2079,13 @@ raced=0; lane_drift=0; claim_refused=0
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     ac="\n".join("  %d. %s"%(i+1,x) for i,x in enumerate(core.get("acceptance_criteria") or []))
-    brief=("Work only SKCapstone card %s. The fleet selector has already claimed it "
-      "for your exact agent identity. Verify that ownership before working and never "
-      "claim or substitute another card. If ownership is absent, or a dependency is "
-      "incomplete, say so and stop rather than working it anyway.\n\n"
-      "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n"
-      "CONSTRAINTS (standing rails, non-negotiable):\n"
+    # PREFIX CACHE ORDERING. vLLM caches on a shared PROMPT PREFIX. This brief
+    # used to open with the card id and the card body, so every request diverged
+    # within a few tokens and the ~1,700 invariant tokens after it could never be
+    # reused. Measured before this change on chiap08: 45,613,120 hits against
+    # 264,609,995 queries, a 17.2% hit rate. Invariant rails now come FIRST and the
+    # card-specific text LAST, so every worker shares one long cacheable prefix.
+    _RAILS=("CONSTRAINTS (standing rails, non-negotiable):\n"
       "- CardStore is append-only. Build JSON with a serializer and parse every line before appending. Never concatenate strings into JSON.\n"
       "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
       "- Return exact PASS, PASS_FOR_REVIEW, or BLOCKED with a real hashed artifact, and notify jarvis and lumina by skmail.\n"
@@ -2160,7 +2161,12 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "6. Clean up: remove scratch files and temp worktrees. Scratch belongs outside the repo.\n"
       "If the card needs no repository change, say so explicitly in your verdict so the\n"
       "absence of a PR is a recorded decision rather than an omission.\n"
-      "- Never use an em dash or en dash.\n") % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac)
+      "- Never use an em dash or en dash.\n")
+    brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
+      "for your exact agent identity. Verify that ownership before working and never "
+      "claim or substitute another card. If ownership is absent, or a dependency is "
+      "incomplete, say so and stop rather than working it anyway.\n\n"
+      "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
     name="pi-%s-%s-%s"%(_LANE["name"],HOST,cid); sess="%s%s"%(_LANE["prefix"],cid)
     model=_LANE["model"]
     workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
