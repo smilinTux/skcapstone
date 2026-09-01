@@ -1949,12 +1949,59 @@ def _record_review_refusal(review_id, parent, outcome_ts, verdict):
         os.close(fd)
     return True
 
-def open_provisional_reviews():
-    """Create one governed review card for each unreviewed provisional pass."""
+def _provisional_producer(parent, outcome_ts, token):
+    """Return the sole producer of an exact outcome generation, or None.
+
+    Attribution is evidence, not lifecycle.  A timestamp and verdict token bind
+    the generation, while the writer binds its producer.  Missing or conflicting
+    writers fail closed instead of assigning a possibly self-authored review.
+    """
+    writers = set()
+    rows = list(event_rows(parent)) + list(_load_evidence_events().get(parent, ()))
+    for event in rows:
+        if str(event.get("ts") or "") != str(outcome_ts or ""):
+            continue
+        value = None
+        if event.get("action") in ("verdict", "blocked"):
+            value = _native_outcome_value(event)
+        elif event.get("action") == "link" and any(
+                key in _fold_key(event.get("link_key")) for key in _OUTCOME_KEYS):
+            raw = str(event.get("link_value") or "")
+            match = _OUTCOME_VALUE_RE.match(raw) or _PIPE_OUTCOME_RE.search(raw)
+            value = match.group(1) if match else None
+        elif event.get("action") == "evidence":
+            raw = event.get("verdict")
+            value = str(raw) if isinstance(raw, str) else None
+        match = _PROVISIONAL_PASS_RE.match(str(value or ""))
+        if match and match.group(1).upper() == token:
+            writer = event.get("writer")
+            if isinstance(writer, str) and writer.strip():
+                writers.add(writer.strip())
+            else:
+                return None
+    return next(iter(writers)) if len(writers) == 1 else None
+
+
+def open_provisional_reviews(capacity):
+    """Create at most ``capacity`` governed provisional-pass reviews.
+
+    Every host sorts the same parent generations and derives the same IDs.  Thus
+    concurrent cycles contend for the same bounded prefix rather than multiplying
+    the batch by host count.
+    """
+    try:
+        capacity = int(capacity)
+    except (TypeError, ValueError):
+        return 0
+    if capacity <= 0:
+        return 0
     outcomes = _load_outcomes()
     reviews = _reviews_by_parent()
     opened = 0
+    attempted = 0
     for parent, (outcome_ts, raw_verdict) in sorted(outcomes.items()):
+        if attempted >= capacity:
+            break
         if lifecycle_state(parent) != "open": continue
         verdict = str(raw_verdict or "")
         match = _PROVISIONAL_PASS_RE.match(verdict)
@@ -1963,19 +2010,27 @@ def open_provisional_reviews():
                for cid in reviews.get(parent, ())):
             continue
         token = match.group(1).upper()
+        producer = _provisional_producer(parent, outcome_ts, token)
+        if not producer:
+            log(d, "OPEN_REVIEW_ATTRIBUTION_BLOCKED|%s|%s|outcome=%s|%s" %
+                (HOST, parent, str(outcome_ts or ""), token))
+            continue
         review_id = _review_card_id(parent, str(outcome_ts or ""), token)
         if os.path.isdir(os.path.join(CARDS, review_id)): continue
         refusal_path = os.path.join(_REVIEW_REFUSALS, review_id + ".json")
         if os.path.exists(refusal_path): continue
+        attempted += 1
         r = subprocess.run(
             [SKC, "coord", "create", "--id", review_id,
              "--title", "[REVIEW] Review provisional outcome for %s" % parent,
-             "--desc", "Independently review parent %s at outcome %s (%s)."
-             % (parent, str(outcome_ts or "unknown"), token),
+             "--desc", "Independently review parent %s at outcome %s (%s). "
+             "Producer identity: %s. Reviewer identity must differ."
+             % (parent, str(outcome_ts or "unknown"), token, producer),
              "--priority", "high", "--tag", "parent-%s" % parent,
              "--tag", "review", "--tag", "qwen-suitable",
              "--by", "fleet-review-opener",
              "--criteria", "Verify the parent acceptance criteria and evidence independently.",
+             "--criteria", "Reviewer identity must differ from producer %s." % producer,
              "--criteria", "Record a leading PASS or FAIL verdict with immutable evidence."],
             capture_output=True, text=True,
             env=dict(os.environ, SKCOORD_CARD_STORE="1"))
@@ -2035,7 +2090,7 @@ def close_reviewed_parents():
     return closed
 
 if not DRY:
-    open_provisional_reviews()
+    open_provisional_reviews(free)
     close_reviewed_parents()
 
 _PINNED_IDS=set()
