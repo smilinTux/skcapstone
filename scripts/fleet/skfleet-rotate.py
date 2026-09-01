@@ -883,7 +883,8 @@ def seat_for(cid, core):
 
     A card labelled `seat-<name>` is work belonging to a standing seat rather
     than to whichever lane happened to pick it up. The worker still gets a
-    unique per-card name, but it is prefixed with the seat instead of the lane,
+    unique per-card name, but it carries the seat instead of the lane after the
+    standard ``pi-`` worker prefix,
     so every claim, verdict and skmail this worker writes is attributable to the
     seat that owns the work.
 
@@ -904,7 +905,7 @@ def seat_for(cid, core):
             continue
         if not _seat_is_provisioned(seat):
             # A well-formed name is not a seat. Without this check a typo such as
-            # seat-lnik would produce a worker called lnik-<host>-<cid> writing
+            # seat-lnik would produce a worker called pi-lnik-<host>-<cid> writing
             # claims and verdicts under an identity that has no agent home, no
             # capauth key, no mailbox and no estate entry: a phantom seat whose
             # outputs look attributable and are not. Fall back to lane naming,
@@ -927,6 +928,11 @@ def _seat_is_provisioned(seat):
     home = os.path.join(HOME, ".skcapstone/agents", seat)
     return os.path.isdir(home) and os.path.isfile(
         os.path.join(home, "capauth/identity/public.asc"))
+
+
+def _worker_owner(lane, cid, seat=None):
+    """Return the reaper-compatible owner for one fleet worker."""
+    return "pi-%s-%s-%s" % (seat or lane, HOST, cid)
 
 
 _NON_IMPLEMENTATION_LABELS = {
@@ -1475,7 +1481,7 @@ def _parse_worker_owner(owner, cid, expected_seat=None):
         if (
             expected_seat
             and _SEAT_RE.fullmatch(str(expected_seat))
-            and owner == "%s-%s-%s" % (expected_seat, host, cid)
+            and owner == "pi-%s-%s-%s" % (expected_seat, host, cid)
         ):
             return "seat", str(expected_seat), host
     return None
@@ -1593,13 +1599,9 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
     global _fleet_launch_claims
     if not cid or not owner or not claim_revision:
         return False
-    try:
-        with open(os.path.join(CARDS, str(cid), "core.json"), encoding="utf-8") as fh:
-            expected_seat = seat_for(str(cid), json.load(fh))
-    except (OSError, ValueError):
-        expected_seat = None
     if _fleet_launch_claims is None:
         _fleet_launch_claims = collections.Counter()
+        expected_seats = {}
         for path in glob.glob(os.path.join(EVID, "*", "actions*.log")):
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
@@ -1619,6 +1621,18 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
                         if len(fields) != len(expected):
                             continue
                         lane, _model, launch_owner, launch_revision = fields
+                        launch_cid = parts[3]
+                        if launch_cid not in expected_seats:
+                            try:
+                                with open(
+                                    os.path.join(CARDS, launch_cid, "core.json"),
+                                    encoding="utf-8",
+                                ) as core_fh:
+                                    expected_seats[launch_cid] = seat_for(
+                                        launch_cid, json.load(core_fh)
+                                    )
+                            except (OSError, ValueError):
+                                expected_seats[launch_cid] = None
                         session_prefix = {
                             "codex": "codex-auto-",
                             "glm": "glm-auto-",
@@ -1626,7 +1640,7 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
                             "escalate": "esc-auto-",
                         }.get(lane)
                         parsed_owner = _parse_worker_owner(
-                            launch_owner, parts[3], expected_seat
+                            launch_owner, launch_cid, expected_seats[launch_cid]
                         )
                         if (
                             parts[1] not in ROTATION_HOSTS
@@ -2413,7 +2427,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     # A seat-owned card runs under the seat's identity, not the lane's. The
     # session prefix stays lane-based so liveness, reaping and tmux lookup are
     # unchanged; only the agent identity moves.
-    name = ("%s-%s-%s" % (_seat, HOST, cid)) if _seat else ("pi-%s-%s-%s" % (_LANE["name"], HOST, cid))
+    name = _worker_owner(_LANE["name"], cid, _seat)
     if _seat:
         log(d, "SEAT|%s|%s|running under seat %s as %s" % (HOST, cid, _seat, name))
     sess="%s%s"%(_LANE["prefix"],cid)

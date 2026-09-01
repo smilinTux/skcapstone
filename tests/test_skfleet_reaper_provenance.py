@@ -313,7 +313,7 @@ def test_launcher_owner_naming_has_exact_provenance(tmp_path: Path, lane: str) -
 
 def test_dead_link_seat_claim_is_reaped_with_exact_provenance(tmp_path: Path) -> None:
     """A dead provisioned seat worker follows the same fenced reap path."""
-    owner = "link-chiap02-deadbeef"
+    owner = "pi-link-chiap02-deadbeef"
     namespace, released, messages = _reaper_fixture(
         tmp_path,
         card_id="deadbeef",
@@ -322,7 +322,7 @@ def test_dead_link_seat_claim_is_reaped_with_exact_provenance(tmp_path: Path) ->
         launch_revision=None,
         launch_lines=[
             "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=codex|"
-            "model=test-model|owner=link-chiap02-deadbeef|"
+            "model=test-model|owner=pi-link-chiap02-deadbeef|"
             "claim_revision=seat-revision"
         ],
     )
@@ -336,6 +336,7 @@ def test_dead_link_seat_claim_is_reaped_with_exact_provenance(tmp_path: Path) ->
     "owner",
     (
         "jarvis-chiap02-deadbeef",
+        "link-chiap02-deadbeef",
         "link-unknown-deadbeef",
         "link-chiap02-feedface",
         "pi-unknown-chiap02-deadbeef",
@@ -352,6 +353,33 @@ def test_worker_owner_parser_rejects_broad_or_mismatched_names(owner: str) -> No
         }
     )
     assert parser(owner, "deadbeef", "link") is None
+
+
+def test_launch_provenance_resolves_seat_for_each_card(tmp_path: Path) -> None:
+    """One seat-owned launch cannot lend its seat to another card."""
+    namespace, _released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner="pi-link-chiap02-deadbeef",
+        claim_revision="link-revision",
+        launch_revision=None,
+        launch_lines=[
+            "LAUNCHED|chiap02|codex-auto-feedface|feedface|lane=codex|"
+            "model=test-model|owner=pi-link-chiap02-feedface|claim_revision=wrong-seat",
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=codex|"
+            "model=test-model|owner=pi-link-chiap02-deadbeef|claim_revision=link-revision",
+        ],
+    )
+    other = tmp_path / "cards" / "feedface"
+    other.mkdir()
+    (other / "core.json").write_text('{"initial_labels": []}\n', encoding="utf-8")
+
+    assert namespace["_fleet_launch_provenance"](
+        "deadbeef", "pi-link-chiap02-deadbeef", "link-revision"
+    )
+    assert not namespace["_fleet_launch_provenance"](
+        "feedface", "pi-link-chiap02-feedface", "wrong-seat"
+    )
 
 
 def test_reap_outcome_is_machine_readable_and_idempotent(tmp_path: Path) -> None:
