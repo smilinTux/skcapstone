@@ -10,6 +10,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card 587ad83e: fill bounded review-lane capacity.** Fleet rotation now opens
+  a deterministic batch of provisional review cards up to current free lane
+  capacity. Exact outcome-generation IDs converge across hosts, and missing or
+  ambiguous producer attribution fails closed while each review requires a
+  distinct reviewer identity.
+
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
   leading `PASS_FOR_*` or `PASS_READY_*` verdict. Stable outcome-generation IDs
