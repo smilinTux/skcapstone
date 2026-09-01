@@ -1894,6 +1894,38 @@ _GOVERNOR_REFUSAL_RE = re.compile(
     r"Governed card .* requires exactly one parent-|Review ancestry)", re.I)
 _REVIEW_REFUSALS = os.path.join(EVID, "provisional-review-refusals")
 
+def _load_outcomes_with_producer():
+    """Return outcomes including producer (writer) for distinct-reviewer enforcement.
+    
+    Returns dict mapping cid -> (ts, value, producer) where producer is the
+    writer of the latest outcome event.
+    """
+    global _outcomes
+    if _outcomes is None:
+        _load_outcomes()
+    
+    # Build producer lookup from the latest verdict/link events per card
+    producers = {}
+    for cid, rows in _load_evidence_events().items():
+        for e in reversed(rows):
+            if e.get("action") == "link":
+                fk = _fold_key(e.get("link_key"))
+                val = str(e.get("link_value") or "")
+                if any(o in fk for o in _OUTCOME_KEYS):
+                    match = _OUTCOME_VALUE_RE.match(val) or _PIPE_OUTCOME_RE.search(val)
+                    if match:
+                        producers[cid] = str(e.get("writer") or "")
+                        break
+            elif e.get("action") in ("verdict", "blocked"):
+                producers[cid] = str(e.get("writer") or "")
+                break
+    
+    # Merge with outcomes
+    result = {}
+    for cid, (ts, val) in _outcomes.items():
+        result[cid] = (ts, val, producers.get(cid, ""))
+    return result
+
 def _review_parent_ids(cid, core):
     """Return explicit parent labels, with legacy title text as a fallback."""
     labels = folded_labels(cid, core)
@@ -1949,12 +1981,28 @@ def _record_review_refusal(review_id, parent, outcome_ts, verdict):
         os.close(fd)
     return True
 
-def open_provisional_reviews():
-    """Create one governed review card for each unreviewed provisional pass."""
-    outcomes = _load_outcomes()
+def open_provisional_reviews(capacity=None):
+    """Create a bounded batch of governed review cards for unreviewed provisional passes.
+    
+    Args:
+        capacity: Maximum number of reviews to open in this cycle. If None, opens
+                  all eligible reviews (legacy behavior for backwards compatibility).
+    
+    Returns:
+        Number of review cards successfully opened.
+    """
+    outcomes = _load_outcomes_with_producer()
     reviews = _reviews_by_parent()
     opened = 0
-    for parent, (outcome_ts, raw_verdict) in sorted(outcomes.items()):
+    skipped_no_producer = 0
+    skipped_same_identity = 0
+    skipped_capacity = 0
+    
+    for parent, (outcome_ts, raw_verdict, producer) in sorted(outcomes.items()):
+        if capacity is not None and opened >= capacity:
+            skipped_capacity += 1
+            continue
+        
         if lifecycle_state(parent) != "open": continue
         verdict = str(raw_verdict or "")
         match = _PROVISIONAL_PASS_RE.match(verdict)
@@ -1962,16 +2010,51 @@ def open_provisional_reviews():
         if any(lifecycle_state(cid) in {"open", "claimed"}
                for cid in reviews.get(parent, ())):
             continue
+        
         token = match.group(1).upper()
         review_id = _review_card_id(parent, str(outcome_ts or ""), token)
         if os.path.isdir(os.path.join(CARDS, review_id)): continue
         refusal_path = os.path.join(_REVIEW_REFUSALS, review_id + ".json")
         if os.path.exists(refusal_path): continue
+        
+        # Fail-closed: require producer identity to differ from reviewer
+        # Reviews are tagged qwen-suitable, so they go to qwen lane
+        # The reviewer identity is the qwen lane worker that will claim the review
+        reviewer_identity = "qwen"  # qwen-suitable reviews route to qwen lane
+        
+        if not producer:
+            skipped_no_producer += 1
+            log(d, "REVIEW_REJECTED_NO_PRODUCER|%s|%s|review=%s|%s" %
+                (HOST, parent, review_id, "producer attribution absent from outcome"))
+            # Record as a refusal so we don't retry
+            _record_review_refusal(review_id, parent, str(outcome_ts or ""), token)
+            continue
+        
+        # Enforce distinct reviewer: producer identity must differ from reviewer
+        # Compare lane/model identity, not the specific worker instance
+        producer_lane = None
+        if "codex" in producer.lower():
+            producer_lane = "codex"
+        elif "glm" in producer.lower():
+            producer_lane = "glm"
+        elif "qwen" in producer.lower():
+            producer_lane = "qwen"
+        elif "esc" in producer.lower() or "escalate" in producer.lower():
+            producer_lane = "escalate"
+        
+        if producer_lane == reviewer_identity:
+            skipped_same_identity += 1
+            log(d, "REVIEW_REJECTED_SAME_IDENTITY|%s|%s|review=%s|producer=%s|reviewer=%s" %
+                (HOST, parent, review_id, producer, reviewer_identity))
+            # Record as a refusal so we don't retry
+            _record_review_refusal(review_id, parent, str(outcome_ts or ""), token)
+            continue
+        
         r = subprocess.run(
             [SKC, "coord", "create", "--id", review_id,
              "--title", "[REVIEW] Review provisional outcome for %s" % parent,
-             "--desc", "Independently review parent %s at outcome %s (%s)."
-             % (parent, str(outcome_ts or "unknown"), token),
+             "--desc", "Independently review parent %s at outcome %s (%s). Producer: %s. Reviewer lane: %s."
+             % (parent, str(outcome_ts or "unknown"), token, producer, reviewer_identity),
              "--priority", "high", "--tag", "parent-%s" % parent,
              "--tag", "review", "--tag", "qwen-suitable",
              "--by", "fleet-review-opener",
@@ -1982,8 +2065,8 @@ def open_provisional_reviews():
         if r.returncode == 0:
             opened += 1
             reviews.setdefault(parent, set()).add(review_id)
-            log(d, "OPENED_REVIEW|%s|%s|review=%s|%s" %
-                (HOST, parent, review_id, token))
+            log(d, "OPENED_REVIEW|%s|%s|review=%s|%s|producer=%s|reviewer=%s" %
+                (HOST, parent, review_id, token, producer, reviewer_identity))
             continue
         current = _reviews_by_parent().get(parent, set())
         if any(lifecycle_state(cid) in {"open", "claimed"} for cid in current):
@@ -1997,6 +2080,14 @@ def open_provisional_reviews():
         else:
             log(d, "OPEN_REVIEW_FAILED|%s|%s|review=%s|%s" %
                 (HOST, parent, review_id, error[:110]))
+    
+    if skipped_no_producer:
+        log(d, "REVIEW_BATCH_STATS|%s|skipped_no_producer=%d" % (HOST, skipped_no_producer))
+    if skipped_same_identity:
+        log(d, "REVIEW_BATCH_STATS|%s|skipped_same_identity=%d" % (HOST, skipped_same_identity))
+    if skipped_capacity:
+        log(d, "REVIEW_BATCH_STATS|%s|skipped_capacity=%d" % (HOST, skipped_capacity))
+    
     return opened
 
 def close_reviewed_parents():
@@ -2034,8 +2125,17 @@ def close_reviewed_parents():
         log(d, "CLOSE_REVIEWED|%s|closed=%d" % (HOST, closed))
     return closed
 
+# Calculate review capacity from qwen lane (reviews are qwen-suitable)
+# Bounded batch: open no more than available qwen slots per cycle
+qwen_free = sum(L["free"] for L in LANES if L["name"] == "qwen")
+review_capacity = qwen_free if qwen_free > 0 else None
+
 if not DRY:
-    open_provisional_reviews()
+    if review_capacity is not None:
+        log(d, "REVIEW_BATCH_START|%s|capacity=%d" % (HOST, review_capacity))
+    open_reviews = open_provisional_reviews(capacity=review_capacity)
+    if review_capacity is not None:
+        log(d, "REVIEW_BATCH_END|%s|opened=%d|capacity=%d" % (HOST, open_reviews, review_capacity))
     close_reviewed_parents()
 
 _PINNED_IDS=set()
