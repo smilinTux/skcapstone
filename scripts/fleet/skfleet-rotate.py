@@ -625,6 +625,7 @@ def _active_repair_parents(card_ids=None, fresh=False):
     global _active_repair_parents_cache
     if card_ids is None and _active_repair_parents_cache is not None and not fresh:
         return _active_repair_parents_cache
+    cache_result = card_ids is None and not fresh
     if card_ids is None:
         card_ids = [os.path.basename(path) for path in glob.glob(CARDS + "/*")]
     parents = set()
@@ -643,7 +644,7 @@ def _active_repair_parents(card_ids=None, fresh=False):
             match = _PARENT_LABEL_RE.fullmatch(label)
             if match and match.group(1).lower() != repair_id.lower():
                 parents.add(match.group(1).lower())
-    if card_ids is not None and not fresh:
+    if cache_result:
         _active_repair_parents_cache = parents
     return parents
 
