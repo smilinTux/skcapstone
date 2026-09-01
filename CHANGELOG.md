@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 ### Added
+- `coord show`: a read verb for a single card. The board had only board-wide
+  reads, so callers reached for `coord describe`, which appends an edit event.
+  A help audit across all 388 reachable commands found it was the only
+  read-sounding name performing a write. `coord describe` now says it writes,
+  carries examples, and its bare-invocation error names `coord show <id>`.
 
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
