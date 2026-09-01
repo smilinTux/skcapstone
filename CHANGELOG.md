@@ -10,6 +10,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card ece35ca2: observe the estate charter from title prefixes.** The new
+  read-only `mero charter observe` command reports normalized workstream size,
+  provisional delivery, seven-day claim energy, latest delivery, stalled active
+  streams, excluded card-class tokens, and sampled unprefixed scatter from an
+  explicitly draft and unratified data-file alias map.
+
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
   leading `PASS_FOR_*` or `PASS_READY_*` verdict. Stable outcome-generation IDs

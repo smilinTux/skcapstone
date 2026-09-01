@@ -74,6 +74,7 @@ from .journal_cmd import register_journal_commands  # noqa: E402
 from .logs_cmd import register_logs_commands  # noqa: E402
 from .mcp_cmd import register_mcp_commands  # noqa: E402
 from .memory import register_memory_commands  # noqa: E402
+from .mero_cmd import register_mero_commands  # noqa: E402
 from .metrics_cmd import register_metrics_commands  # noqa: E402
 from .migrate import register_migrate_commands  # noqa: E402
 from .mood_cmd import register_mood_commands  # noqa: E402
@@ -135,6 +136,7 @@ register_housekeeping_commands(main)
 register_migrate_commands(main)
 register_consciousness_commands(main)
 register_metrics_commands(main)
+register_mero_commands(main)
 register_test_commands(main)
 register_notify_commands(main)
 register_preflight_commands(main)
