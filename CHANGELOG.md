@@ -33,6 +33,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card 3d16d585: keep seat-owned fleet workers reapable.** Seat-routed worker
+  owners retain the standard `pi-` prefix, and launch provenance resolves the
+  expected seat separately for each card instead of sharing one scan-wide seat.
+
 - **Card 168d5a4f: fence fleet claim release by exact generation.** The fast
   reaper now accepts exactly one strict launcher record for the current card,
   fleet owner and explicit claim revision. Missing revisions, malformed or
