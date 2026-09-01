@@ -162,6 +162,12 @@ does not own**, its marching orders, and how it is measured. The second of those
 matters most: seats are created because one seat had too many jobs, and a charter
 that only lists powers will grow the same way.
 
+**The canonical seat charters are maintained in sk-standards ADR-0005 and ROSTER.md.**
+See [Seat Charters: SKCapstone Fleet Boundaries](./seat-charters.md) for the
+SKCapstone-specific alignment and enforcement details. New seats MUST be added to
+the canonical sk-standards documents first; this document only reflects those
+definitions in the SKCapstone context.
+
 Then mail the seat itself and the fleet. The seat's welcome should include the
 two mailbox traps, because both have already cost real time:
 
