@@ -845,35 +845,61 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_link(task_id, key, value, home, agent):
-        """Attach a link (pr/commit/doc/...) to a card."""
+        """Attach a verified authoritative and overlay link to a card."""
         from ..blocked_verdict import validate_blocked_verdict
-        from ..card import CardEvent, CardEventLog
+        from ..coord_receipts import verified_coord_link
 
-        # A BLOCKED verdict takes a card out of circulation. It must therefore
-        # say what would put it back. Measured on the live board 2026-08-27: of
-        # 39 open cards whose latest outcome was BLOCKED, 18 were the literal
-        # word and 20 more named no blocked_on at all, so that pool could not
-        # drain. The contract was already in the worker brief; asking was not
-        # enough, so it is refused here at the write path.
         try:
             validate_blocked_verdict(key, value)
-        except ValueError as exc:
-            raise click.ClickException(str(exc)) from None
-
-        home_path = Path(home).expanduser()
-        try:
-            CardEventLog(home_path).append(
-                CardEvent(
-                    card_id=task_id,
-                    action="link",
-                    link_key=key,
-                    link_value=value,
-                    writer=agent or "",
-                )
+            receipt = verified_coord_link(
+                Path(home).expanduser(), task_id, key, value, agent or ""
             )
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
             raise click.ClickException(str(exc)) from None
-        console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")
+        click.echo(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
+
+    @coord.command("review-result")
+    @click.argument("review_card_id")
+    @click.argument("parent_card_id")
+    @click.argument("writer")
+    @click.argument("claim_revision")
+    @click.argument("verdict", type=click.Choice(["PASS", "BLOCKED"], case_sensitive=True))
+    @click.argument("evidence_uri")
+    @click.argument("evidence_sha256")
+    @click.option("--blocked-on", type=click.Choice(["dependency", "human", "capability", "card"]))
+    @click.option("--blocked-referent")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_review_result(
+        review_card_id,
+        parent_card_id,
+        writer,
+        claim_revision,
+        verdict,
+        evidence_uri,
+        evidence_sha256,
+        blocked_on,
+        blocked_referent,
+        home,
+    ):
+        """Record a claim-bound review result and print its verified receipt."""
+        from skcoord import record_review_result
+
+        try:
+            receipt = record_review_result(
+                Path(home).expanduser(),
+                review_card_id=review_card_id,
+                parent_card_id=parent_card_id,
+                reviewer_identity=writer,
+                claim_revision=claim_revision,
+                verdict=verdict,
+                evidence_uri=evidence_uri,
+                evidence_sha256=evidence_sha256,
+                blocked_on=blocked_on,
+                blocked_referent=blocked_referent,
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise click.ClickException(str(exc)) from None
+        click.echo(json.dumps(receipt.__dict__, sort_keys=True, separators=(",", ":")))
 
     @coord.command("changelog")
     @click.option("--home", default=AGENT_HOME, type=click.Path())

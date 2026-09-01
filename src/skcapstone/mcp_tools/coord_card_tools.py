@@ -1,10 +1,8 @@
 """Coordination card-hygiene tools: describe, label, link, reprioritize, amend-criteria.
 
 The first three mirror the ``coord describe`` / ``coord label`` /
-``coord link`` CLI verbs exactly: the same append-only overlay events
-(``CardEventLog``), the same writer attribution (``agent`` param, empty
-means "default to host"), and the same best-effort CardStore mirror for
-``describe`` when dual-write is enabled. ``coord_reprioritize`` and
+``coord link`` CLI verbs. Link uses SKCoord's canonical verified two-store
+annotation primitive. ``coord_reprioritize`` and
 ``coord_amend_criteria`` are the folded amendment verbs (same discipline
 as describe; see ``coord_amendments``), and ``coord_void`` kills a
 mistaken card without completing it (no Joules, no changelog entry).
@@ -185,28 +183,24 @@ async def _handle_coord_label(args: dict) -> list[TextContent]:
 
 
 async def _handle_coord_link(args: dict) -> list[TextContent]:
-    """Attach a link to a card via one appended overlay event."""
-    from ..card import CardEvent, CardEventLog
+    """Attach a link through the verified authoritative and overlay primitive."""
+    from ..blocked_verdict import validate_blocked_verdict
+    from ..coord_receipts import verified_coord_link
 
     task_id = args.get("task_id", "")
     key = args.get("key", "")
     value = args.get("value", "")
-    if not task_id or not key or not value:
+    if not task_id:
         return _error_response("task_id, key, and value are required")
 
     try:
-        CardEventLog(_shared_root()).append(
-            CardEvent(
-                card_id=task_id,
-                action="link",
-                link_key=key,
-                link_value=value,
-                writer=args.get("agent", "") or "",
-            )
+        validate_blocked_verdict(key, value)
+        receipt = verified_coord_link(
+            _shared_root(), task_id, key, value, args.get("agent", "") or ""
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         return _error_response(str(exc))
-    return _json_response({"linked": True, "task_id": task_id, "key": key, "value": value})
+    return _json_response(receipt)
 
 
 async def _handle_coord_reprioritize(args: dict) -> list[TextContent]:
