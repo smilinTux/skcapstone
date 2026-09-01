@@ -267,10 +267,49 @@ CLAIM_GRACE = 300         # one full rotation period, so every host has reported
 REAP_QUORUM = 3
 KNOWN_HOST_TTL = 24 * 3600   # a host silent this long has left the fleet
 
+STALL_GRACE = 30 * 60     # a zero-byte log younger than this may still be starting
+
+def _never_started(cid):
+    """True when this card has a launch log that is EXACTLY zero bytes and old.
+
+    Liveness here used to mean only that the tmux session exists. A launch
+    wrapper whose child never starts sits in do_wait forever, keeps its session,
+    and holds the claim while every reaper tick correctly reports it live.
+    Observed 2026-08-31 on b27301c0: elapsed 17:24:15, CPU time 00:00:00, log
+    0 bytes, claim held 17.4h until it was killed by hand.
+
+    Emptiness is the only safe discriminator. A log with ANY content keeps the
+    card live no matter how old, because a long quiet think is legitimate and
+    reaping on mtime staleness would pull cards out from under working agents,
+    which is the outage the quorum and oldest-report rules exist to prevent.
+    A missing log is also not evidence of death, so it never reaps either.
+    """
+    try:
+        logs = glob.glob(os.path.join(HOME, ".skcapstone/fleet/logs", cid + "-*.log"))
+        if not logs:
+            return False
+        newest = max(logs, key=os.path.getmtime)
+        st = os.stat(newest)
+    except OSError:
+        return False
+    if st.st_size > 0:
+        return False
+    return (time.time() - st.st_mtime) > STALL_GRACE
+
+
 def publish_live(sessions):
     """Record which cards this host is running, for every other host to read."""
     cards = sorted({s[len(L["prefix"]):] for L in LANES
                     for s in sessions if s.startswith(L["prefix"])})
+    kept = []
+    for _cid in cards:
+        if _never_started(_cid):
+            log(d, "STALLED|%s|%s|session exists but its launch log is 0 bytes and older "
+                   "than %dm; not reporting it live so the claim can be reaped"
+                % (HOST, _cid, STALL_GRACE // 60))
+            continue
+        kept.append(_cid)
+    cards = kept
     try:
         os.makedirs(LIVE, exist_ok=True)
         p = os.path.join(LIVE, HOST + ".json")
