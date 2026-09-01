@@ -32,9 +32,100 @@ CUR="$COORD/.skmail-cursor"
 mkdir -p "$BOXDIR"
 lc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }
 
+usage() {
+  cat <<'SKMAIL_HELP'
+skmail - the append-only coordination mailbox shared across the chi cluster.
+
+USAGE
+  skmail send <from> <to> <priority> <subject> <body...>
+  skmail read <me>           unread for you, oldest first
+  skmail ack  <me>           mark everything currently visible as read
+  skmail tail [n]            recent traffic between any peers (default 10)
+  skmail adopt               one-off: fold legacy skmail.jsonl and
+                             sync-conflict files into skmail.d/
+
+ARGUMENTS
+  <from>      YOUR OWN agent name, expanded. Never the literal string SKAGENT.
+              Four mailboxes on this cluster were written under the identity
+              "SKAGENT" because a shell variable reached the wire unexpanded,
+              and their real author is now unrecoverable.
+  <to>        another agent name, or "all". Case-insensitive: Jarvis, jarvis
+              and JARVIS are one recipient sharing one read cursor. Display
+              keeps the sender casing.
+  <priority>  urgent | normal | fyi. Required, no default.
+              urgent means "stop what you are doing".
+  <subject>   short. Quote it.
+  <body...>   everything after the subject. Quote it.
+
+EXAMPLES
+  Report a verdict to both overseers. This is the common case:
+    skmail send pi-qwen-chiap04-a1b2c3d4 jarvis normal "a1b2c3d4 PASS" \
+      "Card a1b2c3d4 PASS. PR https://github.com/smilinTux/skcapstone/pull/1
+       evidence ~/.skcapstone/evidence/work/a1b2c3d4/PASS.md sha256 abc123"
+
+  Announce something the whole fleet needs:
+    skmail send skwork-sweep all fyi "FILE-LOCK CHANGELOG.md" \
+      "Holding CHANGELOG.md for card a1b2c3d4 until its PR merges."
+
+  Stop the fleet:
+    skmail send jarvis all urgent "GATEWAY DOWN" "chiap08 refusing connections."
+
+  Read and clear your own box:
+    skmail read jarvis
+    skmail ack  jarvis
+
+  See what everyone has been saying:
+    skmail tail 20
+
+RULES THAT ARE NOT OPTIONAL
+  Use this command. NEVER hand-write a file into skmail.d/ yourself. The reader
+  expects ts, from, to, priority, re and body. Hand-written records invent
+  their own field names (sender, recipient, timestamp, subject) and are
+  rejected as malformed, so the agent you are reporting to never sees them.
+  Writing anywhere else, including ~/.skcapstone/mail/, is the same as not
+  reporting at all: 63 verdicts were produced into that directory and silently
+  lost for five days.
+
+  ack is ALL OR NOTHING. It marks everything currently visible as read,
+  including mail you have not acted on. Read first, act, then ack.
+
+STORAGE
+  One file per writer per host: skmail.d/<agent>@<host>.jsonl. That is not a
+  style choice. ~/.skcapstone is a Syncthing folder and a single shared file
+  produced a real sync conflict that swallowed a message. One writer per file
+  means Syncthing never has two versions to reconcile.
+
+  Override the directory with SKMAIL_DIR.
+SKMAIL_HELP
+}
+
+need() {
+  # $1 = how many args the subcommand needs, $2 = the subcommand, rest = what we got.
+  local want="$1" cmd="$2"; shift 2
+  if [ "$#" -lt "$want" ]; then
+    echo "skmail $cmd: expected $want argument(s), got $#" >&2
+    echo >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+case "${1:-}" in
+  -h|--help|help) usage; exit 0 ;;
+esac
+
 cmd="${1:-tail}"; shift || true
+
+# A subcommand asking for help must print help, not crash. Under set -u an
+# unguarded $1 exits with "unbound variable", which is what `skmail send --help`
+# used to do.
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
 case "$cmd" in
   send)
+    need 4 send "$@"
     from="$1"; to="$2"; prio="$3"; re="$4"; shift 4; body="$*"
     case "$prio" in urgent|normal|fyi) ;; *) echo "priority must be urgent|normal|fyi" >&2; exit 2;; esac
     SKM_DIR="$BOXDIR" SKM_FROM="$from" SKM_TO="$to" SKM_PRIO="$prio" SKM_RE="$re" SKM_BODY="$body" \
@@ -55,7 +146,9 @@ print("sent to %s [%s] re %s" % (rec["to"], rec["priority"], rec["re"]))
     ;;
   read|ack|tail)
     me="${1:-}"
-    [ "$cmd" != "tail" ] && [ -z "$me" ] && { echo "usage: skmail $cmd <me>" >&2; exit 2; }
+    [ "$cmd" != "tail" ] && [ -z "$me" ] && {
+      echo "skmail $cmd: needs your own agent name, e.g. skmail $cmd jarvis" >&2
+      echo >&2; usage >&2; exit 2; }
     SKM_DIR="$BOXDIR" SKM_ME="$me" SKM_CMD="$cmd" SKM_N="${1:-10}" \
     SKM_CUR="$CUR.$(lc "${me:-_}")" python3 -c '
 import datetime, glob, hashlib, json, os, sys
