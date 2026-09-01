@@ -1,229 +1,278 @@
 # Writing a card the fleet can actually dispatch
 
-Every gate below is enforced by real code. The authority is
-`scripts/fleet/skfleet-rotate.py` for dispatch and
-`skcoord/card_store.py` for creation. If this document and the code disagree,
-the code is right and this document is stale: fix it.
+Card creation and fleet dispatch use different gates:
 
-The reason this exists: on 2026-09-01 a card carrying a signed human
-authorization with a **fixed 30 minute issue window** could not be dispatched,
-because its author put `[HUMAN]` in the title. Title and `initial_labels` are
-immutable. Once the approval arrived there was no way to release the card to
-the fleet, and the only remaining option was manual execution against the
-clock. The gate was correct. The card was authored wrong.
+- `skcoord/card_store.py` governs creation.
+- `scripts/fleet/skfleet-rotate.py` governs fleet selection and preclaim.
 
-## The one rule that matters most
+The selector's `authoritative_claimability()` function is the dispatch
+authority. If this document and that function disagree, the function wins and
+this document must be corrected.
 
-**A condition that will later be satisfied must be a removable LABEL, never a
-title marker.**
+Human approval is separate from machine state. A complete dependency, a label,
+an elapsed deadline, or a successful CLI write never manufactures human
+authority. Record the exact human decision and its evidence first, then make
+only the state changes that decision authorizes.
 
-Titles are immutable. `initial_labels` in `core.json` is immutable. Labels are
-folded at read time from `initial_labels` plus `add_label` / `remove_label`
-events, so a label can be added and removed forever. A title marker is a
-life sentence.
+`--agent` records attribution; it does not authenticate a human. Never type a
+human writer identity on a person's behalf. The human or trusted decision
+recorder must actually make or attest the recorded decision.
 
-```
-BAD   [SKGW-AUTHZ-06A6-LC][S][HUMAN] Authorize a replacement lifecycle
-      -> _human_gate() returns True from the title, permanently.
-      -> No label change can ever release it. Manual execution only.
+Never bypass a selector gate with manual execution. If a fixed authorization
+window arrives while the card is still blocked, stop and repair the card or
+obtain a fresh authorization. Urgency does not change authority.
 
-GOOD  [SKGW-AUTHZ-06A6-LC][S] Authorize a replacement lifecycle
-      labels: human-gate, do-not-claim
-      -> Same gate, same protection, but `coord label <id> human-gate --remove`
-         releases it the moment the human decides.
-```
+## Birth facts and folded state
 
-Use `[HUMAN]` in a title only when the card must NEVER be machine-dispatched
-under any circumstance, for example a standing decision record.
+`core.json` is write-once, so its original title, description,
+`initial_labels`, and dependencies remain immutable birth facts. The effective
+card is not frozen. Attributed append-only events can fold a new title or
+description, add or remove labels and dependencies, and change lifecycle state.
 
-## Every dispatch gate, and how to clear it
+Use a removable label for a temporary hold:
 
-### 1. Governed class requires exactly one parent
-
-`_GOVERNED_CARD_CLASS = re.compile(r"\[(REVIEW|REREVIEW|REPAIR)\]")`
-
-A title containing `[REVIEW]`, `[REREVIEW]` or `[REPAIR]` needs exactly one
-`parent-<cardid>` label at creation or `coord create` refuses it:
-
-```
-ValueError: Governed card <id> requires exactly one parent-<card_id> label
+```text
+human-gate
+do-not-claim
 ```
 
-Creation is also refused when a **live** repair already exists under that
-parent:
+Use `[HUMAN]` in a title only for a standing human-only card. The title can be
+changed with `coord describe --title`, but changing it is an attributed contract
+edit, not proof that a human approved execution. Do not remove `[HUMAN]` merely
+because another machine condition became true.
 
-```
-ValueError: Refusing live repair duplicate for parent <id>; existing card <id> is non-terminal
-```
+Removing one hold does not remove another. A card carrying both `human-gate`
+and `do-not-claim` stays blocked until both are removed by an authorized
+decision.
 
-That is a duplicate-work guard, not a bug. Either finish the sibling or pick
-the correct parent. Do not retitle the card to dodge the class check.
+## Creation governor
 
-### 2. Not-claimable labels
-
-`_NOT_CLAIMABLE = {"not-claimable", "sprint-container", "do-not-claim"}`
-
-Any of these keeps the card out of the pool. All three are removable:
-
-```
-skcapstone coord label <id> do-not-claim --remove --agent <you>
-```
-
-### 3. Human gate
+The creation class is case-insensitive:
 
 ```python
-return "human-gate" in labels or "[HUMAN]" in str(core.get("title") or "").upper()
+_GOVERNED_CARD_CLASS = re.compile(
+    r"\[(REVIEW|REREVIEW|REPAIR)\]", re.IGNORECASE
+)
 ```
 
-Two sources, only one of them removable. See the rule at the top.
+A new `[REVIEW]`, `[REREVIEW]`, or `[REPAIR]` card normally requires exactly
+one `parent-<card_id>` initial label. The parent must exist. `REREVIEW` folds to
+the review class, a live sibling of the same governed class blocks a duplicate,
+and a third review level is refused.
 
-A gated card is released by a human-resolution event, which
-`_human_resolution_epoch()` finds by scanning for a `void` written by
-`chef`, `human` or a `human-decision-recorder` writer, or a `link` /
-`add_label` whose text matches the blocked-on referent. Record the resolution
-against the referent you blocked on, or nothing will match.
+`human-override` skips the creation governor. It is a human-authority escape
+hatch, not a convenient way around a malformed card. Use it only when an
+explicit human decision authorizes that exact creation. CardStore does not
+authenticate that label by itself, so the surrounding operator gate remains
+mandatory.
 
-### 4. Non-implementation labels
+Creation governance reads birth facts. Later title and label events do not
+rerun the creation governor.
 
+## Card-authoring gates used by dispatch
+
+`authoritative_claimability()` folds the card and returns one reason. Relevant
+reasons, in evaluation order, are:
+
+1. `non-task`, `void`, `archive`, `done`, and `owned-*`: the card kind or
+   lifecycle is not available for a new claim.
+2. `human-gate`: `non_implementation()` found `[HUMAN]` in the folded title or
+   labels, or one of these folded labels:
+
+   ```text
+   planning-only-container
+   do-not-claim-as-implementation
+   human-gate
+   human-decision-recorded-no-action
+   no-action-authorized
+   ```
+
+3. `foreign-project`: the folded labels contain `foreign-project`.
+4. `not-claimable`: folded labels, or legacy core tags, contain one of:
+
+   ```python
+   _NOT_CLAIMABLE = {"not-claimable", "sprint-container", "do-not-claim"}
+   ```
+
+5. `sensitive-category`: the folded title matches this expression and the
+   folded labels do not contain `dispatch-approved`:
+
+   ```python
+   _SENSITIVE_CATEGORY = re.compile(
+       r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
+       r"deploy|production|release|migrat)", re.I
+   )
+   _CATEGORY_OPT_IN = "dispatch-approved"
+   ```
+
+   The expression searches the folded title only. Labels do not trigger it.
+   `dispatch-approved` is an explicit category opt-in, not human approval. The
+   `\bkey\b` alternative matches the word `key`, not the plural `keys`.
+
+6. `dependency`: at least one folded dependency is not complete with a
+   non-BLOCKED outcome.
+7. `host-pin:<host>`: the folded title and labels name exactly one rotation host
+   other than the current host.
+
+The fleet also applies lifecycle reassessment, ITIL, prior-launch, review, and
+BLOCKED-backoff filters before or around this function. Passing the card-authoring
+checks alone does not guarantee dispatch.
+
+## BLOCKED backoff
+
+BLOCKED is an outcome, not a label. Outcomes fold through the controlled keys
+`verdict`, `result`, `disposition`, and `review_decision`. Missing or ambiguous
+blocker metadata fails closed.
+
+A newer explicit `reopen` event clears a recorded BLOCKED backoff. Otherwise the
+allowed wake depends on `blocked_on`:
+
+- `dependency`: the exact dependency edge is removed, or that exact dependency
+  becomes satisfied after the verdict. Adding or changing that exact edge after
+  the verdict can also wake it when the referenced dependency is already
+  satisfied.
+- `human`: every named referent receives a matching approval or void event after
+  the verdict from `chef`, `human`, or a `human-decision-recorder` writer. The
+  event must be an authorized void, or a matching approval or void link or label.
+- `capability`: the card first routes to the stronger lane. After that route also
+  blocks, its referents must be `ac:<number>` or `free`, and an attributed
+  contract change is required before another attempt.
+- `card`: every exact referenced card resolves after the verdict. A referenced
+  non-human-gated card must complete with a satisfied outcome. A referenced
+  human-gated card also requires a matching human-resolution event. If the
+  blocker names only `ac:<number>` referents, an attributed title, criteria,
+  dependency, or material-label change can create one new retry generation.
+  Mixed card and acceptance-criterion referents fail closed.
+
+Each blocker generation funds at most one claim-fenced retry. Separately, three
+reported launches with no outcome park a card until an attributed material
+change or a folded dependency completion occurs. PASS and PASS_FOR_REVIEW
+outcomes remain parked for review rather than being rerun.
+
+A human-resolution event only wakes BLOCKED backoff. It does not remove
+`human-gate`, `do-not-claim`, or any other dispatch gate.
+
+## Where the authoritative fold reads
+
+Dispatch does not use `folded_labels()` by itself. The authoritative path is:
+
+```text
+cards/<id>/core.json                    write-once birth facts
+cards/<id>/events/*.jsonl               native lifecycle and mutation events
+coordination/card_events/*.jsonl        legacy overlay events
 ```
-planning-only-container, do-not-claim-as-implementation, human-gate,
-human-decision-recorded-no-action, no-action-authorized
-```
 
-These say "this card is not a unit of work". Containers and decision records
-belong here. A card carrying one will never be implemented by a worker.
+`_authoritative_card_state()` reads native events and overlay events, then
+`_fold_claimability()` orders the combined stream by timestamp, writer, and
+sequence before folding title, labels, dependencies, ownership, and lifecycle.
+The legacy `coordination/tasks/<id>-*.json` projection is not selector input.
 
-### 5. Sensitive category needs an explicit opt-in
+The separate `folded_labels()` helper reads birth labels plus overlay label
+events for other fleet features. It is not the complete claimability fold.
 
-```python
-_SENSITIVE_CATEGORY = re.compile(
-    r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
-    r"deploy|production|release|migrat)", re.I)
-_CATEGORY_OPT_IN = "dispatch-approved"
-```
+## Worked example
 
-The regex matches the **title and labels**. If your card mentions credentials,
-custody, secrets, keys, rollback, deploy, production, release or migration, it
-is gated until someone adds `dispatch-approved`.
-
-This one surprises people, because the match is textual. A card titled
-"Fix the release notes typo" is sensitive-category by the word `release`. That
-is deliberate: the opt-in is cheap, and a false positive costs one label.
-
-### 6. BLOCKED backoff
-
-A card whose latest recorded outcome is BLOCKED stays out of the pool until one
-of its dependencies reaches complete. Outcomes are read through a controlled
-vocabulary across `verdict`, `result`, `disposition` and `review_decision`,
-because verdict has 41 spellings in this store. Re-blocking the same card
-without changing anything just burns inference.
-
-## Where labels actually live
-
-Labels fold from two places:
-
-```
-core.json initial_labels        immutable, set at creation
-card_events/*.jsonl             add_label / remove_label events, appended forever
-```
-
-`folded_labels()` reads `initial_labels`, then applies the events. It does
-**not** read the per-card `cards/<id>/events/` directory, which holds the
-structural lifecycle (claim, move, complete, archive, void).
-
-This trips people up. After removing a label you will see:
-
-```
-cards/983336c1/          core.json only, no events/ directory
-```
-
-and conclude the write was lost. It was not. Check the evidence store:
-
-```
-grep -h '<cardid>' ~/.skcapstone/coordination/card_events/*.jsonl \
-  | grep -E 'add_label|remove_label'
-```
-
-The legacy `coordination/tasks/<id>-*.json` file also still shows the original
-labels. That store is not what the selector folds. Neither store alone answers
-a question about a card; this is the two-store split, and it is why every
-readback in this repo is done through a different path than the write.
-
-## A worked example
-
-A card that needs one human approval before the fleet may run it, touches
-credentials, and repairs something:
+This example creates a repair card whose folded title is sensitive because it
+contains both `production` and `credential`. Set every variable explicitly:
 
 ```bash
+: "${COORD_HOME:?set COORD_HOME to the SKCapstone home}"
+: "${CARD_ID:?set CARD_ID to the new card ID}"
+: "${PARENT_CARD_ID:?set PARENT_CARD_ID to the existing parent ID}"
+: "${CARD_WRITER:?set CARD_WRITER to the attributed author}"
+
 skcapstone coord create \
-  --title "[SKGW-AUTHZ-06A6-LC][S][REPAIR] Authorize a replacement service-token lifecycle" \
-  --by mero --priority high \
-  --tag parent-9acf44e2 \        # required: [REPAIR] is a governed class
-  --tag human-gate \             # removable gate, NOT [HUMAN] in the title
-  --tag do-not-claim \           # belt and braces until the human decides
-  --tag skgateway --tag authz \
-  --desc "..." \
-  --criteria "Before claim, record an exact verbatim human authorization naming this card." \
-  --criteria "..."
+  --home "$COORD_HOME" \
+  --id "$CARD_ID" \
+  --title "[SKGW-AUTHZ-06A6-LC][S][REPAIR] Repair production credential lifecycle" \
+  --by "$CARD_WRITER" \
+  --priority high \
+  --tag "parent-$PARENT_CARD_ID" \
+  --tag human-gate \
+  --tag do-not-claim \
+  --tag skgateway \
+  --tag authz \
+  --desc "Prepare the authorized replacement lifecycle." \
+  --criteria "Record exact human authorization before releasing either hold." \
+  --criteria "Preserve immutable evidence and stop if authorization cannot be verified."
 ```
 
-When the human decides:
+After the human decides, the authorized human or trusted decision recorder runs
+the release. Writer attribution is explicit on every mutation:
 
 ```bash
-# 1. record the decision as evidence, with a verifiable artifact
-skcapstone coord link <id> human_authorization /path/to/AUTHORIZATION.txt
-skcapstone coord link <id> human_authorization_sha256 <sha256>
+: "${HUMAN_DECISION_WRITER:?set to human or a trusted human-decision-recorder}"
+: "${HUMAN_AUTHORIZATION_FILE:?set the verified authorization artifact path}"
+: "${HUMAN_AUTHORIZATION_SHA256:?set its verified SHA256}"
 
-# 2. release the gates
-skcapstone coord label <id> human-gate --remove --agent <you>
-skcapstone coord label <id> do-not-claim --remove --agent <you>
+printf '%s  %s\n' \
+  "$HUMAN_AUTHORIZATION_SHA256" \
+  "$HUMAN_AUTHORIZATION_FILE" \
+  | sha256sum --check --status
 
-# 3. sensitive category opt-in, because the title says "credential"
-skcapstone coord label <id> dispatch-approved --agent <you>
+approval_referent="approval:$CARD_ID-execution"
+approval_value="APPROVED $approval_referent artifact=$HUMAN_AUTHORIZATION_FILE sha256=$HUMAN_AUTHORIZATION_SHA256"
 
-# 4. VERIFY, through a different path than the write
-python3 - <<'PY'
-import json, glob, os
-cid = "<id>"
-core = json.load(open(os.path.expanduser(f"~/.skcapstone/cards/{cid}/core.json")))
-labels = list(core.get("initial_labels") or [])
-for f in glob.glob(os.path.expanduser("~/.skcapstone/coordination/card_events/*.jsonl")):
-    for line in open(f, errors="replace"):
-        if cid not in line:
-            continue
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(e, dict) or e.get("card_id") != cid:
-            continue
-        lab = e.get("label") or e.get("link_value")
-        if e.get("action") == "add_label" and lab and lab not in labels:
-            labels.append(lab)
-        elif e.get("action") == "remove_label" and lab:
-            labels = [x for x in labels if x != lab]
-norm = {str(x).strip().lower().replace("_", "-") for x in labels}
-print("folded:", sorted(norm))
-print("blocked by not-claimable:", sorted(norm & {"not-claimable", "sprint-container", "do-not-claim"}))
-print("human gate:", "human-gate" in norm or "[HUMAN]" in str(core.get("title") or "").upper())
-PY
+skcapstone coord link \
+  "$CARD_ID" human_approval "$approval_value" \
+  --home "$COORD_HOME" \
+  --agent "$HUMAN_DECISION_WRITER"
+
+skcapstone coord label \
+  "$CARD_ID" human-gate --remove \
+  --home "$COORD_HOME" \
+  --agent "$HUMAN_DECISION_WRITER"
+
+skcapstone coord label \
+  "$CARD_ID" do-not-claim --remove \
+  --home "$COORD_HOME" \
+  --agent "$HUMAN_DECISION_WRITER"
+
+skcapstone coord label \
+  "$CARD_ID" dispatch-approved \
+  --home "$COORD_HOME" \
+  --agent "$HUMAN_DECISION_WRITER"
 ```
 
-If step 4 still reports a gate, the card will not dispatch no matter how many
-times the CLI printed success.
+Read the folded card through a different path than the writes:
 
-## Checklist before you create a card
+```bash
+skcapstone coord kanban --home "$COORD_HOME" --json \
+  | python3 -c '
+import json, sys
+card_id = sys.argv[1]
+grid = json.load(sys.stdin)
+cards = [card for lane in grid.values() for column in lane.values() for card in column]
+print(json.dumps(next(card for card in cards if card["id"] == card_id), indent=2, sort_keys=True))
+' "$CARD_ID"
+```
 
-1. Will any condition on this card be satisfied later? Put it in a **label**.
-2. Does the title contain `[REVIEW]`, `[REREVIEW]` or `[REPAIR]`? Add exactly
-   one `parent-<cardid>`.
-3. Does the title or any label match the sensitive-category regex? Plan for
-   `dispatch-approved`.
-4. Is this a container or a decision record rather than work? Use a
-   non-implementation label so no worker wastes a dispatch on it.
-5. Does an acceptance criterion pin a **deadline**? Then check today that the
-   card is dispatchable, not on the day the deadline arrives.
+This confirms the two-store CardStore fold. It is necessary but not sufficient
+for dispatch. There is currently no public read-only CLI for one card's
+`authoritative_claimability()` decision, so do not paste another implementation
+of the selector into an operational command. In a source checkout, run the
+selector contract tests instead:
 
-Point 5 is the one that cost us. The card was authored on 2026-09-01 at
-02:1xZ with an issue window of 03:00:00Z, and nobody checked it was
-dispatchable until 30 minutes were left.
+```bash
+python3 -m pytest -q \
+  tests/test_skfleet_claimability.py \
+  tests/test_skfleet_backoff_wake.py \
+  tests/test_cli_coord_describe.py
+```
+
+At dispatch time the fleet calls `authoritative_claimability(cid, fresh=True)`
+again immediately before claim. That fresh selector result, followed by the
+claim command's own gate, is authoritative.
+
+## Checklist
+
+1. Use temporary labels for temporary holds.
+2. Give every governed card one real parent unless an exact human creation
+   override applies.
+3. Check sensitive-category matching against the folded title only.
+4. Keep human approval evidence separate from label and lifecycle state.
+5. Remove every authorized hold, not just the first one encountered.
+6. Inspect the folded card through Kanban, then rely on the fresh selector and
+   claim gates for dispatch.
+7. If a deadline arrives while a gate remains, stop. Never substitute manual
+   execution for authority.
