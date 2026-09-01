@@ -192,10 +192,11 @@ def test_batch_is_bounded_by_free_review_lane_capacity(tmp_path: Path) -> None:
 
     assert board.open(capacity=3) == 3
     assert len(board.calls) == 3
-    assert {
-        call[call.index("--title") + 1].rsplit(" ", 1)[-1]
-        for call in board.calls
-    } == {"a1b2c300", "a1b2c301", "a1b2c302"}
+    assert {call[call.index("--title") + 1].rsplit(" ", 1)[-1] for call in board.calls} == {
+        "a1b2c300",
+        "a1b2c301",
+        "a1b2c302",
+    }
 
 
 def test_zero_or_invalid_capacity_fails_closed(tmp_path: Path) -> None:
