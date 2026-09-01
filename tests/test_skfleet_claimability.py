@@ -284,8 +284,9 @@ def test_parent_is_excluded_only_while_distinct_repair_is_actively_claimed(
             cores[repair], [_claim("2026-09-01T03:53:12Z", "repair-worker", "repair-rev")]
         ),
     }
-    namespace["_authoritative_card_state"] = (
-        lambda card_id, core=None, fresh=False: (cores[card_id], states[card_id])
+    namespace["_authoritative_card_state"] = lambda card_id, core=None, fresh=False: (
+        cores[card_id],
+        states[card_id],
     )
     monkeypatch.setattr(
         namespace["glob"], "glob", lambda _pattern: [f"/cards/{parent}", f"/cards/{repair}"]
@@ -297,9 +298,7 @@ def test_parent_is_excluded_only_while_distinct_repair_is_actively_claimed(
         cores[repair],
         [
             _claim("2026-09-01T03:53:12Z", "repair-worker", "repair-rev"),
-            _release(
-                "2026-09-01T04:00:00Z", "repair-worker", "repair-worker", "repair-rev"
-            ),
+            _release("2026-09-01T04:00:00Z", "repair-worker", "repair-worker", "repair-rev"),
         ],
     )
     namespace["_active_repair_parents_cache"] = None
@@ -336,9 +335,7 @@ def test_repair_claim_fold_keeps_exact_owner_and_revision_across_worker_dimensio
     assert state["claim_revision"] == "qwen-rev"
     assert state["status"] == "doing"
 
-    namespace["_authoritative_card_state"] = (
-        lambda card_id, core=None, fresh=False: (core, state)
-    )
+    namespace["_authoritative_card_state"] = lambda card_id, core=None, fresh=False: (core, state)
     assert namespace["_active_repair_parents"]([repair], fresh=True) == {parent}
 
 
