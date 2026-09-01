@@ -34,7 +34,7 @@ CANONICAL_DIR = REPO_ROOT / "systemd"
 PACKAGED_DIR = REPO_ROOT / "src" / "skcapstone" / "data" / "systemd"
 
 # Only these unit suffixes ship in the wheel (see pyproject package-data).
-UNIT_GLOBS = ("*.service", "*.socket", "*.timer")
+UNIT_GLOBS = ("*.conf", "*.service", "*.socket", "*.timer")
 
 
 def _unit_files(directory: Path) -> dict[str, Path]:

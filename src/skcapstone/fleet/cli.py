@@ -6,6 +6,7 @@ Available standalone as `skfleet` and as `skcapstone fleet ...`.
 from __future__ import annotations
 
 import json as jsonlib
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,7 @@ from . import services as services_mod
 from . import sknoded as sknoded_mod
 from .explain import explain as explain_kind
 from .paths import default_paths, self_node_name
+from .rotation_alert import observe, read_journal
 
 
 def _now_iso() -> str:
@@ -225,6 +227,32 @@ def services_cmd() -> None:
     for r in rows:
         flags = "".join([" PAUSED" if r.paused else "", " STALE" if r.stale else ""])
         click.echo(f"{r.name}\t-> {r.node or 'unplaced'}\tstate={r.state}\tready={r.ready}{flags}")
+
+
+@fleet.command("rotate-alert")
+@click.argument("outcome", type=click.Choice(["failure", "success"]))
+@click.option("--unit", default="skfleet-rotate.service", show_default=True)
+@click.option("--invocation", default="")
+def rotate_alert_cmd(outcome: str, unit: str, invocation: str) -> None:
+    """Consume one rotation outcome and alert after a bounded threshold."""
+    paths_ = default_paths()
+    configured_home = os.environ.get("SKCAPSTONE_SHARED_ROOT") or os.environ.get("SKCAPSTONE_HOME")
+    home = Path(configured_home).expanduser() if configured_home else paths_.root.parent
+    state_root = Path(
+        os.environ.get("SKFLEET_ALERT_STATE_DIR", "~/.local/state/skcapstone")
+    ).expanduser()
+    authority = os.environ.get("SKFLEET_ALERT_AUTHORITY", "chiap08")
+    journal = read_journal(unit, invocation)
+    result = observe(
+        outcome,
+        journal,
+        invocation=invocation,
+        state_path=state_root / "skfleet-rotate-alert.json",
+        shared_root=home,
+        observation_root=paths_.root / "rotation-alert-observations",
+        authority_host=authority,
+    )
+    click.echo(result)
 
 
 def _nodes_by_role(paths_) -> dict[str, list[str]]:
