@@ -21,13 +21,15 @@ from dataclasses import dataclass
 
 NOT_CLAIMABLE = frozenset({"not-claimable", "sprint-container", "do-not-claim"})
 
-NON_IMPLEMENTATION = frozenset({
-    "planning-only-container",
-    "do-not-claim-as-implementation",
-    "human-gate",
-    "human-decision-recorded-no-action",
-    "no-action-authorized",
-})
+NON_IMPLEMENTATION = frozenset(
+    {
+        "planning-only-container",
+        "do-not-claim-as-implementation",
+        "human-gate",
+        "human-decision-recorded-no-action",
+        "no-action-authorized",
+    }
+)
 
 SENSITIVE_CATEGORY = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
@@ -66,52 +68,95 @@ def evaluate(title: str, labels) -> list[Gate]:
     gates: list[Gate] = []
 
     hit = sorted(norm & NOT_CLAIMABLE)
-    gates.append(Gate(
-        "not-claimable", bool(hit), True,
-        f"labels {hit} keep this out of the pool; remove with "
-        f"`coord label <id> {hit[0]} --remove`" if hit
-        else "no not-claimable label",
-    ))
+    gates.append(
+        Gate(
+            "not-claimable",
+            bool(hit),
+            True,
+            (
+                f"labels {hit} keep this out of the pool; remove with "
+                f"`coord label <id> {hit[0]} --remove`"
+                if hit
+                else "no not-claimable label"
+            ),
+        )
+    )
 
     by_title = "[HUMAN]" in title.upper()
     by_label = "human-gate" in norm
-    gates.append(Gate(
-        "human-gate", by_title or by_label, not by_title,
-        "[HUMAN] IN TITLE. Titles are immutable, so this gate can NEVER be "
-        "removed and the card can only be run by hand. Use a `human-gate` "
-        "LABEL instead." if by_title
-        else "human-gate label set; remove it when the human decides" if by_label
-        else "not human gated",
-    ))
+    gates.append(
+        Gate(
+            "human-gate",
+            by_title or by_label,
+            not by_title,
+            (
+                "[HUMAN] IN TITLE. Titles are immutable, so this gate can NEVER be "
+                "removed and the card can only be run by hand. Use a `human-gate` "
+                "LABEL instead."
+                if by_title
+                else (
+                    "human-gate label set; remove it when the human decides"
+                    if by_label
+                    else "not human gated"
+                )
+            ),
+        )
+    )
 
     nonimpl = sorted(norm & NON_IMPLEMENTATION)
-    gates.append(Gate(
-        "non-implementation", bool(nonimpl), True,
-        f"labels {nonimpl} mark this as not a unit of work" if nonimpl
-        else "treated as implementable work",
-    ))
+    gates.append(
+        Gate(
+            "non-implementation",
+            bool(nonimpl),
+            True,
+            (
+                f"labels {nonimpl} mark this as not a unit of work"
+                if nonimpl
+                else "treated as implementable work"
+            ),
+        )
+    )
 
     blob = title + " " + " ".join(sorted(norm))
     match = SENSITIVE_CATEGORY.search(blob)
     opted_in = CATEGORY_OPT_IN in norm
-    gates.append(Gate(
-        "sensitive-category", bool(match) and not opted_in, True,
-        f"matched {match.group(1).lower()!r} in the title or labels; add "
-        f"`{CATEGORY_OPT_IN}` to opt in" if match and not opted_in
-        else f"matched {match.group(1).lower()!r} and {CATEGORY_OPT_IN} is set"
-        if match else "not a sensitive category",
-    ))
+    gates.append(
+        Gate(
+            "sensitive-category",
+            bool(match) and not opted_in,
+            True,
+            (
+                f"matched {match.group(1).lower()!r} in the title or labels; add "
+                f"`{CATEGORY_OPT_IN}` to opt in"
+                if match and not opted_in
+                else (
+                    f"matched {match.group(1).lower()!r} and {CATEGORY_OPT_IN} is set"
+                    if match
+                    else "not a sensitive category"
+                )
+            ),
+        )
+    )
 
     governed = GOVERNED_CLASS.search(title)
     parents = {x for x in norm if x.startswith(PARENT_PREFIX) and x != PARENT_PREFIX}
-    gates.append(Gate(
-        "governed-class", bool(governed) and len(parents) != 1, True,
-        f"title declares [{governed.group(1).upper()}] so exactly one "
-        f"parent-<cardid> label is required, found {len(parents)}"
-        if governed and len(parents) != 1
-        else f"[{governed.group(1).upper()}] with parent {sorted(parents)[0]}"
-        if governed else "not a governed class",
-    ))
+    gates.append(
+        Gate(
+            "governed-class",
+            bool(governed) and len(parents) != 1,
+            True,
+            (
+                f"title declares [{governed.group(1).upper()}] so exactly one "
+                f"parent-<cardid> label is required, found {len(parents)}"
+                if governed and len(parents) != 1
+                else (
+                    f"[{governed.group(1).upper()}] with parent {sorted(parents)[0]}"
+                    if governed
+                    else "not a governed class"
+                )
+            ),
+        )
+    )
 
     return gates
 

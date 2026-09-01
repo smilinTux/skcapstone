@@ -33,8 +33,9 @@ def test_sensitive_category_matches_a_bare_word_in_the_title():
     # The regex is textual on purpose: "release" alone is enough.
     g = by_name(evaluate("Fix the release notes typo", []), "sensitive-category")
     assert g.blocks is True
-    g2 = by_name(evaluate("Fix the release notes typo", ["dispatch-approved"]),
-                 "sensitive-category")
+    g2 = by_name(
+        evaluate("Fix the release notes typo", ["dispatch-approved"]), "sensitive-category"
+    )
     assert g2.blocks is False
 
 
@@ -45,10 +46,16 @@ def test_sensitive_category_matches_labels_too():
 
 def test_governed_class_needs_exactly_one_parent():
     assert by_name(evaluate("[X][REPAIR] thing", []), "governed-class").blocks is True
-    assert by_name(evaluate("[X][REPAIR] thing", ["parent-aaaa1111"]),
-                   "governed-class").blocks is False
-    assert by_name(evaluate("[X][REPAIR] thing", ["parent-aaaa1111", "parent-bbbb2222"]),
-                   "governed-class").blocks is True
+    assert (
+        by_name(evaluate("[X][REPAIR] thing", ["parent-aaaa1111"]), "governed-class").blocks
+        is False
+    )
+    assert (
+        by_name(
+            evaluate("[X][REPAIR] thing", ["parent-aaaa1111", "parent-bbbb2222"]), "governed-class"
+        ).blocks
+        is True
+    )
 
 
 def test_the_real_card_that_caused_this():
@@ -63,17 +70,26 @@ def test_the_real_card_that_caused_this():
     gates = evaluate(
         "[SKGW-AUTHZ-06A6-LC][S][HUMAN] Authorize a replacement service-token "
         "lifecycle for the qualification consumer",
-        ["parent-9acf44e2", "skgateway", "sklegal", "authz", "service-token",
-         "human-approval-required", "prerequisite", "do-not-claim"],
+        [
+            "parent-9acf44e2",
+            "skgateway",
+            "sklegal",
+            "authz",
+            "service-token",
+            "human-approval-required",
+            "prerequisite",
+            "do-not-claim",
+        ],
     )
     names = {g.name for g in blocking(gates)}
     assert names == {"human-gate", "not-claimable"}
     assert by_name(gates, "sensitive-category").blocks is False
-    assert [g.name for g in permanent(gates)] == ["human-gate"], \
-        "only the title-derived gate is unfixable"
+    assert [g.name for g in permanent(gates)] == [
+        "human-gate"
+    ], "only the title-derived gate is unfixable"
 
 
-def test_a_credential_card_IS_sensitive_category():
+def test_a_credential_card_is_sensitive_category():
     """The sibling card really does trip it, which is why the two look alike."""
     gates = evaluate(
         "[SKGW-AUTHZ-06A5-DBLC][L] Provision one fresh isolated qualification "

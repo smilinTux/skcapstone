@@ -214,9 +214,7 @@ def register_coord_commands(main: click.Group) -> None:
             console.print("\n  [red]NOT DISPATCHABLE, AND CANNOT BE FIXED:[/]")
             for g in stuck:
                 console.print(f"    [red]{g.name}[/]: {g.detail}")
-            console.print(
-                "  [red]Void this card and recreate it without the title marker.[/]"
-            )
+            console.print("  [red]Void this card and recreate it without the title marker.[/]")
         if held:
             console.print("\n  [yellow]Held from the fleet until cleared:[/]")
             for g in held:

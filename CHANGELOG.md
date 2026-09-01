@@ -10,6 +10,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Dispatch gate advisory at card creation.** The `coord create` command now
+  evaluates dispatch gates immediately and warns the author if a card is born
+  undispatchable. A new `coord gates` command explains why any card will or
+  will not be dispatched by the fleet. Gates are folded the way the selector
+  does: core.json initial_labels plus add_label/remove_label events from
+  coordination/card_events. This prevents the permanent-gate failure mode where
+  a card with `[HUMAN]` in the title (immutable) can never be released to the
+  fleet, because only a removable `human-gate` label can be cleared.
+
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
   leading `PASS_FOR_*` or `PASS_READY_*` verdict. Stable outcome-generation IDs
