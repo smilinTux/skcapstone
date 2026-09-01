@@ -198,8 +198,7 @@ def test_claim_collector_ignores_historical_owner_without_active_revision(tmp_pa
     package = tmp_path / "modules" / "skcoord"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
-    (package / "card_store.py").write_text(
-        """
+    (package / "card_store.py").write_text("""
 class Value:
     def __init__(self, value): self.value = value
 class Card:
@@ -217,8 +216,7 @@ class CardStore:
             Card("33333333", "pi-qwen-chiap01-33333333", "residue", "done"),
             Card("44444444", "pi-qwen-chiap01-44444444", "residue", "backlog"),
         ]
-"""
-    )
+""")
     result = run_bash(
         "collect_claims",
         tmp_path,
