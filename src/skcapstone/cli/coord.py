@@ -199,7 +199,105 @@ def register_coord_commands(main: click.Group) -> None:
         )
         path = board.create_task(task)
         console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
-        console.print(f"  [dim]{path}[/]\n")
+        console.print(f"  [dim]{path}[/]")
+
+        # Tell the author NOW if the card is born undispatchable. A card whose
+        # gate is baked into its title can never be released to the fleet, and
+        # the only way that was ever discovered was by someone noticing the
+        # card had sat unclaimed. See docs/fleet/card-authoring-dispatch-gates.md
+        from ..coord_dispatch_gates import blocking, evaluate, permanent
+
+        gates = evaluate(task.title, task.tags)
+        stuck = permanent(gates)
+        held = [g for g in blocking(gates) if g not in stuck]
+        if stuck:
+            console.print("\n  [red]NOT DISPATCHABLE, AND CANNOT BE FIXED:[/]")
+            for g in stuck:
+                console.print(f"    [red]{g.name}[/]: {g.detail}")
+            console.print(
+                "  [red]Void this card and recreate it without the title marker.[/]"
+            )
+        if held:
+            console.print("\n  [yellow]Held from the fleet until cleared:[/]")
+            for g in held:
+                console.print(f"    [yellow]{g.name}[/]: {g.detail}")
+        if stuck or held:
+            console.print(f"  [dim]full report: skcapstone coord gates {task.id}[/]")
+        console.print()
+
+    @coord.command("gates")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_gates(task_id, home):
+        """Explain why a card will, or will not, be dispatched by the fleet.
+
+        Folds labels the way the selector does: core.json initial_labels plus
+        add_label/remove_label events from coordination/card_events. It does NOT
+        read cards/<id>/events/, which holds the structural lifecycle, and it
+        does NOT read the legacy coordination/tasks JSON, which keeps showing
+        the original labels forever. Both of those look like the answer and are
+        not.
+        """
+        import glob
+        import json as _json
+
+        from ..coord_dispatch_gates import blocking, evaluate, permanent
+
+        validate_task_id(task_id)
+        home_path = Path(home).expanduser()
+        core_path = home_path / "cards" / task_id / "core.json"
+        if not core_path.exists():
+            console.print(f"  [red]no card {task_id}[/] at {core_path}")
+            raise SystemExit(1)
+        core = _json.loads(core_path.read_text(encoding="utf-8"))
+
+        labels = [str(x) for x in (core.get("initial_labels") or [])]
+        events = []
+        pattern = str(home_path / "coordination" / "card_events" / "*.jsonl")
+        for f in sorted(glob.glob(pattern)):
+            for line in open(f, encoding="utf-8", errors="replace"):
+                line = line.strip()
+                if not line or task_id not in line:
+                    continue
+                try:
+                    e = _json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(e, dict) and e.get("card_id") == task_id:
+                    events.append(e)
+        for e in sorted(events, key=lambda r: str(r.get("ts") or "")):
+            if e.get("action") not in ("add_label", "remove_label"):
+                continue
+            lab = e.get("label") or e.get("link_value")
+            if not lab:
+                continue
+            if e["action"] == "add_label" and lab not in labels:
+                labels.append(lab)
+            elif e["action"] == "remove_label":
+                labels = [x for x in labels if x != lab]
+
+        console.print(f"\n  [bold]{task_id}[/] {core.get('title')}")
+        console.print(f"  [dim]folded labels: {sorted(labels)}[/]\n")
+        gates = evaluate(core.get("title") or "", labels)
+        for g in gates:
+            if not g.blocks:
+                mark = "[green]pass[/]"
+            elif g.removable:
+                mark = "[yellow]HELD[/]"
+            else:
+                mark = "[red]STUCK[/]"
+            console.print(f"  {mark:22} [bold]{g.name}[/]: {g.detail}")
+        stuck = permanent(gates)
+        held = blocking(gates)
+        console.print()
+        if stuck:
+            console.print(
+                "  [red]This card can never be auto-dispatched. Manual execution only.[/]\n"
+            )
+        elif held:
+            console.print("  [yellow]Held. Clear the labels above to release it.[/]\n")
+        else:
+            console.print("  [green]Dispatchable.[/]\n")
 
     @coord.command("claim")
     @click.argument("task_id")
