@@ -9,6 +9,7 @@ runtime alignment with that contract.
 
 Reference: sk-standards card 95af18fd, ADR-0005, ROSTER.md
 """
+
 import json
 import pytest
 from pathlib import Path
@@ -70,14 +71,20 @@ class TestMeroBoundary:
             "observed_claim_revision": "evt_abc123",
             "observed_process": {"state": "stalled", "cpu_seconds": 0},
             "reason": "Worker stalled with zero CPU for 30 minutes",
-            "evidence_sha256": hashlib.sha256(b"test").hexdigest()
+            "evidence_sha256": hashlib.sha256(b"test").hexdigest(),
         }
 
         # Verify all required fields are present
         required_fields = [
-            "card_id", "recommendation_id", "recommender", "observed_at",
-            "observed_claim_owner", "observed_claim_revision",
-            "observed_process", "reason", "evidence_sha256"
+            "card_id",
+            "recommendation_id",
+            "recommender",
+            "observed_at",
+            "observed_claim_owner",
+            "observed_claim_revision",
+            "observed_process",
+            "reason",
+            "evidence_sha256",
         ]
         for field in required_fields:
             assert field in recommendation, f"Missing required field: {field}"
@@ -141,8 +148,8 @@ class TestLinkBoundary:
             "independent_review": {
                 "verdict": "PASS",
                 "reviewer": "other-seat",
-                "evidence_sha256": hashlib.sha256(b"review").hexdigest()
-            }
+                "evidence_sha256": hashlib.sha256(b"review").hexdigest(),
+            },
         }
 
         # Link-authored PR must be rejected
@@ -157,12 +164,20 @@ class TestLinkBoundary:
         to Chef.
         """
         sensitive_patterns = [
-            r"capauth", r"credential", r"custody", r"issuer",
-            r"\bkey\b", r"rollback", r"deploy", r"production",
-            r"release", r"migrat"
+            r"capauth",
+            r"credential",
+            r"custody",
+            r"issuer",
+            r"\bkey\b",
+            r"rollback",
+            r"deploy",
+            r"production",
+            r"release",
+            r"migrat",
         ]
 
         import re
+
         pattern = re.compile("|".join(sensitive_patterns), re.I)
 
         test_cases = [
@@ -249,13 +264,19 @@ class TestRecommendationContract:
             "observed_claim_revision": "evt_001",
             "observed_process": {"state": "stalled"},
             "reason": "Worker stalled",
-            "evidence_sha256": hashlib.sha256(b"evidence").hexdigest()
+            "evidence_sha256": hashlib.sha256(b"evidence").hexdigest(),
         }
 
         required_fields = [
-            "card_id", "recommendation_id", "recommender", "observed_at",
-            "observed_claim_owner", "observed_claim_revision",
-            "observed_process", "reason", "evidence_sha256"
+            "card_id",
+            "recommendation_id",
+            "recommender",
+            "observed_at",
+            "observed_claim_owner",
+            "observed_claim_revision",
+            "observed_process",
+            "reason",
+            "evidence_sha256",
         ]
 
         for field in required_fields:
@@ -291,9 +312,8 @@ class TestRecommendationContract:
 
         for invalid_hash in invalid_hashes:
             try:
-                is_valid = (
-                    len(invalid_hash) == 64
-                    and all(c in "0123456789abcdef" for c in invalid_hash.lower())
+                is_valid = len(invalid_hash) == 64 and all(
+                    c in "0123456789abcdef" for c in invalid_hash.lower()
                 )
                 assert not is_valid, f"Invalid hash should fail: {invalid_hash}"
             except AssertionError:
@@ -333,13 +353,22 @@ class TestApplicationActionDispatchSeparation:
         """
         # This is a conceptual test documenting the boundary
         fleet_dispatch_actions = {
-            "claim", "release_claim", "launch", "stop", "reassign",
-            "rotate", "worker_health"
+            "claim",
+            "release_claim",
+            "launch",
+            "stop",
+            "reassign",
+            "rotate",
+            "worker_health",
         }
 
         application_action_examples = {
-            "restart_service", "scale_up", "scale_down",
-            "apply_config", "run_job", "execute_query"
+            "restart_service",
+            "scale_up",
+            "scale_down",
+            "apply_config",
+            "run_job",
+            "execute_query",
         }
 
         # Verify disjoint sets
