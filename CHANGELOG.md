@@ -7,8 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Card 4bd61c62 reports empty fleet selections as empty pool, foreign hash
+  partition, zero target, no compatible lane, or bounded selection race evidence
+  instead of falsely claiming that dependency-clear work does not exist.
 
 ### Added
+
+- **Card ff9b46b4: bound Link merge authority.** A source-only, fail-closed
+  evaluator requires a mergeable exact head, zero failed checks, a distinct
+  author's independent PASS, resolved lineage, non-Link authorship, and a
+  non-sensitive category. Denials produce deterministic evidence for Chef and
+  no merge or deployment actuator is exposed.
 
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
