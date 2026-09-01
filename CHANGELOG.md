@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card b1c7e2a4: immutable fleet service runtime artifact contract.** Add a
+  closed versioned manifest, canonical remote enforcement, artifact identity
+  verification, atomic promotion and rollback receipts, and a mechanical guard
+  against mutable service paths and Python editable installs.
+
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
   leading `PASS_FOR_*` or `PASS_READY_*` verdict. Stable outcome-generation IDs
