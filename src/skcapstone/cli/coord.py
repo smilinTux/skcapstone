@@ -789,8 +789,7 @@ def register_coord_commands(main: click.Group) -> None:
         card = CardStore(Path(home).expanduser()).fold(task_id)
         if card is None:
             raise click.ClickException(
-                f"No card {task_id} on this board. "
-                "Board overview: skcapstone coord status"
+                f"No card {task_id} on this board. " f"Board overview: skcapstone coord status"
             )
         data = card.model_dump(mode="json") if hasattr(card, "model_dump") else dict(vars(card))
         if as_json:

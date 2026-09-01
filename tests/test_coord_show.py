@@ -44,9 +44,7 @@ def _seed(tmp_path, task_id: str, title: str = "Card", labels=()) -> None:
         Task(id=task_id, title=title, priority=TaskPriority("high"), tags=list(labels))
     )
     if CardStore(tmp_path).fold(task_id) is None:  # board hook did not mirror
-        CardStore(tmp_path).create(
-            CardCore(id=task_id, title=title, initial_labels=list(labels))
-        )
+        CardStore(tmp_path).create(CardCore(id=task_id, title=title, initial_labels=list(labels)))
 
 
 def _core_text(tmp_path, task_id: str) -> str:
@@ -102,9 +100,7 @@ def test_describe_without_options_names_the_read_verb(tmp_path):
     which is exactly how the confusion was reached in the first place.
     """
     _seed(tmp_path, "dddd4444")
-    res = CliRunner().invoke(
-        _main(), ["coord", "describe", "dddd4444", "--home", str(tmp_path)]
-    )
+    res = CliRunner().invoke(_main(), ["coord", "describe", "dddd4444", "--home", str(tmp_path)])
     assert res.exit_code != 0
     assert "EDITS" in res.output
     assert "coord show dddd4444" in res.output
