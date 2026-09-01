@@ -875,6 +875,36 @@ def folded_labels(cid,core):
             labels=[item for item in labels if item!=label]
     return labels
 
+_SEAT_LABEL_PREFIX = "seat-"
+_SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+def seat_for(cid, core):
+    """Return the named seat this card belongs to, or None.
+
+    A card labelled `seat-<name>` is work belonging to a standing seat rather
+    than to whichever lane happened to pick it up. The worker still gets a
+    unique per-card name, but it is prefixed with the seat instead of the lane,
+    so every claim, verdict and skmail this worker writes is attributable to the
+    seat that owns the work.
+
+    Card b2fec032 is the motivating case: it is the Integrator seat's triage
+    card. Dispatched by lane it would have been claimed by pi-qwen-chiap01, and
+    its verdicts would have carried no trace of the seat that owns the trunk.
+
+    The name is validated rather than interpolated blindly. It reaches a shell
+    command line, a tmux session, a claim owner and a mailbox name.
+    """
+    for label in folded_labels(cid, core):
+        text = str(label).strip().lower()
+        if not text.startswith(_SEAT_LABEL_PREFIX):
+            continue
+        seat = text[len(_SEAT_LABEL_PREFIX):]
+        if _SEAT_RE.match(seat):
+            return seat
+        log(d, "WARN|%s|%s|ignoring malformed seat label %r" % (HOST, cid, text))
+    return None
+
+
 _NON_IMPLEMENTATION_LABELS = {
     "planning-only-container",
     "do-not-claim-as-implementation",
@@ -2321,7 +2351,14 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "claim or substitute another card. If ownership is absent, or a dependency is "
       "incomplete, say so and stop rather than working it anyway.\n\n"
       "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
-    name="pi-%s-%s-%s"%(_LANE["name"],HOST,cid); sess="%s%s"%(_LANE["prefix"],cid)
+    _seat = seat_for(cid, core)
+    # A seat-owned card runs under the seat's identity, not the lane's. The
+    # session prefix stays lane-based so liveness, reaping and tmux lookup are
+    # unchanged; only the agent identity moves.
+    name = ("%s-%s-%s" % (_seat, HOST, cid)) if _seat else ("pi-%s-%s-%s" % (_LANE["name"], HOST, cid))
+    if _seat:
+        log(d, "SEAT|%s|%s|running under seat %s as %s" % (HOST, cid, _seat, name))
+    sess="%s%s"%(_LANE["prefix"],cid)
     model=_LANE["model"]
     workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     os.makedirs(workspace,exist_ok=True)
