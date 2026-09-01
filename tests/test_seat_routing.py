@@ -5,6 +5,7 @@ source that runs rather than a paraphrase of it.
 
 Run: python3 tests/test_seat_routing.py
 """
+
 import ast
 import os
 import re
@@ -16,17 +17,27 @@ SRC = os.path.join(os.path.dirname(__file__), "..", "scripts", "fleet", "skfleet
 
 def _load(home):
     tree = ast.parse(open(SRC, encoding="utf-8").read())
-    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef)
-           and n.name in ("seat_for", "_seat_is_provisioned")]
+    fns = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name in ("seat_for", "_seat_is_provisioned")
+    ]
     assert len(fns) == 2, "expected seat_for and _seat_is_provisioned in the shipped script"
-    assigns = [n for n in tree.body if isinstance(n, ast.Assign)
-               and getattr(n.targets[0], "id", "") in ("_SEAT_LABEL_PREFIX", "_SEAT_RE")]
+    assigns = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        and getattr(n.targets[0], "id", "") in ("_SEAT_LABEL_PREFIX", "_SEAT_RE")
+    ]
     labels = {}
     ns = {
-        "re": re, "os": os,
+        "re": re,
+        "os": os,
         "folded_labels": lambda cid, core: labels.get(cid, []),
         "log": lambda *a, **k: None,
-        "d": None, "HOST": "testhost", "HOME": home,
+        "d": None,
+        "HOST": "testhost",
+        "HOME": home,
     }
     exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), SRC, "exec"), ns)
     return ns["seat_for"], labels
@@ -69,8 +80,10 @@ def main():
         got = seat_for(cid, {})
         ok = got == want
         failed += not ok
-        print("  %-30s got=%-6s want=%-6s %s  %s"
-              % (str(labs)[:30], got, want, "PASS" if ok else "FAIL", why))
+        print(
+            "  %-30s got=%-6s want=%-6s %s  %s"
+            % (str(labs)[:30], got, want, "PASS" if ok else "FAIL", why)
+        )
     print("FAILED" if failed else "PASS")
     return 1 if failed else 0
 

@@ -1459,7 +1459,26 @@ def itil_terminal(cid):
 #
 # Only ephemeral one-shot workers are eligible. A named agent (jarvis, lumina) or
 # a human may hold a claim deliberately for as long as they like.
-_EPHEMERAL_OWNER = re.compile(r"^(pi|codex|glm)[-_]")
+def _parse_worker_owner(owner, cid, expected_seat=None):
+    """Return (kind, lane or seat, host) for one exact worker owner."""
+    owner = str(owner or "")
+    cid = str(cid or "")
+    if not re.fullmatch(r"[0-9a-f]{8}", cid):
+        return None
+    for host in ROTATION_HOSTS:
+        for lane in ("codex", "glm", "qwen", "escalate"):
+            if owner == "pi-%s-%s-%s" % (lane, host, cid):
+                return "lane", lane, host
+        for lane in ("codex", "glm"):
+            if owner == "%s-%s-%s" % (lane, host, cid):
+                return "lane", lane, host
+        if (
+            expected_seat
+            and _SEAT_RE.fullmatch(str(expected_seat))
+            and owner == "%s-%s-%s" % (expected_seat, host, cid)
+        ):
+            return "seat", str(expected_seat), host
+    return None
 
 def _current_claim(cid):
     """The claim in force now, as (owner, epoch), or (None, 0)."""
@@ -1574,6 +1593,11 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
     global _fleet_launch_claims
     if not cid or not owner or not claim_revision:
         return False
+    try:
+        with open(os.path.join(CARDS, str(cid), "core.json"), encoding="utf-8") as fh:
+            expected_seat = seat_for(str(cid), json.load(fh))
+    except (OSError, ValueError):
+        expected_seat = None
     if _fleet_launch_claims is None:
         _fleet_launch_claims = collections.Counter()
         for path in glob.glob(os.path.join(EVID, "*", "actions*.log")):
@@ -1601,11 +1625,16 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
                             "qwen": "qwen-auto-",
                             "escalate": "esc-auto-",
                         }.get(lane)
+                        parsed_owner = _parse_worker_owner(
+                            launch_owner, parts[3], expected_seat
+                        )
                         if (
                             parts[1] not in ROTATION_HOSTS
                             or session_prefix is None
                             or parts[2] != session_prefix + parts[3]
-                            or launch_owner != f"pi-{lane}-{parts[1]}-{parts[3]}"
+                            or parsed_owner is None
+                            or parsed_owner[2] != parts[1]
+                            or (parsed_owner[0] == "lane" and parsed_owner[1] != lane)
                         ):
                             continue
                         _fleet_launch_claims[(parts[3], launch_owner, launch_revision)] += 1
@@ -1723,7 +1752,12 @@ def reap_dead_claims():
         if lifecycle_state(cid) != "claimed":
             continue
         owner, cts, claim_revision = _claim_identity(event_rows(cid))
-        if not owner or not _EPHEMERAL_OWNER.match(str(owner)):
+        try:
+            with open(os.path.join(cd, "core.json"), encoding="utf-8") as fh:
+                expected_seat = seat_for(cid, json.load(fh))
+        except (OSError, ValueError):
+            expected_seat = None
+        if not _parse_worker_owner(owner, cid, expected_seat):
             continue
         if cid in running:
             continue                      # a host says this is running right now
