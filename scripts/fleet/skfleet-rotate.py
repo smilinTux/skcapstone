@@ -899,10 +899,34 @@ def seat_for(cid, core):
         if not text.startswith(_SEAT_LABEL_PREFIX):
             continue
         seat = text[len(_SEAT_LABEL_PREFIX):]
-        if _SEAT_RE.match(seat):
-            return seat
-        log(d, "WARN|%s|%s|ignoring malformed seat label %r" % (HOST, cid, text))
+        if not _SEAT_RE.match(seat):
+            log(d, "WARN|%s|%s|ignoring malformed seat label %r" % (HOST, cid, text))
+            continue
+        if not _seat_is_provisioned(seat):
+            # A well-formed name is not a seat. Without this check a typo such as
+            # seat-lnik would produce a worker called lnik-<host>-<cid> writing
+            # claims and verdicts under an identity that has no agent home, no
+            # capauth key, no mailbox and no estate entry: a phantom seat whose
+            # outputs look attributable and are not. Fall back to lane naming,
+            # which is always safe, and say so loudly.
+            log(d, "WARN|%s|%s|seat %r is not provisioned (no agent home at %s); "
+                   "falling back to lane naming"
+                % (HOST, cid, seat, os.path.join(HOME, ".skcapstone/agents", seat)))
+            continue
+        return seat
     return None
+
+
+def _seat_is_provisioned(seat):
+    """True when this seat actually exists as an agent on this host.
+
+    A seat is real when it has an agent home and a public key. The private half
+    lives only where the seat signs, so its absence here is expected and is not
+    evidence against the seat.
+    """
+    home = os.path.join(HOME, ".skcapstone/agents", seat)
+    return os.path.isdir(home) and os.path.isfile(
+        os.path.join(home, "capauth/identity/public.asc"))
 
 
 _NON_IMPLEMENTATION_LABELS = {
