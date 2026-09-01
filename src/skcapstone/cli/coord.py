@@ -882,10 +882,10 @@ def register_coord_commands(main: click.Group) -> None:
         home,
     ):
         """Record a claim-bound review result and print its verified receipt."""
-        from skcoord import record_review_result
+        from ..coord_receipts import record_coord_review_result
 
         try:
-            receipt = record_review_result(
+            receipt = record_coord_review_result(
                 Path(home).expanduser(),
                 review_card_id=review_card_id,
                 parent_card_id=parent_card_id,

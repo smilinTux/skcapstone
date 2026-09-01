@@ -116,7 +116,7 @@ def test_review_result_cli_calls_only_reviewed_operation_and_prints_receipt(
         calls.append((home, kwargs))
         return receipt
 
-    monkeypatch.setattr("skcoord.record_review_result", record)
+    monkeypatch.setattr("skcapstone.coord_receipts.record_coord_review_result", record)
     result = CliRunner().invoke(
         main,
         [
@@ -165,7 +165,7 @@ def test_review_result_cli_passes_exact_blocked_referent(tmp_path: Path, monkeyp
             event_id="e", transition_id="t", replayed=False, notification_errors=()
         )
 
-    monkeypatch.setattr("skcoord.record_review_result", record)
+    monkeypatch.setattr("skcapstone.coord_receipts.record_coord_review_result", record)
     result = CliRunner().invoke(
         main,
         [
