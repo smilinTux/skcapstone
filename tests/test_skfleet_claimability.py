@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import glob
 import json
 import os
 import re
@@ -22,6 +23,7 @@ def _load_claimability() -> dict[str, object]:
         "_fold_claimability",
         "_claimability_reason",
         "_authoritative_card_state",
+        "_active_repair_parents",
         "authoritative_claimability",
     }
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
@@ -42,8 +44,12 @@ def _load_claimability() -> dict[str, object]:
             re.I,
         ),
         "_CATEGORY_OPT_IN": "dispatch-approved",
+        "_REPAIR_LABELS": {"repair", "source-repair"},
+        "_PARENT_LABEL_RE": re.compile(r"^parent-([0-9a-f]{8})$", re.I),
+        "_active_repair_parents_cache": None,
         "_dep_satisfied": lambda _dep: True,
         "host_pin": lambda _core, _labels: None,
+        "glob": glob,
         "json": json,
         "non_implementation": lambda core, labels: (
             "[HUMAN]" in str(core.get("title") or "").upper() or "human-gate" in labels
@@ -249,6 +255,91 @@ def test_pool_and_preclaim_call_the_same_predicate() -> None:
     )
     assert "CLAIMABILITY_EXCLUDED|" in source
     assert '"do-not-claim"' in source
+
+
+def test_parent_is_excluded_only_while_distinct_repair_is_actively_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = _load_claimability()
+    parent = "a1b2c3d4"
+    repair = "b8eca7f1"
+    cores = {
+        parent: _core(parent),
+        repair: _core(repair, labels=["repair", f"parent-{parent}"]),
+    }
+    states = {
+        parent: namespace["_fold_claimability"](
+            cores[parent],
+            [
+                _claim("2026-09-01T03:50:00Z", "old-parent-worker", "parent-rev"),
+                _release(
+                    "2026-09-01T03:51:00Z",
+                    "old-parent-worker",
+                    "old-parent-worker",
+                    "parent-rev",
+                ),
+            ],
+        ),
+        repair: namespace["_fold_claimability"](
+            cores[repair], [_claim("2026-09-01T03:53:12Z", "repair-worker", "repair-rev")]
+        ),
+    }
+    namespace["_authoritative_card_state"] = (
+        lambda card_id, core=None, fresh=False: (cores[card_id], states[card_id])
+    )
+    monkeypatch.setattr(
+        namespace["glob"], "glob", lambda _pattern: [f"/cards/{parent}", f"/cards/{repair}"]
+    )
+
+    assert namespace["authoritative_claimability"](parent)["reason"] == "active-repair"
+
+    states[repair] = namespace["_fold_claimability"](
+        cores[repair],
+        [
+            _claim("2026-09-01T03:53:12Z", "repair-worker", "repair-rev"),
+            _release(
+                "2026-09-01T04:00:00Z", "repair-worker", "repair-worker", "repair-rev"
+            ),
+        ],
+    )
+    namespace["_active_repair_parents_cache"] = None
+    assert namespace["authoritative_claimability"](parent)["reason"] == "claimable"
+
+    states[repair] = namespace["_fold_claimability"](
+        cores[repair],
+        [
+            _claim("2026-09-01T03:53:12Z", "repair-worker", "repair-rev"),
+            _event("2026-09-01T04:00:00Z", "repair-worker", "complete"),
+        ],
+    )
+    namespace["_active_repair_parents_cache"] = None
+    assert namespace["authoritative_claimability"](parent)["reason"] == "claimable"
+
+
+def test_repair_claim_fold_keeps_exact_owner_and_revision_across_worker_dimensions() -> None:
+    namespace = _load_claimability()
+    parent = "a1b2c3d4"
+    repair = "b8eca7f1"
+    core = _core(repair, labels=["source-repair", f"parent-{parent}"])
+    events = [
+        _claim("2026-09-01T03:53:10Z", "pi-qwen-chiap01-b8eca7f1", "qwen-rev"),
+        _claim("2026-09-01T03:53:11Z", "pi-glm-chiap03-b8eca7f1", "glm-rev"),
+        _release(
+            "2026-09-01T03:53:12Z",
+            "pi-glm-chiap03-b8eca7f1",
+            "pi-qwen-chiap01-b8eca7f1",
+            "wrong-rev",
+        ),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["owner"] == "pi-qwen-chiap01-b8eca7f1"
+    assert state["claim_revision"] == "qwen-rev"
+    assert state["status"] == "doing"
+
+    namespace["_authoritative_card_state"] = (
+        lambda card_id, core=None, fresh=False: (core, state)
+    )
+    assert namespace["_active_repair_parents"]([repair], fresh=True) == {parent}
 
 
 def test_sensitive_category_requires_explicit_dispatch_approval() -> None:

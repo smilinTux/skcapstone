@@ -416,6 +416,9 @@ _OVERLAY_ACTIONS = {
 }
 _claim_rows = {}
 _legacy_claim_rows = None
+_active_repair_parents_cache = None
+_REPAIR_LABELS = {"repair", "source-repair"}
+_PARENT_LABEL_RE = re.compile(r"^parent-([0-9a-f]{8})$", re.I)
 
 
 def _strict_card_events(cid, fresh=False):
@@ -617,6 +620,34 @@ def _authoritative_card_state(cid, core=None, fresh=False):
     return core, _fold_claimability(core, rows)
 
 
+def _active_repair_parents(card_ids=None, fresh=False):
+    """Return parents named by distinct, actively claimed repair cards."""
+    global _active_repair_parents_cache
+    if card_ids is None and _active_repair_parents_cache is not None and not fresh:
+        return _active_repair_parents_cache
+    if card_ids is None:
+        card_ids = [os.path.basename(path) for path in glob.glob(CARDS + "/*")]
+    parents = set()
+    for repair_id in card_ids:
+        try:
+            core, state = _authoritative_card_state(repair_id, fresh=fresh)
+        except Exception:
+            continue
+        labels = {str(label).strip().lower() for label in state["labels"]}
+        is_repair = bool(_REPAIR_LABELS & labels) or "[REPAIR]" in state["title"].upper()
+        active = bool(state["owner"] and state["claim_revision"] and
+                      state["status"] in {"ready", "doing", "review"})
+        if not is_repair or not active:
+            continue
+        for label in labels:
+            match = _PARENT_LABEL_RE.fullmatch(label)
+            if match and match.group(1).lower() != repair_id.lower():
+                parents.add(match.group(1).lower())
+    if card_ids is not None and not fresh:
+        _active_repair_parents_cache = parents
+    return parents
+
+
 def authoritative_claimability(cid, core=None, fresh=False):
     """Return the one claimability decision used by pool and preclaim."""
     try:
@@ -628,6 +659,8 @@ def authoritative_claimability(cid, core=None, fresh=False):
     folded_core["title"] = state["title"]
     labels = state["labels"]
     reason = _claimability_reason(core, state)
+    if reason == "claimable" and cid in _active_repair_parents(fresh=fresh):
+        reason = "active-repair"
     state.update({"claimable": reason == "claimable", "reason": reason,
                   "core": folded_core, "host_pin": host_pin(folded_core, labels)})
     return state
@@ -1979,7 +2012,7 @@ for cd in sorted(glob.glob(CARDS+"/*")):
             skipped_terminal+=1
         elif reason.startswith("owned-"):
             skipped_claimed+=1
-        elif reason=="dependency":
+        elif reason in ("dependency", "active-repair"):
             blocked+=1
         elif reason.startswith("host-pin:"):
             pinned_elsewhere+=1
