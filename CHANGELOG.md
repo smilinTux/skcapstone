@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card afe2664f: add read-only Link oversight projection.** Deterministic typed
+  snapshots combine lane capacity and bounded churn with stale claim-process
+  joins, reviewer distinctness, gateway latency and errors, age breaches,
+  provenance, and recommendations in append-only JSONL evidence.
+
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
   leading `PASS_FOR_*` or `PASS_READY_*` verdict. Stable outcome-generation IDs
