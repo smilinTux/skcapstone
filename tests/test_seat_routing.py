@@ -88,5 +88,16 @@ def main():
     return 1 if failed else 0
 
 
+def test_seat_routing():
+    """Pytest entry point.
+
+    The 14 cases below run as a standalone script, which is how they were
+    written and how they are still most readable. Living in tests/ without a
+    test_ function meant pytest collected 0 items and CI never ran a single
+    one of them, so the check existed while the gate ignored it.
+    """
+    assert main() == 0
+
+
 if __name__ == "__main__":
     sys.exit(main())
