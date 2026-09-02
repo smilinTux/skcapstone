@@ -186,6 +186,10 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
             "authoritative_claimability": claimability,
             "blocked_backoff": lambda cid: row(cid).get("backoff", False),
             "terminal_review_verdict": lambda cid, core: False,
+            "source_spec": lambda core, home: None,
+            "SourceWorktreeError": ValueError,
+            "Path": Path,
+            "HOME": str(tmp_path),
             "json": json,
         },
     )

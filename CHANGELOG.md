@@ -15,6 +15,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card 35133081: enforce card-scoped source worktrees.** Source cards declare
+  one enrolled repository and base ref, selection rejects dirty or ambiguous
+  checkouts, workers launch only inside registered clean worktrees, completion
+  requires worktree evidence and remote durability, and preservation inventory
+  never removes abandoned worktrees.
+
 - **Card 369ca2f8: report canonical shadow scheduler truth.** Fleet rotation
   emits one exclusive primary reason per card plus diagnostic facets, verifies
   exact parity with the legacy selector, and fails open to legacy selection if

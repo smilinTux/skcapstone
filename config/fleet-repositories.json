@@ -1,0 +1,9 @@
+{
+  "repositories": [
+    {
+      "name": "skcapstone",
+      "checkout": "/home/skuser01/work/skcapstone",
+      "remote": "https://github.com/smilinTux/skcapstone.git"
+    }
+  ]
+}

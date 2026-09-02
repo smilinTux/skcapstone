@@ -298,7 +298,11 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--by", default="human", help="Creator name.")
     @click.option("--criteria", multiple=True, help="Acceptance criteria (repeatable).")
     @click.option("--dep", multiple=True, help="Dependency task IDs (repeatable).")
-    def coord_create(home, task_id, title, desc, priority, tag, by, criteria, dep):
+    @click.option("--repository", default=None, help="Exact enrolled source repository name.")
+    @click.option("--base-ref", default=None, help="Exact source base ref.")
+    def coord_create(
+        home, task_id, title, desc, priority, tag, by, criteria, dep, repository, base_ref
+    ):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
 
@@ -307,6 +311,12 @@ def register_coord_commands(main: click.Group) -> None:
             validate_task_id(task_id)
         for d in dep:
             validate_task_id(d)
+
+        source_card = "source-only" in {str(value).strip().lower() for value in tag}
+        if source_card and (not repository or not base_ref):
+            raise click.UsageError("source-only cards require --repository and --base-ref")
+        if not source_card and (repository or base_ref):
+            raise click.UsageError("--repository and --base-ref require the source-only tag")
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
@@ -319,6 +329,9 @@ def register_coord_commands(main: click.Group) -> None:
             created_by=by,
             acceptance_criteria=list(criteria),
             dependencies=list(dep),
+            meta=(
+                {"source": {"repository": repository, "base_ref": base_ref}} if source_card else {}
+            ),
         )
         path = board.create_task(task)
         console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
@@ -382,6 +395,12 @@ def register_coord_commands(main: click.Group) -> None:
                 _title = ""
         try:
             validate_review_completion(task_id, _title, home_path)
+            if _core.exists():
+                from ..source_worktree import validate_source_completion
+
+                validate_source_completion(
+                    home_path, task_id, json.loads(_core.read_text(encoding="utf-8"))
+                )
         except ValueError as e:
             console.print(f"\n  [red]Refused:[/] {e}\n")
             sys.exit(1)

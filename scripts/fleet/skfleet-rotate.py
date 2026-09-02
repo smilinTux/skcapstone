@@ -19,6 +19,7 @@ from skcapstone.scheduler_decision import (
     pool_v2,
 )
 from skcapstone.seat_boundaries import BoundaryError
+from skcapstone.source_worktree import SourceWorktreeError, prepare_worktree, source_spec
 from skcapstone.seat_runtime import (
     MeroObservation,
     append_review_launch_receipt,
@@ -2428,6 +2429,12 @@ def _legacy_selector_decision(cid, core_p):
         }
     if str(decision["title"]).startswith("CMDB drift"):
         return {"eligible": False, "reason": "selector_excluded"}
+    if "source-only" in {str(label).strip().lower() for label in
+                         (core.get("initial_labels") or core.get("tags") or [])}:
+        try:
+            source_spec(core, Path(HOME))
+        except SourceWorktreeError as exc:
+            return {"eligible": False, "reason": "source_worktree", "detail": str(exc)}
     return {"eligible": True, "reason": "ready", "decision": decision, "core": core}
 
 review_capacity = min(MAX_LAUNCH, sum(
@@ -2511,6 +2518,8 @@ for cd in sorted(glob.glob(CARDS+"/*")):
             not_claimable_skipped += 1
         elif legacy_reason == "sensitive-category":
             sensitive_withheld += 1
+        elif legacy_reason == "source_worktree":
+            claimability_errors.append("%s:%s" % (cid, legacy.get("detail", "source-worktree")))
         continue
     core=legacy["core"]
     decision=legacy["decision"]
@@ -3055,7 +3064,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     except BoundaryError as exc:
         log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
         continue
-    workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
+    workspace=os.path.abspath(os.path.join(HOME,".skcapstone/fleet/workspaces",name))
     os.makedirs(workspace,exist_ok=True)
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
@@ -3091,6 +3100,18 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 "claim not visible with an explicit revision in CardStore fold").strip()[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
+    try:
+        launch_dir=prepare_worktree(
+            Path(HOME),Path(workspace),cid,core,name,
+            branch="feat/%s-%s"%(cid,re.sub(
+                r"[^a-z0-9]+","-",str(core.get("title") or "source").lower()
+            ).strip("-")[:36]))
+    except SourceWorktreeError as exc:
+        log(d,"WORKTREE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
+        subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
+                        "--expected-claim-revision",claimed_revision,"--agent",name],
+                       capture_output=True,text=True)
+        continue
     # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
     # returns normally. Releasing only after the Pi command leaves a dead claim
     # in that case and drains the assignable pool. Bind cleanup to this exact
@@ -3102,7 +3123,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
            '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1; '
            'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
            % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,bf,lf))
-    r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",workspace,"bash","-lc",inner])
+    r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",str(launch_dir),"bash","-lc",inner])
     ok = r.returncode==0 and sess in sh("tmux","ls","-F","#{session_name}").split()
     launch_identity=_launch_claim_fields(name,claimed_revision,ok)
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
