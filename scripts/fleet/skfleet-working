@@ -9,8 +9,11 @@ duplicate card generations are the useful signals.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import shlex
+import sqlite3
 import subprocess
 import sys
 from collections import Counter
@@ -32,12 +35,21 @@ class Worker:
     unit: str
     tmux: bool
     claim_state: str
+    card_status: str
+    unit_missing_process: bool
 
 
 REMOTE = r"""
-import glob,json,os,subprocess,time
+import glob,json,os,re,subprocess,time
+from pathlib import Path
+from skcoord.card_store import CardStore
 host=os.uname().nodename.split('.')[0]
 now=int(time.time())
+unit_lines=subprocess.run(
+    ['systemctl','--user','list-units','skfleet-worker-*.service','--state=running','--no-legend','--plain'],
+    capture_output=True,text=True).stdout.splitlines()
+units={line.split()[0] for line in unit_lines if line.split()}
+seen_units=set()
 try:
     tmux=set(subprocess.run(['tmux','list-sessions','-F','#{session_name}'],capture_output=True,text=True).stdout.split())
 except Exception:
@@ -56,20 +68,25 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         elapsed=max(0,int(uptime-(int(stat[21])/ticks)))
         cpu=int((int(stat[13])+int(stat[14]))/ticks)
         cg=open('/proc/%d/cgroup'%pid).read()
-        unit=next((part for part in cg.replace('\\x2d','-').split('/') if part.startswith('skfleet-worker-') and part.endswith('.service')),'legacy')
+        unit=next((part for part in cg.replace('\\x2d','-').strip().split('/') if part.startswith('skfleet-worker-') and part.endswith('.service')),'legacy')
+        if unit!='legacy': seen_units.add(unit)
         logs=glob.glob(os.path.expanduser('~/.skcapstone/fleet/logs/%s-*.log'%card))
         log=max(logs,key=os.path.getmtime) if logs else ''
         size=os.path.getsize(log) if log else -1
         age=now-int(os.path.getmtime(log)) if log else -1
         legacy_live=any(card in name for name in tmux)
-        projection=os.path.expanduser('~/.skcapstone/coordination/agents/%s.json'%agent)
-        claim='projection-missing'
-        if os.path.exists(projection):
-            data=json.load(open(projection))
-            claim='exact' if data.get('current_task')==card and data.get('state')=='active' else 'mismatch'
-        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim),sort_keys=True))
+        folded=CardStore(Path.home()/'.skcapstone').fold(card)
+        status=folded.status.value
+        claim='exact' if folded.owner==agent and folded.meta.get('_claim_revision') else 'mismatch'
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False),sort_keys=True))
     except (FileNotFoundError,ProcessLookupError,PermissionError,ValueError,KeyError,json.JSONDecodeError):
         pass
+for unit in sorted(units-seen_units):
+    match=re.fullmatch(r'skfleet-worker-[a-z]+-([0-9a-f]{8})\.service',unit)
+    if not match: continue
+    card=match.group(1)
+    pid=int(subprocess.run(['systemctl','--user','show',unit,'-p','MainPID','--value'],capture_output=True,text=True).stdout.strip() or 0)
+    print(json.dumps(dict(host=host,agent='unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state='unknown',card_status='unknown',unit_missing_process=True),sort_keys=True))
 """
 
 
@@ -84,6 +101,8 @@ def duration(seconds: int) -> str:
 
 
 def collect(host: str) -> list[Worker]:
+    encoded = base64.b64encode(REMOTE.encode()).decode("ascii")
+    remote_command = f"import base64;exec(base64.b64decode({encoded!r}))"
     result = subprocess.run(
         [
             "ssh",
@@ -94,12 +113,14 @@ def collect(host: str) -> list[Worker]:
             f"skuser01@{host}",
             "python3",
             "-c",
-            REMOTE,
+            shlex.quote(remote_command),
         ],
         capture_output=True,
         text=True,
         timeout=25,
     )
+    if result.returncode:
+        raise OSError(f"{host}: ssh collector failed with rc={result.returncode}")
     rows = []
     for line in result.stdout.splitlines():
         try:
@@ -119,13 +140,29 @@ def main() -> int:
             unreachable.append(host)
     rows.sort(key=lambda row: (-row.elapsed, row.host, row.agent))
     counts = Counter(row.card for row in rows)
+    gateway_age: dict[str, int] = {}
+    db_path = os.path.expanduser(
+        os.environ.get("SKGW_METRICS_DB", "~/skgateway-codex/data/metrics.db")
+    )
+    if os.path.exists(db_path):
+        try:
+            now_ms = int(__import__("time").time() * 1000)
+            with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as db:
+                for agent, started in db.execute(
+                    "select agent_id,max(started_at) from request_log "
+                    "where agent_id is not null group by agent_id"
+                ):
+                    gateway_age[str(agent)] = max(0, (now_ms - int(started)) // 1000)
+        except (sqlite3.Error, OSError, ValueError):
+            gateway_age = {}
     print(f"fleet worker processes: {len(rows)} across {len({row.host for row in rows})} host(s)")
     print(
         "source of truth: pi processes plus transient worker cgroups and exact agent projections"
     )
     print("-" * 124)
     print(
-        f"  {'host':8} {'worker':38} {'elapsed':>9} {'cpu':>7} {'log':>9} {'log age':>9} {'owner':18} state"
+        f"  {'host':8} {'pid':>7} {'worker':34} {'elapsed':>9} {'log':>9} "
+        f"{'gateway':>9} {'owner':18} state"
     )
     alerts = []
     for row in rows:
@@ -135,7 +172,13 @@ def main() -> int:
             else ("legacy-tmux" if row.tmux else "orphan-process")
         )
         state = "running; output buffered until completion"
-        if counts[row.card] > 1:
+        if row.unit_missing_process:
+            state = "UNIT WITHOUT PI PROCESS"
+            alerts.append((row, "unit-process"))
+        elif row.card_status in {"done", "archived", "void"}:
+            state = f"TERMINAL STILL RUNNING ({row.card_status})"
+            alerts.append((row, "terminal"))
+        elif counts[row.card] > 1:
             state = "DUPLICATE card process"
             alerts.append((row, "duplicate"))
         elif owner == "orphan-process":
@@ -145,8 +188,11 @@ def main() -> int:
             state = f"CLAIM {row.claim_state}"
             alerts.append((row, "claim"))
         log = "absent" if row.log_bytes < 0 else f"{row.log_bytes}B"
+        gw_age = gateway_age.get(row.agent, -1)
         print(
-            f"  {row.host:8} {row.agent[:38]:38} {duration(row.elapsed):>9} {duration(row.cpu):>7} {log:>9} {duration(row.log_age):>9} {owner[:18]:18} {state}"
+            f"  {row.host:8} {row.pid:7d} {row.agent[:34]:34} "
+            f"{duration(row.elapsed):>9} {log:>9} {duration(gw_age):>9} "
+            f"{owner[:18]:18} {state}"
         )
     if not rows:
         print("no fleet worker processes found. This says nothing about board eligibility.")
