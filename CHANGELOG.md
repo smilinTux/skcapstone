@@ -15,6 +15,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card 32d4ff93: schedule bounded Link PR triage.** A source-only recurring
+  cycle inventories immutable PR revisions, recommends one reviewer distinct by
+  identity, host, session, and workspace, emits a Jarvis-validated handoff,
+  joins explicit terminal evidence to exact PR heads and card generations, and
+  revisits changed, stale, retried, and orphaned work without duplicate active
+  reviews or any merge, deployment, credential, or fleet mutation surface.
+
 - **Card 369ca2f8: report canonical shadow scheduler truth.** Fleet rotation
   emits one exclusive primary reason per card plus diagnostic facets, verifies
   exact parity with the legacy selector, and fails open to legacy selection if
