@@ -182,6 +182,12 @@ HOME=os.path.expanduser("~")
 CARDS=os.path.join(HOME,".skcapstone/cards")
 EVID=os.path.join(HOME,".skcapstone/evidence/fleet-rotation")
 PI="/home/skuser01/.npm-global/bin/pi"
+PI_CARDSTORE_GUARD=os.environ.get(
+    "SKFLEET_PI_CARDSTORE_GUARD",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pi-cardstore-guard.mjs"),
+)
+if not os.path.isfile(PI_CARDSTORE_GUARD):
+    raise SystemExit("BLOCKED|missing Pi CardStore write guard: %s" % PI_CARDSTORE_GUARD)
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
 STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -2937,6 +2943,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     # card-specific text LAST, so every worker shares one long cacheable prefix.
     _RAILS=("CONSTRAINTS (standing rails, non-negotiable):\n"
       "- CardStore is append-only. Build JSON with a serializer and parse every line before appending. Never concatenate strings into JSON.\n"
+      "- Structural cards/<id>/events/*.jsonl files are read-only to workers. "
+      "Use skcapstone coord for every lifecycle write.\n"
       "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
       "- Return exact PASS, PASS_FOR_REVIEW, or BLOCKED with a real hashed artifact, and notify jarvis and lumina by skmail.\n"
       "\n"
@@ -3098,10 +3106,12 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     inner=('release_claim() { %s coord release-claim %s --owner %s '
            '--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; '
            'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
-           'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
+           'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s '
+           '--approve --extension %s --name %s '
            '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1; '
            'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
-           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,bf,lf))
+           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,
+              PI_CARDSTORE_GUARD,name,model,bf,lf))
     r=subprocess.run(["tmux","new-session","-d","-s",sess,"-c",workspace,"bash","-lc",inner])
     ok = r.returncode==0 and sess in sh("tmux","ls","-F","#{session_name}").split()
     launch_identity=_launch_claim_fields(name,claimed_revision,ok)
