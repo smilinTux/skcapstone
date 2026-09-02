@@ -3,8 +3,9 @@
 **Status:** Accepted.
 **Epic:** `3bbf39ea`. **Card:** `e884151b`. Sibling ADR:
 [adr-edge-device-class.md](adr-edge-device-class.md) (card `b89f76ca`).
-**Scope:** the nor-cluster install (Chef's fleet). See "Applicability to the
-chi cluster" below for what this does and does not say about Casey's.
+**Scope:** Chef's estate (`chef.skworld.io`), whose hosts still carry the
+legacy `nor` prefix. See "Applicability to peer estates" below for what this
+does and does not say about Casey's estate (`cakjr.skworld.io`).
 
 This ADR records a decision the code already implements. The kind is
 `src/skcapstone/fleet/profiles.py`, the schema reference is
@@ -168,20 +169,38 @@ install shows up as a finding.
 is the role that asserts nothing with teeth except the prohibition, and that
 is the point.
 
-## Applicability to the chi cluster
+## Applicability to peer estates
 
 Roles are per-install **data**. The profile **code** travels via git.
 
-`chi*` is Casey's sovereign install and `nor*` is Chef's; the two share code
-through git and never share files. Nothing in this ADR obliges the chi cluster
-to adopt these four names. The kind, the validator, the drift report and the
-generator arrive there with any ordinary `skcapstone` upgrade, and the
-manifests in `deploy/fleet-objects/profile/` describe nor-cluster boxes by
-name (.158, .41, .100, norpv1300), so they are examples there rather than
-policy. Casey can write his own manifests against the same schema, or bind no
-node to a role at all, in which case `skfleet get profiles` shows `-` in the
-NODES column and the drift report produces no findings. Adoption is opt-in per
-install, which is the only shape that respects two sovereign clusters.
+The unit this ADR is scoped to is an **estate**: one control plane, one
+`~/.skcapstone`, one Syncthing ring, one PGP trust root, one operator. The
+boundary is that control plane and not the network, so sharing a tailnet with
+another estate does not merge the two (the same tailnet also carries a client
+tenant). Casey's estate (`cakjr.skworld.io`, hosts still prefixed `chi`) and
+Chef's (`chef.skworld.io`, hosts still prefixed `nor`) are peers, not branches
+of one parent fleet: they share code through git and never share files, and
+they reach each other only through enumerated bridge nodes.
+
+Nothing in this ADR obliges Casey's estate to adopt these four names. The kind,
+the validator, the drift report and the generator arrive there with any
+ordinary `skcapstone` upgrade, and the manifests in
+`deploy/fleet-objects/profile/` describe boxes in Chef's estate by name (.158,
+.41, .100, norpv1300), so they are examples there rather than policy. Casey can
+write his own manifests against the same schema, or bind no node to a role at
+all, in which case `skfleet get profiles` shows `-` in the NODES column and the
+drift report produces no findings. Adoption is opt-in per install, which is the
+only shape that respects estates as peers.
+
+Two notes on vocabulary, both governed by the
+[Site and Host Naming Standard](https://github.com/smilinTux/sk-standards/blob/main/standards/SITE_AND_HOST_NAMING_STANDARD.md)
+rather than by this ADR. First, `nor` and `chi` are legacy site prefixes that
+keep resolving via `legacy_prefix` in `~/.skcapstone/sites.yaml`, so every
+hostname in this document stays valid and nothing here is a rename order; new
+hardware gets a conforming bare hostname instead. Second, "role" here means the
+fleet **service role** (`control`, `builder-standby`, `worker-gpu`,
+`observer`), which is a different axis from the two-character role slot in that
+standard's hostname grammar. The two never have to agree.
 
 ## Consequences
 
@@ -209,3 +228,6 @@ delivers by itself.
 - [node-100-disposition.md](node-100-disposition.md) and
   [node-41-disposition.md](node-41-disposition.md): the per-unit dispositions
   the role manifests were generated against.
+- [Site and Host Naming Standard](https://github.com/smilinTux/sk-standards/blob/main/standards/SITE_AND_HOST_NAMING_STANDARD.md):
+  what an estate is, why the home site is always Zion, and why hostnames are
+  bare.

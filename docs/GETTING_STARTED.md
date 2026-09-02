@@ -195,6 +195,40 @@ skcapstone whoami
   Peer imports it: skcapstone peer add --card card.json
 ```
 
+### Name your estate and your hosts
+
+What you just created is an **estate**: one control plane, one `~/.skcapstone`,
+one Syncthing ring, one PGP trust root, one operator. It is the unit of
+sovereignty, and it is defined by that control plane rather than by your
+network, so putting a second machine on the same tailnet does not fold it into
+your estate. Estates are peers. Nobody's estate is a branch of anybody else's.
+
+Three conventions are worth getting right on day one, because they are cheap
+now and expensive later:
+
+1. **Your estate label is `<operator>.skworld.io`**, for example
+   `chef.skworld.io`. It is the suffix on every cross-estate reference, and it
+   is what makes a bare hostname unambiguous when two estates are in the room.
+2. **Your first site is Zion, code `zio`.** It is reserved and automatic, like
+   `root` or `localhost`, and you do not choose it. Other site codes exist
+   (`zer`, `ion`, `meg`, `mob`) but you claim one only when you actually have a
+   second site.
+3. **Hostnames are bare**, spelled `<site:3><role:2><index>`: `zioap01`,
+   `ziooc2027`. No estate prefix and no estate suffix, ever. The estate lives
+   in the DNS suffix and in the fqid (`zioap01@chef.skworld.io`), never in the
+   host label. That is what lets a runbook say `ssh zioap01` and be correct in
+   every estate.
+
+New hardware takes a conforming hostname from first boot. Hosts that predate
+this convention (the `nor*` and `chi*` names you will see throughout these
+docs) keep working through `legacy_prefix` in `~/.skcapstone/sites.yaml` and
+are **not** out of compliance; do not bulk-rename them.
+
+The full grammar, the site vocabulary, the estate registry format, and the
+bridge-node rules for how two estates reach each other live in the
+[Site and Host Naming Standard](https://github.com/smilinTux/sk-standards/blob/main/standards/SITE_AND_HOST_NAMING_STANDARD.md).
+Read it before you name a second machine.
+
 ---
 
 ## Step 3 — Start the Daemon

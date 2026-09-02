@@ -162,10 +162,11 @@ fed a stuck test payload. It is doing real work on unreal input.
 
 ### Is the jarvis identity real, and is it distinct from the other daemon
 
-This is a genuine question because the record says the `chi` cluster had no
-jarvis PGP key and its profile named a key that did not exist locally, later
-resolved to Casey's `C8D406A4`. On `.41`, which is Chef's `nor` cluster and a
-separate sovereign install, the answer is different and clean.
+This is a genuine question because the record says Casey's estate
+(`cakjr.skworld.io`, hosts prefixed `chi`) had no jarvis PGP key and its profile
+named a key that did not exist locally, later resolved to Casey's `C8D406A4`. On
+`.41`, which sits in Chef's estate (`chef.skworld.io`, hosts prefixed `nor`) and
+is a separate sovereign install, the answer is different and clean.
 
 ```
 gpg --list-secret-keys --keyid-format LONG

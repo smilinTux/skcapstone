@@ -200,6 +200,6 @@ Ordered by dependency. Each phase is independently shippable.
 
 ## 10. Open questions
 
-1. Does Casey (chi cluster) ever need to consent to actions on nor? Currently he is on the Hermes Telegram allowlist. The two clusters are meant to be separate sovereign installs sharing code via git only.
+1. Does Casey (his own estate, `cakjr.skworld.io`) ever need to consent to actions in Chef's estate (`chef.skworld.io`)? Currently he is on the Hermes Telegram allowlist. The two estates are meant to be separate sovereign installs sharing code via git only, peers rather than one fleet, so a cross-estate consent path would be a bridge and not a shared control plane. See the [Site and Host Naming Standard](https://github.com/smilinTux/sk-standards/blob/main/standards/SITE_AND_HOST_NAMING_STANDARD.md) for what an estate is and how bridges work.
 2. Should `automerge` return at all once the consent plane exists, or is PR-only the permanent posture for a one-operator fleet?
 3. Does the autopilot digest survive Phase 3, or does it fold into the suggestion engine as one more surface?

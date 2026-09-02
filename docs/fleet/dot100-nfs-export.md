@@ -245,9 +245,9 @@ What the search positively establishes:
   the logs. Claude transcripts for March are likewise not present.
 
 Two lumina long-term memories match `/etc/exports` but describe **chipv05**,
-Casey's ZFS-backed file server on the chi cluster, and its
+Casey's ZFS-backed file server in his own estate (`cakjr.skworld.io`), and its
 `/etc/exports.d/zfs.exports` plus a hand-written `tailnet.exports`. Different
-host, different cluster, different mechanism, and notably that setup
+host, different estate, different mechanism, and notably that setup
 deliberately **strips** `no_root_squash`. Ruled out as the writer here.
 
 **Most likely explanation**, consistent with everything above: a hand

@@ -612,9 +612,11 @@ built properly.
    in email, and the portal did not open under automation (Playwright cannot attach to Chrome
    151). We have dollars ($902.33 dated 07/13/2026) but not kilowatt-hours. This blocks nothing:
    per 6.2 the bill sets the price of a joule, not the treasury.
-4. **Cross-cluster inference.** `sk-default` pointed at chiap08, a `chi*` host, which by
-   convention belongs to the other sovereign install. Whether the fleet should depend on it at
-   all is a policy question outside this design.
+4. **Cross-estate inference.** `sk-default` pointed at chiap08, a `chi*` host, which by
+   convention belongs to Casey's estate (`cakjr.skworld.io`) rather than to this one. Whether an
+   estate should depend on a peer's capacity at all is a policy question outside this design; the
+   shape it would take (a bridge node, not a merged fleet) is set by the
+   [Inference Federation Standard](https://github.com/smilinTux/sk-standards/blob/main/standards/INFERENCE_FEDERATION_STANDARD.md).
 
 ---
 
