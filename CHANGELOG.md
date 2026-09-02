@@ -15,6 +15,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Card 8fa7d8eb: decompose the Mero blocker census and keep its gate.**
+  The 1027-line census module and 669-line test module of card 2516480b are
+  split, behavior preserved, into focused files each under 500 lines, with
+  the census test fixtures now pinning their event timestamps so the suite
+  no longer fails whenever the wall clock passes a fixture instant. Every
+  public name of the old module is re-exported unchanged.
+
 - **Card 369ca2f8: report canonical shadow scheduler truth.** Fleet rotation
   emits one exclusive primary reason per card plus diagnostic facets, verifies
   exact parity with the legacy selector, and fails open to legacy selection if
