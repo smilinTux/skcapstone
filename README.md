@@ -184,8 +184,11 @@ git clone https://github.com/smilintux-org/skcapstone.git
 cd skcapstone
 bash scripts/install.sh
 
-# Adds ~/.skenv/bin to PATH automatically
-# Or manually: export PATH="$HOME/.skenv/bin:$PATH"
+# Symlinks the sk* entry points into ~/.local/bin and ensures that is on PATH.
+# ~/.skenv/bin itself is deliberately NOT added: it holds ~128 entries and would
+# shadow system binaries (python3, pip, pytest, ansible*) for every child process.
+# Repair an older install that did add it:
+#   bash scripts/install.sh --repair-path
 
 # Initialize your agent home
 skcapstone init --name "YourAgent"
@@ -292,9 +295,9 @@ The installer sources the SKCapstone launcher from
 sample looks like this:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"   # sk* entry points are symlinked here
 export PATH="$HOME/.npm-global/bin:$PATH"
-export PATH="$HOME/.skenv/bin:$PATH"
+# Do NOT add ~/.skenv/bin -- it shadows system python3/pip/pytest/ansible.
 export PATH="$HOME/.opencode/bin:$PATH"
 export PATH="$HOME/bin:$PATH"
 

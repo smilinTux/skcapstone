@@ -85,8 +85,9 @@ git clone https://github.com/smilintux-org/skcapstone.git
 cd skcapstone
 bash scripts/install.sh
 
-# Adds ~/.skenv/bin to PATH automatically
-# Or manually: export PATH="$HOME/.skenv/bin:$PATH"
+# Symlinks the sk* entry points into ~/.local/bin and ensures that is on PATH.
+# ~/.skenv/bin itself is NOT added: it would shadow system python3/pip/ansible.
+# Repair an older install:  bash scripts/install.sh --repair-path
 ```
 
 **`scripts/install.sh`** — Creates `~/.skenv/` if it does not exist, then installs all SK* packages into the venv.

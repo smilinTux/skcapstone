@@ -9,6 +9,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **The installer no longer puts `~/.skenv/bin` on `PATH`.** That directory holds
+  ~128 entries of which only ~20 are `sk*` commands; prepending it shadowed 36
+  system binaries (`python3`, `pip`, `pytest`, `virtualenv`, `wheel`, all of
+  `ansible*`) for every process started from the shell. Any source build that
+  probed for an interpreter silently resolved the venv Python, **exited 0**, and
+  produced a binary linked against a `libpython` inside `$HOME` that is not on the
+  system linker path -- surfacing only as `=> not found` at first launch. Observed
+  breaking a Kodi build and, historically, package compiles under pamac.
+
+  `scripts/install.sh` now symlinks the `sk*`/`capauth*` entry points into
+  `~/.local/bin` and adds only that (a standard user bin dir that shadows nothing)
+  to `PATH`. Console scripts carry an absolute shebang, so they still run on the
+  venv interpreter -- exposure and isolation are not in tension. Names colliding
+  with a system binary are refused outright, and a stale real file from an older
+  install is moved aside rather than overwritten.
+
+  New `bash scripts/install.sh --repair-path` fixes an existing install: it
+  re-links the entry points and comments out (never deletes) a legacy
+  `~/.skenv/bin` `PATH` export in `~/.bashrc`/`~/.zshrc`, writing an `.bak` first.
+  It runs the same two functions a fresh install runs, so there is one code path,
+  and it exits before any venv or pip work so a broken install is repaired in
+  seconds. Idempotent: a second run relinks nothing and does not re-comment.
+
+  Not changed: `src/skcapstone/codex_setup.py` still exports `~/.skenv/bin` inside
+  the Codex session loader. That is a scoped agent-session surface with its own
+  `docs-evidence` assertion in `SOP.md`, and `~/.local/bin` is not guaranteed
+  populated there. It carries the same shadowing hazard and is left as follow-up.
+
+  Governed by sk-standards `TOOLCHAIN_PATH_ISOLATION_STANDARD`.
+
 - Card 4bd61c62 reports empty fleet selections as empty pool, foreign hash
   partition, zero target, no compatible lane, or bounded selection race evidence
   instead of falsely claiming that dependency-clear work does not exist.

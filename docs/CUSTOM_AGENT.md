@@ -338,9 +338,9 @@ What the launcher does:
 Sample `~/.bashrc`:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"   # sk* entry points are symlinked here
 export PATH="$HOME/.npm-global/bin:$PATH"
-export PATH="$HOME/.skenv/bin:$PATH"
+# Do NOT add ~/.skenv/bin -- it shadows system python3/pip/pytest/ansible.
 export PATH="$HOME/.opencode/bin:$PATH"
 export PATH="$HOME/bin:$PATH"
 

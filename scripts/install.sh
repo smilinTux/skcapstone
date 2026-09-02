@@ -10,9 +10,19 @@
 #   bash scripts/install.sh --force           # Recreate venv from scratch
 #   bash scripts/install.sh --non-interactive # venv + pip install only; never
 #                                              # prompt, never touch systemd
+#   bash scripts/install.sh --repair-path      # re-link entry points and undo a
+#                                              # legacy ~/.skenv/bin PATH export
 #
-# After install, add to your shell profile:
-#   export PATH="$HOME/.skenv/bin:$PATH"
+# PATH policy (see sk-standards TOOLCHAIN_PATH_ISOLATION_STANDARD):
+# This installer does NOT put ~/.skenv/bin on PATH. That directory holds ~128
+# entries, of which only ~20 are sk* commands; the rest (python3, pip, pytest,
+# virtualenv, wheel, ansible*) would shadow the system binaries of the same name
+# for every process started from your shell. A source build that probes for an
+# interpreter would then silently pick the venv Python, succeed, and produce a
+# binary linked against a libpython inside $HOME.
+#
+# Instead the sk* entry points are symlinked into ~/.local/bin. Console scripts
+# carry an absolute shebang, so they still run on the venv interpreter.
 
 set -euo pipefail
 
@@ -22,14 +32,93 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 DEV_MODE=false
 FORCE=false
 NON_INTERACTIVE=false
+REPAIR_PATH=false
+USER_BIN="$HOME/.local/bin"
 
 for arg in "$@"; do
     case "$arg" in
         --dev)  DEV_MODE=true ;;
         --force) FORCE=true ;;
         --non-interactive) NON_INTERACTIVE=true ;;
+        --repair-path) REPAIR_PATH=true ;;
     esac
 done
+
+# True if $1 collides with a system binary, or is an interpreter/pip we must
+# never expose. Such a name is refused even if it starts with sk/capauth.
+_is_shadow_hazard() {
+    case "$1" in
+        python|python[0-9]*|pip|pip[0-9]*|activate*|Activate*|wheel|easy_install*|f2py|virtualenv)
+            return 0 ;;
+    esac
+    [[ -e "/usr/bin/$1" ]] && return 0
+    return 1
+}
+
+expose_entry_points() {
+    mkdir -p "$USER_BIN"
+    local linked=0 refused=0 kept=0 name target
+
+    for path in "$SKENV"/bin/*; do
+        [[ -f "$path" && -x "$path" ]] || continue
+        name="$(basename "$path")"
+        case "$name" in sk*|capauth*) ;; *) continue ;; esac
+
+        if _is_shadow_hazard "$name"; then
+            echo "  refused  $name (collides with a system binary)"
+            refused=$((refused + 1)); continue
+        fi
+
+        target="$USER_BIN/$name"
+        if [[ -L "$target" && "$(readlink -f "$target")" == "$(readlink -f "$path")" ]]; then
+            kept=$((kept + 1)); continue          # already correct; idempotent
+        fi
+        if [[ -e "$target" && ! -L "$target" ]]; then
+            # A real file from an older install would shadow the new venv copy.
+            mv "$target" "$target.pre-skenv.$(date +%Y%m%d%H%M%S)"
+            echo "  backed up  $name (stale real file from a previous install)"
+        fi
+        ln -sfn "$path" "$target"
+        linked=$((linked + 1))
+    done
+
+    echo "  entry points: $linked linked, $kept already correct, $refused refused"
+}
+
+# Comment out a legacy `export PATH=.../.skenv/bin:$PATH` line written by an
+# older installer. Never deletes the line, so the change is auditable and the
+# operator can revert by uncommenting.
+retire_legacy_path_export() {
+    local rcfile changed=0
+    for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        [[ -f "$rcfile" ]] || continue
+        grep -qE '^[[:space:]]*export PATH=.*\.skenv/bin' "$rcfile" || continue
+        cp "$rcfile" "$rcfile.bak.$(date +%Y%m%d%H%M%S)"
+        sed -i -E 's|^([[:space:]]*export PATH=.*\.skenv/bin.*)$|# [skcapstone] retired -- ~/.skenv/bin on PATH shadows system binaries.\n# Entry points are symlinked into ~/.local/bin instead. Re-enable by uncommenting:\n#\1|' "$rcfile"
+        echo "  retired the legacy ~/.skenv/bin PATH export in $rcfile (backup written)"
+        changed=1
+    done
+    [[ "$changed" == "0" ]] && echo "  no legacy ~/.skenv/bin PATH export found"
+    return 0
+}
+
+# --repair-path: fix an existing install's PATH wiring and exit. Runs the same
+# two functions a fresh install runs, so there is one code path, not two.
+if [[ "$REPAIR_PATH" == "true" ]]; then
+    echo ""
+    echo "=== --repair-path ==="
+    if [[ ! -d "$SKENV/bin" ]]; then
+        echo "No venv at $SKENV. Run the installer without --repair-path first." >&2
+        exit 1
+    fi
+    expose_entry_points
+    retire_legacy_path_export
+    echo ""
+    echo "Done. Open a new shell, then verify:"
+    echo "  command -v python3     # expect /usr/bin/python3, NOT ~/.skenv/bin"
+    echo "  command -v skcapstone  # expect ~/.local/bin/skcapstone"
+    exit 0
+fi
 
 echo "=== Sovereign Agent Suite Installer ==="
 echo ""
@@ -160,22 +249,34 @@ done
 
 echo ""
 
-# Check if PATH is configured
-if echo "$PATH" | grep -q "$SKENV/bin"; then
-    echo "PATH already includes $SKENV/bin"
-else
-    echo "Add this to your ~/.bashrc (or ~/.zshrc):"
-    echo ""
-    echo "  export PATH=\"\$HOME/.skenv/bin:\$PATH\""
-    echo ""
+# ---------------------------------------------------------------------------
+# Expose entry points WITHOUT putting the venv bin/ on PATH.
+#
+# ~/.skenv/bin holds ~128 entries; only ~20 are sk* commands. Putting it on PATH
+# shadows every same-named system binary (python3, pip, pytest, virtualenv,
+# wheel, ansible*) for every child process, including package builds. Console
+# scripts carry an absolute shebang, so a symlink still runs on the venv
+# interpreter -- exposure and isolation are not in tension.
+#
+# See sk-standards TOOLCHAIN_PATH_ISOLATION_STANDARD.
+# ---------------------------------------------------------------------------
 
-    # Auto-add if not present
+echo "Exposing entry points in $USER_BIN ..."
+expose_entry_points
+retire_legacy_path_export
+
+# ~/.local/bin is the standard user bin dir and shadows nothing, so it is the
+# only PATH entry this installer will add.
+if ! echo "$PATH" | tr ':' '\n' | grep -qx "$USER_BIN"; then
     for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
-        if [[ -f "$rcfile" ]] && ! grep -q ".skenv/bin" "$rcfile"; then
-            echo "" >> "$rcfile"
-            echo '# SK* sovereign suite — installed in dedicated venv' >> "$rcfile"
-            echo 'export PATH="$HOME/.skenv/bin:$PATH"' >> "$rcfile"
-            echo "  (Added to $rcfile)"
+        if [[ -f "$rcfile" ]] && ! grep -q '\.local/bin' "$rcfile"; then
+            {
+                echo ""
+                echo '# SK* sovereign suite — entry points symlinked here from ~/.skenv/bin.'
+                echo '# The venv bin/ is deliberately NOT on PATH; it would shadow system binaries.'
+                echo 'export PATH="$HOME/.local/bin:$PATH"'
+            } >> "$rcfile"
+            echo "  added ~/.local/bin to PATH in $rcfile"
         fi
     done
 fi
