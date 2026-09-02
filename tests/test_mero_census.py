@@ -14,6 +14,7 @@ every line back through ``json.loads``; nothing is ever concatenated.
 
 from __future__ import annotations
 
+import glob
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,10 +30,15 @@ from skcapstone.seat_boundaries import (
 )
 
 NOW = datetime(2026, 9, 2, 12, 0, 0, tzinfo=timezone.utc)
+NOW_STALE = NOW + timedelta(hours=30)
 
 
 def _fixed_now():
     return lambda: NOW
+
+
+def _stale_now():
+    return lambda: NOW_STALE
 
 
 def _home(tmp_path: Path) -> Path:
@@ -43,7 +49,25 @@ def _home(tmp_path: Path) -> Path:
 
 
 def _add(store: CardStore, cid: str, action: str, **payload) -> dict:
-    return store.append_event(cid, action, payload.pop("writer", "jarvis"), **payload)
+    ts_override = payload.pop("ts_override", None)
+    writer = payload.pop("writer", "jarvis")
+    event = store.append_event(cid, action, writer, **payload)
+    if ts_override is not None:
+        # Repin the durable event row to the fixed fixture clock so the
+        # census age math is deterministic instead of wall-clock.
+        files = glob.glob(str(Path(store.home, "cards", cid[:8], "events", "*.jsonl")))
+        for file in files:
+            p = Path(file)
+            lines = p.read_text(encoding="utf-8").splitlines()
+            kept = []
+            for line in lines:
+                rec = json.loads(line)
+                if rec.get("event_id") == event["event_id"]:
+                    rec["ts"] = ts_override
+                    line = json.dumps(rec, sort_keys=True)
+                kept.append(line)
+            p.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    return event
 
 
 def _recs(store: CardStore, cid: str) -> list[dict]:
@@ -80,6 +104,7 @@ def board(tmp_path: Path) -> CardStore:
         owner="worker-a",
         claim_revision="rev-bbbb-1",
         transition_id="t-bbbb-claim",
+        ts_override=NOW.isoformat(),
     )
     _add(
         store,
@@ -146,13 +171,13 @@ class TestCensusClasses:
 
     def test_stale_claim_after_sla(self, board: CardStore) -> None:
         # Claim is at NOW in the fixture; run the census 30 hours later with
-        # a dead process read so the stale detector (not dead) is exercised.
-        later = NOW + timedelta(hours=30)
+        # a live process read so the stale detector (not dead) is exercised.
         census = mc.MeroBlockerCensus(
             board.home,
-            now=lambda: later,
+            now=_stale_now(),
             process_reader=lambda cid: {"host": "chiap03", "sessions": ["sess-1"]},
             identity_reader=lambda cid: True,
+            stale_claim_sla=timedelta(hours=24),
         )
         report = census.run()
         stale = [
@@ -168,6 +193,7 @@ class TestCensusClasses:
             now=_fixed_now(),
             process_reader=lambda cid: {"host": "chiap03", "sessions": []},
             identity_reader=lambda cid: False,
+            stale_claim_sla=timedelta(hours=24),
         )
         report = census.run()
         dead = [
