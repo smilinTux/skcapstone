@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from ..agent_projection import display_state
 from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name, validate_task_id
 
@@ -18,7 +19,43 @@ from ._validators import validate_agent_name, validate_task_id
 def register_coord_commands(main: click.Group) -> None:
     """Register the coord command group."""
 
-    @main.group()
+    @main.group(
+        epilog=(
+            "\b\n"
+            "THE LIFE OF A CARD\n"
+            "  coord create --title ... --criteria ...     backlog\n"
+            "  coord claim <id> --agent <you>              claimed, moves to ready\n"
+            "  coord move <id> doing --agent <you>         doing\n"
+            "  coord link <id> verdict PASS               record the outcome\n"
+            "  coord link <id> evidence <path>            record the proof\n"
+            "  coord move <id> review --agent <you>       hand to an independent reviewer\n"
+            "  coord complete <id> --agent <you>          done\n"
+            "\n"
+            "\b\n"
+            "COLUMNS\n"
+            "  backlog -> ready -> doing -> review -> done\n"
+            "  Also terminal: archived (coord archive-done), void (coord void).\n"
+            "\n"
+            "\b\n"
+            "TWO THINGS THAT BITE\n"
+            "  A card marked done with no verdict link is not done, it only looks\n"
+            "  done. Measured on this board: 56 percent of cards reached done\n"
+            "  carrying no verdict at all.\n"
+            "\n"
+            "\b\n"
+            "  coord link can print success while storing an empty value. Read the\n"
+            "  verdict back before believing it:\n"
+            "    grep -h '<id>' ~/.skcapstone/coordination/card_events/*.jsonl\n"
+            "\n"
+            "\b\n"
+            "WHERE TO LOOK\n"
+            "  coord status              board overview\n"
+            "  coord kanban              columns, with ITIL\n"
+            "  coord describe <id>       read one card\n"
+            "  coord gates <id>          why a card will or will not dispatch\n"
+            "  coord briefing            the full protocol for an agent\n"
+        )
+    )
     def coord():
         """Multi-agent coordination board.
 
@@ -149,14 +186,106 @@ def register_coord_commands(main: click.Group) -> None:
         if agents:
             console.print()
             for ag in agents:
-                icon = {"active": "[green]ACTIVE[/]", "idle": "[yellow]IDLE[/]"}.get(
-                    ag.state.value, "[dim]OFFLINE[/]"
-                )
+                projected = display_state(ag)
+                icon = {
+                    "active": "[green]ACTIVE[/]",
+                    "idle": "[yellow]IDLE[/]",
+                    "stale": "[yellow]STALE PROJECTION[/]",
+                }.get(projected, "[dim]OFFLINE[/]")
                 current = f" -> [cyan]{ag.current_task}[/]" if ag.current_task else ""
                 console.print(f"  {icon} [bold]{ag.agent}[/]{current}")
         console.print()
 
-    @coord.command("create")
+    @coord.command(
+        "create",
+        epilog=(
+            "\b\n"
+            "TAGS THAT CHANGE BEHAVIOUR\n"
+            "  Most tags are free-form. These are not, and are easy to get wrong:\n"
+            "\n"
+            "\b\n"
+            "  seat-<name>        Card belongs to a standing seat, e.g. seat-link.\n"
+            "                     The worker runs under that seat's identity, so its\n"
+            "                     claims, verdicts and mail are attributable to the\n"
+            "                     seat rather than to whichever lane picked it up.\n"
+            "\n"
+            "\b\n"
+            "  parent-<cardid>    REQUIRED, exactly one, when the title contains\n"
+            "                     [REVIEW], [REREVIEW] or [REPAIR].\n"
+            "\n"
+            "\b\n"
+            "  dispatch-approved  Opt-in REQUIRED when the title or any tag matches\n"
+            "                     capauth credential custody issuer secret key\n"
+            "                     rollback deploy production release migrat.\n"
+            "                     The match is textual: 'fix the release notes typo'\n"
+            "                     is gated by the word release.\n"
+            "\n"
+            "\b\n"
+            "  do-not-claim       Keeps the card out of the pool. Remove later with\n"
+            "                     coord label <id> do-not-claim --remove\n"
+            "\n"
+            "\b\n"
+            "  human-gate         Held until a human decides. Use THIS, never [HUMAN]\n"
+            "                     in the title: titles are immutable, so a title gate\n"
+            "                     can never be released and the card can only ever be\n"
+            "                     run by hand.\n"
+            "\n"
+            "\b\n"
+            "COLUMNS\n"
+            "  backlog  ready  doing  review  done      (see: coord move)\n"
+            "\n"
+            "\b\n"
+            "EXAMPLES\n"
+            "\n"
+            "\b\n"
+            "  Ordinary work:\n"
+            "    coord create --by mero --priority high \\\n"
+            "      --title '[SKDASH-NAV-01][S] Add the missing nav icon masks' \\\n"
+            "      --tag skdashboard \\\n"
+            "      --criteria 'Every nav item renders its icon at 1x and 2x.' \\\n"
+            "      --criteria 'No new dependency is added.'\n"
+            "\n"
+            "\b\n"
+            "  Work owned by a standing seat, so its verdicts carry the seat identity:\n"
+            "    coord create --by mero --priority critical \\\n"
+            "      --title '[LINK-TRIAGE-01][L] Triage every open pull request' \\\n"
+            "      --tag seat-link --tag trunk \\\n"
+            "      --criteria 'Every open PR is in exactly one bucket.'\n"
+            "\n"
+            "\b\n"
+            "  A review card. [REVIEW] is a governed class, so parent- is REQUIRED:\n"
+            "    coord create --by mero \\\n"
+            "      --id e5f6a7b8 \\\n"
+            "      --title '[SKGW-07D-R][S][REVIEW] Independently review the canary' \\\n"
+            "      --tag parent-a1b2c3d4 \\\n"
+            "      --desc 'Producer identity: pi-codex-source. Candidate evidence "
+            "sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.' \\\n"
+            "      --criteria 'Return hashed evidence tied to every acceptance statement.'\n"
+            "    coord link e5f6a7b8 producer_identity pi-codex-source --agent mero\n"
+            "    coord link e5f6a7b8 candidate_evidence_sha256 "
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --agent mero\n"
+            "\n"
+            "\b\n"
+            "  Something that needs a human first. Note the LABEL, not [HUMAN] in the\n"
+            "  title, so it can actually be released once the human decides:\n"
+            "    coord create --by mero --priority high \\\n"
+            "      --title '[SKGW-06A6-LC][S] Authorize a replacement lifecycle' \\\n"
+            "      --tag human-gate --tag do-not-claim --tag dispatch-approved \\\n"
+            "      --criteria 'Record an exact verbatim human authorization first.'\n"
+            "    # later, when the human decides:\n"
+            "    coord label <id> human-gate --remove --agent <you>\n"
+            "    coord label <id> do-not-claim --remove --agent <you>\n"
+            "\n"
+            "\b\n"
+            "  Check it will actually dispatch before you walk away:\n"
+            "    coord gates <id>\n"
+            "\n"
+            "\b\n"
+            "SEE ALSO\n"
+            "  coord gates <id>   why a card will or will not be dispatched\n"
+            "  docs/fleet/card-authoring-dispatch-gates.md\n"
+        ),
+    )
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
         "--id", "task_id", default=None, help="Stable task ID for idempotent automation."
@@ -171,7 +300,11 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option(
         "--priority", type=click.Choice(["critical", "high", "medium", "low"]), default="medium"
     )
-    @click.option("--tag", multiple=True, help="Tags (repeatable).")
+    @click.option(
+        "--tag",
+        multiple=True,
+        help="Tags (repeatable). Some change dispatch behaviour: see the table below.",
+    )
     @click.option("--by", default="human", help="Creator name.")
     @click.option("--criteria", multiple=True, help="Acceptance criteria (repeatable).")
     @click.option("--dep", multiple=True, help="Dependency task IDs (repeatable).")
@@ -284,7 +417,12 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def coord_release_claim(task_id, owner, expected_claim_revision, agent, home):
         """Release one exact claim generation without completing the task."""
-        from skcoord.card_store import card_mutation_lock, current_claim_precondition
+        from skcoord.card_store import (
+            CardStore,
+            card_mutation_lock,
+            current_claim_precondition,
+            mirror_coord_release,
+        )
         from skcoord.coordination import _board_mutation_lock
 
         from ..coordination import Board
@@ -300,11 +438,37 @@ def register_coord_commands(main: click.Group) -> None:
             with _board_mutation_lock(home_path), card_mutation_lock(home_path, task_id):
                 current_revision = current_claim_precondition(home_path, task_id, owner)
                 if current_revision != expected_claim_revision:
-                    raise ValueError(
-                        f"claim revision conflict for {task_id}: expected "
-                        f"{expected_claim_revision}, current {current_revision}"
+                    exact_replay = current_revision is None and any(
+                        event.get("action") == "release_claim"
+                        and event.get("released_owner") == owner
+                        and event.get("expected_claim_revision") == expected_claim_revision
+                        for event in CardStore(home_path)._read_events(task_id)
                     )
-                changed = board._release_claim_locked(owner, task_id, actor=agent)
+                    if not exact_replay:
+                        raise ValueError(
+                            f"claim revision conflict for {task_id}: expected "
+                            f"{expected_claim_revision}, current {current_revision}"
+                        )
+                owner_projection = board.load_agent(owner)
+                if current_revision is not None:
+                    mirror_coord_release(
+                        home_path,
+                        task_id,
+                        owner,
+                        agent,
+                        expected_claim_revision,
+                    )
+                released = CardStore(home_path).fold(task_id)
+                if released is None or released.owner is not None:
+                    raise ValueError(f"CardStore release readback failed for {task_id}")
+                if owner_projection is not None:
+                    owner_projection.claimed_tasks = [
+                        claimed for claimed in owner_projection.claimed_tasks if claimed != task_id
+                    ]
+                    if owner_projection.current_task == task_id:
+                        owner_projection.current_task = None
+                    board.save_agent(owner_projection)
+                changed = True
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
         outcome = "Released" if changed else "Already released"
