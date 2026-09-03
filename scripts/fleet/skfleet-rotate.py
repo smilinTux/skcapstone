@@ -64,7 +64,7 @@ _LIVE_IMPACT_CLASSES = {
 def _live_impact_priorities(events, now=None, max_age_seconds=900):
     """Fold current acknowledged Mero findings into selector priorities."""
     current_time = time.time() if now is None else float(now)
-    findings, rejected = {}, []
+    findings, rejected, tainted = {}, [], set()
     for event in events:
         if event.get("action") != "mero_observation":
             continue
@@ -107,9 +107,13 @@ def _live_impact_priorities(events, now=None, max_age_seconds=900):
         except (TypeError, ValueError):
             rejected.append(card_id or "unknown")
             continue
+        if finding_id in tainted:
+            rejected.append(card_id)
+            continue
         old = findings.get(finding_id)
         if old and old["observed_epoch"] == record["observed_epoch"] and old != record:
             rejected.extend([old["card_id"], card_id])
+            tainted.add(finding_id)
             findings.pop(finding_id, None)
             continue
         if old is None or record["observed_epoch"] > old["observed_epoch"]:

@@ -96,6 +96,8 @@ def test_duplicate_is_deduplicated_and_conflict_fails_closed():
     assert tuple(priorities) == ("repair-card",) and rejected == ()
     priorities, rejected = function()([row, event(card_id="other-card")], now=NOW)
     assert priorities == {} and rejected == ("other-card", "repair-card")
+    priorities, rejected = function()([row, event(card_id="other-card"), row], now=NOW)
+    assert priorities == {} and rejected == ("other-card", "repair-card")
 
 
 def test_source_preserves_healthy_lane_progress_and_records_decision():
