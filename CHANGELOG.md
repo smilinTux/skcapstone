@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Card 91d884c9: record selector projection integration review verdict.**
+  Independent review of parent db74500f candidate 5aaf8d34 (base f4fc61d):
+  verified commit, tree, eight-path scope, and combined full-index diff
+  SHA256 ca1c67bd84059ee6b5fa4b118593dd8ef83f5163d3b5211c17712335f8086617;
+  confirmed both independently reviewed source deltas retained with a clean
+  disjoint overlap in src/skcapstone/cli/coord.py; verified typed review
+  metadata precedence with legacy fallback and fail-closed malformed handling,
+  and truthful stale/missing agent projections. Focused tests 40 passed,
+  adjacent 127 passed, ruff, py_compile, Unicode, and gitleaks clean. The sole
+  full-suite failure reproduces identically on base and is out of scope. The
+  candidate was rescued from a volatile /tmp worktree on chiap08 and pushed to
+  origin branch review/91d884c9-integration-candidate before review. Verdict
+  PASS recorded as an append-only evidence link with SHA256-hashed report on
+  the shared CardStore.
+
 ### Fixed
 
 - Card 4bd61c62 reports empty fleet selections as empty pool, foreign hash
