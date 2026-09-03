@@ -240,6 +240,8 @@ HOME=os.path.expanduser("~")
 CARDS=os.path.join(HOME,".skcapstone/cards")
 EVID=os.path.join(HOME,".skcapstone/evidence/fleet-rotation")
 PI="/home/skuser01/.npm-global/bin/pi"
+PI_NATIVE_TOOLS=("read", "bash", "edit", "write", "grep", "find", "ls")
+PI_MCP_PROXY_LABEL="mcp-required"
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
 STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -287,6 +289,14 @@ def _worker_launch_command(unit, workspace, inner):
         "--unit", unit, "--property=KillMode=control-group",
         "--working-directory", workspace, "bash", "-lc", inner,
     ]
+
+
+def pi_tool_allowlist(labels):
+    """Return the bounded Pi tool surface for one fleet card."""
+    tools = list(PI_NATIVE_TOOLS)
+    if PI_MCP_PROXY_LABEL in {str(label).strip().lower() for label in labels}:
+        tools.append("mcp")
+    return ",".join(tools)
 
 
 def _lane_busy(lane, sessions, units):
@@ -3428,6 +3438,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     model=_LANE["model"]
     if _LANE["name"]=="glm":
         model=_glm_model_for(core) or model
+    pi_tools=pi_tool_allowlist(_labels)
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
     _review_recommendation = None
@@ -3483,9 +3494,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
            '--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; '
            'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
            'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
-           '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1; '
+           '--provider skgateway --model %s --thinking off --tools %s '
+           '-p "$(cat %s)" >%s 2>&1; '
            'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
-           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,bf,lf))
+           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,
+              pi_tools,bf,lf))
     unit=_worker_unit_name(_LANE["name"],cid)
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
