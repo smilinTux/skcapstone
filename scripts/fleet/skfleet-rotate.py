@@ -447,6 +447,7 @@ REAP_QUORUM = 3
 KNOWN_HOST_TTL = 24 * 3600   # a host silent this long has left the fleet
 
 STALL_GRACE = 30 * 60     # a zero-byte log younger than this may still be starting
+_NO_PROGRESS = os.path.join(HOME, ".skcapstone/evidence/live-no-progress")
 
 def _never_started(cid):
     """Return the zero-byte launch log and age when this card never started.
@@ -477,10 +478,46 @@ def _never_started(cid):
     return (newest, age) if age > STALL_GRACE else None
 
 
+def _record_live_no_progress(cid, worker, path, age):
+    """Record one bounded escalation without converting quietness into death."""
+    try:
+        folded = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+        owner = str(folded.get("owner") or "")
+        revision = str((folded.get("meta") or {}).get("_claim_revision") or "")
+    except Exception:
+        owner = revision = ""
+    if not owner or not revision:
+        return False
+    try:
+        generation = str(os.stat(path).st_mtime_ns)
+        key = "\0".join((cid, owner, revision, generation)).encode()
+        digest = hashlib.sha256(key).hexdigest()
+        os.makedirs(_NO_PROGRESS, exist_ok=True)
+        target = os.path.join(_NO_PROGRESS, digest + ".json")
+        payload = json.dumps({
+            "age_seconds": int(age),
+            "card": cid,
+            "claim_revision": revision,
+            "log": path,
+            "observation_generation": generation,
+            "owner": owner,
+            "state": "live_no_progress",
+            "worker": worker,
+        }, sort_keys=True, separators=(",", ":")) + "\n"
+        fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except (FileExistsError, OSError):
+        return False
+    try:
+        os.write(fd, payload.encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return True
+
+
 def publish_live(sessions, units=()):
     """Record legacy tmux and transient-service workers for every other host."""
     cards = _worker_cards(sessions,units,LANES)
-    kept = []
     for _cid in cards:
         stalled = _never_started(_cid)
         if stalled:
@@ -490,12 +527,10 @@ def publish_live(sessions, units=()):
                  if s.startswith(L["prefix"]) and s[len(L["prefix"]):] == _cid),
                 next((u["unit"] for u in units if u["card"] == _cid), "unknown"),
             )
-            log(d, "STALLED|%s|%s|worker=%s|log=%s|age_seconds=%d|launch log is "
-                   "0 bytes and older than %dm; not reporting it live so the claim can be reaped"
-                % (HOST, _cid, worker, path, int(age), STALL_GRACE // 60))
-            continue
-        kept.append(_cid)
-    cards = kept
+            if _record_live_no_progress(_cid, worker, path, age):
+                log(d, "LIVE_NO_PROGRESS|%s|%s|worker=%s|log=%s|age_seconds=%d|"
+                       "worker remains live; bounded escalation recorded"
+                    % (HOST, _cid, worker, path, int(age)))
     try:
         os.makedirs(LIVE, exist_ok=True)
         p = os.path.join(LIVE, HOST + ".json")
@@ -2262,6 +2297,7 @@ def _provisional_candidate(parent, outcome_ts, token):
     producer = next(iter(writers))
     candidate_bytes = set()
     artifact_evidence = set()
+    typed = {"candidate_commit": set(), "candidate_tree": set(), "candidate_ref": set()}
     for event in rows:
         if (str(event.get("ts") or "") != str(outcome_ts or "") or
                 str(event.get("writer") or "").strip() != producer):
@@ -2273,6 +2309,11 @@ def _provisional_candidate(parent, outcome_ts, token):
             digest = str(event.get(digest_key) or "").lower()
             if path and re.fullmatch(r"[0-9a-f]{64}", digest):
                 target.add((path, digest))
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        for key in typed:
+            value = event.get(key, payload.get(key))
+            if isinstance(value, str) and value.strip():
+                typed[key].add(value.strip())
     candidates = candidate_bytes or artifact_evidence
     verified = []
     for path, digest in sorted(candidates):
@@ -2285,7 +2326,20 @@ def _provisional_candidate(parent, outcome_ts, token):
             verified.append((path, digest))
     if len(verified) != 1:
         return None
-    return producer, verified[0][0], verified[0][1]
+    has_typed = any(typed.values())
+    if has_typed:
+        if any(len(values) != 1 for values in typed.values()):
+            return None
+        commit = next(iter(typed["candidate_commit"])).lower()
+        tree = next(iter(typed["candidate_tree"])).lower()
+        ref = next(iter(typed["candidate_ref"]))
+        if not (re.fullmatch(r"[0-9a-f]{40}", commit) and
+                re.fullmatch(r"[0-9a-f]{40}", tree) and
+                re.fullmatch(r"(?:refs/heads/|https://)\S+", ref)):
+            return None
+    else:
+        commit = tree = ref = ""
+    return producer, verified[0][0], verified[0][1], commit, tree, ref
 
 
 def _eligible_provisional_reviews(capacity):
@@ -2324,7 +2378,8 @@ def _eligible_provisional_reviews(capacity):
     return selected
 
 
-def _authoritative_review_readback(review_id, parent, producer, path, digest):
+def _authoritative_review_readback(
+        review_id, parent, producer, path, digest, commit="", tree="", ref=""):
     """Fail closed unless CardStore folds the exact newly created review."""
     try:
         core_path = os.path.join(CARDS, review_id, "core.json")
@@ -2333,12 +2388,20 @@ def _authoritative_review_readback(review_id, parent, producer, path, digest):
         parent_labels = [label for label in folded_labels(review_id, core)
                          if str(label).startswith("parent-")]
         description = str(core.get("description") or "")
+        typed = not commit or all(
+            value in description for value in (
+                "Candidate commit: %s." % commit,
+                "Candidate tree: %s." % tree,
+                "Candidate ref: %s." % ref,
+            )
+        )
         return bool(
             core.get("id") == review_id and
             parent_labels == ["parent-%s" % parent] and
             lifecycle_state(review_id) == "open" and
             "Producer identity: %s." % producer in description and
-            "Candidate evidence: %s sha256=%s." % (path, digest) in description
+            "Candidate evidence: %s sha256=%s." % (path, digest) in description and
+            typed
         )
     except (OSError, ValueError, TypeError):
         return False
@@ -2354,12 +2417,14 @@ def open_provisional_reviews(capacity, dry_run=False):
         (HOST, max(0, int(capacity)), len(selected), len(selected),
          str(bool(dry_run)).lower()))
     if dry_run:
-        for parent, _ts, _token, review_id, _producer, _path, _digest in selected:
+        for row in selected:
+            parent, review_id = row[0], row[3]
             log(d, "WOULD_OPEN_REVIEW|%s|%s|review=%s" % (HOST, parent, review_id))
         return len(selected)
 
     opened = 0
-    for parent, outcome_ts, token, review_id, producer, path, digest in selected:
+    for (parent, outcome_ts, token, review_id, producer, path, digest,
+         commit, tree, ref) in selected:
         # Each attempted create consumes one unit of the initial capacity budget,
         # whether it succeeds or fails.  A transient failure stops the batch.
         description = (
@@ -2367,6 +2432,11 @@ def open_provisional_reviews(capacity, dry_run=False):
             "Candidate evidence: %s sha256=%s. Reviewer identity must differ."
             % (parent, outcome_ts or "unknown", token, producer, path, digest)
         )
+        if commit:
+            description += (
+                " Candidate commit: %s. Candidate tree: %s. Candidate ref: %s."
+                % (commit, tree, ref)
+            )
         r = subprocess.run(
             [SKC, "coord", "create", "--id", review_id,
              "--title", "[REVIEW] Review provisional outcome for %s" % parent,
@@ -2383,7 +2453,7 @@ def open_provisional_reviews(capacity, dry_run=False):
         if r.returncode == 0:
             _rows.pop(review_id, None)
             if not _authoritative_review_readback(
-                    review_id, parent, producer, path, digest):
+                    review_id, parent, producer, path, digest, commit, tree, ref):
                 _REVIEW_READBACK_BLOCKED.add(review_id)
                 log(d, "OPEN_REVIEW_STALE_READBACK|%s|%s|review=%s" %
                     (HOST, parent, review_id))
