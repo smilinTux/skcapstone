@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
+
+from .card import Column, Kind
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,68 @@ def classify_scheduler_population(
 ) -> tuple[SchedulerDecision, ...]:
     """Classify one adapter-produced population without changing it."""
     return tuple(classify_scheduler(facts) for facts in population)
+
+
+def folded_revision(card) -> str:
+    """Hash the complete canonical folded card projection."""
+    payload = card.model_dump(mode="json")
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def card_scheduler_facts(
+    card,
+    cards: Mapping[str, object],
+    evidence_events: Iterable[dict] = (),
+) -> SchedulerFacts:
+    """Build scheduler facts from one fold plus its separate evidence stream.
+
+    This is the shared read-only adapter for scheduler diagnostics. Verdicts are
+    accepted only from explicit evidence events, never lifecycle or links alone.
+    Invalid evidence fails closed as malformed.
+    """
+    labels = {str(label).strip().lower().replace("_", "-") for label in card.labels}
+    title = str(card.title or "")
+    malformed = not card.id.strip() or not title.strip() or title.strip().lower() == "x"
+    verdict = None
+    for event in evidence_events:
+        if not isinstance(event, dict):
+            malformed = True
+            continue
+        if event.get("action") != "link":
+            continue
+        key = str(event.get("link_key") or "").strip().lower().replace("-", "_")
+        if key not in {"verdict", "outcome", "result"}:
+            continue
+        value = event.get("link_value")
+        if not isinstance(value, str) or not re.match(
+            r"^\s*(?:PASS(?:_FOR_[A-Z_]+)?|BLOCKED|FAIL)(?:\b|$)", value, re.I
+        ):
+            malformed = True
+            continue
+        verdict = value.strip().upper()
+    missing_dependency = any(
+        dependency not in cards or cards[dependency].status != Column.DONE
+        for dependency in card.dependencies
+    )
+    human_gate = "human-gate" in labels or "[HUMAN]" in title.upper()
+    not_claimable = bool(labels & {"not-claimable", "sprint-container", "do-not-claim"})
+    owner_health = "live" if card.owner else None
+    terminal = card.status == Column.DONE or card.archived
+    awaiting_review = card.status == Column.REVIEW or bool(
+        verdict and verdict.startswith("PASS_FOR_REVIEW")
+    )
+    return SchedulerFacts(
+        card_id=card.id,
+        malformed=malformed,
+        terminal_cardstore=terminal,
+        owner_health=owner_health,
+        human_gate=human_gate,
+        not_claimable=not_claimable or card.kind not in {Kind.TASK, Kind.EPIC},
+        dependency=missing_dependency,
+        awaiting_review=awaiting_review,
+        backoff=bool(verdict and verdict.startswith("BLOCKED")),
+    )
 
 
 def pool_v2(host: str, decisions: Iterable[SchedulerDecision]) -> PoolV2:

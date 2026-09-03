@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card 5a7e5f41: expose the advertised dispatch gate diagnostic.** The
+  read-only `coord gates <id>` command reports the canonical folded card
+  revision and all scheduler eligibility blockers, failing closed on malformed
+  evidence without mutating the board.
+
 - **Card 46c6526d: fail closed before fleet lane claims.** Fleet selection and
   the immediate preclaim gate consume a fresh snapshot that the selector creates
   by fetching SKGateway health and queue state once in the same cycle. The
