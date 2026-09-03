@@ -135,6 +135,8 @@ def _reaper_fixture(
         "_current_claim_identity_fresh",
         "_fleet_launch_provenance",
         "_record_reap_outcome",
+        "report_hosts",
+        "fresh_report_hosts",
         "reap_dead_claims",
     )
     released: list[list[str]] = []
@@ -167,6 +169,8 @@ def _reaper_fixture(
             "event_rows": namespace["_acts_fresh_rows"],
             "lifecycle_state": lambda _card: "open" if released else "claimed",
             "live_report": lambda: (time.time(), set(), 3),
+            "fresh_report_hosts": lambda: {"chiap01", "chiap02", "chiap03"},
+            "report_hosts": lambda _max_age: {"chiap01", "chiap02", "chiap03"},
             "log": lambda _directory, message: messages.append(message),
             "MeroObservation": lambda **_kwargs: SimpleNamespace(append=lambda _home: {}),
             "Path": Path,
@@ -644,6 +648,7 @@ def test_quorum_and_fresh_owner_fences_still_fail_closed(tmp_path: Path) -> None
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
 
+
     namespace["live_report"] = lambda: (time.time(), set(), 3)
     namespace["_load_ineffective"] = lambda: {"deadbeef"}
     assert namespace["reap_dead_claims"]() == 0
@@ -677,6 +682,59 @@ def test_quorum_and_fresh_owner_fences_still_fail_closed(tmp_path: Path) -> None
     )
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
+
+
+def test_missing_known_reporter_is_named_without_weakening_fence(tmp_path: Path) -> None:
+    owner = "pi-codex-chiap02-deadbeef"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="fleet-claim-revision",
+        launch_revision="fleet-claim-revision",
+    )
+    for host in ("chiap04", "chiap08"):
+        (tmp_path / "live" / f"{host}.json").write_text("{}\n", encoding="utf-8")
+    namespace["live_report"] = lambda: (time.time(), set(), 4)
+    namespace["fresh_report_hosts"] = lambda: {
+        "chiap01", "chiap02", "chiap03", "chiap08"
+    }
+    namespace["report_hosts"] = lambda _max_age: {
+        "chiap01", "chiap02", "chiap03", "chiap04", "chiap08"
+    }
+
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any(
+        "requires_all_known=true missing=chiap04" in message for message in messages
+    )
+
+
+def test_report_hosts_deduplicates_conflicts_and_rejects_unknown_hosts(
+    tmp_path: Path,
+) -> None:
+    live = tmp_path / "live"
+    live.mkdir()
+    now = time.time()
+    payload = json.dumps({"host": "chiap04", "ts": now}) + "\n"
+    (live / "chiap04.json").write_text(payload, encoding="utf-8")
+    (live / "chiap04.sync-conflict.json").write_text(payload, encoding="utf-8")
+    (live / "bookkeeping.json").write_text(
+        json.dumps({"host": "bookkeeping", "ts": now}) + "\n", encoding="utf-8"
+    )
+    namespace = _load_functions("report_hosts")
+    namespace.update(
+        {
+            "LIVE": str(live),
+            "ROTATION_HOSTS": (
+                "chiap01", "chiap02", "chiap03", "chiap04", "chiap08"
+            ),
+            "Path": Path,
+            "time": time,
+        }
+    )
+
+    assert namespace["report_hosts"](1800) == {"chiap04"}
 
 
 def test_newer_same_owner_recent_claim_gets_its_own_grace(tmp_path: Path) -> None:

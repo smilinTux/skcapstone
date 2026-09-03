@@ -88,7 +88,11 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None):
     ) or "-"
     capacity = host_capacity or {}
     owner_free = ",".join(
-        "%s:%d" % (owner, int(capacity.get(owner, 0))) for owner in sorted(owners)
+        "%s:%s" % (
+            owner,
+            str(int(capacity[owner])) if owner in capacity else "unknown",
+        )
+        for owner in sorted(owners)
     ) or "-"
     return (
         "reason=%s pool=%d owned=%d target=%d free=%d ids=%s omitted=%d "
@@ -565,6 +569,28 @@ def live_report():
         hosts[str(snap.get("host") or p)] = ts
         running.update(str(c) for c in (snap.get("cards") or ()))
     return (min(hosts.values()) if hosts else 0.0), running, len(hosts)
+
+
+def report_hosts(max_age):
+    """Return known fleet hosts backed by a valid report within ``max_age``."""
+    hosts = set()
+    now = time.time()
+    for path in glob.glob(os.path.join(LIVE, "*.json")):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                snap = json.load(fh)
+            ts = float(snap.get("ts") or 0)
+            host = str(snap.get("host") or Path(path).stem)
+            if host in ROTATION_HOSTS and 0 < ts <= now and now - ts <= max_age:
+                hosts.add(host)
+        except (OSError, ValueError, TypeError):
+            continue
+    return hosts
+
+
+def fresh_report_hosts():
+    """Return host names backed by a valid, fresh liveness report."""
+    return report_hosts(LIVE_FRESH)
 
 publish_live(sessions, worker_units)
 
@@ -2016,12 +2042,14 @@ def reap_dead_claims():
     # check passes while its workers are invisible. A host that is GONE must
     # eventually stop counting, or one decommissioned machine blocks reaping for
     # the whole fleet forever. KNOWN_HOST_TTL separates the two.
-    _cut = time.time() - KNOWN_HOST_TTL
-    known = sum(1 for f in glob.glob(os.path.join(LIVE, "*.json"))
-                if os.path.getmtime(f) >= _cut)
+    known_hosts = report_hosts(KNOWN_HOST_TTL)
+    known = len(known_hosts)
     if not oldest or nhosts < REAP_QUORUM or nhosts < known:
-        log(d, "REAP|%s|below quorum (reporting=%d known=%d need>=%d); reaped nothing"
-            % (HOST, nhosts, known, REAP_QUORUM))
+        reporting = fresh_report_hosts()
+        missing = ",".join(sorted(known_hosts - reporting)) or "-"
+        log(d, "REAP|%s|insufficient reports (reporting=%d known=%d quorum=%d "
+            "requires_all_known=true missing=%s); reaped nothing"
+            % (HOST, nhosts, known, REAP_QUORUM, missing))
         return 0
     freed = 0
     _ineffective = _load_ineffective()
