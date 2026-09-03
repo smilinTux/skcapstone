@@ -52,6 +52,8 @@ LAUNCHER_RUFF_BASELINE = {
         ("sensitive_category", True, "sensitive_category"),
         ("dependency", True, "dependency"),
         ("awaiting_review", True, "awaiting_review"),
+        ("terminal_review", True, "terminal_review"),
+        ("workflow_closure_required", True, "workflow_closure_required"),
         ("backoff", True, "backoff"),
         ("attempt_limit", True, "attempt_limit"),
         ("host_pin_elsewhere", True, "host_pin_elsewhere"),
@@ -182,6 +184,9 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
             "itil_terminal": lambda cid: False,
             "lifecycle_state": lambda cid: row(cid).get("lifecycle", "open"),
             "awaiting_review": lambda cid: row(cid).get("awaiting_review", False),
+            "outcome_workflow_class": lambda cid, core: (
+                "producer_candidate" if row(cid).get("awaiting_review") else None
+            ),
             "outcome_lifecycle_bucket": outcome_bucket,
             "authoritative_claimability": claimability,
             "blocked_backoff": lambda cid: row(cid).get("backoff", False),

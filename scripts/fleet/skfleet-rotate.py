@@ -1704,22 +1704,37 @@ def _material_change_since(cid, epoch):
     return latest if latest > epoch else 0
 
 
-def awaiting_review(cid):
+def outcome_workflow_class(cid, core=None):
+    """Return the workflow meaning of the latest successful outcome."""
+    ts, value = _load_outcomes().get(cid, (None, None))
+    if not ts:
+        return None
+    raw = str(value or "")
+    if _PROVISIONAL_PASS_RE.match(raw):
+        return "producer_candidate"
+    if not re.match(r"^\s*(PASS|FAIL)\s*(?::|$)", raw, re.I):
+        return None
+    core = core or {}
+    labels = {str(label).strip().lower() for label in folded_labels(cid, core)}
+    title = str(core.get("title") or "")
+    if "review" in labels or _REVIEW_TITLE_RE.search(title):
+        return "terminal_review"
+    if re.match(r"^\s*PASS\s*(?::|$)", raw, re.I):
+        return "workflow_closure_required"
+    return None
+
+
+def awaiting_review(cid, core=None):
     """True if this card produced a candidate and is waiting on a reviewer.
 
     Reported separately from blocked_backoff so that work which SUCCEEDED is not
     counted as work that refused.
     """
-    ts, val = _load_outcomes().get(cid, (None, None))
-    return bool(ts and _PASS_RE.match(str(val or "")))
+    return outcome_workflow_class(cid, core) == "producer_candidate"
 
 def terminal_review_verdict(cid, core=None):
     """True when an independent review card already recorded PASS or FAIL."""
-    labels = folded_labels(cid, core or {})
-    if "review" not in {str(label).strip().lower() for label in labels}:
-        return False
-    ts, value = _load_outcomes().get(cid, (None, None))
-    return bool(ts and re.match(r"^\s*(PASS|FAIL)\s*(?::|$)", str(value or ""), re.I))
+    return outcome_workflow_class(cid, core) == "terminal_review"
 
 
 def outcome_lifecycle_bucket(lifecycle, historical_review):
@@ -2924,18 +2939,21 @@ def _legacy_selector_decision(cid, core_p):
         }
     if outcome_bucket != "open":
         return {"eligible": False, "reason": outcome_bucket}
-    if blocked_backoff(cid):
-        return {
-            "eligible": False,
-            "reason": "awaiting_review" if awaiting_review(cid) else "backoff",
-        }
     try:
         with open(core_p, encoding="utf-8") as handle:
             core = json.load(handle)
     except Exception:
         return {"eligible": False, "reason": "malformed", "detail": "malformed-core"}
-    if terminal_review_verdict(cid, core):
+    workflow_class = outcome_workflow_class(cid, core)
+    if workflow_class == "terminal_review":
         return {"eligible": False, "reason": "terminal_review"}
+    if workflow_class == "workflow_closure_required":
+        return {"eligible": False, "reason": "workflow_closure_required"}
+    if blocked_backoff(cid):
+        return {
+            "eligible": False,
+            "reason": "awaiting_review" if workflow_class == "producer_candidate" else "backoff",
+        }
     decision=authoritative_claimability(cid,core)
     if not decision["claimable"]:
         return {
@@ -3137,7 +3155,6 @@ def _shadow_pool_v2():
                     lifecycle_excluded=cid in all_excluded and not mapped_exclusion,
                     selector_excluded=(
                         cid in _REVIEW_READBACK_BLOCKED
-                        or terminal_review_verdict(cid, core)
                         or str(core.get("title") or "").startswith("CMDB drift")
                     ),
                     terminal_cardstore=lifecycle in {"complete", "void"},
@@ -3152,7 +3169,10 @@ def _shadow_pool_v2():
                         reason == "dependency"
                         or cid in class_ids.get("void_dependency_edges", set())
                     ),
-                    awaiting_review=awaiting_review(cid),
+                    terminal_review=outcome_workflow_class(cid, core) == "terminal_review",
+                    workflow_closure_required=outcome_workflow_class(cid, core)
+                    == "workflow_closure_required",
+                    awaiting_review=awaiting_review(cid, core),
                     backoff=blocked_backoff(cid),
                     attempt_limit=unclaimable(cid),
                     host_pin_elsewhere=reason.startswith("host-pin:"),
