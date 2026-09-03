@@ -67,10 +67,14 @@ def test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes(tmp_path: Path) -
                 const tools = pi.getAllTools().filter((tool: any) => active.has(tool.name));
                 const schemas = tools.map(({name, description, parameters}: any) =>
                   ({name, description, parameters}));
+                const directSchemas = schemas.filter(({name}: any) =>
+                  /^(skcapstone|skcomms|skmemory)_/.test(name));
                 writeFileSync(process.env.PI_TOOL_PROBE_OUT!, JSON.stringify({
                   names: tools.map((tool: any) => tool.name).sort(),
                   count: tools.length,
                   serialized_bytes: Buffer.byteLength(JSON.stringify(schemas)),
+                  direct_count: directSchemas.length,
+                  direct_serialized_bytes: Buffer.byteLength(JSON.stringify(directSchemas)),
                 }) + "\\n");
               });
             }
@@ -107,7 +111,13 @@ def test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes(tmp_path: Path) -
 
     assert direct_tool in baseline["names"]
     assert direct_tool not in allowlisted["names"]
+    assert baseline["direct_count"] == 162
+    assert allowlisted["direct_count"] == 0
     assert allowlisted["names"] == ["bash", "edit", "find", "grep", "ls", "read", "write"]
     assert allowlisted["count"] == 7
     assert allowlisted["serialized_bytes"] < baseline["serialized_bytes"]
-    print(json.dumps({"baseline": baseline, "allowlisted": allowlisted}, sort_keys=True))
+    summary = {
+        key: {field: value for field, value in result.items() if field != "names"}
+        for key, result in (("baseline", baseline), ("allowlisted", allowlisted))
+    }
+    print(json.dumps(summary, sort_keys=True))
