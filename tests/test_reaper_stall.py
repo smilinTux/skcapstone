@@ -130,9 +130,14 @@ def test_publish_live_logs_exact_attribution(tmp_path):
     old = time.time() - 3600
     os.utime(path, (old, old))
 
-    assert ns["publish_live"](["glm-auto-aaaa0001"]) == ["aaaa0001"]
+    unit = {
+        "card": "aaaa0001",
+        "lane": "glm",
+        "unit": "skfleet-worker-qwen-aaaa0001.service",
+    }
+    assert ns["publish_live"]([], [unit]) == ["aaaa0001"]
     assert len(messages) == 1
-    assert "|aaaa0001|worker=glm-auto-aaaa0001|" in messages[0]
+    assert "|aaaa0001|worker=skfleet-worker-qwen-aaaa0001.service|" in messages[0]
     assert "|log=%s|" % path in messages[0]
     assert "|age_seconds=" in messages[0]
     assert "worker remains live" in messages[0]
@@ -143,7 +148,7 @@ def test_publish_live_logs_exact_attribution(tmp_path):
     assert marker["card"] == "aaaa0001"
     assert marker["claim_revision"] == "revision-1"
 
-    assert ns["publish_live"](["glm-auto-aaaa0001"]) == ["aaaa0001"]
+    assert ns["publish_live"]([], [unit]) == ["aaaa0001"]
     assert len(list((tmp_path / ".skcapstone/evidence/live-no-progress").glob("*.json"))) == 1
 
 
