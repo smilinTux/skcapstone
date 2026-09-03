@@ -37,21 +37,9 @@ case "$cmd" in
   send)
     from="$1"; to="$2"; prio="$3"; re="$4"; shift 4; body="$*"
     case "$prio" in urgent|normal|fyi) ;; *) echo "priority must be urgent|normal|fyi" >&2; exit 2;; esac
-    SKM_DIR="$BOXDIR" SKM_FROM="$from" SKM_TO="$to" SKM_PRIO="$prio" SKM_RE="$re" SKM_BODY="$body" \
-    SKM_HOST="$(hostname)" python3 -c '
-import json, os, datetime, fcntl
-d = os.environ["SKM_DIR"]
-# One file per writer per host. Never a shared file: see the header note.
-path = os.path.join(d, "%s@%s.jsonl" % (os.environ["SKM_FROM"].lower(), os.environ["SKM_HOST"]))
-rec = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-       "from": os.environ["SKM_FROM"], "to": os.environ["SKM_TO"],
-       "priority": os.environ["SKM_PRIO"], "re": os.environ["SKM_RE"],
-       "body": os.environ["SKM_BODY"], "host": os.environ["SKM_HOST"]}
-with open(path, "a", encoding="utf-8") as f:
-    fcntl.flock(f, fcntl.LOCK_EX)   # same-host concurrency only; cross-host is solved by the filename
-    f.write(json.dumps(rec, ensure_ascii=False) + "\n"); f.flush(); os.fsync(f.fileno())
-print("sent to %s [%s] re %s" % (rec["to"], rec["priority"], rec["re"]))
-'
+    python3 "$(dirname "$0")/skmail_writer.py" "$from" "$to" "$prio" "$re" "$body" \
+      --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null
+    echo "sent to $to [$prio] re $re"
     ;;
   read|ack|tail)
     me="${1:-}"
