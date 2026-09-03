@@ -191,6 +191,7 @@ def _review_assignment(cid, core, labels, reviewer):
         observed_process=observed_process,
         evidence_sha256=evidence,
     )
+    live_claim_revision = str(_current_claim_identity_fresh(cid)[2] or "")
     handoff = authorize_review_launch(
         Path(HOME) / ".skcapstone",
         recommendation,
@@ -200,7 +201,9 @@ def _review_assignment(cid, core, labels, reviewer):
             str(event.get("recommendation_id"))
             for event in event_rows(cid)
             if event.get("action") == "review_assignment_launch"
+            and event.get("launched")
             and event.get("recommendation_id")
+            and str(event.get("claim_revision") or "") == live_claim_revision
         },
     )
     return handoff.reviewer, recommendation, handoff
@@ -454,6 +457,13 @@ LANES=[
      "model":os.environ.get("SKFLEET_ESC_MODEL", ESC_MODEL if "ESC_MODEL" in dir() else "gpt-5.6-sol"),
      "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
 ]
+_GLM_LEVEL_DEFAULTS={"S":"glm-4.6","M":"glm-4.6","L":"glm-4.7","XL":"glm-5.3"}
+_GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
+             for key,value in _GLM_LEVEL_DEFAULTS.items()}
+_GLM_SIZE_RE=re.compile(r"\[(S|M|XL|L)\]")
+def _glm_model_for(core):
+    match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
+    return _GLM_LEVELS.get(match.group(1)) if match else None
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
@@ -3266,6 +3276,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d, "SEAT|%s|%s|running under seat %s as %s" % (HOST, cid, _seat, name))
     sess="%s%s"%(_LANE["prefix"],cid)
     model=_LANE["model"]
+    if _LANE["name"]=="glm":
+        model=_glm_model_for(core) or model
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
     _review_recommendation = None
