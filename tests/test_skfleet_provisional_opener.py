@@ -216,6 +216,34 @@ def test_missing_or_hash_mismatched_candidate_fails_closed(tmp_path: Path) -> No
     assert any("OPEN_REVIEW_EVIDENCE_BLOCKED" in row for row in board.logs)
 
 
+def test_typed_candidate_identity_is_carried_into_review(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    board.events["a1b2c3d4"][0].update(
+        {
+            "candidate_commit": "1" * 40,
+            "candidate_tree": "2" * 40,
+            "candidate_ref": "refs/heads/review/a1b2c3d4",
+        }
+    )
+
+    assert board.open(1) == 1
+    description = board.calls[0][board.calls[0].index("--desc") + 1]
+    assert "Candidate commit: %s." % ("1" * 40) in description
+    assert "Candidate tree: %s." % ("2" * 40) in description
+    assert "Candidate ref: refs/heads/review/a1b2c3d4." in description
+
+
+def test_partial_typed_candidate_identity_fails_closed(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    board.events["a1b2c3d4"][0]["candidate_commit"] = "1" * 40
+
+    assert board.open(1) == 0
+    assert board.calls == []
+    assert any("OPEN_REVIEW_EVIDENCE_BLOCKED" in row for row in board.logs)
+
+
 def test_partial_create_failure_stops_without_spending_extra_budget(tmp_path: Path) -> None:
     board = OpenerHarness(tmp_path)
     for card_id in ("a0000001", "a0000002", "a0000003"):
