@@ -55,6 +55,69 @@ def _bounded_ids(card_ids, limit=12):
     return ",".join(shown) or "-", max(0, len(values) - len(shown))
 
 
+_LIVE_IMPACT_CLASSES = {
+    "lane_outage", "queue_timeout_growth", "quarantine_growth",
+    "claim_corruption", "coordination_transport_failure",
+}
+
+
+def _live_impact_priorities(events, now=None, max_age_seconds=900):
+    """Fold current acknowledged Mero findings into selector priorities."""
+    current_time = time.time() if now is None else float(now)
+    findings, rejected = {}, []
+    for event in events:
+        if event.get("action") != "mero_observation":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
+        process = payload.get("process")
+        card_id = str(event.get("card_id") or payload.get("card_id") or "").strip()
+        try:
+            if not isinstance(process, dict):
+                raise ValueError("process")
+            finding_id = str(process.get("finding_id") or "").strip()
+            finding_class = str(process.get("finding_class") or "").strip()
+            observed_at = str(process.get("observed_at") or "").strip()
+            evidence = str(payload.get("evidence_sha256") or event.get("evidence_sha256") or "")
+            acknowledged, resolved = process.get("acknowledged"), process.get("resolved")
+            affected = process.get("affected_lanes")
+            if not card_id or not finding_id or finding_class not in _LIVE_IMPACT_CLASSES:
+                raise ValueError("identity")
+            if acknowledged is not True or not isinstance(resolved, bool):
+                raise ValueError("acknowledgement")
+            if not re.fullmatch(r"[0-9a-f]{64}", evidence):
+                raise ValueError("evidence")
+            if (not isinstance(affected, list) or not affected or
+                    any(not isinstance(x, str) or not x.strip() for x in affected)):
+                raise ValueError("lanes")
+            observed_epoch = datetime.datetime.fromisoformat(
+                observed_at.replace("Z", "+00:00")
+            ).timestamp()
+            if (observed_epoch > current_time or
+                    current_time - observed_epoch > max_age_seconds):
+                raise ValueError("stale")
+            record = {
+                "card_id": card_id,
+                "finding_id": finding_id,
+                "finding_class": finding_class,
+                "evidence_sha256": evidence,
+                "observed_epoch": observed_epoch,
+                "resolved": resolved,
+                "affected_lanes": tuple(sorted(set(x.strip() for x in affected))),
+            }
+        except (TypeError, ValueError):
+            rejected.append(card_id or "unknown")
+            continue
+        old = findings.get(finding_id)
+        if old and old["observed_epoch"] == record["observed_epoch"] and old != record:
+            rejected.extend([old["card_id"], card_id])
+            findings.pop(finding_id, None)
+            continue
+        if old is None or record["observed_epoch"] > old["observed_epoch"]:
+            findings[finding_id] = record
+    return ({row["card_id"]: row for row in findings.values() if not row["resolved"]},
+            tuple(sorted(set(rejected))))
+
+
 def _full_reassessment_path(host, evidence_root):
     """Keep exactly one shared full report, written only by its authority host."""
     if host != "chiap08":
@@ -3337,11 +3400,27 @@ for cd in glob.glob(CARDS+"/*"):
     except: continue
     for dep in folded_dependencies(ocid,oc):
         unblocks[str(dep)]=unblocks.get(str(dep),0)+1
-for row in pool: row.append(unblocks.get(row[2],0))
+for row in pool:
+    row.append(unblocks.get(row[2],0))
+_live_priorities, _live_rejected = _live_impact_priorities(
+    [event for rows in _load_evidence_events().values() for event in rows]
+)
+for row in pool:
+    row.append(0 if row[2] in _live_priorities else 1)
 pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
 log(d,"POOL_IDS|%s|ids=%s"%(HOST,pool_ids))
-# lane, then most-unblocking first, then priority, then stable id
-pool.sort(key=lambda x:(x[0],-x[5],x[1],x[2]))
+# Live-impact work preempts ordinary work. Lane remains the next key, so
+# independently healthy lanes continue.
+pool.sort(key=lambda x:(x[6],x[0],-x[5],x[1],x[2]))
+for cid, finding in sorted(_live_priorities.items()):
+    log(d, "LIVE_IMPACT_PRIORITY|%s|card=%s finding=%s class=%s "
+        "evidence_sha256=%s decision=preempt" %
+        (HOST, cid, finding["finding_id"], finding["finding_class"],
+         finding["evidence_sha256"]))
+if _live_rejected:
+    bounded, omitted = _bounded_ids(_live_rejected)
+    log(d,"LIVE_IMPACT_REJECTED|%s|cards=%s omitted=%d decision=ordinary-priority"%
+        (HOST,bounded,omitted))
 lc={0:0,1:0,2:0}
 for x in pool: lc[x[0]]+=1
 top=pool[0][5] if pool else 0
@@ -3731,7 +3810,7 @@ if not picks:
 
 raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
-for _LANE,(_,_,cid,core,_labels,_nb) in picks:
+for _LANE,(_,_,cid,core,_labels,_nb,_live_rank) in picks:
     ac="\n".join("  %d. %s"%(i+1,x) for i,x in enumerate(core.get("acceptance_criteria") or []))
     # PREFIX CACHE ORDERING. vLLM caches on a shared PROMPT PREFIX. This brief
     # used to open with the card id and the card body, so every request diverged
