@@ -262,6 +262,53 @@ def test_sensitive_category_requires_explicit_dispatch_approval() -> None:
     assert namespace["_claimability_reason"](approved, state) == "claimable"
 
 
+def test_refreshed_description_criteria_and_review_links_are_folded() -> None:
+    namespace = _load_claimability()
+    core = {
+        **_core("review01", labels=["review"]),
+        "description": "stale description",
+        "acceptance_criteria": ["stale criterion"],
+    }
+    digest = "a" * 64
+    events = [
+        _event(
+            "2026-09-03T01:00:00Z",
+            "jarvis",
+            "describe",
+            description="refreshed description",
+        ),
+        _event(
+            "2026-09-03T01:01:00Z",
+            "jarvis",
+            "amend_criteria",
+            criteria=["refreshed criterion"],
+        ),
+        _event(
+            "2026-09-03T01:02:00Z",
+            "jarvis",
+            "link",
+            link_key="producer_identity",
+            link_value="producer-new",
+        ),
+        _event(
+            "2026-09-03T01:03:00Z",
+            "jarvis",
+            "link",
+            link_key="candidate_evidence_sha256",
+            link_value=digest,
+        ),
+    ]
+
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+
+    assert state["description"] == "refreshed description"
+    assert state["acceptance_criteria"] == ["refreshed criterion"]
+    assert state["links"] == {
+        "producer_identity": "producer-new",
+        "candidate_evidence_sha256": digest,
+    }
+
+
 def test_malformed_lifecycle_fails_closed_with_reason() -> None:
     namespace = _load_claimability()
 
