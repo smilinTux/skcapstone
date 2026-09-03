@@ -163,7 +163,9 @@ class TestLLMBridge:
             tag_rules=[],
         )
         config = ConsciousnessConfig(fallback_chain=["ollama", "passthrough"])
-        bridge = LLMBridge(config, router_config=router_cfg, fallback_tracker=FallbackTracker(root=tmp_path))
+        bridge = LLMBridge(
+            config, router_config=router_cfg, fallback_tracker=FallbackTracker(root=tmp_path)
+        )
         # ollama is AVAILABLE (but broken) - this is what the old cascade walked
         # into instead of reaching passthrough.
         bridge._available = {k: False for k in bridge._available}
@@ -205,7 +207,9 @@ class TestLLMBridge:
             tag_rules=[],
         )
         config = ConsciousnessConfig(fallback_chain=["ollama", "passthrough"])
-        bridge = LLMBridge(config, router_config=router_cfg, fallback_tracker=FallbackTracker(root=tmp_path))
+        bridge = LLMBridge(
+            config, router_config=router_cfg, fallback_tracker=FallbackTracker(root=tmp_path)
+        )
         # All backends unavailable except passthrough
         bridge._available = {k: False for k in bridge._available}
         bridge._available["passthrough"] = True

@@ -265,6 +265,7 @@ class TestWriterPartitioning:
     def test_events_from_all_writers_come_back_newest_first(self, tmp_path):
         a = FallbackTracker(root=tmp_path, agent="lumina", node="node-a")
         b = FallbackTracker(root=tmp_path, agent="opus", node="node-b")
+
         def at(reason, stamp):
             evt = _event(reason=reason)
             return FallbackEvent(**{**evt.model_dump(), "timestamp": stamp})

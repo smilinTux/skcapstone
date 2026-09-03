@@ -2326,9 +2326,7 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
 
                         moved = migrate_legacy_fallbacks(path, home / "fallbacks")
                         action = f"Migrated {moved} row(s) of {label} to per-writer files"
-                    results.append(
-                        FixResult(check_name=check.name, success=True, action=action)
-                    )
+                    results.append(FixResult(check_name=check.name, success=True, action=action))
                 except Exception as exc:  # noqa: BLE001 - report, never abort the pass
                     results.append(
                         FixResult(

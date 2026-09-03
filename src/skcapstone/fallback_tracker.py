@@ -62,8 +62,10 @@ def writer_name(agent: str | None = None, node: str | None = None) -> str:
     Mirrors the ITIL/activity convention: a bare ``<agent>`` is forbidden,
     because two nodes running the same agent would then share a file.
     """
-    return f"{_segment(agent or active_agent_name(), 'unknown-agent')}" \
-           f"@{_segment(node or socket.gethostname(), 'unknown-node')}"
+    return (
+        f"{_segment(agent or active_agent_name(), 'unknown-agent')}"
+        f"@{_segment(node or socket.gethostname(), 'unknown-node')}"
+    )
 
 
 class FallbackEvent(BaseModel):
@@ -197,7 +199,9 @@ class FallbackTracker:
             count = 0
             for path in self._writer_files():
                 try:
-                    count += sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+                    count += sum(
+                        1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+                    )
                     path.unlink()
                 except OSError:
                     continue
@@ -235,7 +239,9 @@ class FallbackTracker:
         """Drop the oldest rows from this writer's file only."""
         path = self.path
         try:
-            lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            lines = [
+                line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+            ]
         except OSError:
             return
         if len(lines) <= self._max_events:
