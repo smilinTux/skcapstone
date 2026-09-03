@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import SHARED_ROOT
+from .agent_projection import display_state
 from .coordination import Board
 from .discovery import discover_all
 from .memory_engine import list_memories
@@ -122,7 +123,9 @@ def _gather_board(home: Path) -> dict[str, Any]:
             "agents": [
                 {
                     "name": a.agent,
-                    "state": a.state.value,
+                    "state": display_state(a),
+                    "recorded_state": a.state.value,
+                    "last_seen": a.last_seen,
                     "current_task": a.current_task,
                 }
                 for a in agents

@@ -114,13 +114,24 @@ def _review_assignment(cid, core, labels, reviewer):
     """Return Link's governed reviewer and recommendation for a review card."""
     if "review" not in {str(label).strip().lower() for label in labels}:
         return reviewer, None, None
-    description = str(core.get("description") or "")
-    producer = re.search(r"Producer identity:\s*([^.]*)\.", description)
-    evidence = re.search(r"sha256=([0-9a-f]{64})(?:\.|\s|$)", description)
-    if not producer or not producer.group(1).strip() or not evidence:
-        raise BoundaryError("review card lacks producer identity or candidate evidence hash")
+    links = core.get("links") if isinstance(core.get("links"), dict) else {}
+    typed_producer = links.get("producer_identity")
+    typed_evidence = links.get("candidate_evidence_sha256")
+    if typed_producer is not None or typed_evidence is not None:
+        producer = str(typed_producer or "").strip()
+        evidence = str(typed_evidence or "").strip().lower()
+        if not producer or not re.fullmatch(r"[0-9a-f]{64}", evidence):
+            raise BoundaryError("review card has incomplete or malformed typed metadata")
+    else:
+        description = str(core.get("description") or "")
+        producer_match = re.search(r"Producer identity:\s*([^.]*)\.", description)
+        evidence_match = re.search(r"sha256=([0-9a-f]{64})(?:\.|\s|$)", description)
+        if not producer_match or not producer_match.group(1).strip() or not evidence_match:
+            raise BoundaryError("review card lacks producer identity or candidate evidence hash")
+        producer = producer_match.group(1).strip()
+        evidence = evidence_match.group(1)
     recommendation_id = "link-review-" + hashlib.sha256(
-        (cid + "\0" + reviewer + "\0" + evidence.group(1)).encode()
+        (cid + "\0" + reviewer + "\0" + evidence).encode()
     ).hexdigest()[:32]
     observed_process = _card_process_snapshot(cid)
     if observed_process["sessions"]:
@@ -129,10 +140,10 @@ def _review_assignment(cid, core, labels, reviewer):
         Path(HOME) / ".skcapstone",
         card_id=cid,
         recommendation_id=recommendation_id,
-        author=producer.group(1).strip(),
+        author=producer,
         candidates=[reviewer],
         observed_process=observed_process,
-        evidence_sha256=evidence.group(1),
+        evidence_sha256=evidence,
     )
     handoff = authorize_review_launch(
         Path(HOME) / ".skcapstone",
@@ -625,7 +636,7 @@ _CATEGORY_OPT_IN = "dispatch-approved"
 _OVERLAY_ACTIONS = {
     "move": "move", "assign": "assign", "unassign": "unassign",
     "add_label": "add_label", "remove_label": "remove_label",
-    "describe": "describe",
+    "describe": "describe", "amend_criteria": "amend_criteria", "link": "link",
 }
 _claim_rows = {}
 _legacy_claim_rows = None
@@ -716,6 +727,11 @@ def _fold_claimability(core, rows):
         "status": "backlog", "owner": None, "claim_revision": None,
         "archived": False, "voided": False,
         "title": str(core.get("title") or ""),
+        "description": str(core.get("description") or ""),
+        "acceptance_criteria": [
+            str(x) for x in (core.get("acceptance_criteria") or [])
+        ],
+        "links": {},
         "labels": [str(x) for x in (core.get("initial_labels") or [])],
         "dependencies": [str(x) for x in (core.get("dependencies") or [])],
     }
@@ -775,8 +791,25 @@ def _fold_claimability(core, rows):
         elif action == "remove_label":
             label = event.get("label")
             state["labels"] = [x for x in state["labels"] if x != label]
-        elif action == "describe" and event.get("title") is not None:
-            state["title"] = str(event.get("title"))
+        elif action == "describe":
+            if event.get("title") is not None:
+                state["title"] = str(event.get("title"))
+            if event.get("description") is not None:
+                state["description"] = str(event.get("description"))
+        elif action == "amend_criteria":
+            criteria = event.get("criteria")
+            if not isinstance(criteria, list) or not criteria or not all(
+                isinstance(value, str) and value.strip() for value in criteria
+            ):
+                raise ValueError("amended acceptance criteria are malformed")
+            state["acceptance_criteria"] = list(criteria)
+        elif action == "link" and event.get("link_key") in {
+            "producer_identity", "candidate_evidence_sha256"
+        }:
+            value = event.get("link_value")
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("typed review metadata is malformed")
+            state["links"][str(event["link_key"])] = value.strip()
         elif action in ("add_dependency", "remove_dependency"):
             dep = _dependency_value(event)
             if action == "add_dependency" and dep and dep not in state["dependencies"]:
@@ -790,6 +823,9 @@ def _claimability_reason(core, state):
     """Return the exact reason Board or scheduler policy rejects this state."""
     folded_core = dict(core)
     folded_core["title"] = state["title"]
+    folded_core["description"] = state["description"]
+    folded_core["acceptance_criteria"] = state["acceptance_criteria"]
+    folded_core["links"] = dict(state["links"])
     labels = state["labels"]
     if not _coord_task_claimable(core):
         return "non-task"
@@ -839,6 +875,9 @@ def authoritative_claimability(cid, core=None, fresh=False):
 
     folded_core = dict(core)
     folded_core["title"] = state["title"]
+    folded_core["description"] = state["description"]
+    folded_core["acceptance_criteria"] = state["acceptance_criteria"]
+    folded_core["links"] = dict(state["links"])
     labels = state["labels"]
     reason = _claimability_reason(core, state)
     state.update({"claimable": reason == "claimable", "reason": reason,
