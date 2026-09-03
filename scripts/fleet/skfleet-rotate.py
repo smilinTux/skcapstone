@@ -482,8 +482,12 @@ def _record_live_no_progress(cid, worker, path, age):
     """Record one bounded escalation without converting quietness into death."""
     try:
         folded = CardStore(Path(HOME) / ".skcapstone").fold(cid)
-        owner = str(folded.get("owner") or "")
-        revision = str((folded.get("meta") or {}).get("_claim_revision") or "")
+        if isinstance(folded, dict):
+            owner, meta = folded.get("owner"), folded.get("meta")
+        else:
+            owner, meta = getattr(folded, "owner", None), getattr(folded, "meta", None)
+        owner = str(owner or "")
+        revision = str((meta or {}).get("_claim_revision") or "")
     except Exception:
         owner = revision = ""
     if not owner or not revision:
