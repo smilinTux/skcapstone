@@ -72,21 +72,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card 8c52afcb: level-routed GLM models and eight-connection estate
+  ceiling.** `skfleet-rotate.py` now selects the GLM model by the size marker
+  in the card title: S and M route to glm-4.6, L to glm-4.7, XL to glm-5.3,
+  and titles without a size marker keep the lane default glm-4.6. Per-host
+  overrides use the `SKFLEET_GLM_MODEL_S/_M/_L/_XL` environment variables.
+  The same deploy also carries the review-lane replay-fence and digest
+  str-rows repair from card 244c215a, which the three GLM hosts were still
+  running without. `skworld-digest.py` skips non-object JSONL rows that used
+  to crash the fleet digest sort key, and `skfleet-rotate.py` now consumes a
+  review-launch recommendation only while its claim revision is the card's
+  live claim generation.
+
 - **Card 0747c8eb: release orphaned authoritative claims.** The supported
   revision-fenced release command now uses the CardStore claim as authority
   when a stale compatibility agent projection has already dropped the task,
   then reconciles that projection. Exact replay remains idempotent and stale
   owner or revision attempts fail closed.
-
-- **Card 3b227de2: isolate fleet workers from the rotation oneshot cgroup.** New
-  workers launch as collected transient user services while slot counting and
-  liveness continue to include migration-era tmux workers. Refreshed onto main
-  by card 280e3c16.
-
-- **Card fc2d87bf: prevent resurrection of voided cards.** Void now verifies
-  that archival reached both legacy and CardStore projections before returning,
-  and an append-only repair tool re-archives historical move-after-void cards
-  without changing their original writer, timestamp, or reason.
 
 - **Card 168d5a4f: fence fleet claim release by exact generation.** The fast
   reaper now accepts exactly one strict launcher record for the current card,
