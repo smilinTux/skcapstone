@@ -41,6 +41,7 @@ def _scheduler_namespace() -> dict[str, object]:
         "_LOGDIR",
         "_WORKER_EXIT_DIR",
         "_ROTATION_EVID",
+        "_TRANSPORT_FAILURE_CLASSES",
         "_TRANSPORT_RETRY_COOLDOWN_S",
     }
     nodes = []
@@ -75,6 +76,11 @@ def _scheduler_namespace() -> dict[str, object]:
 )
 def test_known_transport_failures_are_classified(diagnostic: str, kind: str) -> None:
     assert _wrapper().classify_transport_failure(diagnostic) == kind
+
+
+def test_scheduler_transport_classes_match_wrapper_exactly() -> None:
+    namespace = _scheduler_namespace()
+    assert namespace["_TRANSPORT_FAILURE_CLASSES"] == frozenset(_wrapper().TRANSPORT_PATTERNS)
 
 
 def test_zero_stdout_exit_records_bounded_redacted_claim_evidence(tmp_path: Path) -> None:
@@ -232,7 +238,49 @@ def test_three_shared_transport_failures_do_not_consume_attempts(tmp_path: Path)
     assert namespace["unclaimable"](card) is False
 
 
-def test_shared_attempts_require_exact_claim_scoped_transport_evidence(
+@pytest.mark.parametrize(
+    "failure",
+    ["unknown_transport", "", None, {"rate_limited": True}, ["rate_limited"]],
+)
+def test_shared_attempts_count_noncanonical_transport_evidence(
+    tmp_path: Path, failure: object
+) -> None:
+    namespace = _scheduler_namespace()
+    card = "deadbeef"
+    evidence = tmp_path / "worker-exits"
+    rotations = tmp_path / "rotations"
+    evidence.mkdir()
+    rotation = rotations / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    rotation.mkdir(parents=True)
+    (rotation / "actions.log").write_text(
+        f"LAUNCHED|chiap01|codex-auto-{card}|{card}|lane=codex|model=model|"
+        "owner=owner-a|claim_revision=revision-a\n",
+        encoding="utf-8",
+    )
+    (evidence / f"{card}-wrong.json").write_text(
+        json.dumps(
+            {
+                "card_id": card,
+                "claim_revision": "revision-a",
+                "host": "chiap01",
+                "owner": "owner-a",
+                "transport_failure": failure,
+            }
+        ),
+        encoding="utf-8",
+    )
+    namespace.update(
+        {
+            "_WORKER_EXIT_DIR": str(evidence),
+            "_ROTATION_EVID": str(rotations),
+            "_LAUNCH_TTL_H": 6,
+            "_shared_launch_cache": None,
+        }
+    )
+    assert namespace["_shared_launch_attempts"](card) == 1
+
+
+def test_shared_attempts_count_transport_evidence_for_another_claim(
     tmp_path: Path,
 ) -> None:
     namespace = _scheduler_namespace()

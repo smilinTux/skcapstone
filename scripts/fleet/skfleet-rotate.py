@@ -1794,6 +1794,13 @@ def _reporting_launches(cid):
 
 _ROTATION_EVID = os.path.join(HOME, ".skcapstone/evidence/fleet-rotation")
 _shared_launch_cache = None
+_TRANSPORT_FAILURE_CLASSES = frozenset({
+    "rate_limited",
+    "model_owner_backend_down",
+    "backend_claims_quarantined",
+    "invalid_upstream_tool_calls",
+    "connection_failure",
+})
 
 def _transport_failure_claims():
     """Return exact claim generations that failed before agent work began."""
@@ -1809,7 +1816,12 @@ def _transport_failure_claims():
             str(event.get("owner") or ""),
             str(event.get("claim_revision") or ""),
         )
-        if event.get("transport_failure") and all(claim):
+        failure = event.get("transport_failure")
+        if (
+            isinstance(failure, str)
+            and failure in _TRANSPORT_FAILURE_CLASSES
+            and all(claim)
+        ):
             failures.add(claim)
     return failures
 
