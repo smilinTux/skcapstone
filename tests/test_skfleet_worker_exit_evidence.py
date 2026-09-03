@@ -30,6 +30,11 @@ def _scheduler_namespace() -> dict[str, object]:
         "_latest_transport_failure_epoch",
         "_transport_failure_logs",
         "_transport_failure_claims",
+        "_structured_transport_failure",
+        "_launch_epoch_from_log",
+        "_launch_receipts",
+        "_card_mutated_during_report",
+        "_local_launch_evidence",
         "_transport_retry_held",
         "_reporting_launches",
         "_shared_launch_attempts",
@@ -42,6 +47,7 @@ def _scheduler_namespace() -> dict[str, object]:
         "_WORKER_EXIT_DIR",
         "_ROTATION_EVID",
         "_TRANSPORT_FAILURE_CLASSES",
+        "_GATEWAY_ERROR_RE",
         "_TRANSPORT_RETRY_COOLDOWN_S",
     }
     nodes = []
@@ -53,11 +59,14 @@ def _scheduler_namespace() -> dict[str, object]:
             if names & constants:
                 nodes.append(node)
     namespace = {
+        "datetime": __import__("datetime"),
         "glob": __import__("glob"),
         "json": json,
         "os": os,
+        "re": __import__("re"),
         "time": time,
         "HOME": "/unused",
+        "HOST": "chiap08",
         "_ts_epoch": lambda value: time.mktime(time.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")),
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)

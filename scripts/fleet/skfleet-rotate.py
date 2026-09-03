@@ -1737,6 +1737,167 @@ _WORKER_EXIT_DIR = os.path.join(HOME, ".skcapstone/evidence/fleet-worker-exits")
 _TRANSPORT_RETRY_COOLDOWN_S = float(
     os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
 )
+_GATEWAY_ERROR_RE = re.compile(r"^\s*(400|404|408|429|502|503|504):?\s*(\{.*\})\s*$", re.S)
+
+def _structured_transport_failure(text):
+    """Classify an entire legacy stdout log only when it is pre-agent failure."""
+    value = str(text or "").strip()
+    if value == "Connection error.":
+        return "connection_failure"
+    match = _GATEWAY_ERROR_RE.fullmatch(value)
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(2))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("message"), str):
+        return None
+    status = int(match.group(1))
+    code = payload.get("code")
+    kind = payload.get("type")
+    if status == 400 and code in (400, "400") and "model is not supported" in payload["message"]:
+        return "unsupported_model_route"
+    if status == 404 and code in (404, "404", "not_found", "route_not_found"):
+        return "gateway_404"
+    if status == 429 and code in (429, "429", "rate_limit", "cooldown"):
+        return "rate_limited"
+    if status == 502 and code == "invalid_upstream_tool_calls":
+        return "invalid_upstream_tool_calls"
+    if status == 503 and kind in {"model_owner_backend_down", "model_claim_quarantined"}:
+        return (
+            "model_owner_backend_down"
+            if kind == "model_owner_backend_down"
+            else "backend_claims_quarantined"
+        )
+    if status in (408, 502, 504) and code in {
+        "first_token_timeout", "gateway_timeout", "timeout_before_first_token", "upstream_timeout",
+    }:
+        return "first_token_timeout"
+    return None
+
+def _is_substantive_worker_report(text, card_mutated):
+    """Fail closed unless the complete output proves a mechanical non-attempt."""
+    return bool(card_mutated or (text and not _structured_transport_failure(text)))
+
+def _launch_epoch_from_log(cid, filename):
+    """Parse the immutable UTC launch stamp embedded in a worker log name."""
+    try:
+        stamp = filename[len(cid) + 1:-4]
+        return datetime.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=datetime.timezone.utc
+        ).timestamp()
+    except (ValueError, TypeError):
+        return 0
+
+def _card_mutated_during_report(cid, started, finished):
+    """Return whether substantive card state changed during this launch."""
+    ignored = {
+        "claim",
+        "release_claim",
+        "mero_observation",
+        "review_assignment_launch",
+        "review_assignment_recommendation",
+    }
+    rows = globals().get("event_rows")
+    if not callable(rows):
+        return False
+    return any(
+        started <= _ts_epoch(event.get("ts")) <= finished + 1
+        and event.get("action") not in ignored
+        for event in rows(cid)
+    )
+
+
+def _launch_receipts(cid):
+    """Return this host's exact launch identities keyed by launch epoch."""
+    receipts = {}
+    cutoff = time.time() - _LAUNCH_TTL_H * 3600
+    try:
+        stamps = os.listdir(_ROTATION_EVID)
+    except OSError:
+        return receipts
+    for stamp in stamps:
+        started = _launch_epoch_from_log(cid, "%s-%s.log" % (cid, stamp))
+        if not started or started < cutoff:
+            continue
+        try:
+            lines = open(
+                os.path.join(_ROTATION_EVID, stamp, "actions.log"),
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError:
+            continue
+        with lines:
+            for line in lines:
+                parts = line.strip().split("|")
+                if parts[:1] != ["LAUNCHED"] or len(parts) != 8:
+                    continue
+                fields = dict(part.split("=", 1) for part in parts[4:] if "=" in part)
+                if parts[1] != HOST or parts[3] != cid:
+                    continue
+                owner = fields.get("owner", "")
+                revision = fields.get("claim_revision", "")
+                if owner and revision:
+                    receipts[started] = (owner, revision)
+    return receipts
+
+
+def _local_launch_evidence(cid):
+    """Return fenced logs seen, chargeable attempts, and latest mechanical exit.
+
+    Every local log must join an exact synchronized host, owner, and claim
+    revision receipt. The first mechanical generation is the original attempt;
+    one later mechanical generation is the sole free retry. Further mechanical
+    generations are chargeable, preventing an unlimited cooldown loop.
+    """
+    seen = reports = 0
+    latest = 0.0
+    mechanical_generations = set()
+    receipts = _launch_receipts(cid)
+    transport_logs = (
+        _transport_failure_logs(cid)
+        if "_transport_failure_logs" in globals()
+        else set()
+    )
+    cutoff = time.time() - _LAUNCH_TTL_H * 3600
+    try:
+        filenames = os.listdir(_LOGDIR)
+    except OSError:
+        return seen, reports, latest
+    for filename in filenames:
+        if not filename.startswith(cid + "-") or not filename.endswith(".log"):
+            continue
+        started = _launch_epoch_from_log(cid, filename)
+        if not started:
+            continue
+        identity = receipts.get(started)
+        if not identity:
+            reports += 1
+            continue
+        path = os.path.join(_LOGDIR, filename)
+        try:
+            stat = os.stat(path)
+            if stat.st_mtime < cutoff:
+                continue
+            text = open(path, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        seen += 1
+        mechanical = (
+            not text
+            or filename in transport_logs
+            or _structured_transport_failure(text)
+        )
+        if mechanical and not _card_mutated_during_report(cid, started, stat.st_mtime):
+            latest = max(latest, stat.st_mtime)
+            mechanical_generations.add(identity)
+        else:
+            reports += 1
+    if len(mechanical_generations) >= 2:
+        reports = max(reports, 3)
+    return seen, reports, latest
 
 def _latest_transport_failure_epoch(cid):
     """Return the latest claim-scoped pre-agent transport failure time."""
@@ -1748,7 +1909,7 @@ def _latest_transport_failure_epoch(cid):
                 latest = max(latest, _ts_epoch(event.get("attempted_at")))
         except (OSError, TypeError, ValueError):
             continue
-    return latest
+    return max(latest, _local_launch_evidence(cid)[2])
 
 def _transport_failure_logs(cid):
     """Return local stdout logs classified as pre-agent transport failures."""
@@ -1769,6 +1930,12 @@ def _transport_retry_held(cid):
 
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
+    local_evidence = globals().get("_local_launch_evidence")
+    local_seen, local_reports, _latest = (
+        local_evidence(cid) if callable(local_evidence) else (0, 0, 0)
+    )
+    if local_seen:
+        return local_reports
     n = 0
     transport_logs = _transport_failure_logs(cid)
     cutoff = time.time() - _LAUNCH_TTL_H * 3600
@@ -1896,7 +2063,13 @@ def launch_attempts(cid):
     sees the shared count, so no card is banned on one host and workable on
     another purely because of where its logs happen to live.
     """
-    return max(_reporting_launches(cid), _shared_launch_attempts(cid))
+    local_evidence = globals().get("_local_launch_evidence")
+    local_seen, local_reports, _latest = (
+        local_evidence(cid) if callable(local_evidence) else (0, 0, 0)
+    )
+    if local_seen:
+        return local_reports
+    return _shared_launch_attempts(cid)
 
 def unclaimable(cid):
     return launch_attempts(cid) >= 2 and "claim" not in acts(cid)
