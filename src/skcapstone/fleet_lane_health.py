@@ -184,7 +184,7 @@ def acquire_lane_snapshot(
         queue, errors = {}, [*errors, "queue:stale"]
     entries = []
     for lane in lanes:
-        domains = capacity_domains.get(str(lane["name"]), ())
+        domains = lane.get("capacity_domains", capacity_domains.get(str(lane["name"]), ()))
         states = [_domain_state(health, queue, domain, observed_at) for domain in domains]
         entries.append(
             {

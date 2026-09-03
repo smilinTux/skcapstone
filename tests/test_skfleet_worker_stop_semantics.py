@@ -32,7 +32,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
-LANES = ("codex", "glm", "qwen", "escalate")
+LANES = ("codex", "glm", "qwen", "kimi", "escalate")
 
 
 def _functions(*names: str) -> dict[str, object]:
@@ -45,7 +45,7 @@ def _functions(*names: str) -> dict[str, object]:
     assert set(nodes) == set(names), f"missing functions: {set(names) - set(nodes)}"
     namespace: dict[str, object] = {
         "_WORKER_UNIT_RE": re.compile(
-            r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
+            r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
         ),
         "re": re,
     }

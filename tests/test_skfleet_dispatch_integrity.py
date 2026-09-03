@@ -270,6 +270,6 @@ def test_existing_holds_reservations_capacity_and_cadence_remain() -> None:
     assert 'MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))' in rotate
     assert 'remaining={lane["name"]:lane["free"] for lane in LANES}' in rotate
     assert "off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0" in rotate
-    assert '_LANE_RANK={"qwen":0,"glm":1,"codex":2,"escalate":3}' in rotate
+    assert '_LANE_RANK={"qwen":0,"glm":1,"kimi":2,"codex":3,"escalate":4}' in rotate
     assert "chiap01 chiap02 chiap03 chiap04 chiap08" in watch
     assert "sleep 300" in watch

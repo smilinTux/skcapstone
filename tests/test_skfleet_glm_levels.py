@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import ast
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -152,6 +151,19 @@ def test_glm_levels_default_table_is_exact() -> None:
         "L": "glm-4.7",
         "XL": "glm-5.3",
     }
+
+
+def test_kimi_models_bind_to_independent_capacity_families() -> None:
+    namespace = _rotate_namespace(
+        {
+            "_CAPACITY_DOMAINS",
+            "_KIMI_K3_CAPACITY_DOMAINS",
+            "_capacity_domains_for",
+        }
+    )
+    assert namespace["_capacity_domains_for"]("kimi", "kimi-for-coding") == ("kimi-coding",)
+    assert namespace["_capacity_domains_for"]("kimi", "k3") == ("kimi-k3",)
+    assert namespace["_capacity_domains_for"]("kimi", "k3-256k") == ("kimi-k3",)
 
 
 def test_launch_receipt_fences_only_its_live_claim_generation() -> None:

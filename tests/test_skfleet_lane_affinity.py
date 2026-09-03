@@ -20,6 +20,7 @@ def _load_lane_helpers() -> dict[str, object]:
         "qwen_first_exclusive",
         "lane_compatibility",
         "select_compatible_lane",
+        "_kimi_model_for",
     }
     body = [
         node
@@ -32,6 +33,7 @@ def _load_lane_helpers() -> dict[str, object]:
                 in {
                     "_LANE_ONLY_LABELS",
                     "_SEMANTIC_COMPLETE_ACTION",
+                    "_GLM_SIZE_RE",
                 }
                 for target in node.targets
             )
@@ -68,7 +70,7 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
         (["glm-only"], False, (("glm",), "required-lane:glm")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
-        ([], False, (("qwen", "glm", "codex"), "ordinary")),
+        ([], False, (("qwen", "glm", "kimi", "codex"), "ordinary")),
     ],
 )
 def test_exact_lane_compatibility(
@@ -164,7 +166,7 @@ def test_qwen_first_is_exclusive_until_hash_bound_semantic_completion() -> None:
     ]
     assert namespace["qwen_first_exclusive"]("04acd4b0", labels) is False
     assert namespace["lane_compatibility"](labels, False) == (
-        ("qwen", "glm", "codex"),
+        ("qwen", "glm", "kimi", "codex"),
         "ordinary",
     )
 
@@ -173,14 +175,30 @@ def test_qwen_suitable_is_nonexclusive() -> None:
     namespace = _load_lane_helpers()
     assert namespace["qwen_first_exclusive"]("suitable", ["qwen-suitable"]) is False
     assert namespace["lane_compatibility"](["qwen-suitable"], False) == (
-        ("qwen", "glm", "codex"),
+        ("qwen", "glm", "kimi", "codex"),
         "ordinary",
     )
 
 
+@pytest.mark.parametrize("size", ["S", "M", "L"])
+def test_kimi_standard_sizes_use_lane_default(size: str) -> None:
+    namespace = _load_lane_helpers()
+    assert namespace["_kimi_model_for"]({"title": f"[{size}] fixture"}) is None
+
+
+def test_kimi_xl_uses_k3_and_target_defaults_to_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    namespace = _load_lane_helpers()
+    assert namespace["_kimi_model_for"]({"title": "[XL] fixture"}) == "k3"
+    monkeypatch.setenv("SKFLEET_KIMI_MODEL_XL", "test-k3-override")
+    assert namespace["_kimi_model_for"]({"title": "[XL] fixture"}) == "test-k3-override"
+    source = ROTATE.read_text(encoding="utf-8")
+    assert 'os.environ.get("SKFLEET_KIMI_MODEL","kimi-for-coding")' in source
+    assert 'os.environ.get("SKFLEET_KIMI_TARGET","0")' in source
+
+
 def test_qwen_gets_first_refusal_only_when_category_allows_it() -> None:
     namespace = _load_lane_helpers()
-    order = ["qwen", "glm", "codex", "escalate"]
+    order = ["qwen", "glm", "kimi", "codex", "escalate"]
     remaining = {"qwen": 1, "glm": 1, "codex": 1, "escalate": 1}
 
     selected, reason = namespace["select_compatible_lane"]([], False, order, remaining, True)

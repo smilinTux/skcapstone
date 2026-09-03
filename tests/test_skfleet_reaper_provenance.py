@@ -415,9 +415,9 @@ def test_malformed_or_duplicate_launch_evidence_fails_closed(
     assert any("provenance=ephemeral" in message for message in messages)
 
 
-@pytest.mark.parametrize("lane", ["codex", "qwen"])
+@pytest.mark.parametrize("lane", ["codex", "qwen", "kimi"])
 def test_launcher_owner_naming_has_exact_provenance(tmp_path: Path, lane: str) -> None:
-    """The launch lookup accepts the fleet's Codex and Qwen owner names."""
+    """The launch lookup accepts every governed fleet owner name."""
     owner = f"pi-{lane}-chiap02-deadbeef"
     namespace, released, messages = _reaper_fixture(
         tmp_path,

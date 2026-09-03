@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Cards 6134901e and fa64c6bb: govern the Kimi fleet overflow lane.** Kimi
+  workers use the same bounded Pi tools, exact managed-service identities,
+  monitoring, claim reaping, and launch-provenance checks as existing lanes.
+  Same-cycle admission independently binds coding models to `kimi-coding` and
+  XL `k3` work to `kimi-k3`, while the default Kimi target remains zero.
+
 - **Card 46c6526d: fail closed before fleet lane claims.** Fleet selection and
   the immediate preclaim gate consume a fresh snapshot that the selector creates
   by fetching SKGateway health and queue state once in the same cycle. The

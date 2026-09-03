@@ -200,6 +200,40 @@ def test_partial_backend_outage_preserves_independent_healthy_lanes(tmp_path: Pa
     )
 
 
+def test_lane_model_can_override_its_capacity_family(tmp_path: Path) -> None:
+    documents = _documents()
+    documents["/health"]["backends"]["kimi-k3"] = {
+        "status": "up",
+        "observed": True,
+        "quarantined": False,
+        "lastCheck": 2_000_000_000_000,
+    }
+    documents["/queue"]["backends"]["kimi-k3"] = {
+        "capacityDomain": "kimi-k3",
+        "max": 14,
+    }
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT,
+        [{"name": "kimi", "model": "k3", "capacity_domains": ("kimi-k3",)}],
+        {"kimi": ("kimi-coding",)},
+        tmp_path / "health.json",
+        "cycle-1",
+        opener=_opener(documents, []),
+        revision_resolver=lambda endpoint: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    assert lane_health(
+        snapshot,
+        "kimi",
+        "k3",
+        cycle_id="cycle-1",
+        endpoint=ENDPOINT,
+        capacity_domains=("kimi-k3",),
+        active_revision=REVISION,
+        now=2_000_000_001.0,
+    ) == (True, "healthy")
+
+
 def test_endpoint_failure_and_revision_failure_seal_fail_closed_evidence(tmp_path: Path) -> None:
     documents = _documents()
     documents["/health"] = OSError("down")  # type: ignore[assignment]

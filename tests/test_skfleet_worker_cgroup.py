@@ -22,7 +22,7 @@ def _load(*names: str) -> dict[str, object]:
     assert set(nodes) == set(names)
     namespace: dict[str, object] = {
         "_WORKER_UNIT_RE": re.compile(
-            r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
+            r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
         ),
         "re": re,
     }
@@ -54,6 +54,22 @@ def test_launch_command_creates_a_collected_user_service() -> None:
     ]
 
 
+def test_kimi_exact_claim_path_reaches_the_systemd_boundary() -> None:
+    functions = _load("_worker_unit_name", "_worker_launch_command")
+    unit = functions["_worker_unit_name"]("kimi", "3b227de2")
+    command = functions["_worker_launch_command"](unit, "/workspace", "worker")
+    source = ROTATE.read_text(encoding="utf-8")
+
+    assert command[0] == "systemd-run"
+    assert command[command.index("--unit") + 1] == "skfleet-worker-kimi-3b227de2.service"
+    assert (
+        source.index("claimed_owner,_claimed_at,claimed_revision=")
+        < source.index('unit=_worker_unit_name(_LANE["name"],cid)')
+        < source.index("subprocess.run(_worker_launch_command(unit,workspace,inner)")
+    )
+    assert "pi_tools=pi_tool_allowlist(_labels)" in source
+
+
 @pytest.mark.parametrize(
     ("lane", "card"),
     [("bad", "3b227de2"), ("codex", "../../bad"), ("codex", "ABCDEF12")],
@@ -70,11 +86,13 @@ def test_migration_counts_and_publishes_old_and_new_workers() -> None:
       skfleet-worker-codex-feedface.service loaded active running worker
       unrelated.service loaded active running other
       skfleet-worker-glm-cafebabe.service loaded active running worker
+      skfleet-worker-kimi-1234abcd.service loaded active running worker
     """
     units = functions["_parse_worker_units"](output)
     lanes = [
         {"name": "codex", "prefix": "codex-auto-"},
         {"name": "glm", "prefix": "glm-auto-"},
+        {"name": "kimi", "prefix": "kimi-auto-"},
     ]
     sessions = ["codex-auto-deadbeef", "persistent-pane"]
 
@@ -85,7 +103,11 @@ def test_migration_counts_and_publishes_old_and_new_workers() -> None:
     assert functions["_lane_busy"](lanes[1], sessions, units) == [
         "skfleet-worker-glm-cafebabe.service"
     ]
+    assert functions["_lane_busy"](lanes[2], sessions, units) == [
+        "skfleet-worker-kimi-1234abcd.service"
+    ]
     assert functions["_worker_cards"](sessions, units, lanes) == [
+        "1234abcd",
         "cafebabe",
         "deadbeef",
         "feedface",
