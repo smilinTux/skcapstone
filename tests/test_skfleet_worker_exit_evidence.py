@@ -32,6 +32,7 @@ def _scheduler_namespace() -> dict[str, object]:
         "_transport_failure_claims",
         "_structured_transport_failure",
         "_launch_epoch_from_log",
+        "_launch_receipts",
         "_card_mutated_during_report",
         "_local_launch_evidence",
         "_transport_retry_held",
@@ -65,6 +66,7 @@ def _scheduler_namespace() -> dict[str, object]:
         "re": __import__("re"),
         "time": time,
         "HOME": "/unused",
+        "HOST": "chiap08",
         "_ts_epoch": lambda value: time.mktime(time.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")),
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)

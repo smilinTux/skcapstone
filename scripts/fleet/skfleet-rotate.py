@@ -1798,11 +1798,59 @@ def _card_mutated_during_report(cid, started, finished):
         for event in rows(cid)
     )
 
+
+def _launch_receipts(cid):
+    """Return this host's exact launch identities keyed by launch epoch."""
+    receipts = {}
+    cutoff = time.time() - _LAUNCH_TTL_H * 3600
+    try:
+        stamps = os.listdir(_ROTATION_EVID)
+    except OSError:
+        return receipts
+    for stamp in stamps:
+        started = _launch_epoch_from_log(cid, "%s-%s.log" % (cid, stamp))
+        if not started or started < cutoff:
+            continue
+        try:
+            lines = open(
+                os.path.join(_ROTATION_EVID, stamp, "actions.log"),
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError:
+            continue
+        with lines:
+            for line in lines:
+                parts = line.strip().split("|")
+                if parts[:1] != ["LAUNCHED"] or len(parts) != 8:
+                    continue
+                fields = dict(part.split("=", 1) for part in parts[4:] if "=" in part)
+                if parts[1] != HOST or parts[3] != cid:
+                    continue
+                owner = fields.get("owner", "")
+                revision = fields.get("claim_revision", "")
+                if owner and revision:
+                    receipts[started] = (owner, revision)
+    return receipts
+
+
 def _local_launch_evidence(cid):
-    """Return local logs seen, substantive attempts, and latest mechanical exit."""
+    """Return fenced logs seen, chargeable attempts, and latest mechanical exit.
+
+    Every local log must join an exact synchronized host, owner, and claim
+    revision receipt. The first mechanical generation is the original attempt;
+    one later mechanical generation is the sole free retry. Further mechanical
+    generations are chargeable, preventing an unlimited cooldown loop.
+    """
     seen = reports = 0
     latest = 0.0
-    transport_logs = _transport_failure_logs(cid) if "_transport_failure_logs" in globals() else set()
+    mechanical_generations = set()
+    receipts = _launch_receipts(cid)
+    transport_logs = (
+        _transport_failure_logs(cid)
+        if "_transport_failure_logs" in globals()
+        else set()
+    )
     cutoff = time.time() - _LAUNCH_TTL_H * 3600
     try:
         filenames = os.listdir(_LOGDIR)
@@ -1814,6 +1862,10 @@ def _local_launch_evidence(cid):
         started = _launch_epoch_from_log(cid, filename)
         if not started:
             continue
+        identity = receipts.get(started)
+        if not identity:
+            reports += 1
+            continue
         path = os.path.join(_LOGDIR, filename)
         try:
             stat = os.stat(path)
@@ -1823,11 +1875,18 @@ def _local_launch_evidence(cid):
         except OSError:
             continue
         seen += 1
-        mechanical = not text or filename in transport_logs or _structured_transport_failure(text)
+        mechanical = (
+            not text
+            or filename in transport_logs
+            or _structured_transport_failure(text)
+        )
         if mechanical and not _card_mutated_during_report(cid, started, stat.st_mtime):
             latest = max(latest, stat.st_mtime)
+            mechanical_generations.add(identity)
         else:
             reports += 1
+    if len(mechanical_generations) >= 2:
+        reports = max(reports, 3)
     return seen, reports, latest
 
 def _latest_transport_failure_epoch(cid):

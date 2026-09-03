@@ -19,13 +19,20 @@ FUNCTIONS = {
     "_structured_transport_failure",
     "_is_substantive_worker_report",
     "_launch_epoch_from_log",
+    "_launch_receipts",
     "_latest_transport_failure_epoch",
     "_local_launch_evidence",
     "_reporting_launches",
     "_transport_retry_held",
     "launch_attempts",
 }
-CONSTANTS = {"_LAUNCH_TTL_H", "_LOGDIR", "_TRANSPORT_RETRY_COOLDOWN_S", "_GATEWAY_ERROR_RE"}
+CONSTANTS = {
+    "_GATEWAY_ERROR_RE",
+    "_LAUNCH_TTL_H",
+    "_LOGDIR",
+    "_ROTATION_EVID",
+    "_TRANSPORT_RETRY_COOLDOWN_S",
+}
 
 
 def _namespace() -> dict[str, object]:
@@ -45,6 +52,7 @@ def _namespace() -> dict[str, object]:
         "re": re,
         "time": time,
         "HOME": "/unused",
+        "HOST": "chiap08",
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
     assert FUNCTIONS <= namespace.keys()
@@ -56,9 +64,19 @@ def _namespace() -> dict[str, object]:
     [
         ('404 {"message":"","code":404}', "gateway_404"),
         ('429: {"message":"backend cooldown","code":429}', "rate_limited"),
-        ('400: {"message":"The \'glm-4.6\' model is not supported when using Codex with a ChatGPT account.","code":400}', "unsupported_model_route"),
-        ('503: {"message":"backend unavailable","code":503,"type":"model_owner_backend_down"}', "model_owner_backend_down"),
-        ('503: {"message":"claims quarantined","code":503,"type":"model_claim_quarantined"}', "backend_claims_quarantined"),
+        (
+            '400: {"message":"The \'glm-4.6\' model is not supported when '
+            'using Codex with a ChatGPT account.","code":400}',
+            "unsupported_model_route",
+        ),
+        (
+            '503: {"message":"backend unavailable","code":503,"type":"model_owner_backend_down"}',
+            "model_owner_backend_down",
+        ),
+        (
+            '503: {"message":"claims quarantined","code":503,"type":"model_claim_quarantined"}',
+            "backend_claims_quarantined",
+        ),
         ("Connection error.", "connection_failure"),
         (
             '504: {"message":"timed out before first token",'
@@ -66,8 +84,7 @@ def _namespace() -> dict[str, object]:
             "first_token_timeout",
         ),
         (
-            '502: {"message":"bad tool evidence",'
-            '"code":"invalid_upstream_tool_calls"}',
+            '502: {"message":"bad tool evidence",' '"code":"invalid_upstream_tool_calls"}',
             "invalid_upstream_tool_calls",
         ),
     ],
@@ -117,14 +134,25 @@ def test_transport_log_overrides_shared_launch_receipt(tmp_path: Path) -> None:
     namespace = _namespace()
     card = "deadbeef"
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    (tmp_path / f"{card}-{stamp}.log").write_text(
+    logs = tmp_path / "logs"
+    rotations = tmp_path / "rotations"
+    logs.mkdir()
+    (logs / f"{card}-{stamp}.log").write_text(
         '404: {"message":"gateway route unavailable","code":404}',
+        encoding="utf-8",
+    )
+    rotation = rotations / stamp
+    rotation.mkdir(parents=True)
+    (rotation / "actions.log").write_text(
+        f"LAUNCHED|chiap08|codex-auto-{card}|{card}|lane=codex|model=model|"
+        "owner=owner-a|claim_revision=revision-a\n",
         encoding="utf-8",
     )
     namespace.update(
         {
             "_LAUNCH_TTL_H": 6,
-            "_LOGDIR": str(tmp_path),
+            "_LOGDIR": str(logs),
+            "_ROTATION_EVID": str(rotations),
             "_shared_launch_attempts": lambda _cid: 1,
             "event_rows": lambda _cid: [],
             "_ts_epoch": lambda event_stamp: float(event_stamp or 0),
@@ -139,15 +167,26 @@ def test_mixed_output_and_card_mutation_each_consume_attempt(tmp_path: Path) -> 
     card = "feedface"
     now = time.time()
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now))
-    log = tmp_path / f"{card}-{stamp}.log"
+    logs = tmp_path / "logs"
+    rotations = tmp_path / "rotations"
+    logs.mkdir()
+    log = logs / f"{card}-{stamp}.log"
     log.write_text(
         '429: {"message":"backend cooldown","code":429}\nagent output',
+        encoding="utf-8",
+    )
+    rotation = rotations / stamp
+    rotation.mkdir(parents=True)
+    (rotation / "actions.log").write_text(
+        f"LAUNCHED|chiap08|codex-auto-{card}|{card}|lane=codex|model=model|"
+        "owner=owner-a|claim_revision=revision-a\n",
         encoding="utf-8",
     )
     namespace.update(
         {
             "_LAUNCH_TTL_H": 6,
-            "_LOGDIR": str(tmp_path),
+            "_LOGDIR": str(logs),
+            "_ROTATION_EVID": str(rotations),
             "_shared_launch_attempts": lambda _cid: 1,
             "event_rows": lambda _cid: [],
             "_ts_epoch": lambda event_stamp: float(event_stamp or 0),
@@ -160,3 +199,59 @@ def test_mixed_output_and_card_mutation_each_consume_attempt(tmp_path: Path) -> 
         {"ts": now, "action": "link", "writer": "pi-codex-example"}
     ]
     assert namespace["launch_attempts"](card) == 1
+
+
+def test_local_log_without_exact_owner_revision_receipt_fails_closed(tmp_path: Path) -> None:
+    namespace = _namespace()
+    card = "deadbeef"
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    logs = tmp_path / "logs"
+    rotations = tmp_path / "rotations"
+    logs.mkdir()
+    (logs / f"{card}-{stamp}.log").write_bytes(b"")
+    rotation = rotations / stamp
+    rotation.mkdir(parents=True)
+    (rotation / "actions.log").write_text(
+        f"LAUNCHED|chiap08|codex-auto-{card}|{card}|lane=codex|model=model|"
+        "owner=owner-a|claim_revision=\n",
+        encoding="utf-8",
+    )
+    namespace.update(
+        {
+            "_LOGDIR": str(logs),
+            "_ROTATION_EVID": str(rotations),
+            "_shared_launch_attempts": lambda _cid: 3,
+        }
+    )
+    assert namespace["_local_launch_evidence"](card)[:2] == (0, 1)
+    assert namespace["launch_attempts"](card) == 3
+
+
+def test_only_one_mechanical_retry_is_free_across_claim_generations(
+    tmp_path: Path,
+) -> None:
+    namespace = _namespace()
+    card = "deadbeef"
+    logs = tmp_path / "logs"
+    rotations = tmp_path / "rotations"
+    logs.mkdir()
+    now = int(time.time())
+    for index in range(2):
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now - index * 60))
+        (logs / f"{card}-{stamp}.log").write_bytes(b"")
+        rotation = rotations / stamp
+        rotation.mkdir(parents=True)
+        (rotation / "actions.log").write_text(
+            f"LAUNCHED|chiap08|codex-auto-{card}|{card}|lane=codex|model=model|"
+            f"owner=owner-a|claim_revision=revision-{index}\n",
+            encoding="utf-8",
+        )
+    namespace.update(
+        {
+            "_LOGDIR": str(logs),
+            "_ROTATION_EVID": str(rotations),
+            "_shared_launch_attempts": lambda _cid: 2,
+        }
+    )
+    assert namespace["_local_launch_evidence"](card)[:2] == (2, 3)
+    assert namespace["launch_attempts"](card) == 3
