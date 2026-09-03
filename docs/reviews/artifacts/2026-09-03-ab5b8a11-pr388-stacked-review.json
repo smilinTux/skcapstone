@@ -20,6 +20,20 @@
     "py_compile": "PASS",
     "unicode_dash_scan": "PASS"
   },
+  "current_main_refresh": {
+    "candidate": "060951c28e468f4ce222622b75bea0f43069557b",
+    "candidate_ref": "refs/heads/integration/db74500f-current-main",
+    "candidate_tree": "98c41bbe58e50dddf7fb3d1a0218c96edabf70a2",
+    "candidate_tree_unchanged": true,
+    "changed_path_count": 8,
+    "full_index_diff_sha256": "8ea05c3b3aec9e78283553161b396a8fb940b222c6ab2968cd61c14f294b83c8",
+    "independent_check_sha256": "cb345e9a87f52a81f29d0f1991e70347d8b642ea8da3cd9234935a5cc4784f64",
+    "merged_main": "73fab55fd53fbafbce393851e1a119f3e873be9e",
+    "merged_main_tree": "4e1e7d17d935291b2d63c557181c41c44e28c7e6",
+    "pr388_tree": "4e1e7d17d935291b2d63c557181c41c44e28c7e6",
+    "producer_evidence_sha256": "84a55b1773d79510a552b448abe8e4811e58fec462dfbd8ca0804910ddf7b544",
+    "squash_equivalent": true
+  },
   "launcher": {
     "added_semantics": [
       "fold refreshed description",
