@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from ..agent_projection import display_state
 from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name, validate_task_id
 
@@ -185,9 +186,12 @@ def register_coord_commands(main: click.Group) -> None:
         if agents:
             console.print()
             for ag in agents:
-                icon = {"active": "[green]ACTIVE[/]", "idle": "[yellow]IDLE[/]"}.get(
-                    ag.state.value, "[dim]OFFLINE[/]"
-                )
+                projected = display_state(ag)
+                icon = {
+                    "active": "[green]ACTIVE[/]",
+                    "idle": "[yellow]IDLE[/]",
+                    "stale": "[yellow]STALE PROJECTION[/]",
+                }.get(projected, "[dim]OFFLINE[/]")
                 current = f" -> [cyan]{ag.current_task}[/]" if ag.current_task else ""
                 console.print(f"  {icon} [bold]{ag.agent}[/]{current}")
         console.print()
