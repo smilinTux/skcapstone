@@ -504,6 +504,7 @@ LIVE = os.path.join(HOME, ".skcapstone/evidence/fleet-live")
 # pushes reporting below known and disables reaping fleetwide. Observed within
 # one tick of adding it. It lives one level up.
 _INEFFECTIVE_PATH = os.path.join(HOME, ".skcapstone/evidence/reap-ineffective.json")
+_REAP_STALE_ALERT_PATH = os.path.join(HOME, ".skcapstone/evidence/reap-stale-alert.json")
 LIVE_FRESH = 30 * 60      # a report older than this says nothing about now
 CLAIM_GRACE = 300         # one full rotation period, so every host has reported
 # Reaping needs a quorum, because a card running on chiap04 is invisible in
@@ -2221,6 +2222,64 @@ def _record_reap_outcome(cid, owner, claim_revision, claim_ts):
         return False
 
 
+def _next_reap_alert_state(previous, released, lifecycle):
+    """Advance silent reaping alert state and return affected card IDs to alert."""
+    counts = lifecycle.get("counts", {}) if isinstance(lifecycle, dict) else {}
+    classes = lifecycle.get("classes", {}) if isinstance(lifecycle, dict) else {}
+    affected = sorted({
+        str(row["card_id"])
+        for name in ("stale_claims", "dead_worker_claims")
+        for row in (classes.get(name, []) or [])
+        if isinstance(row, dict) and row.get("card_id")
+    })
+    has_stale = (
+        int(counts.get("stale_claims", 0) or 0) > 0
+        or int(counts.get("dead_worker_claims", 0) or 0) > 0
+    )
+    if released != 0 or not has_stale:
+        return {"consecutive_cycles": 0, "alerted": False, "card_ids": []}, []
+
+    consecutive = int(previous.get("consecutive_cycles", 0) or 0) + 1
+    alerted = bool(previous.get("alerted", False))
+    alert_ids = affected if consecutive > 2 and not alerted else []
+    return {
+        "consecutive_cycles": consecutive,
+        "alerted": alerted or bool(alert_ids),
+        "card_ids": affected,
+    }, alert_ids
+
+
+def _alert_silent_reap(released, lifecycle):
+    """Persist consecutive no-op cycles and log one alert after the threshold."""
+    lock_path = _REAP_STALE_ALERT_PATH + ".lock"
+    Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            try:
+                with open(_REAP_STALE_ALERT_PATH, encoding="utf-8") as source:
+                    previous = json.load(source)
+                if not isinstance(previous, dict):
+                    previous = {}
+            except (OSError, ValueError, json.JSONDecodeError):
+                previous = {}
+            state, alert_ids = _next_reap_alert_state(previous, released, lifecycle)
+            payload = (json.dumps(state, sort_keys=True) + "\n").encode()
+            json.loads(payload)
+            temporary = _REAP_STALE_ALERT_PATH + ".tmp.%d" % os.getpid()
+            with open(temporary, "wb") as target:
+                target.write(payload)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, _REAP_STALE_ALERT_PATH)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    if alert_ids:
+        log(d, "ALERT|%s|silent reap: released=0 for %d consecutive cycles; "
+            "stale claim cards=%s" %
+            (HOST, state["consecutive_cycles"], ",".join(alert_ids)))
+
+
 def reap_dead_claims():
     """Return claimed cards whose worker no host reports running."""
     oldest, running, nhosts = live_report()
@@ -2367,7 +2426,8 @@ if DRY:
            "close_reviewed_parents skipped; "
            "pass --go to mutate the board" % HOST)
 else:
-    reap_dead_claims()
+    _released = reap_dead_claims()
+    _alert_silent_reap(_released, assessment)
 
 # ---- open provisional outcomes for review, then close reviewed work --------
 # A card that produced a candidate and had it independently reviewed and PASSED
