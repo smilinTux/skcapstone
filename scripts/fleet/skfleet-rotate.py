@@ -8,7 +8,7 @@ Fixes two defects found 03:50Z:
      rotation deadlocked at busy=8 and NOOPed. Workers launched with -p exit on
      their own, so a slot is simply a live codex-auto-* session. No retire logic.
 """
-import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util
+import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
 from pathlib import Path
 
 from skcapstone.card_store import CardStore
@@ -1890,21 +1890,94 @@ def _local_launch_evidence(cid):
     return seen, reports, latest_transport
 
 
-def _latest_transport_failure_epoch(cid):
-    return _local_launch_evidence(cid)[2]
+_WORKER_EXIT_DIR = os.path.join(HOME, ".skcapstone/evidence/fleet-worker-exits")
 
+def _latest_transport_failure_epoch(cid):
+    """Return the latest claim-scoped pre-agent transport failure time."""
+    latest = 0.0
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if event.get("card_id") == cid and event.get("transport_failure"):
+                latest = max(latest, _ts_epoch(event.get("attempted_at")))
+        except (OSError, TypeError, ValueError):
+            continue
+    return latest
+
+def _transport_failure_logs(cid):
+    """Return local stdout logs classified as pre-agent transport failures."""
+    logs = set()
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if event.get("card_id") == cid and event.get("transport_failure"):
+                logs.add(str(event.get("stdout_log") or ""))
+        except (OSError, TypeError, ValueError):
+            continue
+    return logs
 
 def _transport_retry_held(cid):
-    """Hold one card until its bounded recovery-probe interval opens."""
+    """Hold a failed transport until the bounded recovery interval opens."""
     failed_at = _latest_transport_failure_epoch(cid)
     return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
 
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
-    return _local_launch_evidence(cid)[1]
+    n = 0
+    transport_logs = _transport_failure_logs(cid)
+    cutoff = time.time() - _LAUNCH_TTL_H * 3600
+    try:
+        for f in os.listdir(_LOGDIR):
+            if not f.startswith(cid + "-") or not f.endswith(".log"):
+                continue
+            fp = os.path.join(_LOGDIR, f)
+            try:
+                stt = os.stat(fp)
+            except OSError:
+                continue
+            if stt.st_mtime < cutoff:
+                continue          # aged out: exclusion self-heals
+            if stt.st_size == 0:
+                continue          # interrupted, never reported: not evidence
+            if f in transport_logs:
+                continue          # pre-agent transport failure: not card work
+            n += 1
+    except OSError:
+        pass
+    return n
 
 _ROTATION_EVID = os.path.join(HOME, ".skcapstone/evidence/fleet-rotation")
 _shared_launch_cache = None
+_TRANSPORT_FAILURE_CLASSES = frozenset({
+    "rate_limited",
+    "model_owner_backend_down",
+    "backend_claims_quarantined",
+    "invalid_upstream_tool_calls",
+    "connection_failure",
+})
+
+def _transport_failure_claims():
+    """Return exact claim generations that failed before agent work began."""
+    failures = set()
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, "*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        claim = (
+            str(event.get("card_id") or ""),
+            str(event.get("host") or ""),
+            str(event.get("owner") or ""),
+            str(event.get("claim_revision") or ""),
+        )
+        failure = event.get("transport_failure")
+        if (
+            isinstance(failure, str)
+            and failure in _TRANSPORT_FAILURE_CLASSES
+            and all(claim)
+        ):
+            failures.add(claim)
+    return failures
 
 def _shared_launch_attempts(cid):
     """Launch attempts for this card across EVERY host, within the TTL.
@@ -1929,6 +2002,7 @@ def _shared_launch_attempts(cid):
     global _shared_launch_cache
     if _shared_launch_cache is None:
         _shared_launch_cache = {}
+        transport_failures = _transport_failure_claims()
         cutoff = time.time() - _LAUNCH_TTL_H * 3600
         try:
             for stamp in os.listdir(_ROTATION_EVID):
@@ -1943,6 +2017,22 @@ def _shared_launch_attempts(cid):
                                 continue
                             parts = line.strip().split("|")
                             if len(parts) >= 4:
+                                if len(parts) == 8:
+                                    fields = [part.partition("=") for part in parts[4:]]
+                                    if [(key, sep) for key, sep, _value in fields] == [
+                                        ("lane", "="),
+                                        ("model", "="),
+                                        ("owner", "="),
+                                        ("claim_revision", "="),
+                                    ]:
+                                        claim = (
+                                            parts[3],
+                                            parts[1],
+                                            fields[2][2],
+                                            fields[3][2],
+                                        )
+                                        if claim in transport_failures:
+                                            continue
                                 _shared_launch_cache[parts[3]] = (
                                     _shared_launch_cache.get(parts[3], 0) + 1
                                 )
@@ -1960,11 +2050,13 @@ def launch_attempts(cid):
     sees the shared count, so no card is banned on one host and workable on
     another purely because of where its logs happen to live.
     """
-    local_seen, local_reports, _latest_transport = _local_launch_evidence(cid)
-    if local_seen:
-        # The partition owner has the exact worker bytes. Prefer them over the
-        # synced launch receipt, which cannot distinguish transport from work.
-        return local_reports
+    local_evidence = globals().get("_local_launch_evidence")
+    if callable(local_evidence):
+        local_seen, local_reports, _latest_transport = local_evidence(cid)
+        if local_seen:
+            # The partition owner has the exact worker bytes. Prefer them over
+            # the synced receipt, which cannot distinguish transport from work.
+            return local_reports
     return _shared_launch_attempts(cid)
 
 def unclaimable(cid):
@@ -3534,15 +3626,22 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     # returns normally. Releasing only after the Pi command leaves a dead claim
     # in that case and drains the assignable pool. Bind cleanup to this exact
     # claim generation so it cannot release a newer same-owner worker.
-    inner=('release_claim() { %s coord release-claim %s --owner %s '
+    child=('release_claim() { %s coord release-claim %s --owner %s '
            '--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; '
            'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
            'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
            '--provider skgateway --model %s --thinking off --tools %s '
-           '-p "$(cat %s)" >%s 2>&1; '
+           '-p "$(cat %s)"; '
            'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
            % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,
-              pi_tools,bf,lf))
+              pi_tools,bf))
+    wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
+    inner=shlex.join([
+        sys.executable,wrapper,"--card",cid,"--owner",name,
+        "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
+        "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--","bash","-lc",child,
+    ])
     unit=_worker_unit_name(_LANE["name"],cid)
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
