@@ -7,51 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Fixed
-
-- **Card 244c215a: restore coordination hub truth.** Fleet digest ignores valid
-  JSONL values that are not event objects, and review launch receipts consume a
-  deterministic recommendation only for the card's live claim generation.
-
-- **Card db74500f: preserve fleet lifecycle and projection truth.** Fleet
-  rotation keeps process-backed quiet workers live, consumes refreshed folded
-  review metadata when selecting independent reviewers, and reports stale agent
-  projections without presenting them as current ownership.
-
-- Card 4bd61c62 reports empty fleet selections as empty pool, foreign hash
-  partition, zero target, no compatible lane, or bounded selection race evidence
-  instead of falsely claiming that dependency-clear work does not exist.
 
 ### Added
-
-- **Card ff5336c4: bound five-minute reassessment evidence.** Every fleet host
-  assesses before existing actions, only chiap08 writes the capped shared full
-  report, and other hosts emit compact summaries through existing actions.log.
-
-- **Card 369ca2f8: report canonical shadow scheduler truth.** Fleet rotation
-  emits one exclusive primary reason per card plus diagnostic facets, verifies
-  exact parity with the legacy selector, and fails open to legacy selection if
-  shadow reporting cannot be produced.
-
-- **Card 43c88f26: compose governed seat runtime handoffs.** Link records a
-  distinct-reviewer recommendation bound to fresh card state, Jarvis alone
-  authorizes and records the exact claim-and-launch handoff in fleet rotation,
-  and Mero records read-only worker observations without changing lifecycle or
-  ownership. Card and same-card process drift fail closed. Non-review selection
-  and dry-run behavior remain unchanged. A source-backed service drop-in uses
-  the existing SKCapstone environment without changing the timer schedule.
-
-- **Card 4274eef2: enforce fleet seat boundaries.** Link emits bounded,
-  revision-fenced reviewer recommendations, Jarvis remains the only fleet
-  mutation principal, and Mero observes and alerts without mutation authority.
-  Missing revisions, blank reviewers, stale process state, and replay attempts
-  fail closed.
-
-- **Card ff9b46b4: bound Link merge authority.** A source-only, fail-closed
-  evaluator requires a mergeable exact head, zero failed checks, a distinct
-  author's independent PASS, resolved lineage, non-Link authorship, and a
-  non-sensitive category. Denials produce deterministic evidence for Chef and
-  no merge or deployment actuator is exposed.
 
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
@@ -76,21 +33,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- **Card 0747c8eb: release orphaned authoritative claims.** The supported
-  revision-fenced release command now uses the CardStore claim as authority
-  when a stale compatibility agent projection has already dropped the task,
-  then reconciles that projection. Exact replay remains idempotent and stale
-  owner or revision attempts fail closed.
-
-- **Card 3b227de2: isolate fleet workers from the rotation oneshot cgroup.** New
-  workers launch as collected transient user services while slot counting and
-  liveness continue to include migration-era tmux workers. Refreshed onto main
-  by card 280e3c16.
-
-- **Card fc2d87bf: prevent resurrection of voided cards.** Void now verifies
-  that archival reached both legacy and CardStore projections before returning,
-  and an append-only repair tool re-archives historical move-after-void cards
-  without changing their original writer, timestamp, or reason.
+- **Card 8c52afcb: level-routed GLM models and eight-connection estate
+  ceiling.** `skfleet-rotate.py` now selects the GLM model by the size marker
+  in the card title: S and M route to glm-4.6, L to glm-4.7, XL to glm-5.3,
+  and titles without a size marker keep the lane default glm-4.6. Per-host
+  overrides use the `SKFLEET_GLM_MODEL_S/_M/_L/_XL` environment variables.
+  The same deploy also carries the review-lane replay-fence and digest
+  str-rows repair from card 244c215a, which the three GLM hosts were still
+  running without. `skworld-digest.py` skips non-object JSONL rows that used
+  to crash the fleet digest sort key, and `skfleet-rotate.py` now consumes a
+  review-launch recommendation only while its claim revision is the card's
+  live claim generation.
 
 - **Card 168d5a4f: fence fleet claim release by exact generation.** The fast
   reaper now accepts exactly one strict launcher record for the current card,

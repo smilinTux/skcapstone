@@ -54,52 +54,6 @@ def _bounded_ids(card_ids, limit=12):
     return ",".join(shown) or "-", max(0, len(values) - len(shown))
 
 
-def _full_reassessment_path(host, evidence_root):
-    """Keep exactly one shared full report, written only by its authority host."""
-    if host != "chiap08":
-        return None
-    return Path(evidence_root) / "lifecycle-reassessment.json"
-
-
-def _validate_reassessment(report):
-    """Fail closed if the lifecycle assessor did not return its safety contract."""
-    if not isinstance(report, dict):
-        raise ValueError("lifecycle reassessment is not an object")
-    if report.get("read_only") is not True:
-        raise ValueError("lifecycle reassessment is not read only")
-    if not isinstance(report.get("classes"), dict):
-        raise ValueError("lifecycle reassessment classes are absent")
-    if not isinstance(report.get("counts"), dict):
-        raise ValueError("lifecycle reassessment counts are absent")
-    if not isinstance(report.get("excluded_card_ids"), list):
-        raise ValueError("lifecycle reassessment exclusions are absent")
-    if not re.fullmatch(r"[0-9a-f]{64}", str(report.get("content_sha256") or "")):
-        raise ValueError("lifecycle reassessment hash is absent")
-    return report
-
-
-def _reassessment_summary(host, report, report_path):
-    destination = str(report_path) if report_path is not None else "authority:chiap08"
-    counts = json.dumps(report["counts"], sort_keys=True, separators=(",", ":"))
-    return "REASSESSMENT|%s|report=%s sha256=%s counts=%s excluded=%d" % (
-        host, destination, report["content_sha256"], counts,
-        len(report["excluded_card_ids"]),
-    )
-
-
-def _write_bounded_report(report, report_path, limit=2 * 1024 * 1024):
-    """Atomically replace the authority report with the exact bounded bytes."""
-    payload = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
-    json.loads(payload)
-    if len(payload) > limit:
-        raise ValueError("lifecycle reassessment exceeds %d bytes" % limit)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = report_path.with_suffix(report_path.suffix + ".tmp")
-    temporary.write_bytes(payload)
-    json.loads(temporary.read_bytes())
-    temporary.replace(report_path)
-
-
 def _partition_owner(card_id, hosts, pinned_host=None):
     """Return the unique stable owner for one card across host snapshots."""
     if pinned_host:
@@ -191,7 +145,11 @@ def _review_assignment(cid, core, labels, reviewer):
         observed_process=observed_process,
         evidence_sha256=evidence,
     )
-    live_claim_revision = str(_current_claim_identity_fresh(cid)[2] or "")
+    # A launch receipt consumes its recommendation only while that exact
+    # claim generation is still live. A worker that launched, died, and
+    # released its claim must not fence the retry forever, or one dead
+    # worker deadlocks the review lane on that card permanently.
+    _live_claim_revision = str(_current_claim_identity_fresh(cid)[2] or "")
     handoff = authorize_review_launch(
         Path(HOME) / ".skcapstone",
         recommendation,
@@ -203,7 +161,7 @@ def _review_assignment(cid, core, labels, reviewer):
             if event.get("action") == "review_assignment_launch"
             and event.get("launched")
             and event.get("recommendation_id")
-            and str(event.get("claim_revision") or "") == live_claim_revision
+            and str(event.get("claim_revision") or "") == _live_claim_revision
         },
     )
     return handoff.reviewer, recommendation, handoff
@@ -213,20 +171,22 @@ def _review_assignment(cid, core, labels, reviewer):
 # initialize optional skcoord API dependencies such as CapAuth.
 _LIFECYCLE_PATH=Path(os.environ.get("SKCOORD_SRC",os.path.join(os.path.expanduser("~"),"work/skcoord/src")))/"skcoord/lifecycle_reassessment.py"
 _spec=importlib.util.spec_from_file_location("skcoord_lifecycle_reassessment",_LIFECYCLE_PATH)
-# Assessment is a safety input, not optional telemetry. If it cannot be loaded,
-# the cycle still emits a BLOCKED summary below but gains no mutation authority.
+# Degrade instead of dying. A host that has not yet checked out skcoord must still
+# be able to rotate workers: losing the pre-batch lifecycle report is a downgrade,
+# losing the whole rotation is an outage. chiap04 crashed on exactly this the first
+# time it ran, before its skcoord checkout existed.
 _LIFECYCLE_OK = _spec is not None and _spec.loader is not None and _LIFECYCLE_PATH.exists()
 if _LIFECYCLE_OK:
     try:
         _lifecycle=importlib.util.module_from_spec(_spec)
         sys.modules[_spec.name]=_lifecycle
         _spec.loader.exec_module(_lifecycle)
-        assess=_lifecycle.assess
+        assess,write_report=_lifecycle.assess,_lifecycle.write_report
     except Exception as _e:
         _LIFECYCLE_OK=False
-        print("  WARN lifecycle reassessment unavailable (%s)" % _e)
+        print("  WARN lifecycle reassessment unavailable (%s): rotating without the pre-batch report" % _e)
 if not _LIFECYCLE_OK:
-    assess=None
+    assess=write_report=None
 
 HOST=os.uname().nodename
 ROTATION_HOSTS=("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
@@ -394,12 +354,9 @@ if HOST not in ROTATION_HOSTS:
 # Mandatory read-only graph validation precedes slot and assignment decisions.
 # The report is the exact machine-readable assignment exclusion contract.
 try:
-    if not _LIFECYCLE_OK:
-        raise RuntimeError("lifecycle reassessment module unavailable")
-    assessment=_validate_reassessment(assess(Path(CARDS),[Path(EVID)]))
-    report_path=_full_reassessment_path(HOST,EVID)
-    if report_path is not None:
-        _write_bounded_report(assessment,report_path)
+    assessment=assess(Path(CARDS),[Path(EVID)])
+    report_path=Path(d)/"lifecycle-reassessment.json"
+    write_report(assessment,report_path)
     # The lifecycle report's unclaimable_cards class is computed from HOST-LOCAL
     # worker logs, which ~/.skcapstone/.stignore excludes from Syncthing. Every
     # host therefore derives a DIFFERENT set from the same shared cards.
@@ -418,7 +375,8 @@ try:
     _tracking = {r.get("card_id") for r in _classes.get("volatile_ci_identity", [])
                  if r.get("card_id") and r.get("reason")=="tracking_card"}
     excluded=set(assessment["excluded_card_ids"]) - _local_only - _tracking
-    log(d,_reassessment_summary(HOST,assessment,report_path))
+    log(d,"LIFECYCLE|%s|report=%s sha256=%s counts=%s excluded=%d"
+        %(HOST,report_path,assessment["content_sha256"],json.dumps(assessment["counts"],sort_keys=True,separators=(",",":")),len(excluded)))
 except Exception as exc:
     log(d,"BLOCKED|%s|lifecycle reassessment failed: %s"%(HOST,exc))
     sys.exit(2)
@@ -457,6 +415,17 @@ LANES=[
      "model":os.environ.get("SKFLEET_ESC_MODEL", ESC_MODEL if "ESC_MODEL" in dir() else "gpt-5.6-sol"),
      "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
 ]
+# GLM level routing. One z.ai connection serves the whole estate, so the GLM
+# lane spends it deliberately: the card size marker in the title selects the
+# model level, and a card without a size marker keeps the lane default. The
+# estate farmed connection ceiling is eight workers total across hosts.
+_GLM_LEVEL_DEFAULTS={"S":"glm-4.6","M":"glm-4.6","L":"glm-4.7","XL":"glm-5.3"}
+_GLM_LEVELS={_k:os.environ.get("SKFLEET_GLM_MODEL_"+_k,_v)
+             for _k,_v in _GLM_LEVEL_DEFAULTS.items()}
+_GLM_SIZE_RE=re.compile(r"\[(S|M|XL|L)\]")
+def _glm_model_for(core):
+    m=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
+    return _GLM_LEVELS.get(m.group(1)) if m else None
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
@@ -3269,6 +3238,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d, "SEAT|%s|%s|running under seat %s as %s" % (HOST, cid, _seat, name))
     sess="%s%s"%(_LANE["prefix"],cid)
     model=_LANE["model"]
+    if _LANE["name"]=="glm":
+        model=_glm_model_for(core) or model
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
     _review_recommendation = None
