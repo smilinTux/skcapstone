@@ -5,13 +5,16 @@ from __future__ import annotations
 import ast
 import json
 import os
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
-PI = Path("/home/skuser01/.npm-global/bin/pi")
+PI = shutil.which("pi")
 
 
 def _load_tool_policy() -> dict[str, object]:
@@ -54,8 +57,10 @@ def test_launcher_passes_the_exact_allowlist_to_pi() -> None:
     assert "--thinking off --tools %s" in source
 
 
+@pytest.mark.skipif(PI is None, reason="Pi executable is not installed")
 def test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes(tmp_path: Path) -> None:
     """Exercise Pi itself and print reproducible before/after measurements."""
+    assert PI is not None
     extension = tmp_path / "probe.ts"
     extension.write_text(
         textwrap.dedent("""
