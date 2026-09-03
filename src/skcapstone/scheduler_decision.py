@@ -25,6 +25,8 @@ class SchedulerFacts:
     not_claimable: bool = False
     sensitive_category: bool = False
     dependency: bool = False
+    terminal_review: bool = False
+    workflow_closure_required: bool = False
     awaiting_review: bool = False
     backoff: bool = False
     attempt_limit: bool = False
@@ -79,6 +81,8 @@ _PRECEDENCE = (
     ("not_claimable", lambda f: f.not_claimable),
     ("sensitive_category", lambda f: f.sensitive_category),
     ("dependency", lambda f: f.dependency),
+    ("terminal_review", lambda f: f.terminal_review),
+    ("workflow_closure_required", lambda f: f.workflow_closure_required),
     ("awaiting_review", lambda f: f.awaiting_review),
     ("backoff", lambda f: f.backoff),
     ("attempt_limit", lambda f: f.attempt_limit),

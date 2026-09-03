@@ -34,6 +34,7 @@ FUNCTIONS = {
     "_wake_retry_available",
     "blocked_backoff",
     "_material_change_since",
+    "outcome_workflow_class",
     "awaiting_review",
     "needs_escalation",
 }
@@ -52,6 +53,8 @@ CONSTANTS = {
     "_AC_MENTION_RE",
     "_WAKE_RETRY_LIMIT",
     "_PASS_RE",
+    "_PROVISIONAL_PASS_RE",
+    "_REVIEW_TITLE_RE",
     "_ESCALATE_LABEL",
     "_CAPABILITY_VERDICT_RE",
 }
@@ -447,7 +450,7 @@ def test_native_unresolved_holds_remain_parked(
     assert namespace["needs_escalation"](card, {}) is False
 
 
-def test_native_pass_remains_awaiting_review(tmp_path: Path) -> None:
+def test_native_provisional_pass_remains_awaiting_review(tmp_path: Path) -> None:
     card = "dddddddd"
     native = {
         card: [
@@ -492,7 +495,7 @@ def test_native_pass_supersedes_older_legacy_block(tmp_path: Path) -> None:
         native[card][0]["ts"],
         "PASS",
     )
-    assert namespace["awaiting_review"](card) is True
+    assert namespace["awaiting_review"](card) is False
     assert namespace["blocked_backoff"](card) is True
 
 
@@ -779,13 +782,20 @@ def test_capability_uses_one_stronger_route_generation(board: BackoffHarness) ->
     assert board.blocked(card) is True
 
 
-@pytest.mark.parametrize("value", ["PASS", "PASS_FOR_REVIEW", "PASS_FOR_REREVIEW"])
+@pytest.mark.parametrize("value", ["PASS_FOR_REVIEW", "PASS_FOR_REREVIEW"])
 def test_pass_outcomes_remain_awaiting_review(board: BackoffHarness, value: str) -> None:
     card = "44444444"
     board.outcome(card, "2026-08-28T01:00:00Z", value)
     board.event(card, "2026-08-28T02:00:00Z", "amend_criteria")
     assert board.blocked(card) is True
     assert board.ns["awaiting_review"](card) is True
+
+
+def test_plain_pass_requires_workflow_closure_not_review(board: BackoffHarness) -> None:
+    card = "44444444"
+    board.outcome(card, "2026-08-28T01:00:00Z", "PASS")
+    assert board.ns["awaiting_review"](card) is False
+    assert board.ns["outcome_workflow_class"](card, {}) == "workflow_closure_required"
 
 
 def test_no_change_and_unrelated_traffic_do_not_wake(board: BackoffHarness) -> None:

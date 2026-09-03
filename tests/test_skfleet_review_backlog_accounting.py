@@ -59,8 +59,9 @@ def test_authoritative_lifecycle_is_folded_before_outcome_buckets() -> None:
 
 def test_terminal_review_verdict_remains_excluded_after_lifecycle_fold() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
-    backoff = source.index("if blocked_backoff(cid):")
-    terminal_review = source.index("if terminal_review_verdict(cid, core):", backoff)
+    core_read = source.index("with open(core_p", source.index("def _legacy_selector_decision"))
+    terminal_review = source.index('if workflow_class == "terminal_review":', core_read)
+    backoff = source.index("if blocked_backoff(cid):", terminal_review)
     pool_append = source.index("pool.append", terminal_review)
 
-    assert backoff < terminal_review < pool_append
+    assert core_read < terminal_review < backoff < pool_append
