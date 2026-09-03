@@ -1765,7 +1765,11 @@ def _structured_transport_failure(text):
     if status == 502 and code == "invalid_upstream_tool_calls":
         return "invalid_upstream_tool_calls"
     if status == 503 and kind in {"model_owner_backend_down", "model_claim_quarantined"}:
-        return "model_owner_backend_down" if kind == "model_owner_backend_down" else "backend_claims_quarantined"
+        return (
+            "model_owner_backend_down"
+            if kind == "model_owner_backend_down"
+            else "backend_claims_quarantined"
+        )
     if status in (408, 502, 504) and code in {
         "first_token_timeout", "gateway_timeout", "timeout_before_first_token", "upstream_timeout",
     }:
@@ -1788,7 +1792,13 @@ def _launch_epoch_from_log(cid, filename):
 
 def _card_mutated_during_report(cid, started, finished):
     """Return whether substantive card state changed during this launch."""
-    ignored = {"claim", "release_claim", "mero_observation", "review_assignment_launch", "review_assignment_recommendation"}
+    ignored = {
+        "claim",
+        "release_claim",
+        "mero_observation",
+        "review_assignment_launch",
+        "review_assignment_recommendation",
+    }
     rows = globals().get("event_rows")
     if not callable(rows):
         return False
@@ -1921,7 +1931,9 @@ def _transport_retry_held(cid):
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
     local_evidence = globals().get("_local_launch_evidence")
-    local_seen, local_reports, _latest = local_evidence(cid) if callable(local_evidence) else (0, 0, 0)
+    local_seen, local_reports, _latest = (
+        local_evidence(cid) if callable(local_evidence) else (0, 0, 0)
+    )
     if local_seen:
         return local_reports
     n = 0
@@ -2052,7 +2064,9 @@ def launch_attempts(cid):
     another purely because of where its logs happen to live.
     """
     local_evidence = globals().get("_local_launch_evidence")
-    local_seen, local_reports, _latest = local_evidence(cid) if callable(local_evidence) else (0, 0, 0)
+    local_seen, local_reports, _latest = (
+        local_evidence(cid) if callable(local_evidence) else (0, 0, 0)
+    )
     if local_seen:
         return local_reports
     return _shared_launch_attempts(cid)
