@@ -167,3 +167,45 @@ venv
 .DS_Store
 Thumbs.db
 desktop.ini
+
+// ---------------------------------------------------------------------------
+// Rolled in from the chi fleet's deployed ruleset, 2026-09-03.
+// UNIVERSAL HYGIENE ONLY. chi's /agents/<name> prune rules were deliberately
+// excluded: pruning an agent is per-ESTATE policy, not a fleet-wide default.
+// All six of chi's pruned agents exist on noroc2027, so importing that block
+// would have stopped lumina, opus, mcp-builder, sovereign and tester from
+// syncing here. Estate-specific prunes belong in a local overlay.
+//
+// Two rules below are load-bearing rather than tidiness:
+//   index.db-wal / -shm : syncing a live SQLite WAL corrupts the database
+//   *seckey* / *.sec.*  : private key material must never leave a node
+// ---------------------------------------------------------------------------
+**/root-revocation.asc
+**/.last_checkpoint
+**/.sync-conflict-*
+**/*.pyc
+**/__pycache__
+**/daemon.log.*
+**/daemon.pid
+**/dreaming-state.json
+**/heartbeats/
+**/index.db
+**/index.db-journal
+**/index.db-shm
+**/index.db-wal
+**/logs/
+**/metrics/
+**/skwhisper/daemon.log
+**/skwhisper/daemon.log.*
+.sync-conflict-*
+heartbeats/
+metrics/
+.stignore.bak-*
+**/skwhisper/whisper.md
+**/memory/short-term/.json
+**/memory/mid-term/.json
+**/memory/long-term/.json
+fleet/workspaces
+**/*.sec.asc
+**/*seckey*
+**/*.sec.gpg
