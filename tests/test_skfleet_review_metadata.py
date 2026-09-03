@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import os
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -201,3 +202,31 @@ def test_released_review_claim_does_not_consume_recommendation() -> None:
     )
 
     assert handoffs[0]["used_recommendation_ids"] == set()
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("[CARD][S] Small", "glm-4.6"),
+        ("[CARD][M] Medium", "glm-4.6"),
+        ("[CARD][L] Large", "glm-4.7"),
+        ("[CARD][XL] Extra large", "glm-5.3"),
+        ("[CARD] Unspecified", None),
+    ],
+)
+def test_glm_model_follows_card_size(title: str, expected: str | None) -> None:
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    names = {"_GLM_LEVEL_DEFAULTS", "_GLM_LEVELS", "_GLM_SIZE_RE"}
+    nodes = [
+        node
+        for node in tree.body
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id in names
+        )
+        or (isinstance(node, ast.FunctionDef) and node.name == "_glm_model_for")
+    ]
+    namespace = {"os": os, "re": re}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
+    assert namespace["_glm_model_for"]({"title": title}) == expected
