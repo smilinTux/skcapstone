@@ -1234,6 +1234,39 @@ def folded_labels(cid,core):
 
 _SEAT_LABEL_PREFIX = "seat-"
 _SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+_SEAT_PLACEMENT_PATH = os.environ.get(
+    "SKFLEET_SEAT_PLACEMENT",
+    os.path.join(HOME, ".skcapstone/coordination/seat-placement.json"),
+)
+
+
+def _load_seat_placement(path=None):
+    """Read the synchronized public seat-to-host manifest or fail closed."""
+    source = path or _SEAT_PLACEMENT_PATH
+    try:
+        payload = json.loads(Path(source).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {}, "manifest-unavailable:%s" % type(exc).__name__
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        return {}, "manifest-schema"
+    seats = payload.get("seats")
+    if not isinstance(seats, dict):
+        return {}, "manifest-seats"
+    normalized = {}
+    for raw_seat, raw_hosts in seats.items():
+        seat = str(raw_seat).strip().lower()
+        if not _SEAT_RE.fullmatch(seat):
+            return {}, "manifest-seat:%s" % seat
+        if not isinstance(raw_hosts, list) or not raw_hosts:
+            return {}, "manifest-hosts:%s" % seat
+        hosts = tuple(str(host).strip().lower() for host in raw_hosts)
+        if len(set(hosts)) != len(hosts) or any(host not in ROTATION_HOSTS for host in hosts):
+            return {}, "manifest-hosts:%s" % seat
+        normalized[seat] = tuple(host for host in ROTATION_HOSTS if host in hosts)
+    return normalized, None
+
+
+_SEAT_PLACEMENT, _SEAT_PLACEMENT_ERROR = _load_seat_placement()
 
 def seat_for(cid, core):
     """Return the named seat this card belongs to, or None.
@@ -1260,31 +1293,31 @@ def seat_for(cid, core):
         if not _SEAT_RE.match(seat):
             log(d, "WARN|%s|%s|ignoring malformed seat label %r" % (HOST, cid, text))
             continue
-        if not _seat_is_provisioned(seat):
-            # A well-formed name is not a seat. Without this check a typo such as
-            # seat-lnik would produce a worker called pi-lnik-<host>-<cid> writing
-            # claims and verdicts under an identity that has no agent home, no
-            # capauth key, no mailbox and no estate entry: a phantom seat whose
-            # outputs look attributable and are not. Fall back to lane naming,
-            # which is always safe, and say so loudly.
-            log(d, "WARN|%s|%s|seat %r is not provisioned (no agent home at %s); "
-                   "falling back to lane naming"
-                % (HOST, cid, seat, os.path.join(HOME, ".skcapstone/agents", seat)))
-            continue
         return seat
     return None
 
 
 def _seat_is_provisioned(seat):
-    """True when this seat actually exists as an agent on this host.
+    """True when public placement metadata provisions this seat somewhere."""
+    return not _SEAT_PLACEMENT_ERROR and seat in _SEAT_PLACEMENT
 
-    A seat is real when it has an agent home and a public key. The private half
-    lives only where the seat signs, so its absence here is expected and is not
-    evidence against the seat.
-    """
-    home = os.path.join(HOME, ".skcapstone/agents", seat)
-    return os.path.isdir(home) and os.path.isfile(
-        os.path.join(home, "capauth/identity/public.asc"))
+
+def _seat_owner(card_id, seat, pinned_host=None, placement=None, placement_error=None):
+    """Return one seat host and a diagnostic without falling back to a lane."""
+    if not seat:
+        return _partition_owner(card_id, ROTATION_HOSTS, pinned_host), "ordinary"
+    mapping = _SEAT_PLACEMENT if placement is None else placement
+    error = _SEAT_PLACEMENT_ERROR if placement_error is None else placement_error
+    if error:
+        return None, "seat-manifest:%s" % error
+    hosts = tuple(mapping.get(seat, ()))
+    if not hosts:
+        return None, "seat-unprovisioned:%s" % seat
+    if pinned_host:
+        if pinned_host not in hosts:
+            return None, "seat-pin-conflict:%s:%s" % (seat, pinned_host)
+        return pinned_host, "seat-pin:%s:%s" % (seat, pinned_host)
+    return _partition_owner(card_id, hosts), "seat:%s" % seat
 
 
 def _worker_owner(lane, cid, seat=None):
@@ -3080,10 +3113,21 @@ _emit_shadow_pool_v2()
 # A hash partition is stable no matter what the local pool looks like.
 off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0
 _NHOST = len(ROTATION_HOSTS)
+_SEAT_BY_ID = {row[2]: seat_for(row[2], row[3]) for row in pool}
+_SEAT_BLOCKED = set()
+
+
 def owner_host(cid):
     """Return the one stable host authorized to select this card."""
-    return _partition_owner(
-        cid, ROTATION_HOSTS, HOST if cid in _PINNED_IDS else None)
+    owner, reason = _seat_owner(
+        cid, _SEAT_BY_ID.get(cid), HOST if cid in _PINNED_IDS else None
+    )
+    if owner is None:
+        if cid not in _SEAT_BLOCKED:
+            log(d, "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" % (HOST, cid, reason))
+            _SEAT_BLOCKED.add(cid)
+        return "unassigned:%s" % reason
+    return owner
 
 def owns(cid):
     # A host-pinned card is owned by its pinned host, full stop. Letting the hash
