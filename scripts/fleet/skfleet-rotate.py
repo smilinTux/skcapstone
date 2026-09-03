@@ -191,6 +191,7 @@ def _review_assignment(cid, core, labels, reviewer):
         observed_process=observed_process,
         evidence_sha256=evidence,
     )
+    live_claim_revision = str(_current_claim_identity_fresh(cid)[2] or "")
     handoff = authorize_review_launch(
         Path(HOME) / ".skcapstone",
         recommendation,
@@ -200,7 +201,9 @@ def _review_assignment(cid, core, labels, reviewer):
             str(event.get("recommendation_id"))
             for event in event_rows(cid)
             if event.get("action") == "review_assignment_launch"
+            and event.get("launched")
             and event.get("recommendation_id")
+            and str(event.get("claim_revision") or "") == live_claim_revision
         },
     )
     return handoff.reviewer, recommendation, handoff

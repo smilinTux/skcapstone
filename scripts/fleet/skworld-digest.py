@@ -235,9 +235,11 @@ def collect_board():
                 with open(os.path.join(ev, fn), encoding="utf-8", errors="replace") as fh:
                     for line in fh:
                         try:
-                            rows.append(json.loads(line))
+                            parsed = json.loads(line)
                         except ValueError:
                             continue
+                        if isinstance(parsed, dict):
+                            rows.append(parsed)
         except OSError:
             continue
         rows.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", ""))))
