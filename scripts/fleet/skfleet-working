@@ -16,10 +16,16 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import time
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 HOSTS = tuple(os.environ.get("SKFLEET_HOSTS", "chiap01 chiap02 chiap03 chiap04 chiap08").split())
+UNIT_GRACE = int(os.environ.get("SKFLEET_UNIT_GRACE", "15"))
+UNIT_SAMPLE_FRESHNESS = int(os.environ.get("SKFLEET_UNIT_SAMPLE_FRESHNESS", "60"))
+STATE_PATH = Path(os.environ.get("SKFLEET_WORKING_STATE", Path.home() / ".cache/skcapstone/skfleet-working-unit-grace.json"))
 
 
 @dataclass(frozen=True)
@@ -37,6 +43,12 @@ class Worker:
     claim_state: str
     card_status: str
     unit_missing_process: bool
+    unit_load: str = "not-found"
+    unit_active: str = "inactive"
+    unit_sub: str = "dead"
+    claim_owner: str = ""
+    claim_revision: str = ""
+    evidence_source: str = "systemd+proc+cardstore"
 
 
 REMOTE = r"""
@@ -46,10 +58,11 @@ from skcoord.card_store import CardStore
 host=os.uname().nodename.split('.')[0]
 now=int(time.time())
 unit_lines=subprocess.run(
-    ['systemctl','--user','list-units','skfleet-worker-*.service','--state=running','--no-legend','--plain'],
+    ['systemctl','--user','list-units','skfleet-worker-*.service','--all','--no-legend','--plain'],
     capture_output=True,text=True).stdout.splitlines()
-units={line.split()[0] for line in unit_lines if line.split()}
+units={p[0]:p[1:4] for line in unit_lines if len(p:=line.split()) >= 4}
 seen_units=set()
+process_agents=set()
 try:
     tmux=set(subprocess.run(['tmux','list-sessions','-F','#{session_name}'],capture_output=True,text=True).stdout.split())
 except Exception:
@@ -62,6 +75,7 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         agent=env.get('SKAGENT','')
         card=agent.rsplit('-',1)[-1]
         if not agent.startswith('pi-') or len(card)!=8: continue
+        process_agents.add(agent)
         stat=open('/proc/%d/stat'%pid).read().split()
         ticks=os.sysconf(os.sysconf_names['SC_CLK_TCK'])
         uptime=float(open('/proc/uptime').read().split()[0])
@@ -78,15 +92,31 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         folded=CardStore(Path.home()/'.skcapstone').fold(card)
         status=folded.status.value
         claim='exact' if folded.owner==agent and folded.meta.get('_claim_revision') else 'mismatch'
-        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False),sort_keys=True))
+        state=units.get(unit,['not-found','inactive','dead'])
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=folded.owner or '',claim_revision=str(folded.meta.get('_claim_revision',''))),sort_keys=True))
     except (FileNotFoundError,ProcessLookupError,PermissionError,ValueError,KeyError,json.JSONDecodeError):
         pass
-for unit in sorted(units-seen_units):
+for unit in sorted(set(units)-seen_units):
     match=re.fullmatch(r'skfleet-worker-[a-z]+-([0-9a-f]{8})\.service',unit)
     if not match: continue
     card=match.group(1)
+    folded=CardStore(Path.home()/'.skcapstone').fold(card)
+    revision=str(folded.meta.get('_claim_revision',''))
+    claim='exact' if folded.owner and revision else ('released' if not folded.owner else 'mismatch')
     pid=int(subprocess.run(['systemctl','--user','show',unit,'-p','MainPID','--value'],capture_output=True,text=True).stdout.strip() or 0)
-    print(json.dumps(dict(host=host,agent='unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state='unknown',card_status='unknown',unit_missing_process=True),sort_keys=True))
+    state=units[unit]
+    print(json.dumps(dict(host=host,agent=folded.owner or 'unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state=claim,card_status=folded.status.value,unit_missing_process=True,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=folded.owner or '',claim_revision=revision),sort_keys=True))
+for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
+    try:
+        projection=json.loads(path.read_text())
+        agent=projection.get('agent','')
+        card=projection.get('current_task','')
+        if projection.get('state') != 'active' or len(card) != 8 or agent in process_agents: continue
+        expected=next((u for u in units if u.endswith('-'+card+'.service')), '')
+        if expected: continue
+        revision=str(projection.get('_claim_revision',''))
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=0,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit='not-found',tmux=False,claim_state='exact' if card in projection.get('claimed_tasks',[]) else 'mismatch',card_status='unknown',unit_missing_process=False,unit_load='not-found',unit_active='inactive',unit_sub='dead',claim_owner=agent,claim_revision=revision,evidence_source='agent-projection+systemd+proc'),sort_keys=True))
+    except (OSError,json.JSONDecodeError): pass
 """
 
 
@@ -98,6 +128,52 @@ def duration(seconds: int) -> str:
     if seconds < 3600:
         return f"{seconds // 60}m{seconds % 60:02d}s"
     return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+
+
+def load_samples(path: Path = STATE_PATH) -> dict[str, dict[str, int]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_samples(samples: dict[str, dict[str, int]], path: Path = STATE_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(samples, stream, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tuple[str, int]:
+    """Classify joined evidence without treating lifecycle state as a verdict."""
+    key = f"{worker.host}/{worker.unit}"
+    if worker.unit in {"", "not-found"}:
+        samples.pop(key, None)
+        if worker.claim_state == "exact":
+            return "ACTION REQUIRED", now
+        if worker.claim_state == "mismatch":
+            return "STALE PROJECTION", now
+        return "OK", now
+    if worker.claim_state == "mismatch":
+        return "ACTION REQUIRED", now
+    previous = samples.get(key)
+    first_seen = previous["first_seen"] if previous else now
+    if worker.unit_missing_process:
+        samples[key] = {"first_seen": first_seen, "observed": now}
+        if worker.unit_active == "failed" and worker.claim_state == "exact":
+            return "ACTION REQUIRED", first_seen
+        if previous and UNIT_GRACE <= now - previous["observed"] <= UNIT_SAMPLE_FRESHNESS and now - first_seen >= UNIT_GRACE:
+            return "ACTION REQUIRED", first_seen
+        return "SETTLING", first_seen
+    samples.pop(key, None)
+    return "OK", now
 
 
 def collect(host: str) -> list[Worker]:
@@ -139,6 +215,10 @@ def main() -> int:
         except (subprocess.TimeoutExpired, OSError):
             unreachable.append(host)
     rows.sort(key=lambda row: (-row.elapsed, row.host, row.agent))
+    now = int(time.time())
+    samples = load_samples()
+    live_keys = {f"{row.host}/{row.unit}" for row in rows if row.unit_missing_process}
+    samples = {key: value for key, value in samples.items() if key in live_keys and now - value.get("observed", 0) <= UNIT_SAMPLE_FRESHNESS}
     counts = Counter(row.card for row in rows)
     gateway_age: dict[str, int] = {}
     db_path = os.path.expanduser(
@@ -172,9 +252,14 @@ def main() -> int:
             else ("legacy-tmux" if row.tmux else "orphan-process")
         )
         state = "running; output buffered until completion"
-        if row.unit_missing_process:
-            state = "UNIT WITHOUT PI PROCESS"
-            alerts.append((row, "unit-process"))
+        disposition, first_seen = assess(row, samples, now)
+        if disposition == "ACTION REQUIRED":
+            state = "ACTION REQUIRED joined unit/process/claim evidence"
+            alerts.append((row, "joined-evidence"))
+        elif disposition == "SETTLING":
+            state = "SETTLING unit without Pi process"
+        elif disposition == "STALE PROJECTION":
+            state = "STALE PROJECTION no live exact claim"
         elif row.card_status in {"done", "archived", "void"}:
             state = f"TERMINAL STILL RUNNING ({row.card_status})"
             alerts.append((row, "terminal"))
@@ -192,7 +277,10 @@ def main() -> int:
         print(
             f"  {row.host:8} {row.pid:7d} {row.agent[:34]:34} "
             f"{duration(row.elapsed):>9} {log:>9} {duration(gw_age):>9} "
-            f"{owner[:18]:18} {state}"
+            f"{owner[:18]:18} {state}; unit={row.unit}; "
+            f"state={row.unit_load}/{row.unit_active}/{row.unit_sub}; "
+            f"claim_owner={row.claim_owner or '-'}; revision={row.claim_revision or '-'}; "
+            f"first_seen={first_seen}; grace={UNIT_GRACE}s; source={row.evidence_source}"
         )
     if not rows:
         print("no fleet worker processes found. This says nothing about board eligibility.")
@@ -206,6 +294,7 @@ def main() -> int:
     else:
         print("no duplicate, orphan, or claim-mismatch process detected")
     print("log age is informational only and never proves a stall for pi print mode")
+    save_samples(samples)
     return 1 if alerts or unreachable else 0
 
 
