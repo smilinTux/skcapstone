@@ -2394,11 +2394,37 @@ def _provisional_candidate(parent, outcome_ts, token):
     if "" in writers or len(writers) != 1:
         return None
     producer = next(iter(writers))
+    supplemental = {json.dumps(event, sort_keys=True, separators=(",", ":")): event
+                    for event in rows
+                    if event.get("action") == "review_candidate_evidence" and
+                    str(event.get("source_outcome_ts") or "") == str(outcome_ts or "") and
+                    str(event.get("source_verdict") or "").upper() == token and
+                    str(event.get("producer") or "").strip() == producer}
+    if len(supplemental) > 1:
+        return None
+    supplemental = list(supplemental.values())
     candidate_bytes = set()
     artifact_evidence = set()
     typed = {"candidate_commit": set(), "candidate_tree": set(), "candidate_ref": set()}
+
+    def candidate_links(event):
+        """Yield hash-bound candidate artifacts embedded in a verdict event."""
+        links = event.get("evidence_links")
+        if not isinstance(links, list):
+            return
+        for link in links:
+            if (not isinstance(link, dict) or
+                    not str(link.get("type") or "").startswith("candidate_")):
+                continue
+            path = os.path.expanduser(str(link.get("path") or ""))
+            digest = str(link.get("sha256") or "").lower()
+            if path and re.fullmatch(r"[0-9a-f]{64}", digest):
+                yield path, digest
+
     for event in rows:
-        if (str(event.get("ts") or "") != str(outcome_ts or "") or
+        source_event = event in supplemental
+        if not source_event and (
+                str(event.get("ts") or "") != str(outcome_ts or "") or
                 str(event.get("writer") or "").strip() != producer):
             continue
         for path_key, digest_key, target in (
@@ -2407,12 +2433,25 @@ def _provisional_candidate(parent, outcome_ts, token):
             path = str(event.get(path_key) or "")
             digest = str(event.get(digest_key) or "").lower()
             if path and re.fullmatch(r"[0-9a-f]{64}", digest):
-                target.add((path, digest))
+                target.add((os.path.expanduser(path), digest))
+        candidate_bytes.update(candidate_links(event))
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         for key in typed:
             value = event.get(key, payload.get(key))
             if isinstance(value, str) and value.strip():
                 typed[key].add(value.strip())
+        evidence_path = os.path.expanduser(str(
+            event.get("evidence_path") or event.get("evidence_link") or ""))
+        evidence_digest = str(event.get("artifact_sha256") or "").lower()
+        if evidence_path and re.fullmatch(r"[0-9a-f]{64}", evidence_digest):
+            try:
+                with open(evidence_path, "rb") as fh:
+                    evidence_bytes = fh.read()
+                if hashlib.sha256(evidence_bytes).hexdigest() == evidence_digest:
+                    embedded = json.loads(evidence_bytes)
+                    candidate_bytes.update(candidate_links(embedded))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                pass
     candidates = candidate_bytes or artifact_evidence
     verified = []
     for path, digest in sorted(candidates):
