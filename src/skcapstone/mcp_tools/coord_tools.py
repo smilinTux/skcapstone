@@ -34,6 +34,14 @@ TOOLS: list[Tool] = [
                     "items": {"type": "string"},
                     "type": "array",
                 },
+                "limit": {
+                    "description": "Bound the status payload to at most this many cards.",
+                    "type": "integer",
+                },
+                "cursor": {
+                    "description": "Opaque continuation cursor from a previous bounded call.",
+                    "type": "string",
+                },
             },
             "required": [],
             "type": "object",
@@ -165,44 +173,82 @@ async def _handle_coord_status(args: dict) -> list[TextContent]:
     if status_filter:
         views = [v for v in views if v.status.value == status_filter]
 
+    # Bounded payload + malformed-card report (SKCOORD-STATUS-BOUND-01).
+    limit = args.get("limit")
+    cursor = args.get("cursor")
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0):
+        return _error_response("limit must be a positive integer")
+
+    try:
+        from ..card_store import task_views_with_malformed
+
+        _, malformed = task_views_with_malformed(_home())
+    except ImportError:
+        malformed = []
+    for entry in malformed:
+        logger.warning(
+            "Malformed card %s (source %s): %s [evidence_sha256=%s]",
+            entry["card_id"],
+            entry["source"],
+            entry["reason"],
+            entry["evidence_sha256"],
+        )
+
+    bounded = limit is not None or cursor is not None
+    all_views = views
+    if bounded:
+        if cursor is not None:
+            views = [v for v in all_views if v.task.id > cursor]
+            if limit is not None:
+                views = views[:limit]
+        elif limit is not None:
+            views = all_views[:limit]
+        has_more = limit is not None and len(views) < limit and cursor is None
+        next_cursor = views[-1].task.id if (has_more and views) else None
+    else:
+        has_more = False
+        next_cursor = None
+
     eligibility = leaf_eligibility_counts(_home(), {v.task.id for v in views})
 
-    return _json_response(
-        {
-            "tasks": [
-                {
-                    "id": v.task.id,
-                    "title": v.task.title,
-                    "priority": v.task.priority.value,
-                    "status": v.status.value,
-                    "claimed_by": v.claimed_by,
-                    "tags": v.task.tags,
-                    "description": v.task.description[:150] if v.task.description else "",
-                }
-                for v in views
-            ],
-            "agents": [
-                {
-                    "name": a.agent,
-                    "state": a.state.value,
-                    "current_task": a.current_task,
-                    "claimed": a.claimed_tasks,
-                    "completed_count": len(a.completed_tasks),
-                }
-                for a in agents
-            ],
-            "summary": {
-                "total": len(views),
-                "open": sum(1 for v in views if v.status.value == "open"),
-                "leaf_eligible": eligibility.leaves,
-                "review_needs_identity": eligibility.review,
-                "malformed": eligibility.malformed,
-                "claimed": sum(1 for v in views if v.status.value == "claimed"),
-                "in_progress": sum(1 for v in views if v.status.value == "in_progress"),
-                "done": sum(1 for v in views if v.status.value == "done"),
-            },
-        }
-    )
+    payload = {
+        "tasks": [
+            {
+                "id": v.task.id,
+                "title": v.task.title,
+                "priority": v.task.priority.value,
+                "status": v.status.value,
+                "claimed_by": v.claimed_by,
+                "tags": v.task.tags,
+                "description": v.task.description[:150] if v.task.description else "",
+            }
+            for v in views
+        ],
+        "agents": [
+            {
+                "name": a.agent,
+                "state": a.state.value,
+                "current_task": a.current_task,
+                "claimed": a.claimed_tasks,
+                "completed_count": len(a.completed_tasks),
+            }
+            for a in agents
+        ],
+        "malformed_cards": malformed,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+        "summary": {
+            "total": len(views),
+            "open": sum(1 for v in views if v.status.value == "open"),
+            "leaf_eligible": eligibility.leaves,
+            "review_needs_identity": eligibility.review,
+            "malformed": len(malformed),
+            "claimed": sum(1 for v in views if v.status.value == "claimed"),
+            "in_progress": sum(1 for v in views if v.status.value == "in_progress"),
+            "done": sum(1 for v in views if v.status.value == "done"),
+        },
+    }
+    return _json_response(payload)
 
 
 async def _handle_coord_claim(args: dict) -> list[TextContent]:

@@ -11,8 +11,102 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from ._common import AGENT_HOME, console
+from ._common import AGENT_HOME, console, logger
 from ._validators import validate_agent_name, validate_task_id
+
+
+def _status_summary(views, malformed, eligibility) -> dict:
+    """Build the summary block for the bounded JSON status payload."""
+    return {
+        "total": len(views),
+        "open": sum(1 for v in views if v.status.value == "open"),
+        "claimed": sum(1 for v in views if v.status.value == "claimed"),
+        "in_progress": sum(1 for v in views if v.status.value == "in_progress"),
+        "done": sum(1 for v in views if v.status.value == "done"),
+        "malformed": len(malformed),
+        "leaf_eligible": eligibility.leaves,
+        "review_needs_identity": eligibility.review,
+    }
+
+
+def _status_scope(tag, parent, status_filter):
+    """Build a stable scope identifier for the status cursor.
+
+    The scope binds the cursor to the exact filters (tags, parent, status)
+    so a caller cannot replay a cursor from a different scope. The scope is
+    hashed so it stays bounded even with many tags.
+    """
+    import hashlib
+    import json as _json
+
+    scope_obj = {
+        "tag": [t.lower() for t in tag],
+        "parent": parent,
+        "status": status_filter,
+    }
+    body = _json.dumps(scope_obj, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(body).hexdigest()[:32]
+
+
+def _encode_status_cursor(payload: dict) -> str:
+    """Encode an opaque, integrity-protected status cursor.
+
+    The cursor is base64 of (canonical JSON body + SHA-256 HMAC), matching the
+    CardStore cursor contract: opaque to the caller, verifiable, bound to the
+    scope, limit, and position.
+    """
+    import base64
+    import hashlib
+    import json as _json
+
+    body = _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    signature = hashlib.sha256(body).digest()
+    cursor = base64.urlsafe_b64encode(body + signature).decode().rstrip("=")
+    if len(cursor) > 4096:
+        raise click.ClickException("status cursor exceeds its encoded-size contract")
+    return cursor
+
+
+def _decode_status_cursor(cursor: str, limit: int | None = None) -> str:
+    """Decode + validate a status cursor, returning the 'after' position.
+
+    Fails closed on a malformed, tampered, oversized, or stale cursor (one
+    minted for a different limit/scope).
+    """
+    import base64
+    import binascii
+    import hashlib
+    import hmac
+    import json as _json
+
+    if not isinstance(cursor, str) or not cursor or len(cursor) > 4096:
+        raise click.ClickException("status cursor is malformed")
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        body, signature = raw[:-32], raw[-32:]
+        expected = hashlib.sha256(body).digest()
+        if len(signature) != 32 or not hmac.compare_digest(signature, expected):
+            raise ValueError("signature mismatch")
+        payload = _json.loads(body)
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"after", "limit", "scope", "v"}
+            or payload["v"] != 1
+            or not isinstance(payload.get("after"), str)
+            or not payload["after"]
+            or (limit is not None and payload.get("limit") != limit)
+        ):
+            raise ValueError("cursor is stale or out of scope")
+        return payload["after"]
+    except (
+        ValueError,
+        TypeError,
+        UnicodeError,
+        json.JSONDecodeError,
+        KeyError,
+        binascii.Error,
+    ) as exc:
+        raise click.ClickException("status cursor is malformed or stale") from exc
 
 
 def register_coord_commands(main: click.Group) -> None:
@@ -84,14 +178,58 @@ def register_coord_commands(main: click.Group) -> None:
         type=click.Choice(["open", "claimed", "in_progress", "review", "done", "blocked"]),
         help="Only tasks in this status.",
     )
-    def coord_status(home, tag, parent, status_filter):
-        """Show the coordination board overview."""
+    @click.option(
+        "--limit",
+        default=None,
+        type=int,
+        help="Bound the status payload to at most this many cards.",
+    )
+    @click.option(
+        "--cursor",
+        default=None,
+        help="Opaque continuation cursor from a previous bounded status call.",
+    )
+    @click.option(
+        "--format",
+        "fmt",
+        default="text",
+        type=click.Choice(["text", "json"]),
+        help="text = Rich human-readable board (default); json = machine-readable payload.",
+    )
+    def coord_status(home, tag, parent, status_filter, limit, cursor, fmt):
+        """Show the coordination board overview.
+
+        Bounded, machine-readable contract (SKCOORD-STATUS-BOUND-01):
+        The primary payload goes to stdout. With --format json the stdout is
+        a single JSON document: the bounded set of task rows, a summary, the
+        malformed-card report (ID + evidence hash), and a discoverable
+        continuation cursor when the scope is truncated. Diagnostics (skipped
+        files, unreadable cards) are emitted on stderr, keeping stdout clean
+        and parseable by machines.
+        """
         from ..coordination import Board
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
         views = board.get_task_views()
         agents = board.load_agents()
+        # Bounded interface: report one unreadable card by ID + evidence hash
+        # without crashing or hiding the readable cards. Degrades to an empty
+        # malformed list when the paired skcoord build predates the function.
+        try:
+            from ..card_store import task_views_with_malformed
+
+            _, malformed = task_views_with_malformed(home_path)
+        except ImportError:
+            malformed: list = []
+        for entry in malformed:
+            logger.warning(
+                "Malformed card %s (source %s): %s [evidence_sha256=%s]",
+                entry["card_id"],
+                entry["source"],
+                entry["reason"],
+                entry["evidence_sha256"],
+            )
 
         # Open cards whose dependencies are not all done are blocked: the
         # claim gate refuses them without --force, so status must say so.
@@ -113,6 +251,96 @@ def register_coord_commands(main: click.Group) -> None:
             views = [v for v in views if wanted & {t.lower() for t in v.task.tags}]
         if status_filter:
             views = [v for v in views if _status_label(v) == status_filter]
+
+        # Eligibility counts are needed for both the text and JSON payloads.
+        # The eligibility read is best-effort: a malformed card in the
+        # CardStore event stream must not crash the whole status command.
+        from ..coord_eligibility import leaf_eligibility_counts
+
+        try:
+            eligibility = leaf_eligibility_counts(home_path, {v.task.id for v in views})
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                "eligibility counts unavailable, treating malformed population as 1: %s", exc
+            )
+            from dataclasses import dataclass as _dc
+
+            @ _dc(frozen=True)
+            class _NoCounts:
+                leaves: int = 0
+                review: int = 0
+                malformed: int = 1
+
+            eligibility = _NoCounts()
+
+        # Bounded + machine-readable payload. When --limit is given (or the
+        # caller passes --cursor), the primary payload is bounded to at most
+        # ``limit`` cards, and truncation is exposed via a discoverable
+        # continuation cursor. With --format json the whole payload goes to
+        # stdout as one JSON document; diagnostics already went to stderr.
+        bounded = limit is not None or cursor is not None
+        if limit is not None and limit <= 0:
+            raise click.ClickException("--limit must be >= 1")
+
+        def _row(view):  # noqa: E306 - local helper for row projection
+            return {
+                "id": view.task.id,
+                "title": view.task.title,
+                "priority": view.task.priority.value,
+                "status": _status_label(view),
+                "claimed_by": view.claimed_by,
+                "tags": view.task.tags,
+            }
+
+        if fmt == "json" or bounded:
+            if cursor is not None:
+                after = _decode_status_cursor(cursor, limit=limit)
+                views_from = [v for v in views if v.task.id > after]
+                page = views_from[:limit] if limit is not None else views_from
+                has_more = limit is not None and len(views_from) > limit
+                next_cursor = None
+                if has_more and page:
+                    next_cursor = _encode_status_cursor(
+                        {
+                            "after": page[-1].task.id,
+                            "limit": limit,
+                            "scope": _status_scope(tag, parent, status_filter),
+                            "v": 1,
+                        },
+                    )
+                payload = {
+                    "format": "json",
+                    "summary": _status_summary(views, malformed, eligibility),
+                    "cards": [_row(v) for v in page],
+                    "malformed_cards": malformed,
+                    "has_more": has_more,
+                    "next_cursor": next_cursor,
+                }
+                click.echo(json.dumps(payload, indent=2, default=str))
+                return
+
+            page = views[:limit] if limit is not None else views
+            has_more = limit is not None and len(views) > limit
+            next_cursor = None
+            if has_more and page:
+                next_cursor = _encode_status_cursor(
+                    {
+                        "after": page[-1].task.id,
+                        "limit": limit,
+                        "scope": _status_scope(tag, parent, status_filter),
+                        "v": 1,
+                    },
+                )
+            payload = {
+                "format": "json",
+                "summary": _status_summary(views, malformed, eligibility),
+                "cards": [_row(v) for v in page],
+                "malformed_cards": malformed,
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+            }
+            click.echo(json.dumps(payload, indent=2, default=str))
+            return
 
         if not views and (tag or status_filter):
             console.print("\n  [dim]No tasks match the given filters.[/]\n")
