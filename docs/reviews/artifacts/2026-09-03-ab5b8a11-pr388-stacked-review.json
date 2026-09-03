@@ -1,0 +1,81 @@
+{
+  "card_id": "ab5b8a11",
+  "check_artifact_sha256": {
+    "focused_tests.txt": "069b56f659304a815a69dd9ca53414b27a4ecbde6906eb14e8d1c84f3ddabf6d",
+    "gitleaks.txt": "3f938553de08761bffd1866e7a477ceda843d08cd4cebbc47c77d12418276c3f",
+    "identity-scope.txt": "9cf2ac098dfdcbbe8f0a59221edd295074eda56acdffb5905332c810e66145be",
+    "launcher-ruff-post.json": "d3f49e8205467b74b132387dd327fc04b2ef4eeec60bb71bf41a7380b47ce84e",
+    "launcher-ruff-pre.json": "9ec6e19095b36fb8793d33a94f27c4ec12e4ba18e7895bd8adc6a77c0daa943b",
+    "launcher-ruff-summary.txt": "ed2107349d09ee5b6d7ce8d2b82cca0f87509a790362bbc3d10c698ed4aafd9d",
+    "static.txt": "6e7d25c88ed6b3e075e39b16984513cd5c2305ad8988813270d075bb0b242f96"
+  },
+  "checks": {
+    "diff_check": "PASS",
+    "focused_tests": "53 passed",
+    "gitleaks": "PASS, no leaks in pinned candidate range",
+    "launcher_ruff": "PASS non-regression, identical 210 finding code inventory before and after stack",
+    "non_launcher_black": "PASS, 9 files unchanged",
+    "non_launcher_ruff": "PASS",
+    "pr388_exact_head_ci": "PASS, all reported GitHub checks successful",
+    "py_compile": "PASS",
+    "unicode_dash_scan": "PASS"
+  },
+  "launcher": {
+    "added_semantics": [
+      "fold refreshed description",
+      "fold amended acceptance criteria",
+      "fold typed producer identity",
+      "fold typed candidate evidence digest"
+    ],
+    "behavior_verified": [
+      "quiet worker remains live",
+      "transient systemd worker attribution",
+      "duplicate live worker deduplication",
+      "folded claim owner and claim revision identity",
+      "typed review metadata precedence with fail closed malformed input"
+    ],
+    "candidate_blob": "36952e88fdc85101456cd8b2421e0dab12ca5786",
+    "candidate_sha256": "963cc8719fb224bdb95eca6d048cf84fdaad79a803d467f22da2212432c007d5",
+    "candidate_size": 157978,
+    "pr388_blob": "602888f75a01e37a2217fd6b0fe62fcca2ef451e",
+    "preimage_exact_match": true,
+    "preserved_functions": [
+      "_never_started",
+      "_record_live_no_progress",
+      "_worker_cards",
+      "publish_live"
+    ],
+    "reviewed_lifecycle_candidate": "ff15faf4e2aca6b1449d37f1f3cac2b392a908a9",
+    "reviewed_preimage_blob": "602888f75a01e37a2217fd6b0fe62fcca2ef451e"
+  },
+  "merge_performed": false,
+  "parent_card_id": "db74500f",
+  "producer_evidence_sha256": "9066a4db83a8bd5c05779c6fa1c87bf7f2471d635215fdbff7a0567447ee8d8b",
+  "repository_change": "review artifact only",
+  "reviewed_candidate": {
+    "aggregate_diff_sha256": "0f448cb2042bd0f66f230bde27a0b940d6d2b88e45546760e61eda34b8ae4644",
+    "base": "896855ce263325cebd48686d95df93beef0a9815",
+    "changed_path_count": 10,
+    "commit": "5e892f6e2b1185fccbec9264fa5f886a7eec1396",
+    "pr388_head": "3ff2da9a523bb2e6ec0ae91089759dc373a7d2ee",
+    "ref": "refs/heads/integration/db74500f-pr388-refresh",
+    "stacked_delta_sha256": "8ea05c3b3aec9e78283553161b396a8fb940b222c6ab2968cd61c14f294b83c8",
+    "tree": "98c41bbe58e50dddf7fb3d1a0218c96edabf70a2"
+  },
+  "reviewer": "pi-codex-chiap08-ab5b8a11",
+  "runtime_mutation": false,
+  "schema": "skcapstone.independent_review.v1",
+  "scope": [
+    "scripts/fleet/skfleet-rotate.py",
+    "src/skcapstone/agent_projection.py",
+    "src/skcapstone/cli/coord.py",
+    "src/skcapstone/context_loader.py",
+    "tests/test_agent_projection.py",
+    "tests/test_cli_kanban.py",
+    "tests/test_reaper_stall.py",
+    "tests/test_skfleet_claimability.py",
+    "tests/test_skfleet_provisional_opener.py",
+    "tests/test_skfleet_review_metadata.py"
+  ],
+  "verdict": "PASS"
+}
