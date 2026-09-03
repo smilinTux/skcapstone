@@ -9,6 +9,7 @@ Fixes two defects found 03:50Z:
      their own, so a slot is simply a live codex-auto-* session. No retire logic.
 """
 import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
+import importlib.metadata
 from pathlib import Path
 
 from skcapstone.card_store import CardStore
@@ -514,6 +515,7 @@ LIVE = os.path.join(HOME, ".skcapstone/evidence/fleet-live")
 # pushes reporting below known and disables reaping fleetwide. Observed within
 # one tick of adding it. It lives one level up.
 _INEFFECTIVE_PATH = os.path.join(HOME, ".skcapstone/evidence/reap-ineffective.json")
+REAP_RUNTIME_VERSION = importlib.metadata.version("skcoord")
 LIVE_FRESH = 30 * 60      # a report older than this says nothing about now
 CLAIM_GRACE = 300         # one full rotation period, so every host has reported
 # Reaping needs a quorum, because a card running on chiap04 is invisible in
@@ -2156,22 +2158,68 @@ def _claim_identity(rows):
 def _load_ineffective():
     try:
         with open(_INEFFECTIVE_PATH, encoding="utf-8") as fh:
-            return {str(x) for x in json.load(fh).get("cards") or ()}
+            payload = json.load(fh)
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not isinstance(entries, list):
+            return []
+        return [entry for entry in entries if isinstance(entry, dict)]
     except (OSError, ValueError):
-        return set()
+        return []
 
 
-def _record_ineffective(cid):
+def _write_ineffective(entries):
+    os.makedirs(os.path.dirname(_INEFFECTIVE_PATH), exist_ok=True)
+    tmp = _INEFFECTIVE_PATH + ".new"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"schema_version": 1, "entries": entries}, fh, sort_keys=True)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, _INEFFECTIVE_PATH)
+
+
+def _ineffective_suppresses(entries, cid, owner, claim_revision):
+    return any(
+        entry.get("card_id") == cid
+        and entry.get("owner") == owner
+        and entry.get("claim_revision") == claim_revision
+        and entry.get("runtime_version") == REAP_RUNTIME_VERSION
+        for entry in entries
+    )
+
+
+def _record_ineffective(cid, owner, claim_revision, failure_class):
     known = _load_ineffective()
-    if cid in known:
+    if _ineffective_suppresses(known, cid, owner, claim_revision):
         return
-    known.add(cid)
+    known.append({
+        "card_id": cid,
+        "owner": owner,
+        "claim_revision": claim_revision,
+        "failure_class": failure_class,
+        "runtime_version": REAP_RUNTIME_VERSION,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    })
     try:
-        os.makedirs(os.path.dirname(_INEFFECTIVE_PATH), exist_ok=True)
-        tmp = _INEFFECTIVE_PATH + ".new"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"cards": sorted(known)}, fh)
-        os.replace(tmp, _INEFFECTIVE_PATH)
+        _write_ineffective(known)
+    except OSError:
+        pass
+
+
+def _remove_ineffective(cid, owner, claim_revision):
+    known = _load_ineffective()
+    retained = [
+        entry for entry in known
+        if not (
+            entry.get("card_id") == cid
+            and entry.get("owner") == owner
+            and entry.get("claim_revision") == claim_revision
+        )
+    ]
+    if retained == known:
+        return
+    try:
+        _write_ineffective(retained)
     except OSError:
         pass
 
@@ -2421,8 +2469,8 @@ def reap_dead_claims():
             continue
         if cid in running:
             continue                      # a host says this is running right now
-        if cid in _ineffective:
-            continue                      # releasing it does nothing; see above
+        if _ineffective_suppresses(_ineffective, cid, owner, claim_revision):
+            continue                      # exact generation already failed on this runtime
         if not claim_revision:
             log(d, "REAP_EXCLUDED|%s|%s|%s|claim revision missing; exact release "
                    "fence unavailable" % (HOST, cid, owner))
@@ -2495,12 +2543,15 @@ def reap_dead_claims():
             # disagree the CLI answers "Already released" and writes nothing, so
             # confirm against the fold rather than trusting the return code.
             if lifecycle_state(cid) == "claimed":
-                _record_ineffective(cid)
+                _record_ineffective(
+                    cid, fresh_owner, fresh_revision, "release_reported_success_noop"
+                )
                 log(d, "REAP_INEFFECTIVE|%s|%s|%s|release reported success but the "
                        "card is still claimed; CardStore and the legacy task store "
                        "disagree, needs repair" % (HOST, cid, owner))
                 continue
             freed += 1
+            _remove_ineffective(cid, fresh_owner, fresh_revision)
             log(d, "REAPED|%s|%s|%s|revision=%s provenance=%s; no reporting host "
                    "reports this card running" %
                 (HOST, cid, owner, fresh_revision, provenance))
@@ -2508,7 +2559,7 @@ def reap_dead_claims():
             # A release that keeps failing is a divergence, not a transient. Record
             # it after the first failure so it does not retry every five minutes
             # forever, which is how 2b614910 accumulated 455 pointless calls.
-            _record_ineffective(cid)
+            _record_ineffective(cid, fresh_owner, fresh_revision, "release_command_failed")
             log(d, "REAP_FAILED|%s|%s|%s" % (HOST, cid, (r.stderr or "").strip()[:120]))
     log(d, "REAP|%s|released=%d hosts_reporting=%d cards_running=%d ineffective=%d"
         % (HOST, freed, nhosts, len(running), len(_load_ineffective())))

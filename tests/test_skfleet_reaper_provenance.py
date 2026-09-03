@@ -134,6 +134,7 @@ def _reaper_fixture(
         "_acts_fresh_rows",
         "_current_claim_identity_fresh",
         "_fleet_launch_provenance",
+        "_ineffective_suppresses",
         "_record_reap_outcome",
         "reap_dead_claims",
     )
@@ -160,8 +161,10 @@ def _reaper_fixture(
             "SKC": "skcapstone",
             "_SEAT_RE": re.compile(r"^[a-z][a-z0-9-]{0,31}$"),
             "_fleet_launch_claims": None,
-            "_load_ineffective": lambda: set(),
-            "_record_ineffective": lambda _card: None,
+            "REAP_RUNTIME_VERSION": "0.1.63",
+            "_load_ineffective": lambda: [],
+            "_record_ineffective": lambda *_args: None,
+            "_remove_ineffective": lambda *_args: None,
             "_rows": {},
             "d": str(tmp_path / "run"),
             "event_rows": namespace["_acts_fresh_rows"],
@@ -196,6 +199,116 @@ def _replace_fresh_claim(
     event = _claim_event(owner, claim_revision, timestamp)
     path = tmp_path / "cards" / "deadbeef" / "events" / "claim.jsonl"
     path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+
+def _ineffective_functions(tmp_path: Path) -> dict[str, object]:
+    """Load the isolated ineffective-generation store."""
+    namespace = _load_functions(
+        "_load_ineffective",
+        "_write_ineffective",
+        "_ineffective_suppresses",
+        "_record_ineffective",
+        "_remove_ineffective",
+    )
+    namespace.update(
+        {
+            "_INEFFECTIVE_PATH": str(tmp_path / "reap-ineffective.json"),
+            "REAP_RUNTIME_VERSION": "0.1.63",
+        }
+    )
+    return namespace
+
+
+def test_legacy_bare_card_quarantine_is_retried_after_upgrade(tmp_path: Path) -> None:
+    """A pre-0.1.63 bare card ID cannot suppress an exact modern generation."""
+    path = tmp_path / "reap-ineffective.json"
+    path.write_text('{"cards":["deadbeef"]}\n', encoding="utf-8")
+    namespace = _ineffective_functions(tmp_path)
+
+    entries = namespace["_load_ineffective"]()
+
+    assert entries == []
+    assert not namespace["_ineffective_suppresses"](
+        entries, "deadbeef", "pi-codex-chiap02-deadbeef", "revision-1"
+    )
+
+
+def test_ineffective_generation_retries_once_per_runtime_or_claim(tmp_path: Path) -> None:
+    """Only an unchanged claim generation on an unchanged runtime stays suppressed."""
+    namespace = _ineffective_functions(tmp_path)
+    record = namespace["_record_ineffective"]
+    suppresses = namespace["_ineffective_suppresses"]
+    load = namespace["_load_ineffective"]
+    owner = "pi-codex-chiap02-deadbeef"
+
+    record("deadbeef", owner, "revision-1", "release_command_failed")
+    record("deadbeef", owner, "revision-1", "release_command_failed")
+    entries = load()
+
+    assert len(entries) == 1
+    assert entries[0].keys() == {
+        "card_id",
+        "owner",
+        "claim_revision",
+        "failure_class",
+        "runtime_version",
+        "timestamp",
+    }
+    assert suppresses(entries, "deadbeef", owner, "revision-1")
+    assert not suppresses(entries, "deadbeef", owner, "revision-2")
+
+    namespace["REAP_RUNTIME_VERSION"] = "0.1.64"
+    assert not suppresses(entries, "deadbeef", owner, "revision-1")
+    record("deadbeef", owner, "revision-1", "release_reported_success_noop")
+    assert len(load()) == 2
+    assert suppresses(load(), "deadbeef", owner, "revision-1")
+
+
+def test_success_removes_only_the_exact_ineffective_generation(tmp_path: Path) -> None:
+    """Resolving one generation cannot erase another claim's quarantine."""
+    namespace = _ineffective_functions(tmp_path)
+    record = namespace["_record_ineffective"]
+    owner = "pi-codex-chiap02-deadbeef"
+    record("deadbeef", owner, "revision-1", "release_command_failed")
+    record("deadbeef", owner, "revision-2", "release_command_failed")
+
+    namespace["_remove_ineffective"]("deadbeef", owner, "revision-2")
+
+    entries = namespace["_load_ineffective"]()
+    assert [(entry["card_id"], entry["claim_revision"]) for entry in entries] == [
+        ("deadbeef", "revision-1")
+    ]
+
+
+def test_reaper_retries_exact_0_1_58_failure_once_on_0_1_63(tmp_path: Path) -> None:
+    """An exact older-runtime failure does not suppress the upgraded reaper."""
+    owner = "pi-codex-chiap02-deadbeef"
+    revision = "fleet-claim-revision"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision=revision,
+        launch_revision=revision,
+    )
+    old_failure = {
+        "card_id": "deadbeef",
+        "owner": owner,
+        "claim_revision": revision,
+        "failure_class": "release_command_failed",
+        "runtime_version": "0.1.58",
+        "timestamp": "2026-08-28T18:00:00+00:00",
+    }
+    namespace["_load_ineffective"] = lambda: [old_failure]
+
+    assert namespace["reap_dead_claims"]() == 1
+    assert len(released) == 1
+
+    released.clear()
+    current_failure = {**old_failure, "runtime_version": "0.1.63"}
+    namespace["_load_ineffective"] = lambda: [current_failure]
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
 
 
 def test_manual_ephemeral_claim_with_no_launch_generation_is_reaped(tmp_path: Path) -> None:
@@ -645,11 +758,20 @@ def test_quorum_and_fresh_owner_fences_still_fail_closed(tmp_path: Path) -> None
     assert released == []
 
     namespace["live_report"] = lambda: (time.time(), set(), 3)
-    namespace["_load_ineffective"] = lambda: {"deadbeef"}
+    namespace["_load_ineffective"] = lambda: [
+        {
+            "card_id": "deadbeef",
+            "owner": owner,
+            "claim_revision": revision,
+            "failure_class": "release_command_failed",
+            "runtime_version": "0.1.63",
+            "timestamp": "2026-08-28T18:00:00+00:00",
+        }
+    ]
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
 
-    namespace["_load_ineffective"] = lambda: set()
+    namespace["_load_ineffective"] = lambda: []
     namespace["live_report"] = lambda: (time.time(), {"deadbeef"}, 3)
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
