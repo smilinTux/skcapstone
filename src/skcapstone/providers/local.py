@@ -383,6 +383,17 @@ def _pid_is_alive(pid: int) -> bool:
         True if the process exists and is accessible.
     """
     try:
+        # Reap a terminated child before probing it. Signal 0 reports zombies
+        # as alive, which otherwise makes stop() wait through both timeouts and
+        # leaves the process table entry behind until the caller exits.
+        reaped, _status = os.waitpid(pid, os.WNOHANG)
+        if reaped == pid:
+            return False
+    except ChildProcessError:
+        # Persisted sessions may be inspected by a process other than their
+        # original parent. Fall through to the portable signal probe.
+        pass
+    try:
         os.kill(pid, 0)
         return True
     except ProcessLookupError:

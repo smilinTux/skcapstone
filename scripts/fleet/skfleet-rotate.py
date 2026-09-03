@@ -54,6 +54,52 @@ def _bounded_ids(card_ids, limit=12):
     return ",".join(shown) or "-", max(0, len(values) - len(shown))
 
 
+def _full_reassessment_path(host, evidence_root):
+    """Keep exactly one shared full report, written only by its authority host."""
+    if host != "chiap08":
+        return None
+    return Path(evidence_root) / "lifecycle-reassessment.json"
+
+
+def _validate_reassessment(report):
+    """Fail closed if the lifecycle assessor did not return its safety contract."""
+    if not isinstance(report, dict):
+        raise ValueError("lifecycle reassessment is not an object")
+    if report.get("read_only") is not True:
+        raise ValueError("lifecycle reassessment is not read only")
+    if not isinstance(report.get("classes"), dict):
+        raise ValueError("lifecycle reassessment classes are absent")
+    if not isinstance(report.get("counts"), dict):
+        raise ValueError("lifecycle reassessment counts are absent")
+    if not isinstance(report.get("excluded_card_ids"), list):
+        raise ValueError("lifecycle reassessment exclusions are absent")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(report.get("content_sha256") or "")):
+        raise ValueError("lifecycle reassessment hash is absent")
+    return report
+
+
+def _reassessment_summary(host, report, report_path):
+    destination = str(report_path) if report_path is not None else "authority:chiap08"
+    counts = json.dumps(report["counts"], sort_keys=True, separators=(",", ":"))
+    return "REASSESSMENT|%s|report=%s sha256=%s counts=%s excluded=%d" % (
+        host, destination, report["content_sha256"], counts,
+        len(report["excluded_card_ids"]),
+    )
+
+
+def _write_bounded_report(report, report_path, limit=2 * 1024 * 1024):
+    """Atomically replace the authority report with the exact bounded bytes."""
+    payload = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
+    json.loads(payload)
+    if len(payload) > limit:
+        raise ValueError("lifecycle reassessment exceeds %d bytes" % limit)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = report_path.with_suffix(report_path.suffix + ".tmp")
+    temporary.write_bytes(payload)
+    json.loads(temporary.read_bytes())
+    temporary.replace(report_path)
+
+
 def _partition_owner(card_id, hosts, pinned_host=None):
     """Return the unique stable owner for one card across host snapshots."""
     if pinned_host:
@@ -171,22 +217,20 @@ def _review_assignment(cid, core, labels, reviewer):
 # initialize optional skcoord API dependencies such as CapAuth.
 _LIFECYCLE_PATH=Path(os.environ.get("SKCOORD_SRC",os.path.join(os.path.expanduser("~"),"work/skcoord/src")))/"skcoord/lifecycle_reassessment.py"
 _spec=importlib.util.spec_from_file_location("skcoord_lifecycle_reassessment",_LIFECYCLE_PATH)
-# Degrade instead of dying. A host that has not yet checked out skcoord must still
-# be able to rotate workers: losing the pre-batch lifecycle report is a downgrade,
-# losing the whole rotation is an outage. chiap04 crashed on exactly this the first
-# time it ran, before its skcoord checkout existed.
+# Assessment is a safety input, not optional telemetry. If it cannot be loaded,
+# the cycle still emits a BLOCKED summary below but gains no mutation authority.
 _LIFECYCLE_OK = _spec is not None and _spec.loader is not None and _LIFECYCLE_PATH.exists()
 if _LIFECYCLE_OK:
     try:
         _lifecycle=importlib.util.module_from_spec(_spec)
         sys.modules[_spec.name]=_lifecycle
         _spec.loader.exec_module(_lifecycle)
-        assess,write_report=_lifecycle.assess,_lifecycle.write_report
+        assess=_lifecycle.assess
     except Exception as _e:
         _LIFECYCLE_OK=False
-        print("  WARN lifecycle reassessment unavailable (%s): rotating without the pre-batch report" % _e)
+        print("  WARN lifecycle reassessment unavailable (%s)" % _e)
 if not _LIFECYCLE_OK:
-    assess=write_report=None
+    assess=None
 
 HOST=os.uname().nodename
 ROTATION_HOSTS=("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
@@ -354,9 +398,12 @@ if HOST not in ROTATION_HOSTS:
 # Mandatory read-only graph validation precedes slot and assignment decisions.
 # The report is the exact machine-readable assignment exclusion contract.
 try:
-    assessment=assess(Path(CARDS),[Path(EVID)])
-    report_path=Path(d)/"lifecycle-reassessment.json"
-    write_report(assessment,report_path)
+    if not _LIFECYCLE_OK:
+        raise RuntimeError("lifecycle reassessment module unavailable")
+    assessment=_validate_reassessment(assess(Path(CARDS),[Path(EVID)]))
+    report_path=_full_reassessment_path(HOST,EVID)
+    if report_path is not None:
+        _write_bounded_report(assessment,report_path)
     # The lifecycle report's unclaimable_cards class is computed from HOST-LOCAL
     # worker logs, which ~/.skcapstone/.stignore excludes from Syncthing. Every
     # host therefore derives a DIFFERENT set from the same shared cards.
@@ -375,8 +422,7 @@ try:
     _tracking = {r.get("card_id") for r in _classes.get("volatile_ci_identity", [])
                  if r.get("card_id") and r.get("reason")=="tracking_card"}
     excluded=set(assessment["excluded_card_ids"]) - _local_only - _tracking
-    log(d,"LIFECYCLE|%s|report=%s sha256=%s counts=%s excluded=%d"
-        %(HOST,report_path,assessment["content_sha256"],json.dumps(assessment["counts"],sort_keys=True,separators=(",",":")),len(excluded)))
+    log(d,_reassessment_summary(HOST,assessment,report_path))
 except Exception as exc:
     log(d,"BLOCKED|%s|lifecycle reassessment failed: %s"%(HOST,exc))
     sys.exit(2)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import click
 from click.testing import CliRunner
-from skcoord.card_store import current_claim_precondition
+from skcoord.card_store import CardStore, current_claim_precondition
 from skcoord.lifecycle import transition_task
 
 from skcapstone.cli.coord import register_coord_commands
@@ -192,7 +192,53 @@ def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path):
     assert first.exit_code == 0, first.output
     view = next(view for view in Board(tmp_path).get_task_views() if view.task.id == "a1e10001")
     assert view.status.value == "open"
-    assert runner.invoke(_main(), args).exit_code != 0
+    replay = runner.invoke(_main(), args)
+    assert replay.exit_code == 0, replay.output
+    releases = [
+        event
+        for event in CardStore(tmp_path)._read_events("a1e10001")
+        if event.get("action") == "release_claim"
+    ]
+    assert len(releases) == 1
+
+
+def test_release_claim_uses_authoritative_claim_when_agent_projection_is_stale(
+    tmp_path: Path,
+):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="a1e10004", title="orphaned claim target"))
+    board.claim_task("probe", "a1e10004")
+    revision = current_claim_precondition(tmp_path, "a1e10004", "probe")
+
+    agent = board.load_agent("probe")
+    assert agent is not None
+    agent.claimed_tasks = []
+    agent.current_task = None
+    board.save_agent(agent)
+
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "release-claim",
+            "a1e10004",
+            "--owner",
+            "probe",
+            "--expected-claim-revision",
+            revision,
+            "--agent",
+            "repair",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Released claim" in result.output
+    view = next(view for view in Board(tmp_path).get_task_views() if view.task.id == "a1e10004")
+    assert view.status.value == "open"
+    assert current_claim_precondition(tmp_path, "a1e10004", "probe") is None
 
 
 def test_release_claim_requires_expected_revision(tmp_path: Path):

@@ -60,6 +60,7 @@ def _load_functions(*names: str) -> dict[str, object]:
         "hashlib": hashlib,
         "json": json,
         "os": os,
+        "re": re,
         "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
     }
     exec(compile(module, str(ROTATE), "exec"), namespace)
@@ -127,6 +128,7 @@ def _reaper_fixture(
     )
 
     namespace = _load_functions(
+        "_parse_worker_owner",
         "_claim_identity",
         "_current_claim",
         "_acts_fresh_rows",
@@ -145,16 +147,18 @@ def _reaper_fixture(
 
     namespace.update(
         {
+            "BoundaryError": RuntimeError,
             "CARDS": str(cards),
             "CLAIM_GRACE": 300,
             "EVID": str(evidence),
             "HOST": "chiap08",
+            "HOME": str(tmp_path),
             "_EVID_DIR": str(tmp_path / "card_events"),
             "KNOWN_HOST_TTL": 86400,
             "LIVE": str(live),
             "REAP_QUORUM": 3,
             "SKC": "skcapstone",
-            "_EPHEMERAL_OWNER": re.compile(r"^(pi|codex|glm)[-_]"),
+            "_SEAT_RE": re.compile(r"^[a-z][a-z0-9-]{0,31}$"),
             "_fleet_launch_claims": None,
             "_load_ineffective": lambda: set(),
             "_record_ineffective": lambda _card: None,
@@ -164,6 +168,16 @@ def _reaper_fixture(
             "lifecycle_state": lambda _card: "open" if released else "claimed",
             "live_report": lambda: (time.time(), set(), 3),
             "log": lambda _directory, message: messages.append(message),
+            "MeroObservation": lambda **_kwargs: SimpleNamespace(append=lambda _home: {}),
+            "Path": Path,
+            "_worker_health_snapshot": lambda _sessions: {
+                "sessions": 0,
+                "claims_exact": 0,
+                "mismatched": 0,
+                "duplicates": 0,
+            },
+            "sh": lambda *_args: "",
+            "seat_for": lambda card_id, _core: "link" if card_id == "deadbeef" else None,
             "subprocess": SimpleNamespace(run=fake_run),
             "time": time,
         }
@@ -306,6 +320,77 @@ def test_launcher_owner_naming_has_exact_provenance(tmp_path: Path, lane: str) -
     assert namespace["reap_dead_claims"]() == 1
     assert len(released) == 1
     assert any("provenance=fleet" in message for message in messages)
+
+
+def test_dead_link_seat_claim_is_reaped_with_exact_provenance(tmp_path: Path) -> None:
+    """A dead provisioned seat worker follows the same fenced reap path."""
+    owner = "pi-link-chiap02-deadbeef"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="seat-revision",
+        launch_revision=None,
+        launch_lines=[
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=codex|"
+            "model=test-model|owner=pi-link-chiap02-deadbeef|"
+            "claim_revision=seat-revision"
+        ],
+    )
+
+    assert namespace["reap_dead_claims"]() == 1
+    assert released[0][5] == owner
+    assert any("provenance=fleet" in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    "owner",
+    (
+        "jarvis-chiap02-deadbeef",
+        "link-chiap02-deadbeef",
+        "link-unknown-deadbeef",
+        "link-chiap02-feedface",
+        "pi-unknown-chiap02-deadbeef",
+        "pi-codex-chiap02-deadbeef-extra",
+    ),
+)
+def test_worker_owner_parser_rejects_broad_or_mismatched_names(owner: str) -> None:
+    """Seat support does not restore the old arbitrary-prefix eligibility."""
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    parser.__globals__.update(
+        {
+            "ROTATION_HOSTS": ("chiap01", "chiap02"),
+            "_SEAT_RE": re.compile(r"^[a-z][a-z0-9-]{0,31}$"),
+        }
+    )
+    assert parser(owner, "deadbeef", "link") is None
+
+
+def test_launch_provenance_resolves_seat_for_each_card(tmp_path: Path) -> None:
+    """One seat-owned launch cannot lend its seat to another card."""
+    namespace, _released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner="pi-link-chiap02-deadbeef",
+        claim_revision="link-revision",
+        launch_revision=None,
+        launch_lines=[
+            "LAUNCHED|chiap02|codex-auto-feedface|feedface|lane=codex|"
+            "model=test-model|owner=pi-link-chiap02-feedface|claim_revision=wrong-seat",
+            "LAUNCHED|chiap02|codex-auto-deadbeef|deadbeef|lane=codex|"
+            "model=test-model|owner=pi-link-chiap02-deadbeef|claim_revision=link-revision",
+        ],
+    )
+    other = tmp_path / "cards" / "feedface"
+    other.mkdir()
+    (other / "core.json").write_text('{"initial_labels": []}\n', encoding="utf-8")
+
+    assert namespace["_fleet_launch_provenance"](
+        "deadbeef", "pi-link-chiap02-deadbeef", "link-revision"
+    )
+    assert not namespace["_fleet_launch_provenance"](
+        "feedface", "pi-link-chiap02-feedface", "wrong-seat"
+    )
 
 
 def test_reap_outcome_is_machine_readable_and_idempotent(tmp_path: Path) -> None:
@@ -539,7 +624,7 @@ def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
             "--expected-claim-revision",
             revision,
             "--agent",
-            "fleet-liveness-reaper",
+            "jarvis",
         ]
     ]
 

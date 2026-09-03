@@ -503,7 +503,7 @@ peers). With neither set, the resolver uses an explicitly configured
 `SK_DEFAULT_AGENT` when its directory exists, or the sole non-template installed
 agent. If several agents exist and none is selected, resolution fails instead of
 guessing. Fleet/node profiles must therefore set the identity explicitly (for example,
-Casey's cluster sets Jarvis); generic source and service definitions stay identity-free.
+Casey's estate sets Jarvis); generic source and service definitions stay identity-free.
 
 **Coding-agent harnesses and default MCP topology.** `skcapstone register` supports
 Codex and Pi alongside the other detected clients. Their generated context loaders

@@ -47,7 +47,7 @@ dependencies = [
     # 0.1.46 changed parity absence semantics, 0.1.51 changed KanbanBoard.cards()
     # from failing closed to degrading one unreadable card. Neither was announced
     # because neither had to be: the floor was 0.1.44 and anything satisfied it.
-    "skcoord>=0.1.56",
+    "skcoord>=0.1.57",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]

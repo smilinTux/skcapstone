@@ -460,7 +460,7 @@ def register_consciousness_commands(main: click.Group) -> None:
 
         Each entry records the primary model that failed, the backend that
         was tried next, whether the fallback succeeded, and the reason.
-        Events are stored in ~/.skcapstone/fallbacks.json.
+        Events are stored per writer in ~/.skcapstone/fallbacks/<agent>@<node>.jsonl.
         """
         from ..fallback_tracker import FallbackTracker
 

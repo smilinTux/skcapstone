@@ -1,23 +1,15 @@
-"""Focused coverage for the fleet provisional-pass review opener."""
+"""Deterministic coverage for the bounded provisional review opener."""
 
 from __future__ import annotations
 
 import ast
-import concurrent.futures
 import glob
 import hashlib
 import json
 import os
 import re
-import threading
 from dataclasses import dataclass
 from pathlib import Path
-
-import click
-import pytest
-from click.testing import CliRunner
-
-from skcapstone.cli.coord import register_coord_commands
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -27,6 +19,9 @@ FUNCTIONS = {
     "_reviews_by_parent",
     "_review_card_id",
     "_record_review_refusal",
+    "_provisional_candidate",
+    "_eligible_provisional_reviews",
+    "_authoritative_review_readback",
     "open_provisional_reviews",
 }
 CONSTANTS = {
@@ -34,6 +29,7 @@ CONSTANTS = {
     "_REVIEW_TITLE_RE",
     "_ID_RE",
     "_GOVERNOR_REFUSAL_RE",
+    "_REVIEW_READBACK_BLOCKED",
 }
 
 
@@ -59,6 +55,11 @@ def _namespace(cards: Path, refusals: Path) -> dict[str, object]:
         "HOST": "test-host",
         "SKC": "skcapstone",
         "d": object(),
+        "_OUTCOME_KEYS": ("verdict", "result", "disposition", "review_decision"),
+        "_OUTCOME_VALUE_RE": re.compile(r"^\s*(PASS(?:_FOR_[A-Z_]+)?|FAIL|BLOCKED)", re.I),
+        "_PIPE_OUTCOME_RE": re.compile(
+            r"(?:^|\|)\s*(PASS(?:_FOR_[A-Z_]+)?|FAIL|BLOCKED)\s*(?:\||$)", re.I
+        ),
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
     assert FUNCTIONS <= namespace.keys()
@@ -73,7 +74,7 @@ class _Result:
 
 
 class OpenerHarness:
-    """Small filesystem board and subprocess seam for opener tests."""
+    """Small authoritative board and subprocess seam for opener tests."""
 
     def __init__(self, root: Path) -> None:
         self.cards = root / "cards"
@@ -82,158 +83,208 @@ class OpenerHarness:
         self.ns = _namespace(self.cards, self.refusals)
         self.outcomes: dict[str, tuple[str, str]] = {}
         self.states: dict[str, str] = {}
+        self.events: dict[str, list[dict[str, str]]] = {}
         self.calls: list[list[str]] = []
         self.logs: list[str] = []
-        self.result = _Result()
-        self.barrier: threading.Barrier | None = None
+        self.results: list[_Result] = []
+        self.suppress_create: set[int] = set()
         self.ns.update(
             {
                 "_load_outcomes": lambda: self.outcomes,
+                "_load_evidence_events": lambda: self.events,
+                "event_rows": lambda cid: self.events.get(cid, []),
+                "_native_outcome_value": lambda event: str(event.get("verdict") or ""),
                 "lifecycle_state": lambda cid: self.states.get(cid, "open"),
                 "folded_labels": lambda cid, core: core.get("initial_labels", []),
                 "log": lambda _dest, value: self.logs.append(value),
                 "subprocess": type("Subprocess", (), {"run": self._run}),
+                "_rows": {},
             }
         )
 
-    def card(self, card_id: str, title: str, *labels: str) -> None:
+    def card(self, card_id: str, title: str, *labels: str, description: str = "") -> None:
         path = self.cards / card_id
         path.mkdir(exist_ok=True)
         (path / "core.json").write_text(
-            json.dumps({"id": card_id, "title": title, "initial_labels": list(labels)}),
+            json.dumps(
+                {
+                    "id": card_id,
+                    "title": title,
+                    "description": description,
+                    "initial_labels": list(labels),
+                }
+            ),
             encoding="utf-8",
         )
 
+    def outcome(
+        self,
+        card_id: str,
+        *,
+        writer: str = "pi-codex-source",
+        verdict: str = "PASS_FOR_REVIEW",
+        timestamp: str = "2026-09-01T12:00:00Z",
+    ) -> None:
+        artifact = self.cards.parent / f"{card_id}.patch"
+        artifact.write_text(f"candidate {card_id}\n", encoding="utf-8")
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        self.card(card_id, f"Implementation {card_id}")
+        self.outcomes[card_id] = (timestamp, verdict)
+        self.events[card_id] = [
+            {
+                "action": "evidence",
+                "ts": timestamp,
+                "writer": writer,
+                "verdict": verdict,
+                "candidate_path": str(artifact),
+                "candidate_sha256": digest,
+            }
+        ]
+
     def _run(self, command: list[str], **_kwargs: object) -> _Result:
+        index = len(self.calls)
         self.calls.append(command)
-        if self.barrier:
-            self.barrier.wait()
-        if self.result.returncode:
-            return self.result
+        result = self.results[index] if index < len(self.results) else _Result()
+        if result.returncode or index in self.suppress_create:
+            return result
         review_id = command[command.index("--id") + 1]
         title = command[command.index("--title") + 1]
-        labels = [command[index + 1] for index, value in enumerate(command) if value == "--tag"]
-        self.card(review_id, title, *labels)
-        return self.result
+        description = command[command.index("--desc") + 1]
+        labels = [command[i + 1] for i, value in enumerate(command) if value == "--tag"]
+        self.card(review_id, title, *labels, description=description)
+        return result
 
-    def open(self) -> int:
-        return int(self.ns["open_provisional_reviews"]())
-
-
-def test_cli_create_accepts_stable_automation_id(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SKCOORD_CARD_STORE", "0")
-    main = click.Group()
-    register_coord_commands(main)
-    result = CliRunner().invoke(
-        main,
-        [
-            "coord",
-            "create",
-            "--home",
-            str(tmp_path),
-            "--id",
-            "abc12345",
-            "--title",
-            "Stable review",
-            "--by",
-            "fleet-review-opener",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert list((tmp_path / "coordination" / "tasks").glob("abc12345-*.json"))
+    def open(self, capacity: int, *, dry_run: bool = False) -> int:
+        return int(self.ns["open_provisional_reviews"](capacity, dry_run=dry_run))
 
 
-def test_provisional_pass_opens_once_and_repeated_sweep_is_idempotent(tmp_path: Path) -> None:
+def test_zero_capacity_dry_run_is_empty(tmp_path: Path) -> None:
     board = OpenerHarness(tmp_path)
-    board.card("a1b2c3d4", "Implementation")
-    board.outcomes["a1b2c3d4"] = (
-        "2026-08-30T12:00:00Z",
-        "PASS_FOR_REVIEW immutable evidence",
-    )
+    board.outcome("a1b2c3d4")
 
-    assert board.open() == 1
-    assert board.open() == 0
-    assert len(board.calls) == 1
-    children = set(board.ns["_reviews_by_parent"]()["a1b2c3d4"])
-    assert len(children) == 1
-
-
-def test_five_host_sweeps_converge_on_one_successor_id(tmp_path: Path) -> None:
-    child_ids = set()
-    for index in range(5):
-        board = OpenerHarness(tmp_path / f"host-{index}")
-        board.card("a1b2c3d4", "Implementation")
-        board.outcomes["a1b2c3d4"] = ("2026-08-30T12:00:00Z", "PASS_READY_REVIEW")
-        assert board.open() == 1
-        child_ids.add(board.calls[0][board.calls[0].index("--id") + 1])
-
-    assert len(child_ids) == 1
-
-
-def test_five_concurrent_sweeps_create_one_successor(tmp_path: Path) -> None:
-    board = OpenerHarness(tmp_path)
-    board.card("a1b2c3d4", "Implementation")
-    board.outcomes["a1b2c3d4"] = ("2026-08-30T12:00:00Z", "PASS_FOR_REVIEW")
-    board.barrier = threading.Barrier(5)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(lambda _index: board.open(), range(5)))
-
-    assert results == [1, 1, 1, 1, 1]
-    assert len(board.calls) == 5
-    children = set(board.ns["_reviews_by_parent"]()["a1b2c3d4"])
-    assert len(children) == 1
-
-
-@pytest.mark.parametrize(
-    ("verdict", "expected"),
-    [
-        ("PASS", 0),
-        ("BLOCKED old text then PASS_FOR_REVIEW", 0),
-        ("PASS_FOR_REVIEW; historical BLOCKED was superseded", 1),
-        ("PASS_READY_REREVIEW\nBLOCKED is only historical", 1),
-    ],
-)
-def test_only_leading_provisional_token_opens(tmp_path: Path, verdict: str, expected: int) -> None:
-    board = OpenerHarness(tmp_path)
-    board.card("a1b2c3d4", "Implementation")
-    board.outcomes["a1b2c3d4"] = ("2026-08-30T12:00:00Z", verdict)
-    assert board.open() == expected
-
-
-def test_existing_live_rereview_successor_prevents_creation(tmp_path: Path) -> None:
-    board = OpenerHarness(tmp_path)
-    board.card("a1b2c3d4", "Implementation")
-    board.card("b2c3d4e5", "[REREVIEW] Existing", "parent-a1b2c3d4")
-    board.outcomes["a1b2c3d4"] = ("2026-08-30T12:00:00Z", "PASS_FOR_REVIEW")
-    assert board.open() == 0
+    assert board.open(0, dry_run=True) == 0
     assert board.calls == []
+    assert any("capacity=0|eligible=0|batch=0|dry_run=true" in row for row in board.logs)
 
 
-def test_governor_refusal_is_logged_and_not_retried(tmp_path: Path) -> None:
+def test_dry_run_bounds_batch_by_free_slots_and_eligible_sources(tmp_path: Path) -> None:
     board = OpenerHarness(tmp_path)
-    board.card("a1b2c3d4", "Implementation")
-    board.outcomes["a1b2c3d4"] = ("2026-08-30T12:00:00Z", "PASS_FOR_REVIEW")
-    board.result = _Result(
-        returncode=1,
-        stderr="ValueError: Refusing third review level for root a1b2c3d4",
+    for card_id in ("a0000001", "a0000002", "a0000003", "a0000004"):
+        board.outcome(card_id)
+
+    assert board.open(2, dry_run=True) == 2
+    assert board.calls == []
+    assert sum("WOULD_OPEN_REVIEW" in row for row in board.logs) == 2
+
+
+def test_mixed_eligibility_excludes_existing_nonterminal_review(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a0000001")
+    board.outcome("a0000002")
+    board.outcome("a0000003", verdict="PASS")
+    board.card("b0000001", "[REREVIEW] Existing", "parent-a0000002")
+
+    assert board.open(5, dry_run=True) == 1
+    assert "a0000001" in next(row for row in board.logs if "WOULD_OPEN_REVIEW" in row)
+
+
+def test_created_review_has_exact_lineage_evidence_and_distinctness(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4", writer="pi-codex-source")
+
+    assert board.open(1) == 1
+    command = board.calls[0]
+    labels = [command[i + 1] for i, value in enumerate(command) if value == "--tag"]
+    assert [label for label in labels if label.startswith("parent-")] == ["parent-a1b2c3d4"]
+    description = command[command.index("--desc") + 1]
+    assert "Producer identity: pi-codex-source." in description
+    assert "Candidate evidence:" in description and "sha256=" in description
+    criteria = [command[i + 1] for i, value in enumerate(command) if value == "--criteria"]
+    assert "Reviewer identity must differ from source implementer pi-codex-source." in criteria
+
+    assert board.open(1) == 0
+    assert len(board.calls) == 1
+
+
+def test_missing_or_hash_mismatched_candidate_fails_closed(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    board.events["a1b2c3d4"][0]["candidate_sha256"] = "0" * 64
+
+    assert board.open(1) == 0
+    assert board.calls == []
+    assert any("OPEN_REVIEW_EVIDENCE_BLOCKED" in row for row in board.logs)
+
+
+def test_typed_candidate_identity_is_carried_into_review(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    board.events["a1b2c3d4"][0].update(
+        {
+            "candidate_commit": "1" * 40,
+            "candidate_tree": "2" * 40,
+            "candidate_ref": "refs/heads/review/a1b2c3d4",
+        }
     )
 
-    assert board.open() == 0
-    assert board.open() == 0
-    assert len(board.calls) == 1
-    assert sum("OPEN_REVIEW_REFUSED" in row for row in board.logs) == 1
-    assert len(list(board.refusals.glob("*.json"))) == 1
+    assert board.open(1) == 1
+    description = board.calls[0][board.calls[0].index("--desc") + 1]
+    assert "Candidate commit: %s." % ("1" * 40) in description
+    assert "Candidate tree: %s." % ("2" * 40) in description
+    assert "Candidate ref: refs/heads/review/a1b2c3d4." in description
 
 
-def test_transient_failure_is_not_misrecorded_as_governor_refusal(tmp_path: Path) -> None:
+def test_partial_typed_candidate_identity_fails_closed(tmp_path: Path) -> None:
     board = OpenerHarness(tmp_path)
-    board.card("a1b2c3d4", "Implementation")
-    board.outcomes["a1b2c3d4"] = ("2026-08-30T12:00:00Z", "PASS_FOR_REVIEW")
-    board.result = _Result(returncode=1, stderr="temporary transport failure")
+    board.outcome("a1b2c3d4")
+    board.events["a1b2c3d4"][0]["candidate_commit"] = "1" * 40
 
-    assert board.open() == 0
-    assert board.open() == 0
+    assert board.open(1) == 0
+    assert board.calls == []
+    assert any("OPEN_REVIEW_EVIDENCE_BLOCKED" in row for row in board.logs)
+
+
+def test_partial_create_failure_stops_without_spending_extra_budget(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    for card_id in ("a0000001", "a0000002", "a0000003"):
+        board.outcome(card_id)
+    board.results = [_Result(), _Result(returncode=1, stderr="transport failed")]
+
+    assert board.open(3) == 1
     assert len(board.calls) == 2
-    assert not board.refusals.exists()
-    assert sum("OPEN_REVIEW_FAILED" in row for row in board.logs) == 2
+    assert any("OPEN_REVIEW_FAILED" in row for row in board.logs)
+
+
+def test_stale_readback_blocks_launch_eligibility_and_stops(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a0000001")
+    board.outcome("a0000002")
+    board.suppress_create.add(0)
+
+    assert board.open(2) == 0
+    assert len(board.calls) == 1
+    review_id = board.calls[0][board.calls[0].index("--id") + 1]
+    assert review_id in board.ns["_REVIEW_READBACK_BLOCKED"]
+    assert any("OPEN_REVIEW_STALE_READBACK" in row for row in board.logs)
+
+
+def test_capacity_bound_counts_attempts_not_only_successes(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    for card_id in ("a0000001", "a0000002", "a0000003"):
+        board.outcome(card_id)
+    board.results = [_Result(returncode=1, stderr="governed card requires exactly one parent-")]
+
+    assert board.open(1) == 0
+    assert len(board.calls) == 1
+
+
+def test_deterministic_parent_generation_id(tmp_path: Path) -> None:
+    first = OpenerHarness(tmp_path / "first")
+    second = OpenerHarness(tmp_path / "second")
+    for board in (first, second):
+        board.outcome("a1b2c3d4")
+        assert board.open(1, dry_run=True) == 1
+
+    first_id = first.logs[-1].rsplit("review=", 1)[1]
+    second_id = second.logs[-1].rsplit("review=", 1)[1]
+    assert first_id == second_id

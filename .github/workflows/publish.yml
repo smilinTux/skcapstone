@@ -11,10 +11,8 @@ permissions:
 
 # Trusted Publishing (OIDC) is configured on PyPI for this project:
 #   owner=smilinTux  workflow=publish.yml  environment=pypi
-# No PyPI token is used in the publish path. The full test suite is intentionally
-# NOT a gate here (that lives in ci.yml on PRs); a tagged release only needs to
-# build cleanly and pass `twine check`, so a red/flaky unrelated test never blocks
-# a release again.
+# No PyPI token is used in the publish path. The same honest Python 3.11 and
+# 3.12 suite required on pull requests also gates tag creation and publication.
 concurrency:
   # Never let two releases race: a second push to main waits rather than
   # computing the same "next" tag from a stale view of the tag list.
@@ -22,10 +20,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tests:
+    uses: ./.github/workflows/pytest.yml
+
   # ---------------------------------------------------------------------- #
   # Cut the release tag. Only on a push to main; skipped on a tag push.
   # ---------------------------------------------------------------------- #
   tag:
+    needs: tests
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -82,11 +84,12 @@ jobs:
           echo "version=${next#v}" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: [tag]
+    needs: [tests, tag]
     # `always()` is required because `needs` on a SKIPPED job would otherwise
     # skip this one on a manually pushed tag path.
     if: >-
       always() && !cancelled() &&
+      needs.tests.result == 'success' &&
       (needs.tag.result == 'skipped' || needs.tag.outputs.tagged == 'true')
     runs-on: ubuntu-latest
     steps:

@@ -13,11 +13,14 @@ archive off the board, so the void becomes a pure no-op that still reports
 success.
 """
 
-import pytest
+import json
 
-from skcapstone.coord_amendments import is_voided, void_card
+import pytest
 from skcoord.card import Column
 from skcoord.card_store import CardCore, CardStore
+
+from skcapstone.coord_amendments import is_voided, void_card
+from skcapstone.coordination import Board
 
 _SEQ = iter("0123456789abcdef" * 8)
 
@@ -33,6 +36,44 @@ def test_voids_an_open_card(tmp_path):
     cid = _new_card(tmp_path)
     void_card(tmp_path, cid, reason="raised by mistake", agent="test")
     assert is_voided(tmp_path, cid)
+
+
+def test_void_archives_every_projection_and_preserves_reason(tmp_path):
+    cid = _new_card(tmp_path)
+    reason = "Superseded by successor01"
+
+    void_card(tmp_path, cid, reason=reason, agent="chef")
+
+    store = CardStore(tmp_path)
+    folded = store.fold(cid)
+    events = store._read_events(cid)
+    void = next(event for event in events if event["action"] == "void")
+    assert folded is not None and folded.archived is True
+    assert cid in Board(tmp_path).archived_ids()
+    assert void["writer"] == "chef"
+    assert void["reason"] == reason
+
+
+def test_void_fails_loudly_when_archive_does_not_reach_store(tmp_path, monkeypatch):
+    cid = _new_card(tmp_path)
+
+    def legacy_only_archive(self, task_id, by=""):
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        index = self.archive_dir / "synthetic.jsonl"
+        entry = {"id": task_id, "archived_at": "now", "archived_by": by}
+        encoded = json.dumps(entry)
+        json.loads(encoded)
+        index.write_text(encoded + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(Board, "archive_task", legacy_only_archive)
+
+    with pytest.raises(RuntimeError, match="partially applied.*CardStore"):
+        void_card(tmp_path, cid, reason="must not report success", agent="test")
+
+    assert is_voided(tmp_path, cid)
+    events = CardStore(tmp_path)._read_events(cid)
+    void_index = next(i for i, event in enumerate(events) if event["action"] == "void")
+    assert not any(event["action"] == "archive" for event in events[void_index + 1 :])
 
 
 def test_refuses_a_completed_card(tmp_path):

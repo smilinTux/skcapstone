@@ -218,7 +218,10 @@ reimprints identity logic locally (epic `2b264064`; CapAuth is the source of
 truth).
 
 **`~/.skcapstone/cluster.json` — the realm anchor.** A small file describing the
-cluster this operator runs:
+**estate** this operator runs. An estate is one control plane, one
+`~/.skcapstone`, one Syncthing ring, one PGP trust root, one operator; estates
+are peers, never branches of a parent org. The file keeps its historical
+`cluster.json` name, and so do the `realm` and `operator` keys inside it:
 
 ```json
 {
@@ -228,7 +231,7 @@ cluster this operator runs:
 }
 ```
 
-`realm` and `operator` are *cluster facts* (mirrored into agent identities as-is);
+`realm` and `operator` are *estate facts* (mirrored into agent identities as-is);
 `operator_pubkey_fingerprint` anchors the operator's signing key. `cluster.json`
 is looked up at `/etc/skcapstone/cluster.json` first, then the agent home.
 
@@ -244,7 +247,14 @@ ident = resolve_agent_identity()      # active agent via SKAGENT
 
 The `capauth:<agent>@skworld.io` URI is the wire identifier; the
 `<agent>@<operator>.<realm>` FQID is the sovereign realm address (e.g.
-`lumina@chef.skworld`) — and is what skcomms uses for cross-cluster routing.
+`lumina@chef.skworld`), and is what skcomms uses for cross-estate routing.
+
+Host and site naming sits one layer below this and is governed separately by the
+[Site and Host Naming Standard](https://github.com/smilinTux/sk-standards/blob/main/standards/SITE_AND_HOST_NAMING_STANDARD.md):
+hostnames are bare (`zioap01`), every estate's home site is Zion (`zio`), and the
+estate is carried by the domain suffix rather than by the host label. Existing
+`nor*` and `chi*` hostnames keep resolving through `legacy_prefix` in
+`~/.skcapstone/sites.yaml` and are not being renamed.
 
 **`skcapstone identity migrate` — backfill per-agent identity.json.** Walks
 every *provisioned* agent (one with a CapAuth home under

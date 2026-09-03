@@ -291,16 +291,22 @@ class TestTeamEngine:
         engine = TeamEngine(home=tmp_home, provider=backend)
 
         deployment = engine.deploy(bp)
-        assert deployment.status == "running"
-
         agent = list(deployment.agents.values())[0]
-        assert agent.status == AgentStatus.RUNNING
-        assert agent.host == "localhost"
+        try:
+            assert deployment.status == "running"
+            assert agent.status == AgentStatus.RUNNING
+            assert agent.host == "localhost"
 
-        # Check agent directory was created
-        agent_dir = tmp_home / "agents" / "local" / agent.name
-        assert agent_dir.exists()
-        assert (agent_dir / "config.json").exists()
+            # Check agent directory was created
+            agent_dir = tmp_home / "agents" / "local" / agent.name
+            assert agent_dir.exists()
+            assert (agent_dir / "config.json").exists()
+        finally:
+            # LocalProvider starts a real daemon. Always terminate it, including
+            # when an assertion above fails, so the test cannot leak a process.
+            assert engine.destroy_deployment(deployment.deployment_id)
+            assert agent.pid is not None
+            assert not Path(f"/proc/{agent.pid}").exists()
 
     def test_list_deployments(self, tmp_home):
         """List deployments should return saved state."""

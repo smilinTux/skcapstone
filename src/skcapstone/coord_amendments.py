@@ -242,4 +242,23 @@ def void_card(
 
     from .coordination import Board
 
-    Board(home).archive_task(task_id, by=agent or "void")
+    board = Board(home)
+    board.archive_task(task_id, by=agent or "void")
+
+    legacy_archived = task_id in board.archived_ids()
+    store = CardStore(home)
+    events = store._read_events(task_id)
+    void_positions = [index for index, event in enumerate(events) if event.get("action") == "void"]
+    store_archived = bool(void_positions) and any(
+        event.get("action") == "archive" for event in events[void_positions[-1] + 1 :]
+    )
+    if not legacy_archived or not store_archived:
+        missing = []
+        if not legacy_archived:
+            missing.append("legacy board")
+        if not store_archived:
+            missing.append("CardStore")
+        raise RuntimeError(
+            f"void for {task_id} was only partially applied; archive missing from "
+            + " and ".join(missing)
+        )

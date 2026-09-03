@@ -2,16 +2,13 @@
 
 Release-workflow invariants, parsed from the GitHub Actions workflow files.
 
-publish.yml uses OIDC Trusted Publishing, decoupled from the test gate
-(PR #83 / fe3ed56, by Chef): the token-based, test-gated PyPI job was
-intentionally replaced with the canonical OIDC flow so a red/flaky unrelated
-test can no longer block a tagged release. The invariants now are:
+publish.yml uses OIDC Trusted Publishing and reuses the honest Python test
+workflow before creating a tag or publishing an artifact. The invariants are:
 
 * publish.yml: a `build` job runs `twine check` (artifact integrity gate),
   and `pypi-publish` depends on `build` and publishes via OIDC (the `pypi`
   environment with `id-token: write`, no PyPI token).
-* publish.yml: has NO `test` job - PR-time tests live in ci.yml + pytest.yml,
-  not the release path.
+* publish.yml: calls pytest.yml and both tag and build wait for it.
 * publish.yml: the npm job keeps the tag -> package.json version sync.
 * ci.yml: no `|| true` masking on any test or lint step; the masked test
   job is retired in favor of pytest.yml as the honest required check.
@@ -43,12 +40,7 @@ def ci() -> dict:
 
 
 class TestPublishGating:
-    """publish.yml: OIDC Trusted Publishing, gated on `build`, not on tests.
-
-    PR #83 (fe3ed56) intentionally decoupled the release path from the full
-    test suite. These invariants pin the replacement design so it cannot
-    silently regress to a token-based or red-test-blocked publish.
-    """
+    """publish.yml: OIDC publishing gated on tests and artifact integrity."""
 
     def test_build_job_runs_twine_check(self, publish):
         assert "build" in publish["jobs"], "publish.yml must have a build job"
@@ -77,13 +69,23 @@ class TestPublishGating:
             "pypa/gh-action-pypi-publish" in uses
         ), "pypi-publish must publish via pypa/gh-action-pypi-publish (OIDC)"
 
-    def test_release_path_not_gated_on_unrelated_tests(self, publish):
-        # PR #83 intent: a red/flaky unrelated test must never block a release.
-        # PR-time tests live in ci.yml + pytest.yml, not the release path.
-        assert "test" not in publish["jobs"], (
-            "publish.yml intentionally has NO test job (PR #83); the release path "
-            "is gated on `build`/`twine check`, not the full suite"
-        )
+    def test_release_waits_for_python_311_and_312(self, publish):
+        tests = publish["jobs"]["tests"]
+        assert tests["uses"] == "./.github/workflows/pytest.yml"
+        for name in ("tag", "build"):
+            needs = publish["jobs"][name].get("needs")
+            needs = [needs] if isinstance(needs, str) else (needs or [])
+            assert "tests" in needs, f"{name} must wait for Python 3.11 and 3.12"
+
+        build_condition = publish["jobs"]["build"].get("if", "")
+        assert "needs.tests.result == 'success'" in build_condition
+
+    def test_pytest_workflow_is_reusable_and_covers_supported_pythons(self):
+        workflow = _load("pytest.yml")
+        # PyYAML 1.1 parses the unquoted Actions key `on` as boolean true.
+        assert "workflow_call" in workflow[True]
+        versions = workflow["jobs"]["unit"]["strategy"]["matrix"]["python-version"]
+        assert versions == ["3.11", "3.12"]
 
     def test_npm_publish_job_is_retired(self, publish):
         """The npm publish job was dropped; skcapstone is Python-first.

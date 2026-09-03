@@ -7,8 +7,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Card db74500f: preserve fleet lifecycle and projection truth.** Fleet
+  rotation keeps process-backed quiet workers live, consumes refreshed folded
+  review metadata when selecting independent reviewers, and reports stale agent
+  projections without presenting them as current ownership.
+
+- Card 4bd61c62 reports empty fleet selections as empty pool, foreign hash
+  partition, zero target, no compatible lane, or bounded selection race evidence
+  instead of falsely claiming that dependency-clear work does not exist.
 
 ### Added
+
+- **Card ff5336c4: bound five-minute reassessment evidence.** Every fleet host
+  assesses before existing actions, only chiap08 writes the capped shared full
+  report, and other hosts emit compact summaries through existing actions.log.
+
+- **Card 369ca2f8: report canonical shadow scheduler truth.** Fleet rotation
+  emits one exclusive primary reason per card plus diagnostic facets, verifies
+  exact parity with the legacy selector, and fails open to legacy selection if
+  shadow reporting cannot be produced.
+
+- **Card 43c88f26: compose governed seat runtime handoffs.** Link records a
+  distinct-reviewer recommendation bound to fresh card state, Jarvis alone
+  authorizes and records the exact claim-and-launch handoff in fleet rotation,
+  and Mero records read-only worker observations without changing lifecycle or
+  ownership. Card and same-card process drift fail closed. Non-review selection
+  and dry-run behavior remain unchanged. A source-backed service drop-in uses
+  the existing SKCapstone environment without changing the timer schedule.
+
+- **Card 4274eef2: enforce fleet seat boundaries.** Link emits bounded,
+  revision-fenced reviewer recommendations, Jarvis remains the only fleet
+  mutation principal, and Mero observes and alerts without mutation authority.
+  Missing revisions, blank reviewers, stale process state, and replay attempts
+  fail closed.
+
+- **Card ff9b46b4: bound Link merge authority.** A source-only, fail-closed
+  evaluator requires a mergeable exact head, zero failed checks, a distinct
+  author's independent PASS, resolved lineage, non-Link authorship, and a
+  non-sensitive category. Denials produce deterministic evidence for Chef and
+  no merge or deployment actuator is exposed.
 
 - **Card c90e1c78: open provisional outcomes for independent review.** Fleet
   rotation now creates one governed review card when an open card records a
@@ -44,6 +83,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   to crash the fleet digest sort key, and `skfleet-rotate.py` now consumes a
   review-launch recommendation only while its claim revision is the card's
   live claim generation.
+
+- **Card 0747c8eb: release orphaned authoritative claims.** The supported
+  revision-fenced release command now uses the CardStore claim as authority
+  when a stale compatibility agent projection has already dropped the task,
+  then reconciles that projection. Exact replay remains idempotent and stale
+  owner or revision attempts fail closed.
 
 - **Card 168d5a4f: fence fleet claim release by exact generation.** The fast
   reaper now accepts exactly one strict launcher record for the current card,

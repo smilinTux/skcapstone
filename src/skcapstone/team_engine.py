@@ -346,6 +346,12 @@ class TeamEngine:
 
                             deployed.status = AgentStatus.RUNNING
                             self._provider.start(instance_name, result)
+                            # start() records runtime identifiers in the shared
+                            # provision result. Persist them after the process
+                            # exists so destroy_deployment can stop that exact
+                            # process instead of losing its PID.
+                            deployed.pid = result.get("pid")
+                            deployed.container_id = result.get("container_id")
                             deployed.started_at = datetime.now(timezone.utc).isoformat()
                             deployed.last_heartbeat = deployed.started_at
 

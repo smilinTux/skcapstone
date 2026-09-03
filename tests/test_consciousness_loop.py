@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from skcapstone.fallback_tracker import FallbackTracker
 from skcapstone.blueprints.schema import ModelTier
 from skcapstone.consciousness_loop import (
     ConsciousnessConfig,
@@ -128,7 +129,7 @@ class TestLLMBridge:
         assert "ollama" in health
 
     @patch("skseed.llm.ollama_callback")
-    def test_generate_fallback_to_passthrough(self, mock_ollama):
+    def test_generate_fallback_to_passthrough(self, mock_ollama, tmp_path):
         """Cascade degrades to passthrough even when ollama is *available* but broken.
 
         This is the precise regression guard for card 53cb7eaa: ollama is marked
@@ -162,7 +163,9 @@ class TestLLMBridge:
             tag_rules=[],
         )
         config = ConsciousnessConfig(fallback_chain=["ollama", "passthrough"])
-        bridge = LLMBridge(config, router_config=router_cfg)
+        bridge = LLMBridge(
+            config, router_config=router_cfg, fallback_tracker=FallbackTracker(root=tmp_path)
+        )
         # ollama is AVAILABLE (but broken) - this is what the old cascade walked
         # into instead of reaching passthrough.
         bridge._available = {k: False for k in bridge._available}
@@ -179,7 +182,7 @@ class TestLLMBridge:
         ), f"Expected passthrough to echo user message 'hello', got: {result!r}"
 
     @patch("skseed.llm.ollama_callback")
-    def test_generate_passthrough_cascade_returns_user_content(self, mock_ollama):
+    def test_generate_passthrough_cascade_returns_user_content(self, mock_ollama, tmp_path):
         """When all LLM backends fail, cascade reaches passthrough and returns user content.
 
         Verifies the fallback cascade uses direct backend mapping (not _resolve_callback)
@@ -204,7 +207,9 @@ class TestLLMBridge:
             tag_rules=[],
         )
         config = ConsciousnessConfig(fallback_chain=["ollama", "passthrough"])
-        bridge = LLMBridge(config, router_config=router_cfg)
+        bridge = LLMBridge(
+            config, router_config=router_cfg, fallback_tracker=FallbackTracker(root=tmp_path)
+        )
         # All backends unavailable except passthrough
         bridge._available = {k: False for k in bridge._available}
         bridge._available["passthrough"] = True
