@@ -64,7 +64,7 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
         (["glm-only"], False, (("glm",), "required-lane:glm")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
-        ([], False, (("qwen", "glm", "codex"), "ordinary")),
+        ([], False, (("qwen", "glm", "kimi", "codex"), "ordinary")),
     ],
 )
 def test_exact_lane_compatibility(
@@ -145,7 +145,7 @@ def test_qwen_first_is_exclusive_until_hash_bound_semantic_completion() -> None:
     ]
     assert namespace["qwen_first_exclusive"]("04acd4b0", labels) is False
     assert namespace["lane_compatibility"](labels, False) == (
-        ("qwen", "glm", "codex"),
+        ("qwen", "glm", "kimi", "codex"),
         "ordinary",
     )
 
@@ -154,14 +154,14 @@ def test_qwen_suitable_is_nonexclusive() -> None:
     namespace = _load_lane_helpers()
     assert namespace["qwen_first_exclusive"]("suitable", ["qwen-suitable"]) is False
     assert namespace["lane_compatibility"](["qwen-suitable"], False) == (
-        ("qwen", "glm", "codex"),
+        ("qwen", "glm", "kimi", "codex"),
         "ordinary",
     )
 
 
 def test_qwen_gets_first_refusal_only_when_category_allows_it() -> None:
     namespace = _load_lane_helpers()
-    order = ["qwen", "glm", "codex", "escalate"]
+    order = ["qwen", "glm", "kimi", "codex", "escalate"]
     remaining = {"qwen": 1, "glm": 1, "codex": 1, "escalate": 1}
 
     selected, reason = namespace["select_compatible_lane"]([], False, order, remaining, True)
