@@ -29,13 +29,18 @@ def _scheduler_namespace() -> dict[str, object]:
     wanted = {
         "_latest_transport_failure_epoch",
         "_transport_failure_logs",
+        "_transport_failure_claims",
         "_transport_retry_held",
         "_reporting_launches",
+        "_shared_launch_attempts",
+        "launch_attempts",
+        "unclaimable",
     }
     constants = {
         "_LAUNCH_TTL_H",
         "_LOGDIR",
         "_WORKER_EXIT_DIR",
+        "_ROTATION_EVID",
         "_TRANSPORT_RETRY_COOLDOWN_S",
     }
     nodes = []
@@ -177,6 +182,92 @@ def test_transport_exit_is_held_then_does_not_consume_attempt(tmp_path: Path) ->
     )
     assert namespace["_reporting_launches"](card) == 0
     assert namespace["_transport_retry_held"](card) is True
+
+
+def test_three_shared_transport_failures_do_not_consume_attempts(tmp_path: Path) -> None:
+    namespace = _scheduler_namespace()
+    card = "deadbeef"
+    evidence = tmp_path / "worker-exits"
+    rotations = tmp_path / "rotations"
+    evidence.mkdir()
+    rotation = rotations / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    rotation.mkdir(parents=True)
+    launches = [
+        ("chiap01", "owner-a", "revision-a"),
+        ("chiap02", "owner-b", "revision-b"),
+        ("chiap03", "owner-c", "revision-c"),
+    ]
+    (rotation / "actions.log").write_text(
+        "".join(
+            f"LAUNCHED|{host}|codex-auto-{card}|{card}|lane=codex|model=model|"
+            f"owner={owner}|claim_revision={revision}\n"
+            for host, owner, revision in launches
+        ),
+        encoding="utf-8",
+    )
+    for index, (host, owner, revision) in enumerate(launches[:3]):
+        (evidence / f"{card}-{index}.json").write_text(
+            json.dumps(
+                {
+                    "card_id": card,
+                    "claim_revision": revision,
+                    "host": host,
+                    "owner": owner,
+                    "transport_failure": "rate_limited",
+                }
+            ),
+            encoding="utf-8",
+        )
+    namespace.update(
+        {
+            "_WORKER_EXIT_DIR": str(evidence),
+            "_LOGDIR": str(tmp_path / "logs"),
+            "_ROTATION_EVID": str(rotations),
+            "_LAUNCH_TTL_H": 6,
+            "_shared_launch_cache": None,
+            "acts": lambda _cid: set(),
+        }
+    )
+    assert namespace["launch_attempts"](card) == 0
+    assert namespace["unclaimable"](card) is False
+
+
+def test_shared_attempts_require_exact_claim_scoped_transport_evidence(
+    tmp_path: Path,
+) -> None:
+    namespace = _scheduler_namespace()
+    card = "deadbeef"
+    evidence = tmp_path / "worker-exits"
+    rotations = tmp_path / "rotations"
+    evidence.mkdir()
+    rotation = rotations / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    rotation.mkdir(parents=True)
+    (rotation / "actions.log").write_text(
+        f"LAUNCHED|chiap01|codex-auto-{card}|{card}|lane=codex|model=model|"
+        "owner=owner-a|claim_revision=revision-a\n",
+        encoding="utf-8",
+    )
+    (evidence / f"{card}-wrong.json").write_text(
+        json.dumps(
+            {
+                "card_id": card,
+                "claim_revision": "revision-other",
+                "host": "chiap01",
+                "owner": "owner-a",
+                "transport_failure": "rate_limited",
+            }
+        ),
+        encoding="utf-8",
+    )
+    namespace.update(
+        {
+            "_WORKER_EXIT_DIR": str(evidence),
+            "_ROTATION_EVID": str(rotations),
+            "_LAUNCH_TTL_H": 6,
+            "_shared_launch_cache": None,
+        }
+    )
+    assert namespace["_shared_launch_attempts"](card) == 1
 
 
 def test_launcher_routes_every_lane_through_exit_wrapper() -> None:

@@ -1795,6 +1795,24 @@ def _reporting_launches(cid):
 _ROTATION_EVID = os.path.join(HOME, ".skcapstone/evidence/fleet-rotation")
 _shared_launch_cache = None
 
+def _transport_failure_claims():
+    """Return exact claim generations that failed before agent work began."""
+    failures = set()
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, "*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        claim = (
+            str(event.get("card_id") or ""),
+            str(event.get("host") or ""),
+            str(event.get("owner") or ""),
+            str(event.get("claim_revision") or ""),
+        )
+        if event.get("transport_failure") and all(claim):
+            failures.add(claim)
+    return failures
+
 def _shared_launch_attempts(cid):
     """Launch attempts for this card across EVERY host, within the TTL.
 
@@ -1818,6 +1836,7 @@ def _shared_launch_attempts(cid):
     global _shared_launch_cache
     if _shared_launch_cache is None:
         _shared_launch_cache = {}
+        transport_failures = _transport_failure_claims()
         cutoff = time.time() - _LAUNCH_TTL_H * 3600
         try:
             for stamp in os.listdir(_ROTATION_EVID):
@@ -1832,6 +1851,22 @@ def _shared_launch_attempts(cid):
                                 continue
                             parts = line.strip().split("|")
                             if len(parts) >= 4:
+                                if len(parts) == 8:
+                                    fields = [part.partition("=") for part in parts[4:]]
+                                    if [(key, sep) for key, sep, _value in fields] == [
+                                        ("lane", "="),
+                                        ("model", "="),
+                                        ("owner", "="),
+                                        ("claim_revision", "="),
+                                    ]:
+                                        claim = (
+                                            parts[3],
+                                            parts[1],
+                                            fields[2][2],
+                                            fields[3][2],
+                                        )
+                                        if claim in transport_failures:
+                                            continue
                                 _shared_launch_cache[parts[3]] = (
                                     _shared_launch_cache.get(parts[3], 0) + 1
                                 )
