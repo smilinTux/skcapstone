@@ -648,7 +648,6 @@ def test_quorum_and_fresh_owner_fences_still_fail_closed(tmp_path: Path) -> None
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
 
-
     namespace["live_report"] = lambda: (time.time(), set(), 3)
     namespace["_load_ineffective"] = lambda: {"deadbeef"}
     assert namespace["reap_dead_claims"]() == 0
@@ -696,18 +695,18 @@ def test_missing_known_reporter_is_named_without_weakening_fence(tmp_path: Path)
     for host in ("chiap04", "chiap08"):
         (tmp_path / "live" / f"{host}.json").write_text("{}\n", encoding="utf-8")
     namespace["live_report"] = lambda: (time.time(), set(), 4)
-    namespace["fresh_report_hosts"] = lambda: {
-        "chiap01", "chiap02", "chiap03", "chiap08"
-    }
+    namespace["fresh_report_hosts"] = lambda: {"chiap01", "chiap02", "chiap03", "chiap08"}
     namespace["report_hosts"] = lambda _max_age: {
-        "chiap01", "chiap02", "chiap03", "chiap04", "chiap08"
+        "chiap01",
+        "chiap02",
+        "chiap03",
+        "chiap04",
+        "chiap08",
     }
 
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
-    assert any(
-        "requires_all_known=true missing=chiap04" in message for message in messages
-    )
+    assert any("requires_all_known=true missing=chiap04" in message for message in messages)
 
 
 def test_report_hosts_deduplicates_conflicts_and_rejects_unknown_hosts(
@@ -726,9 +725,7 @@ def test_report_hosts_deduplicates_conflicts_and_rejects_unknown_hosts(
     namespace.update(
         {
             "LIVE": str(live),
-            "ROTATION_HOSTS": (
-                "chiap01", "chiap02", "chiap03", "chiap04", "chiap08"
-            ),
+            "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
             "Path": Path,
             "time": time,
         }
