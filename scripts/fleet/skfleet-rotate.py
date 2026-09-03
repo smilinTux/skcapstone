@@ -1619,6 +1619,12 @@ def blocked_backoff(cid):
     # operator reads as failures.
     if ts and _PASS_RE.match(str(val or "")):
         return True
+    # A pure pre-agent gateway failure is not card work, but retrying on every
+    # timer tick would hammer the same unhealthy lane. Wait one bounded circuit
+    # interval, then allow exactly one recovery probe. A failed probe writes a
+    # fresh structured failure and starts a new bounded interval.
+    if _transport_retry_held(cid):
+        return True
     if launch_attempts(cid) >= 3 and lifecycle_state(cid)!="complete":
         # ...unless the world changed since the last attempt. Without this the
         # counter is a one-way door: nothing resets it, so a card parked here is
@@ -1731,28 +1737,128 @@ def host_pin(core,labels):
 #      retried instead of being banned for the lifetime of the estate.
 _LAUNCH_TTL_H = float(os.environ.get("SKFLEET_LAUNCH_TTL_H", "6"))
 _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
+_TRANSPORT_RETRY_COOLDOWN_S = float(
+    os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
+)
+_GATEWAY_ERROR_RE = re.compile(r"^\s*(404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
+
+
+def _structured_transport_failure(text):
+    """Return a known pre-agent gateway failure kind, or None.
+
+    The whole report must be one HTTP status plus one JSON object. This keeps
+    arbitrary prose, partial agent output, and mixed reports substantive.
+    """
+    match = _GATEWAY_ERROR_RE.fullmatch(str(text or ""))
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(2))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("message"), str):
+        return None
+    status = int(match.group(1))
+    code = payload.get("code")
+    if status == 404 and code in (404, "404", "not_found", "route_not_found"):
+        return "gateway_404"
+    if status == 429 and code in (429, "429", "rate_limit", "cooldown"):
+        return "gateway_429"
+    if status == 502 and code == "invalid_upstream_tool_calls":
+        return "invalid_upstream_tool_calls"
+    timeout_codes = {
+        "first_token_timeout",
+        "gateway_timeout",
+        "timeout_before_first_token",
+        "upstream_timeout",
+    }
+    if status in (408, 502, 504) and code in timeout_codes:
+        return "first_token_timeout"
+    return None
+
+
+def _is_substantive_worker_report(text, card_mutated):
+    """Fail closed unless this is a pure, known pre-agent transport failure."""
+    if card_mutated:
+        return True
+    if not str(text or ""):
+        return False
+    return _structured_transport_failure(text) is None
+
+
+def _launch_epoch_from_log(cid, filename):
+    prefix = cid + "-"
+    if not filename.startswith(prefix) or not filename.endswith(".log"):
+        return 0
+    stamp = filename[len(prefix):-4]
+    try:
+        return datetime.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=datetime.timezone.utc
+        ).timestamp()
+    except ValueError:
+        return 0
+
+
+def _card_mutated_during_report(cid, started, finished):
+    """Whether card work, rather than wrapper bookkeeping, occurred."""
+    ignored = {
+        "claim",
+        "release_claim",
+        "mero_observation",
+        "review_assignment_launch",
+        "review_assignment_recommendation",
+    }
+    for event in event_rows(cid):
+        stamp = _ts_epoch(event.get("ts"))
+        if started <= stamp <= finished + 1 and event.get("action") not in ignored:
+            return True
+    return False
+
+
+def _local_launch_evidence(cid):
+    """Return (logs seen, substantive reports, latest transport failure)."""
+    seen = 0
+    reports = 0
+    latest_transport = 0
+    cutoff = time.time() - _LAUNCH_TTL_H * 3600
+    try:
+        filenames = os.listdir(_LOGDIR)
+    except OSError:
+        return seen, reports, latest_transport
+    for filename in filenames:
+        started = _launch_epoch_from_log(cid, filename)
+        if not started:
+            continue
+        fp = os.path.join(_LOGDIR, filename)
+        try:
+            stt = os.stat(fp)
+            if stt.st_mtime < cutoff:
+                continue
+            with open(fp, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        seen += 1
+        mutated = _card_mutated_during_report(cid, started, stt.st_mtime)
+        if _is_substantive_worker_report(text, mutated):
+            reports += 1
+        elif _structured_transport_failure(text):
+            latest_transport = max(latest_transport, stt.st_mtime)
+    return seen, reports, latest_transport
+
+
+def _latest_transport_failure_epoch(cid):
+    return _local_launch_evidence(cid)[2]
+
+
+def _transport_retry_held(cid):
+    """Hold one card until its bounded recovery-probe interval opens."""
+    failed_at = _latest_transport_failure_epoch(cid)
+    return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
 
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
-    n = 0
-    cutoff = time.time() - _LAUNCH_TTL_H * 3600
-    try:
-        for f in os.listdir(_LOGDIR):
-            if not f.startswith(cid + "-") or not f.endswith(".log"):
-                continue
-            fp = os.path.join(_LOGDIR, f)
-            try:
-                stt = os.stat(fp)
-            except OSError:
-                continue
-            if stt.st_mtime < cutoff:
-                continue          # aged out: exclusion self-heals
-            if stt.st_size == 0:
-                continue          # interrupted, never reported: not evidence
-            n += 1
-    except OSError:
-        pass
-    return n
+    return _local_launch_evidence(cid)[1]
 
 _ROTATION_EVID = os.path.join(HOME, ".skcapstone/evidence/fleet-rotation")
 _shared_launch_cache = None
@@ -1811,7 +1917,12 @@ def launch_attempts(cid):
     sees the shared count, so no card is banned on one host and workable on
     another purely because of where its logs happen to live.
     """
-    return max(_reporting_launches(cid), _shared_launch_attempts(cid))
+    local_seen, local_reports, _latest_transport = _local_launch_evidence(cid)
+    if local_seen:
+        # The partition owner has the exact worker bytes. Prefer them over the
+        # synced launch receipt, which cannot distinguish transport from work.
+        return local_reports
+    return _shared_launch_attempts(cid)
 
 def unclaimable(cid):
     return launch_attempts(cid) >= 2 and "claim" not in acts(cid)
