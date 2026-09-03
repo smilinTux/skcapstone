@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card db74500f: preserve fleet lifecycle and projection truth.** Fleet
+  rotation keeps process-backed quiet workers live, consumes refreshed folded
+  review metadata when selecting independent reviewers, and reports stale agent
+  projections without presenting them as current ownership.
+
 - Card 4bd61c62 reports empty fleet selections as empty pool, foreign hash
   partition, zero target, no compatible lane, or bounded selection race evidence
   instead of falsely claiming that dependency-clear work does not exist.
