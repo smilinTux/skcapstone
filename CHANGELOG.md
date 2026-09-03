@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card 3bfc4030: classify completed plain PASS outcomes truthfully.** Review
+  PASS is terminal, while producer candidates remain awaiting review and
+  completed non-review work reports the workflow closure it still requires.
+
 - **Card 244c215a: restore coordination hub truth.** Fleet digest ignores valid
   JSONL values that are not event objects, and review launch receipts consume a
   deterministic recommendation only for the card's live claim generation.
