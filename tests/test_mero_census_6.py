@@ -13,7 +13,6 @@ import pytest
 from skcoord.card_store import CardCore, CardStore
 
 from skcapstone import mero_census as mc
-
 from tests.census_support import NOW, _add, _census, _fixed_now, _home
 
 
