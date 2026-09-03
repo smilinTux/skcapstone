@@ -14,10 +14,17 @@ from skcoord.card_store import CardCore, CardStore
 
 from skcapstone import mero_census as mc
 
-from tests.census_support import NOW, _add, _census, _home
+from tests.census_support import NOW, _add, _census, _fixed_now, _home
 
 
 def _board(tmp_path: Path) -> CardStore:
+    """Build the shared fixture board with the census clock pinned to NOW.
+
+    Card 201cd059: the board events are stamped at NOW, so any census built
+    on this home must observe at NOW too. An unplugged census defaults to
+    wall-clock time, which drifts past the 24h stale-claim SLA and mints an
+    unintended stale_claim finding that no test in this module asserts.
+    """
     home = _home(tmp_path)
     store = CardStore(home)
     store.create(CardCore(id="aaaa0001", title="dep", created_by="jarvis"))
@@ -114,6 +121,7 @@ class TestSkmailJoin:
         signals = {"bbbb0002": [{"from": "jarvis", "re": "stuck?", "ts": NOW.isoformat()}]}
         census = mc.MeroBlockerCensus(
             board.home,
+            now=_fixed_now(),
             process_reader=lambda cid: {},
             skmail_reader=lambda cid: signals.get(cid, []),
         )
