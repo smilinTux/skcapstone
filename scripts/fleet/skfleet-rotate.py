@@ -8,7 +8,7 @@ Fixes two defects found 03:50Z:
      rotation deadlocked at busy=8 and NOOPed. Workers launched with -p exit on
      their own, so a slot is simply a live codex-auto-* session. No retire logic.
 """
-import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util
+import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
 from pathlib import Path
 
 from skcapstone.card_store import CardStore
@@ -1619,6 +1619,8 @@ def blocked_backoff(cid):
     # operator reads as failures.
     if ts and _PASS_RE.match(str(val or "")):
         return True
+    if _transport_retry_held(cid):
+        return True
     if launch_attempts(cid) >= 3 and lifecycle_state(cid)!="complete":
         # ...unless the world changed since the last attempt. Without this the
         # counter is a one-way door: nothing resets it, so a card parked here is
@@ -1731,10 +1733,44 @@ def host_pin(core,labels):
 #      retried instead of being banned for the lifetime of the estate.
 _LAUNCH_TTL_H = float(os.environ.get("SKFLEET_LAUNCH_TTL_H", "6"))
 _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
+_WORKER_EXIT_DIR = os.path.join(HOME, ".skcapstone/evidence/fleet-worker-exits")
+_TRANSPORT_RETRY_COOLDOWN_S = float(
+    os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
+)
+
+def _latest_transport_failure_epoch(cid):
+    """Return the latest claim-scoped pre-agent transport failure time."""
+    latest = 0.0
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if event.get("card_id") == cid and event.get("transport_failure"):
+                latest = max(latest, _ts_epoch(event.get("attempted_at")))
+        except (OSError, TypeError, ValueError):
+            continue
+    return latest
+
+def _transport_failure_logs(cid):
+    """Return local stdout logs classified as pre-agent transport failures."""
+    logs = set()
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if event.get("card_id") == cid and event.get("transport_failure"):
+                logs.add(str(event.get("stdout_log") or ""))
+        except (OSError, TypeError, ValueError):
+            continue
+    return logs
+
+def _transport_retry_held(cid):
+    """Hold a failed transport until the bounded recovery interval opens."""
+    failed_at = _latest_transport_failure_epoch(cid)
+    return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
 
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
     n = 0
+    transport_logs = _transport_failure_logs(cid)
     cutoff = time.time() - _LAUNCH_TTL_H * 3600
     try:
         for f in os.listdir(_LOGDIR):
@@ -1749,6 +1785,8 @@ def _reporting_launches(cid):
                 continue          # aged out: exclusion self-heals
             if stt.st_size == 0:
                 continue          # interrupted, never reported: not evidence
+            if f in transport_logs:
+                continue          # pre-agent transport failure: not card work
             n += 1
     except OSError:
         pass
@@ -3368,13 +3406,20 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     # returns normally. Releasing only after the Pi command leaves a dead claim
     # in that case and drains the assignable pool. Bind cleanup to this exact
     # claim generation so it cannot release a newer same-owner worker.
-    inner=('release_claim() { %s coord release-claim %s --owner %s '
+    child=('release_claim() { %s coord release-claim %s --owner %s '
            '--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; '
            'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
            'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
-           '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1; '
+           '--provider skgateway --model %s --thinking off -p "$(cat %s)"; '
            'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
-           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,bf,lf))
+           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,bf))
+    wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
+    inner=shlex.join([
+        sys.executable,wrapper,"--card",cid,"--owner",name,
+        "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
+        "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--","bash","-lc",child,
+    ])
     unit=_worker_unit_name(_LANE["name"],cid)
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
