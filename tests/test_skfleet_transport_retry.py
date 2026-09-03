@@ -61,8 +61,7 @@ def _namespace() -> dict[str, object]:
             "first_token_timeout",
         ),
         (
-            '502: {"message":"bad tool evidence",'
-            '"code":"invalid_upstream_tool_calls"}',
+            '502: {"message":"bad tool evidence",' '"code":"invalid_upstream_tool_calls"}',
             "invalid_upstream_tool_calls",
         ),
     ],
