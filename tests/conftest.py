@@ -260,3 +260,56 @@ def initialized_agent_home(tmp_agent_home: Path) -> Path:
     )
 
     return tmp_agent_home
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_wide_singletons():
+    """Restore the process-wide module globals that leak between tests.
+
+    Several modules keep a reference cell or a lazy singleton at module scope.
+    They are legitimate in production (one process, one daemon) but in a test
+    session every test shares them, so whatever the previous test left behind
+    is what the next test reads. That turns the suite into an order- and
+    timing-dependent oracle: the same test passes alone and fails in the full
+    run, and a red run stops being evidence of a regression.
+
+    Concretely:
+
+    * ``skcapstone.dreaming_job._consciousness_loop`` - written by
+      ``DaemonService._load_components`` (unconditionally, near the end of the
+      method) and read back by ``run_dreaming_job`` when it constructs the
+      ``DreamingEngine``. ``tests/test_daemon.py`` drives ``_load_components``
+      with a mocked ``ConsciousnessLoop``, so a MagicMock stays registered for
+      the rest of the session and
+      ``test_scheduler_integration.py::test_dreaming_reflection_job_fires_end_to_end``
+      then sees that MagicMock instead of the ``None`` it asserts on.
+    * ``skcapstone.notifications._manager`` - a lazy singleton that caches
+      ``platform.system()`` and carries per-key debounce state, so a manager
+      built by one test decides whether a later test's notification is
+      suppressed.
+    * ``skcapstone.activity._history`` / ``_clients`` - an unbounded-in-practice
+      ring buffer plus a set of live SSE queues, both appended to by any code
+      path that records activity.
+
+    Reset happens after the test, and only for modules that are actually
+    imported, so this costs nothing for the tests that never touch them. This
+    is isolation, not reordering: no test is moved and nothing is retried.
+    """
+    yield
+
+    import sys
+
+    dreaming_job = sys.modules.get("skcapstone.dreaming_job")
+    if dreaming_job is not None:
+        dreaming_job.set_consciousness_loop(None)
+
+    notifications = sys.modules.get("skcapstone.notifications")
+    if notifications is not None:
+        notifications._manager = None
+
+    activity = sys.modules.get("skcapstone.activity")
+    if activity is not None:
+        with activity._history_lock:
+            activity._history.clear()
+        with activity._clients_lock:
+            activity._clients.clear()
