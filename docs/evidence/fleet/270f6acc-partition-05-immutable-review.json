@@ -1,0 +1,89 @@
+{
+  "attempted": "Recomputed report and bundle hashes, parsed the JSON artifacts, independently hashed and parsed every cited immutable JSONL snapshot, checked cutoff lengths and line counts, matched reachable source prefixes, checked every card source reference, checked separate-evidence invariants, compared remedy projection to all 53 frozen card records, and counted preserved non-PASS history.",
+  "blocked_on": "dependency",
+  "blocking_findings": [
+    {
+      "acceptance_criterion": 2,
+      "affected_stores": [
+        {
+          "embedded_prefix_bytes": 378525,
+          "embedded_prefix_lines": 916,
+          "embedded_sha256": "1b562c6babf49cad9d3f581710705c6577203ff53ff1dcc7a102990785bb3739",
+          "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+          "replacement_cutoff_bytes": 410751,
+          "replacement_cutoff_lines": 1003,
+          "replacement_sha256": "0e0008330953d1338be1ae910115bf5beac919b2d40295b63d5873e73dbe30fc"
+        },
+        {
+          "embedded_prefix_bytes": 431597,
+          "embedded_prefix_lines": 1063,
+          "embedded_sha256": "74ed257e52c887e2caa92b28e9ad63e5b5a417d443117191f89c474b9553435e",
+          "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+          "replacement_cutoff_bytes": 473556,
+          "replacement_cutoff_lines": 1178,
+          "replacement_sha256": "8e15702902b9e2ef2b1e461ccf49716ba6256b55eff20bb6346870284b957c17"
+        },
+        {
+          "embedded_prefix_bytes": 342740,
+          "embedded_prefix_lines": 785,
+          "embedded_sha256": "1cc6f6cfe98ca5ad6f6f5260319285c82b46fb3940d8315318a2eb22a446fafd",
+          "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl",
+          "replacement_cutoff_bytes": 388183,
+          "replacement_cutoff_lines": 915,
+          "replacement_sha256": "e084768c8a7e96ede1b866a27362290faf95e503d6c3ee6efd26971282c25f22"
+        },
+        {
+          "embedded_prefix_bytes": 5307850,
+          "embedded_prefix_lines": 12940,
+          "embedded_sha256": "e7f321f1a842071633af1699d62b5f28d6a183af47bb93e3cc058b0c6e1f95d1",
+          "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "replacement_cutoff_bytes": 5308986,
+          "replacement_cutoff_lines": 12944,
+          "replacement_sha256": "94e636150084392d47febb57b3bd07c672112bfc0987bb1f8b7c21cb104d2459"
+        }
+      ],
+      "finding": "The embedded complete_two_store_join_report does not bind its structural and evidence join to the replacement frozen cutoffs. 58 source_files references across 44 of 53 cards cite stale full-file SHA-256 values for four coordination JSONL stores, while source_manifest binds later bytes under different hashes.",
+      "impact": "The wrapper freezes both byte versions but does not recompute the structural fold or evidence join at one declared cutoff. The report therefore cannot establish a complete internally consistent CardStore and separate evidence-store join at the replacement cutoff."
+    },
+    {
+      "acceptance_criterion": 1,
+      "finding": "source_manifest contains the same static Markdown source path twice. The 219 reported entries represent only 218 unique paths.",
+      "impact": "This is an integrity defect in the per-report manifest, though not a mutable JSONL snapshot failure.",
+      "path": "/home/skuser01/worktrees/skdashboard-83a8c40b/docs/evidence/SKCP-50-BROWSER-ACCESSIBILITY-QUALIFICATION-2026-08-25.md"
+    }
+  ],
+  "bundle_manifest": {
+    "bytes": 3399486,
+    "path": "/home/skuser01/.skcapstone/evidence/work/c84987dd/bundle-manifest.json",
+    "sha256_recomputed": "7bd3b9c94a39bb1ac51fb64f068fdd6ae41a69c0eced5501c6d63f2e367a1bf3"
+  },
+  "candidate_report": {
+    "bytes": 441295,
+    "path": "/home/skuser01/.skcapstone/evidence/work/c84987dd/immutable/reports/a082dadaeff26a63e947c4236b85d431554c16796f0622916e706b7b3a487645.json",
+    "sha256_recomputed": "a082dadaeff26a63e947c4236b85d431554c16796f0622916e706b7b3a487645"
+  },
+  "captured_at_utc": "2026-08-28T11:33:06.693849+00:00",
+  "card_id": "270f6acc",
+  "checks": {
+    "currently_absent_unique_sources": 4,
+    "currently_reachable_unique_sources_with_matching_frozen_prefix": 214,
+    "historical_non_pass_events_preserved": 39,
+    "human_authority_language_preserved": "PASS",
+    "mutable_jsonl_entries": 122,
+    "mutable_jsonl_snapshot_hash_length_line_count_and_parse": "PASS",
+    "mutations_applied": [],
+    "partition_source_manifest_entries": 219,
+    "partition_unique_source_paths": 218,
+    "remedies_exact_ordered_projection_from_frozen_source_report": "PASS",
+    "selected_card_source_references": 227,
+    "selected_cards": 53
+  },
+  "partition": 5,
+  "referent": "card:c84987dd",
+  "repository_change": "review evidence only",
+  "required_repair": "Recompute partition 05 structural folds and separate evidence events from one explicit set of frozen JSONL cutoffs, update every source_files hash to that same cutoff identity, deduplicate source_manifest, and republish content-addressed report and manifest bytes for distinct review.",
+  "reviewed_repair_card_id": "c84987dd",
+  "reviewer": "pi-codex-270f6acc",
+  "schema": "skcapstone.fleet_unblock_immutable_review.v1",
+  "verdict": "BLOCKED"
+}
