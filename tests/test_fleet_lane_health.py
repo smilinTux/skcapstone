@@ -226,3 +226,114 @@ def test_rotate_checks_same_cycle_admission_before_claim() -> None:
     preclaim = source.index("admitted,health_reason=_health_for(")
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"')
     assert acquire < selection < preclaim < claim
+
+
+# ---------------------------------------------------------------------------
+# Card 0e010300: fleet bootstrap. SKGateway writes a backend health row only
+# from proxied request outcomes, so `lastCheck` is when that backend last
+# carried traffic, not when the gateway last looked at it. Observation age must
+# therefore not gate admission, or the fleet can never be the thing that
+# produces its own first observation.
+# ---------------------------------------------------------------------------
+
+
+def _acquire_health(tmp_path: Path, codex_row: dict[str, Any], cycle: str = "cycle-1"):
+    documents = _documents()
+    documents["/health"]["backends"]["codex"] = codex_row
+    snapshot, _path, _calls = _acquire(tmp_path, documents, cycle)
+    return snapshot
+
+
+def _codex_state(snapshot: dict[str, Any]) -> str:
+    row = next(item for item in snapshot["lanes"] if item["lane"] == "codex")
+    return row["domains"][0]["state"]
+
+
+def test_idle_but_observed_domain_stays_admissible(tmp_path: Path) -> None:
+    """An observed, up, unquarantined domain is admissible however long it idled.
+
+    Measured on the live dispatch gateway 2026-09-04: codex read up/observed
+    with a lastCheck five hours old and every lane refused, which meant the
+    fleet could not restart itself after two quiet minutes.
+    """
+    stale = _acquire_health(
+        tmp_path,
+        {
+            "status": "up",
+            "observed": True,
+            "quarantined": False,
+            # Five hours before the pinned observation time of 2_000_000_000.
+            "lastCheck": (2_000_000_000 - 5 * 3600) * 1000,
+        },
+    )
+    assert _codex_state(stale) == "healthy"
+    assert _admit(stale, "codex", "sk-codex") == (True, "healthy")
+
+
+def test_unobserved_domain_is_still_refused_after_a_gateway_restart(tmp_path: Path) -> None:
+    """The fresh-start state is genuinely no evidence, so it still fails closed."""
+    cold = _acquire_health(
+        tmp_path,
+        {"status": "unknown", "observed": False, "quarantined": False, "lastCheck": 0},
+    )
+    assert _codex_state(cold) == "unknown"
+    assert _admit(cold, "codex", "sk-codex") == (False, "unknown")
+
+
+def test_malformed_or_future_last_check_still_fails_closed(tmp_path: Path) -> None:
+    """Recency is not required, but malformed or impossible evidence is refused."""
+    for last_check in (None, "recently", True, 0, -1):
+        snapshot = _acquire_health(
+            tmp_path,
+            {
+                "status": "up",
+                "observed": True,
+                "quarantined": False,
+                "lastCheck": last_check,
+            },
+        )
+        assert _codex_state(snapshot) == "unknown", last_check
+        assert _admit(snapshot, "codex", "sk-codex") == (False, "unknown"), last_check
+
+    future = _acquire_health(
+        tmp_path,
+        {
+            "status": "up",
+            "observed": True,
+            "quarantined": False,
+            "lastCheck": (2_000_000_000 + 3600) * 1000,
+        },
+    )
+    assert _codex_state(future) == "unknown"
+    assert _admit(future, "codex", "sk-codex") == (False, "unknown")
+
+
+def test_idle_domain_that_is_down_or_quarantined_is_still_refused(tmp_path: Path) -> None:
+    """Dropping the recency gate must not admit a domain with negative evidence."""
+    idle = (2_000_000_000 - 5 * 3600) * 1000
+    down = _acquire_health(
+        tmp_path,
+        {"status": "down", "observed": True, "quarantined": False, "lastCheck": idle},
+    )
+    assert _admit(down, "codex", "sk-codex") == (False, "model_owner_backend_down")
+
+    quarantined = _acquire_health(
+        tmp_path,
+        {"status": "up", "observed": True, "quarantined": True, "lastCheck": idle},
+    )
+    assert _admit(quarantined, "codex", "sk-codex") == (False, "model_claim_quarantined")
+
+
+def test_snapshot_freshness_is_still_enforced_independently(tmp_path: Path) -> None:
+    """Observation age is not bounded; the snapshot's own age still is."""
+    snapshot = _acquire_health(
+        tmp_path,
+        {
+            "status": "up",
+            "observed": True,
+            "quarantined": False,
+            "lastCheck": (2_000_000_000 - 5 * 3600) * 1000,
+        },
+    )
+    assert _admit(snapshot, "codex", "sk-codex") == (True, "healthy")
+    assert _admit(snapshot, "codex", "sk-codex", now=2_000_000_600.0) == (False, "stale")
