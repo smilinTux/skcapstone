@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -38,7 +39,25 @@ from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger("skcapstone.heartbeat")
 
-DEFAULT_TTL_SECONDS = 300  # 5 minutes
+DEFAULT_TTL_SECONDS = 300
+
+# Strict agent-name allowlist shared by heartbeat and any future beat writer.
+# Reject, never sanitize-and-rewrite: a silently rewritten name is an aliasing
+# bug (two workers, one file). One implementation, not two (review amendment).
+AGENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def validate_agent_name(name: str) -> str:
+    """Reject any agent name outside [a-z0-9-]. Fail fast at construction."""
+    if not name or not name.strip():
+        raise ValueError("agent_name must be a non-empty string")
+    cleaned = name.strip()
+    if not AGENT_NAME_RE.fullmatch(cleaned.lower()):
+        raise ValueError(
+            "agent_name %r contains characters outside [a-z0-9-]; "
+            "path traversal is rejected, not sanitized" % name
+        )
+    return cleaned.lower()  # 5 minutes
 
 
 # ---------------------------------------------------------------------------
@@ -82,9 +101,7 @@ class Heartbeat(BaseModel):
     @field_validator("agent_name")
     @classmethod
     def _validate_agent_name(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("agent_name must be a non-empty string")
-        return v.strip()
+        return validate_agent_name(v)
 
     hostname: str = ""
     platform: str = ""
@@ -184,10 +201,8 @@ class HeartbeatBeacon:
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
         heartbeats_dir: Optional[Path] = None,
     ) -> None:
-        if not agent_name or not agent_name.strip():
-            raise ValueError("agent_name must be a non-empty string, got %r" % agent_name)
         self._home = home
-        self._agent = agent_name.strip()
+        self._agent = validate_agent_name(agent_name)
         self._ttl = ttl_seconds
         self._heartbeat_dir = Path(heartbeats_dir) if heartbeats_dir else home / "heartbeats"
         self._start_time = datetime.now(timezone.utc)
