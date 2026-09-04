@@ -72,6 +72,8 @@ for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
         continue
     try:
         projection=json.loads(path.read_text())
+        if projection.get('host') != host:
+            continue
         agent=projection.get('agent','')
         if isinstance(agent,str) and agent and agent == path.stem:
             projection_agents.add(agent)
@@ -151,6 +153,8 @@ for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
         if '.sync-conflict-' in path.name:
             continue
         projection=json.loads(path.read_text())
+        if projection.get('host') != host:
+            continue
         agent=projection.get('agent','')
         card=projection.get('current_task','')
         if not isinstance(agent, str) or not isinstance(card, str) or not agent or not card:

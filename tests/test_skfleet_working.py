@@ -161,6 +161,14 @@ def test_conflict_projections_are_quarantined_and_states_are_typed() -> None:
     assert missing.projection_state == "missing"
 
 
+def test_projection_rows_are_host_scoped_before_joining_process_truth() -> None:
+    source = PATH.read_text()
+    # The remote collector runs once per host over the shared projection tree.
+    # Both the missing-projection set and emitted projection rows must reject
+    # records belonging to another host before they affect local joins.
+    assert source.count("projection.get('host') != host") >= 2
+
+
 def test_log_age_is_never_a_stall_predicate() -> None:
     source = PATH.read_text()
     assert "output buffered until completion" in source
