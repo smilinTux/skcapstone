@@ -41,14 +41,34 @@ def test_repeated_down_creates_one_incident_with_no_still_down_notes(tmp_path: P
 
 
 def test_current_healthy_probe_resolves_sev3_incident(tmp_path: Path):
-    result = {"name": "skvector", "status": "down", "error": "no route to host"}
+    result = {
+        "name": "skvector",
+        "status": "down",
+        "error": "no route to host",
+        "endpoint": "https://skvector.example/healthz",
+        "vantage_point": "any",
+        "probed_from": "chiap04",
+    }
     _create_incident_for_down_service(result)
 
-    _auto_resolve_recovered_service({"name": "skvector", "status": "up"})
+    _auto_resolve_recovered_service(
+        {
+            "name": "skvector",
+            "status": "up",
+            "endpoint": "https://skvector.example/healthz",
+            "vantage_point": "any",
+            "probed_from": "chiap04",
+        }
+    )
 
     incident = ITILManager(tmp_path).list_incidents(service="skvector")[0]
     assert incident.status.value == "resolved"
     assert incident.resolution_summary == "Resolved after a successful current health probe"
+    assert "address=https://skvector.example/healthz" in incident.impact
+    assert "probed_from=chiap04" in incident.impact
+    assert "declared_vantage=any" in incident.impact
+    assert "address=https://skvector.example/healthz" in incident.timeline[-1]["note"]
+    assert "probed_from=chiap04" in incident.timeline[-1]["note"]
 
 
 def test_recurring_failure_reopens_same_deduplicated_incident(tmp_path: Path):

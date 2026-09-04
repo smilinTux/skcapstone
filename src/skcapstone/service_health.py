@@ -53,6 +53,39 @@ RETRY_ON_TIMEOUT = 1
 # intentionally never written - see _create_incident_for_down_service and
 # prb-7810b08e for why that churn caused Syncthing conflicts.
 _HOSTNAME = socket.gethostname()
+_ANY_VANTAGE = "any"
+
+
+def _vantage_matches(vantage_point: str) -> bool:
+    """Return whether this host is the service's declared probe vantage."""
+    return vantage_point == _ANY_VANTAGE or socket.gethostname() == vantage_point
+
+
+def _probe_from_vantage(
+    name: str,
+    endpoint: str,
+    vantage_point: str,
+    probe: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """Run a probe only at its declared vantage and attach target evidence."""
+    probed_from = socket.gethostname()
+    if not _vantage_matches(vantage_point):
+        return {
+            "name": name,
+            "url": endpoint,
+            "endpoint": endpoint,
+            "vantage_point": vantage_point,
+            "probed_from": probed_from,
+            "status": "unknown",
+            "latency_ms": None,
+            "version": None,
+            "error": f"probe assigned to vantage point {vantage_point}",
+        }
+    result = probe()
+    result["endpoint"] = endpoint
+    result["vantage_point"] = vantage_point
+    result["probed_from"] = probed_from
+    return result
 
 
 def _failure_class(error: str | None) -> str:
@@ -354,11 +387,13 @@ def check_all_services() -> list[dict[str, Any]]:
                                     ~/.skcapstone/agents/<agent>/config/skvector.yaml,
                                     else http://localhost:6333)
         SKMEMORY_SKVECTOR_API_KEY - Qdrant API key (default: from skvector.yaml)
+        SKMEMORY_SKVECTOR_VANTAGE_POINT - host allowed to probe, or "any"
         SKMEMORY_SKGRAPH_HOST     - FalkorDB host   (default: read from
                                     ~/.skcapstone/agents/<agent>/config/skgraph.yaml,
                                     else localhost)
         SKMEMORY_SKGRAPH_PORT     - FalkorDB port   (default: from skgraph.yaml,
                                     else 6379)
+        SKMEMORY_SKGRAPH_VANTAGE_POINT - host allowed to probe, or "any"
         SYNCTHING_API_URL         - Syncthing REST   (default: discovered from
                                     ~/.config/syncthing/config.xml gui address,
                                     else http://localhost:8384)
@@ -375,6 +410,7 @@ def check_all_services() -> list[dict[str, Any]]:
     # -- SKVector (Qdrant) --------------------------------------------------
     qdrant_base = os.environ.get("SKMEMORY_SKVECTOR_URL", "")
     qdrant_api_key = os.environ.get("SKMEMORY_SKVECTOR_API_KEY", "")
+    qdrant_vantage = os.environ.get("SKMEMORY_SKVECTOR_VANTAGE_POINT", "")
     # Fall back to per-agent skvector.yaml when env vars are absent
     if not qdrant_base or not qdrant_api_key:
         cfg = _load_agent_yaml("skvector")
@@ -393,23 +429,37 @@ def check_all_services() -> list[dict[str, Any]]:
                         qdrant_base = f"{proto}://{host}:{port}"
             if not qdrant_api_key and cfg.get("api_key") and cfg["api_key"] != "CHANGE_ME":
                 qdrant_api_key = cfg["api_key"]
+            if not qdrant_vantage and cfg.get("vantage_point"):
+                qdrant_vantage = str(cfg["vantage_point"])
         elif not qdrant_base:
             # Explicitly disabled in skvector.yaml. Without this the code below
             # falls through to the localhost default and probes a backend the
             # operator already decommissioned, filing a false incident per sweep.
             qdrant_base = "disabled"
     if not qdrant_base:
-        qdrant_base = "http://localhost:6333"
+        qdrant_base = "https://skvector.nativeassetmanagement.com"
+    if not qdrant_vantage:
+        qdrant_vantage = _ANY_VANTAGE
     if qdrant_base.lower() != "disabled":
         qdrant_url = qdrant_base.rstrip("/") + "/healthz"
         qdrant_headers: dict[str, str] = {}
         if qdrant_api_key:
             qdrant_headers["api-key"] = qdrant_api_key
-        results.append(_http_check("skvector (Qdrant)", qdrant_url, headers=qdrant_headers))
+        results.append(
+            _probe_from_vantage(
+                "skvector (Qdrant)",
+                qdrant_url,
+                qdrant_vantage,
+                lambda: _http_check(
+                    "skvector (Qdrant)", qdrant_url, headers=qdrant_headers
+                ),
+            )
+        )
 
     # -- SKGraph (FalkorDB) - TCP check on Redis protocol port ---------------
     graph_host = os.environ.get("SKMEMORY_SKGRAPH_HOST", "")
     graph_port_str = os.environ.get("SKMEMORY_SKGRAPH_PORT", "")
+    graph_vantage = os.environ.get("SKMEMORY_SKGRAPH_VANTAGE_POINT", "")
     # Fall back to per-agent skgraph.yaml when env vars are absent
     if not graph_host or not graph_port_str:
         cfg = _load_agent_yaml("skgraph")
@@ -424,6 +474,8 @@ def check_all_services() -> list[dict[str, Any]]:
                 graph_host = str(cfg["host"])
             if not graph_port_str and cfg.get("port"):
                 graph_port_str = str(cfg["port"])
+            if not graph_vantage and cfg.get("vantage_point"):
+                graph_vantage = str(cfg["vantage_point"])
         elif not graph_host:
             # Explicitly disabled in skgraph.yaml - same rationale as skvector
             # above: do not fall through to the localhost default.
@@ -432,9 +484,19 @@ def check_all_services() -> list[dict[str, Any]]:
         graph_host = "localhost"
     if not graph_port_str:
         graph_port_str = "6379"
+    if not graph_vantage:
+        graph_vantage = socket.gethostname() if graph_host in {"localhost", "127.0.0.1"} else _ANY_VANTAGE
     if graph_host.lower() != "disabled":
         graph_port = int(graph_port_str)
-        results.append(_tcp_check("skgraph (FalkorDB)", graph_host, graph_port))
+        graph_endpoint = f"tcp://{graph_host}:{graph_port}"
+        results.append(
+            _probe_from_vantage(
+                "skgraph (FalkorDB)",
+                graph_endpoint,
+                graph_vantage,
+                lambda: _tcp_check("skgraph (FalkorDB)", graph_host, graph_port),
+            )
+        )
 
     # -- Syncthing -----------------------------------------------------------
     syncthing_base = os.environ.get("SYNCTHING_API_URL", "")
@@ -454,26 +516,60 @@ def check_all_services() -> list[dict[str, Any]]:
         if api_key:
             syncthing_headers["X-API-Key"] = api_key
         results.append(
-            _http_check(
+            _probe_from_vantage(
                 "syncthing",
                 syncthing_url,
-                headers=syncthing_headers,
-                version_key="version",
+                socket.gethostname(),
+                lambda: _http_check(
+                    "syncthing",
+                    syncthing_url,
+                    headers=syncthing_headers,
+                    version_key="version",
+                ),
             )
         )
 
     # -- skcapstone daemon ---------------------------------------------------
     daemon_base = os.environ.get("SKCAPSTONE_DAEMON_URL", "http://localhost:9383")
     daemon_url = daemon_base.rstrip("/") + "/health"
-    results.append(_http_check("skcapstone daemon", daemon_url))
+    daemon_vantage = os.environ.get("SKCAPSTONE_DAEMON_VANTAGE_POINT") or (
+        socket.gethostname() if "localhost" in daemon_base else _ANY_VANTAGE
+    )
+    results.append(
+        _probe_from_vantage(
+            "skcapstone daemon",
+            daemon_url,
+            daemon_vantage,
+            lambda: _http_check("skcapstone daemon", daemon_url),
+        )
+    )
 
     # -- skchat daemon -------------------------------------------------------
     chat_base = os.environ.get("SKCHAT_DAEMON_URL", "")
     if not chat_base:
-        results.append(_pid_check("skchat daemon", Path.home() / ".skchat" / "daemon.pid"))
+        chat_pid = Path.home() / ".skchat" / "daemon.pid"
+        chat_endpoint = f"pid://{chat_pid}"
+        results.append(
+            _probe_from_vantage(
+                "skchat daemon",
+                chat_endpoint,
+                socket.gethostname(),
+                lambda: _pid_check("skchat daemon", chat_pid),
+            )
+        )
     elif chat_base.lower() != "disabled":
         chat_url = chat_base.rstrip("/") + "/health"
-        results.append(_http_check("skchat daemon", chat_url))
+        chat_vantage = os.environ.get("SKCHAT_DAEMON_VANTAGE_POINT") or (
+            socket.gethostname() if "localhost" in chat_base else _ANY_VANTAGE
+        )
+        results.append(
+            _probe_from_vantage(
+                "skchat daemon",
+                chat_url,
+                chat_vantage,
+                lambda: _http_check("skchat daemon", chat_url),
+            )
+        )
 
     # -- self-registered services (~/.skcapstone/registry/*.json) ------------
     # Services that called sdk.register_service() become discoverable here
@@ -486,20 +582,42 @@ def check_all_services() -> list[dict[str, Any]]:
             continue
         health_url = entry.get("health_url")
         pid_file = entry.get("pid_file")
-        if health_url and str(health_url).lower() != "disabled":
-            results.append(_http_check(name, str(health_url).rstrip("/")))
-        elif pid_file:
-            results.append(_pid_check(name, Path(pid_file).expanduser()))
-        else:
+        vantage_point = entry.get("vantage_point") or entry.get("registered_on")
+        endpoint = str(health_url).rstrip("/") if health_url else (
+            f"pid://{Path(pid_file).expanduser()}" if pid_file else None
+        )
+        if endpoint is None or not vantage_point:
             results.append(
                 {
                     "name": name,
-                    "url": None,
+                    "url": endpoint,
+                    "endpoint": endpoint,
+                    "vantage_point": vantage_point,
+                    "probed_from": socket.gethostname(),
                     "status": "unknown",
                     "latency_ms": None,
                     "version": None,
-                    "error": "registered without health_url or pid_file",
+                    "error": "registered without endpoint or vantage_point",
                 }
+            )
+        elif health_url and str(health_url).lower() != "disabled":
+            results.append(
+                _probe_from_vantage(
+                    name,
+                    endpoint,
+                    str(vantage_point),
+                    lambda: _http_check(name, endpoint),
+                )
+            )
+        elif pid_file:
+            pid_path = Path(pid_file).expanduser()
+            results.append(
+                _probe_from_vantage(
+                    name,
+                    endpoint,
+                    str(vantage_point),
+                    lambda: _pid_check(name, pid_path),
+                )
             )
         known.add(name)
 
@@ -609,6 +727,13 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
 
         svc_name = service_result["name"]
         error_info = service_result.get("error") or "unreachable"
+        endpoint = service_result.get("endpoint") or service_result.get("url") or "undeclared"
+        probed_from = service_result.get("probed_from") or socket.gethostname()
+        vantage_point = service_result.get("vantage_point") or "undeclared"
+        probe_evidence = (
+            f"address={endpoint}; probed_from={probed_from}; "
+            f"declared_vantage={vantage_point}"
+        )
         failure_class = _failure_class(service_result.get("error"))
         mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
 
@@ -631,7 +756,7 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
             severity="sev3",
             source="service_health",
             affected_services=[svc_name],
-            impact=f"Service unreachable: {error_info}",
+            impact=f"Service unreachable: {error_info}; {probe_evidence}",
             managed_by="lumina",
             created_by="service_health",
             tags=["auto-detected", "service-health"],
@@ -658,7 +783,12 @@ def _auto_resolve_recovered_service(service_result: dict[str, Any]) -> None:
                 existing.id,
                 "service_health",
                 new_status="resolved",
-                note=f"[{_HOSTNAME}] Service {svc_name} recovered",
+                note=(
+                    f"Service {svc_name} recovered; address="
+                    f"{service_result.get('endpoint') or service_result.get('url') or 'undeclared'}; "
+                    f"probed_from={service_result.get('probed_from') or socket.gethostname()}; "
+                    f"declared_vantage={service_result.get('vantage_point') or 'undeclared'}"
+                ),
                 resolution_summary="Resolved after a successful current health probe",
             )
             logger.info("Resolved incident %s for recovered service %s", existing.id, svc_name)
