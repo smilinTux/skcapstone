@@ -35,7 +35,7 @@ def _resolve_provider_backend(provider: Optional[str], home_path: Path):
             from ..providers import DockerProvider, LocalProvider, ProxmoxProvider
 
             if prov_type == ProviderType.LOCAL:
-                prov_backend = LocalProvider(agents_root=home_path / "agents" / "local")
+                prov_backend = LocalProvider(home=home_path)
             elif prov_type == ProviderType.DOCKER:
                 prov_backend = DockerProvider()
             elif prov_type == ProviderType.PROXMOX:
