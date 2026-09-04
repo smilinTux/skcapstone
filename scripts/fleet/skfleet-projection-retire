@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Retire stale idle agent projections into a reversible quarantine.
+
+A projection is retired only when it is idle (null or empty current_task),
+identity-valid (payload agent equals the filename stem), and has had no
+last_seen or file modification within RETIRE_AFTER_DAYS. Active, malformed,
+identity-mismatched, and Syncthing conflict files are never touched; the
+monitor keeps reporting those as diagnostics. Moves are recorded in a
+JSONL manifest and reversible with --restore.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import shutil
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+RETIRE_AFTER_DAYS = 30
+GLOB = "pi-*.json"
+
+
+def agents_dir() -> Path:
+    return Path.home() / ".skcapstone" / "coordination" / "agents"
+
+
+def quarantine_dir() -> Path:
+    return agents_dir().parent / "agents-quarantine"
+
+
+def manifest_path() -> Path:
+    return quarantine_dir() / "manifest.jsonl"
+
+
+def parse_last_seen(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # Offset-naive timestamps are not safely comparable to UTC; fail closed.
+    if observed.tzinfo is None:
+        return None
+    return observed
+
+
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def canonical_agent(path: Path, agent: str) -> bool:
+    """Strict filename identity: no dots, separators, or traversal in agent."""
+    if not agent or any(bad in agent for bad in (".", "/", "\\")):
+        return False
+    return path.name == f"{agent}.json"
+
+
+def eligible(path: Path, now: datetime) -> tuple[bool, str]:
+    """Return (retire, reason) for one projection file, failing closed."""
+    if ".sync-conflict-" in path.name:
+        return False, "sync-conflict copy stays for monitor diagnostics"
+    try:
+        projection = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"malformed stays: {type(exc).__name__}"
+    if not isinstance(projection, dict):
+        return False, "malformed stays: not an object"
+    agent = projection.get("agent", "")
+    if not isinstance(agent, str) or not agent or agent != path.stem:
+        return False, "identity mismatch stays diagnostic"
+    if not canonical_agent(path, agent):
+        return False, "non-canonical filename stays diagnostic"
+    task = projection.get("current_task", "")
+    if task not in (None, ""):
+        return False, "active or holding a task is never retired"
+    observed = parse_last_seen(projection.get("last_seen"))
+    if observed is None:
+        return False, "unreadable last_seen stays"
+    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    cutoff = now - timedelta(days=RETIRE_AFTER_DAYS)
+    if observed >= cutoff:
+        return False, f"seen {int((now - observed).total_seconds() // 3600)}h ago"
+    if modified >= cutoff:
+        return False, "file modified inside the retirement window"
+    # ponytail: 300s tolerates filesystem timestamp granularity, nothing wider.
+    if (observed - modified).total_seconds() > 300:
+        return False, "last_seen newer than mtime stays (rollback evidence)"
+    return True, f"idle since {observed.isoformat()}"
+
+
+class ManifestError(RuntimeError):
+    """Raised when the manifest history is malformed; all mutation refuses."""
+
+
+def parse_manifest_lines() -> list[dict]:
+    if not manifest_path().exists():
+        return []
+    records: list[dict] = []
+    for number, line in enumerate(
+        manifest_path().read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ManifestError(f"manifest line {number} is malformed") from exc
+        if not isinstance(record, dict):
+            raise ManifestError(f"manifest line {number} is not an object")
+        records.append(record)
+    return records
+
+
+def append_manifest(record: dict) -> None:
+    # Standing rail: parse every existing line before appending anything.
+    parse_manifest_lines()
+    quarantine_dir().mkdir(parents=True, exist_ok=True)
+    with manifest_path().open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def moved_records() -> dict[str, dict]:
+    """filename -> latest manifest record, honoring later restored events."""
+    state: dict[str, dict] = {}
+    for record in parse_manifest_lines():
+        filename = record.get("filename")
+        if not isinstance(filename, str):
+            raise ManifestError("manifest record without a filename")
+        if record.get("event") == "moved":
+            state[filename] = record
+        elif record.get("event") == "restored":
+            state.pop(filename, None)
+    return state
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--apply", action="store_true", help="perform the moves (default: dry run)"
+    )
+    parser.add_argument("--restore", metavar="FILENAME", help="move one quarantined file back")
+    args = parser.parse_args(argv)
+
+    now = datetime.now(timezone.utc)
+
+    if args.restore:
+        try:
+            record = moved_records().get(args.restore)
+        except ManifestError as exc:
+            print(f"refusing restore: {exc}")
+            return 1
+        if record is None:
+            print(f"no quarantined record for {args.restore}")
+            return 1
+        source = quarantine_dir() / args.restore
+        target = Path(str(record.get("original_path") or ""))
+        agents = agents_dir().resolve()
+        confined = (
+            target.name == args.restore
+            and target.is_absolute()
+            and target.resolve(strict=False).is_relative_to(agents)
+        )
+        if not source.is_file() or not confined:
+            print(f"cannot restore {args.restore}: source missing or unconfined path")
+            return 1
+        if sha256_of(source) != record.get("sha256"):
+            print(f"cannot restore {args.restore}: digest mismatch against manifest")
+            return 1
+        if target.exists():
+            print(f"cannot restore {args.restore}: original path already exists")
+            return 1
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(target))
+        append_manifest(
+            {
+                "event": "restored",
+                "filename": args.restore,
+                "restored_at": now.isoformat(),
+            }
+        )
+        print(f"restored {args.restore} to {target}")
+        return 0
+
+    retired = skipped = 0
+    if args.apply:
+        try:
+            parse_manifest_lines()
+        except ManifestError as exc:
+            print(f"refusing to apply: {exc}")
+            return 1
+    for path in sorted(agents_dir().glob(GLOB)):
+        ok, reason = eligible(path, now)
+        if not ok:
+            skipped += 1
+            continue
+        if not args.apply:
+            print(f"RETIRE {path.name} ({reason})")
+            retired += 1
+            continue
+        destination = quarantine_dir() / path.name
+        if destination.exists():
+            print(f"SKIP {path.name}: already quarantined")
+            skipped += 1
+            continue
+        digest = sha256_of(path)
+        size = path.stat().st_size
+        quarantine_dir().mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), str(destination))
+        append_manifest(
+            {
+                "event": "moved",
+                "filename": path.name,
+                "original_path": str(path),
+                "sha256": digest,
+                "bytes": size,
+                "moved_at": now.isoformat(),
+            }
+        )
+        print(f"MOVED {path.name} ({reason})")
+        retired += 1
+
+    mode = "applied" if args.apply else "dry run"
+    print(f"{mode}: {retired} retired, {skipped} kept, quarantine={quarantine_dir()}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
