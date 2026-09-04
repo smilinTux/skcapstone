@@ -313,3 +313,44 @@ def _reset_process_wide_singletons():
             activity._history.clear()
         with activity._clients_lock:
             activity._clients.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_notification_bookkeeping(monkeypatch):
+    """Stop a dispatched notification from writing into the operator's live home.
+
+    ``NotificationManager.notify`` ends with two bookkeeping writes:
+
+        _store_notification_memory(title, body, urgency)
+        record_notification_memory(title, body, urgency)
+
+    Neither takes a home from the caller. Both resolve their own default from
+    the module-level ``skcapstone.AGENT_HOME``, which on a workstation is the
+    real, Syncthing-replicated ``~/.skcapstone``. Any test that lets a
+    notification dispatch therefore appends a memory tagged ``notification`` to
+    live operator state, and reads back state that depends on whatever else has
+    run on that machine. ``tests/test_notifications.py::
+    TestModuleLevelHelpers::test_notify_convenience_function`` does exactly
+    that today.
+
+    The same leak is what made ``tests/integration/test_notification_e2e.py::
+    TestMessageToPopupE2E::test_interaction_recorded_as_memory`` environment
+    dependent: it patches ``skcapstone.memory_engine.store`` and then reads
+    ``mock_store.call_args``, the LAST call. On a box where ``AGENT_HOME``
+    exists, ``record_notification_memory`` fires after the interaction memory
+    and becomes that last call (tags ``['notification']``, home
+    ``~/.skcapstone``); on a box where it does not exist the function returns
+    early and the interaction memory is last. Same code, two verdicts,
+    depending on the machine.
+
+    Both writers are replaced with no-ops for the default (home-less) path.
+    Coverage of the writers themselves is unaffected: ``TestNotificationHistory``
+    imports ``record_notification_memory`` by name at module import time and
+    calls it with an explicit ``home=``, so it still exercises the real
+    function. A test that wants the manager's bookkeeping can re-patch the same
+    two attributes, which is what ``linux_notify_manager`` already does.
+    """
+    from skcapstone import notifications
+
+    monkeypatch.setattr(notifications, "_store_notification_memory", lambda *a, **k: None)
+    monkeypatch.setattr(notifications, "record_notification_memory", lambda *a, **k: None)
