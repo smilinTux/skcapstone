@@ -50,17 +50,26 @@ def register_atlas_commands(main: click.Group) -> None:
         Works WHILE FROZEN: `observe` is read-only and freeze-independent.
         Never calls `act`, never touches the freeze, writes nothing anywhere.
         """
+        from skcapstone.atlas import delta as atlas_delta
         from skcapstone.fleet.paths import default_paths
         from skcapstone.operator_seat import eyes
 
         kwargs = {}
         if timeout is not None:
             kwargs["cli_timeout"] = timeout
-        assessment = eyes.assess(default_paths(), **kwargs)
+        paths = default_paths()
+        assessment = eyes.assess(paths, **kwargs)
+        # Card 0e050200: the three-registry delta (declared / desired / actual)
+        # rides on the same read-only pass. Observation only; see
+        # skcapstone.atlas.reconcile for why a frozen Atlas may report it.
+        delta_report = atlas_delta.observe(paths)
         if as_json:
+            assessment["registry_delta"] = atlas_delta.to_dict(delta_report)
             click.echo(_json.dumps(assessment, indent=2))
         else:
             click.echo(eyes.render(assessment))
+            click.echo("")
+            click.echo(atlas_delta.render(delta_report))
         if strict:
             try:
                 eyes.assert_no_conflicts(assessment)

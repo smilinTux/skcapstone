@@ -73,7 +73,28 @@ DESIRED_NOT_ACTUAL = "desired_not_actual"
 #: installed outside the chain, or left behind by something now deleted.
 ACTUAL_NOT_DESIRED = "actual_not_desired"
 
-DELTA_KINDS = (DECLARED_NOT_DESIRED, DESIRED_NOT_ACTUAL, ACTUAL_NOT_DESIRED)
+#: The fleet store wants it under a runtime this pass cannot see. A Service
+#: with ``runtime: docker`` names a container, not a systemd unit, so systemd
+#: saying nothing about it is not evidence either way. Reported as its own
+#: class rather than folded into :data:`DESIRED_NOT_ACTUAL`, because "absent"
+#: and "not looked at" are different findings and an operator acts on them
+#: differently.
+DESIRED_UNOBSERVABLE = "desired_unobservable"
+
+DELTA_KINDS = (
+    DECLARED_NOT_DESIRED,
+    DESIRED_NOT_ACTUAL,
+    DESIRED_UNOBSERVABLE,
+    ACTUAL_NOT_DESIRED,
+)
+
+#: Spec keys that declare what a workload runs. A Service spec carrying none of
+#: them only references a unit something else must have installed: the fleet
+#: store can want it forever and never be able to create it.
+EXEC_KEYS = ("exec", "execStart", "command")
+
+#: Runtimes whose workload is a systemd unit this pass can observe.
+SYSTEMD_RUNTIMES = ("", "systemd-user", "systemd")
 
 #: Object kinds that correspond to a workload on a node. ``node``, ``profile``
 #: and ``operatorapp`` objects describe the estate, not something that runs, so
@@ -200,6 +221,12 @@ class DesiredItem:
         node: Node the placement addresses it to, or "" when unplaced.
         unit: The systemd unit this object projects onto.
         generation: Spec or placement generation, 0 when unknown.
+        has_object: False when only a placement exists and the object it
+            addresses is missing from ``objects/``: an orphan placement.
+        declares_exec: True when the spec carries one of :data:`EXEC_KEYS`.
+            False means the object merely references a unit installed by
+            something outside the fleet chain.
+        runtime: The spec's declared runtime ("systemd-user" when unset).
     """
 
     kind: str
@@ -207,6 +234,14 @@ class DesiredItem:
     node: str
     unit: str
     generation: int = 0
+    has_object: bool = True
+    declares_exec: bool = True
+    runtime: str = "systemd-user"
+
+    @property
+    def observable(self) -> bool:
+        """True when this pass can see the workload through systemd."""
+        return self.runtime in SYSTEMD_RUNTIMES
 
 
 @dataclass(frozen=True)
@@ -236,6 +271,8 @@ class Delta:
         node: Node the delta was observed for.
         state: Observed unit state, "" when there is no unit.
         declared: Whether any pack declared this object.
+        has_object: False for an orphan placement (no object behind it).
+        declares_exec: False when the desired object only references a unit.
         detail: Human-readable explanation, including which registries hold it.
     """
 
@@ -246,6 +283,8 @@ class Delta:
     node: str
     state: str = ""
     declared: bool = False
+    has_object: bool = True
+    declares_exec: bool = True
     detail: str = ""
 
 
@@ -283,6 +322,21 @@ class ReconcileReport:
         """Delta counts per class, for a dashboard tile or a brief."""
         return {kind: len(self.by_kind(kind)) for kind in DELTA_KINDS}
 
+    def orphan_placements(self) -> list[DesiredItem]:
+        """Placements that address an object the store does not hold."""
+        return [d for d in self.desired if not d.has_object]
+
+    def referenced_only(self) -> list[DesiredItem]:
+        """Objects that name a unit but declare nothing that would create it.
+
+        Every one of these is desired state the fleet chain cannot realise on
+        its own: the unit has to arrive from outside, and when it does not, the
+        store keeps wanting it with no way to act. That is a property of the
+        object, not of any node, so it is reported once per object rather than
+        as a per-node delta.
+        """
+        return [d for d in self.desired if d.has_object and not d.declares_exec]
+
 
 DeclaredReader = Callable[[], Sequence[DeclaredItem]]
 DesiredReader = Callable[[FleetPaths, str], Sequence[DesiredItem]]
@@ -318,9 +372,16 @@ def unit_for(kind: str, name: str, spec: dict | None = None) -> str:
         The unit name, including its suffix.
     """
     kind_l = normalize_kind(kind)
-    explicit = (spec or {}).get("unit")
+    spec = spec or {}
+    explicit = spec.get("unit")
     if isinstance(explicit, str) and explicit.strip():
-        return explicit.strip()
+        explicit = explicit.strip()
+        runtime = str(spec.get("runtime") or "systemd-user")
+        if "." not in explicit and runtime in SYSTEMD_RUNTIMES:
+            # systemctl itself reads a bare name as <name>.service; joining
+            # on the bare name would invent drift for a correctly named unit.
+            return f"{explicit}.service"
+        return explicit
     if kind_l == "cronjob":
         return f"{name}.timer"
     return f"{name}.service"
@@ -467,7 +528,10 @@ def fleet_desired(paths: FleetPaths, node: str) -> list[DesiredItem]:
     unplaced", and is reconciled on every node rather than vanishing from every
     report. Placements with no matching object (the ``job/demo`` shape) are
     carried through on their own, because a placement the scheduler wrote for a
-    workload that does not exist is precisely the drift worth naming.
+    workload that does not exist is precisely the drift worth naming. They are
+    carried through for every node, not only this one: an orphan is the store's
+    drift, and scoping it away on the node it happens not to address would make
+    it vanish from every node's report but one.
 
     Args:
         paths: The fleet tree to read. Never created if absent.
@@ -493,13 +557,19 @@ def fleet_desired(paths: FleetPaths, node: str) -> list[DesiredItem]:
             key = (kind, name)
             seen.add(key)
             placement = placed.get(key) or {}
+            spec = payload.get("spec") or {}
+            if not isinstance(spec, dict):
+                spec = {}
             out.append(
                 DesiredItem(
                     kind=kind,
                     name=name,
                     node=str(placement.get("node", "")),
-                    unit=unit_for(kind, name, payload.get("spec")),
+                    unit=unit_for(kind, name, spec),
                     generation=int(payload.get("generation", 0) or 0),
+                    has_object=True,
+                    declares_exec=any(spec.get(k) for k in EXEC_KEYS),
+                    runtime=str(spec.get("runtime") or "systemd-user"),
                 )
             )
     for (kind, name), placement in sorted(placed.items()):
@@ -512,9 +582,11 @@ def fleet_desired(paths: FleetPaths, node: str) -> list[DesiredItem]:
                 node=str(placement.get("node", "")),
                 unit=unit_for(kind, name),
                 generation=int(placement.get("placementGeneration", 0) or 0),
+                has_object=False,
+                declares_exec=False,
             )
         )
-    scoped = [item for item in out if item.node in (node, "")]
+    scoped = [item for item in out if item.node in (node, "") or not item.has_object]
     return sorted(scoped, key=lambda item: item.unit)
 
 
@@ -642,25 +714,49 @@ def compute_deltas(
     for unit in sorted(set(desired_by_unit) - set(actual_by_unit)):
         item = desired_by_unit[unit]
         was_declared = unit in declared_by_unit
-        if was_declared:
+        if not item.observable:
+            kind = DESIRED_UNOBSERVABLE
+            why = (
+                f"runtime {item.runtime!r} is not a systemd unit; this pass observes "
+                "systemd only and cannot say whether it runs"
+            )
+        elif not item.has_object:
+            kind = DESIRED_NOT_ACTUAL
+            why = (
+                f"placement addresses {item.kind}/{item.name} to {item.node or node!r} "
+                f"but objects/{item.kind}/{item.name}.json does not exist: an orphan "
+                "placement, undeclared by any pack, with no workload behind it"
+            )
+        elif was_declared:
+            kind = DESIRED_NOT_ACTUAL
             why = (
                 f"declared by pack {declared_by_unit[unit].pack!r} and present in the "
                 "fleet store, but the node has no unit for it: the install never "
                 "reached this node"
             )
+        elif not item.declares_exec:
+            kind = DESIRED_NOT_ACTUAL
+            why = (
+                "in the fleet store, undeclared by any pack, and the node has no unit "
+                f"named {unit!r}: the object only references that unit, so nothing in "
+                "the fleet chain can create it"
+            )
         else:
+            kind = DESIRED_NOT_ACTUAL
             why = (
                 "in the fleet store but undeclared by any pack and absent from "
-                "systemd: an orphan placement with no workload behind it"
+                "systemd: desired state that never reached this node"
             )
         out.append(
             Delta(
-                kind=DESIRED_NOT_ACTUAL,
+                kind=kind,
                 unit=unit,
                 name=item.name,
                 object_kind=item.kind,
                 node=item.node or node,
                 declared=was_declared,
+                has_object=item.has_object,
+                declares_exec=item.declares_exec,
                 detail=why,
             )
         )

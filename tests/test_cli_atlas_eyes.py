@@ -12,9 +12,21 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
+from skcapstone.atlas.reconcile import ReconcileReport
 from skcapstone.cli import main
+
+
+@pytest.fixture(autouse=True)
+def _no_live_registry_delta():
+    """``atlas eyes`` now carries the three-registry delta (card 0e050200).
+    Patch its observer so these tests stay off the live fleet store and
+    systemd, exactly as ``eyes.assess`` is already patched below."""
+    with patch("skcapstone.atlas.delta.observe", return_value=ReconcileReport(node="node-test")):
+        yield
+
 
 _CLEAN = {
     "schema": "skoperator.eyes/v1",
