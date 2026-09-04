@@ -102,7 +102,11 @@ async def test_link_handler_attaches_a_link(tmp_path, monkeypatch):
             "agent": "lumina",
         }
     )
-    assert _parse(result)["linked"] is True
+    receipt = _parse(result)
+    assert receipt["action"] == "link"
+    assert receipt["link_key"] == "pr"
+    assert receipt["link_value"] == "https://example.test/pr/1"
+    assert receipt["event_id"]
 
     events = [e for e in CardEventLog(tmp_path).read_all() if e.card_id == "mcp00004"]
     assert len(events) == 1
