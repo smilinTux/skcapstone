@@ -3,9 +3,11 @@
 Three things are pinned here.
 
 First, the operator surface: the render leads with what is wrong, names every
-orphan placement and every referenced-only Service, and collapses agreement to
-one line. A report that buries eighteen orphans under seventy lines of "fine"
-has failed at its only job.
+referenced-only Service and every placement with no object behind it, and
+collapses agreement to one line. A report that buries eighteen findings under
+seventy lines of "fine" has failed at its only job. And it must not invent
+findings either: a ``placements/job/`` record has no spec and no unit, and the
+surface says so rather than fabricating ``<id>.service`` (card 0e0a0600).
 
 Second, the wiring: ``atlas eyes`` carries the delta on the same read-only pass,
 in both the text and the ``--json`` shape, and the CLI tests never touch a live
@@ -39,7 +41,7 @@ from skcapstone.fleet.paths import FleetPaths
 # declared/actual readers so no test needs skos or systemd.
 # ---------------------------------------------------------------------------
 
-_ORPHANS = [f"{i:08x}" for i in range(18)]
+_JOB_PLACEMENTS = [f"{i:08x}" for i in range(18)]
 
 _SERVICES = {
     # name: (unit, runtime)
@@ -56,9 +58,9 @@ def _write(path: Path, payload: dict) -> None:
 
 
 def _fleet_tree(root: Path) -> FleetPaths:
-    """A fleet tree with 18 orphan job placements and 4 exec-less Services."""
+    """A fleet tree with 18 object-less job placements and 4 exec-less Services."""
     paths = FleetPaths(root=root)
-    for index, name in enumerate(_ORPHANS):
+    for index, name in enumerate(_JOB_PLACEMENTS):
         node = "node-41" if index < 6 else "node-test"
         _write(
             paths.placement_path("job", name),
@@ -110,27 +112,54 @@ def _observe(paths: FleetPaths, *, actual: rc.ActualReader | None = None) -> rc.
 # ---------------------------------------------------------------------------
 
 
-def test_render_names_every_orphan_placement_first(tmp_path):
+def test_render_names_every_job_placement_without_inventing_a_unit(tmp_path):
     report = _observe(_fleet_tree(tmp_path / "fleet"))
     text = delta.render(report)
     lines = text.splitlines()
     assert lines[0].startswith("REGISTRY DELTA  node-test")
-    # Worst finding first: orphans lead, before anything about running units.
-    assert lines[1].startswith(" !! 18 orphan placements")
-    assert "6 -> node-41" in lines[1] and "12 -> node-test" in lines[1]
-    for name in _ORPHANS:
-        assert name in text, f"orphan {name} not named"
-    assert text.index("orphan placement") < text.index("no fleet object asks for")
+    # Desired counts objects only; the 18 job placements are not desired state.
+    assert "desired 5 /" in lines[0]
+    [head] = [ln for ln in lines if ln.startswith(" ~  18 job placements with no object")]
+    assert "'job' is not a fleet object kind, advisory routing only" in head
+    assert "6 -> node-41" in head and "12 -> node-test" in head
+    assert "no unit is derived for these and no claim is made about systemd" in text
+    for name in _JOB_PLACEMENTS:
+        assert name in text, f"placement {name} not named"
+        assert f"{name}.service" not in text, f"a unit was invented for {name}"
+    # Advisory records rank below real drift and above hand-installed units.
+    assert text.index("reference a unit but declare no exec") < text.index("job placements")
+    assert text.index("job placements") < text.index("no fleet object asks for")
 
 
-def test_orphans_addressed_to_another_node_are_still_reported(tmp_path):
-    """An orphan is the store's drift, not the node's. Scoping it away on the
-    node it does not address would hide it from every node's report but one."""
+def test_placements_without_object_are_their_own_class_not_desired_not_actual(tmp_path):
+    """Before card 0e0a0600 all 18 were desired_not_actual under a fabricated
+    ``<id>.service``: a third of that count on the live node was invented."""
     report = _observe(_fleet_tree(tmp_path / "fleet"))
-    assert len(report.orphan_placements()) == 18
-    assert {d.node for d in report.orphan_placements()} == {"node-41", "node-test"}
-    assert all(not d.has_object for d in report.orphan_placements())
-    assert len([d for d in report.deltas if not d.has_object]) == 18
+    rows = report.by_kind(rc.PLACEMENT_WITHOUT_OBJECT)
+    assert sorted(d.name for d in rows) == _JOB_PLACEMENTS
+    assert {d.unit for d in rows} == {""}
+    assert {d.node for d in rows} == {"node-41", "node-test"}
+    assert all(not d.has_object for d in rows)
+    assert not any(d.object_kind == "job" for d in report.by_kind(rc.DESIRED_NOT_ACTUAL))
+    assert not any(d.kind == "job" for d in report.desired)
+    # Only real objects remain in that class: the cronjob and the referenced-only
+    # Service whose unit is absent. Nothing named after a job placement.
+    assert sorted(d.unit for d in report.by_kind(rc.DESIRED_NOT_ACTUAL)) == [
+        "nostr-relay.service",
+        "skmem-health.timer",
+    ]
+    assert report.summary()[rc.PLACEMENT_WITHOUT_OBJECT] == 18
+
+
+def test_service_placement_whose_object_is_gone_reads_as_drift(tmp_path):
+    paths = _fleet_tree(tmp_path / "fleet")
+    _write(
+        paths.placement_path("service", "gone"),
+        {"kind": "Service", "name": "gone", "node": "node-test", "placementGeneration": 2},
+    )
+    text = delta.render(_observe(paths))
+    assert " !  1 service placement with no object: objects/service/<name>.json is gone" in text
+    assert "gone.service" not in text
 
 
 def test_render_names_referenced_only_services_and_where_their_unit_is(tmp_path):
@@ -205,10 +234,16 @@ def test_to_dict_is_json_ready_and_carries_the_findings(tmp_path):
     assert payload["schema"] == "skatlas.delta/v1"
     assert payload["node"] == "node-test"
     assert payload["in_agreement"] is False
-    assert payload["counts"]["orphan_placements"] == 18
+    assert payload["counts"]["desired"] == 5
+    assert payload["counts"]["placements_without_object"] == 18
     assert payload["counts"]["referenced_only"] == 4
     assert set(payload["summary"]) == set(rc.DELTA_KINDS)
-    assert len(payload["orphan_placements"]) == 18
+    assert payload["summary"]["placement_without_object"] == 18
+    assert len(payload["placements_without_object"]) == 18
+    assert "unit" not in payload["placements_without_object"][0]
+    blob = json.dumps(payload)
+    for name in _JOB_PLACEMENTS:
+        assert f"{name}.service" not in blob, f"a unit was invented for {name}"
 
 
 # ---------------------------------------------------------------------------
@@ -228,13 +263,11 @@ _CLEAN_ASSESSMENT = {
 
 
 def _fake_report() -> rc.ReconcileReport:
-    orphan = rc.DesiredItem(
-        kind="job", name="deadbeef", node="node-test", unit="deadbeef.service", has_object=False
-    )
+    placement = rc.PlacementItem(kind="job", name="deadbeef", node="node-test")
     return rc.ReconcileReport(
         node="node-test",
-        desired=[orphan],
-        deltas=rc.compute_deltas([], [orphan], [], "node-test"),
+        placements=[placement],
+        deltas=rc.compute_deltas([], [], [], "node-test", [placement]),
     )
 
 
@@ -248,8 +281,9 @@ def test_atlas_eyes_text_carries_the_delta_after_the_lane_report():
     assert result.exit_code == 0, result.output
     assert "rendered report" in result.output
     assert "REGISTRY DELTA  node-test" in result.output
-    assert "1 orphan placement" in result.output
+    assert " ~  1 job placement with no object" in result.output
     assert "deadbeef" in result.output
+    assert "deadbeef.service" not in result.output
     assert result.output.index("rendered report") < result.output.index("REGISTRY DELTA")
 
 
@@ -263,7 +297,9 @@ def test_atlas_eyes_json_carries_the_delta_block():
     payload = json.loads(result.output)
     assert payload["schema"] == "skoperator.eyes/v1"
     assert payload["registry_delta"]["schema"] == "skatlas.delta/v1"
-    assert payload["registry_delta"]["counts"]["orphan_placements"] == 1
+    assert payload["registry_delta"]["counts"]["placements_without_object"] == 1
+    assert payload["registry_delta"]["summary"]["placement_without_object"] == 1
+    assert payload["registry_delta"]["summary"]["desired_not_actual"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -380,4 +416,4 @@ def test_shipped_reconcile_path_never_opens_the_coordination_board(tmp_path):
     board_reads = [p for p in _TOUCHED if str(board) in p]
     assert board_reads == [], f"atlas read the coordination board: {board_reads}"
     assert not board.joinpath("bait").exists()
-    assert len(report.orphan_placements()) == 18
+    assert len(report.placements_without_object()) == 18

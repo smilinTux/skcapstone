@@ -9,13 +9,15 @@ The render leads with what is wrong. Full agreement is one line; a thousand
 units in agreement is still one line. What gets space is the drift, ordered by
 how much it should worry the reader:
 
-1. Orphan placements: the scheduler wrote a placement for an object the store
-   does not hold. Nothing can converge these and nothing will clean them up.
-2. Referenced-only objects: Service objects that name a unit but declare no
+1. Referenced-only objects: Service objects that name a unit but declare no
    exec. The fleet chain cannot create these, so when the unit is missing the
    store wants it forever with no way to act.
-3. Desired but absent on this node, by object kind.
-4. Desired under a runtime this pass cannot observe.
+2. Desired but absent on this node, by object kind.
+3. Desired under a runtime this pass cannot observe.
+4. Placements with no object behind them. A workload kind whose object is gone
+   is real drift; ``placements/job/`` is an advisory routing namespace that
+   never had objects and is provenance, not junk. Neither has a unit, and the
+   surface says so instead of inventing one (card 0e0a0600).
 5. Running with no fleet object behind it, failed units first.
 6. Registries that could not be read at all.
 
@@ -72,11 +74,11 @@ def to_dict(report: rc.ReconcileReport) -> dict:
             "declared": len(report.declared),
             "desired": len(report.desired),
             "actual": len(report.actual),
-            "orphan_placements": len(report.orphan_placements()),
+            "placements_without_object": len(report.placements_without_object()),
             "referenced_only": len(report.referenced_only()),
         },
         "deltas": [asdict(d) for d in report.deltas],
-        "orphan_placements": [asdict(d) for d in report.orphan_placements()],
+        "placements_without_object": [asdict(d) for d in report.placements_without_object()],
         "referenced_only": [asdict(d) for d in report.referenced_only()],
         "declared": [asdict(d) for d in report.declared],
         "desired": [asdict(d) for d in report.desired],
@@ -96,22 +98,31 @@ def _plural(n: int, noun: str, plural: str | None = None) -> str:
     return f"{n} {noun if n == 1 else (plural or noun + 's')}"
 
 
-def _orphans(report: rc.ReconcileReport, lines: list[str]) -> None:
-    orphans = report.orphan_placements()
-    if not orphans:
+def _placements_without_object(report: rc.ReconcileReport, lines: list[str]) -> None:
+    rows = report.placements_without_object()
+    if not rows:
         return
-    by_kind: dict[str, list[rc.DesiredItem]] = {}
-    for item in orphans:
+    by_kind: dict[str, list[rc.PlacementItem]] = {}
+    for item in rows:
         by_kind.setdefault(item.kind, []).append(item)
     for kind, items in sorted(by_kind.items()):
         by_node: dict[str, int] = {}
         for item in items:
             by_node[item.node or "unplaced"] = by_node.get(item.node or "unplaced", 0) + 1
         where = ", ".join(f"{n} -> {node}" for node, n in sorted(by_node.items()))
-        lines.append(
-            f" !! {_plural(len(items), 'orphan placement')}: placements/{kind}/* address "
-            f"objects that do not exist under objects/{kind}/ ({where})"
-        )
+        if items[0].workload_kind:
+            # The object was deleted and its placement was not. Real drift.
+            lines.append(
+                f" !  {_plural(len(items), kind + ' placement')} with no object: "
+                f"objects/{kind}/<name>.json is gone ({where})"
+            )
+        else:
+            # Not an object kind at all: advisory routing, kept as provenance.
+            lines.append(
+                f" ~  {_plural(len(items), kind + ' placement')} with no object: "
+                f"{kind!r} is not a fleet object kind, advisory routing only ({where})"
+            )
+        lines.append("    no unit is derived for these and no claim is made about systemd")
         lines.append(f"    {_names(sorted(i.name for i in items))}")
 
 
@@ -153,8 +164,8 @@ def _referenced_only(report: rc.ReconcileReport, lines: list[str]) -> None:
 
 
 def _desired_not_actual(report: rc.ReconcileReport, lines: list[str]) -> None:
-    # Orphans and referenced-only objects already had their own sections.
-    rows = [d for d in report.by_kind(rc.DESIRED_NOT_ACTUAL) if d.has_object and d.declares_exec]
+    # Referenced-only objects already had their own section.
+    rows = [d for d in report.by_kind(rc.DESIRED_NOT_ACTUAL) if d.declares_exec]
     if not rows:
         return
     by_kind: dict[str, list[str]] = {}
@@ -206,10 +217,10 @@ def render(report: rc.ReconcileReport) -> str:
         lines.append(" ok  the three registries agree on this node")
         return "\n".join(lines)
 
-    _orphans(report, lines)
     _referenced_only(report, lines)
     _desired_not_actual(report, lines)
     _unobservable(report, lines)
+    _placements_without_object(report, lines)
     _actual_not_desired(report, lines)
     if not report.declared and not any("declared" in n for n in report.notes):
         lines.append(" -  declared registry is empty: no installed skos pack names a fleet object")

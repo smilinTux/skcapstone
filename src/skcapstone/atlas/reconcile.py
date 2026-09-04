@@ -15,6 +15,11 @@ name: fleet placements that correspond to no workload, a node advertising a
 capability while it has been Dead for two days, and units failing where nothing
 declares them.
 
+One thing lives in none of the three and is reported apart from the join:
+a placement with no object behind it (:data:`PLACEMENT_WITHOUT_OBJECT`). It has
+no spec, so it has no unit, so it cannot be joined in unit space without
+inventing a name. The reconciler used to invent one. It does not any more.
+
 Why this is legal for Atlas
 ---------------------------
 Atlas is frozen. The standing governance position is that it gains no new
@@ -81,11 +86,34 @@ ACTUAL_NOT_DESIRED = "actual_not_desired"
 #: differently.
 DESIRED_UNOBSERVABLE = "desired_unobservable"
 
+#: A placement exists and no object stands behind it (card 0e0a0600).
+#:
+#: This is its own class, not a flavour of :data:`DESIRED_NOT_ACTUAL`, because
+#: it cannot be resolved inside the three-registry join at all. The join runs
+#: in unit space, and a unit name comes from an object's spec. With no spec
+#: there is nothing to project: the only way to put such a placement into unit
+#: space is to invent ``<name>.service``, which is exactly what this module
+#: used to do, and exactly what :func:`unit_for`'s own docstring warns against.
+#: A reconciler whose job is reporting drift must not manufacture it.
+#:
+#: The estate's concrete case is ``placements/job/``, a deliberately
+#: object-less advisory namespace: ``skharness`` fleet_dispatch writes one
+#: record per dispatched coordination card as an audit trail ("placement is
+#: advisory routing"), never creates an object, and ``job`` is not a fleet
+#: object kind. Every such record is a scheduler decision keyed to the
+#: coordination board, which ``docs/fleet/seat-charters.md`` records that Atlas
+#: provably does not read. So it lives in none of the three registries this
+#: module joins, and calling it "desired but not actual" is a category error,
+#: not merely a wrong count. Reported with ``unit=""`` and no claim about
+#: systemd either way.
+PLACEMENT_WITHOUT_OBJECT = "placement_without_object"
+
 DELTA_KINDS = (
     DECLARED_NOT_DESIRED,
     DESIRED_NOT_ACTUAL,
     DESIRED_UNOBSERVABLE,
     ACTUAL_NOT_DESIRED,
+    PLACEMENT_WITHOUT_OBJECT,
 )
 
 #: Spec keys that declare what a workload runs. A Service spec carrying none of
@@ -220,13 +248,16 @@ class DesiredItem:
         name: Object name.
         node: Node the placement addresses it to, or "" when unplaced.
         unit: The systemd unit this object projects onto.
-        generation: Spec or placement generation, 0 when unknown.
-        has_object: False when only a placement exists and the object it
-            addresses is missing from ``objects/``: an orphan placement.
+        generation: Spec generation, 0 when unknown.
         declares_exec: True when the spec carries one of :data:`EXEC_KEYS`.
             False means the object merely references a unit installed by
             something outside the fleet chain.
         runtime: The spec's declared runtime ("systemd-user" when unset).
+
+    Every row here is backed by an object under ``objects/``. A placement with
+    no object behind it is a :class:`PlacementItem`, never a DesiredItem: it
+    has no spec, so it has no unit, and a row type that requires a unit would
+    force one to be invented.
     """
 
     kind: str
@@ -234,7 +265,6 @@ class DesiredItem:
     node: str
     unit: str
     generation: int = 0
-    has_object: bool = True
     declares_exec: bool = True
     runtime: str = "systemd-user"
 
@@ -242,6 +272,32 @@ class DesiredItem:
     def observable(self) -> bool:
         """True when this pass can see the workload through systemd."""
         return self.runtime in SYSTEMD_RUNTIMES
+
+
+@dataclass(frozen=True)
+class PlacementItem:
+    """One placement record with no object behind it.
+
+    Deliberately carries no ``unit`` field. A unit name is a projection of a
+    spec, and there is no spec; a field for it would only ever hold a guess.
+
+    Attributes:
+        kind: Normalized placement kind. ``job`` on this estate, which is not
+            a fleet object kind at all (see :data:`PLACEMENT_WITHOUT_OBJECT`).
+        name: Placement name. For ``job`` this is a coordination card id.
+        node: Node the placement addresses, or "" when unset.
+        generation: Placement generation, 0 when unknown.
+    """
+
+    kind: str
+    name: str
+    node: str
+    generation: int = 0
+
+    @property
+    def workload_kind(self) -> bool:
+        """True when the kind names something that could have had a unit."""
+        return self.kind in WORKLOAD_KINDS
 
 
 @dataclass(frozen=True)
@@ -265,13 +321,14 @@ class Delta:
 
     Attributes:
         kind: One of :data:`DELTA_KINDS`.
-        unit: The unit name the three registries are joined on.
+        unit: The unit name the three registries are joined on. Empty for
+            :data:`PLACEMENT_WITHOUT_OBJECT`, which has no unit and claims none.
         name: Object name, or the unit stem when only systemd knows about it.
         object_kind: Normalized object kind, or "unit" when only systemd knows.
         node: Node the delta was observed for.
         state: Observed unit state, "" when there is no unit.
         declared: Whether any pack declared this object.
-        has_object: False for an orphan placement (no object behind it).
+        has_object: False for a placement with no object behind it.
         declares_exec: False when the desired object only references a unit.
         detail: Human-readable explanation, including which registries hold it.
     """
@@ -297,7 +354,9 @@ class ReconcileReport:
         declared: What the skos capability registry says should exist.
         desired: What the fleet store holds as desired state for this node.
         actual: In-scope systemd units observed on this node.
-        deltas: Every disagreement, ordered by class then unit.
+        placements: Placement records with no object behind them. Kept apart
+            from ``desired`` because they have no unit to join on.
+        deltas: Every disagreement, ordered by class then unit then name.
         notes: Degraded reads and other caveats. A registry that could not be
             read is reported here, never silently treated as empty agreement.
     """
@@ -306,6 +365,7 @@ class ReconcileReport:
     declared: list[DeclaredItem] = field(default_factory=list)
     desired: list[DesiredItem] = field(default_factory=list)
     actual: list[ActualItem] = field(default_factory=list)
+    placements: list[PlacementItem] = field(default_factory=list)
     deltas: list[Delta] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -322,9 +382,9 @@ class ReconcileReport:
         """Delta counts per class, for a dashboard tile or a brief."""
         return {kind: len(self.by_kind(kind)) for kind in DELTA_KINDS}
 
-    def orphan_placements(self) -> list[DesiredItem]:
+    def placements_without_object(self) -> list[PlacementItem]:
         """Placements that address an object the store does not hold."""
-        return [d for d in self.desired if not d.has_object]
+        return list(self.placements)
 
     def referenced_only(self) -> list[DesiredItem]:
         """Objects that name a unit but declare nothing that would create it.
@@ -335,12 +395,13 @@ class ReconcileReport:
         object, not of any node, so it is reported once per object rather than
         as a per-node delta.
         """
-        return [d for d in self.desired if d.has_object and not d.declares_exec]
+        return [d for d in self.desired if not d.declares_exec]
 
 
 DeclaredReader = Callable[[], Sequence[DeclaredItem]]
 DesiredReader = Callable[[FleetPaths, str], Sequence[DesiredItem]]
 ActualReader = Callable[[str], Sequence[ActualItem]]
+PlacementReader = Callable[[FleetPaths, str], Sequence[PlacementItem]]
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
 
@@ -526,12 +587,15 @@ def fleet_desired(paths: FleetPaths, node: str) -> list[DesiredItem]:
     Objects carry no node of their own; a placement addresses them. An object
     with no placement is recorded with an empty node, meaning "desired but
     unplaced", and is reconciled on every node rather than vanishing from every
-    report. Placements with no matching object (the ``job/demo`` shape) are
-    carried through on their own, because a placement the scheduler wrote for a
-    workload that does not exist is precisely the drift worth naming. They are
-    carried through for every node, not only this one: an orphan is the store's
-    drift, and scoping it away on the node it happens not to address would make
-    it vanish from every node's report but one.
+    report.
+
+    Only objects are desired state. A placement with no object behind it is
+    not promoted into a DesiredItem here, because doing so requires a unit name
+    and there is no spec to derive one from; the old sweep called
+    :func:`unit_for` with no spec and fabricated ``<name>.service`` for every
+    ``placements/job/`` record, a third of this node's desired-not-actual
+    count. Those records are read by :func:`fleet_placements_without_object`
+    and reported as :data:`PLACEMENT_WITHOUT_OBJECT` instead.
 
     Args:
         paths: The fleet tree to read. Never created if absent.
@@ -540,23 +604,14 @@ def fleet_desired(paths: FleetPaths, node: str) -> list[DesiredItem]:
     Returns:
         Desired objects for this node, sorted by unit.
     """
-    placed: dict[tuple[str, str], dict] = {}
-    for placement in store.list_placements(paths):
-        kind = normalize_kind(placement.get("kind", ""))
-        name = str(placement.get("name", "")).strip()
-        if kind and name:
-            placed[(kind, name)] = placement
-
+    placed = _placements_by_key(paths)
     out: list[DesiredItem] = []
-    seen: set[tuple[str, str]] = set()
     for kind in WORKLOAD_KINDS:
         for payload in store.list_specs(paths, kind):
             name = str(payload.get("name", "")).strip()
             if not name:
                 continue
-            key = (kind, name)
-            seen.add(key)
-            placement = placed.get(key) or {}
+            placement = placed.get((kind, name)) or {}
             spec = payload.get("spec") or {}
             if not isinstance(spec, dict):
                 spec = {}
@@ -567,27 +622,65 @@ def fleet_desired(paths: FleetPaths, node: str) -> list[DesiredItem]:
                     node=str(placement.get("node", "")),
                     unit=unit_for(kind, name, spec),
                     generation=int(payload.get("generation", 0) or 0),
-                    has_object=True,
                     declares_exec=any(spec.get(k) for k in EXEC_KEYS),
                     runtime=str(spec.get("runtime") or "systemd-user"),
                 )
             )
+    scoped = [item for item in out if item.node in (node, "")]
+    return sorted(scoped, key=lambda item: item.unit)
+
+
+def _placements_by_key(paths: FleetPaths) -> dict[tuple[str, str], dict]:
+    """Every placement record, keyed by normalized (kind, name)."""
+    placed: dict[tuple[str, str], dict] = {}
+    for placement in store.list_placements(paths):
+        kind = normalize_kind(placement.get("kind", ""))
+        name = str(placement.get("name", "")).strip()
+        if kind and name:
+            placed[(kind, name)] = placement
+    return placed
+
+
+def fleet_placements_without_object(paths: FleetPaths, node: str) -> list[PlacementItem]:
+    """Read every placement whose object the store does not hold.
+
+    Carried through for every node, not only ``node``: such a placement is a
+    property of the store, and scoping it away on the node it happens not to
+    address would make it vanish from every node's report but one. ``node`` is
+    accepted for reader-signature symmetry with :func:`fleet_desired`.
+
+    Nothing here projects onto a unit. See :data:`PLACEMENT_WITHOUT_OBJECT`
+    for why that is the point rather than an omission.
+
+    Args:
+        paths: The fleet tree to read. Never created if absent.
+        node: The node being reported on. Unused for scoping, by design.
+
+    Returns:
+        Placement records with no object behind them, sorted by kind then name.
+    """
+    placed = _placements_by_key(paths)
+    # "Object exists" means what it means to fleet_desired: a spec the store
+    # can read. A conflict copy or an unparseable spec is not an object, and a
+    # placement addressing one must not fall between the two readers.
+    held: dict[str, set[str]] = {}
+    for kind in sorted({kind for kind, _ in placed}):
+        held[kind] = {
+            str(payload.get("name", "")).strip() for payload in store.list_specs(paths, kind)
+        }
+    out: list[PlacementItem] = []
     for (kind, name), placement in sorted(placed.items()):
-        if (kind, name) in seen:
+        if name in held.get(kind, set()):
             continue
         out.append(
-            DesiredItem(
+            PlacementItem(
                 kind=kind,
                 name=name,
                 node=str(placement.get("node", "")),
-                unit=unit_for(kind, name),
                 generation=int(placement.get("placementGeneration", 0) or 0),
-                has_object=False,
-                declares_exec=False,
             )
         )
-    scoped = [item for item in out if item.node in (node, "") or not item.has_object]
-    return sorted(scoped, key=lambda item: item.unit)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +765,7 @@ def compute_deltas(
     desired: Sequence[DesiredItem],
     actual: Sequence[ActualItem],
     node: str,
+    placements: Sequence[PlacementItem] = (),
 ) -> list[Delta]:
     """Join the three registries in unit space and name every disagreement.
 
@@ -683,9 +777,12 @@ def compute_deltas(
         desired: What the fleet store holds for this node.
         actual: What systemd has on this node.
         node: The node the report covers.
+        placements: Placement records with no object behind them. These never
+            enter the unit-space join; each becomes one
+            :data:`PLACEMENT_WITHOUT_OBJECT` delta with an empty unit.
 
     Returns:
-        Deltas ordered by class then unit.
+        Deltas ordered by class then unit then name.
     """
     declared_by_unit = {item.unit: item for item in declared}
     desired_by_unit = {item.unit: item for item in desired}
@@ -720,13 +817,6 @@ def compute_deltas(
                 f"runtime {item.runtime!r} is not a systemd unit; this pass observes "
                 "systemd only and cannot say whether it runs"
             )
-        elif not item.has_object:
-            kind = DESIRED_NOT_ACTUAL
-            why = (
-                f"placement addresses {item.kind}/{item.name} to {item.node or node!r} "
-                f"but objects/{item.kind}/{item.name}.json does not exist: an orphan "
-                "placement, undeclared by any pack, with no workload behind it"
-            )
         elif was_declared:
             kind = DESIRED_NOT_ACTUAL
             why = (
@@ -755,7 +845,6 @@ def compute_deltas(
                 object_kind=item.kind,
                 node=item.node or node,
                 declared=was_declared,
-                has_object=item.has_object,
                 declares_exec=item.declares_exec,
                 detail=why,
             )
@@ -780,8 +869,39 @@ def compute_deltas(
             )
         )
 
+    declared_keys = {(item.kind, item.name) for item in declared}
+    for item in placements:
+        where = item.node or node
+        if item.workload_kind:
+            why = (
+                f"placements/{item.kind}/{item.name} addresses {where!r} but "
+                f"objects/{item.kind}/{item.name}.json does not exist: the object it "
+                "routed is gone. No unit name can be derived without a spec, so this "
+                "pass makes no claim about systemd"
+            )
+        else:
+            why = (
+                f"placements/{item.kind}/{item.name} addresses {where!r} but "
+                f"{item.kind!r} is not a fleet object kind: an advisory routing "
+                "record, not desired state. No unit name can be derived without a "
+                "spec, so this pass makes no claim about systemd"
+            )
+        out.append(
+            Delta(
+                kind=PLACEMENT_WITHOUT_OBJECT,
+                unit="",
+                name=item.name,
+                object_kind=item.kind,
+                node=where,
+                declared=(item.kind, item.name) in declared_keys,
+                has_object=False,
+                declares_exec=False,
+                detail=why,
+            )
+        )
+
     order = {kind: index for index, kind in enumerate(DELTA_KINDS)}
-    return sorted(out, key=lambda d: (order.get(d.kind, len(order)), d.unit))
+    return sorted(out, key=lambda d: (order.get(d.kind, len(order)), d.unit, d.name))
 
 
 def reconcile(
@@ -791,6 +911,7 @@ def reconcile(
     declared_reader: DeclaredReader = skos_declared,
     desired_reader: DesiredReader = fleet_desired,
     actual_reader: ActualReader = systemd_actual,
+    placement_reader: PlacementReader = fleet_placements_without_object,
 ) -> ReconcileReport:
     """Report the delta between declared, desired and actual for one node.
 
@@ -804,20 +925,23 @@ def reconcile(
         declared_reader: Reads the skos capability registry.
         desired_reader: Reads the fleet store.
         actual_reader: Reads systemd units.
+        placement_reader: Reads placements with no object behind them.
 
     Returns:
         A :class:`ReconcileReport` whose ``deltas`` is empty exactly when the
-        three registries agree.
+        three registries agree and no placement lacks its object.
     """
     notes: list[str] = []
     declared = _safe(declared_reader, "declared", notes)
     desired = _safe(desired_reader, "desired", notes, paths, node)
     actual = _safe(actual_reader, "actual", notes, node)
+    placements = _safe(placement_reader, "placements", notes, paths, node)
     return ReconcileReport(
         node=node,
         declared=declared,
         desired=desired,
         actual=actual,
-        deltas=compute_deltas(declared, desired, actual, node),
+        placements=placements,
+        deltas=compute_deltas(declared, desired, actual, node, placements),
         notes=notes,
     )

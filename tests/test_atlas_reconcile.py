@@ -20,6 +20,7 @@ documenting that it would.
 from __future__ import annotations
 
 import ast
+import json
 import subprocess
 from pathlib import Path
 
@@ -105,22 +106,100 @@ def test_desired_but_not_actual():
     assert report.in_agreement is False
 
 
-def test_desired_but_not_actual_records_undeclared_orphans():
-    """The job/demo shape: in the fleet store, in no pack, and in no unit.
+# ---------------------------------------------------------------------------
+# Delta class 5: a placement with no object behind it (card 0e0a0600).
+# Not a flavour of desired-but-not-actual: it has no spec, so no unit, so it
+# cannot enter the unit-space join without a name being invented for it.
+# ---------------------------------------------------------------------------
 
-    It is a desired-but-not-actual delta by set membership, and the detail must
-    say it is also undeclared, because "the scheduler invented this" and "the
-    install has not run yet" are different problems with the same set difference.
-    """
-    report = _run(
-        _declared(),
-        _desired(("job", "demo", "node-test")),
-        _actual(),
+
+def _write(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload))
+
+
+def test_spec_less_placement_never_produces_a_synthesized_unit(tmp_path):
+    """The shipped readers, on disk, against the real shape: a ``job``
+    placement (an advisory routing record, not an object kind) and a
+    ``service`` placement whose object is gone. Before this card the reconciler
+    swept both into DesiredItem via ``unit_for(kind, name)`` with no spec and
+    reported ``<name>.service`` as desired-but-not-actual: a unit nothing ever
+    intended to exist, manufactured by the tool whose job is to report drift."""
+    paths = FleetPaths(root=tmp_path / "fleet")
+    _write(
+        paths.placement_path("job", "006df9e3"),
+        {"kind": "Job", "name": "006df9e3", "node": "node-test", "placementGeneration": 1},
     )
-    assert _kinds(report, rc.DESIRED_NOT_ACTUAL) == ["demo.service"]
-    delta = [d for d in report.deltas if d.kind == rc.DESIRED_NOT_ACTUAL][0]
-    assert delta.declared is False
-    assert "undeclared" in delta.detail
+    _write(
+        paths.placement_path("service", "ghost"),
+        {"kind": "Service", "name": "ghost", "node": "node-41", "placementGeneration": 3},
+    )
+    report = rc.reconcile(
+        paths, "node-test", declared_reader=lambda: [], actual_reader=lambda node: []
+    )
+
+    # Neither placement became desired state, and no unit was invented anywhere.
+    assert report.desired == []
+    every_unit = {d.unit for d in report.deltas} | {d.unit for d in report.desired}
+    assert "006df9e3.service" not in every_unit
+    assert "ghost.service" not in every_unit
+    assert _kinds(report, rc.DESIRED_NOT_ACTUAL) == []
+    assert report.summary()[rc.DESIRED_NOT_ACTUAL] == 0
+
+    # Both are reported, under their own class, with no unit and no systemd claim.
+    rows = report.by_kind(rc.PLACEMENT_WITHOUT_OBJECT)
+    assert [(d.object_kind, d.name, d.node, d.unit) for d in rows] == [
+        ("job", "006df9e3", "node-test", ""),
+        ("service", "ghost", "node-41", ""),
+    ]
+    assert all(d.has_object is False and d.declares_exec is False for d in rows)
+    assert all("no claim about systemd" in d.detail for d in rows)
+    assert "not a fleet object kind" in rows[0].detail
+    assert "objects/service/ghost.json does not exist" in rows[1].detail
+    assert report.summary()[rc.PLACEMENT_WITHOUT_OBJECT] == 2
+    assert [(p.kind, p.name, p.generation) for p in report.placements_without_object()] == [
+        ("job", "006df9e3", 1),
+        ("service", "ghost", 3),
+    ]
+    assert not hasattr(rc.PlacementItem("job", "x", "n"), "unit")
+    assert report.in_agreement is False
+
+
+def test_placement_without_object_is_not_scoped_away_on_another_node(tmp_path):
+    """A placement with no object is the store's drift, not the node's. It is
+    reported on every node, and the delta carries the node it addresses."""
+    paths = FleetPaths(root=tmp_path / "fleet")
+    _write(
+        paths.placement_path("job", "abc"),
+        {"kind": "Job", "name": "abc", "node": "node-41", "placementGeneration": 1},
+    )
+    report = rc.reconcile(
+        paths, "node-test", declared_reader=lambda: [], actual_reader=lambda node: []
+    )
+    rows = report.by_kind(rc.PLACEMENT_WITHOUT_OBJECT)
+    assert [(d.name, d.node) for d in rows] == [("abc", "node-41")]
+
+
+def test_placed_object_with_a_spec_is_still_desired_state(tmp_path):
+    """The fix removes only the spec-less sweep. A placement whose object
+    exists still joins in unit space exactly as before."""
+    paths = FleetPaths(root=tmp_path / "fleet")
+    _write(
+        paths.spec_path("service", "skx"),
+        {"kind": "Service", "name": "skx", "generation": 2, "spec": {"exec": "/bin/true"}},
+    )
+    _write(
+        paths.placement_path("service", "skx"),
+        {"kind": "Service", "name": "skx", "node": "node-test", "placementGeneration": 1},
+    )
+    report = rc.reconcile(
+        paths, "node-test", declared_reader=lambda: [], actual_reader=lambda node: []
+    )
+    assert [(d.name, d.unit, d.node) for d in report.desired] == [
+        ("skx", "skx.service", "node-test")
+    ]
+    assert _kinds(report, rc.DESIRED_NOT_ACTUAL) == ["skx.service"]
+    assert report.placements_without_object() == []
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +274,6 @@ def test_service_unit_override_is_honoured():
     )
     assert rc.unit_for("cronjob", "skbrain-sync") == "skbrain-sync.timer"
     assert rc.unit_for("service", "skos-scheduler") == "skos-scheduler.service"
-    assert rc.unit_for("job", "demo") == "demo.service"
 
 
 def test_readers_that_raise_degrade_to_empty_not_to_a_crash():
