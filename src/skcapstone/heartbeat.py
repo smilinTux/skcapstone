@@ -21,6 +21,13 @@ Usage:
     beacon.pulse()                    # Publish heartbeat
     peers = beacon.discover_peers()   # Find live peers
     health = beacon.mesh_health()     # Network overview
+
+DEPRECATION-ON-PARITY (Worker Beat Protocol, card 77d62d85): fleet worker
+liveness is migrating to the beat protocol (skcapstone.fleet_beat, cards
+ad0c3bfd..a97c7ce8). Once Cards B and D are landed and the monitor consumes
+beats with evidence-precedence in production, this module is DEPRECATED for
+worker-liveness use and remains only for general mesh discovery. Do not add
+new worker-liveness features here; add them to fleet_beat.
 """
 
 from __future__ import annotations

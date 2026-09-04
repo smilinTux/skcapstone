@@ -502,6 +502,10 @@ except (OSError,ValueError,TypeError):
 # Two worker lanes. GLM sat unused for six hours because the rotation only managed
 # codex-auto-* sessions, so the z.ai account received no traffic at all while nine
 # idle legacy glm panes did nothing. A lane is a prefix, a model alias, a target.
+def _beat_interval():
+    """Wrapper beat interval in seconds. Tunable via env, no redeploy."""
+    return os.environ.get("SKFLEET_BEAT_INTERVAL", "600")
+
 LANES=[
     {"name":"codex","prefix":"codex-auto-","model":"sk-codex",
      "target":TARGET},
@@ -4006,15 +4010,32 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     # returns normally. Releasing only after the Pi command leaves a dead claim
     # in that case and drains the assignable pool. Bind cleanup to this exact
     # claim generation so it cannot release a newer same-owner worker.
-    child=('release_claim() { %s coord release-claim %s --owner %s '
-           '--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; '
-           'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
-           'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
-           '--provider skgateway --model %s --thinking off --tools %s '
-           '-p "$(cat %s)"; '
-           'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
-           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,
-              pi_tools,bf))
+    _bi = _beat_interval()
+    _bf_path = "~/.skcapstone/fleet/beats/" + name + ".json"
+    child=(
+        "release_claim() { %s coord release-claim %s --owner %s "
+        "--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; "
+        "beat() { while :; do "
+        "mkdir -p ~/.skcapstone/fleet/beats; "
+        "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
+        "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
+        "\"beat_at\":'\\$(date +%%s)',\"elapsed_s\":'\\$SECONDS'}' "
+        "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "
+        "sleep %s; done; }; "
+        "beat & BEAT=$!; "
+        "stop_beat() { kill $BEAT 2>/dev/null || true; }; "
+        'trap "stop_beat; release_claim; exit 143" HUP INT TERM; '
+        'trap "stop_beat; release_claim" EXIT; '
+        "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s "
+        "--provider skgateway --model %s --thinking off --tools %s "
+        '-p "$(cat %s)"; '
+        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; exit $rc"
+        % (SKC, cid, name, claimed_revision, name,
+           name, cid, claimed_revision,
+           _bf_path, _bf_path, _bf_path,
+           _bi,
+           name, name, workspace, PI, name, model,
+           pi_tools, bf))
     wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
     inner=shlex.join([
         sys.executable,wrapper,"--card",cid,"--owner",name,
