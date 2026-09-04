@@ -1,0 +1,119 @@
+{
+  "attempted": [
+    "Verified current ownership and empty dependency list before review.",
+    "Recomputed linked immutable report and manifest hashes.",
+    "Parsed and checked all 114 report-cited JSONL snapshots byte-for-byte and line-by-line.",
+    "Compared every structural source path and hash cited by all 50 join items with the report source_manifest.",
+    "Recomputed classification artifacts used for 39ebfe14, d6f390d0, and e9904899.",
+    "Reviewed all five nonempty item remedy proposals and historical non-PASS preservation.",
+    "Applied no repair, lifecycle, dependency, deployment, gateway, provider, or external mutation."
+  ],
+  "blocked_on": {
+    "referent": "ac:1",
+    "value": "card"
+  },
+  "blocking_finding": {
+    "captured_later_overlay_hashes": [
+      {
+        "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+        "sha256": "0e0008330953d1338be1ae910115bf5beac919b2d40295b63d5873e73dbe30fc"
+      },
+      {
+        "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+        "sha256": "8e15702902b9e2ef2b1e461ccf49716ba6256b55eff20bb6346870284b957c17"
+      },
+      {
+        "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl",
+        "sha256": "e084768c8a7e96ede1b866a27362290faf95e503d6c3ee6efd26971282c25f22"
+      },
+      {
+        "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+        "sha256": "94e636150084392d47febb57b3bd07c672112bfc0987bb1f8b7c21cb104d2459"
+      }
+    ],
+    "contradiction": "The embedded join cites old overlay path and hash pairs as its structural sources. The report source_manifest and bundle contain snapshots for later bytes at the same paths, not snapshots matching the cited hashes. No file under the repair evidence directory has any of the four cited old hash names. Thus the cited bytes are unreachable and AC1 cannot pass for this candidate.",
+    "criterion": "AC1: Recompute the replacement report and bundle manifest SHA-256 from durable shared bytes and verify every cited mutable JSONL snapshot against its cutoff length, parsed line count, prefix hash, and provenance.",
+    "missing_cited_source_occurrences": 62,
+    "missing_unique_path_hash_pairs": [
+      {
+        "occurrences": 5,
+        "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+        "sha256": "1b562c6babf49cad9d3f581710705c6577203ff53ff1dcc7a102990785bb3739"
+      },
+      {
+        "occurrences": 5,
+        "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+        "sha256": "89157e038088aa9180a727beb663d966ba5d974b067195168f913cfb55fa5e42"
+      },
+      {
+        "occurrences": 6,
+        "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl",
+        "sha256": "9231df77124f0b294e8af07f332cf0a233e86d114e253bb4a5a1098da6a6fd58"
+      },
+      {
+        "occurrences": 46,
+        "path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+        "sha256": "e7f321f1a842071633af1699d62b5f28d6a183af47bb93e3cc058b0c6e1f95d1"
+      }
+    ]
+  },
+  "branch": "chore/f1212b8f-immutable-review",
+  "card_id": "f1212b8f",
+  "checks": {
+    "embedded_join_equals_source_report": true,
+    "embedded_source_report_sha256": "6ef86985af7a2c0ab77273a4e2a3a75684862e46b830d6d18a42822f677e5ecf",
+    "human_authority_guards_present": true,
+    "lifecycle_done_with_blocked_evidence_preserved": [
+      "e9904899"
+    ],
+    "linked_hashes_recomputed": true,
+    "manifest_json_parsed": true,
+    "repair_applied": false,
+    "report_cited_mutable_snapshot_count": 114,
+    "report_json_parsed": true,
+    "selected_card_ids_unique": true,
+    "selected_card_partition_membership_pass": 50,
+    "selected_cards": 50,
+    "separate_evidence_outcomes": {
+      "BLOCKED": 2,
+      "NOT_RECORDED": 48
+    },
+    "snapshot_capture_provenance_present": 114,
+    "snapshot_cutoff_length_pass": 114,
+    "snapshot_json_line_parse_pass": 114,
+    "snapshot_parsed_line_count_pass": 114,
+    "snapshot_prefix_hash_pass": 114
+  },
+  "linked_bytes": {
+    "bundle_manifest": {
+      "bytes": 3399486,
+      "path": "/home/skuser01/.skcapstone/evidence/work/c84987dd/immutable/manifests/7bd3b9c94a39bb1ac51fb64f068fdd6ae41a69c0eced5501c6d63f2e367a1bf3.json",
+      "sha256": "7bd3b9c94a39bb1ac51fb64f068fdd6ae41a69c0eced5501c6d63f2e367a1bf3"
+    },
+    "replacement_report": {
+      "bytes": 456309,
+      "path": "/home/skuser01/.skcapstone/evidence/work/c84987dd/immutable/reports/a8c167a16a39d049a0eaa32f4bd4b9386e6f2690d4bec1f19e445e6283242d36.json",
+      "sha256": "a8c167a16a39d049a0eaa32f4bd4b9386e6f2690d4bec1f19e445e6283242d36"
+    }
+  },
+  "ownership": {
+    "dependencies": [],
+    "owner": "pi-codex-f1212b8f",
+    "verified": true
+  },
+  "repository_change": "review evidence only",
+  "reviewer_identity": "pi-codex-f1212b8f",
+  "schema": "skcapstone.immutable_replacement_review.v1",
+  "semantic_review": {
+    "observations": [
+      "The embedded report explicitly separates structural lifecycle and links from evidence verdict records.",
+      "It preserves explicit BLOCKED evidence for d6f390d0 and e9904899, including e9904899 despite lifecycle done.",
+      "Its human gate remedies require explicit Chef approval or void and do not treat supersession links as authority.",
+      "These semantic properties do not cure the absent cited structural bytes, so no PASS is asserted."
+    ],
+    "status": "BLOCKED_BY_UNREACHABLE_STRUCTURAL_BYTES"
+  },
+  "source_card_id": "c84987dd",
+  "summary": "The replacement preserves snapshots of current overlay prefixes, but its embedded structural join still cites four older overlay hashes whose bytes are absent. Therefore the cited structural sources cannot be recomputed from the durable bundle.",
+  "verdict": "BLOCKED"
+}
