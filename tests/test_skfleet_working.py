@@ -74,6 +74,80 @@ def test_collect_fails_closed_on_ssh_error() -> None:
             monitor.collect("chiap99")
 
 
+def test_malformed_projection_is_bounded_and_does_not_hide_process() -> None:
+    monitor = load_monitor()
+    worker = unit_worker(
+        monitor,
+        claim_state="malformed-projection",
+        projection_state="malformed",
+        projection_error="JSONDecodeError",
+        pid=42,
+        unit_missing_process=False,
+    )
+
+    assert monitor.assess(worker, {}, now=100) == ("MALFORMED PROJECTION", 100)
+    assert worker.pid == 42
+    assert worker.card_status == "in_progress"
+    assert worker.projection_error == "JSONDecodeError"
+
+
+def test_null_projection_fields_are_explicitly_bounded() -> None:
+    monitor = load_monitor()
+    worker = unit_worker(
+        monitor,
+        claim_state="malformed-projection",
+        projection_state="malformed",
+        projection_error="TypeError",
+    )
+
+    state, _ = monitor.assess(worker, {}, now=100)
+    assert state == "MALFORMED PROJECTION"
+    assert worker.projection_error == "TypeError"
+
+
+def test_ssh_failure_remains_distinct_from_projection_failure() -> None:
+    monitor = load_monitor()
+    malformed = unit_worker(
+        monitor, claim_state="malformed-projection", projection_state="malformed"
+    )
+    assert monitor.assess(malformed, {}, now=100)[0] == "MALFORMED PROJECTION"
+    result = Mock(returncode=255, stdout="", stderr="unreachable")
+    with patch.object(monitor.subprocess, "run", return_value=result):
+        with pytest.raises(OSError, match="ssh collector failed"):
+            monitor.collect("chiap99")
+
+
+def test_mixed_valid_and_malformed_rows_remain_visible() -> None:
+    monitor = load_monitor()
+    valid = unit_worker(monitor, pid=7, projection_state="valid")
+    malformed = unit_worker(
+        monitor,
+        agent="projection-malformed",
+        card="unknown",
+        pid=0,
+        unit="not-found",
+        claim_state="malformed-projection",
+        projection_state="malformed",
+        projection_error="JSONDecodeError",
+    )
+    assert monitor.assess(valid, {}, now=100)[0] == "SETTLING"
+    assert monitor.assess(malformed, {}, now=100)[0] == "MALFORMED PROJECTION"
+    assert valid.pid == 7
+    assert malformed.projection_state == "malformed"
+
+
+def test_projection_diagnostics_do_not_count_as_workers() -> None:
+    monitor = load_monitor()
+    process = unit_worker(monitor, evidence_source="systemd+proc+cardstore")
+    projection = unit_worker(monitor, evidence_source="agent-projection")
+    worker_rows = [
+        row
+        for row in (process, projection)
+        if not row.evidence_source.startswith("agent-projection")
+    ]
+    assert worker_rows == [process]
+
+
 def test_log_age_is_never_a_stall_predicate() -> None:
     source = PATH.read_text()
     assert "output buffered until completion" in source
