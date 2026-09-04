@@ -349,3 +349,161 @@ def test_malformed_core_identity_fails_closed_in_pool_and_preclaim(
     (card_dir / "core.json").write_text(json.dumps(core), encoding="utf-8")
     namespace["CARDS"] = str(tmp_path)
     assert namespace["authoritative_claimability"](card_id, fresh=True) == expected
+
+
+def test_late_claim_after_complete_does_not_resurrect_56f9d32f() -> None:
+    """Exact 56f9d32f stream: complete, late claim, release, late claim, release."""
+    namespace = _load_claimability()
+    core = _core("56f9d32f")
+    events = [
+        _claim("2026-09-04T09:56:00Z", "pi-codex-chiap04-56f9d32f", "b52e11d2"),
+        _event(
+            "2026-09-04T21:26:12Z",
+            "jarvis",
+            "release_claim",
+            released_owner="pi-codex-chiap04-56f9d32f",
+            expected_claim_revision="b52e11d2",
+        ),
+        _event("2026-09-04T21:26:13Z", "jarvis", "complete"),
+        _claim("2026-09-04T21:29:11Z", "pi-codex-chiap04-56f9d32f", "21ed5df5"),
+        _release(
+            "2026-09-04T22:25:28Z",
+            "pi-codex-chiap04-56f9d32f",
+            "pi-codex-chiap04-56f9d32f",
+            "21ed5df5",
+        ),
+        _claim("2026-09-04T22:29:11Z", "pi-codex-chiap04-56f9d32f", "4c04a452"),
+        _release(
+            "2026-09-04T22:30:18Z",
+            "pi-codex-chiap04-56f9d32f",
+            "pi-codex-chiap04-56f9d32f",
+            "4c04a452",
+        ),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "done"
+    assert state["owner"] is None
+    assert state["claim_revision"] is None
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
+def test_release_after_complete_keeps_status_done() -> None:
+    """A zombie worker's matching release must not fold a done card to backlog."""
+    namespace = _load_claimability()
+    core = _core("relv0001")
+    events = [
+        _claim("2026-09-04T21:29:11Z", "worker", "rev-a"),
+        _event("2026-09-04T21:26:13Z", "coordinator", "complete"),
+    ]
+    state = namespace["_fold_claimability"](core, events)
+    assert state["status"] == "done"
+    # The late claim was ignored, so owner is already None and a later
+    # release with a stale owner does not match; feed a hypothetical stream
+    # where the claim DID precede the complete instead.
+    events2 = [
+        _claim("2026-09-04T20:00:00Z", "worker", "rev-a"),
+        _event("2026-09-04T20:30:00Z", "coordinator", "complete"),
+        _release("2026-09-04T20:31:00Z", "worker", "worker", "rev-a"),
+    ]
+    state2 = namespace["_fold_claimability"](core, list(reversed(events2)))
+    assert state2["status"] == "done"
+    assert state2["owner"] is None
+    assert state2["claim_revision"] is None
+    assert namespace["_claimability_reason"](core, state2) == "done"
+
+
+def test_void_is_sticky_against_late_claim_and_release() -> None:
+    namespace = _load_claimability()
+    core = _core("void0001")
+    events = [
+        _event("2026-09-04T10:00:00Z", "coordinator", "void"),
+        _claim("2026-09-04T10:05:00Z", "worker", "rev-a"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["voided"] is True
+    assert state["owner"] is None
+    assert state["status"] == "backlog"
+    assert namespace["_claimability_reason"](core, state) == "void"
+
+
+def test_reopen_clears_terminal_stickiness() -> None:
+    """Explicit reopen is the one sanctioned revival path."""
+    namespace = _load_claimability()
+    core = _core("reopen001")
+    events = [
+        _claim("2026-09-04T09:00:00Z", "worker", "rev-a"),
+        _event("2026-09-04T10:00:00Z", "coordinator", "complete"),
+        _event("2026-09-04T11:00:00Z", "coordinator", "reopen", column="ready"),
+        _claim("2026-09-04T12:00:00Z", "worker2", "rev-b"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "doing"
+    assert state["owner"] == "worker2"
+    assert namespace["_claimability_reason"](core, state) == "owned-doing"
+
+
+def test_historical_4d98b588_stream_stays_done() -> None:
+    """claim, move, claim, complete, assign, unassign, claim -> done."""
+    namespace = _load_claimability()
+    core = _core("4d98b588")
+    events = [
+        _claim("2026-08-28T01:00:00Z", "worker", "rev-a"),
+        _event("2026-08-28T02:00:00Z", "worker", "move", column="doing"),
+        _claim("2026-08-28T03:00:00Z", "worker", "rev-b"),
+        _event("2026-08-28T04:00:00Z", "coordinator", "complete"),
+        _event("2026-08-28T05:00:00Z", "coordinator", "assign", owner="reviewer"),
+        _event("2026-08-28T06:00:00Z", "coordinator", "unassign"),
+        _claim("2026-08-28T07:00:00Z", "worker", "rev-c"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "done"
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
+def test_historical_92bd87a3_stream_stays_done() -> None:
+    """claim, complete, assign, unassign -> done."""
+    namespace = _load_claimability()
+    core = _core("92bd87a3")
+    events = [
+        _claim("2026-08-28T01:00:00Z", "worker", "rev-a"),
+        _event("2026-08-28T02:00:00Z", "coordinator", "complete"),
+        _event("2026-08-28T03:00:00Z", "coordinator", "assign", owner="reviewer"),
+        _event("2026-08-28T04:00:00Z", "coordinator", "unassign"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "done"
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
+def test_cross_host_completion_race_resolves_terminal() -> None:
+    """A complete written by another node wins over a later local claim view."""
+    namespace = _load_claimability()
+    core = _core("race0001")
+    events = [
+        _event("2026-09-04T21:26:13Z", "jarvis@chiap08", "complete"),
+        _claim("2026-09-04T21:29:11Z", "pi-codex-chiap04", "rev-a"),
+        _release(
+            "2026-09-04T21:30:00Z",
+            "pi-codex-chiap04",
+            "pi-codex-chiap04",
+            "rev-a",
+        ),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "done"
+    assert state["owner"] is None
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
+def test_unreleased_live_claim_still_folds_doing() -> None:
+    """Guard does not change normal in-flight claim semantics."""
+    namespace = _load_claimability()
+    core = _core("alive001")
+    events = [
+        _event("2026-09-04T10:00:00Z", "coordinator", "move", column="ready"),
+        _claim("2026-09-04T10:01:00Z", "worker", "rev-a"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "doing"
+    assert state["owner"] == "worker"
+    assert namespace["_claimability_reason"](core, state) == "owned-doing"
