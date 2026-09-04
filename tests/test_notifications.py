@@ -492,6 +492,52 @@ class TestNotificationHistory:
         missing = tmp_path / "does-not-exist"
         assert record_notification_memory("t", "b", home=str(missing)) is None
 
+    def test_dispatched_notification_is_recorded(self, monkeypatch):
+        """A dispatched notification goes through record_notification_memory.
+
+        The conftest no-ops that writer for every test, because its default home
+        is the operator's live ~/.skcapstone and a test has no business writing
+        there. This asserts the call site itself with a spy, so the wiring stays
+        covered without any test touching live state.
+        """
+        import skcapstone.notifications as _notif_mod
+
+        recorded = []
+        monkeypatch.setattr(
+            _notif_mod,
+            "record_notification_memory",
+            lambda *args, **kwargs: recorded.append((args, kwargs)),
+        )
+        monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "1")
+
+        mgr = _notif_mod.NotificationManager(debounce_seconds=0.0)
+        mgr._system = "Linux"
+        monkeypatch.setattr(mgr, "_notify_linux_gi", lambda *a, **k: False)
+        monkeypatch.setattr(mgr, "_notify_linux", lambda *a, **k: True)
+
+        assert mgr.notify("Build done", "All tests green", "normal") is True
+        assert recorded == [(("Build done", "All tests green", "normal"), {})]
+
+    def test_suppressed_notification_is_not_recorded(self, monkeypatch):
+        """A notification that never dispatches records nothing."""
+        import skcapstone.notifications as _notif_mod
+
+        recorded = []
+        monkeypatch.setattr(
+            _notif_mod,
+            "record_notification_memory",
+            lambda *args, **kwargs: recorded.append((args, kwargs)),
+        )
+        monkeypatch.setenv("SKCAPSTONE_DESKTOP_NOTIFY", "1")
+
+        mgr = _notif_mod.NotificationManager(debounce_seconds=0.0)
+        mgr._system = "Linux"
+        monkeypatch.setattr(mgr, "_notify_linux_gi", lambda *a, **k: False)
+        monkeypatch.setattr(mgr, "_notify_linux", lambda *a, **k: False)
+
+        assert mgr.notify("Build done", "All tests green", "normal") is False
+        assert recorded == []
+
 
 class TestDesktopNotificationGuard:
     """SKCAPSTONE_DESKTOP_NOTIFY suppresses every dispatch path."""
