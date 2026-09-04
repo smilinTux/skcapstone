@@ -214,7 +214,11 @@ class TestMessageToPopupE2E:
             loop.process_envelope(_make_envelope("remember this", sender="mem-peer"))
 
         assert mock_store.called, "Interaction was not recorded via memory_engine.store"
-        kwargs = mock_store.call_args.kwargs
+        # Two memory stores happen in one envelope pass:
+        # call 0: interaction memory (conversation + peer tag)
+        # call 1: notification bookkeeping memory (notification tag)
+        # The assertion must inspect the interaction store, i.e. the first call.
+        kwargs = mock_store.call_args_list[0].kwargs
         assert "conversation" in kwargs.get(
             "tags", []
         ), f"Interaction memory missing 'conversation' tag: {kwargs.get('tags')}"
