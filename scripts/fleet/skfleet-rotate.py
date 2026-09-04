@@ -60,6 +60,18 @@ def _bounded_ids(card_ids, limit=12):
     return ",".join(shown) or "-", max(0, len(values) - len(shown))
 
 
+def _pi_conversation_name(host, card_id, lane, claim_revision):
+    """Return a unique Pi continuation boundary for one claim generation."""
+    parts = tuple(str(value).strip().lower() for value in (
+        host, card_id, lane, claim_revision
+    ))
+    if any(not re.fullmatch(r"[a-z0-9-]+", value) for value in parts):
+        raise ValueError("invalid Pi conversation identity component")
+    if not re.fullmatch(r"[0-9a-f]{32}", parts[3]):
+        raise ValueError("invalid claim revision for Pi conversation identity")
+    return "pi-run-%s-%s-%s-%s" % parts
+
+
 def _full_reassessment_path(host, evidence_root):
     """Keep exactly one shared full report, written only by its authority host."""
     if host != "chiap08":
@@ -3962,6 +3974,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 "claim not visible with an explicit revision in CardStore fold").strip()[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
+    conversation_name = _pi_conversation_name(
+        HOST, cid, _LANE["name"], claimed_revision
+    )
     # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
     # returns normally. Releasing only after the Pi command leaves a dead claim
     # in that case and drains the assignable pool. Bind cleanup to this exact
@@ -3973,7 +3988,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
            '--provider skgateway --model %s --thinking off --tools %s '
            '-p "$(cat %s)"; '
            'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
-           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,
+           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,
+              conversation_name,model,
               pi_tools,bf))
     wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
     inner=shlex.join([
