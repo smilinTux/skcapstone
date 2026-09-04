@@ -65,9 +65,11 @@ def register_coord_commands(main: click.Group) -> None:
         """
 
     from .coord_amend import register_coord_amend_commands
+    from .coord_mail_cmd import register_coord_mail_commands
     from .portfolio_plan_cmd import register_portfolio_plan_command
 
     register_coord_amend_commands(coord)
+    register_coord_mail_commands(coord)
     register_portfolio_plan_command(coord)
 
     @coord.command("status")

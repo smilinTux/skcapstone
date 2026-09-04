@@ -111,6 +111,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **`coord mail` and `coord bootstrap`: skmail packaged, and the skeleton made
+  repeatable.** skmail was a 180-line bash script that existed on one machine,
+  which is why a node could have 5,141 tasks and 5,806 cards but zero mailboxes.
+  The on-disk format is unchanged and byte-compatible (`skmail.d/<agent>@<host>.jsonl`,
+  one writer per host), verified by reading a live production mailbox. That
+  filename rule is load-bearing: a single shared `skmail.jsonl` produced a real
+  sync-conflict on 2026-08-25 that silently swallowed a message, and `flock` does
+  not help because the conflict is between hosts. Mailboxes are deliberately
+  per-estate and never merge. `coord bootstrap` creates the coordination skeleton
+  idempotently, because nothing in `coordination.py` ever created those
+  directories.
+- **`defaults/.stignore`: 29 rules rolled in from the chi fleet's deployed
+  ruleset.** Two are load-bearing rather than tidiness: `index.db-wal`/`-shm`
+  (syncing a live SQLite WAL corrupts the database) and `*seckey*`/`*.sec.*`
+  (private key material must never leave a node). chi's twelve `/agents/<name>`
+  prune rules were deliberately excluded: pruning an agent is per-estate policy,
+  not a fleet-wide default.
 - **Card ff5336c4: bound five-minute reassessment evidence.** Every fleet host
   assesses before existing actions, only chiap08 writes the capped shared full
   report, and other hosts emit compact summaries through existing actions.log.
