@@ -153,7 +153,9 @@ def test_conflict_projections_are_quarantined_and_states_are_typed() -> None:
     source = PATH.read_text()
     assert "sync-conflict-" in source
     assert "projection_state='valid' if agent in projection_agents else 'missing'" in source
-    stale = unit_worker(monitor, evidence_source="agent-projection", projection_state="stale", unit="")
+    stale = unit_worker(
+        monitor, evidence_source="agent-projection", projection_state="stale", unit=""
+    )
     assert monitor.assess(stale, {}, now=100)[0] == "STALE PROJECTION"
     missing = unit_worker(monitor, projection_state="missing")
     assert missing.projection_state == "missing"
