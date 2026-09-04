@@ -152,6 +152,27 @@ Manual scp was required.
 
 **Fix:** Carded in the autopilot (`2a456cb7`).
 
+## 14. A completed card can respawn workers forever
+
+**Incident:** Card 56f9d32f was completed by the coordinator at 21:26Z, but a
+rotation host whose sync view predated the completion re-claimed it and spawned
+a worker. Killing that worker made it worse: the worker exit trap appends
+`release_claim`, and the claimability fold reset the card to `backlog`, so the
+next 5-minute cycle spawned another worker. Two respawns measured (21:29Z,
+22:29Z); each kill re-queued the card.
+
+**Rule:** Terminal states are sticky for claim and release, not just assign
+and unassign. A late claim is a sync-race symptom, not a revival. The only
+sanctioned revival path is an explicit `reopen` event.
+
+**Fix:** Fold guards in `skfleet-rotate.py` `_fold_claimability`
+(card cfb9c863). Operator unblock for a card already stuck in the respawn
+loop: append a terminal `move -> done` as the LAST event after the final
+release (`skcapstone coord move <id> done --agent <you>`), then verify one
+full rotation cycle spawns nothing.
+
+**Evidence:** `evidence/work/56f9d32f/20260904T224500Z-RECOVERY-AUDIT-AND-CLOSEOUT.md`.
+
 ## Summary table
 
 | Lesson | Incident cost | Permanent fix | Where |
@@ -168,3 +189,4 @@ Manual scp was required.
 | Backoff = stale outage | 75 cards stuck | Lane-aware triage | Autopilot |
 | Stale card accumulation | 648 cards | Bulk sweep + auto-triage | Autopilot |
 | Syncthing lag | Cards invisible 30min | Propagation watch | Autopilot |
+| Completed-card respawn | 2 zombie workers, 12.5h burn | Terminal sticky for claim/release + move-done unblock | Rotator (cfb9c863) |

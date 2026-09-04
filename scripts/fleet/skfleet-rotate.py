@@ -806,14 +806,22 @@ for _f in glob.glob(os.path.join(EVID,"*","actions.log")):
 # unassign and archive also clear a claim. Omitting them reports an unassigned
 # card as still claimed, which hides it from the pool permanently.
 # TERMINAL states are sticky. complete and void END a card. Later assign,
-# unassign or claim events do NOT resurrect it: unassigning a finished card
-# clears an assignee, it does not un-finish the work. A naive last-write-wins
-# fold gets this wrong and re-offers completed cards forever.
+# unassign, claim or release_claim events do NOT resurrect it: unassigning a
+# finished card clears an assignee, it does not un-finish the work, a late
+# claim from a host whose sync lag predates the complete is a race symptom,
+# not a revival, and the release trap of such a zombie worker must not fold
+# the card back to the assignable pool. A naive last-write-wins fold gets
+# this wrong and re-offers completed cards forever.
 # Measured: 4d98b588 has claim, move, claim, complete, assign, unassign, claim
 # and 92bd87a3 has claim, complete, assign, unassign. Both were being handed to
 # workers, which then spent ~80 seconds each discovering the card was already
 # done and correctly refusing. That was the real "stale pool" cost, and the race
 # was a symptom rather than the cause.
+# Measured again on 56f9d32f: complete at 21:26:13Z, late claim at 21:29:11Z
+# spawned a worker, and that worker's release_claim at 22:25:28Z folded the
+# card to backlog, so the next cycle spawned another worker at 22:29Z. The
+# claim branch had no terminal guard and release_claim reset status
+# unconditionally. reopen is the one explicit path that clears terminality.
 _COLUMNS = {"backlog", "ready", "doing", "review", "done"}
 _NOT_CLAIMABLE = {"not-claimable", "sprint-container", "do-not-claim"}
 _SENSITIVE_CATEGORY = re.compile(
@@ -912,7 +920,7 @@ def _fold_claimability(core, rows):
     """Fold only fields used by Board.claim_task and scheduler policy."""
     state = {
         "status": "backlog", "owner": None, "claim_revision": None,
-        "archived": False, "voided": False,
+        "archived": False, "voided": False, "terminal": False,
         "title": str(core.get("title") or ""),
         "description": str(core.get("description") or ""),
         "acceptance_criteria": [
@@ -946,12 +954,15 @@ def _fold_claimability(core, rows):
                 and revision
             ):
                 state["owner"] = None
-                state["status"] = "backlog"
                 state["claim_revision"] = None
+                if not state["terminal"]:
+                    state["status"] = "backlog"
         elif action == "claim":
             owner = event.get("owner")
             if not isinstance(owner, str) or not owner:
                 raise ValueError("claim owner is missing")
+            if state["terminal"]:
+                continue
             if (state["owner"] and state["owner"] != owner and
                     state["status"] in {"ready", "doing", "review"}):
                 continue
@@ -962,12 +973,15 @@ def _fold_claimability(core, rows):
             state["status"] = "done"
             state["owner"] = None
             state["claim_revision"] = None
+            state["terminal"] = True
         elif action == "void":
             state["voided"] = True
+            state["terminal"] = True
         elif action == "archive":
             state["archived"] = True
         elif action == "reopen":
             state["archived"] = False
+            state["terminal"] = False
             column = str(event.get("column") or "").strip().lower()
             if column in _COLUMNS:
                 state["status"] = column
