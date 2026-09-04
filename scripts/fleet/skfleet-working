@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+# ruff: noqa: E501
+"""Show fleet worker truth from processes and transient systemd units.
+
+Pi print mode buffers normal output until completion. Log age is therefore
+context, never liveness. The process, its cgroup, exact agent projection, and
+duplicate card generations are the useful signals.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import shlex
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+
+HOSTS = tuple(os.environ.get("SKFLEET_HOSTS", "chiap01 chiap02 chiap03 chiap04 chiap08").split())
+UNIT_GRACE = int(os.environ.get("SKFLEET_UNIT_GRACE", "15"))
+UNIT_SAMPLE_FRESHNESS = int(os.environ.get("SKFLEET_UNIT_SAMPLE_FRESHNESS", "60"))
+STATE_PATH = Path(os.environ.get("SKFLEET_WORKING_STATE", Path.home() / ".cache/skcapstone/skfleet-working-unit-grace.json"))
+
+
+@dataclass(frozen=True)
+class Worker:
+    host: str
+    agent: str
+    card: str
+    pid: int
+    elapsed: int
+    cpu: int
+    log_bytes: int
+    log_age: int
+    unit: str
+    tmux: bool
+    claim_state: str
+    card_status: str
+    unit_missing_process: bool
+    unit_load: str = "not-found"
+    unit_active: str = "inactive"
+    unit_sub: str = "dead"
+    claim_owner: str = ""
+    claim_revision: str = ""
+    evidence_source: str = "systemd+proc+cardstore"
+    projection_state: str = "valid"
+    projection_error: str = ""
+
+
+REMOTE = r"""
+import glob,json,os,re,subprocess,time
+from datetime import datetime,timezone
+from pathlib import Path
+from skcoord.card_store import CardStore
+host=os.uname().nodename.split('.')[0]
+now=int(time.time())
+unit_lines=subprocess.run(
+    ['systemctl','--user','list-units','skfleet-worker-*.service','--all','--no-legend','--plain'],
+    capture_output=True,text=True).stdout.splitlines()
+units={p[0]:p[1:4] for line in unit_lines if len(p:=line.split()) >= 4}
+seen_units=set()
+process_agents=set()
+projection_agents=set()
+for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
+    if '.sync-conflict-' in path.name:
+        continue
+    try:
+        projection=json.loads(path.read_text())
+        if projection.get('host') != host:
+            continue
+        agent=projection.get('agent','')
+        if isinstance(agent,str) and agent and agent == path.stem:
+            projection_agents.add(agent)
+    except (OSError,json.JSONDecodeError,TypeError,AttributeError):
+        pass
+try:
+    tmux=set(subprocess.run(['tmux','list-sessions','-F','#{session_name}'],capture_output=True,text=True).stdout.split())
+except Exception:
+    tmux=set()
+for raw in glob.glob('/proc/[0-9]*/comm'):
+    try:
+        pid=int(raw.split('/')[2])
+        if open(raw).read().strip()!='pi': continue
+        env=dict(x.split('=',1) for x in open('/proc/%d/environ'%pid,'rb').read().decode(errors='replace').split('\0') if '=' in x)
+        agent=env.get('SKAGENT','')
+        card=agent.rsplit('-',1)[-1]
+        if not agent.startswith('pi-') or len(card)!=8: continue
+        process_agents.add(agent)
+        stat=open('/proc/%d/stat'%pid).read().split()
+        ticks=os.sysconf(os.sysconf_names['SC_CLK_TCK'])
+        uptime=float(open('/proc/uptime').read().split()[0])
+        elapsed=max(0,int(uptime-(int(stat[21])/ticks)))
+        cpu=int((int(stat[13])+int(stat[14]))/ticks)
+        cg=open('/proc/%d/cgroup'%pid).read()
+        unit=next((part for part in cg.replace('\\x2d','-').strip().split('/') if part.startswith('skfleet-worker-') and part.endswith('.service')),'legacy')
+        if unit!='legacy': seen_units.add(unit)
+        logs=glob.glob(os.path.expanduser('~/.skcapstone/fleet/logs/%s-*.log'%card))
+        log=max(logs,key=os.path.getmtime) if logs else ''
+        size=os.path.getsize(log) if log else -1
+        age=now-int(os.path.getmtime(log)) if log else -1
+        legacy_live=any(card in name for name in tmux)
+        try:
+            folded=CardStore(Path.home()/'.skcapstone').fold(card)
+            status=folded.status.value
+            claim='exact' if folded.owner==agent and folded.meta.get('_claim_revision') else 'mismatch'
+            projection_state='valid' if agent in projection_agents else 'missing'
+            projection_error=''
+            claim_owner=folded.owner or ''
+            claim_revision=str(folded.meta.get('_claim_revision',''))
+        except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            # A broken CardStore projection must not hide a healthy process.
+            # Keep the diagnostic bounded to an exception class, never source data.
+            status='unknown'
+            claim='malformed-projection'
+            projection_state='malformed'
+            projection_error=type(exc).__name__
+            claim_owner=''
+            claim_revision=''
+        state=units.get(unit,['not-found','inactive','dead'])
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
+    except (FileNotFoundError,ProcessLookupError,PermissionError,ValueError,KeyError,json.JSONDecodeError):
+        pass
+for unit in sorted(set(units)-seen_units):
+    match=re.fullmatch(r'skfleet-worker-[a-z]+-([0-9a-f]{8})\.service',unit)
+    if not match: continue
+    card=match.group(1)
+    try:
+        folded=CardStore(Path.home()/'.skcapstone').fold(card)
+        revision=str(folded.meta.get('_claim_revision',''))
+        owner=folded.owner or ''
+        status=folded.status.value
+        claim='exact' if owner and revision else ('released' if not owner else 'mismatch')
+        projection_state='valid'
+        projection_error=''
+    except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        owner=''
+        revision=''
+        status='unknown'
+        claim='malformed-projection'
+        projection_state='malformed'
+        projection_error=type(exc).__name__
+    pid=int(subprocess.run(['systemctl','--user','show',unit,'-p','MainPID','--value'],capture_output=True,text=True).stdout.strip() or 0)
+    state=units[unit]
+    print(json.dumps(dict(host=host,agent=owner or 'unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state=claim,card_status=status,unit_missing_process=True,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=owner,claim_revision=revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
+idle_projections=0
+sync_conflict_projections=0
+for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
+    try:
+        if '.sync-conflict-' in path.name:
+            sync_conflict_projections+=1
+            continue
+        projection=json.loads(path.read_text())
+        if projection.get('host') != host:
+            continue
+        agent=projection.get('agent','')
+        card=projection.get('current_task','')
+        if not isinstance(agent, str) or not agent:
+            raise TypeError('invalid projection agent')
+        # Identity is validated before idle acceptance so a mismatched
+        # historical file stays diagnostic instead of silently idle.
+        if agent != path.stem:
+            raise TypeError('projection filename identity mismatch')
+        projection_agents.add(agent)
+        # Null or empty current_task is a valid idle projection. It is
+        # diagnostics-only and never a worker, alarm, or malformed row.
+        if card is None or card == '':
+            idle_projections+=1
+            continue
+        if not isinstance(card, str):
+            raise TypeError('invalid projection task')
+        if projection.get('state') != 'active' or len(card) != 8 or agent in process_agents: continue
+        expected=next((u for u in units if u.endswith('-'+card+'.service')), '')
+        if expected: continue
+        revision=str(projection.get('_claim_revision',''))
+        try:
+            folded=CardStore(Path.home()/'.skcapstone').fold(card)
+            owner=folded.owner if folded else ''
+            folded_revision=str(folded.meta.get('_claim_revision','')) if folded else ''
+            status=folded.status.value if folded else 'unknown'
+        except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            owner=folded_revision=''
+            status='unknown'
+        claim='exact' if owner == agent and revision and folded_revision == revision else 'mismatch'
+        stale=False
+        try:
+            seen=projection.get('last_seen')
+            if not isinstance(seen,str): raise ValueError
+            observed=datetime.fromisoformat(seen.replace('Z','+00:00'))
+            stale=(datetime.now(timezone.utc)-observed).total_seconds() > 900
+        except (TypeError,ValueError):
+            stale=True
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=0,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit='not-found',tmux=False,claim_state=claim,card_status=status,unit_missing_process=False,unit_load='not-found',unit_active='inactive',unit_sub='dead',claim_owner=owner,claim_revision=folded_revision,evidence_source='agent-projection+systemd+proc',projection_state='stale' if stale else 'valid',projection_error=''),sort_keys=True))
+    except (OSError,json.JSONDecodeError,TypeError,AttributeError) as exc:
+        # Keep malformed projection visibility without confusing it with SSH failure.
+        print(json.dumps(dict(host=host,agent='projection-malformed',card='unknown',pid=0,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit='not-found',tmux=False,claim_state='malformed-projection',card_status='unknown',unit_missing_process=False,unit_load='not-found',unit_active='inactive',unit_sub='dead',claim_owner='',claim_revision='',evidence_source='agent-projection',projection_state='malformed',projection_error=type(exc).__name__),sort_keys=True))
+print(json.dumps(dict(host=host,projection_diagnostics=dict(idle_projections=idle_projections,sync_conflict_projections=sync_conflict_projections)),sort_keys=True))
+"""
+
+
+def duration(seconds: int) -> str:
+    if seconds < 0:
+        return "-"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+
+
+def load_samples(path: Path = STATE_PATH) -> dict[str, dict[str, int]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_samples(samples: dict[str, dict[str, int]], path: Path = STATE_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(samples, stream, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tuple[str, int]:
+    """Classify joined evidence without treating lifecycle state as a verdict."""
+    if worker.projection_state == "malformed" or worker.claim_state == "malformed-projection":
+        samples.pop(f"{worker.host}/{worker.unit}", None)
+        return "MALFORMED PROJECTION", now
+    if worker.projection_state == "stale":
+        return "STALE PROJECTION", now
+    key = f"{worker.host}/{worker.unit}"
+    if worker.unit in {"", "not-found"}:
+        samples.pop(key, None)
+        if worker.claim_state == "exact":
+            return "ACTION REQUIRED", now
+        if worker.claim_state == "mismatch":
+            return "STALE PROJECTION", now
+        return "OK", now
+    if worker.claim_state == "mismatch":
+        return "ACTION REQUIRED", now
+    previous = samples.get(key)
+    first_seen = previous["first_seen"] if previous else now
+    if worker.unit_missing_process:
+        samples[key] = {"first_seen": first_seen, "observed": now}
+        if worker.unit_active == "failed" and worker.claim_state == "exact":
+            return "ACTION REQUIRED", first_seen
+        if previous and UNIT_GRACE <= now - previous["observed"] <= UNIT_SAMPLE_FRESHNESS and now - first_seen >= UNIT_GRACE:
+            return "ACTION REQUIRED", first_seen
+        return "SETTLING", first_seen
+    samples.pop(key, None)
+    return "OK", now
+
+
+def collect(host: str) -> list[Worker]:
+    encoded = base64.b64encode(REMOTE.encode()).decode("ascii")
+    remote_command = f"import base64;exec(base64.b64decode({encoded!r}))"
+    result = subprocess.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=6",
+            f"skuser01@{host}",
+            "python3",
+            "-c",
+            shlex.quote(remote_command),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=25,
+    )
+    if result.returncode:
+        raise OSError(f"{host}: ssh collector failed with rc={result.returncode}")
+    rows = []
+    diagnostics: dict[str, dict] = {}
+    for line in result.stdout.splitlines():
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "projection_diagnostics" in parsed:
+            diagnostics[str(parsed.get("host", host))] = parsed["projection_diagnostics"]
+            continue
+        try:
+            rows.append(Worker(**parsed))
+        except TypeError:
+            continue
+    return rows, diagnostics
+
+
+def main() -> int:
+    rows = []
+    unreachable = []
+    host_diagnostics: dict[str, dict] = {}
+    for host in HOSTS:
+        try:
+            host_rows, diagnostics = collect(host)
+            rows.extend(host_rows)
+            host_diagnostics.update(diagnostics)
+        except (subprocess.TimeoutExpired, OSError):
+            unreachable.append(host)
+    rows.sort(key=lambda row: (-row.elapsed, row.host, row.agent))
+    now = int(time.time())
+    samples = load_samples()
+    live_keys = {f"{row.host}/{row.unit}" for row in rows if row.unit_missing_process}
+    samples = {key: value for key, value in samples.items() if key in live_keys and now - value.get("observed", 0) <= UNIT_SAMPLE_FRESHNESS}
+    # Projection-only rows are diagnostics, not workers. Keep them visible below,
+    # but never let stale or malformed projections inflate the worker total.
+    worker_rows = [
+        row
+        for row in rows
+        if not row.evidence_source.startswith("agent-projection")
+    ]
+    counts = Counter(row.card for row in worker_rows)
+    gateway_age: dict[str, int] = {}
+    db_path = os.path.expanduser(
+        os.environ.get("SKGW_METRICS_DB", "~/skgateway-codex/data/metrics.db")
+    )
+    if os.path.exists(db_path):
+        try:
+            now_ms = int(__import__("time").time() * 1000)
+            with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as db:
+                for agent, started in db.execute(
+                    "select agent_id,max(started_at) from request_log "
+                    "where agent_id is not null group by agent_id"
+                ):
+                    gateway_age[str(agent)] = max(0, (now_ms - int(started)) // 1000)
+        except (sqlite3.Error, OSError, ValueError):
+            gateway_age = {}
+    print(
+        f"fleet worker processes: {len(worker_rows)} across "
+        f"{len({row.host for row in worker_rows})} host(s)"
+    )
+    print(
+        "source of truth: pi processes plus transient worker cgroups and exact agent projections"
+    )
+    print("-" * 124)
+    print(
+        f"  {'host':8} {'pid':>7} {'worker':34} {'elapsed':>9} {'log':>9} "
+        f"{'gateway':>9} {'owner':18} state"
+    )
+    alerts = []
+    for row in rows:
+        owner = (
+            row.unit.removesuffix(".service")
+            if row.unit != "legacy"
+            else ("legacy-tmux" if row.tmux else "orphan-process")
+        )
+        state = "running; output buffered until completion"
+        disposition, first_seen = assess(row, samples, now)
+        if disposition == "MALFORMED PROJECTION":
+            state = f"MALFORMED PROJECTION ({row.projection_error or 'invalid'})"
+            alerts.append((row, "malformed-projection"))
+        elif disposition == "ACTION REQUIRED":
+            state = "ACTION REQUIRED joined unit/process/claim evidence"
+            alerts.append((row, "joined-evidence"))
+        elif disposition == "SETTLING":
+            state = "SETTLING unit without Pi process"
+        elif disposition == "STALE PROJECTION":
+            state = "STALE PROJECTION no live exact claim"
+        elif row.projection_state == "missing":
+            state = "LIVE WITHOUT PROJECTION (process/unit truth)"
+        elif row.card_status in {"done", "archived", "void"}:
+            state = f"TERMINAL STILL RUNNING ({row.card_status})"
+            alerts.append((row, "terminal"))
+        elif counts[row.card] > 1:
+            state = "DUPLICATE card process"
+            alerts.append((row, "duplicate"))
+        elif owner == "orphan-process":
+            state = "ORPHAN: no unit or tmux owner"
+            alerts.append((row, "orphan"))
+        elif row.claim_state != "exact":
+            state = f"CLAIM {row.claim_state}"
+            alerts.append((row, "claim"))
+        log = "absent" if row.log_bytes < 0 else f"{row.log_bytes}B"
+        gw_age = gateway_age.get(row.agent, -1)
+        print(
+            f"  {row.host:8} {row.pid:7d} {row.agent[:34]:34} "
+            f"{duration(row.elapsed):>9} {log:>9} {duration(gw_age):>9} "
+            f"{owner[:18]:18} {state}; unit={row.unit}; "
+            f"state={row.unit_load}/{row.unit_active}/{row.unit_sub}; "
+            f"claim_owner={row.claim_owner or '-'}; revision={row.claim_revision or '-'}; "
+            f"first_seen={first_seen}; grace={UNIT_GRACE}s; source={row.evidence_source}"
+        )
+    if not rows:
+        print("no fleet worker processes found. This says nothing about board eligibility.")
+    if host_diagnostics:
+        print("projection diagnostics (historical, never counted as workers):")
+        for host_name in sorted(host_diagnostics):
+            counts = host_diagnostics[host_name]
+            print(
+                f"  {host_name}: idle={counts.get('idle_projections', 0)} "
+                f"sync-conflict={counts.get('sync_conflict_projections', 0)}"
+            )
+    print()
+    if unreachable:
+        print("unreachable hosts: " + ", ".join(unreachable))
+    if alerts:
+        print(f"ACTION REQUIRED ({len(alerts)}):")
+        for row, kind in alerts:
+            print(f"  {row.host} {row.agent}: {kind}")
+    else:
+        print("no duplicate, orphan, or claim-mismatch process detected")
+    print("log age is informational only and never proves a stall for pi print mode")
+    save_samples(samples)
+    return 1 if alerts or unreachable else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
