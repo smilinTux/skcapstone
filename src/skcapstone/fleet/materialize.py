@@ -83,19 +83,38 @@ def render_timer_unit(name: str, schedule: str) -> str:
         name: Fleet object name; the timer targets ``<name>.service``.
         schedule: Either a named schedule (``@hourly``, ``@daily``,
             ``@weekly``) mapped to ``OnCalendar``, or an interval such as
-            ``5m`` or ``2h`` mapped to ``OnUnitActiveSec``.
+            ``5m`` or ``2h`` mapped to ``OnActiveSec`` plus
+            ``OnUnitActiveSec`` (see the comment in the body for why both).
 
     Returns:
-        Timer unit text with a trailing newline.
+        Timer unit text with a trailing newline. Interval schedules render
+        two trigger lines; named schedules render one.
 
     Raises:
         UnitRenderError: the schedule is neither a known name nor an
             ``<int>m`` / ``<int>h`` interval.
     """
     if schedule in _SCHEDULE_NAMED:
-        trigger = f"OnCalendar={_SCHEDULE_NAMED[schedule]}"
+        triggers = [f"OnCalendar={_SCHEDULE_NAMED[schedule]}"]
     elif _SCHEDULE_INTERVAL.match(schedule or ""):
-        trigger = f"OnUnitActiveSec={schedule}"
+        # OnUnitActiveSec alone is a timer that never fires. It measures from
+        # the last time <name>.service was active, and a freshly installed
+        # service has never been active, so systemd arms the timer with no
+        # elapse point at all: NextElapseUSecMonotonic=infinity while the
+        # timer reports enabled, active and Result=success. Reproduced on
+        # systemd 255 with a hand-written unit. A first-fire trigger is
+        # required to seed the chain; after the first run OnUnitActiveSec
+        # keeps the cadence.
+        #
+        # OnActiveSec is the right seed, not OnBootSec. OnActiveSec counts
+        # from the moment the TIMER unit is activated, which apply_unit does
+        # via "enable --now" at install time, so the first run lands exactly
+        # one interval after install regardless of host uptime. OnBootSec
+        # counts from boot: on a node that has been up for days the elapse
+        # point is already in the past and the service fires the instant the
+        # timer is enabled, and on a fresh boot it adds nothing OnActiveSec
+        # does not already cover (the timer activates at boot anyway).
+        triggers = [f"OnActiveSec={schedule}", f"OnUnitActiveSec={schedule}"]
     else:
         raise UnitRenderError(f"invalid schedule: {schedule!r}")
     return "\n".join(
@@ -107,7 +126,7 @@ def render_timer_unit(name: str, schedule: str) -> str:
             f"Description=Run {name}",
             "",
             "[Timer]",
-            trigger,
+            *triggers,
             "Persistent=true",
             f"Unit={name}.service",
             "",
