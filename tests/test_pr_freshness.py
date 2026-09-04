@@ -19,111 +19,142 @@ def load_module():
     return module
 
 
-def test_classify_pr_table():
-    m = load_module()
-    assert m.classify_pr({"mergeStateStatus": "BEHIND"}) == "REFRESH_NEEDED"
-    assert m.classify_pr({"mergeStateStatus": "DIRTY"}) == "REFRESH_NEEDED"
-    assert m.classify_pr({"mergeStateStatus": "CLEAN"}) == "CLEAN"
-    assert m.classify_pr({"mergeStateStatus": "HAS_HOOKS"}) == "CLEAN"
-    assert m.classify_pr({"mergeStateStatus": "BLOCKED"}) == "NEEDS_ATTENTION"
-    assert m.classify_pr({}) == "NEEDS_ATTENTION"
-    assert m.classify_pr({"mergeStateStatus": None}) == "NEEDS_ATTENTION"
-
-
-def test_scan_classifies_and_counts(monkeypatch):
+def test_scan_reports_fixture_counts_and_recommendation(monkeypatch):
     m = load_module()
     fixture = [
         {
             "number": 1,
-            "title": "fine",
-            "headRefOid": "a",
+            "title": "current",
+            "headRefOid": "aaa",
             "baseRefName": "main",
             "mergeStateStatus": "CLEAN",
         },
         {
             "number": 2,
-            "title": "stale",
-            "headRefOid": "b",
-            "baseRefName": "main",
-            "mergeStateStatus": "BEHIND",
-        },
-        {
-            "number": 3,
-            "title": "review held",
-            "headRefOid": "c",
+            "title": "stale despite blocked state",
+            "headRefOid": "bbb",
             "baseRefName": "main",
             "mergeStateStatus": "BLOCKED",
         },
     ]
+    comparisons = {
+        "aaa": {"ahead_by": 3, "behind_by": 0},
+        "bbb": {"ahead_by": 2, "behind_by": 7},
+    }
     monkeypatch.setattr(m, "fetch_open_prs", lambda repo: fixture)
+    monkeypatch.setattr(m, "fetch_comparison", lambda repo, oid: comparisons[oid])
+
+    findings, errors = m.scan(["example/demo"])
+
+    assert errors == []
+    assert findings[0]["mergeStateStatus"] == "CLEAN"
+    assert (findings[0]["ahead"], findings[0]["behind"]) == (3, 0)
+    assert findings[0]["refresh"] == "CURRENT"
+    assert findings[0]["recommendation"] == "none"
+    assert findings[1]["mergeStateStatus"] == "BLOCKED"
+    assert (findings[1]["ahead"], findings[1]["behind"]) == (2, 7)
+    assert findings[1]["refresh"] == "REFRESH_NEEDED"
+    assert findings[1]["recommendation"] == m.REFRESH_RECOMMENDATION
+
+
+def test_merge_state_behind_requires_refresh_even_when_count_is_zero(monkeypatch):
+    m = load_module()
+    monkeypatch.setattr(
+        m,
+        "fetch_open_prs",
+        lambda repo: [
+            {
+                "number": 9,
+                "title": "race",
+                "headRefOid": "ccc",
+                "baseRefName": "main",
+                "mergeStateStatus": "BEHIND",
+            }
+        ],
+    )
+    monkeypatch.setattr(m, "fetch_comparison", lambda repo, oid: {"ahead_by": 1, "behind_by": 0})
     findings, errors = m.scan(["example/demo"])
     assert errors == []
-    verdicts = [f["verdict"] for f in findings]
-    assert verdicts == ["CLEAN", "REFRESH_NEEDED", "NEEDS_ATTENTION"]
-    assert all(f["repo"] == "example/demo" for f in findings)
+    assert findings[0]["refresh"] == "REFRESH_NEEDED"
 
 
-def test_scan_collects_gh_errors(monkeypatch):
+def test_scan_collects_attributable_failures(monkeypatch):
     m = load_module()
 
-    def boom(repo):
-        raise RuntimeError("gh pr list failed for example/demo: no auth")
+    def fail(repo):
+        raise RuntimeError(f"gh pr list for {repo} failed: no auth")
 
-    monkeypatch.setattr(m, "fetch_open_prs", boom)
+    monkeypatch.setattr(m, "fetch_open_prs", fail)
     findings, errors = m.scan(["example/demo"])
     assert findings == []
-    assert len(errors) == 1 and "no auth" in errors[0]
+    assert errors == ["gh pr list for example/demo failed: no auth"]
 
 
-def test_exit_code_requires_refresh(monkeypatch, capsys):
-    m = load_module()
-    stale = [
+def test_json_cli_over_fixture_gh(tmp_path):
+    fixture = [
         {
-            "number": 9,
-            "title": "x",
-            "headRefOid": "d",
-            "baseRefName": "main",
-            "mergeStateStatus": "DIRTY",
-        }
-    ]
-    monkeypatch.setattr(m, "fetch_open_prs", lambda repo: stale)
-    assert m.main(["--repo", "example/demo"]) == 1
-    assert "REFRESH_NEEDED" in capsys.readouterr().out
-
-    clean = [
-        {
-            "number": 8,
-            "title": "y",
-            "headRefOid": "e",
-            "baseRefName": "main",
-            "mergeStateStatus": "CLEAN",
-        }
-    ]
-    monkeypatch.setattr(m, "fetch_open_prs", lambda repo: clean)
-    assert m.main(["--repo", "example/demo", "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["findings"][0]["verdict"] == "CLEAN"
-
-
-def test_end_to_end_with_fake_gh(tmp_path):
-    gh = tmp_path / "gh"
-    payload = [
-        {
-            "number": 7,
-            "title": "behind pr",
-            "headRefOid": "f",
+            "number": 42,
+            "title": "fixture stale PR",
+            "headRefOid": "deadbeef",
             "baseRefName": "main",
             "mergeStateStatus": "BEHIND",
         }
     ]
-    gh.write_text("#!/bin/sh\necho '%s'\n" % json.dumps(payload))
-    gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
-    r = subprocess.run(
-        [sys.executable, str(SCRIPT), "--repo", "example/demo"],
+    fake_gh = tmp_path / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        f"prs = {fixture!r}\n"
+        "if sys.argv[1:3] == ['pr', 'list']:\n"
+        "    print(json.dumps(prs))\n"
+        "elif sys.argv[1] == 'api':\n"
+        "    print(json.dumps({'ahead_by': 4, 'behind_by': 6}))\n"
+        "else:\n"
+        "    raise SystemExit(2)\n"
+    )
+    fake_gh.chmod(fake_gh.stat().st_mode | stat.S_IEXEC)
+    env = os.environ.copy()
+    env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo", "example/demo", "--json"],
         capture_output=True,
+        check=False,
         text=True,
         env=env,
     )
-    assert r.returncode == 1
-    assert "example/demo#7" in r.stdout
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert report["errors"] == []
+    assert report["findings"][0]["ahead"] == 4
+    assert report["findings"][0]["behind"] == 6
+    assert report["findings"][0]["mergeStateStatus"] == "BEHIND"
+    assert "merge current main" in report["findings"][0]["recommendation"]
+
+
+def test_json_cli_current_fixture_exits_zero(tmp_path):
+    fake_gh = tmp_path / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "if sys.argv[1:3] == ['pr', 'list']:\n"
+        "    print(json.dumps([{'number': 1, 'title': 'ok', "
+        "'headRefOid': 'abc', 'baseRefName': 'main', "
+        "'mergeStateStatus': 'CLEAN'}]))\n"
+        "elif sys.argv[1] == 'api':\n"
+        "    print(json.dumps({'ahead_by': 1, 'behind_by': 0}))\n"
+        "else:\n"
+        "    raise SystemExit(2)\n"
+    )
+    fake_gh.chmod(fake_gh.stat().st_mode | stat.S_IEXEC)
+    env = os.environ.copy()
+    env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo", "example/demo", "--json"],
+        capture_output=True,
+        check=False,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0

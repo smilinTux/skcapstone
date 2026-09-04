@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """Report open pull requests that have fallen behind current main.
 
-Why: PR427 (card c6eeed44) fell behind a fast-moving main twice. Its stale-head
-green checks were nearly accepted as current evidence, and two reviews returned
-BLOCKED over drift that came from the old base, not the candidate. Freshness
-has to be visible before anyone treats checks or reviews as current.
-
-Read-only. Lists open PRs via gh, classifies merge state, exits 1 when any PR
-needs a current-main refresh. Never merges, never pushes, never files cards.
+The scan is read-only. It lists open PRs via ``gh``, compares each head with the
+current main tip, and exits nonzero when any PR needs a refresh. It never merges,
+pushes, reviews, or files cards.
 """
 
 from __future__ import annotations
@@ -16,106 +12,142 @@ import argparse
 import json
 import subprocess
 import sys
+from typing import Any
 
 DEFAULT_REPOS = [
     "smilinTux/skcapstone",
     "smilinTux/sklegal",
     "smilinTux/skgateway",
 ]
-
-# Head does not contain the current base tip.
-REFRESH_STATES = {"BEHIND", "DIRTY"}
-# Human reads why. BLOCKED is often just "review required", which is fine.
-ATTENTION_STATES = {"BLOCKED", "UNKNOWN"}
-
-
-def classify_pr(pr: dict) -> str:
-    state = (pr.get("mergeStateStatus") or "UNKNOWN").upper()
-    if state in REFRESH_STATES:
-        return "REFRESH_NEEDED"
-    if state in ATTENTION_STATES:
-        return "NEEDS_ATTENTION"
-    return "CLEAN"
+REFRESH_RECOMMENDATION = (
+    "merge current main into the PR branch, push, require checks green on "
+    "fresh head, then request independent review"
+)
 
 
-def fetch_open_prs(repo: str) -> list:
-    cmd = [
-        "gh",
-        "pr",
-        "list",
-        "--repo",
-        repo,
-        "--state",
-        "open",
-        "--json",
-        "number,title,headRefOid,baseRefName,mergeStateStatus",
-        "--limit",
-        "500",
-    ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"gh pr list failed for {repo}: {r.stderr.strip()}")
-    return json.loads(r.stdout)
+def run_gh(arguments: list[str], context: str) -> Any:
+    """Run a read-only gh command and parse its JSON output.
+
+    Args:
+        arguments: Arguments following the gh executable.
+        context: Description included in an attributable failure.
+
+    Returns:
+        Parsed JSON from standard output.
+
+    Raises:
+        RuntimeError: If gh fails or emits invalid JSON.
+    """
+    result = subprocess.run(["gh", *arguments], capture_output=True, check=False, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh {context} failed: {result.stderr.strip()}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"gh {context} returned invalid JSON: {exc}") from exc
 
 
-def scan(repos: list) -> tuple:
-    findings, errors = [], []
+def fetch_open_prs(repo: str) -> list[dict[str, Any]]:
+    """Fetch open pull requests for one repository."""
+    return run_gh(
+        [
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--json",
+            "number,title,headRefOid,baseRefName,mergeStateStatus",
+            "--limit",
+            "500",
+        ],
+        f"pr list for {repo}",
+    )
+
+
+def fetch_comparison(repo: str, head_oid: str) -> dict[str, Any]:
+    """Compare the current main tip with a PR head commit."""
+    return run_gh(
+        ["api", f"repos/{repo}/compare/main...{head_oid}"],
+        f"compare for {repo}@{head_oid}",
+    )
+
+
+def scan(repos: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Scan repositories and return per-PR findings plus attributable errors."""
+    findings: list[dict[str, Any]] = []
+    errors: list[str] = []
     for repo in repos:
         try:
             prs = fetch_open_prs(repo)
-        except (RuntimeError, ValueError) as exc:
+        except RuntimeError as exc:
             errors.append(str(exc))
             continue
         for pr in prs:
+            head_oid = str(pr.get("headRefOid", ""))
+            try:
+                comparison = fetch_comparison(repo, head_oid)
+                ahead = int(comparison["ahead_by"])
+                behind = int(comparison["behind_by"])
+            except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+                errors.append(f"comparison unavailable for {repo}#{pr.get('number')}: {exc}")
+                ahead = None
+                behind = None
+
+            merge_state = str(pr.get("mergeStateStatus") or "UNKNOWN").upper()
+            refresh_needed = (
+                behind is None
+                or behind > 0
+                or merge_state
+                in {
+                    "BEHIND",
+                    "DIRTY",
+                }
+            )
             findings.append(
                 {
                     "repo": repo,
                     "number": pr.get("number"),
                     "title": pr.get("title", ""),
-                    "head": pr.get("headRefOid", ""),
+                    "head": head_oid,
                     "base": pr.get("baseRefName", ""),
-                    "mergeStateStatus": pr.get("mergeStateStatus") or "UNKNOWN",
-                    "verdict": classify_pr(pr),
+                    "mergeStateStatus": merge_state,
+                    "ahead": ahead,
+                    "behind": behind,
+                    "refresh": "REFRESH_NEEDED" if refresh_needed else "CURRENT",
+                    "recommendation": (REFRESH_RECOMMENDATION if refresh_needed else "none"),
                 }
             )
     return findings, errors
 
 
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Report open PRs behind current main")
-    parser.add_argument(
-        "--repo",
-        action="append",
-        default=None,
-        help="owner/name to scan; repeatable; defaults to the fleet repos",
-    )
-    parser.add_argument(
-        "--json", action="store_true", help="print one JSON object instead of lines"
-    )
+def main(argv: list[str] | None = None) -> int:
+    """Run the fleet scan and emit JSON or a concise text report."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", action="append", dest="repos")
+    parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
+    findings, errors = scan(args.repos or DEFAULT_REPOS)
 
-    repos = args.repo or DEFAULT_REPOS
-    findings, errors = scan(repos)
-
-    if args.json:
+    if args.as_json:
         print(json.dumps({"findings": findings, "errors": errors}, indent=2))
     else:
-        for f in findings:
+        for finding in findings:
             print(
-                f"{f['verdict']:<15} {f['repo']}#{f['number']} "
-                f"[{f['mergeStateStatus']}] {f['title'][:60]}"
+                f"{finding['repo']}#{finding['number']} "
+                f"mergeStateStatus={finding['mergeStateStatus']} "
+                f"ahead={finding['ahead']} behind={finding['behind']} "
+                f"refresh={finding['refresh']}"
             )
-        bad = sum(1 for f in findings if f["verdict"] == "REFRESH_NEEDED")
-        att = sum(1 for f in findings if f["verdict"] == "NEEDS_ATTENTION")
-        print(
-            f"scan complete: {len(findings)} open, {bad} refresh needed, "
-            f"{att} need attention, {len(errors)} errors"
-        )
-    for e in errors:
-        print(f"error: {e}", file=sys.stderr)
+            print(f"  recommendation: {finding['recommendation']}")
+        for error in errors:
+            print(f"ERROR: {error}", file=sys.stderr)
 
-    return 1 if any(f["verdict"] == "REFRESH_NEEDED" for f in findings) else 0
+    if errors or any(item["refresh"] == "REFRESH_NEEDED" for item in findings):
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
