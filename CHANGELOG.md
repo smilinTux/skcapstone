@@ -1,5 +1,10 @@
 # Changelog
 
+- **Card `963cab65`: open-PR freshness scan.** Added `scripts/fleet/pr-freshness.py`
+  reporting OPEN pull requests whose head no longer contains current main
+  (BEHIND/DIRTY), across the fleet repos, exiting nonzero when a refresh is
+  needed. Read-only, no auto-merge.
+
 - **Card `c6eeed44`: prevent overlapping Link and Mero recurring cycles.**
   Added per-seat nonblocking guards with immutable cycle receipts and exact Linux
   boot and process-generation evidence for crash recovery. Overlaps now record
