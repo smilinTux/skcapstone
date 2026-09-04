@@ -158,7 +158,7 @@ def test_exact_generation_claim_release_survives_the_stop_model() -> None:
     source = _source()
 
     assert "expected-claim-revision %s --agent %s" in source
-    assert 'trap "release_claim; exit 143" HUP INT TERM' in source
-    assert "trap release_claim EXIT" in source
+    assert 'trap "stop_beat; release_claim; exit 143" HUP INT TERM' in source
+    assert 'trap "stop_beat; release_claim" EXIT' in source
     # Launches still flow through the single detached launch command.
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source

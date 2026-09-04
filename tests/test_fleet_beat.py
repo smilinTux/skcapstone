@@ -13,6 +13,12 @@ from skcapstone.fleet_beat import (
 
 
 class TestValidateBeatOwner:
+    def test_one_shared_implementation(self):
+        """Card 77d62d85: the beat validator IS the heartbeat validator."""
+        from skcapstone.heartbeat import validate_agent_name
+
+        assert validate_beat_owner is validate_agent_name
+
     def test_valid(self):
         assert validate_beat_owner("pi-codex-chiap01-worker") == "pi-codex-chiap01-worker"
 

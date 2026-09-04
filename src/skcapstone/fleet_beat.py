@@ -11,13 +11,16 @@ from beat evidence alone; beats only corroborate preconditioned claim events.
 from __future__ import annotations
 
 import json
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-# Shared with heartbeat.py: one allowlist, not two.
-BEAT_OWNER_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+from .heartbeat import validate_agent_name
+
+# One shared allowlist for heartbeat and beat writers, not two (review
+# amendment 2; deduped by card 77d62d85 once PR431 and PR432 both landed).
+# The alias keeps the beat-domain name importable everywhere.
+validate_beat_owner = validate_agent_name
 
 # Disposition vocabulary (card C will use these; wrapper uses RUNNING only)
 DISPOSITIONS = frozenset(
@@ -33,16 +36,6 @@ DEFAULT_BEAT_INTERVAL_S = 600  # 10 minutes
 SHADOW_ALERT_TTL_S = 900  # alert only, never actuate (measured p95 292s)
 ACTUATION_FLOOR_S = 3600  # minimum before any claim-affecting action
 STARTUP_GRACE_S = 120  # wrapper may take this long to first beat
-
-
-def validate_beat_owner(owner: str) -> str:
-    """Reject any beat owner outside [a-z0-9-]. Fail fast, never sanitize."""
-    cleaned = (owner or "").strip().lower()
-    if not cleaned:
-        raise ValueError("beat owner must be non-empty")
-    if not BEAT_OWNER_RE.fullmatch(cleaned):
-        raise ValueError("beat owner %r outside [a-z0-9-]; rejected, not sanitized" % owner)
-    return cleaned
 
 
 @dataclass(frozen=True)
