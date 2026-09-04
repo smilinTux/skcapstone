@@ -17,9 +17,12 @@ from . import (
     agent_controller,
     alerts,
     config_controller,
+    converge,
     cron_controller,
     install_backends,
     installer,
+    materialize,
+    materialize_apply,
     modelserver_controller,
     node_controller,
     seat_audit,
@@ -437,6 +440,83 @@ def _resolve_role(paths_, role: str | None) -> str:
     return view.role
 
 
+def _remove_unit_lines(name: str, *, dry_run: bool) -> list[str]:
+    """Report (dry run) or perform the removal of one Service's unit files.
+
+    ``materialize_apply.remove_unit`` has no dry-run mode on purpose: it
+    disables before it unlinks, and a half-executed removal is worse than
+    none. So a plan is computed here by looking at the files instead, and
+    the real verb is only reached when the caller is actuating.
+    """
+    base = materialize_apply.default_unit_dir()
+    if dry_run:
+        present = [
+            path for path in (base / f"{name}.timer", base / f"{name}.service") if path.is_file()
+        ]
+        return [f"remove {path.name}" for path in present]
+    return [f"remove {Path(path).name}" for path in materialize_apply.remove_unit(name)]
+
+
+def _materialize_service_units(paths_, node: str, *, dry_run: bool) -> list[str]:
+    """Materialize the Service objects placed on this node, one line each.
+
+    Selection is ``converge.local_services``: a Service is this node's
+    business only when the scheduler has placed it here. An object with no
+    placement is nobody's to write, and materializing on nodeSelector alone
+    would let two nodes both claim the same unit.
+
+    A spec that cannot become a unit is SKIPPED, never guessed at. Most
+    live Service objects carry ``unit`` (the name of a unit some install.sh
+    already put on the box) and no ``exec``; those are references to
+    externally installed units, not declarations, and overwriting them from
+    a spec that never described their command line would be destructive.
+    Only an object that declares ``exec`` is materialize-managed.
+
+    Args:
+        paths_: FleetPaths for the fleet tree.
+        node: This node's name; only its placements are considered.
+        dry_run: Plan only. Nothing is written and systemd is not touched.
+
+    Returns:
+        One human line per Service: ``write <name>.service``,
+        ``write <name>.timer``, ``ok <name> (unchanged)``,
+        ``remove <name>.service`` or ``skip <name> (<reason>)``.
+
+    Raises:
+        click.ClickException: a systemctl step failed mid-apply.
+    """
+    lines: list[str] = []
+    for entry in converge.local_services(paths_, node):
+        name = entry["name"]
+        payload = entry.get("spec_payload")
+        if payload is None:
+            lines.append(f"skip {name} (spec missing or unreadable)")
+            continue
+        spec = payload.get("spec") or {}
+        try:
+            if spec.get("deleted"):
+                lines.extend(_remove_unit_lines(name, dry_run=dry_run))
+                continue
+            runtime = spec.get("runtime", "systemd-user")
+            if runtime != "systemd-user":
+                lines.append(f"skip {name} (runtime {runtime}, not a systemd unit)")
+                continue
+            if not spec.get("exec"):
+                lines.append(f"skip {name} (no spec.exec, unit is externally installed)")
+                continue
+            written = materialize_apply.apply_unit(name, spec, dry_run=dry_run)
+        except materialize.UnitRenderError as exc:
+            lines.append(f"skip {name} ({exc})")
+            continue
+        except materialize_apply.UnitApplyError as exc:
+            raise click.ClickException(str(exc)) from exc
+        if written:
+            lines.extend(f"write {Path(path).name}" for path in written)
+        else:
+            lines.append(f"ok {name} (unchanged)")
+    return lines
+
+
 @fleet.command("install")
 @click.option(
     "--role", "role", default=None, help="Install profile role (default: this node's spec.role)."
@@ -502,6 +582,15 @@ def install_cmd(
             f"actuation not enabled for {exc}: `skfleet actuation <name> --enable` first"
         ) from exc
 
+    # Unit materialization runs after the backend diff and inside the same
+    # gates: check mode and --dry-run both plan without touching the box,
+    # and apply mode is only reached once run_install has cleared the
+    # fleet freeze and this node's actuation opt-in above.
+    unit_lines = _materialize_service_units(
+        paths_, self_node_name(), dry_run=(mode == "check") or dry_run
+    )
+    summary["units"] = unit_lines
+
     if as_json:
         click.echo(jsonlib.dumps(summary, indent=2, sort_keys=True))
     else:
@@ -511,8 +600,12 @@ def install_cmd(
                 click.echo(f"  {r['grade']:5} {r['category']:28} {r['name']}")
             else:
                 click.echo(f"  {r['status']:12} {r['kind']:8} {r['name']}\t{r['detail']}")
+        for line in unit_lines:
+            click.echo(f"  {line}")
         click.echo(f"ok={summary['ok']}")
 
+    # The exit code stays exactly what it was: driven by the drift/apply
+    # summary alone. Materialization reports; it does not redefine ok.
     if not summary["ok"]:
         raise SystemExit(1)
 
