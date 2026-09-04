@@ -139,6 +139,20 @@ def test_dreaming_reflection_job_fires_end_to_end(tmp_path, monkeypatch):
     assert calls, "run_dreaming_job should have fired via the jobs.yaml config-job path"
     assert calls[0]["consciousness_loop"] is None  # nothing registered it in this test process
 
+    # tick_config_jobs dispatches the job to a "skjob-<name>" daemon thread, and
+    # that thread calls SchedulerState.record_run only AFTER JobRunner.run
+    # returns. `calls` is appended from inside the run, so observing it says the
+    # job started, not that the state write landed. Asserting last_run right
+    # here therefore reads the state file mid-flight: it passes on an idle box
+    # and loses the race under a loaded full-suite run, which is exactly how
+    # this test failed a 7301-test run while passing 5/5 on its own. Join the
+    # worker so the assertion below is about what the job recorded, not about
+    # how the scheduler happened to be scheduled.
+    for worker in threading.enumerate():
+        if worker.name.startswith("skjob-"):
+            worker.join(timeout=10)
+            assert not worker.is_alive(), f"{worker.name} did not finish within 10s"
+
     import socket
 
     from skcapstone.scheduler_state import SchedulerState
