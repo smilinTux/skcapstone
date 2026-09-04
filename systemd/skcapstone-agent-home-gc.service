@@ -1,0 +1,18 @@
+[Unit]
+Description=SKCapstone stale one-shot agent home garbage collection
+Documentation=https://github.com/smilinTux/skcapstone
+ConditionHost=chiap08
+
+[Service]
+Type=oneshot
+ExecStart=%h/.skenv/bin/python -m skcapstone.agent_home_gc --report %h/.skcapstone/reports/agent-home-gc/latest.json
+Nice=15
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone/agents %h/.skcapstone/reports/agent-home-gc
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin

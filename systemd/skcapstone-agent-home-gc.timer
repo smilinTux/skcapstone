@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly SKCapstone stale one-shot agent home GC dry run on chiap08
+Documentation=https://github.com/smilinTux/skcapstone
+ConditionHost=chiap08
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
