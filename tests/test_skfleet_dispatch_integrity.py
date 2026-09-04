@@ -159,6 +159,16 @@ ssh() {
   for arg in "$@"; do
     case "$arg" in chiap01|chiap02|chiap03|chiap04) host=$arg ;; esac
   done
+  # Drain stdin the way the real `ssh <host> bash -s` does. sample() probes a
+  # remote host as `host_probe_source | ssh ... bash -s -- "$host"`, and this
+  # harness runs under `set -o pipefail`. A stub that returns without reading
+  # its input leaves host_probe_source writing into a closed pipe, so it dies
+  # of SIGPIPE and pipefail fails the whole probe, which sample() then records
+  # as "unreachable". Measured at roughly 2% per pipeline, 20 pipelines per
+  # test, so about a third of runs lost a host for no reason at all. Nothing
+  # about the code under test changes here; only the stub stops being a
+  # narrower ssh than the real one.
+  cat >/dev/null
   record_for "$host"
 }
 probe_host() { record_for "$1"; }
