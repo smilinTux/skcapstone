@@ -27,8 +27,12 @@ def register_coord_mail_commands(coord: click.Group) -> None:
     @click.argument("to")
     @click.argument("body")
     @click.option("--from", "sender", required=True, help="Writer name (your agent).")
-    @click.option("--priority", type=click.Choice(VALID_PRIORITIES), default="normal",
-                  help="urgent means 'stop what you are doing'.")
+    @click.option(
+        "--priority",
+        type=click.Choice(VALID_PRIORITIES),
+        default="normal",
+        help="urgent means 'stop what you are doing'.",
+    )
     @click.option("--re", "subject", default="", help="Subject line.")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def coord_mail_send(to, body, sender, priority, subject, home):
@@ -52,8 +56,11 @@ def register_coord_mail_commands(coord: click.Group) -> None:
         for m in msgs:
             # markup=False: a priority like [urgent] is otherwise parsed as a
             # Rich style tag and silently disappears from the output.
-            console.print(f"\n[{m.get('priority')}] {m.get('from')} -> {m.get('to')}"
-                          f"  {str(m.get('ts',''))[:19]}", markup=False)
+            console.print(
+                f"\n[{m.get('priority')}] {m.get('from')} -> {m.get('to')}"
+                f"  {str(m.get('ts',''))[:19]}",
+                markup=False,
+            )
             if m.get("re"):
                 console.print(f"  re: {m['re']}")
             console.print(str(m.get("body", "")))
@@ -72,8 +79,11 @@ def register_coord_mail_commands(coord: click.Group) -> None:
     def coord_mail_tail(count, home):
         """Recent traffic between any peers."""
         for m in tail(Path(home), count):
-            console.print(f"{str(m.get('ts',''))[:19]}  {m.get('from')} -> {m.get('to')}"
-                          f"  [{m.get('priority')}] {str(m.get('re',''))[:50]}", markup=False)
+            console.print(
+                f"{str(m.get('ts',''))[:19]}  {m.get('from')} -> {m.get('to')}"
+                f"  [{m.get('priority')}] {str(m.get('re',''))[:50]}",
+                markup=False,
+            )
 
     @coord.command("bootstrap")
     @click.option("--home", default=AGENT_HOME, type=click.Path())

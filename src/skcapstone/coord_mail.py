@@ -59,8 +59,9 @@ def writer_file(home: Path, sender: str, host: str | None = None) -> Path:
     return mailbox_dir(home) / f"{sender.lower()}@{host}.jsonl"
 
 
-def send(home: Path, sender: str, to: str, priority: str, re: str, body: str,
-         host: str | None = None) -> dict:
+def send(
+    home: Path, sender: str, to: str, priority: str, re: str, body: str, host: str | None = None
+) -> dict:
     """Append one message to this writer's own file. Never writes a shared file.
 
     ``to`` may be ``all``. Raises ValueError on an unknown priority rather than
@@ -136,8 +137,7 @@ def read(home: Path, me: str) -> list[dict]:
     cp = _cursor_path(home, me)
     if cp.exists():
         cur = cp.read_text(encoding="utf-8").strip()
-    return [r for r in _read_all(home)
-            if _addressed_to(r, me) and str(r.get("ts", "")) > cur]
+    return [r for r in _read_all(home) if _addressed_to(r, me) and str(r.get("ts", "")) > cur]
 
 
 def ack(home: Path, me: str) -> int:
@@ -185,6 +185,11 @@ def bootstrap(home: Path, agent: str | None = None) -> dict:
             wf.touch(mode=0o600)
             created.append(str(wf.relative_to(home)))
         mailbox = str(wf)
-    return {"home": str(home), "created": created, "mailbox": mailbox,
-            "already_present": [s for s in COORD_SUBDIRS
-                                if str(Path("coordination") / s) not in created]}
+    return {
+        "home": str(home),
+        "created": created,
+        "mailbox": mailbox,
+        "already_present": [
+            s for s in COORD_SUBDIRS if str(Path("coordination") / s) not in created
+        ],
+    }
