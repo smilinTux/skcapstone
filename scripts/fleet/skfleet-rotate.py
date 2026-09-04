@@ -251,8 +251,25 @@ PI_MCP_PROXY_LABEL="mcp-required"
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
 STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+VERDICT_STATS_EVID=os.path.join(HOME,".skcapstone/evidence/fleet-verdict-stats")
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
+
+
+def _update_verdict_stats():
+    """Consume newly appended verdict mail and print a prior-day summary."""
+    module_path=Path(__file__).with_name("skfleet_verdict_stats.py")
+    spec=importlib.util.spec_from_file_location("skfleet_verdict_stats",module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load %s" % module_path)
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    summary=module.update(
+        Path(HOME)/".skcapstone/coordination/skmail.d",
+        Path(VERDICT_STATS_EVID),
+    )
+    if summary:
+        print("  "+summary)
 
 _WORKER_UNIT_RE = re.compile(
     r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
@@ -448,6 +465,11 @@ lock=open(os.path.join(HOME,".skcapstone/fleet/rotate.lock"),"w")
 try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError:
     print("  rotation already running on %s"%HOST); sys.exit(0)
+
+try:
+    _update_verdict_stats()
+except Exception as exc:
+    print("  WARN verdict stats unavailable: %s" % exc)
 
 d=os.path.join(EVID,STAMP)
 
