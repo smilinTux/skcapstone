@@ -15,7 +15,7 @@
 #   - SKAGENT/SKCAPSTONE_AGENT set & valid → honour it silently, no menu
 #   - Missing binary          → offer official install command for that tool
 #   - SK_CLAUDE_YOLO=1        → claude adds permission bypass globally (opt-in)
-#   - SK_CODEX_YOLO=0         → keep Codex approvals+sandbox (default is YOLO)
+#   - SK_CODEX_YOLO=0         → keep Codex approvals+sandbox (safe default)
 #   - SK_OPENCODE_YOLO=1      → opencode allows all tools without approval (opt-in)
 #   - Pass --agent <name>     → skip menu, use that agent directly
 #   - Print mode (-p / --print) → skip menu (non-interactive by definition)
@@ -411,7 +411,7 @@ function claude {
 # codex (OpenAI Codex CLI — https://github.com/openai/codex)
 function codex {
     local extra_flags=""
-    if [[ "${SK_CODEX_YOLO:-1}" == "1" ]]; then
+    if [[ "${SK_CODEX_YOLO:-0}" == "1" ]]; then
         extra_flags="--dangerously-bypass-approvals-and-sandbox"
     fi
     _sk_launch codex "$extra_flags" "$@"
