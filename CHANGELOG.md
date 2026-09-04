@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Card 0e010300: let the fleet bootstrap its own lane admission.** Lane
+  admission required each capacity domain's SKGateway `lastCheck` to be within
+  the 120 second snapshot bound, which reused a snapshot expiry bound as a
+  backend observation bound. SKGateway derives health rows only from proxied
+  request outcomes, so that made a lane admissible only during the two minutes
+  after somebody else sent traffic to that exact domain, and the fleet could
+  neither start nor restart itself. Measured against the live dispatch gateway,
+  up 8 hours with `codex` reading `status=up observed=true`, all four lanes
+  resolved to `(False, "unknown")`. The documented three conditions (observed
+  `up` or `degraded`, not quarantined, positive queue capacity) are now the
+  whole contract. Unobserved, malformed, and future `lastCheck` values still
+  fail closed, and snapshot freshness is still enforced. The post-restart
+  bootstrap (one warm-up request per capacity domain) is documented in
+  `docs/fleet/lane-admission-health.md`.
+
 - **Card 46c6526d: fail closed before fleet lane claims.** Fleet selection and
   the immediate preclaim gate consume a fresh snapshot that the selector creates
   by fetching SKGateway health and queue state once in the same cycle. The
