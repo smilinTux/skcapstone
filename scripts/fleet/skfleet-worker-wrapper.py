@@ -121,9 +121,30 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def preflight_worktree() -> int:
+    """Clear safe stale sequencer state; refuse to start on dirty stale state."""
+    helper = Path(__file__).resolve().parent / "worktree-hygiene.py"
+    if not helper.exists():
+        return 0
+    r = subprocess.run(
+        [sys.executable, str(helper), "--clear", os.getcwd()], capture_output=True, text=True
+    )
+    if r.stdout.strip():
+        sys.stderr.write(r.stdout)
+    if r.returncode == 2:
+        sys.stderr.write(
+            "worktree preflight blocked: stale sequencer state with a dirty tree; "
+            "resolve it by hand before starting a worker\n"
+        )
+    return r.returncode
+
+
 def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
+    preflight = preflight_worktree()
+    if preflight == 2:
+        return 2
     args.stdout.parent.mkdir(parents=True, exist_ok=True)
     with args.stdout.open("wb") as stdout:
         child = subprocess.run(args.command, stdout=stdout, stderr=subprocess.PIPE)

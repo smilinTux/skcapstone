@@ -1,5 +1,10 @@
 # Changelog
 
+- **Card `83b048fc`: worktree sequencer hygiene.** Added
+  `scripts/fleet/worktree-hygiene.py` plus a worker-wrapper preflight: stale
+  cherry-pick, rebase, or merge state is named, auto-cleared when the tree is
+  clean, and never cleared when the tree is dirty.
+
 - **Card `3c9aa03f`: review freshness gate.** Added
   `scripts/fleet/review-freshness-gate.py` plus review guidance: independent
   PASS requires the reviewed head to contain current main and every check
