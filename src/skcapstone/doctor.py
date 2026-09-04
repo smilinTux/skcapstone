@@ -143,6 +143,7 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
     report.checks.extend(_check_sync_conflicts(home))
+    report.checks.extend(_check_multi_writer_layouts(home))
     report.checks.extend(_check_scheduler(home))
     report.checks.extend(_check_systemd_runtime(home))
     report.checks.extend(_check_store_integrity(home))
@@ -151,6 +152,66 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
     report.checks.extend(_check_versions())
 
     return report
+
+
+def multi_writer_migrations(home: Path) -> list[tuple[str, Path]]:
+    """Return legacy shared-writer layouts still present under *home*.
+
+    These are the *causes* behind ``sync:conflicts``, not the symptom. Each is
+    a single file that every node re-reads and rewrites, which is what produced
+    the recurring ``.sync-conflict-*`` churn tracked in prb-7810b08e. The
+    conflict-free replacement is one append-only file per writer.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        ``(label, path)`` for each legacy layout found.
+    """
+    found: list[tuple[str, Path]] = []
+    activity = home / "skcode" / "activity" / "events.jsonl"
+    if activity.exists():
+        found.append(("skcode activity journal", activity))
+    fallbacks = home / "fallbacks.json"
+    if fallbacks.exists():
+        found.append(("LLM fallback log", fallbacks))
+    return found
+
+
+def _check_multi_writer_layouts(home: Path) -> list[Check]:
+    """Flag shared single-file stores that every node rewrites in place.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        A single Check, passed only when every store is partitioned per writer.
+    """
+    legacy = multi_writer_migrations(home) if home.exists() else []
+    if not legacy:
+        return [
+            Check(
+                name="sync:multi-writer",
+                description="Replicated stores are partitioned per writer",
+                passed=True,
+                detail="no shared read-modify-write stores",
+                category="sync",
+            )
+        ]
+    return [
+        Check(
+            name="sync:multi-writer",
+            description="Shared single-file stores rewritten by every node",
+            passed=False,
+            detail=", ".join(f"{label} ({path.name})" for label, path in legacy),
+            fix=(
+                "skcapstone doctor --fix migrates these to per-writer files "
+                "(<agent>@<node>) so replication cannot conflict "
+                "(root cause: prb-7810b08e)."
+            ),
+            category="sync",
+        )
+    ]
 
 
 def _check_sync_conflicts(home: Path) -> list[Check]:
@@ -2245,6 +2306,36 @@ def run_fixes(report: DiagnosticReport, home: Path) -> list[FixResult]:
 
     for check in report.checks:
         if check.passed:
+            continue
+
+        # Migrate shared single-file stores to per-writer files. These are the
+        # cause of the recurring sync-conflict churn, so unlike the conflict
+        # files themselves (where a human must pick the authoritative copy)
+        # this is safe to automate: every migration preserves all rows and is
+        # idempotent.
+        if check.name == "sync:multi-writer":
+            for label, path in multi_writer_migrations(home):
+                try:
+                    if path.name == "events.jsonl":
+                        from skharness.activity import migrate_legacy_activity_layout
+
+                        migrate_legacy_activity_layout(path.parent)
+                        action = f"Partitioned {label} per node ({path.parent}/<node>/)"
+                    else:
+                        from .fallback_tracker import migrate_legacy_fallbacks
+
+                        moved = migrate_legacy_fallbacks(path, home / "fallbacks")
+                        action = f"Migrated {moved} row(s) of {label} to per-writer files"
+                    results.append(FixResult(check_name=check.name, success=True, action=action))
+                except Exception as exc:  # noqa: BLE001 - report, never abort the pass
+                    results.append(
+                        FixResult(
+                            check_name=check.name,
+                            success=False,
+                            action=f"Migrate {label}",
+                            error=str(exc),
+                        )
+                    )
             continue
 
         # Fix missing directories
