@@ -188,9 +188,7 @@ def test_collect_returns_projection_diagnostics_summary() -> None:
     with patch.object(monitor.subprocess, "run", return_value=result):
         rows, diagnostics = monitor.collect("chiap03")
     assert rows == []
-    assert diagnostics == {
-        "chiap03": {"idle_projections": 1773, "sync_conflict_projections": 57}
-    }
+    assert diagnostics == {"chiap03": {"idle_projections": 1773, "sync_conflict_projections": 57}}
 
 
 def test_identity_validation_precedes_idle_acceptance() -> None:
@@ -201,9 +199,7 @@ def test_identity_validation_precedes_idle_acceptance() -> None:
     assert "card is None or card == ''" in source
 
 
-def test_projection_loop_reports_idle_as_diagnostics_not_malformed(
-    tmp_path, monkeypatch
-) -> None:
+def test_projection_loop_reports_idle_as_diagnostics_not_malformed(tmp_path, monkeypatch) -> None:
     import contextlib
     import io
     import re
@@ -250,9 +246,7 @@ def test_projection_loop_reports_idle_as_diagnostics_not_malformed(
         exec(section, namespace)
 
     emitted = [
-        __import__("json").loads(line)
-        for line in buffer.getvalue().splitlines()
-        if line.strip()
+        __import__("json").loads(line) for line in buffer.getvalue().splitlines() if line.strip()
     ]
     # Idle projections never emit rows, not even malformed ones.
     agents_seen = [row["agent"] for row in emitted if "agent" in row]
