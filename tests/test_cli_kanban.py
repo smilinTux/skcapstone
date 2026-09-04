@@ -32,6 +32,39 @@ def test_coord_kanban_text_summary(tmp_path):
     assert "feature" in result.output.lower()
 
 
+def test_coord_status_labels_old_active_record_as_stale_projection(tmp_path):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    board.save_agent(AgentFile(agent="historical-worker", current_task="old-card"))
+    path = board.agents_dir / "historical-worker.json"
+    record = path.read_text(encoding="utf-8").replace(
+        AgentFile.model_validate_json(path.read_text(encoding="utf-8")).last_seen,
+        old,
+    )
+    path.write_text(record, encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["coord", "status", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "STALE PROJECTION" in result.output
+    assert "historical-worker" in result.output
+    assert "ACTIVE" not in result.output
+
+
+def test_coord_status_preserves_and_ignores_conflict_copy(tmp_path):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    conflict = board.agents_dir / "ghost.sync-conflict-20260903-node.json"
+    conflict.write_text('{"agent":"ghost","state":"active"}', encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["coord", "status", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "ghost" not in result.output
+    assert conflict.exists()
+
+
 def test_coord_archive_done_dry_run(tmp_path):
     board = Board(tmp_path)
     board.ensure_dirs()

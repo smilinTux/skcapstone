@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import datetime
 import glob
 import hashlib
 import json
@@ -15,6 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 FUNCTIONS = {
+    "_log_once_per_hour",
+    "_event_sort_key",
+    "_generation_invalidated",
+    "_matching_outcome_events",
+    "_outcome_event_value",
+    "_parent_review_generation",
     "_review_parent_ids",
     "_reviews_by_parent",
     "_review_card_id",
@@ -51,8 +58,10 @@ def _namespace(cards: Path, refusals: Path) -> dict[str, object]:
         "os": os,
         "re": re,
         "CARDS": str(cards),
+        "datetime": datetime,
         "_REVIEW_REFUSALS": str(refusals),
         "HOST": "test-host",
+        "HOME": str(cards.parent),
         "SKC": "skcapstone",
         "d": object(),
         "_OUTCOME_KEYS": ("verdict", "result", "disposition", "review_decision"),
@@ -210,6 +219,175 @@ def test_missing_or_hash_mismatched_candidate_fails_closed(tmp_path: Path) -> No
     board = OpenerHarness(tmp_path)
     board.outcome("a1b2c3d4")
     board.events["a1b2c3d4"][0]["candidate_sha256"] = "0" * 64
+
+    assert board.open(1) == 0
+    assert board.calls == []
+    assert any("OPEN_REVIEW_EVIDENCE_BLOCKED" in row for row in board.logs)
+
+
+def test_native_verdict_accepts_hash_verified_embedded_candidate(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    timestamp = "2026-09-02T20:02:29+00:00"
+    artifact = tmp_path / "candidate.tar"
+    artifact.write_bytes(b"candidate bytes")
+    board.card("a1b2c3d4", "Implementation a1b2c3d4")
+    board.outcomes["a1b2c3d4"] = (timestamp, "PASS_FOR_REVIEW")
+    board.events["a1b2c3d4"] = [
+        {
+            "action": "verdict",
+            "ts": timestamp,
+            "writer": "pi-mero-source",
+            "verdict": "PASS_FOR_REVIEW",
+            "evidence_links": [
+                {
+                    "type": "candidate_tree",
+                    "path": str(artifact),
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                }
+            ],
+        }
+    ]
+
+    assert board.open(1) == 1
+    description = board.calls[0][board.calls[0].index("--desc") + 1]
+    assert "Producer identity: pi-mero-source." in description
+    assert "Candidate evidence: %s sha256=" % artifact in description
+
+
+def test_native_verdict_resolves_hash_verified_candidate_manifest(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    timestamp = "2026-09-02T17:22:19+00:00"
+    artifact = tmp_path / "candidate.tar"
+    artifact.write_bytes(b"candidate bytes")
+    manifest = tmp_path / "verdict-evidence.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "evidence_links": [
+                    {
+                        "type": "candidate_tree",
+                        "path": str(artifact),
+                        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    board.card("a1b2c3d4", "Implementation a1b2c3d4")
+    board.outcomes["a1b2c3d4"] = (timestamp, "PASS_FOR_REVIEW")
+    board.events["a1b2c3d4"] = [
+        {
+            "action": "verdict",
+            "ts": timestamp,
+            "writer": "pi-mero-source",
+            "verdict": "PASS_FOR_REVIEW",
+            "evidence_path": str(manifest),
+            "artifact_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        }
+    ]
+
+    assert board.open(1) == 1
+    description = board.calls[0][board.calls[0].index("--desc") + 1]
+    assert "Candidate evidence: %s sha256=" % artifact in description
+
+
+def test_unverified_embedded_or_manifest_candidate_fails_closed(tmp_path: Path) -> None:
+    for mode in ("embedded", "manifest"):
+        board = OpenerHarness(tmp_path / mode)
+        board.outcome("a1b2c3d4")
+        event = board.events["a1b2c3d4"][0]
+        event.pop("candidate_path")
+        event.pop("candidate_sha256")
+        bad_link = {
+            "type": "candidate_tree",
+            "path": str(tmp_path / mode / "missing.tar"),
+            "sha256": "0" * 64,
+        }
+        if mode == "embedded":
+            event["evidence_links"] = [bad_link]
+        else:
+            manifest = tmp_path / mode / "manifest.json"
+            manifest.write_text(json.dumps({"evidence_links": [bad_link]}), encoding="utf-8")
+            event["evidence_path"] = str(manifest)
+            event["artifact_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+
+        assert board.open(1) == 0
+        assert board.calls == []
+        assert any("OPEN_REVIEW_EVIDENCE_BLOCKED" in row for row in board.logs)
+
+
+def test_separate_candidate_evidence_joins_exact_outcome_and_producer(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4", writer="pi-codex-source")
+    event = board.events["a1b2c3d4"][0]
+    artifact = event.pop("candidate_path")
+    digest = event.pop("candidate_sha256")
+    board.events["a1b2c3d4"].append(
+        {
+            "action": "review_candidate_evidence",
+            "ts": "2026-09-03T12:00:00Z",
+            "writer": "repair-agent",
+            "source_outcome_ts": event["ts"],
+            "source_verdict": event["verdict"],
+            "producer": event["writer"],
+            "candidate_path": artifact,
+            "candidate_sha256": digest,
+        }
+    )
+
+    assert board.open(1) == 1
+    description = board.calls[0][board.calls[0].index("--desc") + 1]
+    assert "Producer identity: pi-codex-source." in description
+    assert "Candidate evidence: %s sha256=%s." % (artifact, digest) in description
+
+
+def test_separate_candidate_evidence_wrong_join_or_duplicate_fails_closed(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    event = board.events["a1b2c3d4"][0]
+    artifact = event.pop("candidate_path")
+    digest = event.pop("candidate_sha256")
+    supplemental = {
+        "action": "review_candidate_evidence",
+        "ts": "2026-09-03T12:00:00Z",
+        "writer": "repair-agent",
+        "source_outcome_ts": event["ts"],
+        "source_verdict": event["verdict"],
+        "producer": "wrong-producer",
+        "candidate_path": artifact,
+        "candidate_sha256": digest,
+    }
+    board.events["a1b2c3d4"].append(supplemental)
+
+    assert board.open(1) == 0
+    supplemental["producer"] = event["writer"]
+    board.events["a1b2c3d4"].append(dict(supplemental, writer="another-repair-agent"))
+    assert board.open(1) == 0
+
+
+def test_typed_candidate_identity_is_carried_into_review(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    board.events["a1b2c3d4"][0].update(
+        {
+            "candidate_commit": "1" * 40,
+            "candidate_tree": "2" * 40,
+            "candidate_ref": "refs/heads/review/a1b2c3d4",
+        }
+    )
+
+    assert board.open(1) == 1
+    description = board.calls[0][board.calls[0].index("--desc") + 1]
+    assert "Candidate commit: %s." % ("1" * 40) in description
+    assert "Candidate tree: %s." % ("2" * 40) in description
+    assert "Candidate ref: refs/heads/review/a1b2c3d4." in description
+
+
+def test_partial_typed_candidate_identity_fails_closed(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    board.events["a1b2c3d4"][0]["candidate_commit"] = "1" * 40
 
     assert board.open(1) == 0
     assert board.calls == []

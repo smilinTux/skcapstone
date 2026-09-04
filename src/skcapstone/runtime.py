@@ -127,6 +127,15 @@ class AgentRuntime:
         self.manifest.last_awakened = datetime.now(timezone.utc)
         self._awakened = True
 
+        # Self-heal any pre-partition shared store on this node. These are the
+        # single files every node rewrote in place, behind the recurring
+        # Syncthing conflicts (prb-7810b08e). Idempotent and best-effort: a
+        # migration failure must never block awakening.
+        try:
+            self._migrate_multi_writer_stores()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("multi-writer migration skipped: %s", exc)
+
         if self.manifest.is_conscious:
             logger.info(
                 "Agent '%s' is CONSCIOUS - identity + memory + trust active",
@@ -191,6 +200,27 @@ class AgentRuntime:
         self.manifest.connectors.append(connector)
         self.save_manifest()
         return connector
+
+    def _migrate_multi_writer_stores(self) -> None:
+        """Convert legacy shared single-file stores to per-writer files.
+
+        Mirrors ``skcapstone doctor --fix``; running it on awaken means a node
+        heals itself on the next daemon restart instead of waiting for someone
+        to notice the conflicts.
+        """
+        from .fallback_tracker import migrate_legacy_fallbacks
+
+        root = self.shared_root
+        moved = migrate_legacy_fallbacks(root / "fallbacks.json", root / "fallbacks")
+        if moved:
+            logger.info("Migrated %d legacy fallback row(s) to per-writer files", moved)
+
+        try:
+            from skharness.activity import migrate_legacy_activity_layout
+        except ImportError:
+            return  # skharness is optional
+        if migrate_legacy_activity_layout(root / "skcode" / "activity"):
+            logger.info("Partitioned the skcode activity journal per node")
 
     def load_skills(self, agent: Optional[str] = None) -> Optional[object]:
         """Load SKSkills for this agent session via the SkillLoader."""

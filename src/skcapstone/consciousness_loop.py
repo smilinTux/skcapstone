@@ -269,6 +269,9 @@ class LLMBridge:
         adapter: Optional PromptAdapter for per-model formatting.
         cache: Optional ResponseCache.  When provided, generate() checks the
             cache before calling an LLM and stores successful results.
+        fallback_tracker: Optional FallbackTracker. Injectable so callers -
+            tests above all - can direct fallback rows somewhere other than the
+            operator's real ``~/.skcapstone``.
     """
 
     def __init__(
@@ -277,6 +280,7 @@ class LLMBridge:
         router_config: Optional[ModelRouterConfig] = None,
         adapter: Optional[PromptAdapter] = None,
         cache: Optional[ResponseCache] = None,
+        fallback_tracker: Optional[FallbackTracker] = None,
     ) -> None:
         self._config = config
         self._router = ModelRouter(config=router_config)
@@ -285,7 +289,7 @@ class LLMBridge:
         self._timeout = config.response_timeout
         self._available: dict[str, bool] = {}
         self._cache: Optional[ResponseCache] = cache
-        self._fallback_tracker = FallbackTracker()
+        self._fallback_tracker = fallback_tracker or FallbackTracker()
         self._ollama_pool = _OllamaPool(os.environ.get("OLLAMA_HOST", config.ollama_host))
         self._probe_available_backends()
 

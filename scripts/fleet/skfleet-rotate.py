@@ -8,11 +8,17 @@ Fixes two defects found 03:50Z:
      rotation deadlocked at busy=8 and NOOPed. Workers launched with -p exit on
      their own, so a slot is simply a live codex-auto-* session. No retire logic.
 """
-import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util
+import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
+import importlib.metadata
 from pathlib import Path
 
 from skcapstone.card_store import CardStore
 from skcapstone.coord_eligibility import leaf_eligibility_counts
+from skcapstone.fleet_lane_health import (
+    acquire_lane_snapshot,
+    cycle_id as new_cycle_id,
+    lane_health,
+)
 from skcapstone.scheduler_decision import (
     SchedulerFacts,
     classify_scheduler_population,
@@ -52,6 +58,52 @@ def _bounded_ids(card_ids, limit=12):
     values = sorted({str(card_id) for card_id in card_ids})
     shown = values[:limit]
     return ",".join(shown) or "-", max(0, len(values) - len(shown))
+
+
+def _full_reassessment_path(host, evidence_root):
+    """Keep exactly one shared full report, written only by its authority host."""
+    if host != "chiap08":
+        return None
+    return Path(evidence_root) / "lifecycle-reassessment.json"
+
+
+def _validate_reassessment(report):
+    """Fail closed if the lifecycle assessor did not return its safety contract."""
+    if not isinstance(report, dict):
+        raise ValueError("lifecycle reassessment is not an object")
+    if report.get("read_only") is not True:
+        raise ValueError("lifecycle reassessment is not read only")
+    if not isinstance(report.get("classes"), dict):
+        raise ValueError("lifecycle reassessment classes are absent")
+    if not isinstance(report.get("counts"), dict):
+        raise ValueError("lifecycle reassessment counts are absent")
+    if not isinstance(report.get("excluded_card_ids"), list):
+        raise ValueError("lifecycle reassessment exclusions are absent")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(report.get("content_sha256") or "")):
+        raise ValueError("lifecycle reassessment hash is absent")
+    return report
+
+
+def _reassessment_summary(host, report, report_path):
+    destination = str(report_path) if report_path is not None else "authority:chiap08"
+    counts = json.dumps(report["counts"], sort_keys=True, separators=(",", ":"))
+    return "REASSESSMENT|%s|report=%s sha256=%s counts=%s excluded=%d" % (
+        host, destination, report["content_sha256"], counts,
+        len(report["excluded_card_ids"]),
+    )
+
+
+def _write_bounded_report(report, report_path, limit=2 * 1024 * 1024):
+    """Atomically replace the authority report with the exact bounded bytes."""
+    payload = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
+    json.loads(payload)
+    if len(payload) > limit:
+        raise ValueError("lifecycle reassessment exceeds %d bytes" % limit)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = report_path.with_suffix(report_path.suffix + ".tmp")
+    temporary.write_bytes(payload)
+    json.loads(temporary.read_bytes())
+    temporary.replace(report_path)
 
 
 def _partition_owner(card_id, hosts, pinned_host=None):
@@ -114,13 +166,24 @@ def _review_assignment(cid, core, labels, reviewer):
     """Return Link's governed reviewer and recommendation for a review card."""
     if "review" not in {str(label).strip().lower() for label in labels}:
         return reviewer, None, None
-    description = str(core.get("description") or "")
-    producer = re.search(r"Producer identity:\s*([^.]*)\.", description)
-    evidence = re.search(r"sha256=([0-9a-f]{64})(?:\.|\s|$)", description)
-    if not producer or not producer.group(1).strip() or not evidence:
-        raise BoundaryError("review card lacks producer identity or candidate evidence hash")
+    links = core.get("links") if isinstance(core.get("links"), dict) else {}
+    typed_producer = links.get("producer_identity")
+    typed_evidence = links.get("candidate_evidence_sha256")
+    if typed_producer is not None or typed_evidence is not None:
+        producer = str(typed_producer or "").strip()
+        evidence = str(typed_evidence or "").strip().lower()
+        if not producer or not re.fullmatch(r"[0-9a-f]{64}", evidence):
+            raise BoundaryError("review card has incomplete or malformed typed metadata")
+    else:
+        description = str(core.get("description") or "")
+        producer_match = re.search(r"Producer identity:\s*([^.]*)\.", description)
+        evidence_match = re.search(r"sha256=([0-9a-f]{64})(?:\.|\s|$)", description)
+        if not producer_match or not producer_match.group(1).strip() or not evidence_match:
+            raise BoundaryError("review card lacks producer identity or candidate evidence hash")
+        producer = producer_match.group(1).strip()
+        evidence = evidence_match.group(1)
     recommendation_id = "link-review-" + hashlib.sha256(
-        (cid + "\0" + reviewer + "\0" + evidence.group(1)).encode()
+        (cid + "\0" + reviewer + "\0" + evidence).encode()
     ).hexdigest()[:32]
     observed_process = _card_process_snapshot(cid)
     if observed_process["sessions"]:
@@ -129,21 +192,24 @@ def _review_assignment(cid, core, labels, reviewer):
         Path(HOME) / ".skcapstone",
         card_id=cid,
         recommendation_id=recommendation_id,
-        author=producer.group(1).strip(),
+        author=producer,
         candidates=[reviewer],
         observed_process=observed_process,
-        evidence_sha256=evidence.group(1),
+        evidence_sha256=evidence,
     )
+    live_claim_revision = str(_current_claim_identity_fresh(cid)[2] or "")
     handoff = authorize_review_launch(
         Path(HOME) / ".skcapstone",
         recommendation,
-        actor="jarvis",
+        actor=reviewer,
         current_process=_card_process_snapshot(cid),
         used_recommendation_ids={
             str(event.get("recommendation_id"))
             for event in event_rows(cid)
             if event.get("action") == "review_assignment_launch"
+            and event.get("launched")
             and event.get("recommendation_id")
+            and str(event.get("claim_revision") or "") == live_claim_revision
         },
     )
     return handoff.reviewer, recommendation, handoff
@@ -153,22 +219,20 @@ def _review_assignment(cid, core, labels, reviewer):
 # initialize optional skcoord API dependencies such as CapAuth.
 _LIFECYCLE_PATH=Path(os.environ.get("SKCOORD_SRC",os.path.join(os.path.expanduser("~"),"work/skcoord/src")))/"skcoord/lifecycle_reassessment.py"
 _spec=importlib.util.spec_from_file_location("skcoord_lifecycle_reassessment",_LIFECYCLE_PATH)
-# Degrade instead of dying. A host that has not yet checked out skcoord must still
-# be able to rotate workers: losing the pre-batch lifecycle report is a downgrade,
-# losing the whole rotation is an outage. chiap04 crashed on exactly this the first
-# time it ran, before its skcoord checkout existed.
+# Assessment is a safety input, not optional telemetry. If it cannot be loaded,
+# the cycle still emits a BLOCKED summary below but gains no mutation authority.
 _LIFECYCLE_OK = _spec is not None and _spec.loader is not None and _LIFECYCLE_PATH.exists()
 if _LIFECYCLE_OK:
     try:
         _lifecycle=importlib.util.module_from_spec(_spec)
         sys.modules[_spec.name]=_lifecycle
         _spec.loader.exec_module(_lifecycle)
-        assess,write_report=_lifecycle.assess,_lifecycle.write_report
+        assess=_lifecycle.assess
     except Exception as _e:
         _LIFECYCLE_OK=False
-        print("  WARN lifecycle reassessment unavailable (%s): rotating without the pre-batch report" % _e)
+        print("  WARN lifecycle reassessment unavailable (%s)" % _e)
 if not _LIFECYCLE_OK:
-    assess=write_report=None
+    assess=None
 
 HOST=os.uname().nodename
 ROTATION_HOSTS=("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
@@ -182,6 +246,8 @@ HOME=os.path.expanduser("~")
 CARDS=os.path.join(HOME,".skcapstone/cards")
 EVID=os.path.join(HOME,".skcapstone/evidence/fleet-rotation")
 PI="/home/skuser01/.npm-global/bin/pi"
+PI_NATIVE_TOOLS=("read", "bash", "edit", "write", "grep", "find", "ls")
+PI_MCP_PROXY_LABEL="mcp-required"
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
 STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -229,6 +295,14 @@ def _worker_launch_command(unit, workspace, inner):
         "--unit", unit, "--property=KillMode=control-group",
         "--working-directory", workspace, "bash", "-lc", inner,
     ]
+
+
+def pi_tool_allowlist(labels):
+    """Return the bounded Pi tool surface for one fleet card."""
+    tools = list(PI_NATIVE_TOOLS)
+    if PI_MCP_PROXY_LABEL in {str(label).strip().lower() for label in labels}:
+        tools.append("mcp")
+    return ",".join(tools)
 
 
 def _lane_busy(lane, sessions, units):
@@ -321,6 +395,54 @@ def log(d,msg):
     with open(os.path.join(d,"actions.log"),"a") as f: f.write(msg+"\n")
     print("  "+msg)
 
+
+def _log_once_per_hour(d, event, cid, message, state_dir=None, now=None):
+    """Emit one repeated per-card diagnostic in each UTC hour bucket.
+
+    The O_EXCL marker makes concurrent rotations agree on the first emitter.
+    State failures are fail-open so an observability aid cannot hide a blocker.
+    """
+    state_dir = state_dir or os.path.join(HOME, ".skcapstone/fleet/log-dedup")
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=datetime.timezone.utc)
+    hour = now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H")
+    safe_event = re.sub(r"[^A-Z0-9_]+", "_", str(event).upper()).strip("_")
+    safe_cid = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(cid))
+    marker = os.path.join(state_dir, "%s-%s-%s.json" % (safe_event, safe_cid, hour))
+    payload = json.dumps(
+        {"card_id": str(cid), "event": str(event), "hour_utc": hour},
+        sort_keys=True,
+        separators=(",", ":"),
+    ) + "\n"
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+        fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    except OSError:
+        log(d, message)
+        return True
+    try:
+        encoded = payload.encode("utf-8")
+        if os.write(fd, encoded) != len(encoded):
+            raise OSError("short marker write")
+        os.fsync(fd)
+        os.close(fd)
+    except OSError:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(marker)
+        except OSError:
+            pass
+        log(d, message)
+        return True
+    log(d, message)
+    return True
+
 os.makedirs(os.path.join(HOME,".skcapstone/fleet"),exist_ok=True)
 lock=open(os.path.join(HOME,".skcapstone/fleet/rotate.lock"),"w")
 try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -336,9 +458,12 @@ if HOST not in ROTATION_HOSTS:
 # Mandatory read-only graph validation precedes slot and assignment decisions.
 # The report is the exact machine-readable assignment exclusion contract.
 try:
-    assessment=assess(Path(CARDS),[Path(EVID)])
-    report_path=Path(d)/"lifecycle-reassessment.json"
-    write_report(assessment,report_path)
+    if not _LIFECYCLE_OK:
+        raise RuntimeError("lifecycle reassessment module unavailable")
+    assessment=_validate_reassessment(assess(Path(CARDS),[Path(EVID)]))
+    report_path=_full_reassessment_path(HOST,EVID)
+    if report_path is not None:
+        _write_bounded_report(assessment,report_path)
     # The lifecycle report's unclaimable_cards class is computed from HOST-LOCAL
     # worker logs, which ~/.skcapstone/.stignore excludes from Syncthing. Every
     # host therefore derives a DIFFERENT set from the same shared cards.
@@ -357,8 +482,7 @@ try:
     _tracking = {r.get("card_id") for r in _classes.get("volatile_ci_identity", [])
                  if r.get("card_id") and r.get("reason")=="tracking_card"}
     excluded=set(assessment["excluded_card_ids"]) - _local_only - _tracking
-    log(d,"LIFECYCLE|%s|report=%s sha256=%s counts=%s excluded=%d"
-        %(HOST,report_path,assessment["content_sha256"],json.dumps(assessment["counts"],sort_keys=True,separators=(",",":")),len(excluded)))
+    log(d,_reassessment_summary(HOST,assessment,report_path))
 except Exception as exc:
     log(d,"BLOCKED|%s|lifecycle reassessment failed: %s"%(HOST,exc))
     sys.exit(2)
@@ -397,6 +521,13 @@ LANES=[
      "model":os.environ.get("SKFLEET_ESC_MODEL", ESC_MODEL if "ESC_MODEL" in dir() else "gpt-5.6-sol"),
      "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
 ]
+_GLM_LEVEL_DEFAULTS={"S":"glm-4.6","M":"glm-4.6","L":"glm-4.7","XL":"glm-5.3"}
+_GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
+             for key,value in _GLM_LEVEL_DEFAULTS.items()}
+_GLM_SIZE_RE=re.compile(r"\[(S|M|XL|L)\]")
+def _glm_model_for(core):
+    match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
+    return _GLM_LEVELS.get(match.group(1)) if match else None
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
@@ -437,16 +568,18 @@ LIVE = os.path.join(HOME, ".skcapstone/evidence/fleet-live")
 # pushes reporting below known and disables reaping fleetwide. Observed within
 # one tick of adding it. It lives one level up.
 _INEFFECTIVE_PATH = os.path.join(HOME, ".skcapstone/evidence/reap-ineffective.json")
+REAP_RUNTIME_VERSION = importlib.metadata.version("skcoord")
 LIVE_FRESH = 30 * 60      # a report older than this says nothing about now
+LIVE_TIMER_CYCLE = 6 * 60  # five-minute timer plus transport allowance
 CLAIM_GRACE = 300         # one full rotation period, so every host has reported
 # Reaping needs a quorum, because a card running on chiap04 is invisible in
 # chiap08's report. During a rollout the first host to publish is the ONLY
 # reporting host, and without this floor it would read every other host's live
 # worker as absent and reap all of them. Below quorum the reaper does nothing.
 REAP_QUORUM = 3
-KNOWN_HOST_TTL = 24 * 3600   # a host silent this long has left the fleet
 
 STALL_GRACE = 30 * 60     # a zero-byte log younger than this may still be starting
+_NO_PROGRESS = os.path.join(HOME, ".skcapstone/evidence/live-no-progress")
 
 def _never_started(cid):
     """Return the zero-byte launch log and age when this card never started.
@@ -477,10 +610,50 @@ def _never_started(cid):
     return (newest, age) if age > STALL_GRACE else None
 
 
+def _record_live_no_progress(cid, worker, path, age):
+    """Record one bounded escalation without converting quietness into death."""
+    try:
+        folded = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+        if isinstance(folded, dict):
+            owner, meta = folded.get("owner"), folded.get("meta")
+        else:
+            owner, meta = getattr(folded, "owner", None), getattr(folded, "meta", None)
+        owner = str(owner or "")
+        revision = str((meta or {}).get("_claim_revision") or "")
+    except Exception:
+        owner = revision = ""
+    if not owner or not revision:
+        return False
+    try:
+        generation = str(os.stat(path).st_mtime_ns)
+        key = "\0".join((cid, owner, revision, generation)).encode()
+        digest = hashlib.sha256(key).hexdigest()
+        os.makedirs(_NO_PROGRESS, exist_ok=True)
+        target = os.path.join(_NO_PROGRESS, digest + ".json")
+        payload = json.dumps({
+            "age_seconds": int(age),
+            "card": cid,
+            "claim_revision": revision,
+            "log": path,
+            "observation_generation": generation,
+            "owner": owner,
+            "state": "live_no_progress",
+            "worker": worker,
+        }, sort_keys=True, separators=(",", ":")) + "\n"
+        fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except (FileExistsError, OSError):
+        return False
+    try:
+        os.write(fd, payload.encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return True
+
+
 def publish_live(sessions, units=()):
     """Record legacy tmux and transient-service workers for every other host."""
     cards = _worker_cards(sessions,units,LANES)
-    kept = []
     for _cid in cards:
         stalled = _never_started(_cid)
         if stalled:
@@ -490,12 +663,10 @@ def publish_live(sessions, units=()):
                  if s.startswith(L["prefix"]) and s[len(L["prefix"]):] == _cid),
                 next((u["unit"] for u in units if u["card"] == _cid), "unknown"),
             )
-            log(d, "STALLED|%s|%s|worker=%s|log=%s|age_seconds=%d|launch log is "
-                   "0 bytes and older than %dm; not reporting it live so the claim can be reaped"
-                % (HOST, _cid, worker, path, int(age), STALL_GRACE // 60))
-            continue
-        kept.append(_cid)
-    cards = kept
+            if _record_live_no_progress(_cid, worker, path, age):
+                log(d, "LIVE_NO_PROGRESS|%s|%s|worker=%s|log=%s|age_seconds=%d|"
+                       "worker remains live; bounded escalation recorded"
+                    % (HOST, _cid, worker, path, int(age)))
     try:
         os.makedirs(LIVE, exist_ok=True)
         p = os.path.join(LIVE, HOST + ".json")
@@ -540,31 +711,54 @@ def reporting_capacity():
     return capacity
 
 
-def live_report():
-    """Return (oldest_recent_report, cards_running, reporting_host_count).
-
-    The first value is the OLDEST report among currently reporting hosts, not the
-    newest, and that choice is the whole safety property. A claim may only be
-    reaped once EVERY reporting host has published since it was made, because a
-    card running on chiap04 is invisible in chiap08's report. Taking the newest
-    would let the first host to start publishing reap every other host's live
-    workers, which is precisely the outage this code exists to prevent.
-    """
-    hosts = {}
+def live_report_health(expected_hosts=None, now=None):
+    """Return fleet reports plus per-host transport and freshness faults."""
+    now = time.time() if now is None else now
+    expected = tuple(expected_hosts or ROTATION_HOSTS)
+    stamps = []
     running = set()
-    now = time.time()
-    for p in glob.glob(os.path.join(LIVE, "*.json")):
+    reporting = set()
+    faults = []
+    for host in expected:
+        path = os.path.join(LIVE, host + ".json")
         try:
-            with open(p, encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 snap = json.load(fh)
+            if not isinstance(snap, dict):
+                raise ValueError("report is not an object")
             ts = float(snap.get("ts") or 0)
-        except (OSError, ValueError, TypeError):
+            report_host = str(snap.get("host") or "")
+            if report_host != host:
+                raise ValueError("report host=%s" % (report_host or "missing"))
+            if not 0 < ts <= now:
+                raise ValueError("report timestamp is absent or in the future")
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            reason = "missing" if isinstance(exc, FileNotFoundError) else "invalid"
+            faults.append({"host": host, "reason": reason, "age_seconds": None,
+                           "detail": str(exc)[:120]})
             continue
-        if not 0 < ts <= now or now - ts > LIVE_FRESH:
+        age = now - ts
+        if age > LIVE_FRESH:
+            faults.append({"host": host, "reason": "stale",
+                           "age_seconds": int(age), "detail": ""})
             continue
-        hosts[str(snap.get("host") or p)] = ts
-        running.update(str(c) for c in (snap.get("cards") or ()))
-    return (min(hosts.values()) if hosts else 0.0), running, len(hosts)
+        stamps.append(ts)
+        reporting.add(host)
+        cards = snap.get("cards") or []
+        if isinstance(cards, list):
+            running.update(str(card) for card in cards)
+        if age > LIVE_TIMER_CYCLE:
+            faults.append({"host": host, "reason": "transport_delayed",
+                           "age_seconds": int(age), "detail": ""})
+    expected_set = set(expected)
+    return {"oldest": min(stamps) if stamps else 0, "running": running,
+            "reporting": reporting, "expected": expected_set, "faults": faults,
+            "authoritative": reporting == expected_set and not faults}
+
+
+def live_report():
+    """Return the authoritative cross-host report health snapshot."""
+    return live_report_health()
 
 publish_live(sessions, worker_units)
 
@@ -625,7 +819,7 @@ _CATEGORY_OPT_IN = "dispatch-approved"
 _OVERLAY_ACTIONS = {
     "move": "move", "assign": "assign", "unassign": "unassign",
     "add_label": "add_label", "remove_label": "remove_label",
-    "describe": "describe",
+    "describe": "describe", "amend_criteria": "amend_criteria", "link": "link",
 }
 _claim_rows = {}
 _legacy_claim_rows = None
@@ -716,6 +910,11 @@ def _fold_claimability(core, rows):
         "status": "backlog", "owner": None, "claim_revision": None,
         "archived": False, "voided": False,
         "title": str(core.get("title") or ""),
+        "description": str(core.get("description") or ""),
+        "acceptance_criteria": [
+            str(x) for x in (core.get("acceptance_criteria") or [])
+        ],
+        "links": {},
         "labels": [str(x) for x in (core.get("initial_labels") or [])],
         "dependencies": [str(x) for x in (core.get("dependencies") or [])],
     }
@@ -775,8 +974,25 @@ def _fold_claimability(core, rows):
         elif action == "remove_label":
             label = event.get("label")
             state["labels"] = [x for x in state["labels"] if x != label]
-        elif action == "describe" and event.get("title") is not None:
-            state["title"] = str(event.get("title"))
+        elif action == "describe":
+            if event.get("title") is not None:
+                state["title"] = str(event.get("title"))
+            if event.get("description") is not None:
+                state["description"] = str(event.get("description"))
+        elif action == "amend_criteria":
+            criteria = event.get("criteria")
+            if not isinstance(criteria, list) or not criteria or not all(
+                isinstance(value, str) and value.strip() for value in criteria
+            ):
+                raise ValueError("amended acceptance criteria are malformed")
+            state["acceptance_criteria"] = list(criteria)
+        elif action == "link" and event.get("link_key") in {
+            "producer_identity", "candidate_evidence_sha256"
+        }:
+            value = event.get("link_value")
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("typed review metadata is malformed")
+            state["links"][str(event["link_key"])] = value.strip()
         elif action in ("add_dependency", "remove_dependency"):
             dep = _dependency_value(event)
             if action == "add_dependency" and dep and dep not in state["dependencies"]:
@@ -790,6 +1006,9 @@ def _claimability_reason(core, state):
     """Return the exact reason Board or scheduler policy rejects this state."""
     folded_core = dict(core)
     folded_core["title"] = state["title"]
+    folded_core["description"] = state["description"]
+    folded_core["acceptance_criteria"] = state["acceptance_criteria"]
+    folded_core["links"] = dict(state["links"])
     labels = state["labels"]
     if not _coord_task_claimable(core):
         return "non-task"
@@ -839,6 +1058,9 @@ def authoritative_claimability(cid, core=None, fresh=False):
 
     folded_core = dict(core)
     folded_core["title"] = state["title"]
+    folded_core["description"] = state["description"]
+    folded_core["acceptance_criteria"] = state["acceptance_criteria"]
+    folded_core["links"] = dict(state["links"])
     labels = state["labels"]
     reason = _claimability_reason(core, state)
     state.update({"claimable": reason == "claimable", "reason": reason,
@@ -1090,6 +1312,39 @@ def folded_labels(cid,core):
 
 _SEAT_LABEL_PREFIX = "seat-"
 _SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+_SEAT_PLACEMENT_PATH = os.environ.get(
+    "SKFLEET_SEAT_PLACEMENT",
+    os.path.join(HOME, ".skcapstone/coordination/seat-placement.json"),
+)
+
+
+def _load_seat_placement(path=None):
+    """Read the synchronized public seat-to-host manifest or fail closed."""
+    source = path or _SEAT_PLACEMENT_PATH
+    try:
+        payload = json.loads(Path(source).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {}, "manifest-unavailable:%s" % type(exc).__name__
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        return {}, "manifest-schema"
+    seats = payload.get("seats")
+    if not isinstance(seats, dict):
+        return {}, "manifest-seats"
+    normalized = {}
+    for raw_seat, raw_hosts in seats.items():
+        seat = str(raw_seat).strip().lower()
+        if not _SEAT_RE.fullmatch(seat):
+            return {}, "manifest-seat:%s" % seat
+        if not isinstance(raw_hosts, list) or not raw_hosts:
+            return {}, "manifest-hosts:%s" % seat
+        hosts = tuple(str(host).strip().lower() for host in raw_hosts)
+        if len(set(hosts)) != len(hosts) or any(host not in ROTATION_HOSTS for host in hosts):
+            return {}, "manifest-hosts:%s" % seat
+        normalized[seat] = tuple(host for host in ROTATION_HOSTS if host in hosts)
+    return normalized, None
+
+
+_SEAT_PLACEMENT, _SEAT_PLACEMENT_ERROR = _load_seat_placement()
 
 def seat_for(cid, core):
     """Return the named seat this card belongs to, or None.
@@ -1116,31 +1371,31 @@ def seat_for(cid, core):
         if not _SEAT_RE.match(seat):
             log(d, "WARN|%s|%s|ignoring malformed seat label %r" % (HOST, cid, text))
             continue
-        if not _seat_is_provisioned(seat):
-            # A well-formed name is not a seat. Without this check a typo such as
-            # seat-lnik would produce a worker called pi-lnik-<host>-<cid> writing
-            # claims and verdicts under an identity that has no agent home, no
-            # capauth key, no mailbox and no estate entry: a phantom seat whose
-            # outputs look attributable and are not. Fall back to lane naming,
-            # which is always safe, and say so loudly.
-            log(d, "WARN|%s|%s|seat %r is not provisioned (no agent home at %s); "
-                   "falling back to lane naming"
-                % (HOST, cid, seat, os.path.join(HOME, ".skcapstone/agents", seat)))
-            continue
         return seat
     return None
 
 
 def _seat_is_provisioned(seat):
-    """True when this seat actually exists as an agent on this host.
+    """True when public placement metadata provisions this seat somewhere."""
+    return not _SEAT_PLACEMENT_ERROR and seat in _SEAT_PLACEMENT
 
-    A seat is real when it has an agent home and a public key. The private half
-    lives only where the seat signs, so its absence here is expected and is not
-    evidence against the seat.
-    """
-    home = os.path.join(HOME, ".skcapstone/agents", seat)
-    return os.path.isdir(home) and os.path.isfile(
-        os.path.join(home, "capauth/identity/public.asc"))
+
+def _seat_owner(card_id, seat, pinned_host=None, placement=None, placement_error=None):
+    """Return one seat host and a diagnostic without falling back to a lane."""
+    if not seat:
+        return _partition_owner(card_id, ROTATION_HOSTS, pinned_host), "ordinary"
+    mapping = _SEAT_PLACEMENT if placement is None else placement
+    error = _SEAT_PLACEMENT_ERROR if placement_error is None else placement_error
+    if error:
+        return None, "seat-manifest:%s" % error
+    hosts = tuple(mapping.get(seat, ()))
+    if not hosts:
+        return None, "seat-unprovisioned:%s" % seat
+    if pinned_host:
+        if pinned_host not in hosts:
+            return None, "seat-pin-conflict:%s:%s" % (seat, pinned_host)
+        return pinned_host, "seat-pin:%s:%s" % (seat, pinned_host)
+    return _partition_owner(card_id, hosts), "seat:%s" % seat
 
 
 def _worker_owner(lane, cid, seat=None):
@@ -1485,6 +1740,12 @@ def blocked_backoff(cid):
     # operator reads as failures.
     if ts and _PASS_RE.match(str(val or "")):
         return True
+    # A pure pre-agent gateway failure is not card work, but retrying on every
+    # timer tick would hammer the same unhealthy lane. Wait one bounded circuit
+    # interval, then allow exactly one recovery probe. A failed probe writes a
+    # fresh structured failure and starts a new bounded interval.
+    if _transport_retry_held(cid):
+        return True
     if launch_attempts(cid) >= 3 and lifecycle_state(cid)!="complete":
         # ...unless the world changed since the last attempt. Without this the
         # counter is a one-way door: nothing resets it, so a card parked here is
@@ -1597,10 +1858,151 @@ def host_pin(core,labels):
 #      retried instead of being banned for the lifetime of the estate.
 _LAUNCH_TTL_H = float(os.environ.get("SKFLEET_LAUNCH_TTL_H", "6"))
 _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
+_TRANSPORT_RETRY_COOLDOWN_S = float(
+    os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
+)
+_GATEWAY_ERROR_RE = re.compile(r"^\s*(404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
+
+
+def _structured_transport_failure(text):
+    """Return a known pre-agent gateway failure kind, or None.
+
+    The whole report must be one HTTP status plus one JSON object. This keeps
+    arbitrary prose, partial agent output, and mixed reports substantive.
+    """
+    match = _GATEWAY_ERROR_RE.fullmatch(str(text or ""))
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(2))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("message"), str):
+        return None
+    status = int(match.group(1))
+    code = payload.get("code")
+    if status == 404 and code in (404, "404", "not_found", "route_not_found"):
+        return "gateway_404"
+    if status == 429 and code in (429, "429", "rate_limit", "cooldown"):
+        return "gateway_429"
+    if status == 502 and code == "invalid_upstream_tool_calls":
+        return "invalid_upstream_tool_calls"
+    timeout_codes = {
+        "first_token_timeout",
+        "gateway_timeout",
+        "timeout_before_first_token",
+        "upstream_timeout",
+    }
+    if status in (408, 502, 504) and code in timeout_codes:
+        return "first_token_timeout"
+    return None
+
+
+def _is_substantive_worker_report(text, card_mutated):
+    """Fail closed unless this is a pure, known pre-agent transport failure."""
+    if card_mutated:
+        return True
+    if not str(text or ""):
+        return False
+    return _structured_transport_failure(text) is None
+
+
+def _launch_epoch_from_log(cid, filename):
+    prefix = cid + "-"
+    if not filename.startswith(prefix) or not filename.endswith(".log"):
+        return 0
+    stamp = filename[len(prefix):-4]
+    try:
+        return datetime.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=datetime.timezone.utc
+        ).timestamp()
+    except ValueError:
+        return 0
+
+
+def _card_mutated_during_report(cid, started, finished):
+    """Whether card work, rather than wrapper bookkeeping, occurred."""
+    ignored = {
+        "claim",
+        "release_claim",
+        "mero_observation",
+        "review_assignment_launch",
+        "review_assignment_recommendation",
+    }
+    for event in event_rows(cid):
+        stamp = _ts_epoch(event.get("ts"))
+        if started <= stamp <= finished + 1 and event.get("action") not in ignored:
+            return True
+    return False
+
+
+def _local_launch_evidence(cid):
+    """Return (logs seen, substantive reports, latest transport failure)."""
+    seen = 0
+    reports = 0
+    latest_transport = 0
+    cutoff = time.time() - _LAUNCH_TTL_H * 3600
+    try:
+        filenames = os.listdir(_LOGDIR)
+    except OSError:
+        return seen, reports, latest_transport
+    for filename in filenames:
+        started = _launch_epoch_from_log(cid, filename)
+        if not started:
+            continue
+        fp = os.path.join(_LOGDIR, filename)
+        try:
+            stt = os.stat(fp)
+            if stt.st_mtime < cutoff:
+                continue
+            with open(fp, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        seen += 1
+        mutated = _card_mutated_during_report(cid, started, stt.st_mtime)
+        if _is_substantive_worker_report(text, mutated):
+            reports += 1
+        elif _structured_transport_failure(text):
+            latest_transport = max(latest_transport, stt.st_mtime)
+    return seen, reports, latest_transport
+
+
+_WORKER_EXIT_DIR = os.path.join(HOME, ".skcapstone/evidence/fleet-worker-exits")
+
+def _latest_transport_failure_epoch(cid):
+    """Return the latest claim-scoped pre-agent transport failure time."""
+    latest = 0.0
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if event.get("card_id") == cid and event.get("transport_failure"):
+                latest = max(latest, _ts_epoch(event.get("attempted_at")))
+        except (OSError, TypeError, ValueError):
+            continue
+    return latest
+
+def _transport_failure_logs(cid):
+    """Return local stdout logs classified as pre-agent transport failures."""
+    logs = set()
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if event.get("card_id") == cid and event.get("transport_failure"):
+                logs.add(str(event.get("stdout_log") or ""))
+        except (OSError, TypeError, ValueError):
+            continue
+    return logs
+
+def _transport_retry_held(cid):
+    """Hold a failed transport until the bounded recovery interval opens."""
+    failed_at = _latest_transport_failure_epoch(cid)
+    return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
 
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
     n = 0
+    transport_logs = _transport_failure_logs(cid)
     cutoff = time.time() - _LAUNCH_TTL_H * 3600
     try:
         for f in os.listdir(_LOGDIR):
@@ -1615,6 +2017,8 @@ def _reporting_launches(cid):
                 continue          # aged out: exclusion self-heals
             if stt.st_size == 0:
                 continue          # interrupted, never reported: not evidence
+            if f in transport_logs:
+                continue          # pre-agent transport failure: not card work
             n += 1
     except OSError:
         pass
@@ -1622,6 +2026,36 @@ def _reporting_launches(cid):
 
 _ROTATION_EVID = os.path.join(HOME, ".skcapstone/evidence/fleet-rotation")
 _shared_launch_cache = None
+_TRANSPORT_FAILURE_CLASSES = frozenset({
+    "rate_limited",
+    "model_owner_backend_down",
+    "backend_claims_quarantined",
+    "invalid_upstream_tool_calls",
+    "connection_failure",
+})
+
+def _transport_failure_claims():
+    """Return exact claim generations that failed before agent work began."""
+    failures = set()
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, "*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        claim = (
+            str(event.get("card_id") or ""),
+            str(event.get("host") or ""),
+            str(event.get("owner") or ""),
+            str(event.get("claim_revision") or ""),
+        )
+        failure = event.get("transport_failure")
+        if (
+            isinstance(failure, str)
+            and failure in _TRANSPORT_FAILURE_CLASSES
+            and all(claim)
+        ):
+            failures.add(claim)
+    return failures
 
 def _shared_launch_attempts(cid):
     """Launch attempts for this card across EVERY host, within the TTL.
@@ -1646,6 +2080,7 @@ def _shared_launch_attempts(cid):
     global _shared_launch_cache
     if _shared_launch_cache is None:
         _shared_launch_cache = {}
+        transport_failures = _transport_failure_claims()
         cutoff = time.time() - _LAUNCH_TTL_H * 3600
         try:
             for stamp in os.listdir(_ROTATION_EVID):
@@ -1660,6 +2095,22 @@ def _shared_launch_attempts(cid):
                                 continue
                             parts = line.strip().split("|")
                             if len(parts) >= 4:
+                                if len(parts) == 8:
+                                    fields = [part.partition("=") for part in parts[4:]]
+                                    if [(key, sep) for key, sep, _value in fields] == [
+                                        ("lane", "="),
+                                        ("model", "="),
+                                        ("owner", "="),
+                                        ("claim_revision", "="),
+                                    ]:
+                                        claim = (
+                                            parts[3],
+                                            parts[1],
+                                            fields[2][2],
+                                            fields[3][2],
+                                        )
+                                        if claim in transport_failures:
+                                            continue
                                 _shared_launch_cache[parts[3]] = (
                                     _shared_launch_cache.get(parts[3], 0) + 1
                                 )
@@ -1677,7 +2128,14 @@ def launch_attempts(cid):
     sees the shared count, so no card is banned on one host and workable on
     another purely because of where its logs happen to live.
     """
-    return max(_reporting_launches(cid), _shared_launch_attempts(cid))
+    local_evidence = globals().get("_local_launch_evidence")
+    if callable(local_evidence):
+        local_seen, local_reports, _latest_transport = local_evidence(cid)
+        if local_seen:
+            # The partition owner has the exact worker bytes. Prefer them over
+            # the synced receipt, which cannot distinguish transport from work.
+            return local_reports
+    return _shared_launch_attempts(cid)
 
 def unclaimable(cid):
     return launch_attempts(cid) >= 2 and "claim" not in acts(cid)
@@ -1776,22 +2234,68 @@ def _claim_identity(rows):
 def _load_ineffective():
     try:
         with open(_INEFFECTIVE_PATH, encoding="utf-8") as fh:
-            return {str(x) for x in json.load(fh).get("cards") or ()}
+            payload = json.load(fh)
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not isinstance(entries, list):
+            return []
+        return [entry for entry in entries if isinstance(entry, dict)]
     except (OSError, ValueError):
-        return set()
+        return []
 
 
-def _record_ineffective(cid):
+def _write_ineffective(entries):
+    os.makedirs(os.path.dirname(_INEFFECTIVE_PATH), exist_ok=True)
+    tmp = _INEFFECTIVE_PATH + ".new"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"schema_version": 1, "entries": entries}, fh, sort_keys=True)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, _INEFFECTIVE_PATH)
+
+
+def _ineffective_suppresses(entries, cid, owner, claim_revision):
+    return any(
+        entry.get("card_id") == cid
+        and entry.get("owner") == owner
+        and entry.get("claim_revision") == claim_revision
+        and entry.get("runtime_version") == REAP_RUNTIME_VERSION
+        for entry in entries
+    )
+
+
+def _record_ineffective(cid, owner, claim_revision, failure_class):
     known = _load_ineffective()
-    if cid in known:
+    if _ineffective_suppresses(known, cid, owner, claim_revision):
         return
-    known.add(cid)
+    known.append({
+        "card_id": cid,
+        "owner": owner,
+        "claim_revision": claim_revision,
+        "failure_class": failure_class,
+        "runtime_version": REAP_RUNTIME_VERSION,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    })
     try:
-        os.makedirs(os.path.dirname(_INEFFECTIVE_PATH), exist_ok=True)
-        tmp = _INEFFECTIVE_PATH + ".new"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"cards": sorted(known)}, fh)
-        os.replace(tmp, _INEFFECTIVE_PATH)
+        _write_ineffective(known)
+    except OSError:
+        pass
+
+
+def _remove_ineffective(cid, owner, claim_revision):
+    known = _load_ineffective()
+    retained = [
+        entry for entry in known
+        if not (
+            entry.get("card_id") == cid
+            and entry.get("owner") == owner
+            and entry.get("claim_revision") == claim_revision
+        )
+    ]
+    if retained == known:
+        return
+    try:
+        _write_ineffective(retained)
     except OSError:
         pass
 
@@ -2003,8 +2507,25 @@ def _record_reap_outcome(cid, owner, claim_revision, claim_ts):
 
 
 def reap_dead_claims():
-    """Return claimed cards whose worker no host reports running."""
-    oldest, running, nhosts = live_report()
+    """Return claims only after every authoritative host reports absence."""
+    report_health = live_report()
+    # Preserve the tuple seam used by focused reaper tests and older callers.
+    # Production returns the richer mapping and therefore never weakens the
+    # fixed all-host visibility gate.
+    if isinstance(report_health, dict):
+        oldest = report_health["oldest"]
+        running = report_health["running"]
+        nhosts = len(report_health["reporting"])
+        known = len(report_health["expected"])
+    else:
+        oldest, running, nhosts = report_health
+        known = nhosts
+        report_health = {"faults": [], "expected": set(), "reporting": set()}
+    for fault in report_health["faults"]:
+        age = ("unknown" if fault["age_seconds"] is None
+               else str(fault["age_seconds"]))
+        log(d, "FLEET_LIVE_FAULT|%s|host=%s|reason=%s|age_seconds=%s|detail=%s"
+            % (HOST, fault["host"], fault["reason"], age, fault["detail"]))
     health = _worker_health_snapshot(
         sh("tmux", "ls", "-F", "#{session_name}").split()
     )
@@ -2012,16 +2533,16 @@ def reap_dead_claims():
         "duplicates=%d" %
         (HOST, health["sessions"], health["claims_exact"], health["mismatched"],
          health["duplicates"]))
-    # A host that is merely between runs must still be counted, or the quorum
-    # check passes while its workers are invisible. A host that is GONE must
-    # eventually stop counting, or one decommissioned machine blocks reaping for
-    # the whole fleet forever. KNOWN_HOST_TTL separates the two.
-    _cut = time.time() - KNOWN_HOST_TTL
-    known = sum(1 for f in glob.glob(os.path.join(LIVE, "*.json"))
-                if os.path.getmtime(f) >= _cut)
-    if not oldest or nhosts < REAP_QUORUM or nhosts < known:
-        log(d, "REAP|%s|below quorum (reporting=%d known=%d need>=%d); reaped nothing"
+    if not oldest or nhosts < REAP_QUORUM:
+        log(d, "REAP|%s|quorum_shortage reporting=%d known=%d need>=%d; reaped nothing"
             % (HOST, nhosts, known, REAP_QUORUM))
+        return 0
+    if not report_health.get("authoritative", nhosts >= known):
+        missing = ",".join(sorted(report_health["expected"] -
+                                  report_health["reporting"])) or "none"
+        log(d, "REAP|%s|known_host_visibility_loss reporting=%d known=%d "
+            "need>=%d missing=%s; reaped nothing"
+            % (HOST, nhosts, known, REAP_QUORUM, missing))
         return 0
     freed = 0
     _ineffective = _load_ineffective()
@@ -2041,15 +2562,19 @@ def reap_dead_claims():
             continue
         if cid in running:
             continue                      # a host says this is running right now
-        if cid in _ineffective:
-            continue                      # releasing it does nothing; see above
+        if _ineffective_suppresses(_ineffective, cid, owner, claim_revision):
+            continue                      # exact generation already failed on this runtime
         if not claim_revision:
-            log(d, "REAP_EXCLUDED|%s|%s|%s|claim revision missing; exact release "
-                   "fence unavailable" % (HOST, cid, owner))
+            _log_once_per_hour(
+                d, "REAP_EXCLUDED_CLAIM_REVISION_MISSING", cid,
+                "REAP_EXCLUDED|%s|%s|%s|claim revision missing; exact release "
+                "fence unavailable" % (HOST, cid, owner))
             continue
         if not cts:
-            log(d, "REAP_EXCLUDED|%s|%s|%s|claim timestamp invalid; liveness age "
-                   "cannot be proved" % (HOST, cid, owner))
+            _log_once_per_hour(
+                d, "REAP_EXCLUDED_CLAIM_TIMESTAMP_INVALID", cid,
+                "REAP_EXCLUDED|%s|%s|%s|claim timestamp invalid; liveness age "
+                "cannot be proved" % (HOST, cid, owner))
             continue
         if cts > time.time():
             log(d, "REAP_CLOCK_SKEW|%s|%s|%s|cached claim timestamp is in the "
@@ -2070,8 +2595,10 @@ def reap_dead_claims():
                    fresh_revision or "missing"))
             continue
         if not fresh_ts:
-            log(d, "REAP_EXCLUDED|%s|%s|%s|fresh claim timestamp invalid; liveness "
-                   "age cannot be proved" % (HOST, cid, fresh_owner))
+            _log_once_per_hour(
+                d, "REAP_EXCLUDED_FRESH_CLAIM_TIMESTAMP_INVALID", cid,
+                "REAP_EXCLUDED|%s|%s|%s|fresh claim timestamp invalid; liveness "
+                "age cannot be proved" % (HOST, cid, fresh_owner))
             continue
         if fresh_ts > time.time():
             log(d, "REAP_CLOCK_SKEW|%s|%s|%s|fresh claim timestamp is in the "
@@ -2115,12 +2642,15 @@ def reap_dead_claims():
             # disagree the CLI answers "Already released" and writes nothing, so
             # confirm against the fold rather than trusting the return code.
             if lifecycle_state(cid) == "claimed":
-                _record_ineffective(cid)
+                _record_ineffective(
+                    cid, fresh_owner, fresh_revision, "release_reported_success_noop"
+                )
                 log(d, "REAP_INEFFECTIVE|%s|%s|%s|release reported success but the "
                        "card is still claimed; CardStore and the legacy task store "
                        "disagree, needs repair" % (HOST, cid, owner))
                 continue
             freed += 1
+            _remove_ineffective(cid, fresh_owner, fresh_revision)
             log(d, "REAPED|%s|%s|%s|revision=%s provenance=%s; no reporting host "
                    "reports this card running" %
                 (HOST, cid, owner, fresh_revision, provenance))
@@ -2128,7 +2658,7 @@ def reap_dead_claims():
             # A release that keeps failing is a divergence, not a transient. Record
             # it after the first failure so it does not retry every five minutes
             # forever, which is how 2b614910 accumulated 455 pointless calls.
-            _record_ineffective(cid)
+            _record_ineffective(cid, fresh_owner, fresh_revision, "release_command_failed")
             log(d, "REAP_FAILED|%s|%s|%s" % (HOST, cid, (r.stderr or "").strip()[:120]))
     log(d, "REAP|%s|released=%d hosts_reporting=%d cards_running=%d ineffective=%d"
         % (HOST, freed, nhosts, len(running), len(_load_ineffective())))
@@ -2210,6 +2740,149 @@ def _review_card_id(parent, outcome_ts, verdict):
     key = "fleet-review-opener-v1\0%s\0%s\0%s" % (parent, outcome_ts, verdict.upper())
     return hashlib.sha256(key.encode()).hexdigest()[:8]
 
+
+def _outcome_event_value(event):
+    """Return a typed outcome carried by one coordination event."""
+    if event.get("action") in ("verdict", "blocked"):
+        return _native_outcome_value(event)
+    if event.get("action") == "evidence":
+        return event.get("verdict")
+    if event.get("action") == "link" and any(
+            key in _fold_key(event.get("link_key")) for key in _OUTCOME_KEYS):
+        raw = str(event.get("link_value") or "")
+        match = _OUTCOME_VALUE_RE.match(raw) or _PIPE_OUTCOME_RE.search(raw)
+        return match.group(1) if match else None
+    return None
+
+
+def _event_sort_key(event):
+    return (
+        str(event.get("ts") or ""),
+        str(event.get("writer") or ""),
+        str(event.get("event_id") or ""),
+    )
+
+
+def _event_identity(event):
+    """Return the stable identity of one exact CardStore event."""
+    return hashlib.sha256(json.dumps(
+        event, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+
+
+def _matching_outcome_events(card_id, outcome_ts, verdict):
+    """Return the exact CardStore events carrying one folded outcome."""
+    wanted = str(verdict or "").strip().upper()
+    return [
+        event for event in event_rows(card_id)
+        if str(event.get("ts") or "") == str(outcome_ts or "")
+        and str(_outcome_event_value(event) or "").strip().upper() == wanted
+    ]
+
+
+def _generation_invalidated(card_id, outcome_event):
+    """Whether later source work made an outcome generation stale."""
+    boundary = _event_sort_key(outcome_event)
+    structural = {"describe", "amend_criteria", "add_dependency", "remove_dependency"}
+    for event in event_rows(card_id):
+        if _event_sort_key(event) <= boundary:
+            continue
+        action = str(event.get("action") or "")
+        if (
+            action == "link"
+            and str(event.get("link_key") or "") == "review_join"
+            and str(event.get("writer") or "") == "fleet-review-closer"
+            and "source_event_sha256=%s" % _event_identity(outcome_event)
+            in str(event.get("link_value") or "")
+        ):
+            continue
+        if (
+            action == "review_candidate_evidence"
+            and str(event.get("source_outcome_ts") or "")
+            == str(outcome_event.get("ts") or "")
+            and str(event.get("source_verdict") or "").upper()
+            == str(_outcome_event_value(outcome_event) or "").upper()
+        ):
+            continue
+        if action in structural or action in {
+                "verdict", "blocked", "evidence", "review_candidate_evidence"}:
+            return True
+        if action == "link":
+            return True
+        if action == "move" and str(event.get("column") or "") in {
+                "backlog", "open", "ready", "doing"}:
+            return True
+    return False
+
+
+def _parent_review_generation(parent, outcome_ts, verdict):
+    """Return the current immutable producer generation, or fail closed."""
+    events = _matching_outcome_events(parent, outcome_ts, verdict)
+    identities = {
+        json.dumps(event, sort_keys=True, separators=(",", ":")) for event in events
+    }
+    if len(identities) != 1:
+        return None
+    outcome_event = events[0]
+    if _generation_invalidated(parent, outcome_event):
+        return None
+    candidate = _provisional_candidate(parent, outcome_ts, str(verdict).upper())
+    if not candidate:
+        return None
+    producer, path, digest, commit, tree, ref = candidate
+    generation = hashlib.sha256(json.dumps({
+        "candidate_sha256": digest,
+        "commit": commit,
+        "outcome_event": json.loads(next(iter(identities))),
+        "parent": parent,
+        "ref": ref,
+        "tree": tree,
+        "verdict": str(verdict).upper(),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return generation, producer, path, digest, commit, tree, ref
+
+
+def _review_names_generation(review_id, generation, outcome_ts, verdict):
+    """Require the review's current PASS to name the exact parent generation."""
+    try:
+        with open(os.path.join(CARDS, review_id, "core.json"), encoding="utf-8") as fh:
+            description = str(json.load(fh).get("description") or "")
+    except (OSError, ValueError, TypeError):
+        return False
+    if "Outcome generation: %s." % generation not in description:
+        return False
+    matches = _matching_outcome_events(review_id, outcome_ts, verdict)
+    return bool(
+        len({json.dumps(event, sort_keys=True, separators=(",", ":"))
+             for event in matches}) == 1
+        and not _generation_invalidated(review_id, matches[0])
+    )
+
+
+def _review_join_value(parent, outcome_event, generation, review_id, review_event):
+    """Return deterministic evidence joining exact source and review generations."""
+    return (
+        "generation=%s source=%s source_event_sha256=%s review=%s "
+        "review_event_sha256=%s"
+        % (
+            generation,
+            parent,
+            _event_identity(outcome_event),
+            review_id,
+            _event_identity(review_event),
+        )
+    )
+
+
+def _has_review_join(parent, value):
+    return any(
+        str(event.get("action") or "") == "link"
+        and str(event.get("link_key") or "") == "review_join"
+        and str(event.get("link_value") or "") == value
+        and str(event.get("writer") or "") == "fleet-review-closer"
+        for event in event_rows(parent)
+    )
+
 def _record_review_refusal(review_id, parent, outcome_ts, verdict):
     """Persist one stable refusal key so later rotations do not retry it."""
     os.makedirs(_REVIEW_REFUSALS, exist_ok=True)
@@ -2260,10 +2933,37 @@ def _provisional_candidate(parent, outcome_ts, token):
     if "" in writers or len(writers) != 1:
         return None
     producer = next(iter(writers))
+    supplemental = {json.dumps(event, sort_keys=True, separators=(",", ":")): event
+                    for event in rows
+                    if event.get("action") == "review_candidate_evidence" and
+                    str(event.get("source_outcome_ts") or "") == str(outcome_ts or "") and
+                    str(event.get("source_verdict") or "").upper() == token and
+                    str(event.get("producer") or "").strip() == producer}
+    if len(supplemental) > 1:
+        return None
+    supplemental = list(supplemental.values())
     candidate_bytes = set()
     artifact_evidence = set()
+    typed = {"candidate_commit": set(), "candidate_tree": set(), "candidate_ref": set()}
+
+    def candidate_links(event):
+        """Yield hash-bound candidate artifacts embedded in a verdict event."""
+        links = event.get("evidence_links")
+        if not isinstance(links, list):
+            return
+        for link in links:
+            if (not isinstance(link, dict) or
+                    not str(link.get("type") or "").startswith("candidate_")):
+                continue
+            path = os.path.expanduser(str(link.get("path") or ""))
+            digest = str(link.get("sha256") or "").lower()
+            if path and re.fullmatch(r"[0-9a-f]{64}", digest):
+                yield path, digest
+
     for event in rows:
-        if (str(event.get("ts") or "") != str(outcome_ts or "") or
+        source_event = event in supplemental
+        if not source_event and (
+                str(event.get("ts") or "") != str(outcome_ts or "") or
                 str(event.get("writer") or "").strip() != producer):
             continue
         for path_key, digest_key, target in (
@@ -2272,7 +2972,25 @@ def _provisional_candidate(parent, outcome_ts, token):
             path = str(event.get(path_key) or "")
             digest = str(event.get(digest_key) or "").lower()
             if path and re.fullmatch(r"[0-9a-f]{64}", digest):
-                target.add((path, digest))
+                target.add((os.path.expanduser(path), digest))
+        candidate_bytes.update(candidate_links(event))
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        for key in typed:
+            value = event.get(key, payload.get(key))
+            if isinstance(value, str) and value.strip():
+                typed[key].add(value.strip())
+        evidence_path = os.path.expanduser(str(
+            event.get("evidence_path") or event.get("evidence_link") or ""))
+        evidence_digest = str(event.get("artifact_sha256") or "").lower()
+        if evidence_path and re.fullmatch(r"[0-9a-f]{64}", evidence_digest):
+            try:
+                with open(evidence_path, "rb") as fh:
+                    evidence_bytes = fh.read()
+                if hashlib.sha256(evidence_bytes).hexdigest() == evidence_digest:
+                    embedded = json.loads(evidence_bytes)
+                    candidate_bytes.update(candidate_links(embedded))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                pass
     candidates = candidate_bytes or artifact_evidence
     verified = []
     for path, digest in sorted(candidates):
@@ -2285,7 +3003,20 @@ def _provisional_candidate(parent, outcome_ts, token):
             verified.append((path, digest))
     if len(verified) != 1:
         return None
-    return producer, verified[0][0], verified[0][1]
+    has_typed = any(typed.values())
+    if has_typed:
+        if any(len(values) != 1 for values in typed.values()):
+            return None
+        commit = next(iter(typed["candidate_commit"])).lower()
+        tree = next(iter(typed["candidate_tree"])).lower()
+        ref = next(iter(typed["candidate_ref"]))
+        if not (re.fullmatch(r"[0-9a-f]{40}", commit) and
+                re.fullmatch(r"[0-9a-f]{40}", tree) and
+                re.fullmatch(r"(?:refs/heads/|https://)\S+", ref)):
+            return None
+    else:
+        commit = tree = ref = ""
+    return producer, verified[0][0], verified[0][1], commit, tree, ref
 
 
 def _eligible_provisional_reviews(capacity):
@@ -2315,16 +3046,23 @@ def _eligible_provisional_reviews(capacity):
             continue
         if os.path.exists(os.path.join(_REVIEW_REFUSALS, review_id + ".json")):
             continue
-        candidate = _provisional_candidate(parent, outcome_ts, token)
-        if not candidate:
-            log(d, "OPEN_REVIEW_EVIDENCE_BLOCKED|%s|%s|outcome=%s|%s" %
-                (HOST, parent, str(outcome_ts or ""), token))
+        generation = _parent_review_generation(parent, outcome_ts, token)
+        if not generation:
+            _log_once_per_hour(
+                d,
+                "OPEN_REVIEW_EVIDENCE_BLOCKED",
+                parent,
+                "OPEN_REVIEW_EVIDENCE_BLOCKED|%s|%s|outcome=%s|%s" %
+                (HOST, parent, str(outcome_ts or ""), token),
+            )
             continue
-        selected.append((parent, str(outcome_ts or ""), token, review_id) + candidate)
+        selected.append((parent, str(outcome_ts or ""), token, review_id) + generation)
     return selected
 
 
-def _authoritative_review_readback(review_id, parent, producer, path, digest):
+def _authoritative_review_readback(
+        review_id, parent, producer, path, digest, generation,
+        commit="", tree="", ref=""):
     """Fail closed unless CardStore folds the exact newly created review."""
     try:
         core_path = os.path.join(CARDS, review_id, "core.json")
@@ -2333,12 +3071,21 @@ def _authoritative_review_readback(review_id, parent, producer, path, digest):
         parent_labels = [label for label in folded_labels(review_id, core)
                          if str(label).startswith("parent-")]
         description = str(core.get("description") or "")
+        typed = not commit or all(
+            value in description for value in (
+                "Candidate commit: %s." % commit,
+                "Candidate tree: %s." % tree,
+                "Candidate ref: %s." % ref,
+            )
+        )
         return bool(
             core.get("id") == review_id and
             parent_labels == ["parent-%s" % parent] and
             lifecycle_state(review_id) == "open" and
             "Producer identity: %s." % producer in description and
-            "Candidate evidence: %s sha256=%s." % (path, digest) in description
+            "Candidate evidence: %s sha256=%s." % (path, digest) in description and
+            "Outcome generation: %s." % generation in description and
+            typed
         )
     except (OSError, ValueError, TypeError):
         return False
@@ -2354,19 +3101,27 @@ def open_provisional_reviews(capacity, dry_run=False):
         (HOST, max(0, int(capacity)), len(selected), len(selected),
          str(bool(dry_run)).lower()))
     if dry_run:
-        for parent, _ts, _token, review_id, _producer, _path, _digest in selected:
+        for row in selected:
+            parent, review_id = row[0], row[3]
             log(d, "WOULD_OPEN_REVIEW|%s|%s|review=%s" % (HOST, parent, review_id))
         return len(selected)
 
     opened = 0
-    for parent, outcome_ts, token, review_id, producer, path, digest in selected:
+    for (parent, outcome_ts, token, review_id, generation, producer, path, digest,
+         commit, tree, ref) in selected:
         # Each attempted create consumes one unit of the initial capacity budget,
         # whether it succeeds or fails.  A transient failure stops the batch.
         description = (
             "Independently review parent %s at outcome %s (%s). Producer identity: %s. "
-            "Candidate evidence: %s sha256=%s. Reviewer identity must differ."
-            % (parent, outcome_ts or "unknown", token, producer, path, digest)
+            "Candidate evidence: %s sha256=%s. Outcome generation: %s. "
+            "Reviewer identity must differ."
+            % (parent, outcome_ts or "unknown", token, producer, path, digest, generation)
         )
+        if commit:
+            description += (
+                " Candidate commit: %s. Candidate tree: %s. Candidate ref: %s."
+                % (commit, tree, ref)
+            )
         r = subprocess.run(
             [SKC, "coord", "create", "--id", review_id,
              "--title", "[REVIEW] Review provisional outcome for %s" % parent,
@@ -2376,6 +3131,7 @@ def open_provisional_reviews(capacity, dry_run=False):
              "--tag", "source-implementer-%s" % producer,
              "--by", "fleet-review-opener",
              "--criteria", "Verify exact candidate %s at sha256 %s." % (path, digest),
+             "--criteria", "Verify exact parent outcome generation %s." % generation,
              "--criteria", "Reviewer identity must differ from source implementer %s." % producer,
              "--criteria", "Record a leading PASS or FAIL verdict with immutable evidence."],
             capture_output=True, text=True,
@@ -2383,7 +3139,8 @@ def open_provisional_reviews(capacity, dry_run=False):
         if r.returncode == 0:
             _rows.pop(review_id, None)
             if not _authoritative_review_readback(
-                    review_id, parent, producer, path, digest):
+                    review_id, parent, producer, path, digest, generation,
+                    commit, tree, ref):
                 _REVIEW_READBACK_BLOCKED.add(review_id)
                 log(d, "OPEN_REVIEW_STALE_READBACK|%s|%s|review=%s" %
                     (HOST, parent, review_id))
@@ -2415,25 +3172,43 @@ def open_provisional_reviews(capacity, dry_run=False):
 
 def close_reviewed_parents():
     """Complete cards whose independent review is complete and PASSED."""
+    if HOST != "chiap08":
+        return 0
     outcomes = _load_outcomes()
     closed = 0
     for parent, reviews in _reviews_by_parent().items():
         if not os.path.isdir(os.path.join(CARDS, parent)): continue
         if lifecycle_state(parent) != "open": continue
         _pts, pval = outcomes.get(parent, (None, None))
-        if not (pval and _PASS_ANY_RE.match(str(pval))): continue
+        match = _PROVISIONAL_PASS_RE.match(str(pval or ""))
+        if not match: continue
+        generation = _parent_review_generation(parent, _pts, match.group(1).upper())
+        if not generation: continue
+        generation_id = generation[0]
         for rev in sorted(reviews):
             if lifecycle_state(rev) != "complete": continue
             _rts, rval = outcomes.get(rev, (None, None))
             rv = str(rval or "")
             if not rv.strip() or not _PASS_ONLY_RE.match(rv):
                 continue          # BLOCKED, or said nothing: the parent stays open
-            r = subprocess.run(
-                [SKC, "coord", "link", parent, "review_join",
-                 "closed on joined evidence: own outcome %s; independent review %s "
-                 "is complete with verdict %s" % (str(pval)[:40], rev, rv[:40]),
-                 "--agent", "fleet-review-closer"],
-                capture_output=True, text=True)
+            if not _review_names_generation(rev, generation_id, _rts, rv):
+                continue
+            parent_event = _matching_outcome_events(
+                parent, _pts, match.group(1).upper()
+            )[0]
+            review_event = _matching_outcome_events(rev, _rts, rv)[0]
+            join_value = _review_join_value(
+                parent, parent_event, generation_id, rev, review_event
+            )
+            if not _has_review_join(parent, join_value):
+                r = subprocess.run(
+                    [SKC, "coord", "link", parent, "review_join", join_value,
+                     "--agent", "fleet-review-closer"],
+                    capture_output=True, text=True)
+                if r.returncode != 0:
+                    log(d, "CLOSE_JOIN_FAILED|%s|%s|%s" % (
+                        HOST, parent, (r.stderr or "").strip()[:110]))
+                    break
             c = subprocess.run(
                 [SKC, "coord", "complete", parent, "--agent", "fleet-review-closer"],
                 capture_output=True, text=True)
@@ -2751,10 +3526,21 @@ _emit_shadow_pool_v2()
 # A hash partition is stable no matter what the local pool looks like.
 off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0
 _NHOST = len(ROTATION_HOSTS)
+_SEAT_BY_ID = {row[2]: seat_for(row[2], row[3]) for row in pool}
+_SEAT_BLOCKED = set()
+
+
 def owner_host(cid):
     """Return the one stable host authorized to select this card."""
-    return _partition_owner(
-        cid, ROTATION_HOSTS, HOST if cid in _PINNED_IDS else None)
+    owner, reason = _seat_owner(
+        cid, _SEAT_BY_ID.get(cid), HOST if cid in _PINNED_IDS else None
+    )
+    if owner is None:
+        if cid not in _SEAT_BLOCKED:
+            log(d, "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" % (HOST, cid, reason))
+            _SEAT_BLOCKED.add(cid)
+        return "unassigned:%s" % reason
+    return owner
 
 def owns(cid):
     # A host-pinned card is owned by its pinned host, full stop. Letting the hash
@@ -2829,16 +3615,22 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
 
 def select_compatible_lane(
         labels, escalation_required, lane_order, remaining, qwen_allowed=True,
-        qwen_exclusive=False):
+        qwen_exclusive=False, lane_health_by_name=None):
     """Choose the first free compatible lane without consuming another lane."""
     compatible,reason=lane_compatibility(
         labels,escalation_required,qwen_allowed,qwen_exclusive)
     if not compatible:
         return None,reason
+    health=lane_health_by_name or {}
+    healthy=[name for name in compatible
+             if health.get(name,(True,"healthy"))[0]]
     for lane in lane_order:
         name=lane["name"] if isinstance(lane,dict) else str(lane)
-        if name in compatible and remaining.get(name,0)>0:
+        admitted=health.get(name,(True,"healthy"))[0]
+        if name in compatible and admitted and remaining.get(name,0)>0:
             return name,"compatible"
+    if not healthy:
+        return None,"no-compatible-healthy-lane:%s"%",".join(compatible)
     return None,"no-free-lane:%s"%",".join(compatible)
 
 
@@ -2877,6 +3669,39 @@ def qwen_suitable(core):
     """Return whether Qwen may receive this card before a paid lane."""
     return not _QWEN_UNSUITABLE.search(str((core or {}).get("title") or ""))
 
+
+def _lane_model(lane, core):
+    return (_glm_model_for(core) or lane["model"]) if lane["name"]=="glm" else lane["model"]
+
+
+_LANE_HEALTH_PATH=os.environ.get(
+    "SKFLEET_LANE_HEALTH_PATH",
+    os.path.join(HOME,".skcapstone/evidence/fleet-lane-health.json"))
+_GATEWAY_ENDPOINT=os.environ.get("SKFLEET_GATEWAY_URL","http://chiap01:18790").rstrip("/")
+_CAPACITY_DOMAINS={
+    "codex":tuple(os.environ.get("SKFLEET_CODEX_CAPACITY_DOMAINS","codex").split(",")),
+    "glm":tuple(os.environ.get("SKFLEET_GLM_CAPACITY_DOMAINS","zai").split(",")),
+    "qwen":tuple(os.environ.get(
+        "SKFLEET_QWEN_CAPACITY_DOMAINS","chiap01-qwen38,chiap08-qwen38").split(",")),
+    "escalate":tuple(os.environ.get("SKFLEET_ESC_CAPACITY_DOMAINS","codex").split(",")),
+}
+_health_lanes=list(LANES)
+for _glm_model in sorted(set(_GLM_LEVELS.values())):
+    if _glm_model!=next(lane for lane in LANES if lane["name"]=="glm")["model"]:
+        _health_lanes.append({"name":"glm","model":_glm_model})
+_cycle_id=new_cycle_id(HOST,STAMP)
+_lane_health_snapshot=acquire_lane_snapshot(
+    _GATEWAY_ENDPOINT,_health_lanes,_CAPACITY_DOMAINS,
+    Path(_LANE_HEALTH_PATH),_cycle_id)
+_active_gateway_revision=str(_lane_health_snapshot.get("runtime_revision") or "")
+
+
+def _health_for(lane,model):
+    return lane_health(
+        _lane_health_snapshot,lane,model,cycle_id=_cycle_id,
+        endpoint=_GATEWAY_ENDPOINT,capacity_domains=_CAPACITY_DOMAINS[lane],
+        active_revision=_active_gateway_revision)
+
 picks=[]; _i=0
 remaining={lane["name"]:lane["free"] for lane in LANES}
 _LANE_RANK={"qwen":0,"glm":1,"codex":2,"escalate":3}
@@ -2897,10 +3722,21 @@ while _i<len(owned) and len(picks)<MAX_LAUNCH:
     _labels=_card[4]
     _esc=needs_escalation(_card[2], _card[3], _labels)
     _qwen_exclusive=qwen_first_exclusive(_card[2],_labels)
+    _card_lane_health={lane["name"]:_health_for(
+        lane["name"],_lane_model(lane,_card[3]))
+        for lane in LANES}
     _lane_name,_defer=select_compatible_lane(
-        _labels,_esc,lane_order,remaining,qwen_suitable(_card[3]),_qwen_exclusive)
+        _labels,_esc,lane_order,remaining,qwen_suitable(_card[3]),_qwen_exclusive,
+        _card_lane_health)
     if _lane_name is None:
         _lane_deferred[_defer]+=1
+        if _defer.startswith("no-compatible-healthy-lane:"):
+            details=",".join("%s=%s"%(name,state[1])
+                             for name,state in sorted(_card_lane_health.items()))
+            _log_once_per_hour(
+                d,"lane_admission",_card[2],
+                "LANE_ADMISSION_BLOCKED|%s|%s|%s|snapshot=%s"%
+                (HOST,_card[2],details,_LANE_HEALTH_PATH))
         if DRY:
             log(d,"DRY_SELECTION|%s|%s|excluded=%s"%(HOST,_card[2],_defer))
         if _defer=="no-free-lane:escalate": _esc_waiting+=1
@@ -3107,6 +3943,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d, "SEAT|%s|%s|running under seat %s as %s" % (HOST, cid, _seat, name))
     sess="%s%s"%(_LANE["prefix"],cid)
     model=_LANE["model"]
+    if _LANE["name"]=="glm":
+        model=_glm_model_for(core) or model
+    pi_tools=pi_tool_allowlist(_labels)
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
     _review_recommendation = None
@@ -3141,6 +3980,15 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],affinity_reason))
         continue
+    model=_lane_model(_LANE,fresh_claimability["core"])
+    admitted,health_reason=_health_for(_LANE["name"],model)
+    if not admitted:
+        lane_drift += 1
+        _log_once_per_hour(
+            d,"lane_admission",cid,
+            "SKIPPED_LANE_HEALTH|%s|%s|%s|lane=%s|model=%s|reason=%s"%
+            (HOST,sess,cid,_LANE["name"],model,health_reason))
+        continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
     claim_outcome=_classify_claim_outcome(
@@ -3158,13 +4006,22 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     # returns normally. Releasing only after the Pi command leaves a dead claim
     # in that case and drains the assignable pool. Bind cleanup to this exact
     # claim generation so it cannot release a newer same-owner worker.
-    inner=('release_claim() { %s coord release-claim %s --owner %s '
+    child=('release_claim() { %s coord release-claim %s --owner %s '
            '--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; '
            'trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT; '
            'env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s '
-           '--provider skgateway --model %s --thinking off -p "$(cat %s)" >%s 2>&1; '
+           '--provider skgateway --model %s --thinking off --tools %s '
+           '-p "$(cat %s)"; '
            'rc=$?; trap - EXIT HUP INT TERM; release_claim; exit $rc'
-           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,bf,lf))
+           % (SKC,cid,name,claimed_revision,name,name,name,workspace,PI,name,model,
+              pi_tools,bf))
+    wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
+    inner=shlex.join([
+        sys.executable,wrapper,"--card",cid,"--owner",name,
+        "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
+        "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--","bash","-lc",child,
+    ])
     unit=_worker_unit_name(_LANE["name"],cid)
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
@@ -3180,7 +4037,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             append_review_launch_receipt(
                 Path(HOME) / ".skcapstone",
                 _review_handoff,
-                actor="jarvis",
+                actor=name,
                 claim_revision=claimed_revision,
                 launched=ok,
             )

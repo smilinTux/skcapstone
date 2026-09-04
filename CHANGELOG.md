@@ -1,5 +1,10 @@
 # Changelog
 
+- **Card `c6eeed44`: prevent overlapping Link and Mero recurring cycles.**
+  Added per-seat nonblocking guards with immutable cycle receipts and exact Linux
+  boot and process-generation evidence for crash recovery. Overlaps now record
+  honest no-ops, while old timestamps and quiet output never imply abandonment.
+
 All notable changes to **skcapstone** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
@@ -7,13 +12,89 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `fleet_beat` module (card ad0c3bfd / A of the Worker Beat Protocol): beat
+  writer with atomic temp+rename, beat reader with malformed-file tolerance,
+  and a pure `classify()` function returning LIVE/STALLED/BLOCKED/DEAD/
+  NEVER_STARTED/UNKNOWN with the evidence class used. Invariant: no lease
+  state is derived from beat evidence alone. Shadow alert TTL 900s,
+  actuation floor 3600s (measured Syncthing p95 292s). Shared allowlist
+  validation with heartbeat.py. 20 tests including agent-beat with disposition vocabulary and skmail emission for non-RUNNING states (Card C).
+
+
+
 ### Fixed
+
+- Review handoff authorization and launch receipt attribution now use the
+  actual worker/reviewer identity instead of hardcoded `actor="jarvis"`.
+  This preserves worker identity in claim and completion events so Joules
+  and evidence are credited to the worker that did the work (card 4c9d7a12).
+- Heartbeat agent names are validated against a strict `[a-z0-9-]` allowlist
+  at model construction and beacon initialization. Names containing path
+  separators, `..`, spaces, or other special characters are rejected, never
+  silently rewritten. The malformed file already in the heartbeats directory
+  (`casimir-andrew-junior: house of kobeszko.json`) is this validation gap
+  made visible. Shared `validate_agent_name()` helper is importable by any
+  future beat writer (card 34006183 / F of the Worker Beat Protocol).
+
+
+
+### Fixed
+
+- **Card 0e010300: let the fleet bootstrap its own lane admission.** Lane
+  admission required each capacity domain's SKGateway `lastCheck` to be within
+  the 120 second snapshot bound, which reused a snapshot expiry bound as a
+  backend observation bound. SKGateway derives health rows only from proxied
+  request outcomes, so that made a lane admissible only during the two minutes
+  after somebody else sent traffic to that exact domain, and the fleet could
+  neither start nor restart itself. Measured against the live dispatch gateway,
+  up 8 hours with `codex` reading `status=up observed=true`, all four lanes
+  resolved to `(False, "unknown")`. The documented three conditions (observed
+  `up` or `degraded`, not quarantined, positive queue capacity) are now the
+  whole contract. Unobserved, malformed, and future `lastCheck` values still
+  fail closed, and snapshot freshness is still enforced. The post-restart
+  bootstrap (one warm-up request per capacity domain) is documented in
+  `docs/fleet/lane-admission-health.md`.
+
+- **Card 46c6526d: fail closed before fleet lane claims.** Fleet selection and
+  the immediate preclaim gate consume a fresh snapshot that the selector creates
+  by fetching SKGateway health and queue state once in the same cycle. The
+  atomically sealed evidence binds endpoint, capacity domains, exact model, and
+  the Git revision of the active gateway process. An unhealthy or incomplete
+  lane remains unclaimed without suppressing independently healthy lanes.
+
+- **Card ea0bc9e1: bind automatic review closeout to exact generations.** A
+  completed review closes only the unchanged producer generation it names;
+  later source or review mutations invalidate the old join. Chiap08 is the
+  sole closer, and an exact deterministic join remains retryable after a
+  transient completion failure.
+
+- **Card 244c215a: restore coordination hub truth.** Fleet digest ignores valid
+  JSONL values that are not event objects, and review launch receipts consume a
+  deterministic recommendation only for the card's live claim generation.
+
+- **Card db74500f: preserve fleet lifecycle and projection truth.** Fleet
+  rotation keeps process-backed quiet workers live, consumes refreshed folded
+  review metadata when selecting independent reviewers, and reports stale agent
+  projections without presenting them as current ownership.
 
 - Card 4bd61c62 reports empty fleet selections as empty pool, foreign hash
   partition, zero target, no compatible lane, or bounded selection race evidence
   instead of falsely claiming that dependency-clear work does not exist.
 
 ### Added
+
+- **Card ff5336c4: bound five-minute reassessment evidence.** Every fleet host
+  assesses before existing actions, only chiap08 writes the capped shared full
+  report, and other hosts emit compact summaries through existing actions.log.
+
+- **Card 8fa7d8eb: decompose the Mero blocker census and keep its gate.**
+  The 1027-line census module and 669-line test module of card 2516480b are
+  split, behavior preserved, into focused files each under 500 lines, with
+  the census test fixtures now pinning their event timestamps so the suite
+  no longer fails whenever the wall clock passes a fixture instant. Every
+  public name of the old module is re-exported unchanged.
 
 - **Card 369ca2f8: report canonical shadow scheduler truth.** Fleet rotation
   emits one exclusive primary reason per card plus diagnostic facets, verifies

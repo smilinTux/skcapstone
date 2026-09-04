@@ -372,3 +372,70 @@ class TestCLIDoctorFix:
         runner = CliRunner()
         result = runner.invoke(main, ["doctor", "--home", str(home), "--fix"])
         assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# sync:multi-writer — migrate shared single-file stores (prb-7810b08e)
+# ---------------------------------------------------------------------------
+
+
+class TestMultiWriterMigration:
+    """The doctor detects the *cause* of sync conflicts, not just the symptom."""
+
+    def test_detects_legacy_shared_stores(self, tmp_path):
+        from skcapstone.doctor import _check_multi_writer_layouts
+
+        (tmp_path / "fallbacks.json").write_text("[]")
+        activity = tmp_path / "skcode" / "activity"
+        activity.mkdir(parents=True)
+        (activity / "events.jsonl").write_text("")
+
+        check = _check_multi_writer_layouts(tmp_path)[0]
+        assert check.name == "sync:multi-writer"
+        assert not check.passed
+        assert "fallbacks.json" in check.detail
+        assert "events.jsonl" in check.detail
+
+    def test_passes_on_a_partitioned_home(self, tmp_path):
+        from skcapstone.doctor import _check_multi_writer_layouts
+
+        # Per-writer layout: nothing shared to rewrite.
+        (tmp_path / "fallbacks").mkdir()
+        (tmp_path / "fallbacks" / "lumina@node-a.jsonl").write_text("")
+        node = tmp_path / "skcode" / "activity" / "node-a"
+        node.mkdir(parents=True)
+        (node / "events.jsonl").write_text("")
+
+        check = _check_multi_writer_layouts(tmp_path)[0]
+        assert check.passed
+        assert check.category == "sync"
+
+    def test_fix_migrates_fallbacks_preserving_every_row(self, tmp_path):
+        from skcapstone.doctor import _check_multi_writer_layouts, run_fixes
+        from skcapstone.doctor import DiagnosticReport
+        from skcapstone.fallback_tracker import FallbackTracker
+
+        rows = [
+            {
+                "timestamp": f"2026-0{i + 1}-01T00:00:00+00:00",
+                "primary_model": "gpt-4o",
+                "primary_backend": "openai",
+                "fallback_model": "llama3.2",
+                "fallback_backend": "ollama",
+                "reason": f"row-{i}",
+                "success": True,
+            }
+            for i in range(3)
+        ]
+        (tmp_path / "fallbacks.json").write_text(json.dumps(rows))
+
+        report = DiagnosticReport(agent_home=str(tmp_path))
+        report.checks.extend(_check_multi_writer_layouts(tmp_path))
+        results = run_fixes(report, tmp_path)
+
+        assert [r.success for r in results] == [True]
+        assert not (tmp_path / "fallbacks.json").exists()
+        tracker = FallbackTracker(root=tmp_path / "fallbacks", agent="lumina", node="node-a")
+        assert {e.reason for e in tracker.load_events()} == {"row-0", "row-1", "row-2"}
+        # Re-running is a no-op, so --fix is safe to schedule.
+        assert _check_multi_writer_layouts(tmp_path)[0].passed

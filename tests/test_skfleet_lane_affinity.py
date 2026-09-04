@@ -28,7 +28,11 @@ def _load_lane_helpers() -> dict[str, object]:
             isinstance(node, ast.Assign)
             and any(
                 isinstance(target, ast.Name)
-                and target.id in {"_LANE_ONLY_LABELS", "_SEMANTIC_COMPLETE_ACTION"}
+                and target.id
+                in {
+                    "_LANE_ONLY_LABELS",
+                    "_SEMANTIC_COMPLETE_ACTION",
+                }
                 for target in node.targets
             )
         )
@@ -113,6 +117,21 @@ def test_no_compatible_slot_does_not_consume_another_lane() -> None:
     assert selected is None
     assert reason == "no-free-lane:codex"
     assert remaining == {"codex": 0, "glm": 3, "escalate": 2}
+
+
+def test_ordinary_card_reassigns_only_to_compatible_healthy_lane() -> None:
+    namespace = _load_lane_helpers()
+    health = {
+        "qwen": (False, "model_claim_quarantined"),
+        "glm": (False, "model_owner_backend_down"),
+        "codex": (True, "healthy"),
+    }
+    assert namespace["select_compatible_lane"](
+        [], False, ["qwen", "glm", "codex"], {"qwen": 1, "glm": 1, "codex": 1}, True, False, health
+    ) == ("codex", "compatible")
+    assert namespace["select_compatible_lane"](
+        ["qwen-first"], False, ["qwen", "codex"], {"qwen": 1, "codex": 1}, True, True, health
+    ) == (None, "no-compatible-healthy-lane:qwen")
 
 
 def test_qwen_first_is_exclusive_until_hash_bound_semantic_completion() -> None:
@@ -261,3 +280,7 @@ def test_pool_and_immediate_preclaim_use_the_same_affinity_predicate() -> None:
     assert 'qwen_suitable(fresh_claimability["core"]),' in source
     assert 'qwen_first_exclusive(cid,fresh_claimability["labels"])' in source
     assert "DRY_SELECTION|" in source
+    health_check = source.index("admitted,health_reason=_health_for(")
+    claim = source.index('claim=subprocess.run([SKC,"coord","claim"')
+    assert health_check < claim
+    assert "SKIPPED_LANE_HEALTH|" in source[health_check:claim]

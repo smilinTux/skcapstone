@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from ..agent_projection import display_state
 from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name, validate_task_id
 
@@ -185,9 +186,12 @@ def register_coord_commands(main: click.Group) -> None:
         if agents:
             console.print()
             for ag in agents:
-                icon = {"active": "[green]ACTIVE[/]", "idle": "[yellow]IDLE[/]"}.get(
-                    ag.state.value, "[dim]OFFLINE[/]"
-                )
+                projected = display_state(ag)
+                icon = {
+                    "active": "[green]ACTIVE[/]",
+                    "idle": "[yellow]IDLE[/]",
+                    "stale": "[yellow]STALE PROJECTION[/]",
+                }.get(projected, "[dim]OFFLINE[/]")
                 current = f" -> [cyan]{ag.current_task}[/]" if ag.current_task else ""
                 console.print(f"  {icon} [bold]{ag.agent}[/]{current}")
         console.print()
@@ -251,9 +255,15 @@ def register_coord_commands(main: click.Group) -> None:
             "\b\n"
             "  A review card. [REVIEW] is a governed class, so parent- is REQUIRED:\n"
             "    coord create --by mero \\\n"
+            "      --id e5f6a7b8 \\\n"
             "      --title '[SKGW-07D-R][S][REVIEW] Independently review the canary' \\\n"
             "      --tag parent-a1b2c3d4 \\\n"
+            "      --desc 'Producer identity: pi-codex-source. Candidate evidence "
+            "sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.' \\\n"
             "      --criteria 'Return hashed evidence tied to every acceptance statement.'\n"
+            "    coord link e5f6a7b8 producer_identity pi-codex-source --agent mero\n"
+            "    coord link e5f6a7b8 candidate_evidence_sha256 "
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --agent mero\n"
             "\n"
             "\b\n"
             "  Something that needs a human first. Note the LABEL, not [HUMAN] in the\n"
