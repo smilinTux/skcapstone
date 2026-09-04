@@ -723,4 +723,4 @@ Reads three registries: the skos capability registry (declared), fleet objects (
 
 **Type consistency:** `render_service_unit` / `render_timer_unit` / `UnitRenderError` defined in 0.1 are used under those exact names in 0.2. `apply_unit` / `remove_unit` defined in 0.2 are used under those names in 0.3. `reconcile` in 5.1 is consumed in 5.2.
 
-**Counts:** 24 tasks. Phase 0 has 3, Phase 1 has 6, Phase 2 has 6, Phase 3 has 4, Phase 4 has 3, Phase 5 has 3.
+**Counts:** 25 tasks. Phase 0 has 3, Phase 1 has 6, Phase 2 has 6, Phase 3 has 4, Phase 4 has 3, Phase 5 has 3.
