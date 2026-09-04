@@ -148,6 +148,17 @@ def test_projection_diagnostics_do_not_count_as_workers() -> None:
     assert worker_rows == [process]
 
 
+def test_conflict_projections_are_quarantined_and_states_are_typed() -> None:
+    monitor = load_monitor()
+    source = PATH.read_text()
+    assert "sync-conflict-" in source
+    assert "projection_state='valid' if agent in projection_agents else 'missing'" in source
+    stale = unit_worker(monitor, evidence_source="agent-projection", projection_state="stale", unit="")
+    assert monitor.assess(stale, {}, now=100)[0] == "STALE PROJECTION"
+    missing = unit_worker(monitor, projection_state="missing")
+    assert missing.projection_state == "missing"
+
+
 def test_log_age_is_never_a_stall_predicate() -> None:
     source = PATH.read_text()
     assert "output buffered until completion" in source

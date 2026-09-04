@@ -55,6 +55,7 @@ class Worker:
 
 REMOTE = r"""
 import glob,json,os,re,subprocess,time
+from datetime import datetime,timezone
 from pathlib import Path
 from skcoord.card_store import CardStore
 host=os.uname().nodename.split('.')[0]
@@ -65,6 +66,17 @@ unit_lines=subprocess.run(
 units={p[0]:p[1:4] for line in unit_lines if len(p:=line.split()) >= 4}
 seen_units=set()
 process_agents=set()
+projection_agents=set()
+for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
+    if '.sync-conflict-' in path.name:
+        continue
+    try:
+        projection=json.loads(path.read_text())
+        agent=projection.get('agent','')
+        if isinstance(agent,str) and agent and agent == path.stem:
+            projection_agents.add(agent)
+    except (OSError,json.JSONDecodeError,TypeError,AttributeError):
+        pass
 try:
     tmux=set(subprocess.run(['tmux','list-sessions','-F','#{session_name}'],capture_output=True,text=True).stdout.split())
 except Exception:
@@ -95,7 +107,7 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
             folded=CardStore(Path.home()/'.skcapstone').fold(card)
             status=folded.status.value
             claim='exact' if folded.owner==agent and folded.meta.get('_claim_revision') else 'mismatch'
-            projection_state='valid'
+            projection_state='valid' if agent in projection_agents else 'missing'
             projection_error=''
             claim_owner=folded.owner or ''
             claim_revision=str(folded.meta.get('_claim_revision',''))
@@ -136,16 +148,38 @@ for unit in sorted(set(units)-seen_units):
     print(json.dumps(dict(host=host,agent=owner or 'unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state=claim,card_status=status,unit_missing_process=True,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=owner,claim_revision=revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
 for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
     try:
+        if '.sync-conflict-' in path.name:
+            continue
         projection=json.loads(path.read_text())
         agent=projection.get('agent','')
         card=projection.get('current_task','')
-        if not isinstance(agent, str) or not isinstance(card, str):
+        if not isinstance(agent, str) or not isinstance(card, str) or not agent or not card:
             raise TypeError('null projection field')
+        if agent != path.stem:
+            raise TypeError('projection filename identity mismatch')
+        projection_agents.add(agent)
         if projection.get('state') != 'active' or len(card) != 8 or agent in process_agents: continue
         expected=next((u for u in units if u.endswith('-'+card+'.service')), '')
         if expected: continue
         revision=str(projection.get('_claim_revision',''))
-        print(json.dumps(dict(host=host,agent=agent,card=card,pid=0,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit='not-found',tmux=False,claim_state='exact' if card in projection.get('claimed_tasks',[]) else 'mismatch',card_status='unknown',unit_missing_process=False,unit_load='not-found',unit_active='inactive',unit_sub='dead',claim_owner=agent,claim_revision=revision,evidence_source='agent-projection+systemd+proc',projection_state='valid',projection_error=''),sort_keys=True))
+        try:
+            folded=CardStore(Path.home()/'.skcapstone').fold(card)
+            owner=folded.owner if folded else ''
+            folded_revision=str(folded.meta.get('_claim_revision','')) if folded else ''
+            status=folded.status.value if folded else 'unknown'
+        except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            owner=folded_revision=''
+            status='unknown'
+        claim='exact' if owner == agent and revision and folded_revision == revision else 'mismatch'
+        stale=False
+        try:
+            seen=projection.get('last_seen')
+            if not isinstance(seen,str): raise ValueError
+            observed=datetime.fromisoformat(seen.replace('Z','+00:00'))
+            stale=(datetime.now(timezone.utc)-observed).total_seconds() > 900
+        except (TypeError,ValueError):
+            stale=True
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=0,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit='not-found',tmux=False,claim_state=claim,card_status=status,unit_missing_process=False,unit_load='not-found',unit_active='inactive',unit_sub='dead',claim_owner=owner,claim_revision=folded_revision,evidence_source='agent-projection+systemd+proc',projection_state='stale' if stale else 'valid',projection_error=''),sort_keys=True))
     except (OSError,json.JSONDecodeError,TypeError,AttributeError) as exc:
         # Keep malformed projection visibility without confusing it with SSH failure.
         print(json.dumps(dict(host=host,agent='projection-malformed',card='unknown',pid=0,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit='not-found',tmux=False,claim_state='malformed-projection',card_status='unknown',unit_missing_process=False,unit_load='not-found',unit_active='inactive',unit_sub='dead',claim_owner='',claim_revision='',evidence_source='agent-projection',projection_state='malformed',projection_error=type(exc).__name__),sort_keys=True))
@@ -188,6 +222,8 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
     if worker.projection_state == "malformed" or worker.claim_state == "malformed-projection":
         samples.pop(f"{worker.host}/{worker.unit}", None)
         return "MALFORMED PROJECTION", now
+    if worker.projection_state == "stale":
+        return "STALE PROJECTION", now
     key = f"{worker.host}/{worker.unit}"
     if worker.unit in {"", "not-found"}:
         samples.pop(key, None)
@@ -308,6 +344,8 @@ def main() -> int:
             state = "SETTLING unit without Pi process"
         elif disposition == "STALE PROJECTION":
             state = "STALE PROJECTION no live exact claim"
+        elif row.projection_state == "missing":
+            state = "LIVE WITHOUT PROJECTION (process/unit truth)"
         elif row.card_status in {"done", "archived", "void"}:
             state = f"TERMINAL STILL RUNNING ({row.card_status})"
             alerts.append((row, "terminal"))
