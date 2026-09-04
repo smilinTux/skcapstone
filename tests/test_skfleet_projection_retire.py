@@ -36,6 +36,8 @@ def build_world(tmp_path: Path) -> Path:
     agents = tmp_path / ".skcapstone" / "coordination" / "agents"
     agents.mkdir(parents=True)
     old_seen = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+    naive_seen = (datetime.now() - timedelta(days=40)).isoformat()
+    rollback_seen = (datetime.now(timezone.utc) - timedelta(days=35)).isoformat()
     write_projection(
         agents,
         "pi-a-host-aaaa1111.json",
@@ -72,6 +74,24 @@ def build_world(tmp_path: Path) -> Path:
         {"agent": "someone-else", "current_task": None, "last_seen": old_seen},
         40,
     )
+    write_projection(
+        agents,
+        "pi-a-host-naive0000.json",
+        {"agent": "pi-a-host-naive0000", "current_task": None, "last_seen": naive_seen},
+        40,
+    )
+    write_projection(
+        agents,
+        "pi-a-host-roll1111.json",
+        {"agent": "pi-a-host-roll1111", "current_task": None, "last_seen": rollback_seen},
+        40,
+    )
+    write_projection(
+        agents,
+        "pi-stem.json.json",
+        {"agent": "pi-stem.json", "current_task": None, "last_seen": old_seen},
+        40,
+    )
     broken = agents / "pi-a-host-88888888.json"
     broken.write_text("{not json", encoding="utf-8")
     stamp_age(broken, 40)
@@ -84,9 +104,7 @@ def build_world(tmp_path: Path) -> Path:
     return agents
 
 
-def test_dry_run_lists_only_old_identity_valid_idle(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def test_dry_run_lists_only_old_identity_valid_idle(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     tool = load_tool()
     agents = build_world(tmp_path)
@@ -98,14 +116,15 @@ def test_dry_run_lists_only_old_identity_valid_idle(
     assert "eeee5555" not in out  # seen 1 day ago
     assert "ffff6666" not in out  # unreadable last_seen
     assert "77777777" not in out  # identity mismatch
+    assert "naive0000" not in out  # offset-naive last_seen
+    assert "roll1111" not in out  # last_seen newer than mtime
+    assert "pi-stem.json" not in out  # stem trick
     assert "88888888" not in out  # malformed
     assert "99999999" not in out  # sync-conflict copy
     assert agents.joinpath("pi-a-host-aaaa1111.json").exists()
 
 
-def test_apply_moves_manifests_and_is_idempotent(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def test_apply_moves_manifests_and_is_idempotent(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     tool = load_tool()
     agents = build_world(tmp_path)
@@ -123,8 +142,7 @@ def test_apply_moves_manifests_and_is_idempotent(
     ):
         assert agents.joinpath(kept).exists(), kept
     records = [
-        json.loads(line)
-        for line in tool.manifest_path().read_text(encoding="utf-8").splitlines()
+        json.loads(line) for line in tool.manifest_path().read_text(encoding="utf-8").splitlines()
     ]
     assert [r["event"] for r in records] == ["moved", "moved"]
     assert all(r["sha256"] and r["original_path"] for r in records)
@@ -136,9 +154,7 @@ def test_apply_moves_manifests_and_is_idempotent(
     assert agents.joinpath("pi-a-host-cccc3333.json").read_bytes() == before
 
 
-def test_restore_returns_file_and_updates_manifest(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def test_restore_returns_file_and_updates_manifest(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     tool = load_tool()
     agents = build_world(tmp_path)
@@ -149,3 +165,41 @@ def test_restore_returns_file_and_updates_manifest(
     assert "pi-a-host-aaaa1111.json" not in tool.moved_records()
     # Restoring again fails closed instead of duplicating.
     assert tool.main(["--restore", "pi-a-host-aaaa1111.json"]) == 1
+
+
+def test_restore_refuses_sibling_escape_path(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tool = load_tool()
+    agents = build_world(tmp_path)
+    assert tool.main(["--apply"]) == 0
+    record = tool.moved_records()["pi-a-host-aaaa1111.json"]
+    record["original_path"] = str(agents.parent / "agents-evil" / "pi-a-host-aaaa1111.json")
+    lines = tool.manifest_path().read_text(encoding="utf-8").splitlines()
+    lines[0] = json.dumps(record, sort_keys=True)
+    tool.manifest_path().write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert tool.main(["--restore", "pi-a-host-aaaa1111.json"]) == 1
+    assert not (agents.parent / "agents-evil").exists()
+    assert tool.quarantine_dir().joinpath("pi-a-host-aaaa1111.json").is_file()
+
+
+def test_corrupt_manifest_refuses_all_mutation(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tool = load_tool()
+    agents = build_world(tmp_path)
+    tool.quarantine_dir().mkdir(parents=True)
+    tool.manifest_path().write_text("{bad-json\n", encoding="utf-8")
+    assert tool.main(["--apply"]) == 1
+    assert agents.joinpath("pi-a-host-aaaa1111.json").is_file()
+    assert not tool.quarantine_dir().joinpath("pi-a-host-aaaa1111.json").exists()
+    assert tool.main(["--restore", "pi-a-host-aaaa1111.json"]) == 1
+
+
+def test_restore_refuses_digest_mismatch(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tool = load_tool()
+    build_world(tmp_path)
+    assert tool.main(["--apply"]) == 0
+    quarantined = tool.quarantine_dir().joinpath("pi-a-host-aaaa1111.json")
+    quarantined.write_text("tampered bytes", encoding="utf-8")
+    assert tool.main(["--restore", "pi-a-host-aaaa1111.json"]) == 1
+    assert quarantined.is_file()

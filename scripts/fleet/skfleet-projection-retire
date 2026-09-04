@@ -39,9 +39,13 @@ def parse_last_seen(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # Offset-naive timestamps are not safely comparable to UTC; fail closed.
+    if observed.tzinfo is None:
+        return None
+    return observed
 
 
 def sha256_of(path: Path) -> str:
@@ -50,6 +54,13 @@ def sha256_of(path: Path) -> str:
         for chunk in iter(lambda: stream.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def canonical_agent(path: Path, agent: str) -> bool:
+    """Strict filename identity: no dots, separators, or traversal in agent."""
+    if not agent or any(bad in agent for bad in (".", "/", "\\")):
+        return False
+    return path.name == f"{agent}.json"
 
 
 def eligible(path: Path, now: datetime) -> tuple[bool, str]:
@@ -65,6 +76,8 @@ def eligible(path: Path, now: datetime) -> tuple[bool, str]:
     agent = projection.get("agent", "")
     if not isinstance(agent, str) or not agent or agent != path.stem:
         return False, "identity mismatch stays diagnostic"
+    if not canonical_agent(path, agent):
+        return False, "non-canonical filename stays diagnostic"
     task = projection.get("current_task", "")
     if task not in (None, ""):
         return False, "active or holding a task is never retired"
@@ -77,10 +90,38 @@ def eligible(path: Path, now: datetime) -> tuple[bool, str]:
         return False, f"seen {int((now - observed).total_seconds() // 3600)}h ago"
     if modified >= cutoff:
         return False, "file modified inside the retirement window"
+    # ponytail: 300s tolerates filesystem timestamp granularity, nothing wider.
+    if (observed - modified).total_seconds() > 300:
+        return False, "last_seen newer than mtime stays (rollback evidence)"
     return True, f"idle since {observed.isoformat()}"
 
 
+class ManifestError(RuntimeError):
+    """Raised when the manifest history is malformed; all mutation refuses."""
+
+
+def parse_manifest_lines() -> list[dict]:
+    if not manifest_path().exists():
+        return []
+    records: list[dict] = []
+    for number, line in enumerate(
+        manifest_path().read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ManifestError(f"manifest line {number} is malformed") from exc
+        if not isinstance(record, dict):
+            raise ManifestError(f"manifest line {number} is not an object")
+        records.append(record)
+    return records
+
+
 def append_manifest(record: dict) -> None:
+    # Standing rail: parse every existing line before appending anything.
+    parse_manifest_lines()
     quarantine_dir().mkdir(parents=True, exist_ok=True)
     with manifest_path().open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
@@ -89,16 +130,10 @@ def append_manifest(record: dict) -> None:
 def moved_records() -> dict[str, dict]:
     """filename -> latest manifest record, honoring later restored events."""
     state: dict[str, dict] = {}
-    if not manifest_path().exists():
-        return state
-    for line in manifest_path().read_text(encoding="utf-8").splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for record in parse_manifest_lines():
         filename = record.get("filename")
         if not isinstance(filename, str):
-            continue
+            raise ManifestError("manifest record without a filename")
         if record.get("event") == "moved":
             state[filename] = record
         elif record.get("event") == "restored":
@@ -111,22 +146,33 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--apply", action="store_true", help="perform the moves (default: dry run)"
     )
-    parser.add_argument(
-        "--restore", metavar="FILENAME", help="move one quarantined file back"
-    )
+    parser.add_argument("--restore", metavar="FILENAME", help="move one quarantined file back")
     args = parser.parse_args(argv)
 
     now = datetime.now(timezone.utc)
 
     if args.restore:
-        record = moved_records().get(args.restore)
+        try:
+            record = moved_records().get(args.restore)
+        except ManifestError as exc:
+            print(f"refusing restore: {exc}")
+            return 1
         if record is None:
             print(f"no quarantined record for {args.restore}")
             return 1
         source = quarantine_dir() / args.restore
         target = Path(str(record.get("original_path") or ""))
-        if not source.is_file() or not str(target).startswith(str(agents_dir())):
-            print(f"cannot restore {args.restore}: source missing or bad original path")
+        agents = agents_dir().resolve()
+        confined = (
+            target.name == args.restore
+            and target.is_absolute()
+            and target.resolve(strict=False).is_relative_to(agents)
+        )
+        if not source.is_file() or not confined:
+            print(f"cannot restore {args.restore}: source missing or unconfined path")
+            return 1
+        if sha256_of(source) != record.get("sha256"):
+            print(f"cannot restore {args.restore}: digest mismatch against manifest")
             return 1
         if target.exists():
             print(f"cannot restore {args.restore}: original path already exists")
@@ -144,6 +190,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     retired = skipped = 0
+    if args.apply:
+        try:
+            parse_manifest_lines()
+        except ManifestError as exc:
+            print(f"refusing to apply: {exc}")
+            return 1
     for path in sorted(agents_dir().glob(GLOB)):
         ok, reason = eligible(path, now)
         if not ok:
@@ -159,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             skipped += 1
             continue
         digest = sha256_of(path)
+        size = path.stat().st_size
         quarantine_dir().mkdir(parents=True, exist_ok=True)
         shutil.move(str(path), str(destination))
         append_manifest(
@@ -167,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
                 "filename": path.name,
                 "original_path": str(path),
                 "sha256": digest,
-                "bytes": path.stat().st_size if path.exists() else destination.stat().st_size,
+                "bytes": size,
                 "moved_at": now.isoformat(),
             }
         )
