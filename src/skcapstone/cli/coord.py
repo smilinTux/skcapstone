@@ -70,6 +70,25 @@ def register_coord_commands(main: click.Group) -> None:
     register_coord_amend_commands(coord)
     register_portfolio_plan_command(coord)
 
+    @coord.command("validate-store")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_validate_store(home):
+        """Report every malformed structural CardStore JSONL line.
+
+        Output is one JSON object per finding and contains no event payload:
+        only card, relative file, physical line, exact-byte SHA-256, and parser
+        reason. The scan is exhaustive and read-only. A finding exits 1.
+        """
+        import json
+
+        from skcoord.card_store_validator import find_malformed_cardstore_lines
+
+        findings = find_malformed_cardstore_lines(Path(home).expanduser())
+        for finding in findings:
+            click.echo(json.dumps(finding.as_dict(), sort_keys=True))
+        if findings:
+            raise click.exceptions.Exit(1)
+
     @coord.command("status")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--tag", multiple=True, help="Only tasks carrying this tag (repeatable).")
