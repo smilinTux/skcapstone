@@ -148,20 +148,32 @@ for unit in sorted(set(units)-seen_units):
     pid=int(subprocess.run(['systemctl','--user','show',unit,'-p','MainPID','--value'],capture_output=True,text=True).stdout.strip() or 0)
     state=units[unit]
     print(json.dumps(dict(host=host,agent=owner or 'unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state=claim,card_status=status,unit_missing_process=True,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=owner,claim_revision=revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
+idle_projections=0
+sync_conflict_projections=0
 for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
     try:
         if '.sync-conflict-' in path.name:
+            sync_conflict_projections+=1
             continue
         projection=json.loads(path.read_text())
         if projection.get('host') != host:
             continue
         agent=projection.get('agent','')
         card=projection.get('current_task','')
-        if not isinstance(agent, str) or not isinstance(card, str) or not agent or not card:
-            raise TypeError('null projection field')
+        if not isinstance(agent, str) or not agent:
+            raise TypeError('invalid projection agent')
+        # Identity is validated before idle acceptance so a mismatched
+        # historical file stays diagnostic instead of silently idle.
         if agent != path.stem:
             raise TypeError('projection filename identity mismatch')
         projection_agents.add(agent)
+        # Null or empty current_task is a valid idle projection. It is
+        # diagnostics-only and never a worker, alarm, or malformed row.
+        if card is None or card == '':
+            idle_projections+=1
+            continue
+        if not isinstance(card, str):
+            raise TypeError('invalid projection task')
         if projection.get('state') != 'active' or len(card) != 8 or agent in process_agents: continue
         expected=next((u for u in units if u.endswith('-'+card+'.service')), '')
         if expected: continue
@@ -187,6 +199,7 @@ for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
     except (OSError,json.JSONDecodeError,TypeError,AttributeError) as exc:
         # Keep malformed projection visibility without confusing it with SSH failure.
         print(json.dumps(dict(host=host,agent='projection-malformed',card='unknown',pid=0,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit='not-found',tmux=False,claim_state='malformed-projection',card_status='unknown',unit_missing_process=False,unit_load='not-found',unit_active='inactive',unit_sub='dead',claim_owner='',claim_revision='',evidence_source='agent-projection',projection_state='malformed',projection_error=type(exc).__name__),sort_keys=True))
+print(json.dumps(dict(host=host,projection_diagnostics=dict(idle_projections=idle_projections,sync_conflict_projections=sync_conflict_projections)),sort_keys=True))
 """
 
 
@@ -273,20 +286,31 @@ def collect(host: str) -> list[Worker]:
     if result.returncode:
         raise OSError(f"{host}: ssh collector failed with rc={result.returncode}")
     rows = []
+    diagnostics: dict[str, dict] = {}
     for line in result.stdout.splitlines():
         try:
-            rows.append(Worker(**json.loads(line)))
-        except (TypeError, json.JSONDecodeError):
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
             continue
-    return rows
+        if isinstance(parsed, dict) and "projection_diagnostics" in parsed:
+            diagnostics[str(parsed.get("host", host))] = parsed["projection_diagnostics"]
+            continue
+        try:
+            rows.append(Worker(**parsed))
+        except TypeError:
+            continue
+    return rows, diagnostics
 
 
 def main() -> int:
     rows = []
     unreachable = []
+    host_diagnostics: dict[str, dict] = {}
     for host in HOSTS:
         try:
-            rows.extend(collect(host))
+            host_rows, diagnostics = collect(host)
+            rows.extend(host_rows)
+            host_diagnostics.update(diagnostics)
         except (subprocess.TimeoutExpired, OSError):
             unreachable.append(host)
     rows.sort(key=lambda row: (-row.elapsed, row.host, row.agent))
@@ -374,6 +398,14 @@ def main() -> int:
         )
     if not rows:
         print("no fleet worker processes found. This says nothing about board eligibility.")
+    if host_diagnostics:
+        print("projection diagnostics (historical, never counted as workers):")
+        for host_name in sorted(host_diagnostics):
+            counts = host_diagnostics[host_name]
+            print(
+                f"  {host_name}: idle={counts.get('idle_projections', 0)} "
+                f"sync-conflict={counts.get('sync_conflict_projections', 0)}"
+            )
     print()
     if unreachable:
         print("unreachable hosts: " + ", ".join(unreachable))
