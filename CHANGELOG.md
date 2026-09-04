@@ -17,6 +17,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `fleet_beat` module (card ad0c3bfd / A of the Worker Beat Protocol): beat
+  writer with atomic temp+rename, beat reader with malformed-file tolerance,
+  and a pure `classify()` function returning LIVE/STALLED/BLOCKED/DEAD/
+  NEVER_STARTED/UNKNOWN with the evidence class used. Invariant: no lease
+  state is derived from beat evidence alone. Shadow alert TTL 900s,
+  actuation floor 3600s (measured Syncthing p95 292s). Shared allowlist
+  validation with heartbeat.py. 20 tests including agent-beat with disposition vocabulary and skmail emission for non-RUNNING states (Card C).
+
+
+
 ### Fixed
 
 - Review handoff authorization and launch receipt attribution now use the
