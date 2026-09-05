@@ -1280,6 +1280,246 @@ def _load_outcomes():
             record(cid,verdicts[0],value,1)
     return _outcomes
 
+# ---- SKGit merge-on-PASS verdict join (card 87da4e8e) -----------------------
+# The fleet actor decides when a reviewed private SKGit candidate may be
+# fast-forwarded into main. Three independent facts must all hold:
+#
+#   1. The producer card's LATEST recorded outcome is a NON-PROVISIONAL PASS.
+#      PASS_FOR_REVIEW / PASS_READY_* are provisional and never integrate.
+#   2. An independent review card that names the producer as parent is
+#      complete, and its own latest outcome is an exact PASS (never a
+#      provisional variant).
+#   3. The remote repository is unchanged: the candidate branch is a direct
+#      descendant of current main, the reviewed tree equals the resulting tree,
+#      and there is no remote drift. Any divergence, tree mismatch, or drift
+#      fails closed and leaves the branch and main unchanged.
+#
+# The sweep is idempotent: if main already equals the candidate commit it
+# records a no-op. Every decision logs branch, base, candidate, reviewed tree,
+# final main, and remote readback. No rebase, force push, merge commit, or
+# unrelated mutation happens here; only a true fast-forward push to main.
+_SKGIT_HOST = "git@skgit.skstack01.douno.it"
+_SKGIT_PORT = "222"
+# The two private SKGit repositories this sweep may integrate into.
+_SKGIT_REPOS = {
+    "smilinTux/sklegal.git": "SKLegal",
+    "smilinTux/hammertime.git": "HammerTime",
+}
+# Strict classifier: exactly "PASS" (optionally with trailing detail), and
+# NEVER a provisional PASS_FOR_* / PASS_READY_* or any other value.
+_SKGIT_PASS_ONLY_RE = re.compile(r"^\s*PASS\b(?![_\s]PASS)", re.I)
+
+def _skgit_pass_only_ok(val):
+    """True only for an exact non-provisional PASS, never PASS_FOR_* or PASS_READY_*."""
+    if val is None:
+        return False
+    text = str(val).strip()
+    if not text:
+        return False
+    # Exact non-provisional PASS: leading "PASS" followed by end or non-word/
+    # pipe separator, and NOT followed by an underscore (which starts a
+    # provisional variant).
+    return bool(re.match(r"^PASS(?!_)", text, re.I))
+
+def _skgit_review_passed(parent, reviews=None):
+    """Return the completed independent review card id for a producer, or None."""
+    if reviews is None:
+        reviews = _reviews_by_parent()
+    outcomes = _load_outcomes()
+    for rev in sorted(reviews.get(parent, ())):
+        if lifecycle_state(rev) != "complete":
+            continue
+        _rts, rval = outcomes.get(rev, (None, None))
+        rv = str(rval or "")
+        if _skgit_pass_only_ok(rv):
+            return rev
+    return None
+
+def _skgit_eligible_parents():
+    """Return (parent_card, review_card) pairs ready for integration."""
+    outcomes = _load_outcomes()
+    reviews = _reviews_by_parent()
+    eligible = []
+    for parent in sorted(outcomes):
+        pts, pval = outcomes.get(parent, (None, None))
+        if not _skgit_pass_only_ok(str(pval or "")):
+            continue
+        if lifecycle_state(parent) != "open":
+            continue
+        rev = _skgit_review_passed(parent, reviews)
+        if rev:
+            eligible.append((parent, rev))
+    return eligible
+
+def _skgit_repo_for_card(cid):
+    """Map a card to its private SKGit repository, or None if out of scope."""
+    try:
+        core = json.load(open(os.path.join(CARDS, cid, "core.json")))
+    except Exception:
+        return None
+    blob = json.dumps(core.get("tags", [])) + " " + str(core.get("title") or "")
+    blob = blob.lower()
+    if "sklegal" in blob:
+        return _SKGIT_REPOS["smilinTux/sklegal.git"]
+    if "hammertime" in blob or "hammer" in blob:
+        return _SKGIT_REPOS["smilinTux/hammertime.git"]
+    return None
+
+def _skgit_git(*args, timeout=120):
+    """Run one git command and return (rc, stdout)."""
+    proc = subprocess.run(["git"] + list(args), capture_output=True, text=True, timeout=timeout)
+    return proc.returncode, (proc.stdout or "").strip()
+
+def _skgit_repo_url(repo):
+    """Build the private SKGit ssh url for a repository display name."""
+    repo = str(repo)
+    if repo == "SKLegal":
+        slug = "sklegal.git"
+    elif repo == "HammerTime":
+        slug = "hammertime.git"
+    else:
+        return None
+    return "ssh://%s:%s/smilinTux/%s" % (_SKGIT_HOST, _SKGIT_PORT, slug)
+
+def _skgit_remote_head(repo):
+    """Read the current remote main head via ls-remote (a remote readback)."""
+    url = _skgit_repo_url(repo)
+    if not url:
+        return None, "unknown repo %s" % repo
+    rc, out = _skgit_git("ls-remote", url, "refs/heads/main")
+    if rc != 0:
+        return None, out
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[1].strip() == "refs/heads/main":
+            return parts[0].strip(), out
+    return None, out
+
+def _skgit_candidate_info(parent):
+    """Return (branch, candidate_commit, reviewed_tree) for a producer card, or None."""
+    ev = os.path.join(_EVID_DIR, "*.jsonl")
+    branch = None
+    cand = None
+    tree = None
+    for path in glob.glob(ev):
+        for line in open(path, encoding="utf-8", errors="replace"):
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            if str(event.get("card_id") or "").lower() != parent.lower():
+                continue
+            if event.get("action") != "link":
+                continue
+            key = str(event.get("link_key") or "").lower().replace("-", "_")
+            val = str(event.get("link_value") or "").strip()
+            if not val:
+                continue
+            if key in ("branch", "branch_name", "candidate_branch"):
+                branch = val
+            elif key in ("candidate", "candidate_commit", "commit", "candidate_sha"):
+                cand = val
+            elif key in ("tree", "reviewed_tree", "candidate_tree"):
+                tree = val
+    if cand and branch:
+        return branch, cand, tree
+    return None
+
+def _skgit_is_ancestor(ancestor, descendant, repo_dir):
+    """True if `ancestor` is reachable from `descendant` (true fast-forward)."""
+    rc, _ = _skgit_git("-C", repo_dir, "merge-base", "--is-ancestor", ancestor, descendant)
+    return rc == 0
+
+def _skgit_tree_hash(repo_dir, commit):
+    rc, out = _skgit_git("-C", repo_dir, "rev-parse", commit + "^{tree}")
+    return out if rc == 0 else None
+
+def _skgit_integrate_one(parent, repo, dry=False):
+    """Fast-forward one reviewed SKGit candidate to main, failing closed.
+
+    Returns a dict describing the decision: status is one of INTEGRATED,
+    ALREADY_INTEGRATED, or REFUSED with a reason. No rebase, force push,
+    merge commit, or unrelated mutation.
+    """
+    info = _skgit_candidate_info(parent)
+    if not info:
+        return {"status": "REFUSED", "reason": "no_candidate_info"}
+    branch, cand, tree = info
+    if not re.fullmatch(r"[0-9a-f]{40}", cand):
+        return {"status": "REFUSED", "reason": "candidate_not_commit"}
+
+    url = _skgit_repo_url(repo)
+    if not url:
+        return {"parent": parent, "repo": repo, "status": "REFUSED", "reason": "unknown_repo"}
+    # Use a throwaway worktree so we never touch a shared or live checkout.
+    worktree_dir = os.path.join(HOME, ".skcapstone/evidence/work/87da4e8e/worktrees", parent)
+    result = {
+        "parent": parent, "repo": repo, "branch": branch,
+        "candidate": cand, "reviewed_tree": tree,
+    }
+    # Ensure worktree exists (clone if missing).
+    if not os.path.isdir(worktree_dir):
+        os.makedirs(os.path.dirname(worktree_dir), exist_ok=True)
+        rc, out = _skgit_git("clone", "--depth", "200", url, worktree_dir, timeout=300)
+        result["clone_rc"] = rc
+        if rc != 0:
+            return {**result, "status": "REFUSED", "reason": "clone_failed", "detail": out[:200]}
+    # Fetch and read back the remote main head (remote readback).
+    _skgit_git("-C", worktree_dir, "fetch", "origin", "main", timeout=120)
+    base, _raw = _skgit_remote_head(repo)
+    result["base"] = base
+    if not base:
+        return {**result, "status": "REFUSED", "reason": "remote_head_unreadable"}
+    # If main already equals the candidate, integration is a no-op (idempotent).
+    if base == cand:
+        return {**result, "status": "ALREADY_INTEGRATED"}
+    # Fast-forward requires candidate to be a descendant of base.
+    if not _skgit_is_ancestor(base, cand, worktree_dir):
+        return {**result, "status": "REFUSED", "reason": "not_fast_forward"}
+    # The resulting tree must equal the reviewed tree (if a reviewed tree was recorded).
+    final_tree = _skgit_tree_hash(worktree_dir, cand)
+    if tree and final_tree and tree != final_tree:
+        return {**result, "final_tree": final_tree, "status": "REFUSED", "reason": "tree_mismatch"}
+    if dry:
+        return {**result, "status": "DRY_RUN", "final_tree": final_tree}
+    # True fast-forward push: push candidate as new main without a merge commit.
+    rc, out = _skgit_git("-C", worktree_dir, "push", "origin", "%s:refs/heads/main" % cand, timeout=120)
+    result["push_rc"] = rc
+    if rc != 0:
+        return {**result, "status": "REFUSED", "reason": "push_failed", "detail": out[:200]}
+    # Remote readback to confirm main advanced to the candidate.
+    new_head, _raw2 = _skgit_remote_head(repo)
+    result["final_main"] = new_head
+    if new_head != cand:
+        return {**result, "status": "REFUSED", "reason": "readback_drift"}
+    return {**result, "status": "INTEGRATED"}
+
+def _skgit_merge_on_pass(dry=False):
+    """Run the SKGit merge-on-PASS sweep. Returns the list of per-card decisions."""
+    decisions = []
+    for parent, rev in _skgit_eligible_parents():
+        repo = _skgit_repo_for_card(parent)
+        if not repo:
+            decisions.append({"parent": parent, "review": rev, "repo": None,
+                              "status": "OUT_OF_SCOPE", "reason": "not_sklegal_or_hammertime"})
+            continue
+        decision = _skgit_integrate_one(parent, repo, dry=dry)
+        decision["review"] = rev
+        decisions.append(decision)
+        status = decision.get("status")
+        log(d, "SKGIT_MERGE_ON_PASS|%s|parent=%s|review=%s|repo=%s|branch=%s|base=%s|candidate=%s|tree=%s|final_main=%s|status=%s|reason=%s"
+            % (HOST, parent, rev, repo, decision.get("branch"), decision.get("base"),
+                decision.get("candidate"), decision.get("reviewed_tree"),
+                decision.get("final_main") or decision.get("final_tree"),
+                status, decision.get("reason", "")))
+    return decisions
+
+# Run the SKGit merge-on-PASS sweep only when explicitly requested, so a
+# normal rotation tick does not push to main. The scheduler invokes the
+# sweep on its own cadence.
+if os.environ.get("SKFLEET_SKGIT_MERGE_ON_PASS") == "1" and not DRY:
+    _skgit_merge_on_pass(dry=False)
+
 def _ts_epoch(value):
     try:
         return datetime.datetime.fromisoformat(str(value).replace("Z","+00:00")).timestamp()
