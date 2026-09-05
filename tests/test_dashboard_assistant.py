@@ -11,13 +11,13 @@ from skcapstone.card_store import CardStore, import_from_legacy
 from skcapstone.coordination import Board, Task
 
 
-
 import skdashboard.dashboard_assistant as _da_probe
 
 pytestmark = pytest.mark.skipif(
     not hasattr(_da_probe, "board_summary"),
     reason="skdashboard.dashboard_assistant.board_summary removed; tests need rewrite against AssistantScope API",
 )
+
 
 @pytest.fixture
 def home(tmp_path):
