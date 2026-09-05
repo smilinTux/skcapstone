@@ -38,13 +38,14 @@ def _storage_snapshot(home: Path) -> dict[str, bytes | None]:
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["describe", "legacy01", "--description", "changed"],
-        ["link", "legacy01", "pr", "https://example.test/1"],
-        ["amend-criteria", "legacy01", "--criteria", "changed"],
+        ["describe", "1e9ac101", "--description", "changed"],
+        ["label", "1e9ac101", "reviewed"],
+        ["link", "1e9ac101", "pr", "https://example.test/1"],
+        ["amend-criteria", "1e9ac101", "--criteria", "changed"],
     ],
 )
 def test_cli_rejects_coreless_mutation_without_writing(tmp_path, monkeypatch, arguments) -> None:
-    _legacy_only_task(tmp_path, monkeypatch, "legacy01")
+    _legacy_only_task(tmp_path, monkeypatch, "1e9ac101")
     before = _storage_snapshot(tmp_path)
 
     result = CliRunner().invoke(
@@ -61,6 +62,7 @@ def test_cli_rejects_coreless_mutation_without_writing(tmp_path, monkeypatch, ar
     ("handler", "arguments"),
     [
         (coord_card_tools._handle_coord_describe, {"description": "changed"}),
+        (coord_card_tools._handle_coord_label, {"label": "reviewed"}),
         (
             coord_card_tools._handle_coord_link,
             {"key": "pr", "value": "https://example.test/1"},
@@ -71,12 +73,53 @@ def test_cli_rejects_coreless_mutation_without_writing(tmp_path, monkeypatch, ar
 async def test_mcp_rejects_coreless_mutation_without_writing(
     tmp_path, monkeypatch, handler, arguments
 ) -> None:
-    _legacy_only_task(tmp_path, monkeypatch, "legacy02")
+    _legacy_only_task(tmp_path, monkeypatch, "1e9ac102")
     monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
     before = _storage_snapshot(tmp_path)
 
-    result = await handler({"task_id": "legacy02", "agent": "reviewer", **arguments})
+    result = await handler({"task_id": "1e9ac102", "agent": "reviewer", **arguments})
     payload = json.loads(result[0].text)
 
     assert "no foldable core" in payload["error"]
+    assert _storage_snapshot(tmp_path) == before
+
+
+_INVALID_IDS = [
+    "",
+    "deadBEEF",
+    "deadbeeg",
+    "deadbeef0",
+    "POOL_IDS|chiap08|ids=12345678",
+]
+
+
+@pytest.mark.parametrize("task_id", _INVALID_IDS)
+@pytest.mark.parametrize("verb", ["label", "link"])
+def test_cli_rejects_non_card_identifiers_without_writing(tmp_path, task_id, verb) -> None:
+    before = _storage_snapshot(tmp_path)
+    arguments = [verb, task_id, "reviewed"]
+    if verb == "link":
+        arguments.append("PASS")
+
+    result = CliRunner().invoke(_main(), ["coord", *arguments, "--home", str(tmp_path)])
+
+    assert result.exit_code != 0
+    assert _storage_snapshot(tmp_path) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_id", _INVALID_IDS)
+@pytest.mark.parametrize(
+    "handler", [coord_card_tools._handle_coord_label, coord_card_tools._handle_coord_link]
+)
+async def test_mcp_rejects_non_card_identifiers_without_writing(
+    tmp_path, monkeypatch, task_id, handler
+) -> None:
+    monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
+    before = _storage_snapshot(tmp_path)
+    arguments = {"task_id": task_id, "label": "reviewed", "key": "result", "value": "PASS"}
+
+    result = await handler(arguments)
+
+    assert "error" in json.loads(result[0].text)
     assert _storage_snapshot(tmp_path) == before
