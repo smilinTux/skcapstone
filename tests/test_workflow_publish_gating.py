@@ -103,6 +103,17 @@ class TestPublishGating:
 
 
 class TestCiHonesty:
+    def test_cross_repository_sources_are_immutable(self):
+        workflow = (WORKFLOWS / "pytest.yml").read_text()
+        for repository in ("skcoord", "skdashboard"):
+            requirement = next(
+                line for line in workflow.splitlines() if f"/{repository}@" in line
+            )
+            revision = requirement.split(f"/{repository}@", 1)[1].split('"', 1)[0]
+            assert len(revision) == 40 and all(
+                c in "0123456789abcdef" for c in revision
+            )
+
     def test_no_or_true_masking_anywhere(self, ci):
         for job_name, job in ci["jobs"].items():
             for step in job.get("steps", []):
