@@ -201,11 +201,7 @@ def register_coord_commands(main: click.Group) -> None:
             hidden = 0
             for ag in agents:
                 projected = display_state(ag)
-                if (
-                    not include_idle_agents
-                    and not ag.current_task
-                    and projected != "active"
-                ):
+                if not include_idle_agents and not ag.current_task and projected != "active":
                     hidden += 1
                     continue
                 shown += 1
@@ -894,9 +890,7 @@ def register_coord_commands(main: click.Group) -> None:
             f"\n  [green]{verb} {len(done)} done (>{done_days}d) + "
             f"{len(stale)} stale-open (>{backlog_days}d) = {len(done) + len(stale)} total.[/]"
         )
-        console.print(
-            f"  [green]{lock_verb} {len(locks)} lock file(s) (>{lock_days}d).[/]\n"
-        )
+        console.print(f"  [green]{lock_verb} {len(locks)} lock file(s) (>{lock_days}d).[/]\n")
 
     @coord.command("move")
     @click.argument("task_id")
