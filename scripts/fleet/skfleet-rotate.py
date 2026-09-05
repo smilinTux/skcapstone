@@ -507,7 +507,7 @@ def _beat_interval():
     return os.environ.get("SKFLEET_BEAT_INTERVAL", "600")
 
 LANES=[
-    {"name":"codex","prefix":"codex-auto-","model":"sk-codex",
+    {"name":"codex","prefix":"codex-auto-","model":"sk-codex-mid",
      "target":TARGET},
     {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","glm-4.6"),
      "target":0 if glm_held else GLM_TARGET},
@@ -529,6 +529,22 @@ _GLM_LEVEL_DEFAULTS={"S":"glm-4.6","M":"glm-4.6","L":"glm-4.7","XL":"glm-5.3"}
 _GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
              for key,value in _GLM_LEVEL_DEFAULTS.items()}
 _GLM_SIZE_RE=re.compile(r"\[(S|M|XL|L)\]")
+# The codex lane used a single hardcoded role for every card. sk-codex is the
+# FRONTIER role (registry.yaml: sk-codex -> codex-frontier -> gpt-5.6-sol), so an
+# [S] card was being dispatched to the most expensive model in the estate. It is
+# the right default for a hand-run pi session, and the wrong one for a fleet that
+# sizes its own work. Roles are used rather than raw gpt names so the gateway can
+# re-point a bucket without a fleet redeploy.
+#   sk-codex-fast -> codex-fast -> gpt-5.4-mini
+#   sk-codex-mid  -> codex-mid  -> gpt-5.6-luna   (the operator default)
+#   sk-codex      -> codex-frontier -> gpt-5.6-sol
+_CODEX_LEVEL_DEFAULTS={"S":"sk-codex-fast","M":"sk-codex-mid",
+                       "L":"sk-codex","XL":"sk-codex"}
+_CODEX_LEVELS={key:os.environ.get("SKFLEET_CODEX_MODEL_"+key,value)
+               for key,value in _CODEX_LEVEL_DEFAULTS.items()}
+def _codex_model_for(core):
+    match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
+    return _CODEX_LEVELS.get(match.group(1)) if match else None
 def _glm_model_for(core):
     match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
     return _GLM_LEVELS.get(match.group(1)) if match else None
@@ -3689,7 +3705,11 @@ def qwen_suitable(core):
 
 
 def _lane_model(lane, core):
-    return (_glm_model_for(core) or lane["model"]) if lane["name"]=="glm" else lane["model"]
+    if lane["name"]=="glm":
+        return _glm_model_for(core) or lane["model"]
+    if lane["name"]=="codex":
+        return _codex_model_for(core) or lane["model"]
+    return lane["model"]
 
 
 _LANE_HEALTH_PATH=os.environ.get(
