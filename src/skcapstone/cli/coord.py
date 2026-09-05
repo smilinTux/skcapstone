@@ -543,8 +543,12 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
-        path = board.write_board_md(include_done=include_done)
-        md = board.generate_board_md(include_done=include_done)
+        try:
+            path = board.write_board_md(include_done=include_done)
+            md = board.generate_board_md(include_done=include_done)
+        except TypeError:
+            path = board.write_board_md()
+            md = board.generate_board_md()
         console.print(md)
         console.print(f"\n  [dim]Written to {path}[/]\n")
 
@@ -1112,6 +1116,12 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         if fmt == "json":
-            click.echo(get_briefing_json(home_path, include_done=include_done))
+            try:
+                click.echo(get_briefing_json(home_path, include_done=include_done))
+            except TypeError:
+                click.echo(get_briefing_json(home_path))
         else:
-            click.echo(get_briefing_text(home_path, include_done=include_done))
+            try:
+                click.echo(get_briefing_text(home_path, include_done=include_done))
+            except TypeError:
+                click.echo(get_briefing_text(home_path))
