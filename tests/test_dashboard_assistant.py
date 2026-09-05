@@ -9,6 +9,19 @@ import pytest
 from skcapstone import dashboard_assistant as da
 from skcapstone.card_store import CardStore, import_from_legacy
 from skcapstone.coordination import Board, Task
+from skdashboard.assistant_client import AssistantScope
+
+
+def _authorized_scope() -> AssistantScope:
+    """Minimal policy scope that unlocks the read-only assistant boundary."""
+    return AssistantScope(
+        tenant_id="platform",
+        matter_id=None,
+        classification="internal",
+        source_rights=("skdashboard",),
+        egress_profile="local",
+        read_authorized=True,
+    )
 
 
 @pytest.fixture
@@ -24,9 +37,9 @@ def home(tmp_path):
     return tmp_path
 
 
-def test_board_summary(home):
-    s = da.board_summary(home)
-    assert s["active"] >= 2 and "by_column" in s and "wip" in s
+def test_legacy_board_summary_is_not_exposed():
+    """Kanban board_summary left the assistant surface; only scoped context remains."""
+    assert not hasattr(da, "board_summary")
 
 
 def test_legacy_mutating_helpers_are_not_exposed():
@@ -35,10 +48,24 @@ def test_legacy_mutating_helpers_are_not_exposed():
     assert not hasattr(da, "_run_action")
 
 
-def test_build_context_has_sections(home):
-    context = json.loads(da.build_context(home))
-    assert set(context) == {"itil", "kanban"}
-    assert set(context["kanban"]) == {"active", "by_column", "by_lane", "wip"}
+def test_build_context_requires_authorized_scope(home):
+    with pytest.raises(PermissionError, match="authorized assistant scope required"):
+        da.build_context(home)
+
+
+def test_build_context_has_authorized_scope_fields(home):
+    scope = _authorized_scope()
+    context = json.loads(da.build_context(home, scope))
+    assert set(context) == {
+        "tenant_id",
+        "matter_id",
+        "classification",
+        "source_rights",
+    }
+    assert context["tenant_id"] == "platform"
+    assert context["matter_id"] is None
+    assert context["classification"] == "internal"
+    assert context["source_rights"] == ["skdashboard"]
     assert "t1" not in json.dumps(context)
     assert "Busy task" not in json.dumps(context)
 
@@ -52,8 +79,17 @@ def test_stream_answer_with_stub(home, monkeypatch):
         def chat_stream(self, messages, **kw):
             yield "Top incident is inc-1."
 
+    # dashboard_assistant binds get_client at import time; patch the bound name.
+    monkeypatch.setattr(da, "get_client", lambda: StubClient())
     monkeypatch.setattr(assistant_client, "get_client", lambda: StubClient())
-    frames = list(da.stream_answer(home, "top incidents", actor="chef"))
+    frames = list(
+        da.stream_answer(
+            home,
+            "top incidents",
+            actor="chef",
+            scope=_authorized_scope(),
+        )
+    )
     joined = "".join(frames)
     assert "event: token" in joined and "event: done" in joined
     assert "event: action" not in joined
@@ -63,11 +99,24 @@ def test_stream_answer_with_stub(home, monkeypatch):
 def test_assistant_route_streams(home, monkeypatch):
     from starlette.testclient import TestClient
 
-    from skcapstone import skgateway_client as gw
     from skcapstone.dashboard import create_app
 
-    monkeypatch.setattr(gw, "chat_stream", lambda m, **k: iter(["hello ", "world"]))
+    def _fake_stream(home_path, prompt, actor="operator", capability_ok=False, scope=None):
+        assert scope is not None and scope.read_authorized is True
+        yield 'event: token\ndata: {"text": "hello "}\n\n'
+        yield 'event: token\ndata: {"text": "world"}\n\n'
+        yield "event: done\ndata: {}\n\n"
+
+    # create_app imports stream_answer from skdashboard.dashboard_assistant.
+    import skdashboard.dashboard_assistant as skda
+
+    monkeypatch.setattr(skda, "stream_answer", _fake_stream)
+    monkeypatch.setattr(da, "stream_answer", _fake_stream)
     client = TestClient(create_app(home))
-    r = client.post("/api/assistant", json={"prompt": "hi"})
+    r = client.post(
+        "/api/assistant",
+        json={"prompt": "hi"},
+        headers={"x-sk-actor": "operator"},
+    )
     assert r.status_code == 200
     assert "event: token" in r.text and "world" in r.text

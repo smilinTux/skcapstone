@@ -1,5 +1,12 @@
 # Changelog
 
+- **Card `1b84d7f4`: Cursor Agent YOLO default.** Added `SK_CURSOR_YOLO`
+  (default on) so the SK agent picker launches Cursor Agent CLI (`agent` /
+  `cursor-agent`) with `--yolo`, plus doctor harness checks and docs aligned
+  with Codex/Claude/OpenCode YOLO wiring. Also realigned
+  `tests/test_dashboard_assistant.py` to the scoped read-only skdashboard
+  assistant contract so CI stays green against current sibling main.
+
 - **Card `83b048fc`: worktree sequencer hygiene.** Added
   `scripts/fleet/worktree-hygiene.py` plus a worker-wrapper preflight: stale
   cherry-pick, rebase, or merge state is named, auto-cleared when the tree is
@@ -39,6 +46,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- `SK_CURSOR_YOLO` (card `1b84d7f4`): SK agent picker wraps Cursor Agent CLI
+  (`agent` / `cursor-agent`) with `--yolo` by default; doctor reports
+  `harness:yolo:agent`; docs cover the env var next to Codex/Claude/OpenCode.
 - `fleet_beat` module (card ad0c3bfd / A of the Worker Beat Protocol): beat
   writer with atomic temp+rename, beat reader with malformed-file tolerance,
   and a pure `classify()` function returning LIVE/STALLED/BLOCKED/DEAD/

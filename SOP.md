@@ -532,6 +532,9 @@ See [`docs/MCP_TOPOLOGY.md`](./docs/MCP_TOPOLOGY.md).
 | `SKAGENT` / `SKCAPSTONE_AGENT` | agent name (`SKAGENT` wins); enables the multi-agent household layout **and selects the daemon port** (§5) |
 | `SK_DEFAULT_AGENT` | explicit node/profile fallback used only when no active-agent variable is set |
 | `SK_CODEX_YOLO` | Codex permission-mode flag; generated SK loaders default it to `1` unless explicitly overridden |
+| `SK_CURSOR_YOLO` | Cursor Agent CLI (`agent`) permission-mode flag; picker wrapper defaults it to `1` (`--yolo`) unless explicitly overridden |
+| `SK_CLAUDE_YOLO` | Claude Code permission-mode flag (opt-in); adds `--dangerously-skip-permissions` |
+| `SK_OPENCODE_YOLO` | OpenCode permission-mode flag (opt-in); sets `OPENCODE_PERMISSION='{"*":"allow"}'` |
 | `SKCAPSTONE_PORT` | overrides the package `DEFAULT_PORT` (default `9383`) |
 | `OLLAMA_HOST` | Ollama API base (default `http://localhost:11434`) |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY` / `MOONSHOT_API_KEY` / `NVIDIA_API_KEY` | enable the corresponding cloud backend (presence = availability) |
