@@ -268,6 +268,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- A standalone blocker-referent sweep now reports by default and writes only
+  with explicit `--go`. It accepts only an exact latest `BLOCKED` verdict with
+  one `blocked_on=card` category and distinct lowercase
+  `referent=card:<8 hex>` tokens. Every referent must fold to active `DONE`.
+  The write path uses the exact same `--home`, serializes same-home processes
+  through the supported per-card lock, records the fixed label and exact verdict
+  digest in one durable card event, preserves per-card failure details, and
+  returns nonzero after any write failure. The related stale-block report keeps
+  closed cards visible, rejects `PASS_FOR_` and `PASS_READY_` review handoffs as
+  completed passes, and reads both current `link_key`/`link_value` and legacy
+  `key`/`value` events. Cross-host duplicate label events remain a documented,
+  bounded race: labels fold as a set and no verdict or approval is discharged.
+
 - **Card 2ff077b8: report leaf-eligible coordination work.** `coord status`
   now distinguishes unowned, dependency-complete leaf work from the broader
   open count. Human gates, parent and sprint containers, superseded cards,
