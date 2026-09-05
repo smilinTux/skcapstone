@@ -27,6 +27,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fleet worker exit now idles the ephemeral agent projection after
+  `release-claim` (wrapper finally/SIGTERM and rotate stop traps). Killed
+  workers no longer linger as active agent projections after the unit dies.
+
 ### Changed
 
 - `fleet_beat.validate_beat_owner` is now an alias of the single shared

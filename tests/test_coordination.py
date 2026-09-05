@@ -230,7 +230,7 @@ class TestBoardMd:
         board.create_task(Task(id="t2", title="Done task"))
         board.claim_task("jarvis", "t2")
         board.complete_task("jarvis", "t2")
-        md = board.generate_board_md()
+        md = board.generate_board_md(include_done=True, include_idle_agents=True)
         assert "Open task" in md
         assert "Done task" in md
         assert "jarvis" in md

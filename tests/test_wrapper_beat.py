@@ -18,11 +18,11 @@ def test_beat_killed_on_all_exit_paths():
     """stop_beat must be called in every trap and before exit."""
     src = ROTATE.read_text(encoding="utf-8")
     # HUP/INT/TERM trap includes stop_beat
-    assert 'trap "stop_beat; release_claim; exit 143" HUP INT TERM' in src
+    assert 'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM' in src
     # EXIT trap includes stop_beat
-    assert 'trap "stop_beat; release_claim" EXIT' in src
+    assert 'trap "stop_beat; release_claim; idle_agent" EXIT' in src
     # Normal exit path calls stop_beat before release
-    assert "stop_beat; release_claim; exit $rc" in src
+    assert "stop_beat; release_claim; idle_agent; exit $rc" in src
 
 
 def test_beat_failure_never_fails_worker():

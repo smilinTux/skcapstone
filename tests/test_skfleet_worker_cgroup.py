@@ -95,7 +95,7 @@ def test_migration_counts_and_publishes_old_and_new_workers() -> None:
 def test_launch_keeps_exact_claim_release_traps() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert "expected-claim-revision %s --agent %s" in source
-    assert 'trap "stop_beat; release_claim; exit 143" HUP INT TERM' in source
-    assert 'trap "stop_beat; release_claim" EXIT' in source
+    assert 'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM' in source
+    assert 'trap "stop_beat; release_claim; idle_agent" EXIT' in source
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
     assert '["tmux","new-session"' not in source

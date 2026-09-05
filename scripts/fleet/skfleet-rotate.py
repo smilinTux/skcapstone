@@ -4015,6 +4015,13 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     child=(
         "release_claim() { %s coord release-claim %s --owner %s "
         "--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; "
+        "idle_agent() { python3 -c \"import json,datetime;from pathlib import Path;"
+        "p=Path.home()/'.skcapstone/coordination/agents'/('%s.json');"
+        "d=json.loads(p.read_text());"
+        "d.update(state='idle',current_task=None,claimed_tasks=[],"
+        "last_seen=datetime.datetime.now(datetime.timezone.utc).isoformat());"
+        "t=p.with_suffix('.json.tmp');t.write_text(json.dumps(d,indent=2)+chr(10));"
+        "t.replace(p)\" >/dev/null 2>&1 || true; }; "
         "beat() { while :; do "
         "mkdir -p ~/.skcapstone/fleet/beats; "
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
@@ -4024,13 +4031,14 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "sleep %s; done; }; "
         "beat & BEAT=$!; "
         "stop_beat() { kill $BEAT 2>/dev/null || true; }; "
-        'trap "stop_beat; release_claim; exit 143" HUP INT TERM; '
-        'trap "stop_beat; release_claim" EXIT; '
+        'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
+        'trap "stop_beat; release_claim; idle_agent" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s "
         "--provider skgateway --model %s --thinking off --tools %s "
         '-p "$(cat %s)"; '
-        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; exit $rc"
+        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; idle_agent; exit $rc"
         % (SKC, cid, name, claimed_revision, name,
+           name,
            name, cid, claimed_revision,
            _bf_path, _bf_path, _bf_path,
            _bi,
