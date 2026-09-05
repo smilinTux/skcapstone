@@ -1017,6 +1017,38 @@ def drill_teardown_cmd(root: str) -> None:
     click.echo(f"removed drill tree {removed}")
 
 
+@fleet.command("ruleset-inventory")
+@click.argument("repo")
+@click.option("--evidence-dir", default=None, help="Override the snapshot evidence directory.")
+def ruleset_inventory_cmd(repo: str, evidence_dir: str | None) -> None:
+    """Inventory the exact current main branch protection or ruleset state.
+
+    Reads the live GitHub state without exposing credentials, then records a
+    hashed snapshot under ~/.skcapstone/evidence/ (or --evidence-dir).
+    """
+    from . import ruleset as ruleset_mod
+
+    payload = ruleset_mod.inventory(repo)
+    snap = ruleset_mod.record(repo, payload, Path(evidence_dir) if evidence_dir else None)
+    click.echo(f"ruleset snapshot recorded for {repo}: {snap.sha256[:16]}...")
+
+
+@fleet.command("ruleset-rollback")
+@click.argument("repo")
+@click.argument("snap-file")
+@click.option("--dry-run", is_flag=True, help="Compute the diff but write nothing.")
+def ruleset_rollback_cmd(repo: str, snap_file: str, dry_run: bool) -> None:
+    """Record rollback: apply a prior ruleset snapshot onto the live state.
+
+    The rollback target is the recorded snapshot, not an inference from the
+    live state. --dry-run reports the exact diff and writes nothing.
+    """
+    from . import ruleset as ruleset_mod
+
+    result = ruleset_mod.rollback(repo, snap_file, apply=not dry_run)
+    click.echo(f"rollback {result['applied'] and 'applied' or 'dry-run'}: {result['diff']}")
+
+
 def register_fleet_commands(main: click.Group) -> None:
     """Register the fleet group on the skcapstone CLI."""
     main.add_command(fleet)

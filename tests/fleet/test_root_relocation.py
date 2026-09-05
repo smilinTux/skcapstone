@@ -195,6 +195,15 @@ _SKCAPSTONE_PATH_EXEMPT = {
         "audits, which is the fleet tree's parent, not fleet state; read-only, and "
         "overridable by the syncfolder object's spec.root"
     ),
+    "cli.py": (
+        "docstrings/help text mention the skcapstone CLI and the evidence dir; "
+        "the only path it names is ~/.skcapstone/evidence, a SIBLING of the fleet "
+        "tree, overridable by the SKFLEET_EVIDENCE env var, not fleet state"
+    ),
+    "ruleset.py": (
+        "EVIDENCE_DIR defaults to ~/.skcapstone/evidence (sibling of the fleet tree, "
+        "overridable by SKFLEET_EVIDENCE); snapshot evidence, not fleet state"
+    ),
 }
 
 
