@@ -1,81 +1,95 @@
-"""Tests for the Phase 5 assistant console (dashboard_assistant + route)."""
+"""Tests for dashboard assistant (AssistantScope boundary via skcapstone shim)."""
 
 from __future__ import annotations
 
 import json
 
 import pytest
+from skdashboard.assistant_client import AssistantScope
 
 from skcapstone import dashboard_assistant as da
-from skcapstone.card_store import CardStore, import_from_legacy
-from skcapstone.coordination import Board, Task
 
 
-import skdashboard.dashboard_assistant as _da_probe
-
-pytestmark = pytest.mark.skipif(
-    not hasattr(_da_probe, "board_summary"),
-    reason="skdashboard.dashboard_assistant.board_summary removed; tests need rewrite against AssistantScope API",
-)
-
-
-@pytest.fixture
-def home(tmp_path):
-    board = Board(tmp_path)
-    board.ensure_dirs()
-    board.create_task(Task(id="t1", title="Busy task", created_by="opus"))
-    board.create_task(Task(id="t2", title="Quiet task", created_by="opus"))
-    import_from_legacy(tmp_path)
-    # make t1 the most-involved by adding events
-    for i in range(4):
-        CardStore(tmp_path).append_event("t1", "note", "opus", text=f"n{i}")
-    return tmp_path
+def _scope(**overrides) -> AssistantScope:
+    """Build a minimal authorized AssistantScope for tests."""
+    data = {
+        "tenant_id": "platform",
+        "matter_id": None,
+        "classification": "internal",
+        "source_rights": ("skdashboard",),
+        "egress_profile": "local-only",
+        "read_authorized": True,
+    }
+    data.update(overrides)
+    return AssistantScope(**data)
 
 
-def test_board_summary(home):
-    s = da.board_summary(home)
-    assert s["active"] >= 2 and "by_column" in s and "wip" in s
+def test_build_context_returns_scope_metadata(tmp_path):
+    context = json.loads(da.build_context(tmp_path, scope=_scope(matter_id="m1")))
+    assert context == {
+        "classification": "internal",
+        "matter_id": "m1",
+        "source_rights": ["skdashboard"],
+        "tenant_id": "platform",
+    }
+
+
+def test_build_context_rejects_missing_scope(tmp_path):
+    with pytest.raises(PermissionError, match="authorized assistant scope required"):
+        da.build_context(tmp_path)
+
+
+def test_stream_answer_with_stub(tmp_path, monkeypatch):
+    class StubClient:
+        def chat_stream(self, messages, **kw):
+            yield "ok"
+
+    monkeypatch.setattr(da, "get_client", lambda: StubClient())
+    frames = list(da.stream_answer(tmp_path, "hi", actor="chef", scope=_scope()))
+    joined = "".join(frames)
+    assert "event: token" in joined and "event: done" in joined
+    assert "event: action" not in joined
+
+
+def test_stream_answer_requires_scope(tmp_path, monkeypatch):
+    called = {"n": 0}
+
+    def boom():
+        called["n"] += 1
+        raise AssertionError("get_client must not run without scope")
+
+    monkeypatch.setattr(da, "get_client", boom)
+    frames = list(da.stream_answer(tmp_path, "hi"))
+    assert called["n"] == 0
+    assert "authorized_scope_required" in frames[0]
+    assert "event: done" in frames[-1]
 
 
 def test_legacy_mutating_helpers_are_not_exposed():
+    assert not hasattr(da, "board_summary")
     assert not hasattr(da, "most_involved_tasks")
     assert not hasattr(da, "_parse_action")
     assert not hasattr(da, "_run_action")
 
 
-def test_build_context_has_sections(home):
-    context = json.loads(da.build_context(home))
-    assert set(context) == {"itil", "kanban"}
-    assert set(context["kanban"]) == {"active", "by_column", "by_lane", "wip"}
-    assert "t1" not in json.dumps(context)
-    assert "Busy task" not in json.dumps(context)
-
-
-def test_stream_answer_with_stub(home, monkeypatch):
-    from skdashboard import assistant_client
-
-    before = CardStore(home).fold("t1").meta.get("comments")
-
-    class StubClient:
-        def chat_stream(self, messages, **kw):
-            yield "Top incident is inc-1."
-
-    monkeypatch.setattr(assistant_client, "get_client", lambda: StubClient())
-    frames = list(da.stream_answer(home, "top incidents", actor="chef"))
-    joined = "".join(frames)
-    assert "event: token" in joined and "event: done" in joined
-    assert "event: action" not in joined
-    assert CardStore(home).fold("t1").meta.get("comments") == before
-
-
-def test_assistant_route_streams(home, monkeypatch):
+def test_assistant_route_passes_scope(tmp_path, monkeypatch):
     from starlette.testclient import TestClient
 
-    from skcapstone import skgateway_client as gw
     from skcapstone.dashboard import create_app
 
-    monkeypatch.setattr(gw, "chat_stream", lambda m, **k: iter(["hello ", "world"]))
-    client = TestClient(create_app(home))
-    r = client.post("/api/assistant", json={"prompt": "hi"})
+    calls = {}
+
+    def fake_stream(home, prompt, actor="operator", capability_ok=False, scope=None):
+        calls["scope"] = scope
+        calls["prompt"] = prompt
+        yield "event: done\ndata: {}\n\n"
+
+    monkeypatch.setattr("skdashboard.dashboard_assistant.stream_answer", fake_stream)
+    r = TestClient(create_app(tmp_path)).post(
+        "/api/assistant", json={"prompt": "hello"}, headers={"x-sk-actor": "operator"}
+    )
     assert r.status_code == 200
-    assert "event: token" in r.text and "world" in r.text
+    assert calls["prompt"] == "hello"
+    assert calls["scope"].read_authorized is True
+    assert calls["scope"].tenant_id == "platform"
+    assert calls["scope"].source_rights == ("skdashboard",)
