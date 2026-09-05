@@ -929,6 +929,56 @@ def register_coord_commands(main: click.Group) -> None:
         verb = "Removed" if remove else "Added"
         console.print(f"\n  [green]{verb} label '{label}' on {task_id}.[/]\n")
 
+    @coord.command("show")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--json", "as_json", is_flag=True, help="Emit the folded card as JSON.")
+    def coord_show(task_id, as_json, home):
+        """Read one card: folded title, state, owner, labels, links, criteria.
+
+        This is the READ command for a single card. To CHANGE a card's title or
+        description use `skcapstone coord describe`, which appends an edit event.
+
+        \b
+        Examples:
+          skcapstone coord show 5c38b715
+          skcapstone coord show 5c38b715 --json | jq -r .links.verdict
+          skcapstone coord show 5c38b715 --json | jq -r '.labels[]'
+          skcapstone coord show 5c38b715 --json | jq -r .owner
+        """
+        import json as _json
+
+        from skcoord.card_store import CardStore
+
+        card = CardStore(Path(home).expanduser()).fold(task_id)
+        if card is None:
+            raise click.ClickException(
+                f"No card {task_id} on this board. " f"Board overview: skcapstone coord status"
+            )
+        data = card.model_dump(mode="json") if hasattr(card, "model_dump") else dict(vars(card))
+        if as_json:
+            click.echo(_json.dumps(data, indent=2, default=str))
+            return
+
+        def line(k, v):
+            console.print(f"  [dim]{k:<12}[/] {v}")
+
+        console.print(f"\n  [bold]{data.get('id', task_id)}[/]  {data.get('title', '')}")
+        line("status", data.get("status", ""))
+        line("owner", data.get("owner") or "[dim]unclaimed[/]")
+        line("priority", data.get("priority", ""))
+        line("created", data.get("created_at", ""))
+        line("updated", data.get("updated_at", ""))
+        if data.get("labels"):
+            line("labels", " ".join(str(x) for x in data["labels"]))
+        if data.get("dependencies"):
+            line("depends", " ".join(str(x) for x in data["dependencies"]))
+        for k, v in (data.get("links") or {}).items():
+            line(f"link:{k}", str(v)[:96])
+        for i, c in enumerate(data.get("acceptance_criteria") or [], 1):
+            console.print(f"  [dim]criterion {i}[/] {str(c)[:96]}")
+        console.print()
+
     @coord.command("describe")
     @click.argument("task_id")
     @click.option("--title", default=None, help="New card title.")
@@ -938,6 +988,14 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_describe(task_id, title, description, home, agent):
         """Edit a card's title/description (folded, never rewrites core.json).
 
+        This WRITES. To read a card without changing it, use
+        `skcapstone coord show`.
+
+        \b
+        Examples:
+          skcapstone coord describe 5c38b715 --title "[SKDASH-01][M] New title"
+          skcapstone coord describe 5c38b715 --description "" --agent mero
+
         Birth facts stay write-once: the edit is one appended event, so it is
         attributed to its writer and reversed by describing again. Only the
         options you pass are changed; pass an empty string to clear a field.
@@ -945,7 +1003,10 @@ def register_coord_commands(main: click.Group) -> None:
         from ..card import CardEvent, CardEventLog
 
         if title is None and description is None:
-            raise click.UsageError("Pass --title and/or --description.")
+            raise click.UsageError(
+                "coord describe EDITS a card. Pass --title and/or --description. "
+                "To read a card instead: skcapstone coord show %s" % task_id
+            )
 
         home_path = Path(home).expanduser()
         try:
