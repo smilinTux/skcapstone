@@ -4048,7 +4048,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
         'trap "stop_beat; release_claim; idle_agent" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s "
-        "--provider skgateway --model %s --thinking off --tools %s "
+        "--provider skgateway --model %s --thinking off --no-context-files --no-skills --tools %s "
         '-p "$(cat %s)"; '
         "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; idle_agent; exit $rc"
         % (SKC, cid, name, claimed_revision, name,
