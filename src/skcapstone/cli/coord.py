@@ -887,7 +887,10 @@ def register_coord_commands(main: click.Group) -> None:
         board = Board(home_path)
         done = board.archive_done_tasks(older_than_days=done_days, dry_run=dry_run)
         stale = board.age_stale_open(older_than_days=backlog_days, dry_run=dry_run)
-        locks = board.prune_stale_locks(older_than_days=lock_days, dry_run=dry_run)
+        # prune_stale_locks ships in skcoord after board-opt; keep CLI runnable
+        # against older registry wheels during the cutover window.
+        prune = getattr(board, "prune_stale_locks", None)
+        locks = prune(older_than_days=lock_days, dry_run=dry_run) if prune is not None else []
         verb = "Would archive" if dry_run else "Archived"
         lock_verb = "Would prune" if dry_run else "Pruned"
         console.print(
