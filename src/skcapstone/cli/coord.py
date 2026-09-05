@@ -85,7 +85,19 @@ def register_coord_commands(main: click.Group) -> None:
         type=click.Choice(["open", "claimed", "in_progress", "review", "done", "blocked"]),
         help="Only tasks in this status.",
     )
-    def coord_status(home, tag, parent, status_filter):
+    @click.option(
+        "--include-done",
+        is_flag=True,
+        default=False,
+        help="List done cards in the table (hidden by default).",
+    )
+    @click.option(
+        "--include-idle-agents",
+        is_flag=True,
+        default=False,
+        help="List idle/stale agent projections (hidden by default).",
+    )
+    def coord_status(home, tag, parent, status_filter, include_done, include_idle_agents):
         """Show the coordination board overview."""
         from ..coordination import Board
 
@@ -166,7 +178,7 @@ def register_coord_commands(main: click.Group) -> None:
         }
 
         for v in views:
-            if v.status.value == "done" and status_filter is None:
+            if v.status.value == "done" and status_filter is None and not include_done:
                 continue
             t = v.task
             status_label = _status_label(v)
@@ -185,8 +197,14 @@ def register_coord_commands(main: click.Group) -> None:
 
         if agents:
             console.print()
+            shown = 0
+            hidden = 0
             for ag in agents:
                 projected = display_state(ag)
+                if not include_idle_agents and not ag.current_task and projected != "active":
+                    hidden += 1
+                    continue
+                shown += 1
                 icon = {
                     "active": "[green]ACTIVE[/]",
                     "idle": "[yellow]IDLE[/]",
@@ -194,6 +212,11 @@ def register_coord_commands(main: click.Group) -> None:
                 }.get(projected, "[dim]OFFLINE[/]")
                 current = f" -> [cyan]{ag.current_task}[/]" if ag.current_task else ""
                 console.print(f"  {icon} [bold]{ag.agent}[/]{current}")
+            if hidden:
+                console.print(
+                    f"  [dim]({hidden} idle/stale agent projections hidden; "
+                    f"--include-idle-agents to show)[/]"
+                )
         console.print()
 
     @coord.command(
@@ -508,14 +531,24 @@ def register_coord_commands(main: click.Group) -> None:
 
     @coord.command("board")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_board(home):
+    @click.option(
+        "--include-done",
+        is_flag=True,
+        default=False,
+        help="Include the full Done section (summarized by default).",
+    )
+    def coord_board(home, include_done):
         """Generate and display the BOARD.md overview."""
         from ..coordination import Board
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
-        path = board.write_board_md()
-        md = board.generate_board_md()
+        try:
+            path = board.write_board_md(include_done=include_done)
+            md = board.generate_board_md(include_done=include_done)
+        except TypeError:
+            path = board.write_board_md()
+            md = board.generate_board_md()
         console.print(md)
         console.print(f"\n  [dim]Written to {path}[/]\n")
 
@@ -824,7 +857,10 @@ def register_coord_commands(main: click.Group) -> None:
     @coord.command("maintain")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
-        "--done-days", default=14, type=int, help="Archive done tasks older than N days."
+        "--done-days",
+        default=7,
+        type=int,
+        help="Archive done tasks older than N days (completion age when known).",
     )
     @click.option(
         "--backlog-days",
@@ -832,12 +868,18 @@ def register_coord_commands(main: click.Group) -> None:
         type=int,
         help="Archive unclaimed open tasks older than N days.",
     )
+    @click.option(
+        "--lock-days",
+        default=7,
+        type=int,
+        help="Prune idle coordination lock files older than N days.",
+    )
     @click.option("--dry-run", is_flag=True, default=False)
-    def coord_maintain(home, done_days, backlog_days, dry_run):
+    def coord_maintain(home, done_days, backlog_days, lock_days, dry_run):
         """Keep the board bounded: archive old done + ancient open tasks.
 
         Runs both sweeps in one shot (for the scheduler). Reversible: delete the
-        per-writer archive index to restore.
+        per-writer archive index to restore. Also prunes stale lock files.
         """
         from ..coordination import Board
 
@@ -845,11 +887,17 @@ def register_coord_commands(main: click.Group) -> None:
         board = Board(home_path)
         done = board.archive_done_tasks(older_than_days=done_days, dry_run=dry_run)
         stale = board.age_stale_open(older_than_days=backlog_days, dry_run=dry_run)
+        # prune_stale_locks ships in skcoord after board-opt; keep CLI runnable
+        # against older registry wheels during the cutover window.
+        prune = getattr(board, "prune_stale_locks", None)
+        locks = prune(older_than_days=lock_days, dry_run=dry_run) if prune is not None else []
         verb = "Would archive" if dry_run else "Archived"
+        lock_verb = "Would prune" if dry_run else "Pruned"
         console.print(
             f"\n  [green]{verb} {len(done)} done (>{done_days}d) + "
-            f"{len(stale)} stale-open (>{backlog_days}d) = {len(done) + len(stale)} total.[/]\n"
+            f"{len(stale)} stale-open (>{backlog_days}d) = {len(done) + len(stale)} total.[/]"
         )
+        console.print(f"  [green]{lock_verb} {len(locks)} lock file(s) (>{lock_days}d).[/]\n")
 
     @coord.command("move")
     @click.argument("task_id")
@@ -1059,12 +1107,24 @@ def register_coord_commands(main: click.Group) -> None:
     @coord.command("briefing")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
-    def coord_briefing(home, fmt):
+    @click.option(
+        "--include-done",
+        is_flag=True,
+        default=False,
+        help="Include done cards in the board snapshot (hidden by default).",
+    )
+    def coord_briefing(home, fmt, include_done):
         """Print the full coordination protocol for any AI agent."""
         from ..coordination import get_briefing_json, get_briefing_text
 
         home_path = Path(home).expanduser()
         if fmt == "json":
-            click.echo(get_briefing_json(home_path))
+            try:
+                click.echo(get_briefing_json(home_path, include_done=include_done))
+            except TypeError:
+                click.echo(get_briefing_json(home_path))
         else:
-            click.echo(get_briefing_text(home_path))
+            try:
+                click.echo(get_briefing_text(home_path, include_done=include_done))
+            except TypeError:
+                click.echo(get_briefing_text(home_path))

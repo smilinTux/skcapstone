@@ -1,0 +1,16 @@
+# Daily coordination board maintain (repo template).
+#
+# Soft-archives done cards and ancient unclaimed backlog, and prunes stale
+# lock files. Reversible: remove lines from coordination/archive/<host>.jsonl.
+#
+# Bundled default also lives at
+# src/skcapstone/defaults/config/jobs.d/coord-maintain.yaml (copied on fresh
+# init only; never overwrites an existing user file).
+jobs:
+  coord-maintain:
+    type: shell
+    schedule: "15 5 * * *"   # daily 05:15
+    command: skcapstone coord maintain --done-days 7 --backlog-days 90 --lock-days 7
+    nodes: all
+    timeout: 900
+    enabled: true
