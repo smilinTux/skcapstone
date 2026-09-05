@@ -1,0 +1,9 @@
+[Unit]
+Description=Archive old terminal SKFleet worker workspaces
+ConditionHost=chiap08
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env skfleet archive-workspaces
+NoNewPrivileges=true
+PrivateTmp=true
