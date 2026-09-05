@@ -3,7 +3,9 @@
 - **Card `1b84d7f4`: Cursor Agent YOLO default.** Added `SK_CURSOR_YOLO`
   (default on) so the SK agent picker launches Cursor Agent CLI (`agent` /
   `cursor-agent`) with `--yolo`, plus doctor harness checks and docs aligned
-  with Codex/Claude/OpenCode YOLO wiring.
+  with Codex/Claude/OpenCode YOLO wiring. Also realigned
+  `tests/test_dashboard_assistant.py` to the scoped read-only skdashboard
+  assistant contract so CI stays green against current sibling main.
 
 - **Card `83b048fc`: worktree sequencer hygiene.** Added
   `scripts/fleet/worktree-hygiene.py` plus a worker-wrapper preflight: stale
