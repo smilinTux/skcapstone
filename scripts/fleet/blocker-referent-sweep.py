@@ -1,135 +1,86 @@
 #!/usr/bin/env python3
-"""Return cards whose recorded blocker has since completed.
-
-Reports by default. Pass --go to actually label the cards, because returning a
-card puts it back in front of a worker and that should be deliberate.
-
-    blocker-referent-sweep.py            # report only
-    blocker-referent-sweep.py --go       # label them blocker-now-done
-
-See skcapstone.blocker_referent for why this exists and what it measured.
-"""
+"""Report or explicitly label cards whose exact card blockers are DONE."""
 
 from __future__ import annotations
 
 import argparse
 import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from skcapstone.blocker_referent import (  # noqa: E402
-    card_dir_lookup,
+    apply_candidates,
     find_returnable,
     find_stale_blocks,
 )
 
-LABEL = "blocker-now-done"
-STALE_LABEL = "successor-passed"
 
-
-def skcapstone_bin() -> str:
-    """The CLI is installed in the SK venv, which is not on a service PATH."""
-    found = shutil.which("skcapstone")
-    if found:
-        return found
-    venv = os.path.expanduser("~/.skenv/bin/skcapstone")
-    return venv if os.path.exists(venv) else "skcapstone"
-
-
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the read-only report or the explicit, locked label application."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--go", action="store_true", help="label the cards")
+    parser.add_argument("--go", action="store_true", help="label qualifying cards")
     parser.add_argument("--agent", default=os.environ.get("SKAGENT", "lumina"))
     parser.add_argument("--home", default=os.path.expanduser("~/.skcapstone"))
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    home = Path(args.home).expanduser()
 
-    home = Path(args.home)
     try:
-        from skcoord.card_store import CardStore
-    except ImportError:
-        print("skcoord is not importable; run this where the board lives", file=sys.stderr)
+        report = find_returnable(home)
+        stale = find_stale_blocks(home)
+    except Exception as exc:  # noqa: BLE001 - report the board read failure
+        print(f"blocker-referent sweep failed closed: {exc}", file=sys.stderr)
         return 2
 
-    store = CardStore(home)
-    lookup = card_dir_lookup(home)
-
-    def is_done(prefix: str):
-        name = lookup(prefix)
-        if name is None:
-            return None
-        try:
-            return str(getattr(store.fold(name), "status", "")) == "Column.DONE"
-        except Exception:
-            return None
-
-    def is_open(card_id: str) -> bool:
-        return is_done(str(card_id)[:8]) is False
-
-    returnable, still_blocked, missing = find_returnable(home, is_done, is_open)
-    stale = find_stale_blocks(home)  # closed cards included on purpose
-
     print("blocker-referent sweep")
-    print("  returnable (every cited blocker is DONE): %d" % len(returnable))
-    print("  still genuinely blocked:                  %d" % still_blocked)
-    print("  citing a card that does not exist:        %d" % missing)
+    print(f"  returnable: {len(report.candidates)}")
+    print(f"  held or invalid: {len(report.held)}")
+    for card_id, reason in sorted(report.held.items()):
+        print(f"    held {card_id}: {reason}")
+    for candidate in report.candidates:
+        refs = ",".join(candidate.referents)
+        print(
+            f"    candidate {candidate.card_id}: verdict={candidate.verdict.identity} "
+            f"referents={refs}"
+        )
 
     if stale:
-        print("  blocks answered by their own successor:      %d" % len(stale))
+        # Blocks whose own named repair has already passed. Reported, never
+        # cleared: whether a successor genuinely discharges its parent is a
+        # judgement about evidence, not a timestamp comparison. Closed cards are
+        # included on purpose, because a stale verdict does its damage through
+        # whoever reads it rather than through the card's own column.
+        print(f"  blocks answered by their own successor: {len(stale)}")
         for row in stale:
             print(
-                "    %s blocked %s, %s %s passed %s"
-                % (
-                    row["card"],
-                    row["blocked_at"][:16],
-                    row["link"],
-                    row["successor"],
-                    row["passed_at"][:16],
-                )
+                f"    {row.card_id} blocked {row.verdict.ts[:16]}, "
+                f"{row.link} {row.successor} passed {row.passed_at[:16]}"
             )
-        if args.go:
-            done = 0
-            for row in stale:
-                r = subprocess.run(
-                    [
-                        skcapstone_bin(),
-                        "coord",
-                        "label",
-                        row["card"],
-                        STALE_LABEL,
-                        "--agent",
-                        args.agent,
-                    ],
-                    capture_output=True,
-                )
-                done += 1 if r.returncode == 0 else 0
-            print("  flagged %d of %d for verdict reconciliation" % (done, len(stale)))
-        else:
-            print("  dry run; --go flags these %d for verdict reconciliation" % len(stale))
 
-    if not returnable:
-        return 0
     if not args.go:
-        for card_id in returnable:
-            print("    would return %s" % card_id)
-        print("  dry run; pass --go to label these %d" % len(returnable))
+        print("  report only; no labels written")
+        return 0
+    if not report.candidates:
+        print("  labelled 0 of 0")
         return 0
 
-    labelled = 0
-    for card_id in returnable:
-        result = subprocess.run(
-            [skcapstone_bin(), "coord", "label", card_id, LABEL, "--agent", args.agent],
-            capture_output=True,
+    receipts = apply_candidates(
+        home,
+        report.candidates,
+        agent=args.agent,
+    )
+    for receipt in receipts:
+        stream = sys.stderr if receipt.state == "failed" else sys.stdout
+        print(
+            f"    {receipt.state} {receipt.card_id}: "
+            f"verdict={receipt.verdict_id} detail={receipt.detail}",
+            file=stream,
         )
-        if result.returncode == 0:
-            labelled += 1
-        else:
-            print("    could not label %s" % card_id, file=sys.stderr)
-    print("  labelled %d of %d" % (labelled, len(returnable)))
-    return 0
+    labelled = sum(receipt.state == "labelled" for receipt in receipts)
+    failed = sum(receipt.state == "failed" for receipt in receipts)
+    print(f"  labelled {labelled} of {len(receipts)}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
