@@ -27,7 +27,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Daily `coord-maintain` scheduler job (`config/jobs.d/coord-maintain.yaml`) and
+  `coord maintain --lock-days` wiring for stale coordination lock prune. Cards
+  b0a0d004 / b0a0d005.
+
 ### Changed
+
+- `coord status` hides idle/stale agent projections by default
+  (`--include-idle-agents`); `coord board` / `briefing` accept `--include-done`.
+  Maintain default `--done-days` is 7. Cards b0a0d003 / b0a0d001.
 
 - `fleet_beat.validate_beat_owner` is now an alias of the single shared
   `heartbeat.validate_agent_name` allowlist (card 77d62d85): one
