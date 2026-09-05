@@ -17,6 +17,7 @@
 #   - SK_CLAUDE_YOLO=1        → claude adds permission bypass globally (opt-in)
 #   - SK_CODEX_YOLO=0         → keep Codex approvals+sandbox (default is YOLO)
 #   - SK_OPENCODE_YOLO=1      → opencode allows all tools without approval (opt-in)
+#   - SK_CURSOR_YOLO=0        → keep Cursor Agent approvals (default is YOLO / --yolo)
 #   - Pass --agent <name>     → skip menu, use that agent directly
 #   - Print mode (-p / --print) → skip menu (non-interactive by definition)
 #   - stdin not a TTY         → skip menu (no way to read user input)
@@ -34,11 +35,14 @@
 #   SK_CODEX_YOLO=1 codex         # codex with dangerous bypass enabled
 #   opencode                      # same picker logic
 #   SK_OPENCODE_YOLO=1 opencode   # opencode with all permissions allowed
+#   agent                         # Cursor Agent CLI (same picker logic)
+#   SK_CURSOR_YOLO=1 agent        # Cursor Agent with --yolo / Run Everything
 #
 # To enable globally for all future shell sessions:
 #   export SK_CLAUDE_YOLO=1
 #   export SK_CODEX_YOLO=1
 #   export SK_OPENCODE_YOLO=1
+#   export SK_CURSOR_YOLO=1
 #   source ~/.bashrc
 #
 # Source in shell config:
@@ -183,6 +187,9 @@ _sk_install_command() {
         opencode)
             printf '%s' "unset -f opencode _sk_launch _sk_pick_agent claude codex skswitch 2>/dev/null || true; curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path"
             ;;
+        agent|cursor-agent)
+            printf '%s' 'curl -fsS https://cursor.com/install | bash'
+            ;;
         *)
             return 1
             ;;
@@ -224,6 +231,13 @@ _sk_find_tool_path() {
                 "$HOME/.opencode/bin/opencode"
                 "$HOME/.local/bin/opencode"
                 "$HOME/bin/opencode"
+            )
+            ;;
+        agent|cursor-agent)
+            fallback_paths=(
+                "$HOME/.local/bin/agent"
+                "$HOME/.local/bin/cursor-agent"
+                "$HOME/.cursor-agent/bin/agent"
             )
             ;;
     esac
@@ -394,10 +408,12 @@ function skswitch {
 # Must unalias first — an active alias with the same name causes bash to
 # expand it during function-definition parsing, producing a syntax error.
 # ---------------------------------------------------------------------------
-unalias claude   2>/dev/null || true
-unalias codex    2>/dev/null || true
-unalias opencode 2>/dev/null || true
-unalias pi       2>/dev/null || true
+unalias claude       2>/dev/null || true
+unalias codex        2>/dev/null || true
+unalias opencode     2>/dev/null || true
+unalias pi           2>/dev/null || true
+unalias agent        2>/dev/null || true
+unalias cursor-agent 2>/dev/null || true
 
 # claude (Claude Code CLI)
 function claude {
@@ -426,6 +442,26 @@ function opencode {
     fi
 }
 
+# Cursor Agent CLI (https://cursor.com/docs/cli) — binary name is `agent`
+function agent {
+    local extra_flags=""
+    # SK Cursor Agent profiles are autonomous by default. Set SK_CURSOR_YOLO=0
+    # before launch to keep Cursor approval prompts.
+    if [[ "${SK_CURSOR_YOLO:-1}" == "1" ]]; then
+        extra_flags="--yolo"
+    fi
+    _sk_launch agent "$extra_flags" "$@"
+}
+
+# cursor-agent is the upstream binary name; keep a twin wrapper in sync.
+function cursor-agent {
+    local extra_flags=""
+    if [[ "${SK_CURSOR_YOLO:-1}" == "1" ]]; then
+        extra_flags="--yolo"
+    fi
+    _sk_launch cursor-agent "$extra_flags" "$@"
+}
+
 # pi coding agent
 function pi {
     _sk_launch pi "" "$@"
@@ -441,4 +477,6 @@ export -f skswitch       2>/dev/null || true
 export -f claude         2>/dev/null || true
 export -f codex          2>/dev/null || true
 export -f opencode       2>/dev/null || true
+export -f agent          2>/dev/null || true
+export -f cursor-agent   2>/dev/null || true
 export -f pi             2>/dev/null || true
