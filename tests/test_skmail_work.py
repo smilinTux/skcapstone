@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import datetime as dt
+import hashlib
 import json
 from pathlib import Path
 
@@ -35,3 +37,29 @@ def test_validate_accepts_canonical_hash_and_rejects_tamper() -> None:
         assert "hash" in str(exc)
     else:
         raise AssertionError("tampered envelope accepted")
+
+
+def test_reader_fences_expired_stale_and_duplicate_messages() -> None:
+    now = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+    first = MODULE.envelope("work.progress", "worker", "jarvis", "card-1", "rev-1", "one")
+    first["created_at"] = "2025-12-31T23:00:00+00:00"
+    first["expires_at"] = "2026-01-01T01:00:00+00:00"
+    unsigned = dict(first)
+    unsigned.pop("body_hash")
+    first["body_hash"] = hashlib.sha256(MODULE._canonical(unsigned)).hexdigest()
+    stale = MODULE.envelope("work.progress", "worker", "jarvis", "card-1", "old", "stale")
+    wrong_card = MODULE.envelope("work.progress", "worker", "jarvis", "other", "rev-1", "other")
+    result = MODULE.read_work_envelopes(
+        [first, first, stale, wrong_card], recipient="jarvis",
+        card_id="card-1", claim_revision="rev-1", now=now
+    )
+    assert [item["body"] for item in result] == ["one"]
+
+
+def test_reader_never_executes_body_text() -> None:
+    message = MODULE.envelope(
+        "work.help.request", "worker", "jarvis", "card-1", "rev-1",
+        "__import__('os').system('touch /tmp/nope')"
+    )
+    result = MODULE.read_work_envelopes([message], recipient="jarvis")
+    assert result[0]["body"].startswith("__import__")

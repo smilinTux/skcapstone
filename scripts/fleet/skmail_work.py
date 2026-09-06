@@ -15,6 +15,7 @@ import json
 import sys
 import uuid
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 WRITER = Path(__file__).with_name("skmail_writer.py")
@@ -53,6 +54,37 @@ def validate_envelope(payload: dict, now: dt.datetime | None = None) -> dict:
     if expires <= current:
         raise ValueError("expired SKMail work envelope")
     return payload
+
+
+def read_work_envelopes(records: Iterable[dict], recipient: str | None = None,
+                        card_id: str | None = None, claim_revision: str | None = None,
+                        now: dt.datetime | None = None) -> list[dict]:
+    """Return valid, unexpired, deduplicated work messages for one claim.
+
+    Ordinary SKMail and malformed legacy records are ignored.  A caller may
+    provide the current recipient/card/revision to fence replies from stale
+    workers.  Messages are sorted by creation time and message id, making a
+    replay deterministic without mutating the append-only mailbox.
+    """
+    accepted: dict[str, dict] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        candidate = record.get("work_envelope", record)
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            validate_envelope(candidate, now=now)
+        except (TypeError, ValueError, KeyError):
+            continue
+        if recipient and candidate["recipient"].lower() not in {recipient.lower(), "all"}:
+            continue
+        if card_id and candidate["card_id"] != card_id:
+            continue
+        if claim_revision and candidate["claim_revision"] != claim_revision:
+            continue
+        accepted[candidate["message_id"]] = candidate
+    return sorted(accepted.values(), key=lambda item: (item["created_at"], item["message_id"]))
 
 
 def envelope(kind: str, sender: str, recipient: str, card_id: str,
