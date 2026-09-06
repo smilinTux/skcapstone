@@ -1,5 +1,9 @@
 # Changelog
 
+- **Card `61852c77`: heartbeat agent-name path safety.** Validate agent names
+  against a shared strict allowlist before heartbeat or worker-beat paths are
+  constructed, rejecting traversal-shaped and other filesystem-special names.
+
 - **Card `1b84d7f4`: Cursor Agent YOLO default.** Added `SK_CURSOR_YOLO`
   (default on) so the SK agent picker launches Cursor Agent CLI (`agent` /
   `cursor-agent`) with `--yolo`, plus doctor harness checks and docs aligned
