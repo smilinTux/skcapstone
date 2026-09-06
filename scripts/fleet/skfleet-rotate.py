@@ -249,13 +249,13 @@ STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
 _WORKER_UNIT_RE = re.compile(
-    r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
+    r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
 )
 
 
 def _worker_unit_name(lane, cid):
     """Return the transient service name for one newly launched worker."""
-    if lane not in {"codex", "glm", "qwen", "escalate"} or not re.fullmatch(
+    if lane not in {"codex", "glm", "qwen", "kimi", "escalate"} or not re.fullmatch(
         r"[0-9a-f]{8}", cid
     ):
         raise ValueError("invalid worker unit identity")
@@ -453,6 +453,11 @@ LANES=[
      "target":TARGET},
     {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","glm-4.6"),
      "target":0 if glm_held else GLM_TARGET},
+    # Kimi is an explicit compatibility lane. A zero target means the lane is
+    # unavailable, so Kimi-only work is deferred rather than falling through.
+    {"name":"kimi","prefix":"kimi-auto-",
+     "model":os.environ.get("SKFLEET_KIMI_MODEL","kimi-for-coding"),
+     "target":int(os.environ.get("SKFLEET_KIMI_TARGET","0"))},
     # Restored. needs_escalation() still exists and still marks a card whose
     # worker reported blocked_on=capability, but the lane it routes to had been
     # dropped, so those cards were marked for a destination that did not exist
@@ -3239,6 +3244,10 @@ _ESCALATE_LABEL="needs-stronger-model"
 _LANE_ONLY_LABELS={
     "codex-only":"codex",
     "glm-only":"glm",
+    "kimi-only":"kimi",
+    "kimi-lane":"kimi",
+    "kimi-role":"kimi",
+    "gateway-kimi":"kimi",
     "escalation-only":"escalate",
 }
 
@@ -3288,6 +3297,8 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
     if required:
         lane=next(iter(required))
         return (lane,),"required-lane:%s"%lane
+    # Ordinary work deliberately keeps its historical mapping. Kimi is never
+    # an overflow fallback: only an explicit Kimi requirement may use it.
     ordinary=("qwen","glm","codex") if qwen_allowed else ("glm","codex")
     return ordinary,"ordinary"
 
@@ -3344,7 +3355,7 @@ def qwen_suitable(core):
 
 picks=[]; _i=0
 remaining={lane["name"]:lane["free"] for lane in LANES}
-_LANE_RANK={"qwen":0,"glm":1,"codex":2,"escalate":3}
+_LANE_RANK={"qwen":0,"glm":1,"kimi":2,"codex":3,"escalate":4}
 lane_order=sorted(LANES,key=lambda lane:_LANE_RANK.get(lane["name"],9))
 _esc_waiting=0
 _lane_deferred=collections.Counter()
