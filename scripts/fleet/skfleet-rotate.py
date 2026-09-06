@@ -4059,8 +4059,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     child=(
         "release_claim() { %s coord release-claim %s --owner %s "
         "--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; "
-        "idle_agent() { python3 -c \"import json,datetime;from pathlib import Path;"
-        "p=Path.home()/'.skcapstone/coordination/agents'/('%s.json');"
+        "idle_agent() { python3 -c \"import json,datetime,os,re;from pathlib import Path;"
+        "h=re.sub(r'[^A-Za-z0-9_.-]+','_',os.uname().nodename.split('.')[0]).strip('._') or 'unknown-host';"
+        "p=Path.home()/'.skcapstone/coordination/agents'/h/('%s.json');"
         "d=json.loads(p.read_text());"
         "d.update(state='idle',current_task=None,claimed_tasks=[],"
         "last_seen=datetime.datetime.now(datetime.timezone.utc).isoformat());"

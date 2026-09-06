@@ -80,7 +80,10 @@ units={p[0]:p[1:4] for line in unit_lines if len(p:=line.split()) >= 4}
 seen_units=set()
 process_agents=set()
 projection_agents=set()
-for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
+# Projections are host-scoped: only inspect this host's mutable view.
+_agent_root = Path.home()/'.skcapstone/coordination/agents'
+_host_scope = ''.join(c if c.isalnum() or c in '_.-' else '_' for c in host).strip('._') or 'unknown-host'
+for path in (_agent_root / _host_scope).glob('pi-*.json'):
     if '.sync-conflict-' in path.name:
         continue
     try:
@@ -163,7 +166,7 @@ for unit in sorted(set(units)-seen_units):
     print(json.dumps(dict(host=host,agent=owner or 'unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state=claim,card_status=status,unit_missing_process=True,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=owner,claim_revision=revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
 idle_projections=0
 sync_conflict_projections=0
-for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
+for path in (_agent_root / _host_scope).glob('pi-*.json'):
     try:
         if '.sync-conflict-' in path.name:
             sync_conflict_projections+=1
