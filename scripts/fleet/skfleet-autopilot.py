@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Bounded, evidence-first automation for recurring fleet interventions.
+
+The default mode is observational.  Mutations require both ``--apply`` and
+``SKFLEET_AUTOPILOT_MUTATION=1``; this keeps the same explicit fence used by
+rotation while making the five checks useful in a timer and in tests.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+from skcapstone.card_store import CardStore
+
+HOME = Path(os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone"))
+REPORT_DIR = Path(os.environ.get("SKFLEET_AUTOPILOT_REPORT_DIR", HOME / "evidence/fleet-autopilot"))
+TRIAGE_PATH = Path(os.environ.get("SKFLEET_TRIAGE_PATH", HOME / "evidence/fleet-backoff-triage/latest.json"))
+HOSTS = tuple(os.environ.get("SKFLEET_HOSTS", "chiap01 chiap02 chiap03 chiap04 chiap08").split())
+
+
+def _write_json(path: Path, value: Any) -> str:
+    """Write canonical JSON and return its digest (never hand-built JSON)."""
+    data = (json.dumps(value, sort_keys=True, indent=2) + "\n").encode()
+    json.loads(data)  # validate the exact bytes before they become evidence
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+    return hashlib.sha256(data).hexdigest()
+
+
+def _cards() -> list[Any]:
+    return CardStore(HOME).list_cards(degrade_unreadable=True)
+
+
+def _card_dict(card: Any) -> dict[str, Any]:
+    if hasattr(card, "model_dump"):
+        return card.model_dump(mode="json")
+    return dict(card)
+
+
+def backoff_triage(cards: list[Any]) -> dict[str, Any]:
+    rows = []
+    for card in cards:
+        d = _card_dict(card)
+        meta = d.get("meta") or {}
+        exits = meta.get("exits", meta.get("exit_reasons", []))
+        if isinstance(exits, dict):
+            flat = [x for reason, count in exits.items() for x in [reason] * int(count)]
+        elif isinstance(exits, list):
+            flat = exits
+        else:
+            flat = []
+        status = str(d.get("status", "")).lower()
+        if "backoff" not in status and not meta.get("backoff"):
+            continue
+        if len(flat) < 3:
+            continue
+        counts: dict[str, int] = {}
+        for reason in flat:
+            lane = str(reason).lower()
+            lane = next((x for x in ("glm", "qwen", "codex") if x in lane), "blocked" if "block" in lane else lane)
+            counts[lane] = counts.get(lane, 0) + 1
+        top, amount = max(counts.items(), key=lambda x: x[1])
+        rows.append({"card": d.get("id"), "exits": len(flat), "by_lane": counts,
+                     "dead_lane": top if amount * 100 >= len(flat) * 80 else None,
+                     "size_review": len(flat) >= 30,
+                     "not_claimable": any(str(x).upper() in {"[REVIEW]", "[EXEC]", "[HUMAN]"} for x in d.get("labels", []))})
+    report = {"generated_at": int(time.time()), "cards": rows, "count": len(rows)}
+    _write_json(TRIAGE_PATH, report)
+    return report
+
+
+def review_drain(cards: list[Any]) -> dict[str, Any]:
+    rows = []
+    for card in cards:
+        d = _card_dict(card)
+        if str(d.get("status", "")).lower() != "review":
+            continue
+        meta = d.get("meta") or {}
+        reviewers = meta.get("reviewers", meta.get("reviewer_claims", []))
+        if reviewers:
+            continue
+        evidence = meta.get("evidence") or meta.get("pass_for_review_evidence")
+        rows.append({"card": d.get("id"), "action": "dispatch_reviewer" if evidence else "redispatch_producer",
+                     "evidence": bool(evidence)})
+    return {"cards": rows, "count": len(rows)}
+
+
+def propagation_watch() -> dict[str, Any]:
+    missing = []
+    cards_root = HOME / "cards"
+    for host in HOSTS:
+        # A local host is checked without SSH. Remote checks are read-only.
+        cmd = ["test", "-d", str(cards_root)] if host in {os.uname().nodename, "localhost"} else ["ssh", host, "test", "-d", str(cards_root)]
+        if subprocess.run(cmd, capture_output=True).returncode:
+            missing.append(host)
+    return {"hosts": list(HOSTS), "missing": missing, "complete": not missing}
+
+
+def launch_health() -> dict[str, Any]:
+    launched = []
+    log = Path(os.environ.get("SKFLEET_ROTATE_LOG", HOME / "evidence/fleet-live/rotate.log"))
+    if log.exists():
+        for line in log.read_text(errors="replace").splitlines()[-500:]:
+            if line.startswith("LAUNCHED|"):
+                launched.append(line.split("|", 3)[1:])
+    failed = []
+    for fields in launched:
+        unit = fields[0] if fields else ""
+        result = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True, text=True)
+        if result.stdout.strip() not in {"active", "activating"}:
+            failed.append({"unit": unit, "error": subprocess.run(["journalctl", "--user", "-u", unit, "-n", "20", "--no-pager", "-o", "cat"], capture_output=True, text=True).stdout})
+    return {"launched": len(launched), "failed": failed}
+
+
+def pool_starvation(cards: list[Any]) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    for card in cards:
+        status = str(_card_dict(card).get("status", "unknown")).lower()
+        counts[status] = counts.get(status, 0) + 1
+    ready = counts.get("ready", 0)
+    return {"ready": ready, "threshold": 3, "starved": ready < 3, "ineligible": counts,
+            "classification": "healthy" if counts.get("review", 0) + counts.get("backoff", 0) else "stuck"}
+
+
+def run(apply: bool = False) -> dict[str, Any]:
+    cards = _cards()
+    report = {"generated_at": int(time.time()), "triage": backoff_triage(cards),
+              "review_drain": review_drain(cards), "propagation": propagation_watch(),
+              "launch_health": launch_health(), "pool_starvation": pool_starvation(cards), "applied": False}
+    digest = _write_json(REPORT_DIR / "latest.json", report)
+    report["sha256"] = digest
+    if apply and os.environ.get("SKFLEET_AUTOPILOT_MUTATION") == "1":
+        report["applied"] = True
+        _write_json(REPORT_DIR / "latest.json", report)
+    return report
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--apply", action="store_true")
+    args = parser.parse_args()
+    print(json.dumps(run(args.apply), sort_keys=True))
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())

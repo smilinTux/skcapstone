@@ -1,0 +1,10 @@
+[Unit]
+Description=SKCapstone fleet autopilot intervention sweep
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
