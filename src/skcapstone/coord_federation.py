@@ -228,43 +228,6 @@ class CoordFederationWatcher:
         await self._announce(conflict_path, event="conflict_reconciliation_required")
         return
 
-        stem = conflict_path.stem
-        canonical_stem = _CONFLICT_RE.sub("", stem)
-        canonical_path = conflict_path.parent / f"{canonical_stem}.json"
-
-        if not canonical_path.exists():
-            # No canonical version - promote conflict to canonical
-            try:
-                conflict_path.rename(canonical_path)
-                logger.info("Promoted conflict to canonical: %s", canonical_path.name)
-                await self._announce(canonical_path, event="conflict_resolved")
-            except OSError as exc:
-                logger.warning("Could not promote conflict file: %s", exc)
-            return
-
-        # Compare modification times
-        try:
-            conflict_mtime = conflict_path.stat().st_mtime
-            canonical_mtime = canonical_path.stat().st_mtime
-        except OSError:
-            return
-
-        if conflict_mtime > canonical_mtime:
-            # Conflict is newer - replace canonical
-            try:
-                conflict_path.replace(canonical_path)
-                logger.info("Conflict newer - replaced canonical: %s", canonical_path.name)
-                await self._announce(canonical_path, event="conflict_resolved")
-            except OSError as exc:
-                logger.warning("Could not replace canonical with conflict: %s", exc)
-        else:
-            # Canonical is newer (or same age) - drop conflict
-            try:
-                conflict_path.unlink(missing_ok=True)
-                logger.debug("Dropped older conflict: %s", conflict_path.name)
-            except OSError as exc:
-                logger.warning("Could not remove conflict file: %s", exc)
-
     async def _announce(self, path: Path, event: str = "synced") -> None:
         """Publish a coord.sync message for a changed coordination file.
 
