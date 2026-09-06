@@ -24,10 +24,12 @@ Usage:
 
 DEPRECATION-ON-PARITY (Worker Beat Protocol, card 77d62d85): fleet worker
 liveness is migrating to the beat protocol (skcapstone.fleet_beat, cards
-ad0c3bfd..a97c7ce8). Once Cards B and D are landed and the monitor consumes
-beats with evidence-precedence in production, this module is DEPRECATED for
-worker-liveness use and remains only for general mesh discovery. Do not add
-new worker-liveness features here; add them to fleet_beat.
+ad0c3bfd..a97c7ce8). Sovereign Heartbeat v2 may be retired for worker
+liveness only after the replacement reaches parity on atomic publication,
+TTL expiry, mesh discovery, and evidence-precedence monitoring in production.
+Once Cards B and D are landed and that parity is verified, this module remains
+only for general mesh discovery. Do not add new worker-liveness features here;
+add them to fleet_beat.
 """
 
 from __future__ import annotations
@@ -59,6 +61,11 @@ def validate_agent_name(name: str) -> str:
     if not name or not name.strip():
         raise ValueError("agent_name must be a non-empty string")
     cleaned = name.strip()
+    if cleaned != name:
+        raise ValueError(
+            "agent_name must not contain leading or trailing whitespace; "
+            "names are rejected, not silently rewritten"
+        )
     if not AGENT_NAME_RE.fullmatch(cleaned.lower()):
         raise ValueError(
             "agent_name %r contains characters outside [a-z0-9-]; "
