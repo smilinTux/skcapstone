@@ -48,6 +48,7 @@ def projection_path(coordination_dir: Path, agent_name: str, host_id: str | None
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", agent_name).strip("._") or "anonymous"
     return host_scoped_agent_dir(coordination_dir, host_id) / f"{safe}.json"
 
+
 # Pub/sub topic name for coordination sync events
 COORD_SYNC_TOPIC = "coord.sync"
 

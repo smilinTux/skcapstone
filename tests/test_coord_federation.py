@@ -28,10 +28,7 @@ def test_projection_path_sanitizes_host_and_agent_names(tmp_path: Path):
 def test_conflict_is_preserved_and_announced_for_reconciliation(tmp_path: Path):
     coordination = tmp_path / "coordination"
     conflict = (
-        coordination
-        / "agents"
-        / "chiap01"
-        / "worker.sync-conflict-20260906-120000-ABC123.json"
+        coordination / "agents" / "chiap01" / "worker.sync-conflict-20260906-120000-ABC123.json"
     )
     conflict.parent.mkdir(parents=True)
     original = {"agent": "worker", "state": "active", "claim": "556491d9"}
