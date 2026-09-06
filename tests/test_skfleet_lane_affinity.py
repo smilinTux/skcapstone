@@ -66,6 +66,10 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
     [
         (["codex-only"], False, (("codex",), "required-lane:codex")),
         (["glm-only"], False, (("glm",), "required-lane:glm")),
+        (["kimi-only"], False, (("kimi",), "required-lane:kimi")),
+        (["kimi-lane"], False, (("kimi",), "required-lane:kimi")),
+        (["kimi-role"], False, (("kimi",), "required-lane:kimi")),
+        (["gateway-kimi"], False, (("kimi",), "required-lane:kimi")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
         ([], False, (("qwen", "glm", "codex"), "ordinary")),
