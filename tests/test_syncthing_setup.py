@@ -197,6 +197,26 @@ class TestConfigureSyncthingFolder:
 
         assert configure_syncthing_folder() is True
 
+    def test_removes_broad_and_nested_overlaps(self, tmp_path, monkeypatch):
+        """Only one coordination root remains federated."""
+        agent_home, _ = _patch_homes(monkeypatch, tmp_path)
+        config_path = self._make_config(tmp_path)
+        root = ET.parse(str(config_path)).getroot()
+        overlapping = (
+            ("broad", agent_home),
+            ("nested", agent_home / "coordination" / "agents"),
+        )
+        for folder_id, path in overlapping:
+            ET.SubElement(root, "folder", id=folder_id, path=str(path))
+        ET.ElementTree(root).write(str(config_path), xml_declaration=True)
+        monkeypatch.setattr("skcapstone.skills.syncthing_setup.SYNCTHING_CONFIG_FILE", config_path)
+
+        assert configure_syncthing_folder() is True
+        folders = ET.parse(str(config_path)).getroot().findall("folder")
+        assert [(f.get("id"), f.get("path")) for f in folders] == [
+            ("skcapstone-sync", str(agent_home / "coordination"))
+        ]
+
     def test_no_config_file_returns_false(self, tmp_path, monkeypatch):
         """Returns False when Syncthing config doesn't exist."""
         monkeypatch.setattr(
