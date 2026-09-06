@@ -74,9 +74,21 @@ def emit_work_mail(args: argparse.Namespace, kind: str, body: str) -> None:
         return
     try:
         subprocess.run(
-            [sys.executable, str(helper), kind, args.owner, args.mail_recipient,
-             args.card, args.claim_revision, body, "--host", args.host],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            [
+                sys.executable,
+                str(helper),
+                kind,
+                args.owner,
+                args.mail_recipient,
+                args.card,
+                args.claim_revision,
+                body,
+                "--host",
+                args.host,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
             timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):

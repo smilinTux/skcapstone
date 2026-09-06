@@ -12,16 +12,23 @@ import argparse
 import datetime as dt
 import hashlib
 import json
-import sys
-import uuid
 import re
+import uuid
 from collections.abc import Iterable
 from pathlib import Path
 
 WRITER = Path(__file__).with_name("skmail_writer.py")
-KINDS = {"agent.hello", "agent.status", "work.progress", "work.help.request",
-         "work.help.response", "dependency.wait", "dependency.changed",
-         "work.complete", "work.blocked"}
+KINDS = {
+    "agent.hello",
+    "agent.status",
+    "work.progress",
+    "work.help.request",
+    "work.help.response",
+    "dependency.wait",
+    "dependency.changed",
+    "work.complete",
+    "work.blocked",
+}
 IDENTITY = re.compile(r"^[A-Za-z0-9_.:@-]{1,160}$")
 CARD = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 
@@ -32,8 +39,20 @@ def _canonical(payload: dict) -> bytes:
 
 def validate_envelope(payload: dict, now: dt.datetime | None = None) -> dict:
     """Validate a work envelope and its canonical hash without executing body text."""
-    required = {"schema", "message_id", "thread_id", "type", "sender", "recipient",
-                "card_id", "claim_revision", "created_at", "expires_at", "body", "body_hash"}
+    required = {
+        "schema",
+        "message_id",
+        "thread_id",
+        "type",
+        "sender",
+        "recipient",
+        "card_id",
+        "claim_revision",
+        "created_at",
+        "expires_at",
+        "body",
+        "body_hash",
+    }
     if not isinstance(payload, dict) or not required.issubset(payload):
         raise ValueError("incomplete SKMail work envelope")
     if payload["schema"] != "skmail.work.v1" or payload["type"] not in KINDS:
@@ -47,7 +66,10 @@ def validate_envelope(payload: dict, now: dt.datetime | None = None) -> dict:
         raise ValueError("body must be text")
     unsigned = dict(payload)
     supplied = unsigned.pop("body_hash")
-    if not isinstance(supplied, str) or hashlib.sha256(_canonical(unsigned)).hexdigest() != supplied:
+    if (
+        not isinstance(supplied, str)
+        or hashlib.sha256(_canonical(unsigned)).hexdigest() != supplied
+    ):
         raise ValueError("body_hash mismatch")
     current = now or dt.datetime.now(dt.timezone.utc)
     expires = dt.datetime.fromisoformat(payload["expires_at"])
@@ -56,9 +78,13 @@ def validate_envelope(payload: dict, now: dt.datetime | None = None) -> dict:
     return payload
 
 
-def read_work_envelopes(records: Iterable[dict], recipient: str | None = None,
-                        card_id: str | None = None, claim_revision: str | None = None,
-                        now: dt.datetime | None = None) -> list[dict]:
+def read_work_envelopes(
+    records: Iterable[dict],
+    recipient: str | None = None,
+    card_id: str | None = None,
+    claim_revision: str | None = None,
+    now: dt.datetime | None = None,
+) -> list[dict]:
     """Return valid, unexpired, deduplicated work messages for one claim.
 
     Ordinary SKMail and malformed legacy records are ignored.  A caller may
@@ -87,8 +113,15 @@ def read_work_envelopes(records: Iterable[dict], recipient: str | None = None,
     return sorted(accepted.values(), key=lambda item: (item["created_at"], item["message_id"]))
 
 
-def envelope(kind: str, sender: str, recipient: str, card_id: str,
-             claim_revision: str, body: str, thread_id: str = "") -> dict:
+def envelope(
+    kind: str,
+    sender: str,
+    recipient: str,
+    card_id: str,
+    claim_revision: str,
+    body: str,
+    thread_id: str = "",
+) -> dict:
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     message_id = str(uuid.uuid4())
     payload = {
@@ -110,30 +143,60 @@ def envelope(kind: str, sender: str, recipient: str, card_id: str,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Send a structured SKMail work envelope.")
-    parser.add_argument("kind", choices=("agent.hello", "agent.status", "work.progress",
-                                          "work.help.request", "work.help.response",
-                                          "dependency.wait", "dependency.changed",
-                                          "work.complete", "work.blocked"))
+    parser.add_argument(
+        "kind",
+        choices=(
+            "agent.hello",
+            "agent.status",
+            "work.progress",
+            "work.help.request",
+            "work.help.response",
+            "dependency.wait",
+            "dependency.changed",
+            "work.complete",
+            "work.blocked",
+        ),
+    )
     parser.add_argument("sender")
     parser.add_argument("recipient")
     parser.add_argument("card_id")
     parser.add_argument("claim_revision")
     parser.add_argument("body")
     parser.add_argument("--thread", default="")
-    parser.add_argument("--boxdir", type=Path, default=Path.home() / ".skcapstone/coordination/skmail.d")
+    parser.add_argument(
+        "--boxdir", type=Path, default=Path.home() / ".skcapstone/coordination/skmail.d"
+    )
     parser.add_argument("--host", default=__import__("socket").gethostname())
     args = parser.parse_args()
-    payload = envelope(args.kind, args.sender, args.recipient, args.card_id,
-                       args.claim_revision, args.body, args.thread)
+    payload = envelope(
+        args.kind,
+        args.sender,
+        args.recipient,
+        args.card_id,
+        args.claim_revision,
+        args.body,
+        args.thread,
+    )
     import importlib.util
+
     spec = importlib.util.spec_from_file_location("skmail_writer", WRITER)
     writer = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(writer)
     subject = f"SKMAIL-WORK {args.kind} {args.card_id}"
     line = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    digest = writer.append(args.boxdir, args.sender, args.recipient, "normal", subject, line, args.host)
-    print(json.dumps({"message_id": payload["message_id"], "body_hash": payload["body_hash"], "line_hash": digest}))
+    digest = writer.append(
+        args.boxdir, args.sender, args.recipient, "normal", subject, line, args.host
+    )
+    print(
+        json.dumps(
+            {
+                "message_id": payload["message_id"],
+                "body_hash": payload["body_hash"],
+                "line_hash": digest,
+            }
+        )
+    )
     return 0
 
 

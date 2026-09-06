@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 
@@ -23,7 +23,9 @@ def test_envelope_is_work_scoped_and_hashed() -> None:
 
 
 def test_envelope_body_is_data_not_executable() -> None:
-    msg = MODULE.envelope("work.progress", "worker", "jarvis", "abc12345", "rev1", "$(touch pwned)")
+    msg = MODULE.envelope(
+        "work.progress", "worker", "jarvis", "abc12345", "rev1", "$(touch pwned)"
+    )
     assert json.dumps(msg, sort_keys=True).find("touch pwned") >= 0
 
 
@@ -50,16 +52,23 @@ def test_reader_fences_expired_stale_and_duplicate_messages() -> None:
     stale = MODULE.envelope("work.progress", "worker", "jarvis", "card-1", "old", "stale")
     wrong_card = MODULE.envelope("work.progress", "worker", "jarvis", "other", "rev-1", "other")
     result = MODULE.read_work_envelopes(
-        [first, first, stale, wrong_card], recipient="jarvis",
-        card_id="card-1", claim_revision="rev-1", now=now
+        [first, first, stale, wrong_card],
+        recipient="jarvis",
+        card_id="card-1",
+        claim_revision="rev-1",
+        now=now,
     )
     assert [item["body"] for item in result] == ["one"]
 
 
 def test_reader_never_executes_body_text() -> None:
     message = MODULE.envelope(
-        "work.help.request", "worker", "jarvis", "card-1", "rev-1",
-        "__import__('os').system('touch /tmp/nope')"
+        "work.help.request",
+        "worker",
+        "jarvis",
+        "card-1",
+        "rev-1",
+        "__import__('os').system('touch /tmp/nope')",
     )
     result = MODULE.read_work_envelopes([message], recipient="jarvis")
     assert result[0]["body"].startswith("__import__")
