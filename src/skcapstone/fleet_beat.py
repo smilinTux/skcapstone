@@ -137,6 +137,10 @@ def write_agent_beat(
 
     This is the agent-side entry point (Card C). The wrapper cannot call
     this: emitter is fixed to "agent" and progress_token is allowed.
+
+    ``reason`` is kept in the event body, not the state record. A missing
+    reason falls back to the disposition and card so the required one-line
+    event is still emitted.
     """
     import subprocess
 
