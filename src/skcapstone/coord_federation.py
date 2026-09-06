@@ -22,10 +22,10 @@ import asyncio
 import json
 import logging
 import re
+import socket
 import time
 from pathlib import Path
 from typing import Callable, Optional
-import socket
 
 from .pubsub import PubSub
 
