@@ -9,6 +9,9 @@ Covers:
 - 404 for unknown paths
 - start_dashboard creates a server
 - Dashboard HTML contains essential elements
+
+NOTE: These tests start a real HTTP server and connect to it via HTTP.
+They require the network stack and bind to a TCP port.
 """
 
 from __future__ import annotations
@@ -20,6 +23,9 @@ from http.client import HTTPConnection
 from unittest.mock import patch
 
 import pytest
+
+pytestmark = pytest.mark.network
+
 import yaml
 
 from skcapstone.dashboard import (

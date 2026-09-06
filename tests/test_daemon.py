@@ -1,4 +1,8 @@
-"""Tests for the skcapstone daemon."""
+"""Tests for the skcapstone daemon.
+
+These tests start a real HTTP server and make network requests to it.
+They require the network stack and bind to a TCP port.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,8 @@ import urllib.request
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytestmark = pytest.mark.network
 
 # Import dreaming_job at module load so it is resident in sys.modules before any
 # test enters a ``patch.dict(sys.modules, ...)`` block. Otherwise the first test

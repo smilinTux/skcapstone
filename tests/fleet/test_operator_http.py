@@ -8,6 +8,8 @@ freeze-independent (byte-identical fleet tree, still answers while frozen);
 a cli/seat lane disagreement renders Unknown(LaneConflict) rather than
 picking a winner; the reserved act path never actuates; and sknoded.main_loop
 only starts the surface when the gate is on and it is not a one-shot pass.
+
+NOTE: These tests use real HTTP sockets and require the network stack.
 """
 
 from __future__ import annotations
@@ -21,6 +23,8 @@ import urllib.error
 import urllib.request
 
 import pytest
+
+pytestmark = pytest.mark.network
 
 from skcapstone.fleet import operator_http as oh
 from skcapstone.fleet import sknoded, store
