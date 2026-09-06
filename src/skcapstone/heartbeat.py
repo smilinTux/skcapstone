@@ -295,11 +295,15 @@ class HeartbeatBeacon:
         """Read a specific agent's heartbeat.
 
         Args:
-            agent_name: The agent to read.
+            agent_name: The agent to read. It is validated before becoming
+                part of a filesystem path, just like the writer's name.
 
         Returns:
             Heartbeat or None if not found.
         """
+        # Validate before constructing the path; peer names may come from
+        # card data or another untrusted heartbeat source.
+        agent_name = validate_agent_name(agent_name)
         path = self._heartbeat_dir / f"{agent_name}.json"
         if not path.exists():
             return None
