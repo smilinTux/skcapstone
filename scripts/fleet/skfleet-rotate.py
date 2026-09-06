@@ -256,13 +256,13 @@ STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
 _WORKER_UNIT_RE = re.compile(
-    r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
+    r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
 )
 
 
 def _worker_unit_name(lane, cid):
     """Return the transient service name for one newly launched worker."""
-    if lane not in {"codex", "glm", "qwen", "escalate"} or not re.fullmatch(
+    if lane not in {"codex", "glm", "qwen", "kimi", "escalate"} or not re.fullmatch(
         r"[0-9a-f]{8}", cid
     ):
         raise ValueError("invalid worker unit identity")
@@ -411,7 +411,13 @@ def folded_dependencies(cid,core=None,fresh=False):
     deps=[str(x) for x in (core.get("dependencies") or [])]
     rows=_acts_fresh(cid) if fresh else event_rows(cid)
     if fresh:
-        rows.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", "")), str(e.get("event_id", ""))))
+        rows.sort(
+            key=lambda e: (
+                e.get("ts", ""),
+                str(e.get("writer", "")),
+                str(e.get("event_id", "")),
+            )
+        )
     for event in rows:
         dep=_dependency_value(event)
         if not dep: continue
@@ -506,7 +512,11 @@ try:
     # record, immediately below. So drop that one class here and keep the rest,
     # which are all derived from shared data and on which every host agrees.
     _classes = assessment.get("classes", {}) or {}
-    _local_only = {r.get("card_id") for r in _classes.get("unclaimable_cards", []) if r.get("card_id")}
+    _local_only = {
+        r.get("card_id")
+        for r in _classes.get("unclaimable_cards", [])
+        if r.get("card_id")
+    }
     # The volatile identity class names its repair card as tracking_card. That
     # card is the work that removes the defect and must remain assignable; only
     # the generated drift records belong in the exclusion set.
@@ -542,6 +552,11 @@ LANES=[
      "target":TARGET},
     {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","glm-4.6"),
      "target":0 if glm_held else GLM_TARGET},
+    # Kimi is an explicit compatibility lane. A zero target means the lane is
+    # unavailable, so Kimi-only work is deferred rather than falling through.
+    {"name":"kimi","prefix":"kimi-auto-",
+     "model":os.environ.get("SKFLEET_KIMI_MODEL","kimi-for-coding"),
+     "target":int(os.environ.get("SKFLEET_KIMI_TARGET","0"))},
     # Restored. needs_escalation() still exists and still marks a card whose
     # worker reported blocked_on=capability, but the lane it routes to had been
     # dropped, so those cards were marked for a destination that did not exist
@@ -553,7 +568,9 @@ LANES=[
      "model":os.environ.get("SKFLEET_QWEN_MODEL","qwen3.8-27b-huihui-abliterated-q4_k_m"),
      "target":QWEN_TARGET},
     {"name":"escalate","prefix":"esc-auto-",
-     "model":os.environ.get("SKFLEET_ESC_MODEL", ESC_MODEL if "ESC_MODEL" in dir() else "gpt-5.6-sol"),
+     "model":os.environ.get(
+         "SKFLEET_ESC_MODEL", ESC_MODEL if "ESC_MODEL" in dir() else "gpt-5.6-sol"
+     ),
      "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
 ]
 _GLM_LEVEL_DEFAULTS={"S":"glm-4.6","M":"glm-4.6","L":"glm-4.7","XL":"glm-5.3"}
@@ -839,12 +856,20 @@ for _f in glob.glob(os.path.join(EVID,"*","actions.log")):
                     _launched_at[_p[3]]=max(_launched_at.get(_p[3],0),_launch_epoch)
                     if len(_p)==8:
                         _fields=[part.partition("=") for part in _p[4:]]
-                        if [(key,sep) for key,sep,_value in _fields]==[
-                                ("lane","="),("model","="),("owner","="),
-                                ("claim_revision","=")] and all(value for _key,_sep,value in _fields):
+                        valid_fields = [(key, sep) for key, sep, _value in _fields]
+                        expected_fields = [
+                            ("lane", "="), ("model", "="),
+                            ("owner", "="), ("claim_revision", "="),
+                        ]
+                        if valid_fields == expected_fields and all(
+                            value for _key, _sep, value in _fields
+                        ):
                             _wake_launch_times[_p[3]].append(_launch_epoch)
-                    if "model=%s"%ESC_MODEL in _p:
-                        _strong_launched_at[_p[3]]=max(_strong_launched_at.get(_p[3],0),_launch_epoch)
+                    esc_model_marker = "model=%s" % ESC_MODEL
+                    if esc_model_marker in _p:
+                        _strong_launched_at[_p[3]] = max(
+                            _strong_launched_at.get(_p[3], 0), _launch_epoch
+                        )
     except OSError: pass
 # A card claimed and then RELEASED is open again and must be assignable. The prior
 # filter excluded any card with a claim action anywhere in history, making
@@ -1128,12 +1153,25 @@ def _claimability_reason(core, state):
     # producer separation and exact candidate evidence before launch.
     links = state["links"]
     description = state["description"]
-    governed_review = "review" in {str(label).strip().lower() for label in labels} and (
-        (bool(str(links.get("producer_identity") or "").strip())
-         and bool(re.fullmatch(r"[0-9a-f]{64}", str(links.get("candidate_evidence_sha256") or "").lower())))
-        or (not links.get("producer_identity") and not links.get("candidate_evidence_sha256")
-            and bool(re.search(r"Producer identity:\s*[^.\s][^.]*\.", description))
-            and bool(re.search(r"sha256=([0-9a-f]{64})(?:\.|\s|$)", description)))
+    governed_review = (
+        "review" in {str(label).strip().lower() for label in labels}
+        and (
+            (
+                bool(str(links.get("producer_identity") or "").strip())
+                and bool(
+                    re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(links.get("candidate_evidence_sha256") or "").lower(),
+                    )
+                )
+            )
+            or (
+                not links.get("producer_identity")
+                and not links.get("candidate_evidence_sha256")
+                and bool(re.search(r"Producer identity:\s*[^.\s][^.]*\.", description))
+                and bool(re.search(r"sha256=([0-9a-f]{64})(?:\.|\s|$)", description))
+            )
+        )
     )
     review_marked = (
         state["status"] == "review"
@@ -2474,7 +2512,10 @@ def _startup_release_ready(report):
             return False
         group_path = Path("/sys/fs/cgroup" + cgroup)
         try:
-            events = dict(line.split() for line in (group_path / "cgroup.events").read_text().splitlines())
+            events = dict(
+                line.split()
+                for line in (group_path / "cgroup.events").read_text().splitlines()
+            )
             if events.get("populated") != "0":
                 return False
         except FileNotFoundError:
@@ -3782,6 +3823,10 @@ _ESCALATE_LABEL="needs-stronger-model"
 _LANE_ONLY_LABELS={
     "codex-only":"codex",
     "glm-only":"glm",
+    "kimi-only":"kimi",
+    "kimi-lane":"kimi",
+    "kimi-role":"kimi",
+    "gateway-kimi":"kimi",
     "escalation-only":"escalate",
 }
 
@@ -3831,6 +3876,8 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
     if required:
         lane=next(iter(required))
         return (lane,),"required-lane:%s"%lane
+    # Ordinary work deliberately keeps its historical mapping. Kimi is never
+    # an overflow fallback: only an explicit Kimi requirement may use it.
     ordinary=("qwen","glm","codex") if qwen_allowed else ("glm","codex")
     return ordinary,"ordinary"
 
@@ -3887,9 +3934,20 @@ _QWEN_UNSUITABLE = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|deploy|"
     r"production|release|migrat|schema|architecture|\[HUMAN\]|\[XL\])", re.I)
 
+
 def qwen_suitable(core):
-    """Return whether Qwen may receive this card before a paid lane."""
-    return not _QWEN_UNSUITABLE.search(str((core or {}).get("title") or ""))
+    """Return whether Qwen may receive this card before a paid lane.
+
+    Exclusions are evaluated against the complete structural description, not
+    only the title. This keeps a suitability hint from bypassing safety labels.
+    """
+    if not isinstance(core, dict):
+        return False
+    description = " ".join(
+        [str(core.get("title") or ""),
+         *(str(label) for label in (core.get("initial_labels") or []))]
+    )
+    return not _QWEN_UNSUITABLE.search(description)
 
 
 def _lane_model(lane, core):
@@ -3933,7 +3991,7 @@ def _health_for(lane,model):
 
 picks=[]; _i=0
 remaining={lane["name"]:lane["free"] for lane in LANES}
-_LANE_RANK={"qwen":0,"glm":1,"codex":2,"escalate":3}
+_LANE_RANK={"qwen":0,"glm":1,"kimi":2,"codex":3,"escalate":4}
 lane_order=sorted(LANES,key=lambda lane:_LANE_RANK.get(lane["name"],9))
 _esc_waiting=0
 _lane_deferred=collections.Counter()
@@ -4064,9 +4122,12 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     # 264,609,995 queries, a 17.2% hit rate. Invariant rails now come FIRST and the
     # card-specific text LAST, so every worker shares one long cacheable prefix.
     _RAILS=("CONSTRAINTS (standing rails, non-negotiable):\n"
-      "- CardStore is append-only. Build JSON with a serializer and parse every line before appending. Never concatenate strings into JSON.\n"
-      "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
-      "- Return exact PASS, PASS_FOR_REVIEW, or BLOCKED with a real hashed artifact, and notify jarvis and lumina by skmail.\n"
+      "- CardStore is append-only. Build JSON with a serializer and parse every line "
+      "before appending. Never concatenate strings into JSON.\n"
+      "- Join structural CardStore events with separate evidence events. Never infer "
+      "a verdict from lifecycle state or from links alone.\n"
+      "- Return exact PASS, PASS_FOR_REVIEW, or BLOCKED with a real hashed artifact, "
+      "and notify jarvis and lumina by skmail.\n"
       "\n"
       "HOW TO SEND MAIL. This is the ONLY mailbox. Use the command; do not invent a\n"
       "file format or a directory:\n"
@@ -4168,11 +4229,18 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "If the card needs no repository change, say so explicitly in your verdict so the\n"
       "absence of a PR is a recorded decision rather than an omission.\n"
       "- Never use an em dash or en dash.\n")
-    brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
-      "for your exact agent identity. Verify that ownership before working and never "
-      "claim or substitute another card. If ownership is absent, or a dependency is "
-      "incomplete, say so and stop rather than working it anyway.\n\n"
-      "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
+    brief = _RAILS + (
+        "Work only SKCapstone card %s. The fleet selector has already claimed it "
+        "for your exact agent identity. Verify that ownership before working and never "
+        "claim or substitute another card. If ownership is absent, or a dependency is "
+        "incomplete, say so and stop rather than working it anyway.\n\n"
+        "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\n"
+        "ACCEPTANCE CRITERIA:\n%s\n\n"
+        % (
+            cid, cid, core.get("kind"), core.get("title"),
+            core.get("description"), ac,
+        )
+    )
     _seat = seat_for(cid, core)
     # A seat-owned card runs under the seat's identity, not the lane's. The
     # Worker identity stays lane-based so slot accounting, liveness, and reaping
@@ -4186,7 +4254,12 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         model=_glm_model_for(core) or model
     pi_tools=pi_tool_allowlist(_labels)
     if DRY:
-        log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
+        log(
+            d,
+            "WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"
+            % (HOST, sess, cid, _LANE["name"], model, str(core.get("title"))[:40]),
+        )
+        continue
     _review_recommendation = None
     _review_handoff = None
     try:
