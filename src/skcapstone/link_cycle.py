@@ -19,6 +19,7 @@ from .seat_boundaries import BoundaryError, evaluate_merge_as_link
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _TERMINAL_REVIEW = frozenset({"PASS", "BLOCKED", "FAIL"})
+_FEED_SCHEMA = "skfleet.link-observation-feed/v1"
 
 
 def _digest(value: object) -> str:
@@ -92,6 +93,68 @@ class PullRequestObservation:
 
 
 @dataclass(frozen=True)
+class MediatedObservationFeed:
+    """A credential-free, hashed snapshot supplied by an external observer.
+
+    The Link seat receives this value, never a GitHub client or token. The
+    source revision and evidence hash are part of the signed-by-convention
+    snapshot so consumers can fence stale and replayed observations.
+    """
+
+    source_revision: str
+    observed_at: str
+    observations: tuple[PullRequestObservation, ...]
+    reviewers: tuple["ReviewerIdentity", ...]
+    evidence_sha256: str
+    schema: str = _FEED_SCHEMA
+
+    def _payload(self) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "source_revision": self.source_revision,
+            "observed_at": self.observed_at,
+            "observations": [asdict(item) for item in self.observations],
+            "reviewers": [asdict(item) for item in self.reviewers],
+        }
+
+    @property
+    def feed_hash(self) -> str:
+        return _digest(self._payload())
+
+    def validate(self, *, now: str, max_age_seconds: int = 300, prior_feed_hash: str | None = None) -> None:
+        if self.schema != _FEED_SCHEMA or not _SHA256.fullmatch(self.source_revision):
+            raise BoundaryError("malformed observation feed")
+        if not _SHA256.fullmatch(self.evidence_sha256) or self.evidence_sha256 != self.feed_hash:
+            raise BoundaryError("observation feed evidence hash mismatch")
+        if prior_feed_hash and self.feed_hash == prior_feed_hash:
+            raise BoundaryError("observation feed replay denied")
+        from datetime import datetime, timezone
+        try:
+            seen = datetime.fromisoformat(self.observed_at.replace("Z", "+00:00"))
+            current = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            if seen.tzinfo is None or current.tzinfo is None:
+                raise BoundaryError("malformed observation feed timestamp")
+            age = (current - seen).total_seconds()
+        except ValueError as exc:
+            raise BoundaryError("malformed observation feed timestamp") from exc
+        if age < 0 or age > max_age_seconds:
+            raise BoundaryError("stale observation feed")
+        if not self.observations:
+            raise BoundaryError("observation feed is empty")
+        for observation in self.observations:
+            observation.validate()
+
+    @classmethod
+    def build(
+        cls, *, source_revision: str, observed_at: str,
+        observations: Sequence[PullRequestObservation],
+        reviewers: Sequence["ReviewerIdentity"],
+    ) -> "MediatedObservationFeed":
+        provisional = cls(source_revision, observed_at, tuple(observations), tuple(reviewers), "0" * 64)
+        return cls(source_revision, observed_at, tuple(observations), tuple(reviewers), provisional.feed_hash)
+
+
+@dataclass(frozen=True)
 class ReviewerIdentity:
     """Eligibility facts needed to prove reviewer distinctness."""
 
@@ -137,6 +200,18 @@ class RevisionFencedReviewHandoff:
         payload = asdict(self)
         payload["schema"] = "skfleet.pr-review-handoff/v1"
         return payload
+
+
+def consume_observation_feed(
+    feed: MediatedObservationFeed,
+    *,
+    now: str,
+    max_age_seconds: int = 300,
+    prior_feed_hash: str | None = None,
+) -> tuple[tuple[PullRequestObservation, ...], tuple[ReviewerIdentity, ...], str, str]:
+    """Validate and expose an authorized snapshot without side effects."""
+    feed.validate(now=now, max_age_seconds=max_age_seconds, prior_feed_hash=prior_feed_hash)
+    return feed.observations, feed.reviewers, feed.source_revision, feed.evidence_sha256
 
 
 def recommend_one_reviewer(
