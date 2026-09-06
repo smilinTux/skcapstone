@@ -235,6 +235,18 @@ def register_skills_commands(main: click.Group) -> None:
         try:
             result = client.install(name, version=version, agent=agent, force=force)
         except FileNotFoundError:
+            try:
+                from skskills.catalog import SkillCatalog
+                from skskills.installer import install_from_catalog
+                if SkillCatalog().get(name) is not None:
+                    installed = install_from_catalog(name, agent=agent, force=force)
+                    console.print(f"  [green]Installed:[/] [bold]{installed.manifest.name}[/] v{installed.manifest.version}")
+                    console.print(f"  [dim]Path:  {installed.install_path}[/]")
+                    console.print(f"  [dim]Agent: {installed.agent}[/]\n")
+                    return
+            except Exception as exc:
+                console.print(f"[bold red]Catalog install failed:[/] {exc}\n")
+                sys.exit(1)
             console.print(
                 f"[bold red]Not found:[/] skill [cyan]{name}[/] is not in the registry.\n"
                 f"  Run [dim]skcapstone skills list --query {name}[/] to search."
