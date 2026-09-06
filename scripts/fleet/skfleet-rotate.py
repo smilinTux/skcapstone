@@ -503,7 +503,7 @@ except (OSError,ValueError,TypeError):
 # codex-auto-* sessions, so the z.ai account received no traffic at all while nine
 # idle legacy glm panes did nothing. A lane is a prefix, a model alias, a target.
 def _beat_interval():
-    """Wrapper beat interval in seconds. Tunable via env, no redeploy."""
+    """Wrapper beat interval in seconds, defaulting to 600 (10 minutes)."""
     return os.environ.get("SKFLEET_BEAT_INTERVAL", "600")
 
 LANES=[
@@ -4066,15 +4066,19 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "last_seen=datetime.datetime.now(datetime.timezone.utc).isoformat());"
         "t=p.with_suffix('.json.tmp');t.write_text(json.dumps(d,indent=2)+chr(10));"
         "t.replace(p)\" >/dev/null 2>&1 || true; }; "
+        # The wrapper uses the shared fleet_beat serializer rather than building
+        # JSON in the shell.  The default is ten minutes; operators may tune it
+        # with SKFLEET_BEAT_INTERVAL without changing the launcher.
         "beat() { while :; do "
-        "mkdir -p ~/.skcapstone/fleet/beats; "
-        "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
-        "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
-        "\"beat_at\":'\\$(date +%%s)',\"elapsed_s\":'\\$SECONDS'}' "
-        "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "
+        "python3 -c \"import sys,time; from pathlib import Path; "
+        "from skcapstone.fleet_beat import write_beat; "
+        "write_beat(Path.home()/'.skcapstone/fleet/beats', sys.argv[1], sys.argv[2], "
+        "sys.argv[3], emitter='wrapper', disposition='RUNNING', "
+        "elapsed_s=max(0, int(time.time())-int(sys.argv[4])))\" "
+        "'%s' '%s' '%s' \"$(date +%%s)\" >/dev/null 2>&1 || true; "
         "sleep %s; done; }; "
         "beat & BEAT=$!; "
-        "stop_beat() { kill $BEAT 2>/dev/null || true; }; "
+        "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; }; "
         'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
         'trap "stop_beat; release_claim; idle_agent" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s "
@@ -4082,10 +4086,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         '-p "$(cat %s)"; '
         "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; idle_agent; exit $rc"
         % (SKC, cid, name, claimed_revision, name,
-           name,
-           name, cid, claimed_revision,
-           _bf_path, _bf_path, _bf_path,
-           _bi,
+           name, cid, claimed_revision, _bi,
            name, name, workspace, PI, name, model,
            pi_tools, bf))
     wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
