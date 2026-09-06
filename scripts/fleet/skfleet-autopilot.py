@@ -94,14 +94,20 @@ def review_drain(cards: list[Any]) -> dict[str, Any]:
 
 
 def propagation_watch() -> dict[str, Any]:
-    missing = []
+    """Check the card *contents* on each host, with bounded SSH fallback.
+
+    This is deliberately observational unless the explicit mutation fence is
+    enabled.  The rotator remains the authority for claims and lifecycle.
+    """
+    missing: list[str] = []
     cards_root = HOME / "cards"
     for host in HOSTS:
-        # A local host is checked without SSH. Remote checks are read-only.
-        cmd = ["test", "-d", str(cards_root)] if host in {os.uname().nodename, "localhost"} else ["ssh", host, "test", "-d", str(cards_root)]
-        if subprocess.run(cmd, capture_output=True).returncode:
+        check = "test -d {0} && find {0} -name core.json -type f -print -quit | grep -q . && find {0} -type d -path '*/events' -print -quit | grep -q .".format(str(cards_root))
+        cmd = ["bash", "-lc", check] if host in {os.uname().nodename, "localhost"} else ["ssh", host, "bash", "-lc", check]
+        if subprocess.run(cmd, capture_output=True, timeout=15).returncode:
             missing.append(host)
-    return {"hosts": list(HOSTS), "missing": missing, "complete": not missing}
+    return {"hosts": list(HOSTS), "missing": missing, "complete": not missing,
+            "alert": bool(missing), "fallback_due": bool(missing)}
 
 
 def launch_health() -> dict[str, Any]:
@@ -114,9 +120,20 @@ def launch_health() -> dict[str, Any]:
     failed = []
     for fields in launched:
         unit = fields[0] if fields else ""
+        # LAUNCHED timestamps are optional for compatibility with old logs.
+        launched_at = 0.0
+        if len(fields) > 1:
+            try:
+                launched_at = float(fields[1])
+            except ValueError:
+                pass
+        if launched_at and time.time() - launched_at < 30:
+            continue
         result = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True, text=True)
         if result.stdout.strip() not in {"active", "activating"}:
-            failed.append({"unit": unit, "error": subprocess.run(["journalctl", "--user", "-u", unit, "-n", "20", "--no-pager", "-o", "cat"], capture_output=True, text=True).stdout})
+            journal = subprocess.run(["journalctl", "--user", "-u", unit, "-n", "20", "--no-pager", "-o", "cat"], capture_output=True, text=True).stdout
+            causes = [name for name, needle in (("unit-name-allowlist", "allowlist"), ("model-not-found", "model not found"), ("credential-expired", "credential"), ("invalid-worker-identity", "invalid worker unit identity")) if needle in journal.lower()]
+            failed.append({"unit": unit, "error": journal, "known_causes": causes, "action": "release_claim_and_alert"})
     return {"launched": len(launched), "failed": failed}
 
 
@@ -126,8 +143,13 @@ def pool_starvation(cards: list[Any]) -> dict[str, Any]:
         status = str(_card_dict(card).get("status", "unknown")).lower()
         counts[status] = counts.get(status, 0) + 1
     ready = counts.get("ready", 0)
+    blocked = counts.get("blocked", 0)
+    healthy = counts.get("review", 0) + counts.get("backoff", 0) + blocked
+    classification = "healthy" if healthy == sum(counts.values()) - ready else "stuck"
     return {"ready": ready, "threshold": 3, "starved": ready < 3, "ineligible": counts,
-            "classification": "healthy" if counts.get("review", 0) + counts.get("backoff", 0) else "stuck"}
+            "classification": classification,
+            "alert_after_seconds": 900 if ready < 3 else 0,
+            "recommended_action": "drain_review_or_reap_stale_claims" if classification == "stuck" else "none"}
 
 
 def run(apply: bool = False) -> dict[str, Any]:
