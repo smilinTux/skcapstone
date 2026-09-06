@@ -67,6 +67,22 @@ def redact_stderr(stderr: bytes) -> str:
     return TOKEN_RE.sub("[REDACTED]", text)
 
 
+def emit_work_mail(args: argparse.Namespace, kind: str, body: str) -> None:
+    """Best-effort lifecycle notice; mailbox health never changes job outcome."""
+    helper = Path(__file__).with_name("skmail_work.py")
+    if not helper.exists():
+        return
+    try:
+        subprocess.run(
+            [sys.executable, str(helper), kind, args.owner, args.mail_recipient,
+             args.card, args.claim_revision, body, "--host", args.host],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+
+
 def idle_owner_projection(owner: str) -> None:
     """Clear the ephemeral worker agent file so monitors stop listing ghosts.
 
@@ -142,6 +158,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", required=True)
     parser.add_argument("--stdout", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
+    parser.add_argument("--mail-recipient", default="jarvis")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command[:1] == ["--"]:
@@ -176,6 +193,7 @@ def main() -> int:
     if preflight == 2:
         return 2
     args.stdout.parent.mkdir(parents=True, exist_ok=True)
+    emit_work_mail(args, "agent.hello", f"phase=started lane={args.lane} model={args.model}")
 
     def _stop(signum: int, _frame: object) -> None:
         idle_owner_projection(args.owner)
@@ -188,6 +206,11 @@ def main() -> int:
             child = subprocess.run(args.command, stdout=stdout, stderr=subprocess.PIPE)
         sys.stderr.buffer.write(child.stderr)
         record_terminal_exit(args, child.stderr, child.returncode)
+        emit_work_mail(
+            args,
+            "work.complete" if child.returncode == 0 else "work.blocked",
+            f"phase=finished exit_code={child.returncode}",
+        )
         return child.returncode
     finally:
         # Always idle the worker projection on any exit path, including SIGTERM.
