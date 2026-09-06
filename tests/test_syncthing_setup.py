@@ -154,7 +154,7 @@ class TestConfigureSyncthingFolder:
         folders = list(tree.getroot().iter("folder"))
         assert len(folders) == 1
         assert folders[0].get("id") == SHARED_FOLDER_ID
-        assert folders[0].get("path") == str(agent_home)
+        assert folders[0].get("path") == str(agent_home / "coordination")
         assert folders[0].get("label") == "SKCapstone Sovereign"
 
     def test_upgrades_old_sync_dir_path(self, tmp_path, monkeypatch):
@@ -177,7 +177,7 @@ class TestConfigureSyncthingFolder:
 
         tree = ET.parse(config_path)
         folder = list(tree.getroot().iter("folder"))[0]
-        assert folder.get("path") == str(agent_home)
+        assert folder.get("path") == str(agent_home / "coordination")
         assert folder.get("label") == "SKCapstone Sovereign"
 
     def test_already_correct_path_is_noop(self, tmp_path, monkeypatch):

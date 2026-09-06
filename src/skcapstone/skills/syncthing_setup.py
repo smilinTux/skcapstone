@@ -348,12 +348,9 @@ def _backup_stamp() -> str:
 def configure_syncthing_folder() -> bool:
     """Add or update the skcapstone shared folder in Syncthing config.
 
-    Points Syncthing at the entire agent home (~/.skcapstone/) so all
-    pillar data - identity, memory, trust, security, coordination, and
-    sync seeds - replicates automatically across every node.
-
-    If an older config pointed at the sync/ subfolder, it gets upgraded
-    to share the full agent home instead.
+    Points Syncthing at exactly the coordination root. Other pillars and
+    broad home folders are deliberately excluded to prevent nested overlap.
+    Existing folder identity is preserved while its path is narrowed.
 
     Returns:
         bool: True if configuration was added/updated.
@@ -367,8 +364,11 @@ def configure_syncthing_folder() -> bool:
     except ET.ParseError:
         return False
 
-    agent_home_str = str(AGENT_HOME)
-    str(SYNC_DIR)
+    # Only the coordination root is federated. Sharing AGENT_HOME creates
+    # nested/broad overlaps and lets hosts mutate one projection filename.
+    coordination_root = AGENT_HOME / "coordination"
+    coordination_root.mkdir(parents=True, exist_ok=True)
+    agent_home_str = str(coordination_root)
 
     for folder in root.iter("folder"):
         if folder.get("id") == SHARED_FOLDER_ID:

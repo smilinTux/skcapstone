@@ -2,13 +2,13 @@
 SKCapstone Coordination Federation - Syncthing-based multi-instance task sync.
 
 Watches ~/.skcapstone/coordination/ for incoming task and agent files from
-peer instances. Handles last-writer-wins conflict resolution by mtime and
-announces changes via the coord.sync pubsub topic.
+peer instances. Agent projections are host-scoped. Conflicts are retained and
+announced for reconciliation, never resolved by last-writer-wins.
 
 Design:
     - Uses watchdog (inotify on Linux) to detect file-system events
     - Debounces events (Syncthing writes in stages)
-    - Resolves Syncthing conflict files by mtime: newer wins
+    - Retains Syncthing conflict files as evidence for reconciliation
     - Publishes coord.sync messages so peers can react immediately
 
 Syncthing conflict filename format:
@@ -25,6 +25,7 @@ import re
 import time
 from pathlib import Path
 from typing import Callable, Optional
+import socket
 
 from .pubsub import PubSub
 
@@ -33,6 +34,19 @@ logger = logging.getLogger("skcapstone.coord_federation")
 # Syncthing appends this pattern to the stem before the extension on conflict.
 # e.g. "abc1-my-task.sync-conflict-20260302-120000-ABCDEF7.json"
 _CONFLICT_RE = re.compile(r"\.sync-conflict-\d{8}-\d{6}-[A-Z0-9]+$", re.IGNORECASE)
+
+
+def host_scoped_agent_dir(coordination_dir: Path, host_id: str | None = None) -> Path:
+    """Return the unique directory used for mutable agent projections."""
+    host = (host_id or socket.gethostname()).strip()
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", host).strip("._") or "unknown-host"
+    return Path(coordination_dir) / "agents" / safe
+
+
+def projection_path(coordination_dir: Path, agent_name: str, host_id: str | None = None) -> Path:
+    """Build a host-scoped projection path."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", agent_name).strip("._") or "anonymous"
+    return host_scoped_agent_dir(coordination_dir, host_id) / f"{safe}.json"
 
 # Pub/sub topic name for coordination sync events
 COORD_SYNC_TOPIC = "coord.sync"
@@ -122,6 +136,7 @@ class CoordFederationWatcher:
         self._root = Path(shared_root).expanduser()
         self._coord_dir = self._root / "coordination"
         self._agent_name = agent_name
+        self._host_id = socket.gethostname()
         self._debounce_ms = debounce_ms
 
         self._pubsub: Optional[PubSub] = None
@@ -153,7 +168,7 @@ class CoordFederationWatcher:
 
         # Ensure the directories exist before watching
         (self._coord_dir / "tasks").mkdir(parents=True, exist_ok=True)
-        (self._coord_dir / "agents").mkdir(parents=True, exist_ok=True)
+        host_scoped_agent_dir(self._coord_dir, self._host_id).mkdir(parents=True, exist_ok=True)
 
         handler = _CoordEventHandler(self._on_fs_event, debounce_ms=self._debounce_ms)
         self._observer = Observer()
@@ -187,23 +202,32 @@ class CoordFederationWatcher:
         if not path.exists():
             return
 
-        # Check if this is a Syncthing conflict file
-        stem = path.stem  # e.g. "abc1-task.sync-conflict-20260302-120000-ABC"
+        # Malformed projections are never state.
+        try:
+            with path.open(encoding="utf-8") as stream:
+                json.load(stream)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Ignoring malformed coordination JSON %s: %s", path, exc)
+            return
+        # Conflicts are immutable evidence for explicit reconciliation.
+        stem = path.stem
         if _CONFLICT_RE.search(stem):
-            await self._resolve_conflict(path)
+            await self._announce(path, event="conflict_reconciliation_required")
         else:
             await self._announce(path, event="synced")
 
     async def _resolve_conflict(self, conflict_path: Path) -> None:
-        """Resolve a Syncthing conflict file using last-writer-wins (mtime).
+        """Retain a conflict and announce it for explicit reconciliation.
 
-        The conflict file's stem contains the `.sync-conflict-DATE-TIME-ID`
-        suffix. Strip it to find the canonical filename, then keep whichever
-        version has the newer mtime and delete the loser.
+        Neither the canonical projection nor the conflict evidence is renamed,
+        replaced, or deleted. A reducer must compare validated events.
 
         Args:
             conflict_path: Path to the `.sync-conflict-*.json` file.
         """
+        await self._announce(conflict_path, event="conflict_reconciliation_required")
+        return
+
         stem = conflict_path.stem
         canonical_stem = _CONFLICT_RE.sub("", stem)
         canonical_path = conflict_path.parent / f"{canonical_stem}.json"
