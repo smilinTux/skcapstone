@@ -49,8 +49,18 @@ Runner = Callable[[Sequence[str], Path], int]
 
 def _run(command: Sequence[str], cwd: Path) -> int:
     """Run a check while withholding output that may contain a secret."""
+    env = os.environ.copy()
+    if "pytest" in command:
+        # GitHub's clean test runner does not install the optional Pi CLI. Do
+        # not let a developer's global Pi extension catalog change CI parity.
+        pi = shutil.which("pi")
+        if pi:
+            pi_directory = str(Path(pi).resolve().parent)
+            env["PATH"] = os.pathsep.join(
+                item for item in env.get("PATH", "").split(os.pathsep) if item != pi_directory
+            )
     return subprocess.run(
-        command, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        command, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     ).returncode
 
 

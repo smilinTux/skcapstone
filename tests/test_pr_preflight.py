@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.fleet import pr_preflight
 from skcapstone.fleet.pr_preflight import PreflightError, run_preflight, write_receipt
 
 
@@ -105,3 +106,19 @@ def test_receipt_is_canonical_immutable_and_contains_no_check_output(
     assert all(set(item) == {"name", "exit_code", "elapsed_ms"} for item in data["checks"])
     with pytest.raises(FileExistsError):
         write_receipt(receipt, path)
+
+
+def test_pytest_matches_clean_ci_without_host_global_pi(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run(*_args: object, **kwargs: object) -> object:
+        seen.update(kwargs)
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setenv("PATH", "/tools:/opt/pi/bin:/usr/bin")
+    monkeypatch.setattr(pr_preflight.shutil, "which", lambda _name: "/opt/pi/bin/pi")
+    monkeypatch.setattr(pr_preflight.subprocess, "run", fake_run)
+    assert pr_preflight._run(("python", "-m", "pytest", "tests/"), tmp_path) == 0
+    assert seen["env"]["PATH"] == "/tools:/usr/bin"  # type: ignore[index]
