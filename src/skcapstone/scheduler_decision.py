@@ -124,9 +124,21 @@ def card_scheduler_facts(
     accepted only from explicit evidence events, never lifecycle or links alone.
     Invalid evidence fails closed as malformed.
     """
+    from .coord_eligibility import dispatch_policy_facts
+
     labels = {str(label).strip().lower().replace("_", "-") for label in card.labels}
     title = str(card.title or "")
-    malformed = not card.id.strip() or not title.strip() or title.strip().lower() == "x"
+    policy = dispatch_policy_facts(
+        card,
+        dict(cards),
+        {
+            label.removeprefix("parent-")
+            for candidate in cards.values()
+            for label in candidate.labels
+            if label.lower().startswith("parent-") and len(label) > len("parent-")
+        },
+    )
+    malformed = policy["malformed"]
     # Keep this projection aligned with the fleet dispatch policy.  In
     # particular, only TASK cards are claimable: EPIC is a coordination
     # container, not an executable dispatch unit.
@@ -134,8 +146,8 @@ def card_scheduler_facts(
         r"(capauth|credential|custody|issuer|secret|\\bkey\\b|rollback|"
         r"deploy|production|release|migrat)", re.I
     )
-    foreign_project = "foreign-project" in labels
-    non_task = getattr(card, "kind", None) != Kind.TASK
+    foreign_project = policy["foreign_project"]
+    non_task = not policy["task"] or policy["container"]
     sensitive_category = bool(sensitive.search(title)) and "dispatch-approved" not in labels
     verdict = None
     for event in evidence_events:
@@ -154,12 +166,9 @@ def card_scheduler_facts(
             malformed = True
             continue
         verdict = value.strip().upper()
-    missing_dependency = any(
-        dependency not in cards or cards[dependency].status != Column.DONE
-        for dependency in card.dependencies
-    )
-    human_gate = "human-gate" in labels or "[HUMAN]" in title.upper()
-    not_claimable = bool(labels & {"not-claimable", "sprint-container", "do-not-claim"})
+    missing_dependency = policy["missing_dependency"]
+    human_gate = policy["human_gate"]
+    not_claimable = policy["excluded"]
     owner_health = "live" if card.owner else None
     terminal = card.status == Column.DONE or card.archived
     awaiting_review = card.status == Column.REVIEW or bool(
