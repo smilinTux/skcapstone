@@ -130,18 +130,13 @@ jobs:
             tests/test_coord_amend.py
 
       # The extracted siblings (CR-4.1/4.3) are declared deps, so the step above
-      # already pulls them from PyPI. Reinstall from git main so CI tests the
-      # code that ships TOGETHER: a published wheel can lag its repo, and
+      # already pulls them from PyPI. Reinstall reviewed source revisions so CI
+      # tests the code that ships TOGETHER: a published wheel can lag its repo, and
       # skcapstone's dashboard_*/coordination modules are transparent re-export
       # shims, so a stale sibling silently changes what the shims re-export.
       # --no-deps keeps this from dragging anything over the checkout under test.
-      # No @ref on purpose: pip then clones whatever the DEFAULT branch is.
-      # Pinning @master broke this job the day those repos were renamed to
-      # main, and a CI step that breaks on someone else's rename is a step
-      # that will break again.
-      # No @ref on purpose: pip then clones whatever the DEFAULT branch is.
-      # Pinning @master broke skchat CI the day those repos were renamed to
-      # main, with no commit from us in between.
+      # Immutable commit pins prevent a sibling repository change from altering
+      # this repository's required test result without an SKCapstone commit.
       #
       # skharness is here because tests/test_cli_autopilot_cost.py imports
       # skharness.autocode.autopilot_cost. It was never declared, so CI hit
@@ -152,8 +147,8 @@ jobs:
       - name: Install extracted siblings from source
         run: |
           pip install --force-reinstall --no-deps --no-cache-dir \
-            "skcoord @ git+https://github.com/smilinTux/skcoord" \
-            "skdashboard @ git+https://github.com/smilinTux/skdashboard" \
+            "skcoord @ git+https://github.com/smilinTux/skcoord@f99066292ae16130de0193f09d6f452f42c5fa3a" \
+            "skdashboard @ git+https://github.com/smilinTux/skdashboard@2d924699f49124d6456d8e5e7749deee92d012d3" \
             "skharness @ git+https://github.com/smilinTux/skharness"
 
       - name: Run unit tests (exclude integration + e2e via markers)
