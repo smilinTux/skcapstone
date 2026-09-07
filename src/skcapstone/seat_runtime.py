@@ -1,4 +1,4 @@
-"""One-shot runtime contracts for Link, Jarvis, and Mero."""
+"""One-shot runtime contracts for Link, Niobe, and Mero."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def review_state_revision(card: Card) -> str:
 
 @dataclass(frozen=True)
 class ReviewAssignmentRecommendation:
-    """Link advice that Jarvis may turn into one exact review launch."""
+    """Link advice that Niobe may turn into one exact review launch."""
 
     card_id: str
     recommendation_id: str
@@ -119,7 +119,7 @@ def recommend_reviewer(
 
 @dataclass(frozen=True)
 class ReviewLaunchHandoff:
-    """Exact input Jarvis may pass to the existing claim and launch path."""
+    """Exact input Niobe may pass to the existing claim and launch path."""
 
     card_id: str
     reviewer: str
@@ -135,12 +135,12 @@ def authorize_review_launch(
     current_process: Mapping[str, object],
     used_recommendation_ids: set[str],
 ) -> ReviewLaunchHandoff:
-    """Let Jarvis validate fresh card state before the existing claim path runs."""
+    """Let Niobe validate fresh card state before the existing claim path runs."""
 
     recommendation.validate()
     require_authority(actor, Action.LAUNCH)
-    if actor.strip().lower() != "jarvis":
-        raise BoundaryError("only jarvis may authorize a review launch")
+    if actor.strip().lower() != "niobe":
+        raise BoundaryError("only niobe may authorize a review launch")
     if recommendation.recommendation_id in used_recommendation_ids:
         raise BoundaryError("recommendation replay denied")
     card = CardStore(home).fold(recommendation.card_id)
@@ -171,18 +171,18 @@ def append_review_launch_receipt(
     claim_revision: str,
     launched: bool,
 ) -> dict[str, object]:
-    """Record Jarvis's exact claim generation and launch result."""
+    """Record Niobe's exact claim generation and launch result."""
 
     require_authority(actor, Action.LAUNCH)
-    if actor.strip().lower() != "jarvis":
-        raise BoundaryError("only jarvis may record a review launch")
+    if actor.strip().lower() != "niobe":
+        raise BoundaryError("only niobe may record a review launch")
     if not claim_revision.strip():
         raise BoundaryError("claim revision is required")
     return CardStore(home).append_event(
         handoff.card_id,
         "review_assignment_launch",
-        "jarvis",
-        transition_id=("jarvis-" + handoff.recommendation_id + "-" + claim_revision),
+        "niobe",
+        transition_id=("niobe-" + handoff.recommendation_id + "-" + claim_revision),
         schema="skfleet.review-assignment-launch/v1",
         recommendation_id=handoff.recommendation_id,
         reviewer=handoff.reviewer,

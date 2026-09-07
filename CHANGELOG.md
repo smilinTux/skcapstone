@@ -1,5 +1,10 @@
 # Changelog
 
+- **Card `c1841395`: Seraph review publishing.** Added typed, idempotent
+  publication of Seraph review verdicts and aligned lifecycle seat boundaries:
+  Niobe owns fleet control, Tank release installation, Seraph verification,
+  ATLAS observation, and Jarvis only Casey-directed assistance.
+
 - **Card `1b84d7f4`: Cursor Agent YOLO default.** Added `SK_CURSOR_YOLO`
   (default on) so the SK agent picker launches Cursor Agent CLI (`agent` /
   `cursor-agent`) with `--yolo`, plus doctor harness checks and docs aligned
