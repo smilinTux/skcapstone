@@ -505,7 +505,14 @@ def test_exclusion_validation_fails_closed(tmp_path, changes, message):
 
     with pytest.raises(ValueError, match=message):
         mod.reconcile(
-            [{"repository": "org/repo", "number": 17, "headRefOid": "a" * 40, "baseRefOid": "b" * 40}],
+            [
+                {
+                    "repository": "org/repo",
+                    "number": 17,
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                }
+            ],
             [],
             tmp_path,
             _exclusion(**changes),
@@ -519,7 +526,14 @@ def test_duplicate_exclusion_pr_fails_closed(tmp_path):
     exclusion["records"].append(dict(exclusion["records"][0]))
     with pytest.raises(ValueError, match="duplicate"):
         mod.reconcile(
-            [{"repository": "org/repo", "number": 17, "headRefOid": "a" * 40, "baseRefOid": "b" * 40}],
+            [
+                {
+                    "repository": "org/repo",
+                    "number": 17,
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                }
+            ],
             [],
             tmp_path,
             exclusion,
@@ -531,7 +545,14 @@ def test_unknown_exclusion_pr_fails_closed(tmp_path):
 
     with pytest.raises(ValueError, match="unknown"):
         mod.reconcile(
-            [{"repository": "org/repo", "number": 17, "headRefOid": "a" * 40, "baseRefOid": "b" * 40}],
+            [
+                {
+                    "repository": "org/repo",
+                    "number": 17,
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                }
+            ],
             [],
             tmp_path,
             _exclusion(pr=999),
@@ -543,7 +564,14 @@ def test_legacy_reason_map_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="structured"):
         mod.reconcile(
-            [{"repository": "org/repo", "number": 17, "headRefOid": "a" * 40, "baseRefOid": "b" * 40}],
+            [
+                {
+                    "repository": "org/repo",
+                    "number": 17,
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                }
+            ],
             [],
             tmp_path,
             {"17": "legacy reason"},
