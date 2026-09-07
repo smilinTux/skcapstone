@@ -70,6 +70,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   workers no longer linger as active agent projections after the unit dies.
 
 ### Added
+- `coord show`: a read verb for a single card. The board had only board-wide
+  reads, so callers reached for `coord describe`, which appends an edit event.
+  A help audit across all 388 reachable commands found it was the only
+  read-sounding name performing a write. `coord describe` now says it writes,
+  carries examples, and its bare-invocation error names `coord show <id>`.
 
 - Daily `coord-maintain` scheduler job (`config/jobs.d/coord-maintain.yaml`) and
   `coord maintain --lock-days` wiring for stale coordination lock prune. Cards
