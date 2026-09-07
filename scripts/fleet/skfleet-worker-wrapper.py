@@ -98,7 +98,13 @@ def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObse
     )
 
 
-def write_process_record(args: argparse.Namespace, *, pid: int, completion_state: str, heartbeat_at: str | None = None) -> None:
+def write_process_record(
+    args: argparse.Namespace,
+    *,
+    pid: int,
+    completion_state: str,
+    heartbeat_at: str | None = None,
+) -> None:
     """Publish bounded identity evidence for direct-seat execution."""
     record = {
         "card": args.card,
@@ -114,7 +120,7 @@ def write_process_record(args: argparse.Namespace, *, pid: int, completion_state
         temporary = path.with_name(path.name + ".tmp")
         with temporary.open("w", encoding="utf-8") as handle:
             json.dump(record, handle, sort_keys=True, separators=(",", ":"))
-            handle.write("\\n")
+            handle.write("\n")
         os.replace(temporary, path)
     except OSError:
         pass
