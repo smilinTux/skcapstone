@@ -17,7 +17,7 @@ The following table is a direct reflection of the canonical definitions in sk-st
 | **Integrator** (`link`) | Triage, independent-review assignment, the merge queue, and eligible merges under the PR 358 control. Owns delivery quality. | Fleet claims, launches, releases, reassignment, application action dispatch, app actuation |
 | **Overseer** (`mero`) | Read-only convergence and drift measurement. Emits typed recommendations, alerts, observations, and briefs. | Fleet mutation, merge, application action dispatch, or any actuation |
 | **Release and Install Operator** (`tank`) | Approved artifact installation, release receipts, behavioral deployment verification, and pinned rollback on exact cards. | Card approval, independent review of its own work, arbitrary claims, and application actuation |
-| **Independent Verifier** (`seraph`) | Independent artifact, release, deployment, health, and rollback verification on exact cards. | Release, install, merge, deployment, claims, and actuation |
+| **Independent Verifier** (`seraph`) | Independent artifact, release, deployment, health, and rollback verification on exact cards; card-scoped publication of its own exact-head PASS review. | Release, install, merge, deployment, claims, and actuation |
 | **Operations** (`atlas`) | Apps and infrastructure under the Atlas Constitution after its freeze is lifted. | Lifecycle coordination, card claims, review, merge, release, and actuation while frozen |
 | **Recorder** | *nobody* | A rule, not a role: every seat records its own decisions as it makes them. | n/a |
 
@@ -116,7 +116,23 @@ Niobe gains no application actuation authority from the Fleet Dispatcher seat. T
 Tank may operate only on an eligible exact card with an approved source hash,
 independent review, preflight, health evidence, and rollback evidence. Seraph
 must be independent of Tank and verifies exact artifact, version, health,
-rollback, and idempotency evidence. Neither seat may approve its own work.
+rollback, and idempotency evidence. Seraph may publish its already-recorded
+exact-head PASS through the review-only connector on a named card. That
+publication records the verdict and is not merge, release, deployment, or
+application authorization. Publication requires an opaque caller presentation
+verified by an injected, fail-closed CapAuth verifier as
+`capauth:seraph@skworld.io` with only the review-publication capability and
+bound to the exact publication request. Caller booleans and role strings are
+never authentication. It also requires current source and review CardStore
+revisions with a completed PASS review parented to the source, a trusted
+branch-protection required-check set, and exactly `metadata:read`,
+`contents:read`, and `pull_requests:write` connector permissions. Every
+return path rechecks the live PR, cards, GitHub review, and review-card-linked
+evidence bytes. Evidence must be a regular non-symlink file beneath the
+approved evidence root, and its computed SHA256 must equal the CardStore link.
+The hash-sealed filesystem receipt and its append-only CardStore link must both
+be durable.
+Neither seat may approve its own work.
 ATLAS remains frozen until its operations gates, identity, mailbox, and
 bounded actuation contract are separately qualified. A frozen ATLAS seat emits
 no healthy lifecycle beat.

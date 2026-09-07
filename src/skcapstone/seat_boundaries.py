@@ -1,4 +1,4 @@
-"""Fail-closed authority boundaries for the five operating seats."""
+"""Fail-closed authority boundaries for the lifecycle operating seats."""
 
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ class Action(StrEnum):
     ASSIGN_REVIEWER = "assign_reviewer"
     EVALUATE_MERGE = "evaluate_merge"
     MERGE = "merge"
+    PUBLISH_REVIEW = "publish_review"
     CLAIM = "claim"
     RELEASE = "release"
     LAUNCH = "launch"
@@ -90,7 +91,7 @@ _ALLOWED = {
             Action.ROLLBACK,
         }
     ),
-    Seat.SERAPH: frozenset({Action.OBSERVE, Action.VERIFY_ARTIFACT}),
+    Seat.SERAPH: frozenset({Action.OBSERVE, Action.VERIFY_ARTIFACT, Action.PUBLISH_REVIEW}),
     Seat.ATLAS: frozenset({Action.OBSERVE}),
     Seat.JARVIS: frozenset({Action.OBSERVE}),
 }

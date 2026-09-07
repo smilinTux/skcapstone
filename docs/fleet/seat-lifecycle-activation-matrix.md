@@ -15,7 +15,7 @@ and evidence contract remain authoritative.
 | Mero | `provisioned` | Bounded read-only census timer enabled on chiap08 | Convergence observation, drift measurement, blocker detection, typed recommendations | Claims, reassignment, fleet mutation, merge, deployment, or actuation |
 | Niobe | `active_bounded` | Five-minute live dispatcher and read-only shadow beat enabled on chiap08 under Casey decision `casey-c4e7a9b2-20260906`, expiring 2026-10-06T22:00:00+00:00 | Claim, release, launch, stop, and reassign only for SKCapstone, SKDashboard, and SKWorld lifecycle cards | Merge, deploy, application actuation, and external dispatch always denied |
 | Tank | `provisioned_not_activated` | Card-scoped worker only | Exact approved artifact install, release receipt, behavioral deployment verification, pinned rollback | Self-approval, arbitrary claims, artifact substitution, independent review of its own work, application actuation |
-| Seraph | `provisioned_not_activated` | Card-scoped worker only | Exact candidate, release, deployment, health, and rollback verification | Merge, dispatch, deployment, release, claim, approval, or actuation |
+| Seraph | `provisioned_not_activated` | Card-scoped worker only | Exact candidate, release, deployment, health, and rollback verification; publication of its own exact-head PASS review | Merge, dispatch, deployment, release, claim, or actuation |
 | ATLAS | `frozen` | No healthy lifecycle beat | Typed operations observation only until separately authorized | Coordination-board ownership, card claims, review, merge, release, or action while frozen |
 | Jarvis | `not_a_lifecycle_seat` | Casey-directed assistant presence only | Casey-directed assistance and relay | Self-starting lifecycle work, lifecycle card ownership, impersonation, or replacing a named seat |
 
@@ -88,7 +88,17 @@ notify-only.
 Seraph receives the exact candidate and verifies source hash, version, health,
 deployment behavior, rollback behavior, and idempotent rerun evidence. Its
 PASS, FAIL, or BLOCKED result is independent of Tank and cannot itself release,
-deploy, merge, or authorize the candidate.
+deploy, merge, or authorize the candidate. For a named card, a hash-sealed
+PASS may be published as a GitHub review after request-bound authoritative
+CapAuth verification, exact-head, card-revision, immutable evidence-byte,
+terminal-green-check, and distinct-identity checks. The review is only the
+external record of Seraph's verdict. Link alone evaluates merge eligibility
+and merges. Receipt replay repeats live CapAuth, CardStore, branch-protection,
+required-check, connector-scope, PR-head, evidence-file hash, and GitHub-review
+validation before returning. The live review card supplies the evidence path
+and SHA256; the publisher accepts only a regular non-symlink file beneath the
+approved evidence root. A missing CardStore receipt event is a failed
+publication, even when the filesystem receipt or GitHub review already exists.
 
 ### ATLAS
 
@@ -119,7 +129,7 @@ Every seat with an active identity:
    poll time, and status.
 
 Link and Mero emit one beat per short cycle. Tank and Seraph emit beats only
-while executing a card. Niobe emits shadow beats without mutation. Frozen ATLAS
+while executing a card, including a one-shot review-publication card. Niobe emits shadow beats without mutation. Frozen ATLAS
 does not emit a healthy lifecycle beat. Missing beats create an observation;
 they do not automatically release a claim or wake Casey.
 
