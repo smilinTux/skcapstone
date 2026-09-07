@@ -3639,11 +3639,89 @@ log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d "
         structural_leaf,human_gated,
         skipped_unclaimable+sensitive_withheld+not_claimable_skipped+foreign_skipped,top))
 
-# Shadow-only scheduler truth. The legacy selector above remains authoritative
-# until this partition has proven parity across a release. SKCoord contributes
-# read-only lifecycle classes through this adapter; it does not own runtime
-# backoff, worker health, ITIL state, or host routing policy.
+# Scheduler truth. POOL_V2 is the bounded admission partition; the legacy pool
+# remains in the report for parity diagnostics. SKCoord contributes read-only
+# lifecycle classes through this adapter; it does not own runtime backoff, worker
+# health, ITIL state, or host routing policy.
+_POOL_V2_DECISIONS = None
+_POOL_V2_ADMISSIONS = {}
+_POOL_V2_ERROR = False
+_POOL_V2_CLASS_IDS = {}
+_POOL_V2_ALL_EXCLUDED = set()
+
+
+def _pool_v2_admission_fingerprint(decision):
+    """Stable identity for the bounded admission facts used by selection."""
+    return hashlib.sha256(json.dumps(
+        {
+            "card_id": decision.get("card_id"),
+            "claimable": decision.get("claimable"),
+            "reason": decision.get("reason"),
+            "host_pin": decision.get("host_pin"),
+            "labels": decision.get("labels"),
+            "title": decision.get("title"),
+            "core": decision.get("core"),
+            "overlay": decision.get("overlay"),
+            "source_revision": decision.get("source_revision"),
+        }, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+
+
+def _pool_v2_claimability_flags(claimability):
+    """Translate an adapter result without ever treating omission as ready."""
+    if claimability.get("claimable") is True:
+        return False, False
+    reason = str(claimability.get("reason") or "")
+    if reason in {"review", "awaiting-review"}:
+        return False, True
+    if (
+        reason in {
+            "human-gate", "foreign-project", "not-claimable", "non-task",
+            "sensitive-category", "dependency", "backoff", "attempt-limit",
+            "done", "void", "archive",
+        }
+        or reason.startswith(("owned-", "host-pin:"))
+    ):
+        return False, False
+    if reason.startswith("malformed:"):
+        return True, False
+    return True, False
+
+
+def _pool_v2_source_revision(cid, core, fresh=False):
+    """Identify the exact core and event inputs used for one admission."""
+    rows = list(_strict_card_events(cid, fresh=fresh))
+    rows.extend(_legacy_claimability_events(fresh=fresh).get(cid, []))
+    outcomes = _load_outcome_revision_rows(fresh=fresh).get(cid, [])
+    return hashlib.sha256(json.dumps(
+        {"core": core, "events": rows, "outcomes": outcomes}, sort_keys=True,
+        separators=(",", ":")
+    ).encode()).hexdigest()
+
+
+def _pool_v2_overlay(cid, core, reason):
+    """Return every non-claimability overlay that can exclude a card."""
+    classes = _POOL_V2_CLASS_IDS
+    return {
+        "lifecycle": lifecycle_state(cid),
+        "itil_terminal": itil_terminal(cid),
+        "superseded": cid in classes.get("superseded_cards", set()),
+        "excluded": cid in _POOL_V2_ALL_EXCLUDED,
+        "review_readback": cid in _REVIEW_READBACK_BLOCKED,
+        "terminal_review": terminal_review_verdict(cid, core),
+        "awaiting_review": awaiting_review(cid),
+        "backoff": blocked_backoff(cid),
+        "attempt_limit": unclaimable(cid),
+        "class_facets": tuple(sorted(
+            name for name, ids in classes.items() if cid in ids
+        )),
+        "reason": reason,
+    }
+
+
 def _shadow_pool_v2():
+    global _POOL_V2_ADMISSIONS, _POOL_V2_CLASS_IDS, _POOL_V2_ALL_EXCLUDED
+    _POOL_V2_ADMISSIONS = {}
     classes = assessment.get("classes", {}) if isinstance(assessment, dict) else {}
     class_ids = {
         name: {str(row.get("card_id")) for row in rows if row.get("card_id")}
@@ -3651,6 +3729,8 @@ def _shadow_pool_v2():
         if isinstance(rows, list)
     }
     all_excluded = set(excluded)
+    _POOL_V2_CLASS_IDS = class_ids
+    _POOL_V2_ALL_EXCLUDED = all_excluded
     population = []
     for card_dir in sorted(glob.glob(CARDS + "/*")):
         cid = os.path.basename(card_dir)
@@ -3666,6 +3746,11 @@ def _shadow_pool_v2():
             lifecycle = lifecycle_state(cid)
             claimability = authoritative_claimability(cid, core)
             reason = str(claimability.get("reason") or "")
+            # Admission is fail-closed.  A missing or non-boolean claimability
+            # result is not equivalent to claimable; it is malformed and can
+            # never become a ready row by omission of a mapped facet.
+            claimable = claimability.get("claimable")
+            malformed, awaiting = _pool_v2_claimability_flags(claimability)
             owner_health = None
             if reason.startswith("owned-"):
                 if cid in class_ids.get("dead_worker_claims", set()):
@@ -3685,7 +3770,7 @@ def _shadow_pool_v2():
             population.append(
                 SchedulerFacts(
                     card_id=cid,
-                    malformed=lifecycle == "ambiguous"
+                    malformed=malformed or lifecycle == "ambiguous"
                     or reason.startswith("malformed:"),
                     lifecycle_excluded=cid in all_excluded and not mapped_exclusion,
                     selector_excluded=(
@@ -3705,14 +3790,26 @@ def _shadow_pool_v2():
                         reason == "dependency"
                         or cid in class_ids.get("void_dependency_edges", set())
                     ),
-                    awaiting_review=awaiting_review(cid),
+                    awaiting_review=awaiting or awaiting_review(cid),
                     backoff=blocked_backoff(cid),
                     attempt_limit=unclaimable(cid),
                     host_pin_elsewhere=reason.startswith("host-pin:"),
                     adapter_facets=adapter_facets,
                 )
             )
+            _POOL_V2_ADMISSIONS[cid] = {
+                **claimability,
+                "claimable": claimable is True,
+                "overlay": _pool_v2_overlay(cid, core, reason),
+                "source_revision": _pool_v2_source_revision(cid, core),
+            }
         except Exception as exc:
+            _POOL_V2_ADMISSIONS[cid] = {
+                "card_id": cid,
+                "claimable": False,
+                "reason": "malformed:%s" % type(exc).__name__,
+                "overlay": {"adapter_error": type(exc).__name__},
+            }
             population.append(
                 SchedulerFacts(
                     card_id=cid,
@@ -3721,6 +3818,8 @@ def _shadow_pool_v2():
                 )
             )
     decisions = classify_scheduler_population(population)
+    global _POOL_V2_DECISIONS
+    _POOL_V2_DECISIONS = decisions
     report = pool_v2(HOST, decisions)
     log(d, report.render())
     ready_ids = {row.card_id for row in decisions if row.eligible}
@@ -3743,14 +3842,80 @@ def _shadow_pool_v2():
 
 
 def _emit_shadow_pool_v2():
+    global _POOL_V2_ERROR
     try:
         _shadow_pool_v2()
     except Exception as exc:
-        # Shadow truth is observational. Its failure must never stop legacy claims.
+        _POOL_V2_ERROR = True
+        # Admission errors fail closed. They must never fall back to legacy claims.
         log(d, "SHADOW_ERROR|%s|%s:%s" % (HOST, type(exc).__name__, str(exc)[:160]))
 
 
 _emit_shadow_pool_v2()
+
+# POOL_V2 is now the dispatch admission result.  The legacy pool remains useful
+# as a diagnostic comparison, but it must not be allowed to strand work after
+# the bounded scheduler has proved a card eligible.  Rebuild only the rows that
+# POOL_V2 marked ready; all claim, dependency, lane, and last-moment fencing
+# still happens below before launch.
+if _POOL_V2_ERROR:
+    pool = []
+    log(d, "POOL_AUTHORITY_ERROR|%s|source=POOL_V2|ready=0" % HOST)
+elif _POOL_V2_DECISIONS is not None:
+    _legacy_pool_count = len(pool)
+    _v2_ids = {row.card_id for row in _POOL_V2_DECISIONS if row.eligible}
+    _v2_rows = {}
+    for _row in pool:
+        if _row[2] in _v2_ids:
+            _v2_rows[_row[2]] = _row
+    for _cid in sorted(_v2_ids - set(_v2_rows)):
+        _core_path = os.path.join(CARDS, _cid, "core.json")
+        try:
+            with open(_core_path, encoding="utf-8") as _handle:
+                _core = json.load(_handle)
+            _decision = authoritative_claimability(_cid, _core)
+            _admission = _POOL_V2_ADMISSIONS.get(_cid)
+            _decision = {
+                **_decision,
+                "overlay": _pool_v2_overlay(
+                    _cid, _decision.get("core", _core),
+                    str(_decision.get("reason") or ""),
+                ),
+                "source_revision": _pool_v2_source_revision(_cid, _core),
+            }
+            if (
+                not isinstance(_admission, dict)
+                or _decision.get("claimable") is not True
+                or _pool_v2_admission_fingerprint(_decision)
+                != _pool_v2_admission_fingerprint(_admission)
+            ):
+                log(d, "POOL_V2_ROW_BLOCKED|%s|%s|reason=%s" %
+                    (HOST, _cid, _decision.get("reason", "snapshot-drift")))
+                continue
+            if _decision.get("host_pin") == HOST:
+                _PINNED_IDS.add(_cid)
+            _labels = _decision["labels"]
+            _title = _decision["title"]
+            _folded_core = _decision.get("core", _core)
+            _blob = (_title + " " + json.dumps(_labels)).upper()
+            _up = _title.upper().lstrip("[")
+            if _up.startswith("SKLEGAL") or "SKLEGAL" in _blob:
+                _lane = 0
+            elif any(_up.startswith(_prefix) for _prefix in ENG):
+                _lane = 1
+            else:
+                _lane = 2
+            _v2_rows[_cid] = [
+                _lane, PRI.get(str(_core.get("initial_priority")), 4),
+                _cid, _folded_core, _labels, unblocks.get(_cid, 0),
+            ]
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as _exc:
+            log(d, "POOL_V2_ROW_ERROR|%s|%s|%s" %
+                (HOST, _cid, type(_exc).__name__))
+    pool = list(_v2_rows.values())
+    pool.sort(key=lambda _row: (_row[0], -_row[5], _row[1], _row[2]))
+    log(d, "POOL_AUTHORITY|%s|source=POOL_V2|ready=%d|legacy_ready=%d" %
+        (HOST, len(pool), _legacy_pool_count))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
@@ -4203,8 +4368,6 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     model=_LANE["model"]
     if _LANE["name"]=="glm":
         model=_glm_model_for(core) or model
-    if _LANE["name"]=="kimi":
-        model=_kimi_model_for(core) or model
     pi_tools=pi_tool_allowlist(_labels)
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
@@ -4229,8 +4392,30 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
     # Last-moment re-check through the same fold that built the pool.
     fresh_claimability=authoritative_claimability(cid,fresh=True)
-    if _classify_claim_outcome(fresh_claimability["claimable"]) == "raced":
+    with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as _raw_handle:
+        _raw_core = json.load(_raw_handle)
+    _admission = _POOL_V2_ADMISSIONS.get(cid)
+    fresh_claimability = {
+        **fresh_claimability,
+        "overlay": _pool_v2_overlay(
+            cid, fresh_claimability.get("core", core),
+            str(fresh_claimability.get("reason") or ""),
+        ),
+        "source_revision": _pool_v2_source_revision(cid, _raw_core, fresh=True),
+    }
+    if (
+        not isinstance(_admission, dict)
+        or fresh_claimability.get("claimable") is not True
+        or _pool_v2_admission_fingerprint(fresh_claimability)
+        != _pool_v2_admission_fingerprint(_admission)
+    ):
         raced += 1
+        _raced_ids.append(cid)
+        log(d,"SKIPPED_ADMISSION_DRIFT|%s|%s|%s|reason=%s"%
+            (HOST,sess,cid,fresh_claimability.get("reason","snapshot-drift")))
+        continue
+    if _classify_claim_outcome(fresh_claimability["claimable"]) == "raced":
+        raced = raced + 1
         _raced_ids.append(cid)
         log(d,"SKIPPED_RACED|%s|%s|%s|reason=%s"%
             (HOST,sess,cid,fresh_claimability["reason"]))
@@ -4239,7 +4424,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         cid,fresh_claimability["core"],fresh_claimability["labels"])
     compatible,affinity_reason=lane_compatibility(
         fresh_claimability["labels"],fresh_escalation,
-        qwen_suitable(fresh_claimability["core"]),
+        qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"]),
         qwen_first_exclusive(cid,fresh_claimability["labels"]))
     if _LANE["name"] not in compatible:
         lane_drift += 1
@@ -4285,40 +4470,37 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "t=p.with_suffix('.json.tmp');t.write_text(json.dumps(d,indent=2)+chr(10));"
         "t.replace(p)\" >/dev/null 2>&1 || true; }; "
         "beat() { while :; do "
-        "trap 'trap - HUP INT TERM; "
-        "for sleeper in $(jobs -pr); do kill \"$sleeper\" 2>/dev/null || true; done; "
-        "wait; exit 0' HUP INT TERM; "
         "mkdir -p ~/.skcapstone/fleet/beats; "
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
-        "\"session_id\":\"%s\","
         "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
         "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
         "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "
-        "sleep %s & wait $!; done; }; "
+        "sleep %s; done; }; "
         "beat & BEAT=$!; "
-        "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; }; "
+        # The beat is ephemeral runtime state.  Remove it only after the
+        # worker has exited, so monitors cannot mistake a completed worker for
+        # a live one on the next cycle.
+        "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; rm -f -- %s 2>/dev/null || true; }; "
         'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
         'trap "stop_beat; release_claim; idle_agent" EXIT; '
-        "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s "
-        "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s "
-        "%s --approve --name %s "
+        "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s "
         "--provider skgateway --model %s --thinking off --no-context-files --no-skills --tools %s "
         '-p "$(cat %s)"; '
         "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; idle_agent; exit $rc"
         % (SKC, cid, name, claimed_revision, name,
            name,
-           name, cid, claimed_revision, sess,
+           name, cid, claimed_revision,
            _bf_path, _bf_path, _bf_path,
            _bi,
-           name, name, shlex.quote(workspace), cid, shlex.quote(claimed_revision),
-           shlex.quote(sess), shlex.quote(PI), name, model,
+           _bf_path,
+           name, name, workspace, PI, name, model,
            pi_tools, bf))
     wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
     inner=[
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
         "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
-        "--session",sess,"--worker-executable",PI,
+        "--mail-recipient","all",
         "--","bash","-lc",child,
     ]
     unit=_worker_unit_name(_LANE["name"],cid)
@@ -4336,9 +4518,10 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             append_review_launch_receipt(
                 Path(HOME) / ".skcapstone",
                 _review_handoff,
-                actor=name,
+                actor="niobe",
                 claim_revision=claimed_revision,
                 launched=ok,
+                worker_name=name,
             )
             MeroObservation(
                 card_id=cid,
@@ -4392,5 +4575,4 @@ if lane_drift:
     log(d,"LANE_RACED|%s|%d card(s) changed lane compatibility before claim"%
         (HOST,lane_drift))
 if claim_refused:
-    log(d,"CLAIM_REFUSED_TOTAL|%s|%d claim command(s) refused or not visible "
-        "in the authoritative fold"%(HOST,claim_refused))
+    log(d,"CLAIM_REFUSED_TOTAL|%s|%d claim command(s) refused or not visible in the authoritative fold"%(HOST,claim_refused))
