@@ -1,4 +1,4 @@
-"""Tests for the one-shot Link, Jarvis, and Mero runtime contracts."""
+"""Tests for the one-shot Link, Niobe, and Mero runtime contracts."""
 
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ def card(home: Path) -> None:
     )
 
 
-def test_link_recommends_and_jarvis_authorizes_fresh_assignment(tmp_path: Path) -> None:
-    """The happy path stays advisory until Jarvis authorizes it."""
+def test_link_recommends_and_niobe_authorizes_fresh_assignment(tmp_path: Path) -> None:
+    """The happy path stays advisory until Niobe authorizes it."""
 
     card(tmp_path)
     recommendation = recommend_reviewer(
@@ -52,7 +52,7 @@ def test_link_recommends_and_jarvis_authorizes_fresh_assignment(tmp_path: Path) 
     handoff = authorize_review_launch(
         tmp_path,
         recommendation,
-        actor="jarvis",
+        actor="niobe",
         current_process={"sessions": []},
         used_recommendation_ids=set(),
     )
@@ -61,7 +61,7 @@ def test_link_recommends_and_jarvis_authorizes_fresh_assignment(tmp_path: Path) 
     receipt = append_review_launch_receipt(
         tmp_path,
         handoff,
-        actor="jarvis",
+        actor="niobe",
         claim_revision="claim-revision-1",
         launched=True,
     )
@@ -86,7 +86,7 @@ def test_link_rejects_non_distinct_reviewer(tmp_path: Path, candidate: str) -> N
         )
 
 
-def test_jarvis_rejects_replay_and_state_drift(tmp_path: Path) -> None:
+def test_niobe_rejects_replay_and_state_drift(tmp_path: Path) -> None:
     """A recommendation is one-use and bound to the observed card state."""
 
     card(tmp_path)
@@ -103,7 +103,7 @@ def test_jarvis_rejects_replay_and_state_drift(tmp_path: Path) -> None:
         authorize_review_launch(
             tmp_path,
             recommendation,
-            actor="jarvis",
+            actor="niobe",
             current_process={"sessions": []},
             used_recommendation_ids={"assignment-1"},
         )
@@ -112,13 +112,13 @@ def test_jarvis_rejects_replay_and_state_drift(tmp_path: Path) -> None:
         authorize_review_launch(
             tmp_path,
             recommendation,
-            actor="jarvis",
+            actor="niobe",
             current_process={"sessions": []},
             used_recommendation_ids=set(),
         )
 
 
-def test_jarvis_rejects_process_drift(tmp_path: Path) -> None:
+def test_niobe_rejects_process_drift(tmp_path: Path) -> None:
     """A same-card process appearing after Link's read denies launch."""
 
     card(tmp_path)
@@ -135,13 +135,13 @@ def test_jarvis_rejects_process_drift(tmp_path: Path) -> None:
         authorize_review_launch(
             tmp_path,
             recommendation,
-            actor="jarvis",
+            actor="niobe",
             current_process={"sessions": ["codex-auto-feedface"]},
             used_recommendation_ids=set(),
         )
 
 
-def test_only_jarvis_authorizes_launch(tmp_path: Path) -> None:
+def test_only_niobe_authorizes_launch(tmp_path: Path) -> None:
     """Link and Mero cannot cross into fleet launch authority."""
 
     card(tmp_path)
@@ -165,7 +165,7 @@ def test_only_jarvis_authorizes_launch(tmp_path: Path) -> None:
             )
 
 
-def test_only_jarvis_records_launch_receipt(tmp_path: Path) -> None:
+def test_only_niobe_records_launch_receipt(tmp_path: Path) -> None:
     """Link and Mero cannot record a fleet launch outcome."""
 
     card(tmp_path)
@@ -181,7 +181,7 @@ def test_only_jarvis_records_launch_receipt(tmp_path: Path) -> None:
     handoff = authorize_review_launch(
         tmp_path,
         recommendation,
-        actor="jarvis",
+        actor="niobe",
         current_process={"sessions": []},
         used_recommendation_ids=set(),
     )
