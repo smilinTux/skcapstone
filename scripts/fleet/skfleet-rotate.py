@@ -4484,7 +4484,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
         "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "
         "sleep %s & wait $!; done; }; "
-        "beat & BEAT=$!; "
+        # The Python wrapper captures the worker shell's stderr.  A background
+        # beat that inherits that pipe keeps it open after the shell exits and
+        # strands the wrapper and transient unit.  The beat is file-only, so
+        # detach all three standard streams before it enters the background.
+        "beat </dev/null >/dev/null 2>&1 & BEAT=$!; "
         "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; }; "
         'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
         'trap "stop_beat; release_claim; idle_agent" EXIT; '
