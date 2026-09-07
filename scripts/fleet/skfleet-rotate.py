@@ -1114,6 +1114,11 @@ def _claimability_reason(core, state):
         or "PASS_FOR_REVIEW" in state["description"].upper()
         or any(key in review_links and value for key, value in state["links"].items())
     )
+    # A review card has exactly one executable lifecycle. It must be unowned,
+    # in the review column, and carry the exact review label. All other review
+    # markers remain diagnostic only and fail closed.
+    if state["status"] == "review" and "review" in normalized_labels:
+        return "governed-review"
     if review_marked:
         return "review"
     if non_implementation(folded_core, labels):
@@ -1159,8 +1164,12 @@ def authoritative_claimability(cid, core=None, fresh=False):
     folded_core["links"] = dict(state["links"])
     labels = state["labels"]
     reason = _claimability_reason(core, state)
-    state.update({"claimable": reason == "claimable", "reason": reason,
-                  "core": folded_core, "host_pin": host_pin(folded_core, labels)})
+    state.update({
+        "claimable": reason in {"claimable", "governed-review"},
+        "reason": reason,
+        "core": folded_core,
+        "host_pin": host_pin(folded_core, labels),
+    })
     return state
 
 

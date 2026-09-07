@@ -64,3 +64,39 @@ def test_terminal_review_verdict_remains_excluded_after_lifecycle_fold() -> None
     pool_append = source.index("pool.append", terminal_review)
 
     assert backoff < terminal_review < pool_append
+
+
+def test_governed_review_is_the_only_executable_review_state() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    reason = source[
+        source.index("def _claimability_reason") : source.index("def _authoritative_card_state")
+    ]
+    decision = source[
+        source.index("def authoritative_claimability") : source.index("def lifecycle_state")
+    ]
+
+    assert 'state["status"] == "review" and "review" in normalized_labels' in reason
+    assert 'return "governed-review"' in reason
+    assert 'reason in {"claimable", "governed-review"}' in decision
+    assert reason.index('return "governed-review"') < reason.index('return "review"')
+
+
+def test_governed_review_still_passes_link_before_claim() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    launch = source[source.index("for _LANE,"):]
+
+    assignment = launch.index("_review_assignment(")
+    claim = launch.index('claim=subprocess.run([SKC,"coord","claim"')
+    assert assignment < claim
+
+
+def test_review_admission_uses_same_snapshot_fence_as_hash_partition() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    rebuild = source[source.index("if _POOL_V2_ERROR:"):source.index("# Partition the CARD SPACE")]
+    launch = source[source.index("# Last-moment re-check"):]
+
+    assert "_pool_v2_admission_fingerprint(_decision)" in rebuild
+    assert "_pool_v2_admission_fingerprint(_admission)" in rebuild
+    assert "fresh_claimability.get(\"claimable\") is not True" in launch
+    assert "_pool_v2_admission_fingerprint(fresh_claimability)" in launch
+    assert "SKIPPED_ADMISSION_DRIFT" in launch

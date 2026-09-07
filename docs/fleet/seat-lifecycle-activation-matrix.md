@@ -48,6 +48,14 @@ and the mediated observation feed is present, fresh, hash-bound, and complete.
 The feed producer may read GitHub through its separately bounded connector;
 Link never receives GitHub credentials and never invokes a GitHub client.
 
+Governed review work has one executable card lifecycle: the card is unowned,
+its folded column is `review`, and it carries the exact `review` label. Backlog,
+ready, owned, terminal, and label-only review markers are not executable review
+states. The generic selector may place only that exact state into its candidate
+pool. It still cannot claim or launch the card until Link records a distinct
+reviewer recommendation and Niobe validates the same folded revision, process
+snapshot, evidence hash, and unused recommendation ID.
+
 Merge eligibility additionally requires the exact PR head, zero failed checks,
 an independent full-SHA PASS, no unresolved FAIL or BLOCKED lineage, distinct
 author and reviewer identities, and a non-sensitive category. The result is

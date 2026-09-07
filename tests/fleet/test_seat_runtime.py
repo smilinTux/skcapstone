@@ -33,6 +33,7 @@ def card(home: Path) -> None:
             initial_labels=["review", "parent-deadbeef"],
         )
     )
+    CardStore(home).append_event("feedface", "move", "producer", column="review")
 
 
 def test_link_recommends_and_niobe_authorizes_fresh_assignment(tmp_path: Path) -> None:
@@ -83,6 +84,65 @@ def test_link_rejects_non_distinct_reviewer(tmp_path: Path, candidate: str) -> N
             candidates=[candidate],
             observed_process={"sessions": []},
             evidence_sha256=HASH,
+        )
+
+
+@pytest.mark.parametrize("column", ["backlog", "ready"])
+def test_link_rejects_non_review_lifecycle(tmp_path: Path, column: str) -> None:
+    """Only the review column is executable governed review work."""
+
+    card(tmp_path)
+    CardStore(tmp_path).append_event("feedface", "move", "producer", column=column)
+    with pytest.raises(BoundaryError, match="governed review"):
+        recommend_reviewer(
+            tmp_path,
+            card_id="feedface",
+            recommendation_id="assignment-1",
+            author="producer",
+            candidates=["reviewer-one"],
+            observed_process={"sessions": []},
+            evidence_sha256=HASH,
+        )
+
+
+def test_link_rejects_missing_exact_review_label(tmp_path: Path) -> None:
+    """A review column alone cannot enter the governed launch path."""
+
+    card(tmp_path)
+    CardStore(tmp_path).append_event("feedface", "remove_label", "producer", label="review")
+    with pytest.raises(BoundaryError, match="governed review"):
+        recommend_reviewer(
+            tmp_path,
+            card_id="feedface",
+            recommendation_id="assignment-1",
+            author="producer",
+            candidates=["reviewer-one"],
+            observed_process={"sessions": []},
+            evidence_sha256=HASH,
+        )
+
+
+def test_authorization_rejects_owner_after_recommendation(tmp_path: Path) -> None:
+    """An intervening owner claim fails closed before launch."""
+
+    card(tmp_path)
+    recommendation = recommend_reviewer(
+        tmp_path,
+        card_id="feedface",
+        recommendation_id="assignment-1",
+        author="producer",
+        candidates=["reviewer-one"],
+        observed_process={"sessions": []},
+        evidence_sha256=HASH,
+    )
+    CardStore(tmp_path).append_event("feedface", "assign", "other", owner="other")
+    with pytest.raises(BoundaryError, match="governed review"):
+        authorize_review_launch(
+            tmp_path,
+            recommendation,
+            actor="niobe",
+            current_process={"sessions": []},
+            used_recommendation_ids=set(),
         )
 
 
