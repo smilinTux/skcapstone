@@ -1,0 +1,2502 @@
+{
+  "actions_applied": [],
+  "blocked_review_reproduced": {
+    "card_id": "567e6b09",
+    "path": "/home/skuser01/.skcapstone/evidence/work/567e6b09/BLOCKED-review.json",
+    "sha256": "f84ea516f634c8ee118d2b094673c3d5fad4f95a0a07f652e68e900269040e12",
+    "verdict": "BLOCKED"
+  },
+  "card_id": "a743f500",
+  "correction_ledger": [
+    {
+      "after": [
+        {
+          "source": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+          "verdict": "BLOCKED"
+        }
+      ],
+      "card_id": "9535bc80",
+      "defect_type": "omitted_verdict"
+    },
+    {
+      "after": [
+        {
+          "blocked_on": {
+            "referent": "ac:2",
+            "type": "card"
+          },
+          "source": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:13",
+          "verdict": "BLOCKED"
+        },
+        {
+          "blocked_on": {
+            "referent": "ac:2",
+            "type": "card"
+          },
+          "source": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:18",
+          "verdict": "BLOCKED"
+        }
+      ],
+      "card_id": "f10a0e73",
+      "defect_type": "omitted_verdicts_and_unsafe_transition"
+    },
+    {
+      "after": [
+        {
+          "command": null,
+          "execution_status": "NO_ACTION_PROPOSED",
+          "reason": "The reviewed replacement contained prose rather than an exact supported command. This immutable replacement does not invent authority or an audited card repair."
+        }
+      ],
+      "before": [
+        "Append an evidence event for the review only after dependency 5a0e0d6d receives supported disposition; then move this card to review without treating its verdict link as a dependency."
+      ],
+      "card_id": "0994c010",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "review_finding": "6c418ad3:0994c010"
+    },
+    {
+      "after": [
+        {
+          "command": null,
+          "execution_status": "NO_ACTION_PROPOSED",
+          "reason": "The reviewed replacement contained prose rather than an exact supported command. This immutable replacement does not invent authority or an audited card repair."
+        }
+      ],
+      "before": [
+        "Chef may append explicit approval or explicit void to 3f7da35a. Only after explicit approval may this collection card be claimed under its bounded authority."
+      ],
+      "card_id": "5236382f",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "review_finding": "6c418ad3:5236382f"
+    },
+    {
+      "after": [
+        {
+          "command": null,
+          "execution_status": "NO_ACTION_PROPOSED",
+          "reason": "The reviewed replacement contained prose rather than an exact supported command. This immutable replacement does not invent authority or an audited card repair."
+        }
+      ],
+      "before": [
+        "Obtain explicit Chef approval or Chef void on 357ba8f4 only after a fresh reviewed lifecycle is recorded. If the lifecycle cannot be refreshed, append a supported void disposition to this unreachable execution card; do not detach the HUMAN gate."
+      ],
+      "card_id": "65e00fd9",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "review_finding": "6c418ad3:65e00fd9"
+    }
+  ],
+  "partition": 11,
+  "reasoning_contract": {
+    "evidence_store": "Read direct evidence and verdict events separately, including card event JSONL and acceptance criteria evidence JSONL.",
+    "human_authority_rule": "Only explicit Chef approval or explicit Chef void discharges a human gate. A machine card is not a substitute.",
+    "join_rule": "Join the two stores only by exact card_id. Lifecycle, links, labels, and dependency completion never imply an evidence verdict.",
+    "structural_store": "Fold core.json and structural CardStore events for lifecycle, archive, owner, labels, and dependencies."
+  },
+  "records": [
+    {
+      "card_id": "01478825",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "architecture",
+        "codex",
+        "skdashboard",
+        "sklegal"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/01478825/events/codex-durable-architecture-repair@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/01478825/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/01478825/events/pi-durable-architecture-repair@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/01478825/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "90eea862",
+            "labels": [
+              "architecture",
+              "capauth",
+              "parent-c6583686",
+              "size-m",
+              "skdashboard"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-05F8-00R4][M][REPAIR] Correct custody logout and unavailable-state architecture findings"
+    },
+    {
+      "card_id": "0994c010",
+      "classifications": [
+        "dependency"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "verdict": "BLOCKED"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "foreign-project",
+        "greg-break-house",
+        "review",
+        "source-54aa06eb"
+      ],
+      "proposed_supported_append_only_remedies": [
+        {
+          "command": null,
+          "execution_status": "NO_ACTION_PROPOSED",
+          "reason": "The reviewed replacement contained prose rather than an exact supported command. This immutable replacement does not invent authority or an audited card repair."
+        }
+      ],
+      "reason": "Dependency 5a0e0d6d is structurally backlog and has an explicit BLOCKED evidence event; this card also has link-only BLOCKED metadata.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/0994c010/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/0994c010/events/pi-review-54-0994c010@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/0994c010/events/pi-review-54-0994c010@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/0994c010/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "5a0e0d6d",
+            "labels": [
+              "epic-c68239d1",
+              "foreign-project",
+              "greg-break-house",
+              "sprint-1"
+            ],
+            "owner": null,
+            "status": "backlog"
+          }
+        ],
+        "owner": null,
+        "status": "backlog",
+        "terminal": false
+      },
+      "title": "[GBH-S2-04-R1][S][REVIEW] Independently review financial controls proposal"
+    },
+    {
+      "card_id": "1e39b105",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "result": "BLOCKED",
+          "verdict": "BLOCKED"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "accessibility",
+        "do-not-claim",
+        "false-completion",
+        "mvp-ui",
+        "public-synthetic",
+        "qualification",
+        "sklegal",
+        "superseded",
+        "visual-regression"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/1e39b105/events/pi-auto-1e39b105@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/1e39b105/events/pi-qwen38-candidate-8c1d29c8@chiap01.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/1e39b105/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "95af661a",
+            "labels": [
+              "mvp-first",
+              "mvp-functional-path",
+              "mvp-ui",
+              "public-synthetic",
+              "sklegal"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "6f3cd09d",
+            "labels": [
+              "mvp-ui",
+              "public-synthetic",
+              "repair",
+              "security",
+              "sklegal"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-MVP-04R2][M] Qualify real-browser public-synthetic MVP accessibility and visuals"
+    },
+    {
+      "card_id": "21349dd8",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "disposition": "PASS_BASE_CLAIM_GATE_FAILS_CLOSED"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "board-integrity",
+        "mvp",
+        "review",
+        "size-s",
+        "sklegal",
+        "wave-0"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/21349dd8/events/codex-skl-mvp-v2-final-review@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/21349dd8/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "0d15489f",
+            "labels": [
+              "board-integrity",
+              "mvp",
+              "size-s",
+              "sklegal",
+              "wave-0"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-MVP-BOARD-01R][S][REVIEW] Independently review BASE dependency enforcement"
+    },
+    {
+      "card_id": "271c1b58",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "s1-05",
+        "sklegal"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/271c1b58/events/codex-skl-s1-05a@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/271c1b58/events/codex-skl-wave2-root@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/271c1b58/events/coord-move@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/271c1b58/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/271c1b58/events/kimi-skl-s1-05a@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/271c1b58/events/kimi@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/271c1b58/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "84c6f30c",
+            "labels": [
+              "data",
+              "leaf-task",
+              "parent-3457eb15",
+              "size-l",
+              "sklegal",
+              "sprint-1"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "0ef8eb48",
+            "labels": [
+              "capauth",
+              "capauth-runtime-validated",
+              "leaf-task",
+              "parent-3457eb15",
+              "size-l",
+              "sklegal",
+              "sprint-1"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKLEGAL][S1-05A][M] Accept append-only audit source contract"
+    },
+    {
+      "card_id": "360f058d",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "disposition": "BLOCKED",
+          "evidence-verdict": "BLOCKED: exact candidate/evidence absent locally; dependency 9212ef10 is BLOCKED_COMPACT_WORK_PRODUCT_HASH_CLIPPING"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "candidate-defect",
+        "independent-review",
+        "mandatory-correctness-security-boundary",
+        "mvp-ui",
+        "public-synthetic",
+        "sklegal",
+        "superseded-do-not-claim",
+        "supersedes-d3235a9b",
+        "v2-wireframe"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/360f058d/events/pi-auto-360f058d@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/360f058d/events/pi-skl-v2-final-review-360f058d@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/360f058d/events/pi-skl-v2-final-review-360f058d@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/360f058d/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "6417165c",
+            "labels": [
+              "final-synthesis",
+              "mvp-ui",
+              "public-synthetic",
+              "sklegal",
+              "v2-wireframe"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "9212ef10",
+            "labels": [
+              "accessibility",
+              "mvp-ui",
+              "public-synthetic",
+              "sklegal",
+              "superseded-by-repair-replay",
+              "v2-wireframe",
+              "visual-regression"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-MVP-04R4][M][REVIEW] Independently review exact final V2 MVP synthesis"
+    },
+    {
+      "card_id": "4c4ca6b0",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "evals",
+        "leaf-task",
+        "not-claimable",
+        "parent-3457eb15",
+        "size-l",
+        "sklegal",
+        "sprint-3",
+        "wave-3-assurance"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/4c4ca6b0/events/codex-skl-s2-10@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/4c4ca6b0/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/4c4ca6b0/events/kimi-coordinator@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/4c4ca6b0/events/zai-skl-s3-04@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/4c4ca6b0/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": true,
+            "id": "b04de409",
+            "labels": [
+              "approval-gate",
+              "human-only",
+              "parent-3457eb15",
+              "size-m",
+              "sklegal",
+              "sprint-0"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "c4ef2a90",
+            "labels": [
+              "leaf-task",
+              "parent-3457eb15",
+              "retrieval",
+              "size-l",
+              "sklegal",
+              "sprint-2",
+              "wave-2-first-workspace"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "f5ed9d24",
+            "labels": [
+              "corpus-observability",
+              "leaf-task",
+              "parent-3457eb15",
+              "size-m",
+              "sklegal",
+              "sprint-2",
+              "wave-3-assurance"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-S3-04][L] Build retrieval evaluation and qualify the custom embedding"
+    },
+    {
+      "card_id": "4e1130cc",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "ai-insights",
+        "contract",
+        "control-plane",
+        "forecasting",
+        "leaf-task",
+        "scheduling",
+        "size-l",
+        "skdashboard",
+        "sprint-3"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/4e1130cc/events/codex-root-skcp30b-contracts@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/4e1130cc/events/codex-root@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/4e1130cc/events/jarvis@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/4e1130cc/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": true,
+            "id": "bea13a70",
+            "labels": [
+              "architecture-remediation",
+              "control-plane",
+              "do-not-claim",
+              "human-gate",
+              "not-claimable",
+              "skdashboard",
+              "sprint-0"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "169028ce",
+            "labels": [
+              "ai-first",
+              "calibration",
+              "control-plane",
+              "dependencies",
+              "epic-6f7fd828",
+              "forecasting",
+              "leaf-task",
+              "monte-carlo",
+              "parent-ef218eb9",
+              "size-l",
+              "skdashboard",
+              "sprint-3"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "f080f150",
+            "labels": [
+              "ai-first",
+              "control-plane",
+              "epic-6f7fd828",
+              "evaluation",
+              "insights",
+              "leaf-task",
+              "natural-language",
+              "parent-ef218eb9",
+              "policy",
+              "size-l",
+              "skdashboard",
+              "sprint-3"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "efa9bee8",
+            "labels": [
+              "ai-first",
+              "best-practices",
+              "control-plane",
+              "epic-6f7fd828",
+              "impact",
+              "leaf-task",
+              "outcome-learning",
+              "parent-ef218eb9",
+              "recommendations",
+              "size-l",
+              "skdashboard",
+              "sprint-3"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "c3a9c9e9",
+            "labels": [
+              "contract",
+              "control-plane",
+              "leaf-task",
+              "openapi",
+              "scheduling",
+              "size-l",
+              "skdashboard",
+              "sprint-2"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "847e250a",
+            "labels": [
+              "cdp",
+              "control-plane",
+              "independent-review",
+              "leaf-task",
+              "mandatory-correctness-boundary",
+              "provenance",
+              "size-m",
+              "skdashboard",
+              "sprint-0"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-30B][L] Freeze discriminated forecast calibration and AI schedule insight contracts"
+    },
+    {
+      "card_id": "5236382f",
+      "classifications": [
+        "human_gate"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "codex-only",
+        "mvp",
+        "read-only",
+        "size-s",
+        "sklegal",
+        "stable-lan"
+      ],
+      "proposed_supported_append_only_remedies": [
+        {
+          "command": null,
+          "execution_status": "NO_ACTION_PROPOSED",
+          "reason": "The reviewed replacement contained prose rather than an exact supported command. This immutable replacement does not invent authority or an audited card repair."
+        }
+      ],
+      "reason": "Dependency 3f7da35a is a backlog HUMAN gate whose folded links state HUMAN FACTS REQUIRED; no explicit Chef approval or Chef void is present.",
+      "source_paths": {
+        "card_event_files": [],
+        "core": "/home/skuser01/.skcapstone/cards/5236382f/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": true,
+            "id": "3f7da35a",
+            "labels": [
+              "human-gate",
+              "mvp",
+              "read-only",
+              "sklegal",
+              "stable-lan"
+            ],
+            "owner": null,
+            "status": "backlog"
+          }
+        ],
+        "owner": null,
+        "status": "backlog",
+        "terminal": false
+      },
+      "title": "[SKL-MVP-LAN-AUTH-READ][S] Collect approved read-only DHCP authority evidence"
+    },
+    {
+      "card_id": "658dd722",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "defensive",
+        "size-m",
+        "skcoord",
+        "supersession"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/658dd722/events/pi-night-supersession-658dd722@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/658dd722/events/pi-night-supersession-658dd722@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/658dd722/events/pi-skc-supersession-658dd722@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/658dd722/events/pi-supersession-658dd722@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/658dd722/events/pi-supersession-658dd722@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/658dd722/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCOORD-VERDICT-01B][M] Fold canonical supersession into card truth"
+    },
+    {
+      "card_id": "65e00fd9",
+      "classifications": [
+        "human_gate",
+        "card_contradiction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "authz",
+        "deployment",
+        "retry",
+        "skgateway",
+        "sklegal"
+      ],
+      "proposed_supported_append_only_remedies": [
+        {
+          "command": null,
+          "execution_status": "NO_ACTION_PROPOSED",
+          "reason": "The reviewed replacement contained prose rather than an exact supported command. This immutable replacement does not invent authority or an audited card repair."
+        }
+      ],
+      "reason": "Dependency 357ba8f4 is an unapproved backlog HUMAN gate. Dependency c891e1b0 is structurally done but its recorded qualification custody expired in 2026-08-24, while this card requires fresh non-expired lifecycle time; completion is not evidence of current fitness.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/65e00fd9/events/jarvis@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/65e00fd9/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "c891e1b0",
+            "labels": [
+              "credential",
+              "postgres",
+              "qualification",
+              "sklegal"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "99926e05",
+            "labels": [
+              "authz",
+              "governance",
+              "skgateway",
+              "sklegal"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": true,
+            "id": "357ba8f4",
+            "labels": [
+              "authz",
+              "credential-mode",
+              "human-gate",
+              "skgateway",
+              "sklegal",
+              "unapproved"
+            ],
+            "owner": null,
+            "status": "backlog"
+          }
+        ],
+        "owner": null,
+        "status": "backlog",
+        "terminal": false
+      },
+      "title": "[SKGW-AUTHZ-06B4-R3][L] Retry repaired protected composition disabled"
+    },
+    {
+      "card_id": "720d60ca",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "ci",
+        "gates",
+        "leaf-task",
+        "merged-to-main",
+        "parent-3457eb15",
+        "reviewer-veritas",
+        "size-s",
+        "sklegal",
+        "sprint-1"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/720d60ca/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/720d60ca/events/kimi@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/720d60ca/events/reconcile@chiap04.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/720d60ca/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-S1-06][S] Repair the three red quality gates blocking S1-03A review"
+    },
+    {
+      "card_id": "73be3561",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "verdict": "PASS"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "browser",
+        "durable-authz",
+        "mvp",
+        "repair",
+        "size-m",
+        "sklegal"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/73be3561/events/codex-luna-73be3561@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/73be3561/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "06a2686f",
+            "labels": [
+              "durable-composition",
+              "mvp",
+              "size-l",
+              "sklegal",
+              "wave-3"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-MVP-QUAL-01R3][M][REPAIR] Repair durable synthetic Matter authorization"
+    },
+    {
+      "card_id": "771d94ae",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "authentication",
+        "evidence-integrity",
+        "leaf-task",
+        "parent-b43537a8",
+        "policy-binding",
+        "portfolio-steward",
+        "qualification",
+        "repair",
+        "repo:skcapstone",
+        "size-l"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/771d94ae/events/codex-skpm-shadow-qual-f3-sol@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/771d94ae/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "f03b3530",
+            "labels": [
+              "evidence-integrity",
+              "hash-chain",
+              "independent-review",
+              "leaf-task",
+              "parent-b43537a8",
+              "portfolio-steward",
+              "qualification-review",
+              "repo:skcapstone",
+              "size-l"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "1bb253d7",
+            "labels": [
+              "evidence-integrity",
+              "hash-chain",
+              "leaf-task",
+              "parent-b43537a8",
+              "portfolio-steward",
+              "qualification",
+              "repair",
+              "repo:skcapstone",
+              "size-l"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKPM-05QF3][L][REPAIR] Bind proposal provenance, handoff authentication, and authority policy"
+    },
+    {
+      "card_id": "8085bc60",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "atlas",
+        "provenance",
+        "skcapstone",
+        "skw-autonomy"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/8085bc60/events/pi-skc-ledger-8085bc60@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/8085bc60/events/pi-skc-ledger-8085bc60@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/8085bc60/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKW-PROV-05][M] action_ledger has zero key overlap with the harness card and run vocabulary"
+    },
+    {
+      "card_id": "83abb3fa",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "verdict": "PASS"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "jarvis-night-loop",
+        "successor"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/83abb3fa/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/83abb3fa/events/pi-codex-83abb3fa@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/83abb3fa/events/pi-writer-serialization-83abb3fa@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/83abb3fa/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[CARDSTORE-WRITER-SERIALIZATION-01][DESIGN] Specify parse-before-append invariants"
+    },
+    {
+      "card_id": "86fdbdf8",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "epic:c6583686",
+        "repo:skdashboard"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/86fdbdf8/events/codex-skcp-05f8-a2@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/86fdbdf8/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "711f254c",
+            "labels": [
+              "epic:c6583686",
+              "review"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-05F8-A2][M] Qualify HTTPS origins and session-cookie transport"
+    },
+    {
+      "card_id": "881c0a32",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "acceptance_result": "PASS_READY_FOR_INDEPENDENT_REVIEW: exact A deny/B allow logical restore, C deny/D allow PITR, canonical per-file base backup and WAL hashes/bytes plus timeline/LSNs/target, fail-closed negative matrix, RLS/audit/rollback/cleanup",
+          "completion_result": "Implementation complete at fa82e43a01e696e4d75f65dee94a3cd24d9f163d; acceptance PASS; independent final review remains gated on issuer lane and ceremony",
+          "test_result": "PASS: pytest backup_restore plus capauth_replay = 3 passed, 2 subtests passed in 123.37s; ruff PASS; py_compile PASS; diff-check PASS; zero labeled containers and zero skl-s504d volumes after exit",
+          "verification_result": "PARTIAL: existing backup/PITR tests passed 2 plus 2 subtests and replay concurrency passed 1, but no integrated reservation-through-restore or card-specific tamper/missing-WAL/wrong-target evidence; no code change; card remains DOING"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "backup-restore",
+        "capauth",
+        "human-approved-remediation",
+        "persistence",
+        "sklegal"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/881c0a32/events/codex-persistence@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/881c0a32/events/jarvis@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/881c0a32/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "84c6f30c",
+            "labels": [
+              "data",
+              "leaf-task",
+              "parent-3457eb15",
+              "size-l",
+              "sklegal",
+              "sprint-1"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "61c43e1e",
+            "labels": [
+              "leaf-task",
+              "observability",
+              "parent-3457eb15",
+              "size-m",
+              "sklegal",
+              "sprint-1"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "ec15731e",
+            "labels": [
+              "capauth",
+              "sklegal"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "07a3bd6a",
+            "labels": [
+              "backup-restore",
+              "capauth",
+              "custody",
+              "human-decision",
+              "no-activation",
+              "production-gate",
+              "recommendation",
+              "sklegal"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-S1-03A-R2A][L] Implement replay-reservation backup and PITR qualification"
+    },
+    {
+      "card_id": "8a8b2d19",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "review_result": "PASS"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "joined-analysis",
+        "mvp",
+        "repair",
+        "review",
+        "size-s",
+        "sklegal",
+        "wave-1"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/8a8b2d19/events/codex-skl-mvp-board-12@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/8a8b2d19/events/codex-skl-mvp-join-01f@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/8a8b2d19/events/codex-skl-mvp-join-rereview@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/8a8b2d19/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "f714c839",
+            "labels": [
+              "joined-analysis",
+              "mvp",
+              "repair",
+              "size-s",
+              "sklegal",
+              "wave-1"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-MVP-JOIN-01FR][S][REVIEW] Independently re-review Claim and ledger projection repair"
+    },
+    {
+      "card_id": "9535bc80",
+      "classifications": [
+        "human_gate"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": "BLOCKED",
+        "link_metadata_only": {
+          "human_decision_artifact": "/home/skuser01/.skcapstone/evidence/decisions/9535bc80/20260828T024737Z/HUMAN-PATTERN-CONFIRMED-CONTAINER-OPEN.txt#sha256=583f3c9f40a0288e1d968c15cfbab26e10e00b55a1ee352184b7cf5b62296c1c",
+          "verdict": "PASS_FOR_REVIEW"
+        },
+        "omitted_direct_events": [
+          {
+            "source": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+            "verdict": "BLOCKED"
+          }
+        ],
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "do-not-claim",
+        "do-not-claim-as-implementation",
+        "human-pattern-confirmed-container-open",
+        "not-claimable",
+        "parent-3457eb15",
+        "parent-container",
+        "planning-only-container",
+        "post-mvp-hardening",
+        "sklegal",
+        "sprint-5",
+        "sprint-container",
+        "wave-6-pilot"
+      ],
+      "proposed_supported_append_only_remedies": [
+        {
+          "command": null,
+          "execution_status": "NO_ACTION_PROPOSED",
+          "reason": "Human gate remains blocked. Only explicit Chef authority may append approval or void evidence."
+        }
+      ],
+      "reason": "The card is an explicitly non-claimable planning container. Its folded closure_gate requires all Sprint 5 leaves plus separate human acceptance; its PASS_FOR_REVIEW is link metadata and does not discharge that human gate.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/9535bc80/events/fleet-liveness-reaper@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/9535bc80/events/lumina@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/9535bc80/events/pi-auto-9535bc80@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/9535bc80/events/pi-codex-9535bc80@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/9535bc80/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": true,
+            "id": "b04de409",
+            "labels": [
+              "approval-gate",
+              "human-only",
+              "parent-3457eb15",
+              "size-m",
+              "sklegal",
+              "sprint-0"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "backlog",
+        "terminal": false
+      },
+      "title": "[SKLEGAL][SPRINT 5] Pilot proof and rollout gate"
+    },
+    {
+      "card_id": "9c568af3",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "verdict": "PASS"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "handoff",
+        "independent-review",
+        "parent-b43537a8",
+        "portfolio-steward",
+        "repo:skcapstone",
+        "rereview",
+        "size-l",
+        "trust-boundary"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/9c568af3/events/codex-skpm-handoff-rp1-review-sol@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/9c568af3/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "a349074d",
+            "labels": [
+              "handoff",
+              "parent-b43537a8",
+              "portfolio-steward",
+              "repair",
+              "replay",
+              "repo:skcapstone",
+              "size-l",
+              "trust-boundary"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKPM-HO-01-RP1-R][L][REVIEW] Independently rereview handoff trust-boundary repair"
+    },
+    {
+      "card_id": "9e88de5c",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "contracts",
+        "control-plane",
+        "epic-6f7fd828",
+        "leaf-task",
+        "measurement",
+        "metric-registry",
+        "parent-4747a506",
+        "size-m",
+        "skdashboard",
+        "sprint-1"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/9e88de5c/events/codex-gantt-metrics@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/9e88de5c/events/codex-root@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/9e88de5c/events/jarvis@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/9e88de5c/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": true,
+            "id": "9508b8fd",
+            "labels": [
+              "ai-first",
+              "architecture",
+              "control-plane",
+              "epic-6f7fd828",
+              "exact-version",
+              "human-gate",
+              "measurement",
+              "parent-84f763ac",
+              "skdashboard",
+              "sprint-0",
+              "wireframe"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "847e250a",
+            "labels": [
+              "cdp",
+              "control-plane",
+              "independent-review",
+              "leaf-task",
+              "mandatory-correctness-boundary",
+              "provenance",
+              "size-m",
+              "skdashboard",
+              "sprint-0"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-11][M] Build versioned metric registry and deterministic calculation fixtures"
+    },
+    {
+      "card_id": "a432658f",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "capauth",
+        "control-plane",
+        "leaf-task",
+        "security",
+        "size-m",
+        "skdashboard"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/a432658f/events/codex-root@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/a432658f/events/codex-skcp-05f3@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/a432658f/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "24bb1398",
+            "labels": [
+              "capauth",
+              "review",
+              "security",
+              "skdashboard"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "a3caf264",
+            "labels": [
+              "capauth",
+              "control-plane",
+              "leaf-task",
+              "library",
+              "security",
+              "size-m"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-05F3][M] Preserve attributable control-plane PEP decision context"
+    },
+    {
+      "card_id": "a63455b9",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "continuation_verdict": "BLOCKED|full_gate=575_passed_2_failed|same_2_reproduce_on_clean_main=573_passed_2_failed|repair_outside_session_scope|gitleaks_ci_gate_unavailable_without_forbidden_push",
+          "implementation_verdict": "PASS_FOR_REVIEW|criteria=5/5|independent_review_not_claimed|full_suite_has_2_preexisting_unrelated_consent_failures",
+          "verdict": "BLOCKED"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "SKCP-05F8",
+        "repair",
+        "session",
+        "verdict-contract-rerun"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/a63455b9/events/jarvis@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/a63455b9/events/jarvis@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/a63455b9/events/pi-glm-a63455b9@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/a63455b9/events/pi-glm-a63455b9@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/a63455b9/events/pi-skd-session-a63455b9@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/a63455b9/events/pi-skd-session-a63455b9@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/a63455b9/events/pi@chiap01.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/a63455b9/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "58ed1ac0",
+            "labels": [
+              "epic:c6583686",
+              "review"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "c8f9202d",
+            "labels": [
+              "epic:c6583686",
+              "repo:skdashboard"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-05F8-D3F][L] Repair durable session refresh, logout, bounds, and truth states"
+    },
+    {
+      "card_id": "a6808c33",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "codex",
+        "integration",
+        "sklegal"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/a6808c33/events/codex-sklegal-durable-pass-handoffs@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/a6808c33/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKLEGAL][INTEGRATION-REPAIR][S] Publish durable PASS evidence handoffs"
+    },
+    {
+      "card_id": "a824ed11",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "authenticated-envelope",
+        "handoff",
+        "independent-review",
+        "parent-b43537a8",
+        "portfolio-steward",
+        "repo:skcapstone",
+        "simulation-only",
+        "size-l"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/a824ed11/events/codex-skpm-handoff-producer-review-sol@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/a824ed11/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "de712b36",
+            "labels": [
+              "authenticated-envelope",
+              "epic-b43537a8",
+              "handoff",
+              "leaf-task",
+              "parent-b43537a8",
+              "portfolio-steward",
+              "producer",
+              "repo:skcapstone",
+              "simulation-only",
+              "size-m",
+              "skharness"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKPM-HO-01R][L][REVIEW] Independently review authenticated handoff producer"
+    },
+    {
+      "card_id": "b00caf68",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "review",
+        "skgateway",
+        "source-94cffe51"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/b00caf68/events/pi-review-94-b00caf68@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/b00caf68/events/pi-review-94-b00caf68@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/b00caf68/events/reconcile@chiap01.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/b00caf68/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKW-BUCKET-02-R1][S][REVIEW] Independently review XL-secret capability-gap decision"
+    },
+    {
+      "card_id": "c1de4669",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "chiap01",
+        "large-v3",
+        "lower-model-ready",
+        "parent-30b495a9",
+        "size-m",
+        "whisper",
+        "xpu"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/c1de4669/events/codex-whisper@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/c1de4669/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[M] Deploy Whisper large-v3 XPU transcription API on chiap01"
+    },
+    {
+      "card_id": "c67a257a",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "predecessor_disposition": "026d71a5|FAIL_PRESERVED|status=review|verdict=FAIL|blocker=R1-unattested-alternate-approval-source-receipt",
+          "verdict": "PASS"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "approval-provenance",
+        "independent-review",
+        "leaf-task",
+        "review-required",
+        "skdashboard"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/pi-approval-attribution-rereview@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/spawn-reviewer-1787636439-reviewer-agent@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/spawn-reviewer-1787636500-reviewer-agent@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/spawn-reviewer-1787637309-reviewer-agent@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/spawn-reviewer-1787637437-reviewer-agent@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/spawn-reviewer-1787637635-reviewer-agent@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/spawn-reviewer-1787638806-reviewer-agent@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/spawn-reviewer-1787639469-reviewer-agent@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c67a257a/events/spawn-reviewer-1787639736-reviewer-agent@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/c67a257a/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "af31a281",
+            "labels": [
+              "append-only",
+              "approval",
+              "control-plane",
+              "exact-hash",
+              "leaf-task",
+              "size-s",
+              "skdashboard",
+              "sprint-0",
+              "truth-state"
+            ],
+            "owner": null,
+            "status": "done"
+          },
+          {
+            "exists": true,
+            "human_gate": true,
+            "id": "9ad1eeb8",
+            "labels": [
+              "control-plane",
+              "exact-hash",
+              "human-gate",
+              "leaf-task",
+              "size-s",
+              "skdashboard",
+              "sprint-0"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-00R3R][M][REVIEW] Freshly rereview approval attribution repair"
+    },
+    {
+      "card_id": "c8e94483",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "verdict": "BLOCKED",
+          "verdict_artifact": "/home/skuser01/.skcapstone/evidence/work/c8e94483/BLOCKED-verdict-pi-codex-c8e94483.json",
+          "verdict_sha256": "790bb3cdf0e40688fd168582aa43104a134d706a8a2658eccbc504bd90a229ab"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "false-completion",
+        "review",
+        "skgateway",
+        "source-f361407c"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/c8e94483/events/pi-auto-c8e94483@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/c8e94483/events/pi-codex-c8e94483@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/c8e94483/events/pi-glm-c8e94483@chiap02.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/c8e94483/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKGW-COLDSTART-R1][M][REVIEW] Independently review fail-closed discovery readiness repair"
+    },
+    {
+      "card_id": "e3840300",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "disposition": "PASS_ARTIFACT_INTEGRITY_READY_FOR_HUMAN_DISPOSITION"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "corpus",
+        "mvp",
+        "pgvector",
+        "review",
+        "sklegal"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/e3840300/events/codex-skl-mvp-pgvector-review@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/e3840300/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "3d169f30",
+            "labels": [
+              "acquisition",
+              "corpus",
+              "mvp",
+              "pgvector",
+              "sklegal"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKL-MVP-CORPUS-01AR][M][REVIEW] Independently review exact offline pgvector substrate"
+    },
+    {
+      "card_id": "e69d3f77",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "verdict": "PASS"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "board-integrity",
+        "unblock"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/e69d3f77/events/jarvis@chiap02.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/e69d3f77/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[BOARD-FALSECOMPLETE-01][M] Resolve two cards that report COMPLETE while their verdict says BLOCKED"
+    },
+    {
+      "card_id": "e8f135d0",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [
+          {
+            "artifact_path": "/home/skuser01/.skcapstone/evidence/work/e8f135d0/PASS-20260827.json",
+            "artifact_sha256": "975dcd53eb769cc37fd7b2006031330179302bb73d03f055a7c9a9194c381a18",
+            "line": 2,
+            "source_path": "/home/skuser01/.skcapstone/cards/e8f135d0/events/pi-codex-e8f135d0@chiap03.jsonl",
+            "timestamp": "2026-08-27T13:40:28.835984+00:00",
+            "verdict": "PASS"
+          }
+        ],
+        "latest_explicit_verdict": "PASS",
+        "link_metadata_only": {
+          "review_verdict": "FAIL/BLOCKED. Criterion 1 is not fully proven because profile key_info.private_key_path declares identity/private.asc but that file is absent, so its required private-file mode 600 cannot be verified; the 6 existing custody directories are mode 700, the 4 existing custody files are mode 600, and passphrase.env is mode 600 by stat only. Criterion 2 PASS: CapAuth profile verify exited 0 and reported Profile signature is VALID. Criterion 3 remains blocked: fingerprint DCE38ED7BC9D95D724B5FE7FECF9D6A423EC83F5 and public-key SHA256 3fcd748c73599aacee6ab3255b272a8f0df3db934b6e8bd8a9a95e98c7338997 match current envelope metadata, but roster source card 1e8931ae is still in REVIEW and its newly linked commit/artifact is unavailable in the local source repository, so the roster row cannot be independently read and matched. Prior FAIL verdicts remain preserved. Do not complete."
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "capauth",
+        "independent-review",
+        "signer-migration",
+        "successor"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/e8f135d0/events/lumina@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/e8f135d0/events/pi-cap-custody-e8f135d0@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/e8f135d0/events/pi-cap-custody-e8f135d0@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/e8f135d0/events/pi-codex-e8f135d0@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/e8f135d0/events/pi-codex-e8f135d0@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/e8f135d0/events/pi-night-permission-review-e8f135d0@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/e8f135d0/events/pi-night-permission-review-e8f135d0@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/e8f135d0/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[CAPAUTH-SIGNER-P3R3][REVIEW] Rereview permission and profile verification repair"
+    },
+    {
+      "card_id": "ea614add",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "review"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/ea614add/events/pi-review-f094-ea614add@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/ea614add/events/pi-review-f094-ea614add@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/ea614add/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKGW-REPLICA-PACKET-R2][REVIEW] Independently review no-action adoption packet"
+    },
+    {
+      "card_id": "ea765116",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "decision-template": "HUMAN DECISION: ACCEPT or REJECT. Card: ea765116. Qualification parent: 9936350d. Qualification bundle SHA-256: c212bf90e76539c554c7a19ba6a367f5a6aa9edce9f5d99cc6367cb60e0aa1be. Independent review card: 1d56f857. Review bundle SHA-256: 3e64355254182294cc06be90651a2a7461d4efa4225049a3c0478874166beaa0. Source binding SHA-256: 56d8aad72138de7b5d9d8aacf09b98085ad8b14988c7a5a8f09569b83fba3263. Trees: SKDashboard beea04bbe0be5f72ce4c707229352ec3e1c4cd80; SKOS 510e53dd5baf95db8f3ff0e1db7f1b06718dd54c; Atlas 0f3d9993e4e8abe4c7a08ed8d0780d90895bca38. I accept or reject only this exact public-synthetic technical qualification. This decision authorizes no merge, push, deployment, credentials, grants, protected data, live traffic, production-readiness claim, or external action. Decision maker: [NAME]. Timestamp: [UTC TIMESTAMP].",
+          "human-decision": "HUMAN DECISION: ACCEPT. Card: ea765116. Qualification parent: 9936350d. Qualification bundle SHA-256: c212bf90e76539c554c7a19ba6a367f5a6aa9edce9f5d99cc6367cb60e0aa1be. Independent review card: 1d56f857. Review bundle SHA-256: 3e64355254182294cc06be90651a2a7461d4efa4225049a3c0478874166beaa0. Source binding SHA-256: 56d8aad72138de7b5d9d8aacf09b98085ad8b14988c7a5a8f09569b83fba3263. Trees: SKDashboard beea04bbe0be5f72ce4c707229352ec3e1c4cd80; SKOS 510e53dd5baf95db8f3ff0e1db7f1b06718dd54c; Atlas 0f3d9993e4e8abe4c7a08ed8d0780d90895bca38. I accept only this exact public-synthetic technical qualification. This decision authorizes no merge, push, deployment, credentials, grants, protected data, live traffic, production-readiness claim, or external action. Decision maker: Chef <chef@skworld.io>. Timestamp: 2026-08-26T03:54:17Z."
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "exact-version",
+        "human-gate",
+        "sk-control-plane"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/ea765116/events/human-owner@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/ea765116/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "1d56f857",
+            "labels": [
+              "codex",
+              "parent-review",
+              "size-l",
+              "sk-control-plane"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-10-H1][HUMAN] Accept exact repaired public-synthetic technical qualification"
+    },
+    {
+      "card_id": "edb4bf57",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {
+          "disposition": "COMPATIBLE_PATCH_READY_FOR_INDEPENDENT_INTEGRATION_REREVIEW"
+        },
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "codex",
+        "integration",
+        "sklegal"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/edb4bf57/events/codex-sklegal-integration-repair@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/edb4bf57/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKLEGAL][INTEGRATION-REPAIR][L] Reconcile refresh candidate against current origin"
+    },
+    {
+      "card_id": "eff95fb8",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "pi-pool",
+        "repair",
+        "sk-orch",
+        "state-machine"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/eff95fb8/events/codex-pi-spawn-state-repair@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/eff95fb8/events/jarvis@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/eff95fb8/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "38553de3",
+            "labels": [
+              "pi-pool",
+              "quiescence",
+              "repair",
+              "sk-orch"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SK-ORCH-05R2][M] Reject inconsistent Pi spawn-control history and replay"
+    },
+    {
+      "card_id": "f10a0e73",
+      "classifications": [
+        "card_contradiction"
+      ],
+      "evidence": {
+        "explicit_events": [
+          {
+            "artifact_path": "/home/skuser01/.skcapstone/evidence/work/f10a0e73/BLOCKED-verdict-20260827T213939Z.json",
+            "artifact_sha256": "cba743c874615c583f405ea8b39c234c1ecb074904d7ce8aa7c5c7f07f800d97",
+            "line": 5,
+            "source_path": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl",
+            "timestamp": "2026-08-27T21:39:39.573329+00:00",
+            "verdict": "BLOCKED"
+          },
+          {
+            "artifact_path": "/home/skuser01/.skcapstone/evidence/work/f10a0e73/BLOCKED-verdict-20260828T034408Z.json",
+            "artifact_sha256": "f1e5b3294fe0b26d0bb124ff32261365e35b7fd0f327559fd1134239dce35557",
+            "line": 16,
+            "source_path": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl",
+            "timestamp": "2026-08-28T03:44:08.095954+00:00",
+            "verdict": "BLOCKED"
+          }
+        ],
+        "latest_explicit_verdict": "BLOCKED",
+        "link_metadata_only": {
+          "disposition": "SUPERSEDED",
+          "verdict": "PASS_FOR_REVIEW"
+        },
+        "omitted_direct_verdict_events": [
+          {
+            "blocked_on": {
+              "referent": "ac:2",
+              "type": "card"
+            },
+            "source": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:13",
+            "verdict": "BLOCKED"
+          },
+          {
+            "blocked_on": {
+              "referent": "ac:2",
+              "type": "card"
+            },
+            "source": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:18",
+            "verdict": "BLOCKED"
+          }
+        ],
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "canary",
+        "non-matter",
+        "post-mvp-hardening",
+        "skgateway",
+        "transport",
+        "verdict-contract-rerun"
+      ],
+      "proposed_supported_append_only_remedies": [
+        {
+          "command": null,
+          "execution_status": "NO_ACTION_PROPOSED",
+          "reason": "Do not move to review while the latest direct outcome is BLOCKED. The card criteria or constraints require a separately authorized amendment before rerun."
+        }
+      ],
+      "reason": "Direct BLOCKED verdicts state that AC 2 requires live restart and teardown proof while standing constraints prohibit those actions. PASS_FOR_REVIEW link metadata and lifecycle do not override the direct verdict.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/f10a0e73/events/fleet-liveness-reaper@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/f10a0e73/events/fleet-liveness-reaper@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f10a0e73/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f10a0e73/events/lumina-ghost-reaper@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f10a0e73/events/lumina@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f10a0e73/events/reconcile@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/f10a0e73/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": true,
+            "id": "0c865c70",
+            "labels": [
+              "agent-canary",
+              "human-gate",
+              "non-matter",
+              "skgateway"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "backlog",
+        "terminal": false
+      },
+      "title": "[SKGW-STRAT-06E][M] Establish least-privilege chiap08 loopback transport for canary"
+    },
+    {
+      "card_id": "f4e52160",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "control-plane",
+        "leaf-task",
+        "project-management",
+        "reconciliation",
+        "release",
+        "size-m",
+        "skdashboard"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/f4e52160/events/jarvis@chiap08.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/f4e52160/core.json"
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "exists": true,
+            "human_gate": false,
+            "id": "5ee56779",
+            "labels": [
+              "agile",
+              "analytics",
+              "control-plane",
+              "dependencies",
+              "epic-6f7fd828",
+              "kanban",
+              "leaf-task",
+              "parent-973b802f",
+              "portfolio",
+              "project-management",
+              "size-l",
+              "skdashboard",
+              "sprint-2"
+            ],
+            "owner": null,
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[SKCP-21R][M] Reconcile qualify and publish completed Portfolio workspace"
+    },
+    {
+      "card_id": "fd2f5735",
+      "classifications": [
+        "terminal_no_obstruction"
+      ],
+      "evidence": {
+        "explicit_events": [],
+        "latest_explicit_verdict": null,
+        "link_metadata_only": {},
+        "pass_inferred_from_completion": false
+      },
+      "labels": [
+        "epic-c68239d1",
+        "foreign-project",
+        "greg-break-house",
+        "sprint-0"
+      ],
+      "proposed_supported_append_only_remedies": [],
+      "reason": "Structural lifecycle is terminal; no PASS is inferred from completion.",
+      "source_paths": {
+        "card_event_files": [
+          "/home/skuser01/.skcapstone/cards/fd2f5735/events/jarvis@chiap04.jsonl"
+        ],
+        "core": "/home/skuser01/.skcapstone/cards/fd2f5735/core.json"
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done",
+        "terminal": true
+      },
+      "title": "[GBH][SPRINT 0] Discovery, artifact governance, and current-state hub"
+    }
+  ],
+  "replacement_chain": {
+    "blocking_review_path": "/home/skuser01/.skcapstone/evidence/work/6c418ad3/partition-11-corrected-replacement-review.json",
+    "blocking_review_sha256": "24728ed7e976910860d018379d6d88bec756edd309b79c679844df804ad16f09",
+    "blocking_review_verdict": "BLOCKED",
+    "preserves_replaced_bytes": true,
+    "replaces_path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+    "replaces_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c"
+  },
+  "repository_or_external_action_applied": false,
+  "reproduction_limit": "The historical source did not publish a frozen manifest for all 1817 input cards. Selection completeness at its timestamp is therefore not claimed.",
+  "schema": "skcapstone.fleet_unblock.corrected_replacement.v2",
+  "source_snapshot_metadata": {
+    "audit_card_id": "482cc241",
+    "counts": {
+      "classifications": {
+        "awaiting_review": 1,
+        "card_contradiction": 2,
+        "dependency": 1,
+        "human_gate": 3,
+        "supersession": 1,
+        "terminal_no_obstruction": 35
+      },
+      "current_cardstore_cards": 1817,
+      "current_eight_hex_cards": 1503,
+      "excluded_fleet_unblock_audit": 2,
+      "partition_before_exclusion": 42,
+      "selected": 40,
+      "selected_claimed": 0,
+      "selected_nonterminal": 5,
+      "selected_terminal": 35
+    },
+    "governance_rules_applied": [
+      "Structural lifecycle, current claim, and folded dependencies are reported separately from evidence outcomes and labels.",
+      "Completion never implies PASS.",
+      "Links are metadata and never treated as dependencies or evidence events.",
+      "Machine supersession never discharges a HUMAN gate; only explicit Chef approval or explicit Chef void can discharge it.",
+      "No repair or non-audit action was applied."
+    ],
+    "limitations": [
+      "Evidence artifacts outside CardStore were not opened unless represented by explicit CardStore evidence-event metadata; protected data was not accessed.",
+      "Link values are reported only as non-authoritative metadata."
+    ],
+    "overall_verdict": "PASS_FOR_REVIEW",
+    "parent_card_id": "799de053",
+    "partition": {
+      "modulus": 33,
+      "remainder": 11
+    },
+    "report_sha256": {
+      "algorithm": "SHA-256",
+      "sidecar_path": "/home/skuser01/.skcapstone/evidence/work/482cc241/fleet-unblock-partition-11-audit.json.sha256",
+      "value_in_sidecar": true
+    },
+    "schema": "fleet_unblock_partition_audit.v1",
+    "selection_algorithm": "From CardStore.list_cards(include_archived=False), retain IDs matching exactly 8 hexadecimal characters and int(id,16) % 33 == 11, then exclude cards whose folded labels contain fleet-unblock-audit.",
+    "snapshot_timestamp_utc": "2026-08-28T11:03:59.230404+00:00",
+    "source_paths": {
+      "audit_card_description": "/home/skuser01/.skcapstone/coordination/tasks/482cc241-fleet-unblock-wave-01-11saudit-audit-blo.json",
+      "cardstore_root": "/home/skuser01/.skcapstone/cards",
+      "legacy_overlay_root": "/home/skuser01/.skcapstone/coordination/card_events",
+      "legacy_task_projection_root": "/home/skuser01/.skcapstone/coordination/tasks"
+    }
+  },
+  "supersedes_report": {
+    "card_id": "482cc241",
+    "path": "/home/skuser01/.skcapstone/evidence/work/482cc241/fleet-unblock-partition-11-audit.json",
+    "preserved_unchanged": true,
+    "sha256": "d7f5b4b0eff35c1401bef95c84a3c576f68adc3ddd54b645c742752d51afc70d"
+  }
+}

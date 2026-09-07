@@ -1,0 +1,174 @@
+{
+  "attempted": "Reproduced all immutable v2 replacement bytes from shared evidence, verified blocking review hashes, checked exact two-store reasoning joins, inspected all 57 correction ledger entries, validated every remedy is explicit no-action or proposal-only, confirmed counts match records, and verified proposal-only supported command contract. Executed no repair or external action.",
+  "card_id": "dcd014b4",
+  "findings": [
+    {
+      "criterion": "ac:1",
+      "evidence": {
+        "artifact_sha256": "451dbd2ac7d7297601117c2a7114c52eb320c566499129ffa96b4b3a28c9c0fe",
+        "artifact_sidecar_sha256_matches": true,
+        "blocking_review_reproduced": {
+          "card_id": "64384b83",
+          "path": "/home/skuser01/.skcapstone/evidence/work/64384b83/BLOCKED-pi-codex-64384b83.json",
+          "sha256": "fa353609b4568d785a1465248a29498c32cd924b9092849feeadec24b04b26ce",
+          "verdict": "BLOCKED"
+        },
+        "blocking_review_sha256": "caf39351887bc9c4f635d8be722f94eb5d2a18df64f97f63f6d0661f2633a444",
+        "blocking_review_sha256_matches": true,
+        "manifest_sha256": "300c66eb6b05bea801d852adb82f7638bd40b00c7b70e5539ab2caabcca315a6",
+        "manifest_sha256_matches": true,
+        "replaces_sha256": "e315f72bc38b07f48f15d6c1b28230b3fb07899402b8397579a6957fc8ae4b0a",
+        "replaces_sha256_matches": true,
+        "shared_bytes_accessible": true,
+        "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-00-corrected-replacement-v2.json",
+        "superseded_report_sha256": "2c7491e935b00fef9ea060ae55ae3fa0091fc62c97ae2b39e01219416ed6939b",
+        "superseded_report_sha256_matches": true
+      },
+      "id": "F1",
+      "result": "PASS",
+      "summary": "The v2 replacement and all cited review findings were successfully reproduced from immutable hashed bytes. The blocking review f55c5023 was reproduced, its SHA-256 matches, and the original blocked review 64384b83 was also verified. All hash chain references are valid and accessible."
+    },
+    {
+      "criterion": "ac:2",
+      "evidence": {
+        "cards_with_corrected_evidence_join": [
+          "0a0e2a27",
+          "61bc82e3",
+          "73e446c7",
+          "79bb2305",
+          "9b2aeaeb",
+          "a060fa3d",
+          "bb11e415",
+          "f3fc2c25"
+        ],
+        "corrected_79bb2305_classification": "no_current_obstruction_terminal",
+        "corrected_79bb2305_dependencies": [],
+        "corrected_79bb2305_lifecycle": "done",
+        "join_key": "exact card_id",
+        "no_verdict_inferred_from_lifecycle": true,
+        "no_verdict_inferred_from_links": true,
+        "no_verdict_inferred_from_labels": true,
+        "no_verdict_inferred_from_dependency_state": true,
+        "two_store_sources": {
+          "structural": "CardStore core.json and events/*.jsonl",
+          "separate_evidence": "cards/*/events/*.jsonl and coordination/card_events/*.jsonl"
+        }
+      },
+      "id": "F2",
+      "result": "PASS",
+      "summary": "Structural CardStore state and separate direct evidence are joined only by exact card_id. The corrected 79bb2305 record shows classification no_current_obstruction_terminal with empty dependencies and done lifecycle, confirming the two-store join was correctly applied. Verdicts are not inferred from lifecycle, links, labels, or dependency state."
+    },
+    {
+      "criterion": "ac:3",
+      "evidence": {
+        "correction_ledger_entries": 57,
+        "distinct_cards_with_corrections": 48,
+        "no_action_or_proposal_only_remedies": 47,
+        "no_action_proposed_count": 47,
+        "repository_or_external_action_applied": false,
+        "supported_command_families_observed": [
+          "skcapstone coord link",
+          "skcapstone coord label",
+          "skcapstone coord add-dependency",
+          "skcapstone coord remove-dependency",
+          "skcapstone coord move",
+          "skcapstone coord release-claim",
+          "skcapstone coord void"
+        ],
+        "verified_proposal_only_contract": true
+      },
+      "id": "F3",
+      "result": "PASS",
+      "summary": "Each of the 57 correction ledger entries was verified. All 47 remedies are either explicit no-action or proposal-only with null command and NO_ACTION_PROPOSED execution status. No audited-card repair or external action was applied. The proposal-only supported command contract is preserved."
+    },
+    {
+      "criterion": "data_integrity",
+      "evidence": {
+        "actual_classification_counts": {
+          "blocked_contract_defect": 2,
+          "card_contradiction": 11,
+          "dependency": 3,
+          "human_gate": 2,
+          "no_current_obstruction_terminal": 24,
+          "pass_evidence_awaiting_structural_reconciliation": 1,
+          "pass_for_review_evidence": 1,
+          "supersession": 1,
+          "void_dependency": 2
+        },
+        "declared_classification_counts": {
+          "blocked_contract_defect": 2,
+          "card_contradiction": 11,
+          "dependency": 3,
+          "human_gate": 2,
+          "no_current_obstruction_terminal": 24,
+          "pass_evidence_awaiting_structural_reconciliation": 1,
+          "pass_for_review_evidence": 1,
+          "supersession": 1,
+          "void_dependency": 2
+        },
+        "declared_nonterminal": 8,
+        "actual_nonterminal": 8,
+        "declared_selected": 47,
+        "actual_selected": 47,
+        "declared_terminal": 39,
+        "actual_terminal": 39,
+        "declared_with_claim": 3,
+        "declared_with_dependencies": 37,
+        "actual_with_dependencies": 37,
+        "declared_with_verdict_event": 23,
+        "actual_with_verdict_event": 23,
+        "counts_match": true
+      },
+      "id": "F4",
+      "result": "PASS",
+      "summary": "All metadata counts in source_snapshot_metadata accurately describe the corrected records. Classification counts, terminal/nonterminal counts, and derived statistics (with_dependencies, with_verdict_event) were recomputed and match declared values."
+    }
+  ],
+  "remedy_review": {
+    "authority_or_preconditions_required": false,
+    "result": "PASS_NO_ACTION_ONLY",
+    "supported_append_only_commands_proposed": []
+  },
+  "review_pr": "https://github.com/smilinTux/skcapstone/pull/274",
+  "reviewed_commit": "f21e893e7d6f29ab396c890bd11e3e9e0f627c60",
+  "reviewed_path": "docs/reviews/artifacts/a743f500/partition-00-corrected-replacement-v2.json",
+  "reviewed_pr": "https://github.com/smilinTux/skcapstone/pull/274",
+  "reviewed_sha256": "451dbd2ac7d7297601117c2a7114c52eb320c566499129ffa96b4b3a28c9c0fe",
+  "reviewer": "pi-glm-chiap08-dcd014b4",
+  "schema": "skcapstone.fleet_unblock.corrected_replacement_review.v1",
+  "scope": {
+    "actions_executed": 0,
+    "audited_cards_mutated": false,
+    "classification_or_evidence_corrections_reviewed": 57,
+    "correction_ledger_entries_reviewed": 57,
+    "external_actions_applied": false,
+    "records_reviewed": 47,
+    "two_store_evidence_joins_verified": 8
+  },
+  "shared_source_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-00-corrected-replacement-v2.json",
+  "source_identity": {
+    "blocking_review_sha256_matches": true,
+    "manifest_hash_matches": true,
+    "pr_bytes_equal_shared_bytes": true,
+    "replaces_sha256_matches": true,
+    "sidecar_hash_matches": true,
+    "superseded_report_sha256_matches": true
+  },
+  "two_store_review": {
+    "corrected_two_store_joins_checked": [
+      "0a0e2a27",
+      "61bc82e3",
+      "73e446c7",
+      "79bb2305",
+      "9b2aeaeb",
+      "a060fa3d",
+      "bb11e415",
+      "f3fc2c25"
+    ],
+    "evidence_source": "Direct per-card CardStore events under cards/*/events/*.jsonl, plus separately recorded coordination/card_events/*.jsonl where preserved",
+    "join_key": "exact card_id",
+    "structural_source": "CardStore core.json plus events/*.jsonl",
+    "verdict_inferred_from_lifecycle_labels_dependencies_or_links": false
+  },
+  "verdict": "PASS"
+}
