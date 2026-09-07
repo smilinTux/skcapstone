@@ -2102,6 +2102,12 @@ def _claimability_reason(core, state):
         or state["review_seen"]
         or any(state["review_markers"].values())
     )
+    # A review card has exactly one executable lifecycle. It must be unowned,
+    # in the review column, and carry the exact review label. All other review
+    # markers remain diagnostic only and fail closed.
+    normalized_labels = {str(x).strip().lower() for x in labels}
+    if state["status"] == "review" and "review" in normalized_labels:
+        return "governed-review"
     if non_implementation(folded_core, labels):
         return "human-gate"
     if "foreign-project" in {str(x).strip().lower() for x in labels}:
@@ -2161,9 +2167,13 @@ def authoritative_claimability(cid, core=None, fresh=False):
     folded_core["links"] = dict(state["links"])
     labels = state["labels"]
     reason = _claimability_reason(core, state)
-    state.update({"claimable": reason == "claimable", "reason": reason,
-                  "core": folded_core, "host_pin": host_pin(folded_core, labels),
-                  "source_revision": source_revision})
+    state.update({
+        "claimable": reason in {"claimable", "governed-review"},
+        "reason": reason,
+        "core": folded_core,
+        "host_pin": host_pin(folded_core, labels),
+        "source_revision": source_revision,
+    })
     return state
 
 
@@ -4956,7 +4966,11 @@ def _pool_v2_dispatchable(admission):
         return False
     ordinary = (
         admission.get("claimable") is True
-        and admission.get("reason") == "claimable"
+        and admission.get("reason") in {"claimable", "governed-review"}
+        and (
+            admission.get("reason") == "claimable"
+            or admission.get("governed_review") is True
+        )
     )
     seraph_review = (
         admission.get("claimable") is False
@@ -5037,15 +5051,15 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         globals().get("_ONLY_SEAT", "") == review_seat
         and review_seat is not None
         and review_status
-        and reason == "review"
-        and claimability.get("claimable") is False
+        and reason in {"review", "governed-review"}
+        and claimability.get("claimable") is (reason == "governed-review")
         and governed_review
         and not hold
     )
     elastic_review_admitted = bool(
         not globals().get("_ONLY_SEAT", "")
-        and reason == "review"
-        and claimability.get("claimable") is False
+        and reason in {"review", "governed-review"}
+        and claimability.get("claimable") is (reason == "governed-review")
         and governed_review
         and review_seat is not None
         and review_status
@@ -5154,20 +5168,27 @@ def _pool_v2_preclaim_handoff(cid, selected, fresh, reviewer):
 
 def _seraph_unique_source_heads(candidates):
     """Exclude every ambiguous source/head pair before claim or launch."""
-    if globals().get("_ONLY_SEAT", "") != "seraph":
+    only_seat = globals().get("_ONLY_SEAT", "")
+    if only_seat not in {"", "seraph"}:
         return list(candidates), set()
+    review_candidates = list(candidates) if only_seat == "seraph" else [
+        row for row in candidates
+        if globals().get("_POOL_V2_ADMISSIONS", {}).get(row[2], {}).get(
+            "governed_review"
+        ) is True
+    ]
     grouped = collections.Counter(
         (
             str((row[3].get("meta") or {}).get("link_source_card") or ""),
             str((row[3].get("meta") or {}).get("link_head_revision") or ""),
         )
-        for row in candidates
+        for row in review_candidates
     )
     duplicates = {key for key, count in grouped.items() if not all(key) or count > 1}
     return [
         row
         for row in candidates
-        if (
+        if row not in review_candidates or (
             str((row[3].get("meta") or {}).get("link_source_card") or ""),
             str((row[3].get("meta") or {}).get("link_head_revision") or ""),
         )
@@ -5254,8 +5275,13 @@ def _shadow_pool_v2():
                         or cid in class_ids.get("void_dependency_edges", set())
                     ),
                     awaiting_review=(
-                        awaiting_review(cid) or reason == "review"
-                    ) and not (seraph_review_admitted or elastic_review_admitted),
+                        (
+                            awaiting_review(cid)
+                            or reason == "review"
+                        )
+                        and reason != "governed-review"
+                        and not (seraph_review_admitted or elastic_review_admitted)
+                    ),
                     backoff=blocked_backoff(cid),
                     attempt_limit=unclaimable(cid),
                     host_pin_elsewhere=reason.startswith("host-pin:"),

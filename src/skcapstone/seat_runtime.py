@@ -101,10 +101,9 @@ def recommend_reviewer(
         card is None
         or card.owner is not None
         or getattr(card.status, "value", card.status) != "review"
+        or "review" not in {str(label).strip().lower() for label in card.labels}
     ):
-        raise BoundaryError("review card is not unclaimed review work")
-    if "review" not in {str(label).lower() for label in card.labels}:
-        raise BoundaryError("review card lacks the review label")
+        raise BoundaryError("review card is not unclaimed governed review work")
     state_revision = review_state_revision(card)
     if expected_state_revision is not None and expected_state_revision != state_revision:
         raise BoundaryError("review card state changed before recommendation")
@@ -177,8 +176,9 @@ def authorize_review_launch(
         card is None
         or card.owner is not None
         or getattr(card.status, "value", card.status) != "review"
+        or "review" not in {str(label).strip().lower() for label in card.labels}
     ):
-        raise BoundaryError("review card is no longer unclaimed review work")
+        raise BoundaryError("review card is no longer unclaimed governed review work")
     current_revision = review_state_revision(card)
     if current_revision != recommendation.observed_state_revision:
         raise BoundaryError("review card state changed after assignment")

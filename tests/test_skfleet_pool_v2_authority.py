@@ -79,6 +79,46 @@ def test_pool_v2_dispatchable_refuses_backoff_overlay() -> None:
     assert dispatchable(admission) is True
 
 
+def test_governed_review_admission_is_dispatchable_not_review_withheld() -> None:
+    """Reproduce live POOL_V2-admitted + REVIEW_WITHHELD reason=review on main.
+
+    A governed review card (review column, exact review label) used to fold to
+    claimable=False with reason "review", so POOL_V2 admitted the snapshot yet
+    the launch loop withheld it with reason=review. The unified lifecycle makes
+    the same card claimable with reason "governed-review", which must be
+    dispatchable through the same bounded admission snapshot.
+    """
+    dispatchable = _load_helpers("_pool_v2_dispatchable")["_pool_v2_dispatchable"]
+    card_id = "83754e0e"
+    withheld_live = {
+        "card_id": card_id,
+        "claimable": False,
+        "reason": "review",
+        "governed_review": True,
+        "title": "[REVIEW] governed candidate",
+        "labels": ["review"],
+        "core": {"id": card_id},
+        "seraph_review_admitted": False,
+        "elastic_review_admitted": False,
+        "overlay": {"reason": "review"},
+        "source_revision": "b" * 64,
+    }
+    assert dispatchable(withheld_live) is False
+
+    refreshed = dict(withheld_live)
+    refreshed.update(
+        {
+            "claimable": True,
+            "reason": "governed-review",
+        }
+    )
+    assert dispatchable(refreshed) is True
+
+    ungoverned = dict(refreshed)
+    ungoverned["governed_review"] = False
+    assert dispatchable(ungoverned) is False
+
+
 def test_seraph_admission_clears_when_blocked_backoff_holds() -> None:
     """Unresolved blockers clear Seraph/elastic bits so do-not-claim is unnecessary."""
     helpers = _load_helpers(

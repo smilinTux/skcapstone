@@ -43,7 +43,7 @@ def test_backlog_review_label_is_not_admitted(tmp_path: Path) -> None:
     card(tmp_path)
     CardStore(tmp_path).append_event("feedface", "move", "producer", column="backlog")
 
-    with pytest.raises(BoundaryError, match="unclaimed review work"):
+    with pytest.raises(BoundaryError, match="governed review"):
         recommend_reviewer(
             tmp_path,
             card_id="feedface",
@@ -159,6 +159,65 @@ def test_link_rejects_non_distinct_reviewer(tmp_path: Path, candidate: str) -> N
         )
 
 
+@pytest.mark.parametrize("column", ["backlog", "ready"])
+def test_link_rejects_non_review_lifecycle(tmp_path: Path, column: str) -> None:
+    """Only the review column is executable governed review work."""
+
+    card(tmp_path)
+    CardStore(tmp_path).append_event("feedface", "move", "producer", column=column)
+    with pytest.raises(BoundaryError, match="governed review"):
+        recommend_reviewer(
+            tmp_path,
+            card_id="feedface",
+            recommendation_id="assignment-1",
+            author="producer",
+            candidates=["reviewer-one"],
+            observed_process={"sessions": []},
+            evidence_sha256=HASH,
+        )
+
+
+def test_link_rejects_missing_exact_review_label(tmp_path: Path) -> None:
+    """A review column alone cannot enter the governed launch path."""
+
+    card(tmp_path)
+    CardStore(tmp_path).append_event("feedface", "remove_label", "producer", label="review")
+    with pytest.raises(BoundaryError, match="governed review"):
+        recommend_reviewer(
+            tmp_path,
+            card_id="feedface",
+            recommendation_id="assignment-1",
+            author="producer",
+            candidates=["reviewer-one"],
+            observed_process={"sessions": []},
+            evidence_sha256=HASH,
+        )
+
+
+def test_authorization_rejects_owner_after_recommendation(tmp_path: Path) -> None:
+    """An intervening owner claim fails closed before launch."""
+
+    card(tmp_path)
+    recommendation = recommend_reviewer(
+        tmp_path,
+        card_id="feedface",
+        recommendation_id="assignment-1",
+        author="producer",
+        candidates=["reviewer-one"],
+        observed_process={"sessions": []},
+        evidence_sha256=HASH,
+    )
+    CardStore(tmp_path).append_event("feedface", "assign", "other", owner="other")
+    with pytest.raises(BoundaryError, match="governed review"):
+        authorize_review_launch(
+            tmp_path,
+            recommendation,
+            actor="reviewer-one",
+            current_process={"sessions": []},
+            used_recommendation_ids=set(),
+        )
+
+
 def test_reviewer_rejects_replay_and_state_drift(tmp_path: Path) -> None:
     """A recommendation is one-use and bound to the observed card state."""
 
@@ -206,7 +265,7 @@ def test_launch_rejects_later_backlog_move(tmp_path: Path) -> None:
     )
     CardStore(tmp_path).append_event("feedface", "move", "producer", column="backlog")
 
-    with pytest.raises(BoundaryError, match="unclaimed review work"):
+    with pytest.raises(BoundaryError, match="governed review"):
         authorize_review_launch(
             tmp_path,
             recommendation,
@@ -407,7 +466,7 @@ def test_assignment_denies_owned_review_card(tmp_path: Path) -> None:
         owner="other-reviewer",
         claim_revision="claim-revision-1",
     )
-    with pytest.raises(BoundaryError, match="unclaimed review work"):
+    with pytest.raises(BoundaryError, match="governed review"):
         recommend_reviewer(
             tmp_path,
             card_id="feedface",

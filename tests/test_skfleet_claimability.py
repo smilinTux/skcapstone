@@ -369,8 +369,8 @@ def test_review_markers_are_not_executable_after_claim_release() -> None:
         assert namespace["_claimability_reason"](core, state) == "review"
 
 
-def test_released_64c201a1_review_keeps_elastic_admission_after_empty_title() -> None:
-    """Exact claim, move-doing, describe-empty, release review regression."""
+def test_released_64c201a1_review_keeps_governed_admission_after_empty_title() -> None:
+    """Exact claim, move-doing, describe-empty, release governed review regression."""
     namespace = _load_claimability()
     core = {
         **_core("64c201a1", labels=["review", "seat-seraph", "sk-s"]),
@@ -392,7 +392,7 @@ def test_released_64c201a1_review_keeps_elastic_admission_after_empty_title() ->
     state = namespace["_fold_claimability"](core, events)
     reason = namespace["_claimability_reason"](core, state)
     state.update(
-        claimable=False,
+        claimable=reason in {"claimable", "governed-review"},
         reason=reason,
         core={**core, "title": state["title"], "links": state["links"]},
         source_revision="c" * 64,
@@ -400,7 +400,8 @@ def test_released_64c201a1_review_keeps_elastic_admission_after_empty_title() ->
     )
     admission = namespace["_pool_v2_admission"]("64c201a1", core, state)
 
-    assert reason == "review"
+    assert reason == "governed-review"
+    assert admission["governed_review"] is True
     assert admission["elastic_review_admitted"] is True
 
     paused = namespace["_fold_claimability"](

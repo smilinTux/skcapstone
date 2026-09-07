@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Card `83754e0e`: unify the governed review lifecycle so an unowned
+  review-column card carrying the exact `review` label folds to claimable
+  reason `governed-review` and dispatches through the bounded POOL_V2
+  admission snapshot, while every other review marker stays diagnostic-only
+  and fails closed; the Link recommendation and Niobe launch paths require
+  the same exact state, repairing POOL_V2-admitted cards withheld with
+  reason=review.
+
 - Card `27fd3463`: preflight repository and protected-branch merge policy,
   select an allowed merge method deterministically, and fail closed before
   mutation when policy is unavailable or disjoint.
