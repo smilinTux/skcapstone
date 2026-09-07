@@ -83,6 +83,25 @@ incomplete manifest preserves the last valid feed and writes only a bounded
 diagnostic result. Link receives no GitHub credentials and cannot bypass this
 boundary.
 
+## Review recommendation handoff
+
+Review work is keyed by the exact pair `source_card` and `head_revision`.
+Every host derives the same review-card ID from that pair, so retries, service
+restarts, and cross-host observation converge on one card. A changed head gets
+a different review card and cannot reuse an earlier verdict.
+
+The reconciler creates the card as unclaimed backlog work with the `review`,
+`seat-seraph`, and exact `parent-<source_card>` labels. It records producer
+identity and candidate evidence as typed links. It then calls the same
+`recommend_reviewer` preflight used by fleet dispatch. A receipt may say
+`launchable=true` only when that preflight accepts the exact folded card.
+Missing parents, duplicate matching cards, ID collisions, changed lifecycle,
+or non-distinct reviewers fail closed and remain non-launchable.
+
+CardStore mutation is limited to the first deterministic create, two typed
+links, and the idempotent recommendation event. Repeated cycles append no
+duplicate mutations.
+
 ## Evidence
 
 - Producer implementation: `src/skcapstone/link_observation_producer.py`

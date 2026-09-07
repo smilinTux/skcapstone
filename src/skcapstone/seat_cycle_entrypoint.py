@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
-from .link_review_work import load_review_work
+from .link_review_work import load_review_work, reconcile_review_work_batch
 from .mero_census import run_blocker_census
 from .seat_boundaries import BoundaryError
 from .seat_cycle_guard import CycleResult, SeatCycleGuard
@@ -185,13 +185,17 @@ def _emit_review_work(home: Path, lineage_path: Path, feed_reason: str) -> dict[
         return {"reason": feed_reason, "suppressed": 1}
     output = home / "coordination" / "seat-cycles" / "link.review-work.jsonl"
     if recommendations:
+        results = reconcile_review_work_batch(
+            home, recommendations, evidence_sha256=evidence_sha256
+        )
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("a", encoding="utf-8") as stream:
-            for recommendation in recommendations:
+            for recommendation, result in zip(recommendations, results, strict=True):
                 event = {
                     "source_revision": source_revision,
                     "evidence_sha256": evidence_sha256,
                     **recommendation,
+                    "reconciliation": result.as_dict(),
                 }
                 stream.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
     return {
