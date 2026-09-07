@@ -12,9 +12,9 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+from pathlib import Path
 import re
 import subprocess
-from pathlib import Path
 from typing import Any
 
 PR_RE = re.compile(r"\bPR\s*#?\s*(\d+)\b", re.I)
