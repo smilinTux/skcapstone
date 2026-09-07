@@ -76,11 +76,8 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_gates(task_id, home):
         """Report the canonical dispatch decision for one folded card."""
         from ..card_store import CardStore
-        from ..scheduler_decision import (
-            card_scheduler_facts,
-            classify_scheduler,
-            folded_revision,
-        )
+        from ..scheduler_decision import folded_revision
+        from skcoord.scheduler_truth import evaluate_scheduler_truth
 
         validate_task_id(task_id)
         home_path = Path(home).expanduser()
@@ -89,31 +86,23 @@ def register_coord_commands(main: click.Group) -> None:
             card = store.fold(task_id)
             if card is None:
                 raise click.ClickException(f"unknown card: {task_id}")
-            cards = {item.id: item for item in store.list_cards(include_archived=True)}
-            evidence = []
-            evidence_dir = home_path / "coordination" / "card_events"
-            for path in sorted(evidence_dir.glob("*.jsonl")) if evidence_dir.exists() else ():
-                for line in path.read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
-                        continue
-                    event = json.loads(line)
-                    if not isinstance(event, dict):
-                        raise ValueError("evidence event is not an object")
-                    if event.get("card_id") == task_id:
-                        evidence.append(event)
-            facts = card_scheduler_facts(card, cards, evidence)
-            decision = classify_scheduler(facts)
+            truth = evaluate_scheduler_truth(home_path, cards=[task_id])
+            facts = next(
+                (item for item in truth.cards if item.card_id == task_id), None
+            )
+            if facts is None:
+                raise click.ClickException(f"unknown card: {task_id}")
+            eligible = truth.ready_count == 1
+            primary_reason = "ready" if eligible else next(iter(truth.reason_counts))
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise click.ClickException(f"malformed card or evidence: {exc}") from exc
 
         result = {
             "card_id": card.id,
             "folded_revision": folded_revision(card),
-            "eligible": decision.eligible,
-            "primary_reason": decision.primary_reason,
-            "blocking_reasons": (
-                [] if decision.eligible else [decision.primary_reason, *decision.facets]
-            ),
+            "eligible": eligible,
+            "primary_reason": primary_reason,
+            "blocking_reasons": [] if eligible else [primary_reason],
         }
         click.echo(json.dumps(result, sort_keys=True))
 

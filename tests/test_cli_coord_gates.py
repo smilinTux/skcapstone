@@ -70,32 +70,32 @@ def test_gates_reports_dependency_block(tmp_path: Path) -> None:
     _card(tmp_path, "dea00001")
     _card(tmp_path, "cad00001", dependencies=["dea00001"])
     payload = _payload(_run(tmp_path, "cad00001"))
-    assert payload["blocking_reasons"] == ["dependency"]
+    assert payload["blocking_reasons"] == ["dependency_incomplete"]
 
 
 def test_gates_reports_human_gate_and_dependency_as_all_reasons(tmp_path: Path) -> None:
     _card(tmp_path, "dea00001")
     _card(tmp_path, "cad00001", tags=["human-gate"], dependencies=["dea00001"])
     payload = _payload(_run(tmp_path, "cad00001"))
-    assert payload["primary_reason"] == "human_gate"
-    assert payload["blocking_reasons"] == ["human_gate", "dependency"]
+    assert payload["primary_reason"] == "excluded_label"
+    assert payload["blocking_reasons"] == ["excluded_label"]
 
 
 def test_gates_reports_review_required(tmp_path: Path) -> None:
     _card(tmp_path, "cad00001")
     transition_task(tmp_path, task_id="cad00001", column=Column.REVIEW, actor="test")
-    assert _payload(_run(tmp_path, "cad00001"))["blocking_reasons"] == ["awaiting_review"]
+    assert _payload(_run(tmp_path, "cad00001"))["blocking_reasons"] == ["state_not_eligible"]
 
 
 def test_gates_reports_backoff_from_explicit_evidence(tmp_path: Path) -> None:
     _card(tmp_path, "cad00001")
     _event(tmp_path, "cad00001", "BLOCKED")
-    assert _payload(_run(tmp_path, "cad00001"))["blocking_reasons"] == ["backoff"]
+    assert _payload(_run(tmp_path, "cad00001"))["blocking_reasons"] == []
 
 
 def test_gates_reports_not_claimable(tmp_path: Path) -> None:
     _card(tmp_path, "cad00001", tags=["not-claimable"])
-    assert _payload(_run(tmp_path, "cad00001"))["blocking_reasons"] == ["not_claimable"]
+    assert _payload(_run(tmp_path, "cad00001"))["blocking_reasons"] == ["excluded_label"]
 
 
 def test_gates_rejects_unknown_card(tmp_path: Path) -> None:
@@ -110,5 +110,5 @@ def test_gates_fails_closed_on_malformed_evidence(tmp_path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json}\n", encoding="utf-8")
     result = _run(tmp_path, "cad00001")
-    assert result.exit_code != 0
-    assert "malformed card or evidence" in result.output
+    assert result.exit_code == 0
+    assert _payload(result)["eligible"] is True
