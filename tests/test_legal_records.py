@@ -40,3 +40,14 @@ def test_correction_can_supersede_evidence_but_not_other_record(tmp_path):
     other = append_record(tmp_path, "c2", {"type": "deadline"})
     with pytest.raises(ValueError):
         supersede(tmp_path, "c1", {"kind": "bad"}, supersedes=other["event_id"])
+
+
+def test_correction_cannot_add_tracking_outcome(tmp_path):
+    first = append_record(tmp_path, "c1", {"type": "communication"})
+    with pytest.raises(ValueError):
+        supersede(
+            tmp_path,
+            "c1",
+            {"receipt": {"tracking_number": "x", "status": "delivered"}},
+            supersedes=first["event_id"],
+        )

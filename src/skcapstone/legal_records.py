@@ -19,6 +19,29 @@ SCHEMA = "skcapstone.legal-record.v1"
 EVIDENCE_SCHEMA = "skcapstone.legal-evidence.v1"
 
 
+def _tracking_claim(value: Any) -> bool:
+    """Return whether tracking metadata is coupled to an inferred outcome.
+
+    Tracking identifiers are retained as manual evidence only.  This check is
+    recursive because receipt attachments are commonly nested in lists or
+    envelope objects, and applies equally to later corrections.
+    """
+    forbidden = {
+        "outcome", "status", "delivery_status", "mailing_status",
+        "legal_outcome", "delivered", "mailed", "served",
+    }
+    if isinstance(value, dict):
+        if "tracking_number" in value and any(
+            key in value and value[key] not in (None, False, "")
+            for key in forbidden
+        ):
+            return True
+        return any(_tracking_claim(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_tracking_claim(item) for item in value)
+    return False
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -67,30 +90,7 @@ def append_evidence(root: Path, record_id: str, evidence: dict[str, Any]) -> dic
     """Append evidence separately from structure, preserving supplied bytes/intent."""
     if not record_id or not isinstance(evidence, dict):
         raise ValueError("record_id and object evidence are required")
-    def tracking_claim(value: Any) -> bool:
-        """Reject delivery or legal outcomes coupled to tracking evidence.
-
-        Carrier metadata is evidence only.  In particular, a carrier's status
-        must not be promoted to a mailing, delivery, service, or legal result.
-        Check nested attachment objects too, since receipt bundles commonly
-        contain the tracking object several levels down.
-        """
-        forbidden = {
-            "outcome", "status", "delivery_status", "mailing_status",
-            "legal_outcome", "delivered", "mailed", "served",
-        }
-        if isinstance(value, dict):
-            if "tracking_number" in value and any(
-                key in value and value[key] not in (None, False, "")
-                for key in forbidden
-            ):
-                return True
-            return any(tracking_claim(item) for item in value.values())
-        if isinstance(value, list):
-            return any(tracking_claim(item) for item in value)
-        return False
-
-    if tracking_claim(evidence):
+    if _tracking_claim(evidence):
         raise ValueError("tracking numbers cannot carry inferred outcomes")
     event = {"schema": EVIDENCE_SCHEMA, "event_id": str(uuid.uuid4()), "kind": "evidence",
              "record_id": record_id, "occurred_at": _now(), "writer": os.environ.get("SKAGENT", "unknown"),
@@ -102,6 +102,8 @@ def supersede(root: Path, record_id: str, correction: dict[str, Any], *, superse
     """Append a correction; old records remain immutable and addressable."""
     if not supersedes or not isinstance(correction, dict):
         raise ValueError("supersedes event id and object correction are required")
+    if _tracking_claim(correction):
+        raise ValueError("tracking numbers cannot carry inferred outcomes")
     # Corrections may supersede either structural state or a prior evidence
     # assertion.  In both cases the original event remains immutable and the
     # correction is a new structural event that can be audited by event_id.
