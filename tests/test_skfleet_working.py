@@ -38,6 +38,52 @@ def test_remote_collector_keeps_seat_filter_in_sync() -> None:
     assert "is_ephemeral_worker_agent" in PATH.read_text(encoding="utf-8")
 
 
+def test_released_and_superseded_units_are_actionable_without_samples() -> None:
+    monitor = load_monitor()
+    for claim_state in ("released", "superseded"):
+        worker = monitor.Worker(
+            host="chiap08", agent="unit", card="a1b2c3d4", pid=0,
+            elapsed=0, cpu=0, log_bytes=-1, log_age=-1,
+            unit="skfleet-worker-a1b2c3d4.service", tmux=False,
+            claim_state=claim_state, card_status="released",
+            unit_missing_process=True,
+        )
+        state, _ = monitor.assess(worker, {}, now=100)
+        assert state == "ACTION REQUIRED"
+
+
+def test_current_finalizer_keeps_bounded_settling_grace() -> None:
+    monitor = load_monitor()
+    worker = monitor.Worker(
+        host="chiap08", agent="unit", card="a1b2c3d4", pid=0,
+        elapsed=0, cpu=0, log_bytes=-1, log_age=-1,
+        unit="skfleet-worker-a1b2c3d4.service", tmux=False,
+        claim_state="exact", card_status="doing", unit_missing_process=True,
+        unit_timestamp=95,
+    )
+    samples = {}
+    state, first = monitor.assess(worker, samples, now=100)
+    assert state == "SETTLING" and first == 95
+    state, _ = monitor.assess(worker, samples, now=110)
+    assert state == "SETTLING"
+    state, _ = monitor.assess(worker, samples, now=126)
+    assert state == "ACTION REQUIRED"
+
+
+def test_repeated_invocation_preserves_first_observation() -> None:
+    monitor = load_monitor()
+    worker = monitor.Worker(
+        host="chiap08", agent="unit", card="a1b2c3d4", pid=0,
+        elapsed=0, cpu=0, log_bytes=-1, log_age=-1,
+        unit="skfleet-worker-a1b2c3d4.service", tmux=False,
+        claim_state="exact", card_status="doing", unit_missing_process=True,
+    )
+    samples = {}
+    assert monitor.assess(worker, samples, now=100)[0] == "SETTLING"
+    assert monitor.assess(worker, samples, now=105)[0] == "SETTLING"
+    assert samples["chiap08/skfleet-worker-a1b2c3d4.service"]["first_seen"] == 100
+
+
 def test_seat_hold_without_unit_is_not_stale_projection_candidate() -> None:
     """Seat agents with hold/current_task must not enter the stale path."""
     monitor = load_monitor()

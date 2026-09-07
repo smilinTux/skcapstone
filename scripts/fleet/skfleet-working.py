@@ -166,7 +166,15 @@ for unit in sorted(set(units)-seen_units):
     environment=props[1] if len(props)>1 else ''
     launched_owner=next((x.split('=',1)[1] for x in environment.split() if x.startswith('SKAGENT=')), '')
     launched_revision=next((x.split('=',1)[1] for x in environment.split() if x.startswith('SKCAPSTONE_CLAIM_REVISION=')), '')
-    timestamp=int(props[2].strip() or 0) // 1000000 if len(props)>2 and props[2].strip().isdigit() else now
+    # ActiveEnterTimestampMonotonic is relative to boot. Convert it to the
+    # same wall-clock epoch used by the persistent settling samples; using the
+    # raw microsecond value would make every unit appear ancient after restart.
+    if len(props) > 2 and props[2].strip().isdigit():
+        monotonic=int(props[2].strip()) / 1000000
+        uptime=float(open('/proc/uptime').read().split()[0])
+        timestamp=int(now - uptime + monotonic)
+    else:
+        timestamp=now
     if not owner or not revision: claim='released'
     elif launched_owner != owner or launched_revision != revision: claim='superseded'
     else: claim='exact'
