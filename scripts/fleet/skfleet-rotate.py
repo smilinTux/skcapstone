@@ -4080,10 +4080,24 @@ def needs_escalation(cid, core=None, labels=None):
 _QWEN_UNSUITABLE = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|deploy|"
     r"production|release|migrat|schema|architecture|\[HUMAN\]|\[XL\])", re.I)
+# Gateway routing and model-registry work requires a model-aware lane.  Treating
+# it as ordinary work silently sent provider/Kimi decisions to Qwen.
+_GATEWAY_MODEL_LANE = re.compile(
+    r"(gateway|provider[-_ ]?routing|model[-_ ]?registr(?:y|y)|\bSKGW[-_ ]?KIMI\b|"
+    r"\bkimi(?:[-_ ]?role|[-_ ]?routing|[-_ ]?only)?\b)", re.I)
 
-def qwen_suitable(core):
-    """Return whether Qwen may receive this card before a paid lane."""
-    return not _QWEN_UNSUITABLE.search(str((core or {}).get("title") or ""))
+def qwen_suitable(core, labels=()):
+    """Return whether Qwen may receive this card before a paid lane.
+
+    ``qwen-suitable`` is an explicit exception.  Without it, gateway/model
+    routing and Kimi-role cards are admitted only to non-Qwen lanes.
+    """
+    normalized={str(label).strip().lower() for label in (labels or [])}
+    if "qwen-suitable" in normalized:
+        return True
+    text="%s %s" % (str((core or {}).get("title") or ""),
+                    str((core or {}).get("description") or ""))
+    return not (_QWEN_UNSUITABLE.search(text) or _GATEWAY_MODEL_LANE.search(text))
 
 
 def _lane_model(lane, core):
@@ -4155,7 +4169,7 @@ while _i<len(owned) and len(picks)<MAX_LAUNCH:
         lane["name"],_lane_model(lane,_card[3]))
         for lane in LANES}
     _lane_name,_defer=select_compatible_lane(
-        _labels,_esc,lane_order,remaining,qwen_suitable(_card[3]),_qwen_exclusive,
+        _labels,_esc,lane_order,remaining,qwen_suitable(_card[3],_labels),_qwen_exclusive,
         _card_lane_health)
     if _lane_name is None:
         _lane_deferred[_defer]+=1
@@ -4413,7 +4427,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         cid,fresh_claimability["core"],fresh_claimability["labels"])
     compatible,affinity_reason=lane_compatibility(
         fresh_claimability["labels"],fresh_escalation,
-        qwen_suitable(fresh_claimability["core"]),
+        qwen_suitable(fresh_claimability["core"],fresh_claimability.get("labels",[])),
         qwen_first_exclusive(cid,fresh_claimability["labels"]))
     if _LANE["name"] not in compatible:
         lane_drift += 1

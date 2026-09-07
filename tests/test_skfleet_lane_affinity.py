@@ -20,6 +20,8 @@ def _load_lane_helpers() -> dict[str, object]:
         "qwen_first_exclusive",
         "lane_compatibility",
         "select_compatible_lane",
+        "qwen_suitable",
+        "_GATEWAY_MODEL_LANE",
     }
     body = [
         node
@@ -32,6 +34,7 @@ def _load_lane_helpers() -> dict[str, object]:
                 in {
                     "_LANE_ONLY_LABELS",
                     "_SEMANTIC_COMPLETE_ACTION",
+                    "_GATEWAY_MODEL_LANE",
                 }
                 for target in node.targets
             )
@@ -45,6 +48,7 @@ def _load_lane_helpers() -> dict[str, object]:
         "event_rows": lambda cid: [],
         "_load_evidence_events": lambda: {},
         "_fold_key": lambda value: str(value),
+        "_QWEN_UNSUITABLE": __import__("re").compile(r"$^"),
     }
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
     assert names <= namespace.keys()
@@ -237,20 +241,32 @@ def test_folded_add_and_remove_label_events_drive_routing() -> None:
 
 
 @pytest.mark.parametrize(
+    "title",
+    ["[SKGW-KIMI] route provider model", "provider-routing registry update"],
+)
+def test_gateway_model_routing_is_not_qwen_suitable(title: str) -> None:
+    namespace = _load_lane_helpers()
+    assert namespace["qwen_suitable"]({"title": title}, []) is False
+    selected, _ = namespace["select_compatible_lane"](
+        [], False, ["qwen", "glm", "codex"], {"qwen": 1, "glm": 1, "codex": 1}, False
+    )
+    assert selected == "glm"
+
+
+def test_explicit_qwen_suitable_retains_qwen_eligibility() -> None:
+    namespace = _load_lane_helpers()
+    assert namespace["qwen_suitable"]({"title": "provider-routing"}, ["qwen-suitable"]) is True
+    selected, _ = namespace["select_compatible_lane"](
+        ["qwen-suitable"], False, ["qwen", "glm", "codex"], {"qwen": 1, "glm": 1, "codex": 1}, True
+    )
+    assert selected == "qwen"
+
+
+@pytest.mark.parametrize(
     ("card_id", "owner", "claim_revision", "launch_record"),
     [
-        (
-            "12eaed95",
-            "pi-glm-chiap01-12eaed95",
-            "1fbb41e91fd2477898245f368a431b00",  # pragma: allowlist secret
-            "LAUNCHED|chiap01|glm-auto-12eaed95|12eaed95|lane=glm|model=glm-4.6",
-        ),
-        (
-            "ac8592fc",
-            "pi-glm-chiap08-ac8592fc",
-            "c4963eeb02d643d0a5761ababa2b98f9",  # pragma: allowlist secret
-            "LAUNCHED|chiap08|glm-auto-ac8592fc|ac8592fc|lane=glm|model=glm-4.6",
-        ),
+        ("12eaed95", "pi-glm-chiap01-12eaed95", "1fbb41e91fd2477898245f368a431b00", "LAUNCHED|chiap01|glm-auto-12eaed95|12eaed95|lane=glm|model=glm-4.6"),
+        ("ac8592fc", "pi-glm-chiap08-ac8592fc", "c4963eeb02d643d0a5761ababa2b98f9", "LAUNCHED|chiap08|glm-auto-ac8592fc|ac8592fc|lane=glm|model=glm-4.6"),
     ],
 )
 def test_observed_codex_only_glm_misroutes_are_rejected(
@@ -276,8 +292,8 @@ def test_pool_and_immediate_preclaim_use_the_same_affinity_predicate() -> None:
     assert 'fresh_claimability["labels"]' in source
     assert "SKIPPED_LANE_RACE|" in source
     assert "LANE_DEFER|" in source
-    assert "qwen_suitable(_card[3]),_qwen_exclusive" in source
-    assert 'qwen_suitable(fresh_claimability["core"]),' in source
+    assert "qwen_suitable(_card[3],_labels),_qwen_exclusive" in source
+    assert 'qwen_suitable(fresh_claimability["core"],fresh_claimability.get("labels",[])),' in source
     assert 'qwen_first_exclusive(cid,fresh_claimability["labels"])' in source
     assert "DRY_SELECTION|" in source
     health_check = source.index("admitted,health_reason=_health_for(")
