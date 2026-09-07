@@ -1,0 +1,297 @@
+{
+  "attempted": [
+    "Recomputed report and manifest SHA-256 from shared immutable bytes.",
+    "Parsed and hashed every cited JSONL snapshot and checked cutoff bytes, parsed lines, prefix hash, content address, provenance fields, and equality to its bundle manifest entry.",
+    "Inspected all selected structural records, separate evidence outcomes, historical non-PASS values, human authority rule, and remedy proposal text.",
+    "Cross-checked every selected card core path against both the report source_manifest and the bundle manifest."
+  ],
+  "blocked_criterion_quote": "Recompute the replacement report and bundle manifest SHA-256 from durable shared bytes and verify every cited mutable JSONL snapshot against its cutoff length, parsed line count, prefix hash, and provenance.",
+  "blocked_on": {
+    "referent": "ac:1",
+    "type": "card"
+  },
+  "card_id": "cc85ef16",
+  "contradiction": "The report methodology says CardStore core and event JSONL bytes are named in source_manifest. The partition report names zero core.json files. Its 41 selected folds require 41 core.json inputs. The bundle names only 6 of those 41 core files, preserves no immutable snapshot bytes for any of them, and omits 35. Current mutable core files cannot replace missing frozen source bytes. Therefore the complete structural fold and exact remedy support cannot be independently recomputed from durable frozen bytes as acceptance criteria 1 through 3 require.",
+  "dependency_status": {
+    "card_id": "c84987dd",
+    "status": "done"
+  },
+  "hash_verification": {
+    "bundle_manifest_bytes": 3399486,
+    "bundle_manifest_expected_sha256": "7bd3b9c94a39bb1ac51fb64f068fdd6ae41a69c0eced5501c6d63f2e367a1bf3",
+    "bundle_manifest_match": true,
+    "bundle_manifest_path": "/home/skuser01/.skcapstone/evidence/work/c84987dd/immutable/manifests/7bd3b9c94a39bb1ac51fb64f068fdd6ae41a69c0eced5501c6d63f2e367a1bf3.json",
+    "bundle_manifest_recomputed_sha256": "7bd3b9c94a39bb1ac51fb64f068fdd6ae41a69c0eced5501c6d63f2e367a1bf3",
+    "replacement_report_bytes": 4267745,
+    "replacement_report_expected_sha256": "69b4e747c9a6fdee93771ec18192395daf6e009a4c72c27e50f4adf889ce4f31",
+    "replacement_report_match": true,
+    "replacement_report_path": "/home/skuser01/.skcapstone/evidence/work/c84987dd/immutable/reports/69b4e747c9a6fdee93771ec18192395daf6e009a4c72c27e50f4adf889ce4f31.json",
+    "replacement_report_recomputed_sha256": "69b4e747c9a6fdee93771ec18192395daf6e009a4c72c27e50f4adf889ce4f31"
+  },
+  "mutations_applied": [],
+  "ownership_verified": true,
+  "producer_card_id": "c84987dd",
+  "pull_request": "https://github.com/smilinTux/skcapstone/pull/307",
+  "remedy_review": {
+    "conclusion": "The proposal wording is conservative and retains human authority and historical evidence. Exact derivation remains unverifiable because complete frozen structural core bytes are absent.",
+    "embedded_audit_proposal_count": 8,
+    "historical_non_pass_event_count": 27,
+    "historical_non_pass_events": [
+      {
+        "event_id": "blocker_audit",
+        "key": "blocker_audit",
+        "raw_key": "blocker_audit",
+        "ts": "2026-08-23T23:36:20.114221+00:00",
+        "value": "failed lifecycle transition is audited with outcome=succeeded"
+      },
+      {
+        "event_id": "discovery",
+        "key": "discovery",
+        "raw_key": "discovery",
+        "ts": "2026-08-24T21:11:33.299141+00:00",
+        "value": "BLOCKED: no approved dashboard TLS certificate/key custody path found. Available certificates are Syncthing, skcounter, or unrelated ZCode/test material and are not eligible for reuse. No key material created, copied, moved, or inspected beyond public certificate metadata."
+      },
+      {
+        "event_id": "verdict",
+        "key": "verdict",
+        "raw_key": "verdict",
+        "ts": "2026-08-25T12:14:59.467723+00:00",
+        "value": "FAIL|retirement_delta_not_safely_executable|d9a6c9ff_authoritative_BLOCKED|retirement_unauthorized|review_sha256=84bbd546a997dd65007683edf751b0afaf6b3b74efa9b52319c418c29b2dada0"
+      },
+      {
+        "event_id": "authoritative_correction",
+        "key": "authoritative_correction",
+        "raw_key": "authoritative_correction",
+        "ts": "2026-08-25T12:14:59.480500+00:00",
+        "value": "d9a6c9ff|correction_sha256=5b8aa79ab78d0ea4fc08e568d8987c145509620770e84ba3f272c95730f3de82|manifest_sha256=fb43905d4fe9b71b5d9cb7f0e4d7d688f06e0bb3ba0f2b3fdeeefd1316b84fd3|PASS_RECONCILIATION_superseded|BLOCKED_authoritative"
+      },
+      {
+        "event_id": "preservation",
+        "key": "preservation",
+        "raw_key": "preservation",
+        "ts": "2026-08-25T12:14:59.484220+00:00",
+        "value": "5e082ce8_BLOCKED|prior_FAIL_VOID_expiry_supersession_safe_state_preserved"
+      },
+      {
+        "event_id": "status_note",
+        "key": "status_note",
+        "raw_key": "status_note",
+        "ts": "2026-08-27T17:38:21.165051+00:00",
+        "value": "Candidate already contains SentenceGrounding mapping and explicit role creation; focused mapping tests pass. Integration review remains blocked by disposable PostgreSQL harness/runtime environment, not an unimplemented source fix."
+      },
+      {
+        "event_id": "independent-review-verdict",
+        "key": "independent_review_verdict",
+        "raw_key": "independent-review-verdict",
+        "ts": "2026-08-25T21:24:01.901251+00:00",
+        "value": "FAIL:black-26.5.1-skcoord-overlay"
+      },
+      {
+        "event_id": "disposition",
+        "key": "disposition",
+        "raw_key": "disposition",
+        "ts": "2026-08-23T17:23:02.406066+00:00",
+        "value": "PASS_FAIL_CLOSED_BASE_STILL_BLOCKED"
+      },
+      {
+        "event_id": "reviewed-candidate",
+        "key": "reviewed_candidate",
+        "raw_key": "reviewed-candidate",
+        "ts": "2026-08-25T00:42:34.312991+00:00",
+        "value": "b1ce03c4|failed-review=2bdbc8e6:FAIL|repair=18036f7e|review=f704af35:PASS|base=dd0705f2dddc850099b457dd27fbfd8346aa99c6"
+      },
+      {
+        "event_id": "preservation",
+        "key": "preservation",
+        "raw_key": "preservation",
+        "ts": "2026-08-25T00:42:38.719848+00:00",
+        "value": "Active, blocked, unknown, user-owned, unrelated, excluded, and unreviewed state preserved. Only reviewed 16 files committed. No deploy, restart, protected-data access, force push, reset hard, broad clean, or successor claim."
+      },
+      {
+        "event_id": "boundary_and_adversarial",
+        "key": "boundary_and_adversarial",
+        "raw_key": "boundary_and_adversarial",
+        "ts": "2026-08-25T06:36:44.657168+00:00",
+        "value": "PASS|Boundary/sentinel: 6 passed, 7 deselected, /tmp/9c8cc119-boundary-sentinel.log sha256=a7eed814f4f0c9986266e4ff4e1430543f507e320a0a44971fadab78c6c4ae8c. Adversarial: /tmp/9c8cc119-adversarial.log sha256=e89e117eb35211f0704c9c6c9bb78b180983ae014273c39018cc26e93f281d80; 10,000 cardinality requested/folded 2 with enumeration forbidden; malformed, forgery, wrong-key, restart, rescope, limit/archive shifts, population replace/remove/add, and stale fold rejected; 23 unique traversal, gaps=0, overlap=0, touches=[6,6,6,6,3]."
+      },
+      {
+        "event_id": "preflight",
+        "key": "preflight",
+        "raw_key": "preflight",
+        "ts": "2026-08-24T20:59:42.351808+00:00",
+        "value": "BLOCKED: no skdashboard.service; listeners 10.0.0.139:7778 and 100.81.238.58:7778 are plain HTTP; HTTPS handshake fails; installed package 0.1.19 and repo checkouts do not match approved pins; no restart or mutation"
+      },
+      {
+        "event_id": "preserved-fail",
+        "key": "preserved_fail",
+        "raw_key": "preserved-fail",
+        "ts": "2026-08-25T12:47:45.857567+00:00",
+        "value": "ccd83eeb confirmed FAIL findings must remain append-only and visible."
+      },
+      {
+        "event_id": "verdict",
+        "key": "verdict",
+        "raw_key": "verdict",
+        "ts": "2026-08-25T13:40:43.852001+00:00",
+        "value": "FAIL|repaired candidate closes six ccd83eeb findings but same preview+hash with changed idempotency key caused second authorize transport dispatch and second accepted response|no repair"
+      },
+      {
+        "event_id": "replay-probe",
+        "key": "replay_probe",
+        "raw_key": "replay-probe",
+        "ts": "2026-08-25T13:40:44.669075+00:00",
+        "value": "probe_sha256=bd5a7d6a3f5554909214967b82c7aa80a2466a504747879b607c0204dda92e55|result_sha256=a5d5f127d8215e25155f78e92bc818db4710aca4e9f33c923df79c269e974686|first_submit=success|same_preview_hash_reused=true|idempotency_key=changed|authorize_dispatches=2|second=accepted|FAIL"
+      },
+      {
+        "event_id": "six-findings",
+        "key": "six_findings",
+        "raw_key": "six-findings",
+        "ts": "2026-08-25T13:40:45.218593+00:00",
+        "value": "rejected_all_6_reproduced sha256=2fb8798835cac1c0c027016132ee7342d0f2b5517f5f6dbc8aa2ede2cdb16e98|repaired_all_7_mapped_boundaries_fail_closed sha256=019d46531f208246771cab39e3f6c55997cfb8d316e373f70028ccd231b41189|replay remained blocking"
+      },
+      {
+        "event_id": "exact-results",
+        "key": "exact_results",
+        "raw_key": "exact-results",
+        "ts": "2026-08-25T13:40:45.491440+00:00",
+        "value": "replay=FAIL_2_dispatches|targeted=9 passed in 0.28s|focused=73 passed in 0.89s|full=554 passed,8 warnings in 28.66s|ruff=PASS|compile=PASS|diff=PASS|apply-reverse=PASS|unicode=0|sensitive=0|detect-secrets=0|gitleaks=UNAVAILABLE"
+      },
+      {
+        "event_id": "preservation",
+        "key": "preservation",
+        "raw_key": "preservation",
+        "ts": "2026-08-25T13:40:45.765254+00:00",
+        "value": "ccd83eeb FAIL preserved bundle=903c6f947c6f71937acaf43a6fb461e4fc4f382864653ed696f734760d193e0e review=1582a1c272a38a596419de2966dc7c538207a3c9aa306af0def1ad65299df9b7 receipt=a45778d8579137d083aee0dab3d96783a06ad270ab3ac0245dc4a703b172f4f4|both supplied worktrees unchanged|no source repair"
+      },
+      {
+        "event_id": "gating",
+        "key": "gating",
+        "raw_key": "gating",
+        "ts": "2026-08-25T13:40:46.039236+00:00",
+        "value": "9936350d remains unauthorized and BLOCKED|not claimed or launched|no integration deployment commit merge push cleanup protected data or external action"
+      },
+      {
+        "event_id": "successor-pass",
+        "key": "successor_pass",
+        "raw_key": "successor-pass",
+        "ts": "2026-08-25T17:11:54.419698+00:00",
+        "value": "99d0ff85|PASS|skcapstone-artifact:sha256/cb45d64e0476feefa35328286db09970c95fb5cf58049ca7bab11cb9e4a140ed|original_FAIL_preserved|repair=2f282e6d"
+      },
+      {
+        "event_id": "disposition",
+        "key": "disposition",
+        "raw_key": "disposition",
+        "ts": "2026-08-24T04:43:18.245918+00:00",
+        "value": "BLOCKED_STALE_TARGET_ALREADY_DONE"
+      },
+      {
+        "event_id": "disposition",
+        "key": "disposition",
+        "raw_key": "disposition",
+        "ts": "2026-08-24T06:07:13.594207+00:00",
+        "value": "BLOCKED_STALE_TARGET_ALREADY_DONE"
+      },
+      {
+        "event_id": "human-decision",
+        "key": "human_decision",
+        "raw_key": "human-decision",
+        "ts": "2026-08-25T04:28:32.406193+00:00",
+        "value": "VOID_CURRENT_GATE|decision_maker=user-endorsed-in-conversation|prerequisite=2ead9e49_BLOCKED|credential_expiry=2026-08-24T06:50:08Z|retire_via=5e082ce8|requirements=fresh-candidate,fresh-independent-PASS-review,fresh-hashes,new-exact-human-gate|recorded_at=2026-08-25T04:28:31Z"
+      },
+      {
+        "event_id": "gate_status",
+        "key": "gate_status",
+        "raw_key": "gate_status",
+        "ts": "2026-08-25T04:29:41.183637+00:00",
+        "value": "VOID_CURRENT_GATE_RECORDED|prerequisite=2ead9e49_BLOCKED|credential_expired=2026-08-24|retirement=5e082ce8|fresh-candidate-review-hashes-and-human-gate-required"
+      },
+      {
+        "event_id": "review_disposition",
+        "key": "review_disposition",
+        "raw_key": "review_disposition",
+        "ts": "2026-08-23T07:02:47.009416+00:00",
+        "value": "BLOCKED_NOT_MERGE_READY"
+      },
+      {
+        "event_id": "review_verdict",
+        "key": "review_verdict",
+        "raw_key": "review_verdict",
+        "ts": "2026-08-28T03:55:10.455803+00:00",
+        "value": "BLOCKED blocked_on=card referent=card:fc3689c8"
+      },
+      {
+        "event_id": "preserved_state",
+        "key": "preserved_state",
+        "raw_key": "preserved_state",
+        "ts": "2026-08-28T03:57:53.804740+00:00",
+        "value": "BLOCKED; no repair in this card; successors 0ddd3df6 and 599037a2"
+      }
+    ],
+    "human_authority_preserved_in_text": true,
+    "human_authority_rule": "Only explicit Chef approval or explicit Chef void can discharge a HUMAN gate.",
+    "proposal_count": 8,
+    "proposal_text_matches_embedded_report": true
+  },
+  "repository_change": true,
+  "repository_change_scope": "Review evidence only. No source repair or runtime mutation.",
+  "reviewer": "pi-codex-chiap02-cc85ef16",
+  "schema": "skcapstone.independent_immutable_rereview.v1",
+  "snapshot_verification": {
+    "cited_jsonl_snapshots": 3824,
+    "cited_sources": 3831,
+    "provenance_scope": "The frozen manifest records capture-host device, inode, mode, and mtime. Shared snapshot bytes independently verify their presence and equality across report and bundle, while origin filesystem identity is not re-observable from a copied content-addressed snapshot.",
+    "source_kind_counts": {
+      "append_only_jsonl": 3824,
+      "file": 7
+    },
+    "validation_error_count": 0,
+    "validation_errors": []
+  },
+  "two_store_review": {
+    "bundle_selected_core_entries": 6,
+    "bundle_selected_core_snapshot_bytes": 0,
+    "join_kept_separate": true,
+    "lifecycle_verdict_inference_found": false,
+    "missing_selected_core_count": 35,
+    "missing_selected_core_paths": [
+      "/home/skuser01/.skcapstone/cards/002df8a4/core.json",
+      "/home/skuser01/.skcapstone/cards/13f4a727/core.json",
+      "/home/skuser01/.skcapstone/cards/1961af4c/core.json",
+      "/home/skuser01/.skcapstone/cards/1a74b2fe/core.json",
+      "/home/skuser01/.skcapstone/cards/217a9704/core.json",
+      "/home/skuser01/.skcapstone/cards/22ac118a/core.json",
+      "/home/skuser01/.skcapstone/cards/23003311/core.json",
+      "/home/skuser01/.skcapstone/cards/24bb1398/core.json",
+      "/home/skuser01/.skcapstone/cards/32f2eaae/core.json",
+      "/home/skuser01/.skcapstone/cards/49d34274/core.json",
+      "/home/skuser01/.skcapstone/cards/525a00e1/core.json",
+      "/home/skuser01/.skcapstone/cards/58b6e49d/core.json",
+      "/home/skuser01/.skcapstone/cards/5d14dd5d/core.json",
+      "/home/skuser01/.skcapstone/cards/77cc0563/core.json",
+      "/home/skuser01/.skcapstone/cards/7c2c9e20/core.json",
+      "/home/skuser01/.skcapstone/cards/8198a412/core.json",
+      "/home/skuser01/.skcapstone/cards/91fde0d5/core.json",
+      "/home/skuser01/.skcapstone/cards/9298ac29/core.json",
+      "/home/skuser01/.skcapstone/cards/980c389c/core.json",
+      "/home/skuser01/.skcapstone/cards/9c409a9b/core.json",
+      "/home/skuser01/.skcapstone/cards/9c8cc119/core.json",
+      "/home/skuser01/.skcapstone/cards/aafc86f6/core.json",
+      "/home/skuser01/.skcapstone/cards/b7668c11/core.json",
+      "/home/skuser01/.skcapstone/cards/c4106e9c/core.json",
+      "/home/skuser01/.skcapstone/cards/c4ce5fb9/core.json",
+      "/home/skuser01/.skcapstone/cards/c95d5de2/core.json",
+      "/home/skuser01/.skcapstone/cards/cb48f194/core.json",
+      "/home/skuser01/.skcapstone/cards/cb89b247/core.json",
+      "/home/skuser01/.skcapstone/cards/cc5ad024/core.json",
+      "/home/skuser01/.skcapstone/cards/cd879333/core.json",
+      "/home/skuser01/.skcapstone/cards/cf0e34cd/core.json",
+      "/home/skuser01/.skcapstone/cards/e3dabffa/core.json",
+      "/home/skuser01/.skcapstone/cards/fa81f43e/core.json",
+      "/home/skuser01/.skcapstone/cards/fd75b5f5/core.json",
+      "/home/skuser01/.skcapstone/cards/fec3a475/core.json"
+    ],
+    "report_core_json_entries": 0,
+    "selected_cards": 41
+  },
+  "verdict": "BLOCKED"
+}
