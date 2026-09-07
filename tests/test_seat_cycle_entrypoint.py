@@ -112,6 +112,8 @@ def test_stale_feed_emits_only_signed_lineage_review_work(tmp_path: Path) -> Non
     )
     assert emitted["head_revision"] == "a" * 40
     assert emitted["source_card"] == "source01"
+    assert emitted["reconciliation"]["launchable"] is False
+    assert emitted["reconciliation"]["reason"] == "source_card_missing"
 
 
 def test_cycle_without_operation_is_explicit_noop(tmp_path: Path) -> None:
