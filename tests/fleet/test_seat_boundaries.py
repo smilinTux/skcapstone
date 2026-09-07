@@ -119,6 +119,7 @@ def test_only_link_can_evaluate_merge_queue() -> None:
         mergeable=False,
         failed_checks=0,
         review=None,
+        local_preflight=None,
     )
     decision = evaluate_merge_as_link("link", candidate)
     assert not decision.eligible

@@ -28,6 +28,16 @@ class IndependentReview:
 
 
 @dataclass(frozen=True)
+class LocalPreflight:
+    """Terminal local CI receipt bound to the exact candidate head."""
+
+    head_sha: str
+    state: str
+    evidence_sha256: str
+    checks: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class MergeCandidate:
     """Closed input set for one Link merge eligibility decision."""
 
@@ -40,6 +50,7 @@ class MergeCandidate:
     mergeable: bool
     failed_checks: int
     review: IndependentReview | None
+    local_preflight: LocalPreflight | None
     lineage_outcomes: tuple[str, ...] = ()
 
 
@@ -59,6 +70,7 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
     """Return Link merge eligibility and deterministic exact-head evidence."""
     failures: list[str] = []
     review = candidate.review
+    preflight = candidate.local_preflight
     author = candidate.author.strip().lower()
 
     if not _GIT_SHA.fullmatch(candidate.head_sha):
@@ -67,6 +79,18 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
         failures.append("not-mergeable")
     if candidate.failed_checks:
         failures.append("failed-checks")
+    if preflight is None:
+        failures.append("missing-local-preflight")
+    else:
+        if preflight.head_sha != candidate.head_sha:
+            failures.append("local-preflight-head-mismatch")
+        if preflight.state != "PASS":
+            failures.append("local-preflight-failed")
+        if not _SHA256.fullmatch(preflight.evidence_sha256):
+            failures.append("invalid-local-preflight-evidence")
+        required = {"diff", "black", "ruff", "docs", "gitleaks", "shim-imports", "tests"}
+        if set(preflight.checks) != required:
+            failures.append("incomplete-local-preflight")
     if author in {"link", "seat-link"} or author.startswith(("link-", "pi-link-")):
         failures.append("authored-by-seat-link")
     if _SENSITIVE.search(" ".join((candidate.title, *candidate.categories))):
@@ -94,6 +118,7 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
         f"head={candidate.head_sha}",
         f"mergeable={str(candidate.mergeable).lower()}",
         f"failed_checks={candidate.failed_checks}",
+        f"local_preflight={preflight.evidence_sha256 if preflight else ''}",
         f"review_evidence={review.evidence_sha256 if review else ''}",
     )
     payload = {

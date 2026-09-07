@@ -6,6 +6,7 @@ import pytest
 
 from skcapstone.link_merge_authority import (
     IndependentReview,
+    LocalPreflight,
     MergeCandidate,
     evaluate_link_merge,
 )
@@ -24,6 +25,12 @@ def candidate(**changes: object) -> MergeCandidate:
         "mergeable": True,
         "failed_checks": 0,
         "review": IndependentReview("reviewer", "PASS", HEAD, "e" * 64),
+        "local_preflight": LocalPreflight(
+            HEAD,
+            "PASS",
+            "f" * 64,
+            ("diff", "black", "ruff", "docs", "gitleaks", "shim-imports", "tests"),
+        ),
         "lineage_outcomes": ("PASS_FOR_REVIEW", "PASS"),
     }
     values.update(changes)
@@ -45,6 +52,23 @@ def test_exact_head_independent_pass_is_eligible_and_evidenced() -> None:
         ({"head_sha": "not-a-sha"}, "invalid-exact-head"),
         ({"mergeable": False}, "not-mergeable"),
         ({"failed_checks": 1}, "failed-checks"),
+        ({"local_preflight": None}, "missing-local-preflight"),
+        (
+            {"local_preflight": LocalPreflight("b" * 40, "PASS", "f" * 64, ("diff",))},
+            "local-preflight-head-mismatch",
+        ),
+        (
+            {"local_preflight": LocalPreflight(HEAD, "FAIL", "f" * 64, ("diff",))},
+            "local-preflight-failed",
+        ),
+        (
+            {"local_preflight": LocalPreflight(HEAD, "PASS", "bad", ("diff",))},
+            "invalid-local-preflight-evidence",
+        ),
+        (
+            {"local_preflight": LocalPreflight(HEAD, "PASS", "f" * 64, ("diff",))},
+            "incomplete-local-preflight",
+        ),
         ({"author": "pi-link-chiap08-card"}, "authored-by-seat-link"),
         ({"review": None}, "missing-independent-pass"),
         (
