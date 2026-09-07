@@ -31,6 +31,7 @@ from skcapstone.seat_runtime import (
     append_review_launch_receipt,
     authorize_review_launch,
     recommend_reviewer,
+    review_state_revision,
 )
 
 def _required_lane_target(name, env=None, default=None):
@@ -163,10 +164,10 @@ def _card_process_snapshot(cid):
     }
 
 
-def _review_assignment(cid, core, labels, reviewer):
-    """Return Link's governed reviewer and recommendation for a review card."""
+def _governed_review_metadata(core, labels):
+    """Return complete producer evidence for an explicitly labeled review."""
     if "review" not in {str(label).strip().lower() for label in labels}:
-        return reviewer, None, None
+        return None
     links = core.get("links") if isinstance(core.get("links"), dict) else {}
     typed_producer = links.get("producer_identity")
     typed_evidence = links.get("candidate_evidence_sha256")
@@ -174,29 +175,42 @@ def _review_assignment(cid, core, labels, reviewer):
         producer = str(typed_producer or "").strip()
         evidence = str(typed_evidence or "").strip().lower()
         if not producer or not re.fullmatch(r"[0-9a-f]{64}", evidence):
-            raise BoundaryError("review card has incomplete or malformed typed metadata")
+            return None
     else:
         description = str(core.get("description") or "")
         producer_match = re.search(r"Producer identity:\s*([^.]*)\.", description)
         evidence_match = re.search(r"sha256=([0-9a-f]{64})(?:\.|\s|$)", description)
         if not producer_match or not producer_match.group(1).strip() or not evidence_match:
-            raise BoundaryError("review card lacks producer identity or candidate evidence hash")
+            return None
         producer = producer_match.group(1).strip()
         evidence = evidence_match.group(1)
-    recommendation_id = "link-review-" + hashlib.sha256(
-        (cid + "\0" + reviewer + "\0" + evidence).encode()
-    ).hexdigest()[:32]
+    return producer, evidence
+
+
+def _review_assignment(cid, core, labels, reviewer):
+    """Return Link's governed reviewer and recommendation for a review card."""
+    if "review" not in {str(label).strip().lower() for label in labels}:
+        return reviewer, None, None
+    metadata = _governed_review_metadata(core, labels)
+    if metadata is None:
+        raise BoundaryError("review card lacks complete producer evidence metadata")
+    producer, evidence = metadata
+    card = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+    if card is None:
+        raise BoundaryError("review card is missing")
+    state_revision = review_state_revision(card)
     observed_process = _card_process_snapshot(cid)
     if observed_process["sessions"]:
         raise BoundaryError("review card already has a live same-card process")
     recommendation = recommend_reviewer(
         Path(HOME) / ".skcapstone",
         card_id=cid,
-        recommendation_id=recommendation_id,
+        recommendation_id=None,
         author=producer,
         candidates=[reviewer],
         observed_process=observed_process,
         evidence_sha256=evidence,
+        expected_state_revision=state_revision,
     )
     live_claim_revision = str(_current_claim_identity_fresh(cid)[2] or "")
     handoff = authorize_review_launch(
@@ -1136,22 +1150,11 @@ def _claimability_reason(core, state):
     # explicit markers also cover stale projections whose column is backlog.
     # A dedicated reviewer must reach _review_assignment, which enforces
     # producer separation and exact candidate evidence before launch.
-    links = state["links"]
-    description = state["description"]
-    governed_review = "review" in {str(label).strip().lower() for label in labels} and (
-        (bool(str(links.get("producer_identity") or "").strip())
-         and bool(re.fullmatch(r"[0-9a-f]{64}", str(links.get("candidate_evidence_sha256") or "").lower())))
-        or (not links.get("producer_identity") and not links.get("candidate_evidence_sha256")
-            and bool(re.search(r"Producer identity:\s*[^.\s][^.]*\.", description))
-            and bool(re.search(r"sha256=([0-9a-f]{64})(?:\.|\s|$)", description)))
-    )
     review_marked = (
         state["status"] == "review"
         or state["review_seen"]
-        or (any(state["review_markers"].values()) and not governed_review)
+        or any(state["review_markers"].values())
     )
-    if review_marked:
-        return "review"
     if non_implementation(folded_core, labels):
         return "human-gate"
     if "foreign-project" in {str(x).strip().lower() for x in labels}:
@@ -1165,11 +1168,13 @@ def _claimability_reason(core, state):
     if any(not _dep_satisfied(dep) for dep in state["dependencies"]):
         return "dependency"
     pin = host_pin(folded_core, labels)
-    return "host-pin:%s" % pin if pin and pin != HOST else "claimable"
+    if pin and pin != HOST:
+        return "host-pin:%s" % pin
+    return "review" if review_marked else "claimable"
 
 
-def _authoritative_card_state(cid, core=None, fresh=False):
-    """Read and fold one card without applying dependency or scheduler policy."""
+def _authoritative_card_snapshot(cid, core=None, fresh=False):
+    """Read and fold one card from one core and event snapshot."""
     if core is None:
         with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as fh:
             core = json.load(fh)
@@ -1178,13 +1183,27 @@ def _authoritative_card_state(cid, core=None, fresh=False):
         raise ValueError("core identity mismatch")
     rows = list(_strict_card_events(cid, fresh=fresh))
     rows.extend(_legacy_claimability_events(fresh=fresh).get(cid, []))
-    return core, _fold_claimability(core, rows)
+    source_revision = hashlib.sha256(json.dumps(
+        {"core": core, "events": rows},
+        sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    return core, _fold_claimability(core, rows), source_revision
+
+
+def _authoritative_card_state(cid, core=None, fresh=False):
+    """Read and fold one card without applying dependency or scheduler policy."""
+    core, state, _source_revision = _authoritative_card_snapshot(
+        cid, core=core, fresh=fresh
+    )
+    return core, state
 
 
 def authoritative_claimability(cid, core=None, fresh=False):
     """Return the one claimability decision used by pool and preclaim."""
     try:
-        core, state = _authoritative_card_state(cid, core=core, fresh=fresh)
+        core, state, source_revision = _authoritative_card_snapshot(
+            cid, core=core, fresh=fresh
+        )
     except Exception as exc:
         return {"claimable": False, "reason": "malformed:%s" % type(exc).__name__}
 
@@ -1196,7 +1215,8 @@ def authoritative_claimability(cid, core=None, fresh=False):
     labels = state["labels"]
     reason = _claimability_reason(core, state)
     state.update({"claimable": reason == "claimable", "reason": reason,
-                  "core": folded_core, "host_pin": host_pin(folded_core, labels)})
+                  "core": folded_core, "host_pin": host_pin(folded_core, labels),
+                  "source_revision": source_revision})
     return state
 
 
@@ -3656,36 +3676,48 @@ def _pool_v2_fingerprint(admission):
                                      separators=(",", ":")).encode()).hexdigest()
 
 
+def _pool_v2_dispatchable(admission):
+    """Allow claimable work and review work routed through review authority."""
+    return bool(
+        isinstance(admission, dict)
+        and isinstance(admission.get("card_id"), str)
+        and isinstance(admission.get("core"), dict)
+        and admission["core"].get("id") == admission["card_id"]
+        and isinstance(admission.get("title"), str)
+        and isinstance(admission.get("labels"), list)
+        and isinstance(admission.get("overlay"), dict)
+        and re.fullmatch(r"[0-9a-f]{64}", str(admission.get("source_revision") or ""))
+        and (
+            (admission.get("claimable") is True
+             and admission.get("reason") == "claimable")
+            or (
+                admission.get("claimable") is False
+                and admission.get("reason") == "review"
+                and admission.get("governed_review") is True
+            )
+        )
+    )
+
+
 def _pool_v2_ready_ids(decisions, admissions, failed=False):
-    """Return only explicitly eligible, explicitly claimable snapshot rows."""
+    """Return explicitly eligible rows with a dispatchable snapshot."""
     if failed:
         return set()
     return {
         row.card_id for row in decisions
-        if row.eligible
-        and isinstance(admissions.get(row.card_id), dict)
-        and admissions[row.card_id].get("claimable") is True
+        if row.eligible is True
+        and _pool_v2_dispatchable(admissions.get(row.card_id))
     }
 
 
 def _pool_v2_preclaim_matches(selected, fresh):
-    """Require explicit claimability and byte-identical admission facts."""
+    """Require dispatchable, byte-identical admission facts."""
     return bool(
         isinstance(selected, dict)
         and isinstance(fresh, dict)
-        and fresh.get("claimable") is True
+        and _pool_v2_dispatchable(fresh)
         and _pool_v2_fingerprint(fresh) == _pool_v2_fingerprint(selected)
     )
-
-
-def _pool_v2_source_revision(cid, core, fresh=False):
-    """Identify the exact core and event inputs used for one admission."""
-    rows = list(_strict_card_events(cid, fresh=fresh))
-    rows.extend(_legacy_claimability_events(fresh=fresh).get(cid, []))
-    return hashlib.sha256(json.dumps(
-        {"core": core, "events": rows},
-        sort_keys=True, separators=(",", ":")
-    ).encode()).hexdigest()
 
 
 def _pool_v2_overlay(cid, core, reason):
@@ -3712,15 +3744,69 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
     reason = str(claimability.get("reason") or "")
     return {
         "card_id": cid,
-        "claimable": claimability.get("claimable") is True,
+        "claimable": claimability.get("claimable"),
         "reason": reason,
         "host_pin": claimability.get("host_pin"),
         "title": claimability.get("title"),
         "labels": claimability.get("labels"),
         "core": claimability.get("core"),
+        "governed_review": _governed_review_metadata(
+            claimability.get("core") or core, claimability.get("labels") or ()
+        ) is not None,
         "overlay": _pool_v2_overlay(cid, core, reason),
-        "source_revision": _pool_v2_source_revision(cid, core, fresh=fresh),
+        "source_revision": claimability.get("source_revision"),
     }
+
+
+def _pool_v2_authority_rows(decisions, admissions, failed, unblocks, priorities,
+                            engineering_prefixes, host):
+    """Build every dispatch row from the same bounded POOL_V2 snapshot."""
+    ready_ids = _pool_v2_ready_ids(decisions, admissions, failed)
+    rows = []
+    pinned = set()
+    for cid in sorted(ready_ids):
+        admission = admissions[cid]
+        core = admission["core"]
+        title = admission["title"]
+        labels = admission["labels"]
+        blob = (title + " " + json.dumps(labels)).upper()
+        upper = title.upper().lstrip("[")
+        if admission["host_pin"] == host:
+            pinned.add(cid)
+        if upper.startswith("SKLEGAL") or "SKLEGAL" in blob:
+            lane = 0
+        elif any(upper.startswith(prefix) for prefix in engineering_prefixes):
+            lane = 1
+        else:
+            lane = 2
+        rows.append([
+            lane, priorities.get(str(core.get("initial_priority")), 4),
+            cid, core, labels, unblocks.get(cid, 0),
+        ])
+    rows.sort(key=lambda row: (row[0], -row[5], row[1], row[2]))
+    return rows, pinned
+
+
+def _pool_v2_owner_map(rows, host, pinned_ids):
+    """Return exact stable host ownership for the authoritative rows."""
+    owners = {}
+    blocked = {}
+    for row in rows:
+        cid, core = row[2], row[3]
+        owner, reason = _seat_owner(
+            cid, seat_for(cid, core), host if cid in pinned_ids else None
+        )
+        owners[cid] = owner if owner is not None else "unassigned:%s" % reason
+        if owner is None:
+            blocked[cid] = reason
+    return owners, blocked
+
+
+def _pool_v2_preclaim_handoff(cid, selected, fresh, reviewer):
+    """Authorize review assignment only after the final admission comparison."""
+    if not _pool_v2_preclaim_matches(selected, fresh):
+        raise BoundaryError("POOL_V2 admission changed before claim")
+    return _review_assignment(cid, fresh["core"], fresh["labels"], reviewer)
 
 
 def _shadow_pool_v2():
@@ -3854,31 +3940,10 @@ _emit_shadow_pool_v2()
 # then build missing rows only from the same admission snapshot. Any unknown or
 # malformed state produces zero candidates rather than a legacy fallback.
 _legacy_ready = len(pool)
-_pool_v2_ids = _pool_v2_ready_ids(
-    _POOL_V2_DECISIONS or (), _POOL_V2_ADMISSIONS, _POOL_V2_FAILED
+pool, _PINNED_IDS = _pool_v2_authority_rows(
+    _POOL_V2_DECISIONS or (), _POOL_V2_ADMISSIONS, _POOL_V2_FAILED,
+    unblocks, PRI, ENG, HOST
 )
-_pool_v2_rows = {row[2]: row for row in pool if row[2] in _pool_v2_ids}
-for _cid in sorted(_pool_v2_ids - set(_pool_v2_rows)):
-    _admission = _POOL_V2_ADMISSIONS[_cid]
-    _core = _admission["core"]
-    _title = _admission["title"]
-    _labels = _admission["labels"]
-    _blob = (_title + " " + json.dumps(_labels)).upper()
-    _up = _title.upper().lstrip("[")
-    if _admission["host_pin"] == HOST:
-        _PINNED_IDS.add(_cid)
-    if _up.startswith("SKLEGAL") or "SKLEGAL" in _blob:
-        _lane = 0
-    elif any(_up.startswith(_prefix) for _prefix in ENG):
-        _lane = 1
-    else:
-        _lane = 2
-    _pool_v2_rows[_cid] = [
-        _lane, PRI.get(str(_core.get("initial_priority")), 4),
-        _cid, _core, _labels, unblocks.get(_cid, 0),
-    ]
-pool = list(_pool_v2_rows.values())
-pool.sort(key=lambda row: (row[0], -row[5], row[1], row[2]))
 log(d, "POOL_AUTHORITY|%s|source=POOL_V2|ready=%d|legacy_ready=%d" %
     (HOST, len(pool), _legacy_ready))
 
@@ -3888,21 +3953,14 @@ log(d, "POOL_AUTHORITY|%s|source=POOL_V2|ready=%d|legacy_ready=%d" %
 # A hash partition is stable no matter what the local pool looks like.
 off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0
 _NHOST = len(ROTATION_HOSTS)
-_SEAT_BY_ID = {row[2]: seat_for(row[2], row[3]) for row in pool}
-_SEAT_BLOCKED = set()
+_OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(pool, HOST, _PINNED_IDS)
+for _cid, _reason in sorted(_SEAT_BLOCKED.items()):
+    log(d, "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" % (HOST, _cid, _reason))
 
 
 def owner_host(cid):
     """Return the one stable host authorized to select this card."""
-    owner, reason = _seat_owner(
-        cid, _SEAT_BY_ID.get(cid), HOST if cid in _PINNED_IDS else None
-    )
-    if owner is None:
-        if cid not in _SEAT_BLOCKED:
-            log(d, "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" % (HOST, cid, reason))
-            _SEAT_BLOCKED.add(cid)
-        return "unassigned:%s" % reason
-    return owner
+    return _OWNER_BY_ID.get(cid, "unassigned:not-authoritative")
 
 def owns(cid):
     # A host-pinned card is owned by its pinned host, full stop. Letting the hash
@@ -4346,13 +4404,6 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
     _review_recommendation = None
     _review_handoff = None
-    try:
-        name, _review_recommendation, _review_handoff = _review_assignment(
-            cid, core, _labels, name
-        )
-    except BoundaryError as exc:
-        log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
-        continue
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
         workspace=_worker_workspace(default_workspace)
@@ -4364,19 +4415,13 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
     # Last-moment re-check through the same fold that built the pool.
-    fresh_claimability=authoritative_claimability(cid,fresh=True)
     with open(os.path.join(CARDS,cid,"core.json"),encoding="utf-8") as _handle:
         _fresh_core=json.load(_handle)
+    fresh_claimability=authoritative_claimability(cid,core=_fresh_core,fresh=True)
     _fresh_admission=_pool_v2_admission(
         cid,_fresh_core,fresh_claimability,fresh=True
     )
     _selected_admission=_POOL_V2_ADMISSIONS.get(cid)
-    if not _pool_v2_preclaim_matches(_selected_admission,_fresh_admission):
-        raced += 1
-        _raced_ids.append(cid)
-        log(d,"SKIPPED_ADMISSION_DRIFT|%s|%s|%s|reason=%s"%
-            (HOST,sess,cid,fresh_claimability.get("reason","unknown")))
-        continue
     fresh_escalation=needs_escalation(
         cid,fresh_claimability["core"],fresh_claimability["labels"])
     compatible,affinity_reason=lane_compatibility(
@@ -4396,6 +4441,21 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             d,"lane_admission",cid,
             "SKIPPED_LANE_HEALTH|%s|%s|%s|lane=%s|model=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],model,health_reason))
+        continue
+    # Link's recommendation appends evidence. Compare the bounded admission
+    # after lane health so no event mutates the card before the final preclaim.
+    try:
+        name, _review_recommendation, _review_handoff = _pool_v2_preclaim_handoff(
+            cid, _selected_admission, _fresh_admission, name
+        )
+    except BoundaryError as exc:
+        if str(exc) == "POOL_V2 admission changed before claim":
+            raced += 1
+            _raced_ids.append(cid)
+            log(d,"SKIPPED_ADMISSION_DRIFT|%s|%s|%s|reason=%s"%
+                (HOST,sess,cid,fresh_claimability.get("reason","unknown")))
+            continue
+        log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
         continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)

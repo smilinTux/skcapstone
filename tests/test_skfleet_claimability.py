@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,7 @@ def _load_claimability() -> dict[str, object]:
         "_dependency_value",
         "_fold_claimability",
         "_claimability_reason",
+        "_authoritative_card_snapshot",
         "_authoritative_card_state",
         "authoritative_claimability",
     }
@@ -45,6 +47,7 @@ def _load_claimability() -> dict[str, object]:
         "_dep_satisfied": lambda _dep: True,
         "host_pin": lambda _core, _labels: None,
         "json": json,
+        "hashlib": hashlib,
         "re": re,
         "non_implementation": lambda core, labels: (
             "[HUMAN]" in str(core.get("title") or "").upper() or "human-gate" in labels
@@ -238,7 +241,7 @@ def test_terminal_review_dependency_gate_and_host_pin_reasons() -> None:
 
     namespace["_dep_satisfied"] = lambda _dep: True
     namespace["host_pin"] = lambda _core, _labels: "chiap08"
-    assert namespace["_claimability_reason"](core, review) == "review"
+    assert namespace["_claimability_reason"](core, review) == "host-pin:chiap08"
 
 
 def test_governed_reviewer_reaches_assignment_without_admitting_source_cards() -> None:
@@ -249,7 +252,7 @@ def test_governed_reviewer_reaches_assignment_without_admitting_source_cards() -
         "links": {"producer_identity": "producer", "candidate_evidence_sha256": "a" * 64},
     }
     state = namespace["_fold_claimability"](core, [])
-    assert namespace["_claimability_reason"](core, state) == "claimable"
+    assert namespace["_claimability_reason"](core, state) == "review"
     for links in (
         {"open_pr": "https://example.invalid/pr/1"},
         {"candidate_evidence_sha256": "a" * 64},
@@ -267,6 +270,41 @@ def test_review_markers_are_not_executable_after_claim_release() -> None:
         assert namespace["_claimability_reason"](core, state) == "review"
 
 
+@pytest.mark.parametrize(
+    ("core_update", "events", "expected"),
+    [
+        ({"title": "[HUMAN] Review approval"}, [], "human-gate"),
+        ({"dependencies": ["blocked-dependency"]}, [], "dependency"),
+        ({"title": "[REVIEW] Production deployment"}, [], "sensitive-category"),
+        (
+            {},
+            [_claim("2026-09-07T10:00:00Z", "other-reviewer", "revision-1")],
+            "owned-doing",
+        ),
+    ],
+)
+def test_review_marker_never_overrides_safety_exclusions(
+    core_update: dict[str, object],
+    events: list[dict[str, object]],
+    expected: str,
+) -> None:
+    """Review routing happens only after every ordinary exclusion."""
+
+    namespace = _load_claimability()
+    namespace["_dep_satisfied"] = lambda _dep: False
+    core = {
+        **_core("review-safety", labels=["review"]),
+        "links": {
+            "producer_identity": "producer",
+            "candidate_evidence_sha256": "a" * 64,
+        },
+        **core_update,
+    }
+    state = namespace["_fold_claimability"](core, events)
+
+    assert namespace["_claimability_reason"](core, state) == expected
+
+
 def test_review_evidence_and_open_pr_links_are_folded_and_excluded() -> None:
     namespace = _load_claimability()
     for links in (
@@ -282,7 +320,9 @@ def test_review_evidence_and_open_pr_links_are_folded_and_excluded() -> None:
 def test_pool_and_preclaim_call_the_same_predicate() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert "decision=authoritative_claimability(cid,core)" in source
-    assert "fresh_claimability=authoritative_claimability(cid,fresh=True)" in source
+    assert (
+        "fresh_claimability=authoritative_claimability(" "cid,core=_fresh_core,fresh=True)"
+    ) in source
     assert source.index("if blocked_backoff(cid):") < source.index(
         "decision=authoritative_claimability(cid,core)"
     )

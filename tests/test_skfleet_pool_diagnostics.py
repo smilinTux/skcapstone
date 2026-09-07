@@ -109,7 +109,13 @@ def test_source_preserves_admission_and_reports_selection_races() -> None:
     assert "reason=%s pool=%d owned=%d target=%d free=%d" in source
     assert "SELECTION_EMPTY|" in source
     assert "no dependency-clear cards" not in source
-    assert "fresh_claimability=authoritative_claimability(cid,fresh=True)" in source
+    fresh_core = source.index(
+        'with open(os.path.join(CARDS,cid,"core.json"),encoding="utf-8") as _handle:'
+    )
+    fresh_claimability = source.index(
+        "fresh_claimability=authoritative_claimability(cid,core=_fresh_core,fresh=True)"
+    )
+    assert fresh_core < fresh_claimability
     assert "_current_claim_identity_fresh(cid)" in source
     assert "claimed_owner," in source
     assert "name)" in source

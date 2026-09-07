@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import ast
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -98,17 +97,20 @@ def _load_review_assignment(
         "HOME": "/home/test",
         "hashlib": __import__("hashlib"),
         "BoundaryError": _BoundaryError,
+        "CardStore": lambda _home: SimpleNamespace(fold=lambda _cid: object()),
         "event_rows": _event_rows,
         "_current_claim_identity_fresh": _current_claim_identity_fresh,
         "_card_process_snapshot": _card_process_snapshot,
         "recommend_reviewer": recommend_reviewer,
+        "review_state_revision": lambda _card: "0" * 64,
         "authorize_review_launch": authorize_review_launch,
     }
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     body = [
         node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_review_assignment"
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"_governed_review_metadata", "_review_assignment"}
     ]
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace, captured

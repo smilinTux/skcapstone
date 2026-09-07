@@ -137,7 +137,11 @@ def test_seat_owner_one_multiple_missing_pin_and_ordinary(tmp_path: Path) -> Non
 
 def test_runtime_places_seats_before_generic_partitioning() -> None:
     source = Path(SRC).read_text(encoding="utf-8")
-    assert source.index("_SEAT_BY_ID =") < source.index("owned=[x for x in pool")
+    ownership = source.index(
+        "_OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(pool, HOST, _PINNED_IDS)"
+    )
+    assert source.index("seat_for(cid, core)", source.index("def _pool_v2_owner_map")) < ownership
+    assert ownership < source.index("owned=[x for x in pool")
     assert "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" in source
     assert "falling back to lane naming" not in source
 

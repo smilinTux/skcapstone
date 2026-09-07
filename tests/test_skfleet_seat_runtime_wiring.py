@@ -5,16 +5,16 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def test_rotation_wires_link_jarvis_and_mero_in_order() -> None:
+def test_rotation_wires_link_reviewer_and_mero_in_order() -> None:
     """Review launches use all three governed runtime stages."""
 
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
     link = source.index("recommend_reviewer(")
-    jarvis = source.index("authorize_review_launch(", link)
-    claim = source.index('claim=subprocess.run([SKC,"coord","claim"', jarvis)
+    reviewer = source.index("authorize_review_launch(", link)
+    claim = source.index('claim=subprocess.run([SKC,"coord","claim"', reviewer)
     receipt = source.index("append_review_launch_receipt(", claim)
     mero = source.index("MeroObservation(", receipt)
-    assert link < jarvis < claim < receipt < mero
+    assert link < reviewer < claim < receipt < mero
 
 
 def test_non_review_cards_bypass_assignment() -> None:
@@ -31,7 +31,7 @@ def test_dry_run_exits_before_link_writes() -> None:
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
     loop = source.index("for _LANE,")
     dry = source.index("if DRY:", loop)
-    assignment = source.index("_review_assignment(", dry)
+    assignment = source.index("_pool_v2_preclaim_handoff(", dry)
     assert dry < assignment
 
 

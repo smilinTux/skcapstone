@@ -36,6 +36,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Cards `c106a2a6` and `d12b93ef`: POOL_V2 now supplies every dispatch row
+  from one bounded admission snapshot, and governed review work reaches an
+  exact distinct reviewer only after final drift and lane-health checks.
+
 - Fleet runtime repair: selector claimability, worker startup evidence,
   heartbeat cleanup, watchdog fencing, and truthful Pi-only monitoring.
 
