@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from skcapstone.link_merge_authority import (
+    REQUIRED_GITHUB_CHECKS,
+    REQUIRED_LOCAL_CHECKS,
     GitHubCheck,
     IndependentReview,
     LocalPreflight,
@@ -17,15 +19,7 @@ from skcapstone.link_merge_authority import (
 )
 
 HEAD, BASE, TREE, DIFF = "a" * 40, "b" * 40, "c" * 40, "d" * 64
-LOCAL = (
-    "scope/diff",
-    "lint/black-26.5.1",
-    "lint/ruff-0.15.4",
-    "docs/changelog",
-    "secret/gitleaks-8.28.0",
-    "imports/shims",
-    "unit/python-current",
-)
+LOCAL = tuple(sorted(REQUIRED_LOCAL_CHECKS))
 
 
 def receipt(tmp_path: Path, **changes: object) -> LocalPreflight:
@@ -76,9 +70,9 @@ def candidate(tmp_path: Path, **changes: object) -> MergeCandidate:
         diff_sha256=DIFF,
         author="mero",
         mergeable=True,
-        github_checks=(GitHubCheck("unit", "completed", "success"),),
-        required_github_checks=("unit",),
-        required_local_checks=LOCAL,
+        github_checks=tuple(
+            GitHubCheck(name, "completed", "success") for name in REQUIRED_GITHUB_CHECKS
+        ),
         review=IndependentReview("reviewer", "PASS", HEAD, "e" * 64),
         local_preflight=receipt(tmp_path),
         lineage_outcomes=("PASS",),
@@ -98,7 +92,14 @@ def test_link_cannot_review_its_own_queue(tmp_path: Path, reviewer: str) -> None
 
 
 def test_pending_github_check_fails_closed(tmp_path: Path) -> None:
-    checks = (GitHubCheck("unit", "in_progress", ""),)
+    checks = tuple(
+        GitHubCheck(
+            name,
+            "in_progress" if name == "build" else "completed",
+            "" if name == "build" else "success",
+        )
+        for name in REQUIRED_GITHUB_CHECKS
+    )
     assert (
         "github-check-not-successful"
         in evaluate_link_merge(candidate(tmp_path, github_checks=checks)).failures
@@ -120,8 +121,18 @@ def test_receipt_candidate_mismatch_fails_closed(tmp_path: Path) -> None:
 
 
 def test_completed_failure_is_not_success(tmp_path: Path) -> None:
-    checks = (GitHubCheck("unit", "completed", "failure"),)
+    checks = tuple(
+        GitHubCheck(name, "completed", "failure" if name == "build" else "success")
+        for name in REQUIRED_GITHUB_CHECKS
+    )
     assert (
         "github-check-not-successful"
         in evaluate_link_merge(candidate(tmp_path, github_checks=checks)).failures
     )
+
+
+def test_callers_cannot_reduce_required_check_sets(tmp_path: Path) -> None:
+    local = receipt(tmp_path, checks=[])
+    decision = evaluate_link_merge(candidate(tmp_path, local_preflight=local, github_checks=()))
+    assert "missing-github-check" in decision.failures
+    assert "invalid-local-preflight-receipt" in decision.failures

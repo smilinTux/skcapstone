@@ -65,7 +65,11 @@ def test_pass_receipt_binds_exact_head_paths_and_all_checks(candidate: tuple[Pat
         "docs/changelog",
         "secret/gitleaks-8.28.0",
         "imports/shims",
-        "unit/python-current",
+        "unit/python-3.11",
+        "unit/python-3.12",
+        "provider/cloud-python-3.12",
+        "provider/docker-python-3.12",
+        "package/build-twine-python-3.12",
     ]
     assert any("--redact" in command for command in commands)
     assert len(receipt.digest) == 64

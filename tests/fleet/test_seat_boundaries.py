@@ -122,8 +122,6 @@ def test_only_link_can_evaluate_merge_queue() -> None:
         author="producer",
         mergeable=False,
         github_checks=(),
-        required_github_checks=(),
-        required_local_checks=(),
         review=None,
         local_preflight=None,
     )

@@ -16,6 +16,34 @@ _SENSITIVE = re.compile(
 _UNRESOLVED = re.compile(r"^\s*(FAIL|BLOCKED)\b", re.IGNORECASE)
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+REQUIRED_GITHUB_CHECKS = frozenset(
+    {
+        "build",
+        "docs / docs-check",
+        "gitleaks",
+        "lint",
+        "provider tests (cloud)",
+        "provider tests (docker)",
+        "shim-imports",
+        "unit tests (py3.11)",
+        "unit tests (py3.12)",
+    }
+)
+REQUIRED_LOCAL_CHECKS = frozenset(
+    {
+        "scope/diff",
+        "lint/black-26.5.1",
+        "lint/ruff-0.15.4",
+        "docs/changelog",
+        "secret/gitleaks-8.28.0",
+        "imports/shims",
+        "unit/python-3.11",
+        "unit/python-3.12",
+        "provider/cloud-python-3.12",
+        "provider/docker-python-3.12",
+        "package/build-twine-python-3.12",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -61,8 +89,6 @@ class MergeCandidate:
     author: str
     mergeable: bool
     github_checks: tuple[GitHubCheck, ...]
-    required_github_checks: tuple[str, ...]
-    required_local_checks: tuple[str, ...]
     review: IndependentReview | None
     local_preflight: LocalPreflight | None
     lineage_outcomes: tuple[str, ...] = ()
@@ -98,7 +124,7 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
     github = {check.context: check for check in candidate.github_checks}
     if len(github) != len(candidate.github_checks):
         failures.append("duplicate-github-check")
-    for context in candidate.required_github_checks:
+    for context in REQUIRED_GITHUB_CHECKS:
         check = github.get(context)
         if check is None:
             failures.append("missing-github-check")
@@ -132,7 +158,7 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
                 raise ValueError("receipt candidate mismatch")
             checks = receipt.get("checks")
             if not isinstance(checks, list) or {item.get("name") for item in checks} != set(
-                candidate.required_local_checks
+                REQUIRED_LOCAL_CHECKS
             ):
                 raise ValueError("receipt checks mismatch")
             if receipt.get("state") != "PASS" or any(

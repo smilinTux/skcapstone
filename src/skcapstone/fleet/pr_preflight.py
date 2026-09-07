@@ -134,16 +134,26 @@ def _commands(
         ),
         ("imports/shims", ("bash", "scripts/check-no-shim-imports.sh")),
         (
-            "unit/python-current",
+            "unit/python-3.11",
             (
                 "python",
-                "-m",
-                "pytest",
-                "tests/",
-                "--strict-markers",
-                "-m",
-                "not integration and not e2e",
+                "scripts/fleet/skfleet-ci-parity-job.py",
+                "unit",
+                "3.11",
             ),
+        ),
+        ("unit/python-3.12", ("python", "scripts/fleet/skfleet-ci-parity-job.py", "unit", "3.12")),
+        (
+            "provider/cloud-python-3.12",
+            ("python", "scripts/fleet/skfleet-ci-parity-job.py", "provider-cloud", "3.12"),
+        ),
+        (
+            "provider/docker-python-3.12",
+            ("python", "scripts/fleet/skfleet-ci-parity-job.py", "provider-docker", "3.12"),
+        ),
+        (
+            "package/build-twine-python-3.12",
+            ("python", "scripts/fleet/skfleet-ci-parity-job.py", "build", "3.12"),
         ),
     )
 
@@ -199,7 +209,7 @@ def run_preflight(
             if code:
                 break
     state = (
-        "PASS" if len(results) == 7 and all(item.exit_code == 0 for item in results) else "FAIL"
+        "PASS" if len(results) == 11 and all(item.exit_code == 0 for item in results) else "FAIL"
     )
     unsigned = {
         "schema": "skfleet.local-ci-preflight/v1",
