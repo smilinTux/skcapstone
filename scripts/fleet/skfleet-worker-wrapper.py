@@ -285,6 +285,7 @@ def _terminal_verdict_seen(args: argparse.Namespace) -> bool:
     directory = Path.home() / ".skcapstone" / "coordination" / "card_events"
     paths = {
         directory / f"{args.owner}@{args.host}.jsonl",
+        directory / f"{args.owner}@{args.card}.jsonl",
         directory / f"{args.owner}.jsonl",
         directory / f"{args.host}.jsonl",
     }
@@ -310,11 +311,16 @@ def _terminal_verdict_seen(args: argparse.Namespace) -> bool:
             if observed_at.tzinfo is None:
                 continue
             stamp = observed_at.timestamp()
-            verdict = str(event.get("verdict") or "").strip().upper()
+            canonical_link = event.get("action") == "link" and event.get("link_key") == "verdict"
+            verdict = (
+                str(event.get("link_value") if canonical_link else event.get("verdict") or "")
+                .strip()
+                .upper()
+            )
             if (
                 event.get("card_id") == args.card
                 and event.get("writer") == args.owner
-                and event.get("action") == "verdict"
+                and (canonical_link or event.get("action") == "verdict")
                 and stamp >= args.started_at
                 and re.match(r"^(?:PASS(?:_FOR_REVIEW)?|FAIL|BLOCKED)(?:\b|:)", verdict)
             ):

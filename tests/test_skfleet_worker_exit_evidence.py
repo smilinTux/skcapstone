@@ -201,13 +201,14 @@ def test_attributable_terminal_verdict_preserves_zero_exit_success(
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     events = tmp_path / ".skcapstone/coordination/card_events"
     events.mkdir(parents=True)
-    (events / f"{args.owner}@{args.host}.jsonl").write_text(
+    (events / f"{args.owner}@{args.card}.jsonl").write_text(
         json.dumps(
             {
-                "action": "verdict",
+                "action": "link",
                 "card_id": args.card,
                 "writer": args.owner,
-                "verdict": "BLOCKED",
+                "link_key": "verdict",
+                "link_value": "PASS_FOR_REVIEW",
                 "ts": "2026-09-07T06:00:01+00:00",
             }
         )
@@ -229,18 +230,28 @@ def test_foreign_or_old_verdict_cannot_bless_zero_exit(tmp_path: Path, monkeypat
             json.dumps(row)
             for row in (
                 {
-                    "action": "verdict",
+                    "action": "link",
                     "card_id": args.card,
                     "writer": "another-worker",
-                    "verdict": "PASS",
+                    "link_key": "verdict",
+                    "link_value": "PASS",
                     "ts": "2026-09-07T06:00:01+00:00",
                 },
                 {
-                    "action": "verdict",
+                    "action": "link",
                     "card_id": args.card,
                     "writer": args.owner,
-                    "verdict": "PASS",
+                    "link_key": "verdict",
+                    "link_value": "PASS",
                     "ts": "2026-09-01T00:00:00+00:00",
+                },
+                {
+                    "action": "link",
+                    "card_id": "wrong-card",
+                    "writer": args.owner,
+                    "link_key": "verdict",
+                    "link_value": "PASS",
+                    "ts": "2026-09-07T06:00:01+00:00",
                 },
             )
         )
