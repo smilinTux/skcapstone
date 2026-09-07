@@ -133,7 +133,13 @@ class DraftStore:
         canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         manifest["manifest_sha256"] = _hash(canonical)
         mp=outdir/"manifest.json"
-        mp.write_text(json.dumps(manifest, sort_keys=True, indent=2)+"\n", encoding="utf-8")
+        manifest_line = _json_line(manifest)
+        tmp_manifest = mp.with_suffix(".json.tmp")
+        tmp_manifest.write_text(manifest_line, encoding="utf-8")
+        # Parse the exact bytes that will be published before replacing the
+        # manifest.  This mirrors the journal's serializer/parse invariant.
+        json.loads(tmp_manifest.read_text(encoding="utf-8"))
+        os.replace(tmp_manifest, mp)
         self._append({"type":"artifact_created", **manifest, "path":str(path)})
         return Artifact(matter_id,version,fmt,manifest["artifact_sha256"],str(path),manifest["manifest_sha256"])
 
@@ -148,7 +154,19 @@ class DraftStore:
             raise DraftError("artifact not found")
         row = rows[-1]
         path = Path(row["path"])
-        if not path.is_file() or _hash(path.read_bytes()) != row.get("artifact_sha256"):
+        if not path.is_absolute():
+            path = self.root / path
+        manifest_path = path.with_name("manifest.json")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_hash = manifest.pop("manifest_sha256")
+            if _hash(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()) != manifest_hash:
+                raise ValueError("manifest hash mismatch")
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            raise DraftError("manifest unavailable or corrupt") from exc
+        if (manifest.get("matter_id") != matter_id or manifest.get("version") != version
+                or manifest.get("format") != fmt or manifest.get("artifact_sha256") != row.get("artifact_sha256")
+                or not path.is_file() or _hash(path.read_bytes()) != row.get("artifact_sha256")):
             raise DraftError("artifact unavailable or corrupt")
         self._append({"type":"artifact_downloaded", "matter_id":matter_id,
                       "version":version, "format":fmt, "artifact_sha256":row["artifact_sha256"]})
@@ -164,7 +182,7 @@ def _pdf(text):
     obj=[b"<< /Type /Catalog /Pages 2 0 R >>", None, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
     kids=[]
     for s in streams:
-        si=len(obj)+1; obj.append(f"<< /Length {len(s)} >>\nstream\n".encode()+s+b"\nendstream"); pi=len(obj)+1; obj.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {si+1} 0 R >> >> /Contents {si} 0 R >>".encode()); kids.append(f"{pi} 0 R")
+        si=len(obj)+1; obj.append(f"<< /Length {len(s)} >>\nstream\n".encode()+s+b"\nendstream"); pi=len(obj)+1; obj.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents {si} 0 R >>".encode()); kids.append(f"{pi} 0 R")
     obj[1]=f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>".encode()
     out=b"%PDF-1.4\n"; offsets=[]
     for n,o in enumerate(obj,1): offsets.append(len(out)); out+=f"{n} 0 obj\n".encode()+o+b"\nendobj\n"
