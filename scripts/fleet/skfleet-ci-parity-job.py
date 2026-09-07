@@ -27,7 +27,12 @@ def main() -> int:
         venv = root / "venv"
         run(["uv", "venv", "--python", args.python, str(venv)], cwd=repo)
         python = venv / "bin/python"
-        env = {**os.environ, "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+        env = {
+            **os.environ,
+            "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ['PATH']}",
+        }
+        for variable in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT", "SK_DEFAULT_AGENT"):
+            env.pop(variable, None)
         pi = shutil.which("pi", path=env["PATH"])
         if pi:
             pi_directory = str(Path(pi).parent)
