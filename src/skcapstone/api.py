@@ -42,7 +42,8 @@ try:
         Depends,
         FastAPI,
         HTTPException,
-        Query,  # noqa: F401
+        Header,
+        Query,
         Request,
         Security,
         WebSocket,
@@ -120,6 +121,78 @@ def _get_ctx() -> Dict[str, Any]:
 
 
 # ── Pydantic response models ──────────────────────────────────────────────────
+
+
+class ContractError(BaseModel):
+    """Machine-readable error returned by job contract operations."""
+
+    code: str = Field(..., description="Stable error code.")
+    message: str = Field(..., description="Safe, human-readable explanation.")
+    retryable: bool = Field(False, description="Whether retrying may succeed.")
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PageInfo(BaseModel):
+    """Opaque cursor pagination metadata."""
+
+    next_cursor: Optional[str] = Field(None, description="Opaque cursor, or null at end.")
+    has_more: bool = False
+
+
+class ActionDescriptor(BaseModel):
+    action_id: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+    name: str
+    purpose: str
+    capability: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EligibleActionsResponse(BaseModel):
+    items: List[ActionDescriptor]
+    page: PageInfo
+    event_cursor: Optional[str] = Field(None, description="Cursor of the observed event stream.")
+
+
+class ProposalRequest(BaseModel):
+    action_id: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    purpose: str = Field(..., min_length=1, max_length=256)
+    capability: str = Field(..., min_length=1, max_length=256)
+    expected_version: int = Field(..., ge=0)
+
+
+class ProposalResponse(BaseModel):
+    proposal_id: str
+    status: str
+    version: int
+    receipt_id: Optional[str] = None
+
+
+class JobState(BaseModel):
+    job_id: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+    state: str
+    version: int
+    event_cursor: Optional[str] = None
+    receipt_id: Optional[str] = None
+
+
+class JobStateResponse(BaseModel):
+    items: List[JobState]
+    page: PageInfo
+
+
+class CancelRequest(BaseModel):
+    expected_version: int = Field(..., ge=0)
+    reason: str = Field(..., min_length=1, max_length=512)
+
+
+class ReceiptResponse(BaseModel):
+    receipt_id: str
+    job_id: str
+    status: str
+    version: int
+    event_cursor: Optional[str] = None
+    artifact_sha256: Optional[str] = Field(None, pattern=r"^[a-f0-9]{64}$")
 
 
 class HealthResponse(BaseModel):
@@ -686,6 +759,65 @@ def _custom_openapi() -> Dict[str, Any]:
 
 
 app.openapi = _custom_openapi  # type: ignore[method-assign]
+
+# ── Agent job contract API ────────────────────────────────────────────────────
+
+
+def _contract_unavailable(operation: str) -> HTTPException:
+    return HTTPException(status_code=501, detail=ContractError(
+        code="CONTRACT_BACKEND_UNAVAILABLE",
+        message=f"{operation} is not connected to a daemon job provider",
+        retryable=True,
+    ).model_dump())
+
+
+@app.get("/api/v1/actions/eligible", response_model=EligibleActionsResponse, tags=["Agent jobs"])
+async def list_eligible_actions(
+    purpose: str = Query(..., min_length=1, max_length=256),
+    capability: str = Query(..., min_length=1, max_length=256),
+    cursor: Optional[str] = Query(None, max_length=512),
+    limit: int = Query(50, ge=1, le=100),
+    _key: Optional[str] = Depends(_check_api_key),
+) -> EligibleActionsResponse:
+    raise _contract_unavailable("eligible action discovery")
+
+
+@app.post("/api/v1/proposals", response_model=ProposalResponse, tags=["Agent jobs"])
+async def create_proposal(
+    body: ProposalRequest,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=256),
+    _key: Optional[str] = Depends(_check_api_key),
+) -> ProposalResponse:
+    raise _contract_unavailable("proposal creation")
+
+
+@app.get("/api/v1/jobs", response_model=JobStateResponse, tags=["Agent jobs"])
+async def list_jobs(
+    cursor: Optional[str] = Query(None, max_length=512),
+    limit: int = Query(50, ge=1, le=100),
+    event_cursor: Optional[str] = Query(None, max_length=512),
+    _key: Optional[str] = Depends(_check_api_key),
+) -> JobStateResponse:
+    raise _contract_unavailable("job state listing")
+
+
+@app.post("/api/v1/jobs/{job_id}/cancel", response_model=ReceiptResponse, tags=["Agent jobs"])
+async def cancel_job(
+    body: CancelRequest,
+    job_id: str = FPath(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=256),
+    _key: Optional[str] = Depends(_check_api_key),
+) -> ReceiptResponse:
+    raise _contract_unavailable("job cancellation")
+
+
+@app.get("/api/v1/jobs/{job_id}/receipt", response_model=ReceiptResponse, tags=["Agent jobs"])
+async def get_job_receipt(
+    job_id: str = FPath(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"),
+    _key: Optional[str] = Depends(_check_api_key),
+) -> ReceiptResponse:
+    raise _contract_unavailable("job receipt retrieval")
+
 
 # ── /api/v1/health ────────────────────────────────────────────────────────────
 
