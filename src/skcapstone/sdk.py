@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -274,6 +275,7 @@ def register_service(
     health_url: Optional[str] = None,
     pid_file: Optional[str] = None,
     home: Optional[Path] = None,
+    vantage_point: Optional[str] = None,
 ) -> str:
     """Advertise a service to skcapstone's discovery registry.
 
@@ -288,6 +290,8 @@ def register_service(
         health_url: Optional HTTP URL whose 2xx response means "up".
         pid_file: Optional pid-file path used as a liveness fallback.
         home: Override skcapstone root (defaults to ~/.skcapstone).
+        vantage_point: Host that owns the probe, or ``any`` for a remotely
+            reachable endpoint. Defaults to the registering host.
 
     Returns:
         Path to the written registry entry, as a string.
@@ -300,6 +304,8 @@ def register_service(
         "name": name,
         "health_url": health_url,
         "pid_file": pid_file,
+        "vantage_point": vantage_point or socket.gethostname(),
+        "registered_on": socket.gethostname(),
         "registered_by": _agent_name(),
         "registered_at": datetime.now(timezone.utc).isoformat(),
     }
