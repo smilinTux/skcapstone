@@ -54,15 +54,15 @@ def _payload(result) -> dict:
 
 
 def test_epic_is_not_false_eligible(tmp_path):
-    _card(tmp_path, "epic001", title="An epic", kind="epic")
-    payload = _payload(_run(tmp_path, "epic001"))
+    _card(tmp_path, "e11ec001", title="An epic", kind="epic")
+    payload = _payload(_run(tmp_path, "e11ec001"))
     assert payload["eligible"] is False
     assert payload["primary_reason"] == "not_claimable"
 
 
 def test_foreign_project_is_not_false_eligible(tmp_path):
-    _card(tmp_path, "task001", title="Task", labels=("foreign-project",))
-    payload = _payload(_run(tmp_path, "task001"))
+    _card(tmp_path, "f0ae1b01", title="Task", labels=("foreign-project",))
+    payload = _payload(_run(tmp_path, "f0ae1b01"))
     assert payload["eligible"] is False
     assert payload["primary_reason"] == "foreign_project"
 
