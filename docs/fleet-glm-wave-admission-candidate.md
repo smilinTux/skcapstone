@@ -1,0 +1,76 @@
+# GLM nine-worker wave admission candidate
+
+Cards: base `9ca6efd6` / `35e539d1`; authoritative rebuild `7f72f938`
+
+Status: disabled-by-default no-action candidate for distinct review. This document is not authorization to cut over, create live state, clear a hold, or launch a worker. The two divergent `3ee52525` candidates were not copied or adopted.
+
+## Evidence reproduced before design
+
+The candidate was designed only after locally reproducing the shared preserved evidence:
+
+| Evidence | Reproduced SHA-256 |
+| --- | --- |
+| RCA `0b07aeeb`, `GLM-NINE-WORKER-CONCURRENCY-AUDIT-0b07aeeb.md` | `501f64cf72a03e49da6a633144d62b4bbb9f28750a19510422186690d24f3aea` |
+| Blocked review `334b8d63`, `BLOCKED.json` | `c31e9bc703e064cf7bd64984711befdff4e961fe34f2ada702068ab348b6deca` |
+| Active dispatch hold | `bc5ccfd3fae165bacec626683c485fd2496e63e72032c8795c5f2fff3198dc05` |
+| chiap01 `534fffec-20260828T110000Z.log` | `385add1adc8bd5307335621b32a5f514f1df4da76ffaa416280d03faab390ab7` |
+| chiap03 `910da7a0-20260828T110155Z.log` | `2c1f8d17ed4bc68a6e53e18eaef6aa15254c76a3c347be70fc6d5cf25401bd25` |
+| chiap03 `11fae2b7-20260828T105727Z.log` | `562c37aa86a362908e6e00de0349f6f1f4ebcc14f9551bb70e9180f4849184b9` |
+| Shared source manifest | `b9e8e33b7bf9a79e25a7c4f8595e5d1616d50ebbd067084db1bcd20f43e3cabb` |
+
+The RCA establishes that host-local selector decisions cannot enforce a fleet-wide limit and that request `peakActive=10` is not a worker count. The blocked review identifies three missing deliverables repaired here: a selected authority and lock, executable deterministic tests, and exact rollback bytes.
+
+## Candidate protocol
+
+`src/skcapstone/fleet/glm_admission.py` is deliberately not connected to a CLI, timer, selector, launcher, gateway, or provider. It can only publish a reservation ledger.
+
+1. The operating system hostname is normalized to lowercase without a trailing dot and must equal `chiap08`. Callers cannot supply authority identity. Host selectors have no dispatch entry point.
+2. Compile-time paths `/var/lib/skcapstone-local/glm-admission/admission.lock` and `/var/lib/skcapstone-local/glm-admission/generation.json` are outside Syncthing state. Callers cannot override either path.
+3. The authority directory must be a physical, owner-controlled mode-0700 directory. Lock and ledger opens reject symlinks, non-regular files, extra hard links, foreign ownership, and modes other than 0600. The existing ledger must be present, current, schema-exact, owned by chiap08, and internally valid.
+4. A chiap08-local advisory `flock` covers ledger read, evidence validation, monotonicity validation, and replacement. Before atomic replace, the writer proves the ledger inode is the one validated under the lock. Missing, malformed, stale, conflicting, live, replaced, or non-monotonic state denies admission.
+5. A complete generation can advance by exactly one. A live generation is never refilled.
+6. One wave has exactly nine bindings, exactly three for each of chiap01, chiap02, and chiap03. Card, host-distinct agent, session, claim, and absolute workspace identities must each be nonempty and distinct.
+7. All three hosts must be reachable, report zero `glm-auto` sessions, and have fresh timestamps. Each authoritative host snapshot carries its own two queue samples and 429 observation; the consumer folds all three rather than trusting a single bundle member.
+8. A 429 on any host denies admission. Two fresh samples exactly five seconds apart with positive queued work in both deny admission on any host. Invalid or stale pressure denies admission.
+9. The exact hold generation and SHA-256 are checked twice under the lock. An active hold or a changed hold denies admission. Thus the currently active hold causes zero publication and zero dispatch.
+10. Publication serializes canonical JSON, writes an owner-only temporary regular file in the ledger directory, fsyncs it, atomically renames it over the verified ledger, and fsyncs the directory.
+
+`src/skcapstone/fleet/glm_consumer.py` is the disabled executable consumer. It accepts no arguments and fixes authority, coordination home, snapshot helpers, backend/model, nine card IDs, three hosts, identity/session/claim naming, and worktree paths in reviewed source. Physical chiap08 and `/etc/skcapstone/glm-admission-enabled` are both mandatory; the marker is absent by default and this card neither creates nor installs it. It reads the nine cards through CardStore, requires dependencies complete, claims via `skcapstone coord claim`, reserves the whole wave, and launches fixed SSH/tmux/pi commands. Any failure stops already launched sessions, atomically aborts the exact reservation, and uses `skcapstone coord release-claim` for all acquired claims. There is no selector, gateway, credential, inference probe, or provider canary path.
+
+## Deterministic qualification
+
+`tests/test_glm_admission.py` replaces socket construction and connection with immediate failures. Frozen inputs and a fixed UTC clock cover:
+
+- concurrent admission, with exactly one whole wave published;
+- stale sessions and stale in-flight queue observations;
+- missing, malformed, stale, and non-monotonic ledgers;
+- crash before rename, preserving the old generation;
+- crash after rename, exposing one complete live generation and denying refill;
+- hold change while the lock is held;
+- partial host reachability;
+- tenth-worker denial and duplicate custody denial;
+- physical chiap03 spoof denial and active-hold zero publication;
+- impossible caller coordinator, backend, generation, authority, ledger, lock, and state overrides;
+- any-host 429 and per-host two-positive-queue-sample denial;
+- disabled marker and wrong-host denial;
+- dependency/identity fixed binding and partial-launch session/reservation/claim rollback;
+- symlink and non-regular lock and ledger denial.
+
+## No-action cutover packet
+
+No cutover is requested by this card. A later, separately authorized and reviewed change would have to satisfy every item below before any integration work:
+
+1. Obtain a distinct PASS review of the exact commit and shared evidence hashes.
+2. Keep the current hold active. Do not treat candidate review as hold clearance.
+3. Install the reviewed bytes only on chiap08 under a separate approved deployment change.
+4. Keep chiap01, chiap02, and chiap03 selectors incapable of GLM dispatch.
+5. Provision a chiap08-local lock and genesis ledger using reviewed exact bytes and restrictive ownership. Never bootstrap from a missing ledger.
+6. Bind read-only host and zai samplers that preserve the timestamp and identity contract. Do not add inference probes.
+7. Run the deterministic zero-network suite against installed bytes.
+8. Require a separate human-authorized hold generation before an inactive hold can be observed. This packet cannot provide that authorization.
+9. Reserve the entire 3-by-3 wave in one generation. If any validation fails, dispatch zero workers.
+10. Treat any 429, identity conflict, unreachable host, stale sample, malformed ledger, or process uncertainty as a new fail-closed stop condition.
+
+## Rollback
+
+The exact reverse patch and SHA-256 are published with the card evidence after the candidate commit is created. Applying that reverse patch to the exact candidate commit removes the module, tests, and this document. Since this candidate is not wired into runtime selection, rollback requires no gateway or provider mutation and leaves the active hold unchanged.
