@@ -1,0 +1,127 @@
+{
+  "actions_applied": [],
+  "artifact_identity": {
+    "blocked_review_reproduced": {
+      "computed_sha256": "54db47e5428ca3aa57024956811f651aea76f9a6324843aca9de80bf37b6211b",
+      "json_parse": "PASS",
+      "path": "/home/skuser01/.skcapstone/evidence/work/9651184f/partition-15-independent-review.json",
+      "reported_sha256": "54db47e5428ca3aa57024956811f651aea76f9a6324843aca9de80bf37b6211b",
+      "verdict": "BLOCKED"
+    },
+    "corrected_artifact": {
+      "byte_identity": "PASS",
+      "json_parse": "PASS",
+      "manifest_sha256": "aa5e138dccf6d4c904ab42d0c6e1b60a699048ae960517509a7410efca3d20d0",
+      "pr_computed_sha256": "aa5e138dccf6d4c904ab42d0c6e1b60a699048ae960517509a7410efca3d20d0",
+      "pr_path": "docs/reviews/artifacts/a743f500/partition-15-corrected-replacement.json",
+      "shared_computed_sha256": "aa5e138dccf6d4c904ab42d0c6e1b60a699048ae960517509a7410efca3d20d0",
+      "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-15-corrected-replacement.json"
+    },
+    "producer_manifest": {
+      "computed_sha256": "07ec3c58abf34eb4137d8586ec659fa381dacdf5117a9dca3eca84d41cb92433",
+      "json_parse": "PASS",
+      "pr_computed_sha256": "07ec3c58abf34eb4137d8586ec659fa381dacdf5117a9dca3eca84d41cb92433",
+      "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/manifest.json"
+    },
+    "producer_pr": {
+      "head_branch": "fix/a743f500-classification-reports",
+      "head_commit": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
+      "state_at_review": "OPEN",
+      "url": "https://github.com/smilinTux/skcapstone/pull/244"
+    },
+    "superseded_source_report": {
+      "computed_sha256": "6932d1c8a1f9b1b02a1fff2a61d34a747afcb83edd035c5718ec40515a4933fa",
+      "json_parse": "PASS",
+      "path": "/home/skuser01/.skcapstone/evidence/work/b9e6f7c1/fleet-unblock-partition-15.json",
+      "preserved_unchanged": true,
+      "reported_sha256": "6932d1c8a1f9b1b02a1fff2a61d34a747afcb83edd035c5718ec40515a4933fa"
+    }
+  },
+  "card_id": "6464e55d",
+  "correction_ledger_review": [
+    {
+      "after": "dependency",
+      "before": "card contradiction",
+      "card_id": "d83f3f3c",
+      "defect_type": "wrong_obstruction_class",
+      "direct_evidence_events": {
+        "blocked_on": {
+          "referent": "card:a060fa3d",
+          "type": "dependency"
+        },
+        "evidence_event_id": "62bf3ef3ad924cec9ff0607ebb1b6e25",
+        "joined_by_exact_card_id": true,
+        "path": "/home/skuser01/.skcapstone/cards/d83f3f3c/events/pi-codex-d83f3f3c@chiap08.jsonl",
+        "verdict": "BLOCKED",
+        "verdict_event_id": "88103cac960d413282af32981053a045"
+      },
+      "finding": "PASS. Direct outcome evidence supports dependency. Structural CardStore separately proves that a060fa3d is not a folded dependency. Neither fact creates an acceptance criterion contradiction. No verdict was inferred from lifecycle, labels, dependencies, or links.",
+      "referent": {
+        "card_id": "a060fa3d",
+        "core_path": "/home/skuser01/.skcapstone/cards/a060fa3d/core.json",
+        "exists": true
+      },
+      "structural_cardstore": {
+        "a060fa3d_is_folded_dependency": false,
+        "acceptance_criteria_checked": 2,
+        "core_path": "/home/skuser01/.skcapstone/cards/d83f3f3c/core.json",
+        "folded_dependency_ids": [
+          "b04de409"
+        ]
+      }
+    }
+  ],
+  "full_report_verification": {
+    "dependencies_used_as_verdict": false,
+    "evidence_record_mismatches": 0,
+    "join_key": "exact card_id",
+    "labels_used_as_verdict": false,
+    "lifecycle_used_as_verdict": false,
+    "links_used_as_verdict": false,
+    "nonterminal_records": 6,
+    "records": 55,
+    "separate_evidence_records_checked_against_exact_jsonl_lines": 553,
+    "structural_source_files_parsed": 203,
+    "structural_source_parse_failures": 0,
+    "verification": "PASS"
+  },
+  "ownership_and_dependencies": {
+    "agent": "pi-codex-6464e55d",
+    "card_dependencies": [],
+    "card_id": "6464e55d",
+    "dependency_gate": "PASS",
+    "ownership_verified": true
+  },
+  "remedy_review": {
+    "audited_card_repairs_executed": 0,
+    "exact_command": {
+      "append_only": true,
+      "authority": "authorized lifecycle actor after independent approval",
+      "card_id": "d83f3f3c",
+      "cli_syntax_verified": true,
+      "command": "skcapstone coord add-dependency d83f3f3c --dependency a060fa3d --reason 'Align the structural gate with direct BLOCKED dependency evidence after independent approval' --agent <authorized-actor>",
+      "execution_status": "PROPOSAL_ONLY_NOT_EXECUTED",
+      "preconditions": [
+        "a060fa3d remains the intended gate",
+        "the command accepts the dependency under current CardStore policy"
+      ]
+    },
+    "external_actions_executed": 0,
+    "narrative_remedies": "PASS. Each is conditional, append only, and requires separate authority before lifecycle, void, successor, or evidence action.",
+    "records_with_remedies": [
+      "00bb0a6a",
+      "440d2718",
+      "53af5fc1",
+      "59d92c25",
+      "bf904486",
+      "d83f3f3c"
+    ],
+    "verification": "PASS"
+  },
+  "repository_delivery": {
+    "branch": "chore/6464e55d-partition-15-review",
+    "pull_request": null
+  },
+  "schema": "skcapstone.fleet_unblock.corrected_replacement_review.v1",
+  "verdict": "PASS"
+}
