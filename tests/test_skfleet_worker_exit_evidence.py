@@ -7,6 +7,8 @@ import ast
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -404,6 +406,66 @@ def test_launcher_routes_every_lane_through_exit_wrapper() -> None:
     assert '"--claim-revision",claimed_revision' in source
     assert "inner=[" in source
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
+
+
+def test_detached_beat_cannot_strand_wrapper_after_immediate_child_exit(
+    tmp_path: Path,
+) -> None:
+    """The file heartbeat must not retain the wrapper's captured pipes."""
+    home = tmp_path / "home"
+    beat = home / ".skcapstone" / "fleet" / "beats" / "owner.json"
+    released = home / ".skcapstone" / "fleet" / "released-revision-1"
+    stdout = home / ".skcapstone" / "fleet" / "logs" / "deadbeef.log"
+    evidence = home / ".skcapstone" / "evidence" / "fleet-worker-exits"
+    beat.parent.mkdir(parents=True)
+    child = (
+        f"release_claim() {{ echo revision-1 > {released}; }}; "
+        f"beat() {{ while :; do echo running > {beat}; sleep 60; done; }}; "
+        "beat </dev/null >/dev/null 2>&1 & BEAT=$!; "
+        "stop_beat() { kill $BEAT 2>/dev/null || true; "
+        f"wait $BEAT 2>/dev/null || true; rm -f -- {beat}; }}; "
+        "trap 'stop_beat; release_claim' EXIT; exit 0"
+    )
+    command = [
+        sys.executable,
+        str(WRAPPER),
+        "--card",
+        "deadbeef",
+        "--owner",
+        "pi-codex-chiap08-deadbeef",
+        "--claim-revision",
+        "revision-1",
+        "--host",
+        "chiap08",
+        "--lane",
+        "codex",
+        "--model",
+        "sk-codex-mid",
+        "--stdout",
+        str(stdout),
+        "--evidence-dir",
+        str(evidence),
+        "--",
+        "bash",
+        "-lc",
+        child,
+    ]
+
+    started = time.monotonic()
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        timeout=3,
+    )
+
+    assert result.returncode == 0
+    assert time.monotonic() - started < 3
+    assert not beat.exists()
+    assert released.read_text(encoding="utf-8").strip() == "revision-1"
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "beat </dev/null >/dev/null 2>&1 & BEAT=$!;" in source
+    assert "--expected-claim-revision %s --agent %s" in source
 
 
 def test_idle_owner_projection_clears_active_worker(tmp_path, monkeypatch) -> None:
