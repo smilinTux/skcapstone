@@ -84,15 +84,25 @@ class ProcessDefinition(BaseModel):
         ids = {s.id for s in self.steps}
         if len(ids) != len(self.steps):
             raise ValueError("duplicate process step")
-        if any(s.source.source_id != self.source_id or s.source.source_hash != self.source_hash for s in self.steps):
-            raise ValueError("step source span is not bound to process source")
+        if len({b.id for b in self.branches}) != len(self.branches):
+            raise ValueError("duplicate process branch")
+        evidence = {e.key for e in self.required_evidence}
+        if len(evidence) != len(self.required_evidence):
+            raise ValueError("duplicate required evidence")
+        all_spans = (*self.source_spans, *(s.source for s in self.steps),
+                     *(b.source for b in self.branches),
+                     *(e.source for e in self.required_evidence))
+        if any(span.source_id != self.source_id or span.source_hash != self.source_hash
+               for span in all_spans):
+            raise ValueError("source span is not bound to process source")
+        if any(span.end < span.start for span in all_spans):
+            raise ValueError("invalid source span")
         if any(s.capability and s.capability not in self.capabilities for s in self.steps):
             raise ValueError("invalid capability")
         if any(s.tool and s.tool not in self.tools for s in self.steps):
             raise ValueError("invalid tool")
         if any(b.from_step not in ids or b.to_step not in ids for b in self.branches):
             raise ValueError("branch references unknown step")
-        evidence = {e.key for e in self.required_evidence}
         if any(k not in evidence for s in self.steps for k in s.required_evidence):
             raise ValueError("step references unknown required evidence")
         if any(s.deadline is None and "deadline" in self.unresolved_values for s in self.steps):
@@ -119,14 +129,23 @@ class ProcessDefinition(BaseModel):
 
 
 class ProcessInstance(BaseModel):
+    """An immutable execution bound to one exact definition digest."""
     model_config = ConfigDict(frozen=True, extra="forbid")
-    instance_id: str
-    process_id: str
-    definition_version: str
+    instance_id: str = Field(min_length=1)
+    process_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]*$")
+    definition_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     definition_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     values: Mapping[str, Any] = Field(default_factory=dict)
     evidence: Mapping[str, Any] = Field(default_factory=dict)
     unresolved_values: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "ProcessInstance":
+        if len(set(self.unresolved_values)) != len(self.unresolved_values):
+            raise ValueError("duplicate unresolved value")
+        if any(not name.strip() for name in self.unresolved_values):
+            raise ValueError("unresolved value name is empty")
+        return self
 
 
 class ProcessRegistry:
