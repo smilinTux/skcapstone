@@ -29,6 +29,8 @@ def main() -> int:
         python = venv / "bin/python"
         env = {
             **os.environ,
+            "CI": "true",
+            "GITHUB_ACTIONS": "true",
             "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ['PATH']}",
         }
         for variable in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT", "SK_DEFAULT_AGENT"):
