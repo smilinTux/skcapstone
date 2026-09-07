@@ -40,6 +40,12 @@ class DraftStore:
         self.events = self.root / "events.jsonl"
 
     def _append(self, event):
+        # Validate the existing log before extending it.  This keeps the
+        # append-only journal fail-closed if it was truncated or tampered with.
+        if self.events.exists():
+            for raw in self.events.read_text(encoding="utf-8").splitlines():
+                if raw.strip():
+                    json.loads(raw)
         line = _json_line({"ts": _now(), **event})
         with self.events.open("a", encoding="utf-8") as f:
             f.write(line); f.flush(); os.fsync(f.fileno())
@@ -55,8 +61,16 @@ class DraftStore:
         if not matter_id or not isinstance(content, str): raise DraftError("invalid draft")
         previous = [e for e in self._events() if e.get("matter_id")==matter_id and e["type"]=="draft_saved"]
         version = len(previous)+1
+        # A new version can never inherit approval for an older version.
+        # Record invalidation as its own lifecycle event, rather than mutating
+        # the old draft or treating its links as approval evidence.
+        old_approvals = {e.get("version") for e in self._events()
+                         if e.get("matter_id") == matter_id and e.get("type") == "approval"}
         self._append({"type":"draft_saved", "matter_id":matter_id, "version":version,
                       "content":content, "source_map":source_map or {}, "approval":approval})
+        if old_approvals:
+            self._append({"type":"approval_invalidated", "matter_id":matter_id,
+                          "superseded_by":version, "versions":sorted(old_approvals)})
         return version
 
     def load(self, matter_id, version=None):
@@ -79,7 +93,14 @@ class DraftStore:
         data = _pdf(body) if fmt=="pdf" else _docx(body)
         outdir=self.root / "artifacts" / matter_id / str(version); outdir.mkdir(parents=True, exist_ok=True)
         path=outdir / ("packet."+fmt); path.write_bytes(data)
-        manifest={"matter_id":matter_id,"version":version,"format":fmt,"template":template,"source_sha256":_hash(draft["content"].encode()),"artifact_sha256":_hash(data),"approved":bool(approvals),"retention_days":retention,"created_at":_now()}
+        source_map_bytes = json.dumps(draft.get("source_map", {}), sort_keys=True,
+                                      separators=(",", ":")).encode()
+        manifest={"matter_id":matter_id,"version":version,"format":fmt,"template":template,
+                  "source_sha256":_hash(draft["content"].encode()),
+                  "source_map_sha256":_hash(source_map_bytes),
+                  "artifact_sha256":_hash(data),"approved":bool(approvals),
+                  "retention_days":retention,"created_at":_now(),
+                  "lineage":{"draft_event":"draft_saved", "source_map":draft.get("source_map", {})}}
         mp=outdir/"manifest.json"; mp.write_text(json.dumps(manifest,sort_keys=True,indent=2)+"\n",encoding="utf-8")
         manifest["manifest_sha256"]=_hash(mp.read_bytes())
         self._append({"type":"artifact_created", **manifest, "path":str(path)})
