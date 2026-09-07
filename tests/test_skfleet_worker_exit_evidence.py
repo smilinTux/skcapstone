@@ -28,6 +28,9 @@ def _wrapper():
 def _scheduler_namespace() -> dict[str, object]:
     wanted = {
         "_latest_transport_failure_epoch",
+        "_latest_ineffective_exit",
+        "_ineffective_exit_logs",
+        "_ineffective_retry_held",
         "_transport_failure_logs",
         "_transport_failure_claims",
         "_transport_retry_held",
@@ -118,6 +121,134 @@ def test_zero_stdout_exit_records_bounded_redacted_claim_evidence(tmp_path: Path
     assert len(payload["stderr"]) <= module.STDERR_LIMIT
     assert payload["transport_failure"] == "connection_failure"
     assert payload["attempted_at"]
+
+
+def _args(tmp_path: Path, **changes: object) -> argparse.Namespace:
+    values = {
+        "card": "114e513a",
+        "owner": "pi-qwen-chiap01-114e513a",
+        "claim_revision": "revision-zero",
+        "host": "chiap01",
+        "lane": "qwen",
+        "model": "qwen-local",
+        "session": "qwen-auto-114e513a",
+        "started_at": 1_788_713_000,
+        "stdout": tmp_path / "114e513a-zero.log",
+        "evidence_dir": tmp_path / "worker-exits",
+    }
+    values.update(changes)
+    return argparse.Namespace(**values)
+
+
+def test_zero_exit_with_missing_startup_evidence_is_ineffective(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _wrapper()
+    args = _args(tmp_path)
+    args.stdout.write_bytes(b"")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert module.successful_completion(args, 0) == (
+        False,
+        "startup-evidence-missing",
+    )
+    module.record_terminal_exit(args, b"", 0, "ineffective", "startup-evidence-missing")
+
+    (record,) = args.evidence_dir.glob("*.json")
+    payload = json.loads(record.read_text(encoding="utf-8"))
+    assert payload["card_id"] == "114e513a"
+    assert payload["claim_revision"] == "revision-zero"
+    assert payload["child_exit_code"] == 0
+    assert payload["completion"] == "ineffective"
+    assert payload["completion_reason"] == "startup-evidence-missing"
+
+
+def test_exact_executable_evidence_preserves_zero_exit_success(tmp_path: Path) -> None:
+    module = _wrapper()
+    args = _args(tmp_path)
+    identity = {
+        "owner": args.owner,
+        "card_id": args.card,
+        "claim_revision": args.claim_revision,
+        "session_id": args.session,
+    }
+    key = (
+        __import__("hashlib")
+        .sha256(f"{args.owner}\0{args.claim_revision}\0{args.started_at}".encode())
+        .hexdigest()
+    )
+    directory = args.evidence_dir.parent / "worker-startup"
+    directory.mkdir()
+    (directory / f"{key}.json").write_text(
+        json.dumps(
+            {
+                **identity,
+                "state": "startup-ready",
+                "executable_evidence": {**identity, "kind": "executable-work"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert module.successful_completion(args, 0) == (True, "executable-evidence")
+
+
+def test_attributable_terminal_verdict_preserves_zero_exit_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _wrapper()
+    args = _args(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    events = tmp_path / ".skcapstone/coordination/card_events"
+    events.mkdir(parents=True)
+    (events / f"{args.owner}@{args.host}.jsonl").write_text(
+        json.dumps(
+            {
+                "action": "verdict",
+                "card_id": args.card,
+                "writer": args.owner,
+                "verdict": "BLOCKED",
+                "ts": "2026-09-07T06:00:01+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert module.successful_completion(args, 0) == (True, "terminal-verdict")
+
+
+def test_foreign_or_old_verdict_cannot_bless_zero_exit(tmp_path: Path, monkeypatch) -> None:
+    module = _wrapper()
+    args = _args(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    events = tmp_path / ".skcapstone/coordination/card_events"
+    events.mkdir(parents=True)
+    (events / f"{args.host}.jsonl").write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {
+                    "action": "verdict",
+                    "card_id": args.card,
+                    "writer": "another-worker",
+                    "verdict": "PASS",
+                    "ts": "2026-09-07T06:00:01+00:00",
+                },
+                {
+                    "action": "verdict",
+                    "card_id": args.card,
+                    "writer": args.owner,
+                    "verdict": "PASS",
+                    "ts": "2026-09-01T00:00:00+00:00",
+                },
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert module.successful_completion(args, 0)[0] is False
 
 
 def test_substantive_stdout_does_not_create_terminal_record(tmp_path: Path) -> None:
@@ -316,6 +447,67 @@ def test_shared_attempts_count_transport_evidence_for_another_claim(
         }
     )
     assert namespace["_shared_launch_attempts"](card) == 1
+
+
+def test_114e513a_zero_output_cycle_backs_off_then_exhausts_once_per_claim(
+    tmp_path: Path,
+) -> None:
+    namespace = _scheduler_namespace()
+    card = "114e513a"
+    evidence = tmp_path / "worker-exits"
+    rotations = tmp_path / "rotations"
+    logs = tmp_path / "logs"
+    evidence.mkdir()
+    logs.mkdir()
+    rotation = rotations / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    rotation.mkdir(parents=True)
+    launches = [
+        ("revision-zero-1", "114e513a-one.log"),
+        ("revision-zero-2", "114e513a-two.log"),
+    ]
+    (rotation / "actions.log").write_text(
+        "".join(
+            f"LAUNCHED|chiap01|qwen-auto-{card}|{card}|lane=qwen|model=model|"
+            f"owner=pi-qwen-chiap01-{card}|claim_revision={revision}\n"
+            for revision, _log in launches
+        ),
+        encoding="utf-8",
+    )
+    now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+    for index, (revision, log) in enumerate(launches):
+        (logs / log).write_bytes(b"")
+        (evidence / f"{card}-{index}.json").write_text(
+            json.dumps(
+                {
+                    "attempted_at": now,
+                    "card_id": card,
+                    "claim_revision": revision,
+                    "completion": "ineffective",
+                    "host": "chiap01",
+                    "lane": "qwen",
+                    "owner": f"pi-qwen-chiap01-{card}",
+                    "stdout_log": log,
+                }
+            ),
+            encoding="utf-8",
+        )
+    namespace.update(
+        {
+            "_WORKER_EXIT_DIR": str(evidence),
+            "_ROTATION_EVID": str(rotations),
+            "_LOGDIR": str(logs),
+            "_LAUNCH_TTL_H": 6,
+            "_TRANSPORT_RETRY_COOLDOWN_S": 60,
+            "_shared_launch_cache": None,
+            "acts": lambda _cid: set(),
+        }
+    )
+
+    assert namespace["_ineffective_retry_held"](card) is True
+    assert namespace["launch_attempts"](card) == 2
+    assert namespace["unclaimable"](card) is True
+    source = ROTATE.read_text(encoding="utf-8")
+    assert 'ineffective_exit = globals().get("_latest_ineffective_exit")' in source
 
 
 def test_launcher_routes_every_lane_through_exit_wrapper() -> None:

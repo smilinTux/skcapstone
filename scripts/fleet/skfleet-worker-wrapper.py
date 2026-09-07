@@ -157,6 +157,7 @@ def monitor_startup(
 
 
 STDERR_LIMIT = 2048
+EVENT_TAIL_LIMIT = 256 * 1024
 TRANSPORT_PATTERNS = {
     "rate_limited": re.compile(r"(?:\b429\b|rate.?limit)", re.I),
     "model_owner_backend_down": re.compile(r"model_owner_backend_down", re.I),
@@ -266,14 +267,101 @@ def idle_owner_projection(owner: str) -> None:
             pass
 
 
-def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> None:
+def _startup_report(args: argparse.Namespace) -> dict[str, object] | None:
+    """Return exact-generation startup evidence, if it is valid."""
+    key = hashlib.sha256(
+        f"{args.owner}\0{args.claim_revision}\0{args.started_at}".encode()
+    ).hexdigest()
+    path = args.evidence_dir.parent / "worker-startup" / f"{key}.json"
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return report if isinstance(report, dict) else None
+
+
+def _terminal_verdict_seen(args: argparse.Namespace) -> bool:
+    """Find a bounded, attributable terminal verdict for this worker run."""
+    directory = Path.home() / ".skcapstone" / "coordination" / "card_events"
+    paths = {
+        directory / f"{args.owner}@{args.host}.jsonl",
+        directory / f"{args.owner}.jsonl",
+        directory / f"{args.host}.jsonl",
+    }
+    for path in paths:
+        try:
+            with path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - EVENT_TAIL_LIMIT))
+                data = handle.read(EVENT_TAIL_LIMIT)
+        except OSError:
+            continue
+        if size > EVENT_TAIL_LIMIT:
+            data = data.partition(b"\n")[2]
+        for line in data.splitlines():
+            try:
+                event = json.loads(line)
+                observed_at = datetime.datetime.fromisoformat(
+                    str(event.get("ts") or "").replace("Z", "+00:00")
+                )
+            except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
+                continue
+            if observed_at.tzinfo is None:
+                continue
+            stamp = observed_at.timestamp()
+            verdict = str(event.get("verdict") or "").strip().upper()
+            if (
+                event.get("card_id") == args.card
+                and event.get("writer") == args.owner
+                and event.get("action") == "verdict"
+                and stamp >= args.started_at
+                and re.match(r"^(?:PASS(?:_FOR_REVIEW)?|FAIL|BLOCKED)(?:\b|:)", verdict)
+            ):
+                return True
+    return False
+
+
+def successful_completion(args: argparse.Namespace, rc: int) -> tuple[bool, str]:
+    """Require card-scoped evidence before accepting a zero child exit."""
+    if rc != 0:
+        return False, "child-failed"
+    report = _startup_report(args)
+    if report:
+        identity = {
+            "owner": args.owner,
+            "card_id": args.card,
+            "claim_revision": args.claim_revision,
+            "session_id": args.session,
+        }
+        evidence = report.get("executable_evidence")
+        if (
+            report.get("state") == "startup-ready"
+            and all(report.get(key) == value for key, value in identity.items())
+            and isinstance(evidence, dict)
+            and evidence.get("kind") == "executable-work"
+            and all(evidence.get(key) == value for key, value in identity.items())
+        ):
+            return True, "executable-evidence"
+    if _terminal_verdict_seen(args):
+        return True, "terminal-verdict"
+    return False, str((report or {}).get("state") or "startup-evidence-missing")
+
+
+def record_terminal_exit(
+    args: argparse.Namespace,
+    stderr: bytes,
+    rc: int,
+    completion: str | None = None,
+    completion_reason: str | None = None,
+) -> None:
     """Create one immutable, claim-scoped terminal evidence record."""
     stdout_size = args.stdout.stat().st_size
     stdout_tail = b""
     if stdout_size <= STDERR_LIMIT:
         stdout_tail = args.stdout.read_bytes()
     failure = classify_pre_agent_failure(stdout_tail, stderr, rc)
-    if stdout_size and not failure:
+    if stdout_size and not failure and completion != "ineffective":
         return
     attempted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     redacted = redact_stderr(stderr)
@@ -282,6 +370,8 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
         "card_id": args.card,
         "child_exit_code": rc,
         "claim_revision": args.claim_revision,
+        "completion": completion,
+        "completion_reason": completion_reason,
         "host": args.host,
         "lane": args.lane,
         "model": args.model,
@@ -374,13 +464,21 @@ def main() -> int:
                 startup_thread.start()
             _, stderr = child.communicate()
         sys.stderr.buffer.write(stderr)
-        record_terminal_exit(args, stderr, child.returncode)
+        startup_stop.set()
+        if startup_thread:
+            startup_thread.join(timeout=6)
+        successful, reason = successful_completion(args, child.returncode)
+        effective_rc = child.returncode if child.returncode != 0 or successful else 75
+        completion = (
+            "successful" if successful else ("ineffective" if child.returncode == 0 else "failed")
+        )
+        record_terminal_exit(args, stderr, child.returncode, completion, reason)
         emit_work_mail(
             args,
-            "work.complete" if child.returncode == 0 else "work.blocked",
-            f"phase=finished exit_code={child.returncode}",
+            "work.complete" if successful else "work.blocked",
+            f"phase=finished exit_code={effective_rc} completion={completion} reason={reason}",
         )
-        return child.returncode
+        return effective_rc
     finally:
         startup_stop.set()
         if startup_thread:

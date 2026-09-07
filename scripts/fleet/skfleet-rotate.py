@@ -1878,6 +1878,9 @@ def blocked_backoff(cid):
     # fresh structured failure and starts a new bounded interval.
     if _transport_retry_held(cid):
         return True
+    ineffective_retry = globals().get("_ineffective_retry_held")
+    if callable(ineffective_retry) and ineffective_retry(cid):
+        return True
     if launch_attempts(cid) >= 3 and lifecycle_state(cid)!="complete":
         # ...unless the world changed since the last attempt. Without this the
         # counter is a one-way door: nothing resets it, so a card parked here is
@@ -2126,15 +2129,52 @@ def _transport_failure_logs(cid):
             continue
     return logs
 
+def _ineffective_exit_logs(cid):
+    """Return logs whose exact worker generation exited zero without evidence."""
+    logs = set()
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if (isinstance(event, dict) and event.get("card_id") == cid
+                    and event.get("completion") == "ineffective"):
+                logs.add(str(event.get("stdout_log") or ""))
+        except (OSError, TypeError, ValueError):
+            continue
+    return logs
+
+def _latest_ineffective_exit(cid):
+    """Return the newest bounded ineffective worker record for a card."""
+    latest = None
+    latest_at = 0.0
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if not isinstance(event, dict):
+                continue
+            attempted_at = _ts_epoch(event.get("attempted_at"))
+            if (event.get("card_id") == cid and event.get("completion") == "ineffective"
+                    and attempted_at > latest_at):
+                latest, latest_at = event, attempted_at
+        except (OSError, TypeError, ValueError):
+            continue
+    return latest
+
 def _transport_retry_held(cid):
     """Hold a failed transport until the bounded recovery interval opens."""
     failed_at = _latest_transport_failure_epoch(cid)
+    return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
+
+def _ineffective_retry_held(cid):
+    """Prevent an evidence-free exit from immediately reclaiming the card."""
+    event = _latest_ineffective_exit(cid)
+    failed_at = _ts_epoch(event.get("attempted_at")) if event else 0
     return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
 
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
     n = 0
     transport_logs = _transport_failure_logs(cid)
+    ineffective_logs = _ineffective_exit_logs(cid)
     cutoff = time.time() - _LAUNCH_TTL_H * 3600
     try:
         for f in os.listdir(_LOGDIR):
@@ -2147,7 +2187,7 @@ def _reporting_launches(cid):
                 continue
             if stt.st_mtime < cutoff:
                 continue          # aged out: exclusion self-heals
-            if stt.st_size == 0:
+            if stt.st_size == 0 and f not in ineffective_logs:
                 continue          # interrupted, never reported: not evidence
             if f in transport_logs:
                 continue          # pre-agent transport failure: not card work
@@ -3889,6 +3929,9 @@ def needs_escalation(cid, core=None, labels=None):
         try: labels=folded_labels(cid, core or {})
         except Exception: labels=[]
     if _ESCALATE_LABEL in {str(x).strip().lower() for x in (labels or [])}:
+        return True
+    ineffective_exit = globals().get("_latest_ineffective_exit")
+    if callable(ineffective_exit) and ineffective_exit(cid):
         return True
     try:
         _ts, _val = _load_outcomes().get(cid, (None, None))
