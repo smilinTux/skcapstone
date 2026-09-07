@@ -166,6 +166,9 @@ class ProposalResponse(BaseModel):
     status: str
     version: int
     receipt_id: Optional[str] = None
+    event_cursor: Optional[str] = Field(
+        None, description="Cursor for resuming the resulting event stream."
+    )
 
 
 class JobState(BaseModel):
@@ -763,6 +766,14 @@ app.openapi = _custom_openapi  # type: ignore[method-assign]
 # ── Agent job contract API ────────────────────────────────────────────────────
 
 
+_CONTRACT_ERROR_RESPONSES = {
+    401: {"description": "Authentication or scope authorization failed."},
+    409: {"description": "Expected version is stale or idempotency key conflicts."},
+    422: {"description": "Request validation failed."},
+    501: {"description": "The daemon job provider is unavailable."},
+}
+
+
 def _contract_unavailable(operation: str) -> HTTPException:
     return HTTPException(status_code=501, detail=ContractError(
         code="CONTRACT_BACKEND_UNAVAILABLE",
@@ -771,7 +782,13 @@ def _contract_unavailable(operation: str) -> HTTPException:
     ).model_dump())
 
 
-@app.get("/api/v1/actions/eligible", response_model=EligibleActionsResponse, tags=["Agent jobs"])
+@app.get(
+    "/api/v1/actions/eligible",
+    response_model=EligibleActionsResponse,
+    responses=_CONTRACT_ERROR_RESPONSES,
+    summary="Discover actions eligible for a purpose and capability",
+    tags=["Agent jobs"],
+)
 async def list_eligible_actions(
     purpose: str = Query(..., min_length=1, max_length=256),
     capability: str = Query(..., min_length=1, max_length=256),
@@ -782,7 +799,13 @@ async def list_eligible_actions(
     raise _contract_unavailable("eligible action discovery")
 
 
-@app.post("/api/v1/proposals", response_model=ProposalResponse, tags=["Agent jobs"])
+@app.post(
+    "/api/v1/proposals",
+    response_model=ProposalResponse,
+    responses=_CONTRACT_ERROR_RESPONSES,
+    summary="Create an idempotent action proposal",
+    tags=["Agent jobs"],
+)
 async def create_proposal(
     body: ProposalRequest,
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=256),
@@ -791,7 +814,13 @@ async def create_proposal(
     raise _contract_unavailable("proposal creation")
 
 
-@app.get("/api/v1/jobs", response_model=JobStateResponse, tags=["Agent jobs"])
+@app.get(
+    "/api/v1/jobs",
+    response_model=JobStateResponse,
+    responses=_CONTRACT_ERROR_RESPONSES,
+    summary="List job state with cursor and event resumption",
+    tags=["Agent jobs"],
+)
 async def list_jobs(
     cursor: Optional[str] = Query(None, max_length=512),
     limit: int = Query(50, ge=1, le=100),
@@ -801,7 +830,13 @@ async def list_jobs(
     raise _contract_unavailable("job state listing")
 
 
-@app.post("/api/v1/jobs/{job_id}/cancel", response_model=ReceiptResponse, tags=["Agent jobs"])
+@app.post(
+    "/api/v1/jobs/{job_id}/cancel",
+    response_model=ReceiptResponse,
+    responses=_CONTRACT_ERROR_RESPONSES,
+    summary="Cancel a job using an expected version",
+    tags=["Agent jobs"],
+)
 async def cancel_job(
     body: CancelRequest,
     job_id: str = FPath(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"),
@@ -811,7 +846,13 @@ async def cancel_job(
     raise _contract_unavailable("job cancellation")
 
 
-@app.get("/api/v1/jobs/{job_id}/receipt", response_model=ReceiptResponse, tags=["Agent jobs"])
+@app.get(
+    "/api/v1/jobs/{job_id}/receipt",
+    response_model=ReceiptResponse,
+    responses=_CONTRACT_ERROR_RESPONSES,
+    summary="Retrieve a job receipt and artifact identity",
+    tags=["Agent jobs"],
+)
 async def get_job_receipt(
     job_id: str = FPath(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"),
     _key: Optional[str] = Depends(_check_api_key),
