@@ -54,7 +54,7 @@ def _payload(result) -> dict:
 
 
 def test_epic_is_not_false_eligible(tmp_path):
-    _card(tmp_path, "e11ec001", title="An epic", kind="epic")
+    _card(tmp_path, "e11ec001", title="An epic", labels=("sprint-container",))
     payload = _payload(_run(tmp_path, "e11ec001"))
     assert payload["eligible"] is False
     assert payload["primary_reason"] == "not_claimable"
