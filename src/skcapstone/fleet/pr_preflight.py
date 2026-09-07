@@ -24,6 +24,9 @@ class CheckResult:
     """One redacted local check result."""
 
     name: str
+    environment: str
+    status: str
+    conclusion: str
     exit_code: int
     elapsed_ms: int
 
@@ -84,14 +87,17 @@ def _commands(
     version = subprocess.run(
         [resolved, "version"], capture_output=True, text=True, check=False
     ).stdout.strip()
-    if "8.28.0" not in version:
+    if version.removeprefix("v") != "8.28.0":
         raise PreflightError("gitleaks binary must be exact workflow version 8.28.0")
     return (
-        ("diff", ("git", "diff", "--check", f"{base}...{head}")),
-        ("black", ("uvx", "--from", "black==26.5.1", "black", "--check", "src/", "tests/")),
-        ("ruff", ("uvx", "--from", "ruff==0.15.4", "ruff", "check", "src/")),
+        ("scope/diff", ("git", "diff", "--check", f"{base}...{head}")),
         (
-            "docs",
+            "lint/black-26.5.1",
+            ("uvx", "--from", "black==26.5.1", "black", "--check", "src/", "tests/"),
+        ),
+        ("lint/ruff-0.15.4", ("uvx", "--from", "ruff==0.15.4", "ruff", "check", "src/")),
+        (
+            "docs/changelog",
             (
                 "python",
                 str(docs_check),
@@ -108,7 +114,7 @@ def _commands(
             ),
         ),
         (
-            "gitleaks",
+            "secret/gitleaks-8.28.0",
             (
                 resolved,
                 "detect",
@@ -126,9 +132,9 @@ def _commands(
                 "1",
             ),
         ),
-        ("shim-imports", ("bash", "scripts/check-no-shim-imports.sh")),
+        ("imports/shims", ("bash", "scripts/check-no-shim-imports.sh")),
         (
-            "tests",
+            "unit/python-current",
             (
                 "python",
                 "-m",
@@ -180,7 +186,16 @@ def run_preflight(
         for name, command in _commands(repo, resolved_base, resolved_head, changed.name):
             started = time.monotonic()
             code = runner(command, repo)
-            results.append(CheckResult(name, code, round((time.monotonic() - started) * 1000)))
+            results.append(
+                CheckResult(
+                    name=name,
+                    environment=name.split("/", 1)[-1],
+                    status="completed",
+                    conclusion="success" if code == 0 else "failure",
+                    exit_code=code,
+                    elapsed_ms=round((time.monotonic() - started) * 1000),
+                )
+            )
             if code:
                 break
     state = (
@@ -220,6 +235,7 @@ def write_receipt(receipt: PreflightReceipt, path: Path) -> None:
     with path.open("x", encoding="utf-8") as handle:
         json.dump(asdict(receipt), handle, sort_keys=True, separators=(",", ":"))
         handle.write("\n")
+    path.chmod(0o444)
 
 
 def main() -> int:

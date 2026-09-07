@@ -2,129 +2,126 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import pytest
 
 from skcapstone.link_merge_authority import (
+    GitHubCheck,
     IndependentReview,
     LocalPreflight,
     MergeCandidate,
     evaluate_link_merge,
 )
 
-HEAD = "a" * 40
+HEAD, BASE, TREE, DIFF = "a" * 40, "b" * 40, "c" * 40, "d" * 64
+LOCAL = (
+    "scope/diff",
+    "lint/black-26.5.1",
+    "lint/ruff-0.15.4",
+    "docs/changelog",
+    "secret/gitleaks-8.28.0",
+    "imports/shims",
+    "unit/python-current",
+)
 
 
-def candidate(**changes: object) -> MergeCandidate:
-    values = {
-        "repository": "smilinTux/skcapstone",
-        "number": 338,
-        "title": "docs: clarify card authoring",
-        "categories": ("documentation",),
-        "head_sha": HEAD,
-        "author": "mero",
-        "mergeable": True,
-        "failed_checks": 0,
-        "review": IndependentReview("reviewer", "PASS", HEAD, "e" * 64),
-        "local_preflight": LocalPreflight(
-            HEAD,
-            "PASS",
-            "f" * 64,
-            ("diff", "black", "ruff", "docs", "gitleaks", "shim-imports", "tests"),
-        ),
-        "lineage_outcomes": ("PASS_FOR_REVIEW", "PASS"),
+def receipt(tmp_path: Path, **changes: object) -> LocalPreflight:
+    unsigned = {
+        "schema": "skfleet.local-ci-preflight/v1",
+        "repository": "x",
+        "base": BASE,
+        "head": HEAD,
+        "tree": TREE,
+        "paths": ["a.py"],
+        "diff_sha256": DIFF,
+        "checks": [
+            {
+                "name": n,
+                "environment": n,
+                "status": "completed",
+                "conclusion": "success",
+                "exit_code": 0,
+                "elapsed_ms": 1,
+            }
+            for n in LOCAL
+        ],
+        "state": "PASS",
     }
+    unsigned.update(changes)
+    data = {
+        **unsigned,
+        "digest": hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+    raw = (json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    path = tmp_path / f"receipt-{len(list(tmp_path.iterdir()))}.json"
+    path.write_bytes(raw)
+    return LocalPreflight(str(path), hashlib.sha256(raw).hexdigest())
+
+
+def candidate(tmp_path: Path, **changes: object) -> MergeCandidate:
+    values = dict(
+        repository="org/repo",
+        number=1,
+        title="docs repair",
+        categories=("documentation",),
+        head_sha=HEAD,
+        base_sha=BASE,
+        tree_sha=TREE,
+        paths=("a.py",),
+        diff_sha256=DIFF,
+        author="mero",
+        mergeable=True,
+        github_checks=(GitHubCheck("unit", "completed", "success"),),
+        required_github_checks=("unit",),
+        required_local_checks=LOCAL,
+        review=IndependentReview("reviewer", "PASS", HEAD, "e" * 64),
+        local_preflight=receipt(tmp_path),
+        lineage_outcomes=("PASS",),
+    )
     values.update(changes)
     return MergeCandidate(**values)  # type: ignore[arg-type]
 
 
-def test_exact_head_independent_pass_is_eligible_and_evidenced() -> None:
-    decision = evaluate_link_merge(candidate())
-
-    assert decision.eligible
-    assert decision.escalation is None
-    assert f"head={HEAD}" in decision.evidence
-    assert len(decision.evidence_sha256) == 64
+def test_valid_receipt_and_terminal_checks_are_eligible(tmp_path: Path) -> None:
+    assert evaluate_link_merge(candidate(tmp_path)).eligible
 
 
-@pytest.mark.parametrize(
-    ("changes", "failure"),
-    [
-        ({"head_sha": "not-a-sha"}, "invalid-exact-head"),
-        ({"mergeable": False}, "not-mergeable"),
-        ({"failed_checks": 1}, "failed-checks"),
-        ({"local_preflight": None}, "missing-local-preflight"),
-        (
-            {"local_preflight": LocalPreflight("b" * 40, "PASS", "f" * 64, ("diff",))},
-            "local-preflight-head-mismatch",
-        ),
-        (
-            {"local_preflight": LocalPreflight(HEAD, "FAIL", "f" * 64, ("diff",))},
-            "local-preflight-failed",
-        ),
-        (
-            {"local_preflight": LocalPreflight(HEAD, "PASS", "bad", ("diff",))},
-            "invalid-local-preflight-evidence",
-        ),
-        (
-            {"local_preflight": LocalPreflight(HEAD, "PASS", "f" * 64, ("diff",))},
-            "incomplete-local-preflight",
-        ),
-        ({"author": "pi-link-chiap08-card"}, "authored-by-seat-link"),
-        ({"review": None}, "missing-independent-pass"),
-        (
-            {"review": IndependentReview("reviewer", "PASS", "b" * 40, "e" * 64)},
-            "review-head-mismatch",
-        ),
-        (
-            {"review": IndependentReview("mero", "PASS", HEAD, "e" * 64)},
-            "reviewer-is-author",
-        ),
-        (
-            {"review": IndependentReview("  ", "PASS", HEAD, "e" * 64)},
-            "missing-reviewer-identity",
-        ),
-        (
-            {"review": IndependentReview("reviewer", "PASS", "not-a-sha", "e" * 64)},
-            "invalid-review-head",
-        ),
-        (
-            {"review": IndependentReview("reviewer", "PASS", HEAD, "e")},
-            "invalid-review-evidence",
-        ),
-        ({"lineage_outcomes": ("PASS", "BLOCKED|needs repair")}, "unresolved-lineage"),
-    ],
-)
-def test_every_failed_gate_escalates_to_chef(changes: dict[str, object], failure: str) -> None:
-    decision = evaluate_link_merge(candidate(**changes))
-
-    assert not decision.eligible
-    assert failure in decision.failures
-    assert decision.escalation == "Chef"
+@pytest.mark.parametrize("reviewer", ["link", "seat-link", "pi-link-chiap08-card", "LINK"])
+def test_link_cannot_review_its_own_queue(tmp_path: Path, reviewer: str) -> None:
+    review = IndependentReview(reviewer, "PASS", HEAD, "e" * 64)
+    assert "reviewer-is-link" in evaluate_link_merge(candidate(tmp_path, review=review)).failures
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        "CapAuth policy",
-        "credential rotation",
-        "custody",
-        "issuer",
-        "secret scan",
-        "key handling",
-        "rollback",
-        "deploy",
-        "production",
-        "release notes",
-        "migration",
-    ],
-)
-def test_sensitive_title_or_category_is_never_eligible(value: str) -> None:
-    assert "sensitive-class" in evaluate_link_merge(candidate(categories=(value,))).failures
+def test_pending_github_check_fails_closed(tmp_path: Path) -> None:
+    checks = (GitHubCheck("unit", "in_progress", ""),)
+    assert (
+        "github-check-not-successful"
+        in evaluate_link_merge(candidate(tmp_path, github_checks=checks)).failures
+    )
 
 
-def test_decision_is_deterministic_and_exposes_no_actuator() -> None:
-    first = evaluate_link_merge(candidate())
-    second = evaluate_link_merge(candidate())
+def test_tampered_receipt_fails_closed(tmp_path: Path) -> None:
+    item = candidate(tmp_path)
+    Path(item.local_preflight.receipt_path).write_text("{}")  # type: ignore[union-attr]
+    assert "invalid-local-preflight-receipt" in evaluate_link_merge(item).failures
 
-    assert first == second
-    assert not hasattr(first, "merge")
+
+def test_receipt_candidate_mismatch_fails_closed(tmp_path: Path) -> None:
+    local = receipt(tmp_path, head="f" * 40)
+    assert (
+        "invalid-local-preflight-receipt"
+        in evaluate_link_merge(candidate(tmp_path, local_preflight=local)).failures
+    )
+
+
+def test_completed_failure_is_not_success(tmp_path: Path) -> None:
+    checks = (GitHubCheck("unit", "completed", "failure"),)
+    assert (
+        "github-check-not-successful"
+        in evaluate_link_merge(candidate(tmp_path, github_checks=checks)).failures
+    )

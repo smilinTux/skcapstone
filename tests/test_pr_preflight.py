@@ -59,13 +59,13 @@ def test_pass_receipt_binds_exact_head_paths_and_all_checks(candidate: tuple[Pat
     assert receipt.head == git(repo, "rev-parse", "HEAD")
     assert receipt.paths == ("src/app.py",)
     assert [check.name for check in receipt.checks] == [
-        "diff",
-        "black",
-        "ruff",
-        "docs",
-        "gitleaks",
-        "shim-imports",
-        "tests",
+        "scope/diff",
+        "lint/black-26.5.1",
+        "lint/ruff-0.15.4",
+        "docs/changelog",
+        "secret/gitleaks-8.28.0",
+        "imports/shims",
+        "unit/python-current",
     ]
     assert any("--redact" in command for command in commands)
     assert len(receipt.digest) == 64
@@ -82,7 +82,7 @@ def test_failure_stops_later_checks(candidate: tuple[Path, str]) -> None:
 
     receipt = run_preflight(repo, base=base, runner=runner)
     assert receipt.state == "FAIL"
-    assert [check.name for check in receipt.checks] == ["diff", "black"]
+    assert [check.name for check in receipt.checks] == ["scope/diff", "lint/black-26.5.1"]
 
 
 def test_path_drift_and_dirty_tree_fail_closed(candidate: tuple[Path, str]) -> None:
@@ -103,7 +103,11 @@ def test_receipt_is_canonical_immutable_and_contains_no_check_output(
     write_receipt(receipt, path)
     data = json.loads(path.read_text())
     assert data["digest"] == receipt.digest
-    assert all(set(item) == {"name", "exit_code", "elapsed_ms"} for item in data["checks"])
+    assert all(
+        set(item) == {"name", "environment", "status", "conclusion", "exit_code", "elapsed_ms"}
+        for item in data["checks"]
+    )
+    assert path.stat().st_mode & 0o777 == 0o444
     with pytest.raises(FileExistsError):
         write_receipt(receipt, path)
 
@@ -122,3 +126,11 @@ def test_pytest_matches_clean_ci_without_host_global_pi(
     monkeypatch.setattr(pr_preflight.subprocess, "run", fake_run)
     assert pr_preflight._run(("python", "-m", "pytest", "tests/"), tmp_path) == 0
     assert seen["env"]["PATH"] == "/tools:/usr/bin"  # type: ignore[index]
+
+
+def test_gitleaks_version_requires_exact_equality(candidate: tuple[Path, str]) -> None:
+    repo, base = candidate
+    fake = Path(pr_preflight.os.environ["SKCAPSTONE_GITLEAKS_8_28_BIN"])
+    fake.write_text("#!/bin/sh\necho 18.28.0-malicious\n")
+    with pytest.raises(PreflightError, match="exact workflow version"):
+        run_preflight(repo, base=base, runner=lambda *_: 0)
