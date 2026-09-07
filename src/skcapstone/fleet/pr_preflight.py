@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -58,7 +59,9 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _commands(repo: Path, base: str, head: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+def _commands(
+    repo: Path, base: str, head: str, changed_files: str
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """Return commands mirrored from SKCapstone's checked-in workflows."""
     standards = Path(os.environ.get("SK_STANDARDS_HOME", str(repo.parent / "sk-standards")))
     docs_check = standards / "scripts/docs_check.py"
@@ -84,8 +87,8 @@ def _commands(repo: Path, base: str, head: str) -> tuple[tuple[str, tuple[str, .
                 str(docs_check),
                 "--repo",
                 str(repo),
-                "--base-ref",
-                base,
+                "--changed-files",
+                changed_files,
                 "--tier",
                 "1",
                 "--tier",
@@ -161,12 +164,15 @@ def run_preflight(
         raise PreflightError("candidate path set differs from the exact expected path set")
 
     results: list[CheckResult] = []
-    for name, command in _commands(repo, resolved_base, resolved_head):
-        started = time.monotonic()
-        code = runner(command, repo)
-        results.append(CheckResult(name, code, round((time.monotonic() - started) * 1000)))
-        if code:
-            break
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as changed:
+        changed.write("".join(f"{path}\n" for path in paths))
+        changed.flush()
+        for name, command in _commands(repo, resolved_base, resolved_head, changed.name):
+            started = time.monotonic()
+            code = runner(command, repo)
+            results.append(CheckResult(name, code, round((time.monotonic() - started) * 1000)))
+            if code:
+                break
     state = (
         "PASS" if len(results) == 7 and all(item.exit_code == 0 for item in results) else "FAIL"
     )
