@@ -1,0 +1,185 @@
+{
+  "acceptance": {
+    "ac1": "PASS: v2, v1, original source report, original blocked review, and the remedy-contract blocking review were recovered as immutable hashed bytes and parsed. PR 274, the shared v2 artifact, sidecar, and manifest-v2 agree on the v2 SHA-256. All five correction ledger entries reproduce from the cited bytes.",
+    "ac2": "PASS: structural state and direct evidence remain separate and are joined only on exact card_id. Direct BLOCKED evidence for 9535bc80 and f10a0e73 was verified from cited JSONL lines. No verdict was derived from lifecycle, links, labels, dependency completion, or terminal state.",
+    "ac3": "PASS: all five nonempty remedy arrays contain explicit NO_ACTION_PROPOSED objects with null commands. No command, audited-card repair, repository-external action, or external action was executed."
+  },
+  "actions_applied": [],
+  "attempted": [
+    "Verified the effective append-only claim assigns eb73bdf4 to pi-codex-chiap03-eb73bdf4 after the prior GLM claim was released.",
+    "Fetched PR 274 head f21e893e7d6f29ab396c890bd11e3e9e0f627c60 and compared its v2 blob byte for byte with the shared immutable artifact.",
+    "Fetched PR 245 head dff7236 and recovered the cited blocking review bytes after its shared path had later been overwritten. The recovered blob matches the cited SHA-256 24728ed7e976910860d018379d6d88bec756edd309b79c679844df804ad16f09.",
+    "Hashed and parsed the v2, v1, original audit, original blocked review, blocking review, manifest-v2, and correction evidence. Parsed every line of all 148 core JSON and event JSONL source files named by the 40 v2 records.",
+    "Compared v1 and v2 and verified that only records 0994c010, 5236382f, and 65e00fd9 changed, each replacing unsupported prose with explicit no action. Verified the two preserved evidence corrections for 9535bc80 and f10a0e73.",
+    "Inspected every remedy without executing a command or applying an audited-card or external action."
+  ],
+  "audited_card_repair_applied": false,
+  "correction_ledger_verification": [
+    {
+      "card_id": "9535bc80",
+      "defect_type": "omitted_verdict",
+      "direct_evidence": {
+        "artifact_sha256": "0890f14e099073207558ca2060f8de1cfd6234c096f7f612ad9ec2de8743b14b",
+        "file_sha256": "7eb1a623361da04347a0ef575d8b3ecdf3a9f292f4bbef7555631b6d14b70b52",
+        "line": 1,
+        "path": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl",
+        "verdict": "BLOCKED"
+      },
+      "result": "PASS"
+    },
+    {
+      "card_id": "f10a0e73",
+      "defect_type": "omitted_verdicts_and_unsafe_transition",
+      "direct_evidence": {
+        "events": [
+          {
+            "artifact_sha256": "6df545076b6a1750ed5249622cc4550b52918cf1b06621a99afe84e6d11b64b0",
+            "blocked_on": {
+              "referent": "ac:2",
+              "type": "card"
+            },
+            "line": 13,
+            "verdict": "BLOCKED"
+          },
+          {
+            "artifact_sha256": "f1e5b3294fe0b26d0bb124ff32261365e35b7fd0f327559fd1134239dce35557",
+            "blocked_on": {
+              "referent": "ac:2",
+              "type": "card"
+            },
+            "line": 18,
+            "verdict": "BLOCKED"
+          }
+        ],
+        "file_sha256": "9e4e4af84aad8a6781dc8690d812bb641215f56dd9a9fff10e4783d15262fef6",
+        "path": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl"
+      },
+      "replacement_remedy": "NO_ACTION_PROPOSED",
+      "result": "PASS"
+    },
+    {
+      "blocking_review_finding_reproduced": true,
+      "card_id": "0994c010",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "result": "PASS",
+      "v2_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED"
+      }
+    },
+    {
+      "blocking_review_finding_reproduced": true,
+      "card_id": "5236382f",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "result": "PASS",
+      "v2_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED"
+      }
+    },
+    {
+      "blocking_review_finding_reproduced": true,
+      "card_id": "65e00fd9",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "result": "PASS",
+      "v2_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED"
+      }
+    }
+  ],
+  "external_or_audited_action_applied": false,
+  "identity": {
+    "card_id": "eb73bdf4",
+    "distinct_identity": true,
+    "effective_claim_event_id": "3102bf7349874a3080ed01c905bd52b9",
+    "effective_claim_revision": "a2c90269e22f4fb7a78069007c4391a9",
+    "owner": "pi-codex-chiap03-eb73bdf4",
+    "prior_owner_release_event_id": "a2f76c88cf17422983ae7a50b6ac85ac",
+    "producer": "pi-codex-chiap08-a743f500",
+    "reviewer": "pi-codex-chiap03-eb73bdf4",
+    "verified": true
+  },
+  "immutable_sources": {
+    "blocking_review": {
+      "path_as_cited": "/home/skuser01/.skcapstone/evidence/work/6c418ad3/partition-11-corrected-replacement-review.json",
+      "recovered_from": "PR 245 head dff7236858cc4140197264519f3a786f8b7e7061",
+      "sha256": "24728ed7e976910860d018379d6d88bec756edd309b79c679844df804ad16f09",
+      "verdict": "BLOCKED"
+    },
+    "manifest_v2": {
+      "path": "docs/reviews/artifacts/a743f500/manifest-v2.json",
+      "sha256": "300c66eb6b05bea801d852adb82f7638bd40b00c7b70e5539ab2caabcca315a6"
+    },
+    "original_blocked_review": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/567e6b09/BLOCKED-review.json",
+      "sha256": "f84ea516f634c8ee118d2b094673c3d5fad4f95a0a07f652e68e900269040e12",
+      "verdict": "BLOCKED"
+    },
+    "original_source_report": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/482cc241/fleet-unblock-partition-11-audit.json",
+      "sha256": "d7f5b4b0eff35c1401bef95c84a3c576f68adc3ddd54b645c742752d51afc70d"
+    },
+    "v1": {
+      "path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+      "sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c"
+    },
+    "v2": {
+      "path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement-v2.json",
+      "pr_blob_shared_exact": true,
+      "pr_head": "f21e893e7d6f29ab396c890bd11e3e9e0f627c60",
+      "serializer_exact": "json.dumps(indent=2, sort_keys=True, ensure_ascii=False) plus newline",
+      "sha256": "51aa08d6ba94b471943016c53df68ce13664bd2632d4f9846093c58fa0b352ec",
+      "size": 84861
+    }
+  },
+  "remedy_contract": {
+    "commands_executed": false,
+    "no_action_dispositions": 5,
+    "nonempty_remedies": 5,
+    "nonempty_remedy_record_ids": [
+      "0994c010",
+      "5236382f",
+      "65e00fd9",
+      "9535bc80",
+      "f10a0e73"
+    ],
+    "null_commands": 5,
+    "result": "PASS",
+    "supported_command_proposals": 0
+  },
+  "reproduction": {
+    "all_named_source_json_and_jsonl_parsed": true,
+    "changed_record_ids_v1_to_v2": [
+      "0994c010",
+      "5236382f",
+      "65e00fd9"
+    ],
+    "correction_ledger_count": 5,
+    "named_source_files_parsed": 148,
+    "record_count": 40,
+    "record_ids_sorted": true,
+    "record_ids_unique": true,
+    "repository_or_external_action_applied_in_source": false,
+    "source_actions_applied": 0,
+    "v2_json_roundtrip": true,
+    "v2_trailing_newline": true
+  },
+  "reproduction_limit_accepted": "The historical source did not publish a frozen manifest for all 1817 CardStore inputs, so historical selection completeness is not claimed. This review reproduces the immutable report chain, all cited findings, all 40 replacement records, and all five corrections without treating mutable current state as the historical snapshot.",
+  "schema": "skcapstone.fleet_unblock.v2_independent_review.v1",
+  "two_store_verification": {
+    "direct_evidence_card_ids": [
+      "9535bc80",
+      "f10a0e73"
+    ],
+    "join_key": "exact card_id",
+    "links_are_metadata_only": true,
+    "result": "PASS",
+    "structural_and_direct_evidence_kept_separate": true,
+    "verdict_inferred_from_dependency_state": false,
+    "verdict_inferred_from_labels": false,
+    "verdict_inferred_from_lifecycle": false,
+    "verdict_inferred_from_links": false
+  },
+  "verdict": "PASS"
+}
