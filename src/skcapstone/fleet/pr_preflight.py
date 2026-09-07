@@ -55,7 +55,7 @@ def _run(command: Sequence[str], cwd: Path) -> int:
         # not let a developer's global Pi extension catalog change CI parity.
         pi = shutil.which("pi")
         if pi:
-            pi_directory = str(Path(pi).resolve().parent)
+            pi_directory = str(Path(pi).parent)
             env["PATH"] = os.pathsep.join(
                 item for item in env.get("PATH", "").split(os.pathsep) if item != pi_directory
             )
