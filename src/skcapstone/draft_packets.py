@@ -7,7 +7,7 @@ filesystem paths supplied by a model.
 """
 from __future__ import annotations
 
-import hashlib, hmac, io, json, os, secrets, zipfile
+import hashlib, hmac, io, json, os, re, zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +24,8 @@ def _json_line(obj):
 
 class DraftError(ValueError): pass
 class AuthorizationError(PermissionError): pass
+
+_PLACEHOLDER = re.compile(r"\\{\\{\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*\\}\\}")
 
 @dataclass(frozen=True)
 class Artifact:
@@ -58,7 +60,9 @@ class DraftStore:
         return out
 
     def save(self, matter_id, content, *, source_map=None, approval=None):
-        if not matter_id or not isinstance(content, str): raise DraftError("invalid draft")
+        if not isinstance(matter_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", matter_id):
+            raise DraftError("invalid matter")
+        if not isinstance(content, str): raise DraftError("invalid draft")
         previous = [e for e in self._events() if e.get("matter_id")==matter_id and e["type"]=="draft_saved"]
         version = len(previous)+1
         # A new version can never inherit approval for an older version.
@@ -85,14 +89,31 @@ class DraftStore:
         self._append({"type":"approval", "matter_id":matter_id, "version":version, "approver":approver})
 
     def export(self, matter_id, version, fmt, *, token, template="plain", retention=30):
+        if not isinstance(matter_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", matter_id):
+            raise DraftError("invalid matter")
         if fmt not in {"pdf","docx"} or template not in TEMPLATES: raise DraftError("unsupported output")
         if not hmac.compare_digest(token, os.environ.get("SK_PACKET_TOKEN", "")): raise AuthorizationError("invalid token")
         draft=self.load(matter_id, version)
-        approvals=[e for e in self._events() if e.get("type")=="approval" and e.get("matter_id")==matter_id and e.get("version")==version]
+        events = self._events()
+        invalidated = any(e.get("type") == "approval_invalidated" and
+                          e.get("matter_id") == matter_id and version in e.get("versions", [])
+                          for e in events)
+        approvals=[e for e in events if e.get("type")=="approval" and e.get("matter_id")==matter_id and e.get("version")==version]
+        approvals = [] if invalidated else approvals
+        missing = sorted(set(_PLACEHOLDER.findall(draft["content"])))
+        if missing:
+            raise DraftError("missing placeholders: " + ", ".join(missing))
         body=TEMPLATES[template].format(title=matter_id, body=draft["content"])
-        data = _pdf(body) if fmt=="pdf" else _docx(body)
         outdir=self.root / "artifacts" / matter_id / str(version); outdir.mkdir(parents=True, exist_ok=True)
-        path=outdir / ("packet."+fmt); path.write_bytes(data)
+        path=outdir / ("packet."+fmt)
+        try:
+            data = _pdf(body) if fmt=="pdf" else _docx(body)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_bytes(data); os.replace(tmp, path)
+        except Exception as exc:
+            self._append({"type":"render_failed", "matter_id":matter_id,
+                          "version":version, "format":fmt, "error":str(exc)})
+            raise DraftError("render failed") from exc
         source_map_bytes = json.dumps(draft.get("source_map", {}), sort_keys=True,
                                       separators=(",", ":")).encode()
         manifest={"matter_id":matter_id,"version":version,"format":fmt,"template":template,
@@ -105,6 +126,23 @@ class DraftStore:
         manifest["manifest_sha256"]=_hash(mp.read_bytes())
         self._append({"type":"artifact_created", **manifest, "path":str(path)})
         return Artifact(matter_id,version,fmt,manifest["artifact_sha256"],str(path),manifest["manifest_sha256"])
+
+    def download(self, matter_id, version, fmt, *, token):
+        """Read only a previously authorized, version-bound artifact."""
+        if not hmac.compare_digest(token, os.environ.get("SK_PACKET_TOKEN", "")):
+            raise AuthorizationError("invalid token")
+        rows = [e for e in self._events() if e.get("type") == "artifact_created"
+                and e.get("matter_id") == matter_id and e.get("version") == version
+                and e.get("format") == fmt]
+        if not rows:
+            raise DraftError("artifact not found")
+        row = rows[-1]
+        path = Path(row["path"])
+        if not path.is_file() or _hash(path.read_bytes()) != row.get("artifact_sha256"):
+            raise DraftError("artifact unavailable or corrupt")
+        self._append({"type":"artifact_downloaded", "matter_id":matter_id,
+                      "version":version, "format":fmt, "artifact_sha256":row["artifact_sha256"]})
+        return path.read_bytes()
 
 def _pdf(text):
     # Bounded one-page-per-1000 characters renderer, with deterministic objects.
