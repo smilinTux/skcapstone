@@ -25,7 +25,9 @@ def _json_line(obj):
 class DraftError(ValueError): pass
 class AuthorizationError(PermissionError): pass
 
-_PLACEHOLDER = re.compile(r"\\{\\{\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*\\}\\}")
+# Placeholders are deliberately limited to simple field names.  The escaped
+# braces matter: a literal ``{{name}}`` is a missing input, not template code.
+_PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_.-]*)\s*\}\}")
 
 @dataclass(frozen=True)
 class Artifact:
@@ -92,7 +94,10 @@ class DraftStore:
         if not isinstance(matter_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", matter_id):
             raise DraftError("invalid matter")
         if fmt not in {"pdf","docx"} or template not in TEMPLATES: raise DraftError("unsupported output")
-        if not hmac.compare_digest(token, os.environ.get("SK_PACKET_TOKEN", "")): raise AuthorizationError("invalid token")
+        if not isinstance(token, str) or not hmac.compare_digest(token, os.environ.get("SK_PACKET_TOKEN", "")):
+            raise AuthorizationError("invalid token")
+        if not isinstance(retention, int) or isinstance(retention, bool) or not 0 <= retention <= 3650:
+            raise DraftError("invalid retention")
         draft=self.load(matter_id, version)
         events = self._events()
         invalidated = any(e.get("type") == "approval_invalidated" and
@@ -122,14 +127,19 @@ class DraftStore:
                   "artifact_sha256":_hash(data),"approved":bool(approvals),
                   "retention_days":retention,"created_at":_now(),
                   "lineage":{"draft_event":"draft_saved", "source_map":draft.get("source_map", {})}}
-        mp=outdir/"manifest.json"; mp.write_text(json.dumps(manifest,sort_keys=True,indent=2)+"\n",encoding="utf-8")
-        manifest["manifest_sha256"]=_hash(mp.read_bytes())
+        # The manifest hash is over its canonical, hash-free representation.
+        # Keep the hash in the file as well so an independent reader can verify
+        # identity without consulting the event journal.
+        canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        manifest["manifest_sha256"] = _hash(canonical)
+        mp=outdir/"manifest.json"
+        mp.write_text(json.dumps(manifest, sort_keys=True, indent=2)+"\n", encoding="utf-8")
         self._append({"type":"artifact_created", **manifest, "path":str(path)})
         return Artifact(matter_id,version,fmt,manifest["artifact_sha256"],str(path),manifest["manifest_sha256"])
 
     def download(self, matter_id, version, fmt, *, token):
         """Read only a previously authorized, version-bound artifact."""
-        if not hmac.compare_digest(token, os.environ.get("SK_PACKET_TOKEN", "")):
+        if not isinstance(token, str) or not hmac.compare_digest(token, os.environ.get("SK_PACKET_TOKEN", "")):
             raise AuthorizationError("invalid token")
         rows = [e for e in self._events() if e.get("type") == "artifact_created"
                 and e.get("matter_id") == matter_id and e.get("version") == version
