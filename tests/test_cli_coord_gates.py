@@ -53,6 +53,20 @@ def _payload(result) -> dict:
     return json.loads(result.output)
 
 
+def test_epic_is_not_false_eligible(tmp_path):
+    _card(tmp_path, "epic001", title="An epic", kind="epic")
+    payload = _payload(_run(tmp_path, "epic001"))
+    assert payload["eligible"] is False
+    assert payload["primary_reason"] == "not_claimable"
+
+
+def test_foreign_project_is_not_false_eligible(tmp_path):
+    _card(tmp_path, "task001", title="Task", labels=("foreign-project",))
+    payload = _payload(_run(tmp_path, "task001"))
+    assert payload["eligible"] is False
+    assert payload["primary_reason"] == "foreign_project"
+
+
 def test_gates_reports_identity_revision_and_eligible_without_mutation(tmp_path: Path) -> None:
     _card(tmp_path, "aaa00001")
     before = sorted((p, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file())

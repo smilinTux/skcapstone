@@ -127,6 +127,16 @@ def card_scheduler_facts(
     labels = {str(label).strip().lower().replace("_", "-") for label in card.labels}
     title = str(card.title or "")
     malformed = not card.id.strip() or not title.strip() or title.strip().lower() == "x"
+    # Keep this projection aligned with the fleet dispatch policy.  In
+    # particular, only TASK cards are claimable: EPIC is a coordination
+    # container, not an executable dispatch unit.
+    sensitive = re.compile(
+        r"(capauth|credential|custody|issuer|secret|\\bkey\\b|rollback|"
+        r"deploy|production|release|migrat)", re.I
+    )
+    foreign_project = "foreign-project" in labels
+    non_task = getattr(card, "kind", None) != Kind.TASK
+    sensitive_category = bool(sensitive.search(title)) and "dispatch-approved" not in labels
     verdict = None
     for event in evidence_events:
         if not isinstance(event, dict):
@@ -161,7 +171,9 @@ def card_scheduler_facts(
         terminal_cardstore=terminal,
         owner_health=owner_health,
         human_gate=human_gate,
-        not_claimable=not_claimable or card.kind not in {Kind.TASK, Kind.EPIC},
+        foreign_project=foreign_project,
+        not_claimable=not_claimable or non_task,
+        sensitive_category=sensitive_category,
         dependency=missing_dependency,
         awaiting_review=awaiting_review,
         backoff=bool(verdict and verdict.startswith("BLOCKED")),
