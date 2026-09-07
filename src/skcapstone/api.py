@@ -41,8 +41,8 @@ try:
     from fastapi import (
         Depends,
         FastAPI,
-        HTTPException,
         Header,
+        HTTPException,
         Query,
         Request,
         Security,
@@ -767,10 +767,16 @@ app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 
 _CONTRACT_ERROR_RESPONSES = {
-    401: {"description": "Authentication or scope authorization failed."},
-    409: {"description": "Expected version is stale or idempotency key conflicts."},
-    422: {"description": "Request validation failed."},
-    501: {"description": "The daemon job provider is unavailable."},
+    401: {
+        "model": ContractError,
+        "description": "Authentication, capability, or purpose authorization failed.",
+    },
+    409: {
+        "model": ContractError,
+        "description": "Expected version is stale or idempotency key conflicts.",
+    },
+    422: {"model": ContractError, "description": "Request validation failed."},
+    501: {"model": ContractError, "description": "The daemon job provider is unavailable."},
 }
 
 
