@@ -156,6 +156,15 @@ class DraftStore:
         path = Path(row["path"])
         if not path.is_absolute():
             path = self.root / path
+        # Artifact references are storage metadata, not an authorization
+        # mechanism.  Keep a journal entry from redirecting reads outside the
+        # store if the append-only log is damaged or replaced.
+        try:
+            path = path.resolve(strict=False)
+            artifact_root = (self.root / "artifacts").resolve(strict=True)
+            path.relative_to(artifact_root)
+        except (OSError, ValueError) as exc:
+            raise DraftError("artifact path outside store") from exc
         manifest_path = path.with_name("manifest.json")
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -165,7 +174,9 @@ class DraftStore:
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             raise DraftError("manifest unavailable or corrupt") from exc
         if (manifest.get("matter_id") != matter_id or manifest.get("version") != version
-                or manifest.get("format") != fmt or manifest.get("artifact_sha256") != row.get("artifact_sha256")
+                or manifest.get("format") != fmt
+                or manifest.get("artifact_sha256") != row.get("artifact_sha256")
+                or manifest.get("manifest_sha256") != row.get("manifest_sha256")
                 or not path.is_file() or _hash(path.read_bytes()) != row.get("artifact_sha256")):
             raise DraftError("artifact unavailable or corrupt")
         self._append({"type":"artifact_downloaded", "matter_id":matter_id,
@@ -189,7 +200,16 @@ def _pdf(text):
     x=len(out); out+=f"xref\n0 {len(obj)+1}\n0000000000 65535 f \n".encode()+b''.join(f"{v:010d} 00000 n \n".encode() for v in offsets)+f"trailer << /Size {len(obj)+1} /Root 1 0 R >>\nstartxref\n{x}\n%%EOF\n".encode(); return out
 
 def _docx(text):
-    xml=f'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{escape(text)}</w:t></w:r></w:p></w:body></w:document>'
+    # Keep output bounded and deterministic while preserving the same page
+    # chunks as the PDF renderer.  Explicit page breaks make pagination
+    # inspectable by consumers rather than relying on a viewer's heuristics.
+    pages=[text[i:i+1000] for i in range(0,max(1,len(text)),1000)]
+    paragraphs=[]
+    for index, page in enumerate(pages):
+        paragraphs.append(f'<w:p><w:r><w:t>{escape(page)}</w:t></w:r></w:p>')
+        if index + 1 < len(pages):
+            paragraphs.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
+    xml=f'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{"".join(paragraphs)}</w:body></w:document>'
     b=io.BytesIO()
     with zipfile.ZipFile(b,"w",zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml",'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
