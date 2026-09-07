@@ -3,7 +3,7 @@
 Card 2516480b extends Mero from one-shot observation to a recurring, bounded
 census. Mero reads CardStore lifecycle, blocker attributes, worker joins,
 review joins, and SKMail signals, then emits typed append-only
-recommendations. Jarvis or another explicitly fenced consumer performs any
+recommendations. Activated Niobe or another explicitly fenced consumer performs any
 mutation; Mero never does.
 
 WHY A CENSUS MODULE AND NOT MORE ROTATION LOGIC. The rotation decides what to

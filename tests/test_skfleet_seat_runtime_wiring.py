@@ -10,11 +10,11 @@ def test_rotation_wires_link_jarvis_and_mero_in_order() -> None:
 
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
     link = source.index("recommend_reviewer(")
-    jarvis = source.index("authorize_review_launch(", link)
-    claim = source.index('claim=subprocess.run([SKC,"coord","claim"', jarvis)
+    niobe = source.index("authorize_review_launch(", link)
+    claim = source.index('claim=subprocess.run([SKC,"coord","claim"', niobe)
     receipt = source.index("append_review_launch_receipt(", claim)
     mero = source.index("MeroObservation(", receipt)
-    assert link < jarvis < claim < receipt < mero
+    assert link < niobe < claim < receipt < mero
 
 
 def test_non_review_cards_bypass_assignment() -> None:
@@ -44,6 +44,16 @@ def test_link_and_jarvis_use_distinct_fresh_process_reads() -> None:
     ]
     assert assignment.count("_card_process_snapshot(cid)") == 2
     assert 'if observed_process["sessions"]:' in assignment
+
+
+def test_niobe_authorizes_review_launch_for_worker_identity() -> None:
+    """The reviewer identity is a handoff target, not the launch authority."""
+
+    source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
+    assignment = source[
+        source.index("def _review_assignment(") : source.index("# Load this dependency-free")
+    ]
+    assert 'actor="niobe"' in assignment
 
 
 def test_mero_tracks_review_lifecycle_without_mutation() -> None:

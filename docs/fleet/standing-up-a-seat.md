@@ -1,9 +1,30 @@
 # Standing up a seat
 
-A **seat** is a standing role with its own identity: Mero the overseer, Link the
-integrator. Cards labelled `seat-<name>` run under that seat's identity, so their
+A **seat** is a standing role with its own identity. The software lifecycle
+seats are Link, Mero, Niobe, Tank, Seraph, and ATLAS. Cards labelled
+`seat-<name>` run under that seat's identity, so their
 claims, verdicts and mail are attributable to the role that owns the work rather
 than to whichever lane happened to pick it up.
+
+Jarvis is not a lifecycle seat. Jarvis is Casey's personal assistant and may
+help a seat when Casey directs it, but it is not assigned lifecycle cards,
+beats, approvals, or normal workflow ownership.
+
+The current operating posture is deliberately uneven:
+
+| Seat | Lifecycle responsibility | Runtime posture |
+| --- | --- | --- |
+| Link | Integrator and trunk owner | Recurring bounded cycle on chiap08 |
+| Mero | Oversight, blocker census, and drift control | Recurring bounded cycle on chiap08 |
+| Niobe | Successor dispatcher and transition shadow | Shadow-only until transition criteria pass |
+| Tank | Release, install, and behavioral deployment verification | Card-scoped worker only |
+| Seraph | Independent review and lifecycle verification | Card-scoped worker only |
+| ATLAS | Operations-plane identity and emergency continuity | Frozen, no healthy beat |
+
+All seats use Luna medium by default, read and acknowledge SKMail, write
+status and handoff messages, and check the `all` mailbox view on startup and
+periodically. A stronger model or a human decision is introduced only when a
+card's risk or authority boundary actually requires it.
 
 This is the whole ceremony, in order, with the checks that matter. It was written
 by doing it twice and getting parts of it wrong both times.
@@ -164,7 +185,9 @@ that only lists powers will grow the same way.
 
 **The canonical seat charters are maintained in sk-standards ADR-0005 and ROSTER.md.**
 See [Seat Charters: SKCapstone Fleet Boundaries](./seat-charters.md) for the
-SKCapstone-specific alignment and enforcement details. New seats MUST be added to
+SKCapstone-specific alignment and enforcement details, and see the
+[Lifecycle Seat Activation Matrix](./seat-lifecycle-activation-matrix.md) for
+the current posture and activation gates of every existing seat. New seats MUST be added to
 the canonical sk-standards documents first; this document only reflects those
 definitions in the SKCapstone context.
 
@@ -190,6 +213,7 @@ two mailbox traps, because both have already cost real time:
 [ ] private.asc count is 0 on every host except the signing host
 [ ] public key imported into the DEFAULT keyring on every verifying host
 [ ] charter written, including what the seat does NOT own
+[ ] read-only seat manifest audit reports healthy before enabling any unit
 [ ] first cards labelled seat-<name> and checked with coord gates
 [ ] seat and fleet both told, with the two mailbox traps stated
 ```

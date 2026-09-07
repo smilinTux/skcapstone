@@ -25,6 +25,10 @@ class Seat(StrEnum):
     JARVIS = "jarvis"
     LINK = "link"
     MERO = "mero"
+    NIOBE = "niobe"
+    TANK = "tank"
+    SERAPH = "seraph"
+    ATLAS = "atlas"
 
 
 class Action(StrEnum):
@@ -45,6 +49,11 @@ class Action(StrEnum):
     REPAIR_WORKER = "repair_worker"
     DEPLOY = "deploy"
     ACTUATE_APPLICATION = "actuate_application"
+    INSTALL_ARTIFACT = "install_artifact"
+    VERIFY_ARTIFACT = "verify_artifact"
+    RELEASE_RECEIPT = "release_receipt"
+    DEPLOY_VERIFY = "deploy_verify"
+    ROLLBACK = "rollback"
 
 
 _ALLOWED = {
@@ -59,9 +68,10 @@ _ALLOWED = {
             Action.MERGE,
         }
     ),
-    Seat.JARVIS: frozenset(
+    Seat.NIOBE: frozenset(
         {
             Action.OBSERVE,
+            Action.RECOMMEND,
             Action.CLAIM,
             Action.RELEASE,
             Action.LAUNCH,
@@ -71,6 +81,18 @@ _ALLOWED = {
             Action.REPAIR_WORKER,
         }
     ),
+    Seat.TANK: frozenset(
+        {
+            Action.OBSERVE,
+            Action.INSTALL_ARTIFACT,
+            Action.RELEASE_RECEIPT,
+            Action.DEPLOY_VERIFY,
+            Action.ROLLBACK,
+        }
+    ),
+    Seat.SERAPH: frozenset({Action.OBSERVE, Action.VERIFY_ARTIFACT}),
+    Seat.ATLAS: frozenset({Action.OBSERVE}),
+    Seat.JARVIS: frozenset({Action.OBSERVE}),
 }
 _FLEET_MUTATIONS = frozenset(
     {
@@ -91,6 +113,7 @@ def require_authority(
     action: Action,
     *,
     fenced_system_actors: Collection[str] = (),
+    casey_directed: bool = False,
 ) -> None:
     """Reject actions not owned by the named seat or fenced system actor."""
 
@@ -101,6 +124,8 @@ def require_authority(
         seat = Seat(normalized)
     except ValueError as exc:
         raise BoundaryError(f"unknown or unfenced actor: {actor}") from exc
+    if seat is Seat.JARVIS and casey_directed and action in _FLEET_MUTATIONS:
+        return
     if action not in _ALLOWED[seat]:
         raise BoundaryError(f"{seat.value} is not authorized for {action.value}")
 
@@ -119,7 +144,7 @@ def assign_distinct_reviewer(*, author: str, assigner: str, candidates: Collecti
 
 @dataclass(frozen=True)
 class DispatchRecommendation:
-    """Advisory observation that only Jarvis may evaluate and act upon."""
+    """Advisory observation that only Niobe may evaluate and act upon."""
 
     card_id: str
     recommendation_id: str
@@ -197,12 +222,12 @@ def authorize_recommendation_action(
     current_process: Mapping[str, object],
     used_recommendation_ids: Collection[str],
 ) -> None:
-    """Fence Jarvis action against replay and stale CardStore/process state."""
+    """Fence Niobe action against replay and stale CardStore/process state."""
 
     recommendation.validate()
     require_authority(actor, action)
-    if actor.strip().lower() != Seat.JARVIS:
-        raise BoundaryError("only jarvis may act on a recommendation")
+    if actor.strip().lower() != Seat.NIOBE:
+        raise BoundaryError("only niobe may act on a recommendation")
     if recommendation.recommendation_id in used_recommendation_ids:
         raise BoundaryError("recommendation replay denied")
     if recommendation.observed_claim_owner != current_claim_owner:

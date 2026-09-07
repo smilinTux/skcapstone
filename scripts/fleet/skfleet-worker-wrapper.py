@@ -10,8 +10,10 @@ import json
 import os
 import re
 import signal
+import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 STDERR_LIMIT = 2048
@@ -31,6 +33,24 @@ SECRET_RE = re.compile(
     r"(?:api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*)\S+"
 )
 TOKEN_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{12,}|[A-Za-z0-9_-]{32,})\b")
+DEFAULT_MAIL_HEARTBEAT_INTERVAL = 300
+
+
+def seat_from_owner(owner: str) -> str:
+    """Return the governed seat segment when a worker owner carries one."""
+    parts = owner.strip().split("-")
+    if len(parts) >= 4 and parts[0] == "pi":
+        return parts[1]
+    return "lane-worker"
+
+
+VERDICT_RE = re.compile(
+    r"(?im)(?:^\s*|[\"']verdict[\"']\s*:\s*[\"'])(PASS_FOR_REVIEW|BLOCKED)\b[^\n]*"
+)
+HASH_RE = re.compile(r"(?i)(?:sha256|artifact_sha256)[=: ]+([0-9a-f]{64})")
+PR_RE = re.compile(r"https?://[^\s]+/pull/[0-9]+")
+COMMIT_RE = re.compile(r"(?i)\bcommit[=: ]+([0-9a-f]{7,64})\b")
+REFERENT_RE = re.compile(r"(?i)blocked_on=card\s+referent=([0-9a-f]{8})")
 
 
 def classify_transport_failure(text: str) -> str | None:
@@ -95,6 +115,68 @@ def emit_work_mail(args: argparse.Namespace, kind: str, body: str) -> None:
         return
 
 
+def mail_heartbeat_interval() -> int:
+    """Return a safe periodic status interval without changing worker leases."""
+    try:
+        value = int(os.environ.get("SKFLEET_MAIL_HEARTBEAT_INTERVAL", ""))
+    except ValueError:
+        return DEFAULT_MAIL_HEARTBEAT_INTERVAL
+    return value if value > 0 else DEFAULT_MAIL_HEARTBEAT_INTERVAL
+
+
+def poll_mailbox(owner: str) -> str:
+    """Read direct and ``all`` mail without acknowledging it.
+
+    The reader includes messages addressed to ``all``. Mail is coordination
+    only, so a read failure becomes a bounded status detail and never changes
+    the worker's claim or exit result.
+    """
+    command = shutil.which("skmail")
+    if not command:
+        return "mailbox=unavailable"
+    try:
+        result = subprocess.run(
+            [command, "read", owner],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "mailbox=error"
+    if result.returncode != 0:
+        return "mailbox=error"
+    output = result.stdout or ""
+    match = re.search(r"\((\d+) new\)\s*$", output, re.MULTILINE)
+    new_count = match.group(1) if match else "0"
+    lower = output.lower()
+    help_count = sum(lower.count(word) for word in ("help", "handoff", "dependency"))
+    digest = hashlib.sha256(output.encode("utf-8")).hexdigest()[:16]
+    return f"mailbox=ok new={new_count} help_or_handoff={help_count} digest={digest}"
+
+
+def mail_heartbeat_loop(
+    args: argparse.Namespace,
+    stop_event: threading.Event,
+    interval: int | None = None,
+) -> None:
+    """Emit bounded status notices while the child is still running.
+
+    This is observability only: it never reads or changes claim state.  A
+    stop event and a bounded subprocess timeout keep shutdown deterministic.
+    """
+    wait_for = interval if interval is not None else mail_heartbeat_interval()
+    while not stop_event.wait(wait_for):
+        emit_work_mail(
+            args,
+            "agent.status",
+            (
+                f"phase=running seat={seat_from_owner(args.owner)} "
+                f"lane={args.lane} model={args.model} {poll_mailbox(args.owner)}"
+            ),
+        )
+
+
 def idle_owner_projection(owner: str) -> None:
     """Clear the ephemeral worker agent file so monitors stop listing ghosts.
 
@@ -122,6 +204,98 @@ def idle_owner_projection(owner: str) -> None:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _current_claim(args: argparse.Namespace, store: object) -> bool:
+    """Return true only while this owner and revision still hold the card."""
+    try:
+        events = store._read_events(args.card)  # CardStore's fenced read path.
+    except Exception:  # noqa: BLE001
+        return False
+    current = None
+    for event in sorted(events, key=lambda row: str(row.get("ts") or "")):
+        action = event.get("action")
+        if action == "claim":
+            current = (event.get("owner"), event.get("claim_revision"))
+        elif action in {"release_claim", "complete", "void"}:
+            current = None
+    return current == (args.owner, args.claim_revision)
+
+
+def _terminal_evidence(
+    args: argparse.Namespace,
+) -> tuple[str, Path, str, str | None, str | None] | None:
+    """Find explicit review/blocker metadata without copying arbitrary output."""
+    roots = [Path.home() / ".skcapstone" / "evidence" / "work" / args.card]
+    if args.stdout.exists():
+        roots.append(args.stdout)
+    for root in roots:
+        paths = [root] if root.is_file() else list(root.rglob("*"))[:64]
+        for path in paths:
+            if not path.is_file():
+                continue
+            try:
+                if path.stat().st_size > 1_048_576:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            match = VERDICT_RE.search(text)
+            if not match:
+                continue
+            verdict = match.group(1).upper()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            pr = PR_RE.search(text)
+            commit = COMMIT_RE.search(text)
+            if verdict == "BLOCKED" and not REFERENT_RE.search(text):
+                continue
+            return (
+                verdict,
+                path,
+                digest,
+                pr.group(0) if pr else None,
+                commit.group(1) if commit else None,
+            )
+    return None
+
+
+def record_terminal_card_links(args: argparse.Namespace) -> None:
+    """Persist explicit terminal evidence once, fenced to this claim generation."""
+    found = _terminal_evidence(args)
+    if not found:
+        return
+    verdict, path, digest, pr, commit = found
+    try:
+        from skcoord.card_store import CardStore
+
+        store = CardStore(Path.home() / ".skcapstone")
+        if not _current_claim(args, store):
+            return
+        transition = f"worker-terminal-{args.card}-{args.claim_revision}"
+        evidence_value = f"file:{path} sha256:{digest} claim_revision={args.claim_revision}"
+        if verdict == "BLOCKED":
+            text = path.read_text(encoding="utf-8", errors="replace")
+            referent = REFERENT_RE.search(text)
+            verdict_value = f"BLOCKED blocked_on=card referent={referent.group(1)}"
+        else:
+            verdict_value = (
+                f"PASS_FOR_REVIEW|claim_revision={args.claim_revision}|"
+                f"artifact_sha256={digest}"
+            )
+        if pr:
+            verdict_value += f"|PR={pr}"
+        if commit:
+            verdict_value += f"|commit={commit}"
+        store.append_event(args.card, "link", args.owner, link_key="evidence",
+                           link_value=evidence_value, transition_id=f"{transition}-evidence")
+        store.append_event(args.card, "link", args.owner, link_key="verdict",
+                           link_value=verdict_value, transition_id=f"{transition}-verdict")
+        if pr:
+            store.append_event(args.card, "link", args.owner, link_key="pr",
+                               link_value=pr, transition_id=f"{transition}-pr")
+    except Exception:  # noqa: BLE001
+        # Terminal mail and immutable exit evidence remain the fallback record.
+        return
 
 
 def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> None:
@@ -170,7 +344,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", required=True)
     parser.add_argument("--stdout", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
-    parser.add_argument("--mail-recipient", default="jarvis")
+    parser.add_argument("--mail-recipient", default="all")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command[:1] == ["--"]:
@@ -205,7 +379,12 @@ def main() -> int:
     if preflight == 2:
         return 2
     args.stdout.parent.mkdir(parents=True, exist_ok=True)
-    emit_work_mail(args, "agent.hello", f"phase=started lane={args.lane} model={args.model}")
+    emit_work_mail(
+        args,
+        "agent.hello",
+        f"phase=started seat={seat_from_owner(args.owner)} lane={args.lane} model={args.model}",
+    )
+    emit_work_mail(args, "agent.status", f"phase=mailbox_poll {poll_mailbox(args.owner)}")
 
     def _stop(signum: int, _frame: object) -> None:
         idle_owner_projection(args.owner)
@@ -213,11 +392,20 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
+    heartbeat_stop = threading.Event()
+    heartbeat = threading.Thread(
+        target=mail_heartbeat_loop,
+        args=(args, heartbeat_stop),
+        name="skmail-heartbeat",
+        daemon=True,
+    )
+    heartbeat.start()
     try:
         with args.stdout.open("wb") as stdout:
             child = subprocess.run(args.command, stdout=stdout, stderr=subprocess.PIPE)
         sys.stderr.buffer.write(child.stderr)
         record_terminal_exit(args, child.stderr, child.returncode)
+        record_terminal_card_links(args)
         emit_work_mail(
             args,
             "work.complete" if child.returncode == 0 else "work.blocked",
@@ -225,6 +413,8 @@ def main() -> int:
         )
         return child.returncode
     finally:
+        heartbeat_stop.set()
+        heartbeat.join(timeout=5)
         # Always idle the worker projection on any exit path, including SIGTERM.
         idle_owner_projection(args.owner)
 

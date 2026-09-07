@@ -223,10 +223,8 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
     }
 
 
-def test_shadow_error_is_logged_and_does_not_change_legacy_pool() -> None:
+def test_shadow_error_is_logged_and_blocks_legacy_fallback() -> None:
     messages = []
-    legacy_pool = ["ready000"]
-
     emit = _launcher_function(
         "_emit_shadow_pool_v2",
         {
@@ -238,8 +236,9 @@ def test_shadow_error_is_logged_and_does_not_change_legacy_pool() -> None:
     )
     emit()
 
-    assert legacy_pool == ["ready000"]
     assert messages == ["SHADOW_ERROR|chiap08|RuntimeError:boom"]
+    launcher = SCRIPT.read_text(encoding="utf-8")
+    assert 'log(d, "POOL_AUTHORITY_ERROR|%s|source=POOL_V2|ready=0" % HOST)' in launcher
 
 
 def test_launcher_ruff_does_not_expand_the_exact_inherited_baseline() -> None:
@@ -275,4 +274,16 @@ def test_launcher_emits_shadow_report_after_legacy_pool() -> None:
 
     assert legacy < shadow < selection
     assert "POOL_V2_PARITY|%s|match=%s" in launcher
-    assert "SKCoord contributes" in launcher
+    assert "lifecycle classes through this adapter" in launcher
+
+
+def test_launcher_uses_pool_v2_for_dispatch_after_parity_report() -> None:
+    launcher = SCRIPT.read_text(encoding="utf-8")
+
+    report = launcher.index('log(d, report.render())')
+    authority = launcher.index('log(d, "POOL_AUTHORITY|', report)
+    selection = launcher.index("def owner_host", authority)
+
+    assert "_POOL_V2_DECISIONS = decisions" in launcher
+    assert "pool = list(_v2_rows.values())" in launcher
+    assert report < authority < selection

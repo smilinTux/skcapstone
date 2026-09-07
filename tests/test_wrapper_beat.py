@@ -1,5 +1,7 @@
 """Tests for the wrapper beat loop in the launch command (card e03755ba / B)."""
 
+import ast
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,3 +45,35 @@ def test_beat_writes_to_correct_directory():
     """Beat files go to ~/.skcapstone/fleet/beats/."""
     src = ROTATE.read_text(encoding="utf-8")
     assert "~/.skcapstone/fleet/beats" in src
+
+
+def test_generated_child_substitutes_interval_and_cleanup_path():
+    """The generated shell must put the numeric interval in sleep, not the path."""
+    source = ROTATE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    assignment = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "child" for target in node.targets)
+    )
+    rendered = eval(  # noqa: S307 - the expression is parsed from this reviewed source only
+        compile(ast.Expression(assignment.value), str(ROTATE), "eval"),
+        {
+            "SKC": "/home/skuser01/.skenv/bin/skcapstone",
+            "cid": "deadbeef",
+            "name": "pi-codex-chiap08-deadbeef",
+            "claimed_revision": "a" * 32,
+            "_bf_path": "/tmp/deadbeef.beat.json",
+            "_bi": "37",
+            "workspace": "/tmp/workspace",
+            "PI": "/bin/true",
+            "model": "sk-codex-mid",
+            "pi_tools": "",
+            "bf": "/tmp/brief.txt",
+        },
+    )
+    assert "sleep 37; done" in rendered
+    assert "sleep /tmp/deadbeef.beat.json" not in rendered
+    assert "rm -f -- /tmp/deadbeef.beat.json" in rendered
+    subprocess.run(["bash", "-n"], input=rendered, text=True, check=True)

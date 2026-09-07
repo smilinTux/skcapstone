@@ -54,6 +54,17 @@ def test_launch_command_creates_a_collected_user_service() -> None:
     ]
 
 
+def test_launch_command_preserves_wrapper_script_as_one_bash_argument() -> None:
+    functions = _load("_worker_launch_command")
+    command = functions["_worker_launch_command"](
+        "skfleet-worker-codex-3b227de2.service",
+        "/workspace",
+        ["/usr/bin/python3", "wrapper.py", "--", "bash", "-lc", "release_claim() { true; }; beat() { :; }"]
+    )
+    assert command[-3:] == ["bash", "-lc", "release_claim() { true; }; beat() { :; }"]
+    assert command[-1].count("release_claim()") == 1
+
+
 @pytest.mark.parametrize(
     ("lane", "card"),
     [("bad", "3b227de2"), ("codex", "../../bad"), ("codex", "ABCDEF12")],

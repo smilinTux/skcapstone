@@ -44,7 +44,7 @@ class CensusDetectorsMixin:
             CensusFindingType.DEAD_CLAIM,
             facts,
             risk=RiskClass.HIGH,
-            action="jarvis_release_claim_and_optionally_relaunch",
+            action="niobe_release_claim_and_optionally_relaunch",
             stop_conditions=[
                 "stop if a live worker session for this claim is now visible",
                 "stop if the claim revision changed after observation",
@@ -76,7 +76,7 @@ class CensusDetectorsMixin:
             CensusFindingType.STALE_CLAIM,
             facts,
             risk=RiskClass.MEDIUM,
-            action="jarvis_review_stale_claim_for_release_or_reassignment",
+            action="niobe_review_stale_claim_for_release_or_reassignment",
             stop_conditions=[
                 "stop if progress events newer than the claim appear",
                 "stop if the card left doing",
@@ -264,7 +264,7 @@ class CensusDetectorsMixin:
     def _detect_review_identity_gap(self, card: Card, facts: dict) -> list[dict]:
         """Review receipts whose seat identities violate the boundary.
 
-        A recommendation must be written by link, a launch by jarvis, and the
+            A recommendation must be written by link, a launch by niobe, and the
         assigned reviewer must be distinct from the card's workers and from
         link. A review-column card with no receipt at all is also a gap.
         """
@@ -287,9 +287,9 @@ class CensusDetectorsMixin:
                     {"receipt": event.get("event_id", ""), "defect": "recommender_not_link"}
                 )
                 sources.append(event)
-            if action == "review_assignment_launch" and writer != "jarvis":
+            if action == "review_assignment_launch" and writer != "niobe":
                 gaps.append(
-                    {"receipt": event.get("event_id", ""), "defect": "launcher_not_jarvis"}
+                    {"receipt": event.get("event_id", ""), "defect": "launcher_not_niobe"}
                 )
                 sources.append(event)
             reviewer = str(event.get("reviewer") or "").strip().lower()
@@ -307,7 +307,7 @@ class CensusDetectorsMixin:
             CensusFindingType.REVIEW_IDENTITY_GAP,
             facts,
             risk=RiskClass.MEDIUM,
-            action="jarvis_audit_review_assignment_identities",
+            action="niobe_audit_review_assignment_identities",
             stop_conditions=[
                 "stop if corrected receipts supersede every defect",
                 "stop if the card left the review column",

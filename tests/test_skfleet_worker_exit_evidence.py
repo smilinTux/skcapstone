@@ -157,6 +157,86 @@ def test_substantive_failure_mentioning_429_remains_substantive(tmp_path: Path) 
     assert not args.evidence_dir.exists()
 
 
+def _terminal_link_fixture(tmp_path: Path, card: str = "deadbeef"):
+    from skcoord.card_store import CardCore, CardStore
+
+    home = tmp_path / "home"
+    evidence = home / ".skcapstone" / "evidence" / "work" / card
+    evidence.mkdir(parents=True)
+    store = CardStore(home / ".skcapstone")
+    owner = "pi-codex-chiap08-" + card
+    revision = "revision-1"
+    store.create(CardCore(id=card, title="terminal evidence"))
+    store.append_event(
+        card,
+        "claim",
+        owner,
+        owner=owner,
+        claim_revision=revision,
+        transition_id="claim-1",
+    )
+    args = argparse.Namespace(
+        card=card,
+        owner=owner,
+        claim_revision=revision,
+        host="chiap08",
+        lane="codex",
+        model="model",
+        stdout=tmp_path / "stdout.log",
+        evidence_dir=tmp_path / "exit-evidence",
+    )
+    return home, store, evidence, args
+
+
+def test_terminal_pass_links_are_fenced_and_idempotent(tmp_path: Path, monkeypatch) -> None:
+    module = _wrapper()
+    home, store, evidence, args = _terminal_link_fixture(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    (evidence / "PASS_FOR_REVIEW.json").write_text(
+        '{"verdict":"PASS_FOR_REVIEW", "pr":"https://example.test/pull/7", '
+        '"commit":"abcdef1"}\n',
+        encoding="utf-8",
+    )
+
+    module.record_terminal_card_links(args)
+    module.record_terminal_card_links(args)
+
+    folded = store.fold(args.card)
+    assert folded.links["evidence"].startswith("file:")
+    assert "PASS_FOR_REVIEW" in folded.links["verdict"]
+    assert folded.links["pr"] == "https://example.test/pull/7"
+    links = [event for event in store._read_events(args.card) if event["action"] == "link"]
+    assert len(links) == 3
+    assert len({event["transition_id"] for event in links}) == 3
+
+
+def test_terminal_blocked_link_requires_bounded_referent(tmp_path: Path, monkeypatch) -> None:
+    module = _wrapper()
+    home, store, evidence, args = _terminal_link_fixture(tmp_path, "feedface")
+    monkeypatch.setenv("HOME", str(home))
+    (evidence / "BLOCKED.md").write_text(
+        "BLOCKED blocked_on=card referent=deadbeef\n", encoding="utf-8"
+    )
+
+    module.record_terminal_card_links(args)
+
+    folded = store.fold(args.card)
+    assert folded.links["verdict"] == "BLOCKED blocked_on=card referent=deadbeef"
+    assert "evidence" in folded.links
+
+
+def test_terminal_link_drops_mismatched_claim_generation(tmp_path: Path, monkeypatch) -> None:
+    module = _wrapper()
+    home, store, evidence, args = _terminal_link_fixture(tmp_path, "cafebabe")
+    monkeypatch.setenv("HOME", str(home))
+    (evidence / "PASS_FOR_REVIEW.md").write_text("PASS_FOR_REVIEW\n", encoding="utf-8")
+    args.claim_revision = "wrong-revision"
+
+    module.record_terminal_card_links(args)
+
+    assert not [event for event in store._read_events(args.card) if event["action"] == "link"]
+
+
 def test_transport_exit_is_held_then_does_not_consume_attempt(tmp_path: Path) -> None:
     namespace = _scheduler_namespace()
     card = "deadbeef"
@@ -322,7 +402,7 @@ def test_launcher_routes_every_lane_through_exit_wrapper() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert 'wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")' in source
     assert '"--claim-revision",claimed_revision' in source
-    assert "inner=shlex.join([" in source
+    assert "inner=[" in source
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
 
 

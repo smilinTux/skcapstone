@@ -1,0 +1,20 @@
+{
+  "schema": "skfleet.niobe-activation/v1",
+  "state": "active",
+  "seat": "niobe",
+  "decision_id": "casey-c4e7a9b2-20260906",
+  "authorized_by": "casey",
+  "card_id": "c4e7a9b2",
+  "card_revision": "21e418225aa6780bfc13ea0e8705693277bf6ec676f50fedfb54dcb1c965990a",
+  "host": "chiap08",
+  "live_unit": "skfleet-niobe-live.timer",
+  "product_scope": ["skcapstone", "skdashboard", "skworld"],
+  "card_label": "seat-niobe",
+  "allowed_actions": ["claim", "release", "launch", "stop", "reassign"],
+  "denied_actions": ["merge", "deploy", "application_actuation", "external_dispatch"],
+  "expires_at": "2026-10-06T22:00:00+00:00",
+  "rollback": {
+    "owner": "casey",
+    "action": "disable_skfleet-niobe-live.timer_enable_skfleet-niobe-shadow.timer"
+  }
+}

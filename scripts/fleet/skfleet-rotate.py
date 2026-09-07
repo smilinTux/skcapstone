@@ -8,7 +8,7 @@ Fixes two defects found 03:50Z:
      rotation deadlocked at busy=8 and NOOPed. Workers launched with -p exit on
      their own, so a slot is simply a live codex-auto-* session. No retire logic.
 """
-import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
+import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util
 import importlib.metadata
 from pathlib import Path
 
@@ -201,7 +201,11 @@ def _review_assignment(cid, core, labels, reviewer):
     handoff = authorize_review_launch(
         Path(HOME) / ".skcapstone",
         recommendation,
-        actor=reviewer,
+        # Niobe is the governed launch authority.  ``reviewer`` is the
+        # worker identity that receives the handoff, not a seat authority
+        # actor; passing it here makes every full identity fail the boundary
+        # check as ``unknown or unfenced actor``.
+        actor="niobe",
         current_process=_card_process_snapshot(cid),
         used_recommendation_ids={
             str(event.get("recommendation_id"))
@@ -290,11 +294,41 @@ def active_worker_units():
 
 def _worker_launch_command(unit, workspace, inner):
     """Build the systemd-supported detached worker launch command."""
+    # Keep a legacy string caller compatible, but never round-trip the real
+    # wrapper argv through shlex.join/split.  The child script contains shell
+    # function declarations and must remain one argument to bash -lc.
+    child_argv = ["bash", "-lc", inner] if isinstance(inner, str) else list(inner)
     return [
         "systemd-run", "--user", "--quiet", "--collect", "--service-type=exec",
         "--unit", unit, "--property=KillMode=control-group",
-        "--working-directory", workspace, "bash", "-lc", inner,
+        "--working-directory", workspace, *child_argv,
     ]
+
+
+def _resolve_workspace_root(root):
+    """Resolve a configured workspace root to one unambiguous Git checkout."""
+    candidate = Path(root).expanduser()
+    if not candidate.is_dir():
+        raise ValueError("workspace root is missing or not a directory")
+    if (candidate / ".git").exists():
+        return str(candidate)
+    repositories = sorted(
+        child
+        for child in candidate.iterdir()
+        if child.is_dir() and (child / ".git").exists()
+    )
+    if len(repositories) != 1:
+        raise ValueError(
+            "workspace root must contain exactly one Git checkout; "
+            f"found {len(repositories)}"
+        )
+    return str(repositories[0])
+
+
+def _worker_workspace(default):
+    """Use an explicitly configured checkout only when it resolves uniquely."""
+    configured = os.environ.get("SKFLEET_WORKSPACE")
+    return _resolve_workspace_root(configured) if configured else default
 
 
 def pi_tool_allowlist(labels):
@@ -934,15 +968,21 @@ def _legacy_claimability_events(fresh=False):
 
 def _fold_claimability(core, rows):
     """Fold only fields used by Board.claim_task and scheduler policy."""
+    core_links = core.get("links") if isinstance(core.get("links"), dict) else {}
     state = {
         "status": "backlog", "owner": None, "claim_revision": None,
         "archived": False, "voided": False, "terminal": False,
+        "review_seen": False,
         "title": str(core.get("title") or ""),
         "description": str(core.get("description") or ""),
         "acceptance_criteria": [
             str(x) for x in (core.get("acceptance_criteria") or [])
         ],
-        "links": {},
+        "links": {
+            str(key): str(value).strip()
+            for key, value in core_links.items()
+            if str(key).strip() and str(value).strip()
+        },
         "labels": [str(x) for x in (core.get("initial_labels") or [])],
         "dependencies": [str(x) for x in (core.get("dependencies") or [])],
     }
@@ -954,6 +994,8 @@ def _fold_claimability(core, rows):
             column = str(event.get("column") or "").strip().lower()
             if column in _COLUMNS:
                 state["status"] = column
+                if column == "review":
+                    state["review_seen"] = True
         elif action == "assign":
             state["owner"] = event.get("owner")
             state["claim_revision"] = None
@@ -1021,7 +1063,8 @@ def _fold_claimability(core, rows):
                 raise ValueError("amended acceptance criteria are malformed")
             state["acceptance_criteria"] = list(criteria)
         elif action == "link" and event.get("link_key") in {
-            "producer_identity", "candidate_evidence_sha256"
+            "producer_identity", "candidate_evidence_sha256", "pr",
+            "pull_request", "open_pr", "evidence", "evidence_sha256",
         }:
             value = event.get("link_value")
             if not isinstance(value, str) or not value.strip():
@@ -1054,6 +1097,25 @@ def _claimability_reason(core, state):
         return "done"
     if state["owner"] and state["status"] in {"ready", "doing", "review"}:
         return "owned-%s" % state["status"]
+    # Review work is a separate lane.  An unowned review card must not fall
+    # through as executable work after its producer releases the claim.  The
+    # explicit markers also cover stale projections whose column is backlog.
+    normalized_labels = {str(x).strip().lower() for x in labels}
+    review_links = {
+        "pr", "pull_request", "open_pr", "candidate_evidence_sha256",
+        "evidence", "evidence_sha256",
+    }
+    review_marked = (
+        state["status"] == "review"
+        or state["review_seen"]
+        or "review" in normalized_labels
+        or "review-only" in normalized_labels
+        or "[REVIEW]" in state["title"].upper()
+        or "PASS_FOR_REVIEW" in state["description"].upper()
+        or any(key in review_links and value for key, value in state["links"].items())
+    )
+    if review_marked:
+        return "review"
     if non_implementation(folded_core, labels):
         return "human-gate"
     if "foreign-project" in {str(x).strip().lower() for x in labels}:
@@ -1152,6 +1214,7 @@ def _fold_key(k):
 _evidence_events = None
 _outcomes = None
 _label_events = None
+_outcome_revision_rows = None
 
 def _load_evidence_events():
     global _evidence_events
@@ -1169,6 +1232,41 @@ def _load_evidence_events():
     for rows in _evidence_events.values():
         rows.sort(key=lambda e:(e.get("ts",""),str(e.get("writer","")),str(e.get("event_id",""))))
     return _evidence_events
+
+
+def _load_outcome_revision_rows(fresh=False):
+    """Read raw outcome evidence for admission fencing without using caches."""
+    global _outcome_revision_rows
+    if _outcome_revision_rows is not None and not fresh:
+        return _outcome_revision_rows
+    rows_by_card = {}
+    for path in sorted(glob.glob(os.path.join(_EVID_DIR, "*.jsonl"))):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        event = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(event, dict) or not event.get("card_id"):
+                        continue
+                    action = event.get("action")
+                    key = _fold_key(event.get("link_key"))
+                    if action not in {"verdict", "blocked"} and not any(
+                        outcome_key in key for outcome_key in _OUTCOME_KEYS
+                    ):
+                        continue
+                    rows_by_card.setdefault(str(event["card_id"]), []).append(event)
+        except OSError:
+            continue
+    for rows in rows_by_card.values():
+        rows.sort(key=lambda event: (
+            str(event.get("ts") or ""),
+            str(event.get("writer") or ""),
+            str(event.get("event_id") or ""),
+        ))
+    _outcome_revision_rows = rows_by_card
+    return rows_by_card
 
 def _native_outcome_value(event):
     """Return one safe outcome value from a native CardStore verdict event."""
@@ -3441,11 +3539,89 @@ log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d "
         structural_leaf,human_gated,
         skipped_unclaimable+sensitive_withheld+not_claimable_skipped+foreign_skipped,top))
 
-# Shadow-only scheduler truth. The legacy selector above remains authoritative
-# until this partition has proven parity across a release. SKCoord contributes
-# read-only lifecycle classes through this adapter; it does not own runtime
-# backoff, worker health, ITIL state, or host routing policy.
+# Scheduler truth. POOL_V2 is the bounded admission partition; the legacy pool
+# remains in the report for parity diagnostics. SKCoord contributes read-only
+# lifecycle classes through this adapter; it does not own runtime backoff, worker
+# health, ITIL state, or host routing policy.
+_POOL_V2_DECISIONS = None
+_POOL_V2_ADMISSIONS = {}
+_POOL_V2_ERROR = False
+_POOL_V2_CLASS_IDS = {}
+_POOL_V2_ALL_EXCLUDED = set()
+
+
+def _pool_v2_admission_fingerprint(decision):
+    """Stable identity for the bounded admission facts used by selection."""
+    return hashlib.sha256(json.dumps(
+        {
+            "card_id": decision.get("card_id"),
+            "claimable": decision.get("claimable"),
+            "reason": decision.get("reason"),
+            "host_pin": decision.get("host_pin"),
+            "labels": decision.get("labels"),
+            "title": decision.get("title"),
+            "core": decision.get("core"),
+            "overlay": decision.get("overlay"),
+            "source_revision": decision.get("source_revision"),
+        }, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+
+
+def _pool_v2_claimability_flags(claimability):
+    """Translate an adapter result without ever treating omission as ready."""
+    if claimability.get("claimable") is True:
+        return False, False
+    reason = str(claimability.get("reason") or "")
+    if reason in {"review", "awaiting-review"}:
+        return False, True
+    if (
+        reason in {
+            "human-gate", "foreign-project", "not-claimable", "non-task",
+            "sensitive-category", "dependency", "backoff", "attempt-limit",
+            "done", "void", "archive",
+        }
+        or reason.startswith(("owned-", "host-pin:"))
+    ):
+        return False, False
+    if reason.startswith("malformed:"):
+        return True, False
+    return True, False
+
+
+def _pool_v2_source_revision(cid, core, fresh=False):
+    """Identify the exact core and event inputs used for one admission."""
+    rows = list(_strict_card_events(cid, fresh=fresh))
+    rows.extend(_legacy_claimability_events(fresh=fresh).get(cid, []))
+    outcomes = _load_outcome_revision_rows(fresh=fresh).get(cid, [])
+    return hashlib.sha256(json.dumps(
+        {"core": core, "events": rows, "outcomes": outcomes}, sort_keys=True,
+        separators=(",", ":")
+    ).encode()).hexdigest()
+
+
+def _pool_v2_overlay(cid, core, reason):
+    """Return every non-claimability overlay that can exclude a card."""
+    classes = _POOL_V2_CLASS_IDS
+    return {
+        "lifecycle": lifecycle_state(cid),
+        "itil_terminal": itil_terminal(cid),
+        "superseded": cid in classes.get("superseded_cards", set()),
+        "excluded": cid in _POOL_V2_ALL_EXCLUDED,
+        "review_readback": cid in _REVIEW_READBACK_BLOCKED,
+        "terminal_review": terminal_review_verdict(cid, core),
+        "awaiting_review": awaiting_review(cid),
+        "backoff": blocked_backoff(cid),
+        "attempt_limit": unclaimable(cid),
+        "class_facets": tuple(sorted(
+            name for name, ids in classes.items() if cid in ids
+        )),
+        "reason": reason,
+    }
+
+
 def _shadow_pool_v2():
+    global _POOL_V2_ADMISSIONS, _POOL_V2_CLASS_IDS, _POOL_V2_ALL_EXCLUDED
+    _POOL_V2_ADMISSIONS = {}
     classes = assessment.get("classes", {}) if isinstance(assessment, dict) else {}
     class_ids = {
         name: {str(row.get("card_id")) for row in rows if row.get("card_id")}
@@ -3453,6 +3629,8 @@ def _shadow_pool_v2():
         if isinstance(rows, list)
     }
     all_excluded = set(excluded)
+    _POOL_V2_CLASS_IDS = class_ids
+    _POOL_V2_ALL_EXCLUDED = all_excluded
     population = []
     for card_dir in sorted(glob.glob(CARDS + "/*")):
         cid = os.path.basename(card_dir)
@@ -3468,6 +3646,11 @@ def _shadow_pool_v2():
             lifecycle = lifecycle_state(cid)
             claimability = authoritative_claimability(cid, core)
             reason = str(claimability.get("reason") or "")
+            # Admission is fail-closed.  A missing or non-boolean claimability
+            # result is not equivalent to claimable; it is malformed and can
+            # never become a ready row by omission of a mapped facet.
+            claimable = claimability.get("claimable")
+            malformed, awaiting = _pool_v2_claimability_flags(claimability)
             owner_health = None
             if reason.startswith("owned-"):
                 if cid in class_ids.get("dead_worker_claims", set()):
@@ -3487,7 +3670,7 @@ def _shadow_pool_v2():
             population.append(
                 SchedulerFacts(
                     card_id=cid,
-                    malformed=lifecycle == "ambiguous"
+                    malformed=malformed or lifecycle == "ambiguous"
                     or reason.startswith("malformed:"),
                     lifecycle_excluded=cid in all_excluded and not mapped_exclusion,
                     selector_excluded=(
@@ -3507,14 +3690,26 @@ def _shadow_pool_v2():
                         reason == "dependency"
                         or cid in class_ids.get("void_dependency_edges", set())
                     ),
-                    awaiting_review=awaiting_review(cid),
+                    awaiting_review=awaiting or awaiting_review(cid),
                     backoff=blocked_backoff(cid),
                     attempt_limit=unclaimable(cid),
                     host_pin_elsewhere=reason.startswith("host-pin:"),
                     adapter_facets=adapter_facets,
                 )
             )
+            _POOL_V2_ADMISSIONS[cid] = {
+                **claimability,
+                "claimable": claimable is True,
+                "overlay": _pool_v2_overlay(cid, core, reason),
+                "source_revision": _pool_v2_source_revision(cid, core),
+            }
         except Exception as exc:
+            _POOL_V2_ADMISSIONS[cid] = {
+                "card_id": cid,
+                "claimable": False,
+                "reason": "malformed:%s" % type(exc).__name__,
+                "overlay": {"adapter_error": type(exc).__name__},
+            }
             population.append(
                 SchedulerFacts(
                     card_id=cid,
@@ -3523,6 +3718,8 @@ def _shadow_pool_v2():
                 )
             )
     decisions = classify_scheduler_population(population)
+    global _POOL_V2_DECISIONS
+    _POOL_V2_DECISIONS = decisions
     report = pool_v2(HOST, decisions)
     log(d, report.render())
     ready_ids = {row.card_id for row in decisions if row.eligible}
@@ -3545,14 +3742,80 @@ def _shadow_pool_v2():
 
 
 def _emit_shadow_pool_v2():
+    global _POOL_V2_ERROR
     try:
         _shadow_pool_v2()
     except Exception as exc:
-        # Shadow truth is observational. Its failure must never stop legacy claims.
+        _POOL_V2_ERROR = True
+        # Admission errors fail closed. They must never fall back to legacy claims.
         log(d, "SHADOW_ERROR|%s|%s:%s" % (HOST, type(exc).__name__, str(exc)[:160]))
 
 
 _emit_shadow_pool_v2()
+
+# POOL_V2 is now the dispatch admission result.  The legacy pool remains useful
+# as a diagnostic comparison, but it must not be allowed to strand work after
+# the bounded scheduler has proved a card eligible.  Rebuild only the rows that
+# POOL_V2 marked ready; all claim, dependency, lane, and last-moment fencing
+# still happens below before launch.
+if _POOL_V2_ERROR:
+    pool = []
+    log(d, "POOL_AUTHORITY_ERROR|%s|source=POOL_V2|ready=0" % HOST)
+elif _POOL_V2_DECISIONS is not None:
+    _legacy_pool_count = len(pool)
+    _v2_ids = {row.card_id for row in _POOL_V2_DECISIONS if row.eligible}
+    _v2_rows = {}
+    for _row in pool:
+        if _row[2] in _v2_ids:
+            _v2_rows[_row[2]] = _row
+    for _cid in sorted(_v2_ids - set(_v2_rows)):
+        _core_path = os.path.join(CARDS, _cid, "core.json")
+        try:
+            with open(_core_path, encoding="utf-8") as _handle:
+                _core = json.load(_handle)
+            _decision = authoritative_claimability(_cid, _core)
+            _admission = _POOL_V2_ADMISSIONS.get(_cid)
+            _decision = {
+                **_decision,
+                "overlay": _pool_v2_overlay(
+                    _cid, _decision.get("core", _core),
+                    str(_decision.get("reason") or ""),
+                ),
+                "source_revision": _pool_v2_source_revision(_cid, _core),
+            }
+            if (
+                not isinstance(_admission, dict)
+                or _decision.get("claimable") is not True
+                or _pool_v2_admission_fingerprint(_decision)
+                != _pool_v2_admission_fingerprint(_admission)
+            ):
+                log(d, "POOL_V2_ROW_BLOCKED|%s|%s|reason=%s" %
+                    (HOST, _cid, _decision.get("reason", "snapshot-drift")))
+                continue
+            if _decision.get("host_pin") == HOST:
+                _PINNED_IDS.add(_cid)
+            _labels = _decision["labels"]
+            _title = _decision["title"]
+            _folded_core = _decision.get("core", _core)
+            _blob = (_title + " " + json.dumps(_labels)).upper()
+            _up = _title.upper().lstrip("[")
+            if _up.startswith("SKLEGAL") or "SKLEGAL" in _blob:
+                _lane = 0
+            elif any(_up.startswith(_prefix) for _prefix in ENG):
+                _lane = 1
+            else:
+                _lane = 2
+            _v2_rows[_cid] = [
+                _lane, PRI.get(str(_core.get("initial_priority")), 4),
+                _cid, _folded_core, _labels, unblocks.get(_cid, 0),
+            ]
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as _exc:
+            log(d, "POOL_V2_ROW_ERROR|%s|%s|%s" %
+                (HOST, _cid, type(_exc).__name__))
+    pool = list(_v2_rows.values())
+    pool.sort(key=lambda _row: (_row[0], -_row[5], _row[1], _row[2]))
+    log(d, "POOL_AUTHORITY|%s|source=POOL_V2|ready=%d|legacy_ready=%d" %
+        (HOST, len(pool), _legacy_pool_count))
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
@@ -4014,12 +4277,40 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     except BoundaryError as exc:
         log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
         continue
-    workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
-    os.makedirs(workspace,exist_ok=True)
+    default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
+    try:
+        workspace=_worker_workspace(default_workspace)
+    except ValueError as exc:
+        log(d,"WORKSPACE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
+        continue
+    if workspace == default_workspace:
+        os.makedirs(workspace,exist_ok=True)
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
     # Last-moment re-check through the same fold that built the pool.
     fresh_claimability=authoritative_claimability(cid,fresh=True)
+    with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as _raw_handle:
+        _raw_core = json.load(_raw_handle)
+    _admission = _POOL_V2_ADMISSIONS.get(cid)
+    fresh_claimability = {
+        **fresh_claimability,
+        "overlay": _pool_v2_overlay(
+            cid, fresh_claimability.get("core", core),
+            str(fresh_claimability.get("reason") or ""),
+        ),
+        "source_revision": _pool_v2_source_revision(cid, _raw_core, fresh=True),
+    }
+    if (
+        not isinstance(_admission, dict)
+        or fresh_claimability.get("claimable") is not True
+        or _pool_v2_admission_fingerprint(fresh_claimability)
+        != _pool_v2_admission_fingerprint(_admission)
+    ):
+        raced += 1
+        _raced_ids.append(cid)
+        log(d,"SKIPPED_ADMISSION_DRIFT|%s|%s|%s|reason=%s"%
+            (HOST,sess,cid,fresh_claimability.get("reason","snapshot-drift")))
+        continue
     if _classify_claim_outcome(fresh_claimability["claimable"]) == "raced":
         raced += 1
         _raced_ids.append(cid)
@@ -4079,11 +4370,14 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "mkdir -p ~/.skcapstone/fleet/beats; "
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
         "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
-        "\"beat_at\":'\\$(date +%%s)',\"elapsed_s\":'\\$SECONDS'}' "
+        "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
         "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "
         "sleep %s; done; }; "
         "beat & BEAT=$!; "
-        "stop_beat() { kill $BEAT 2>/dev/null || true; }; "
+        # The beat is ephemeral runtime state.  Remove it only after the
+        # worker has exited, so monitors cannot mistake a completed worker for
+        # a live one on the next cycle.
+        "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; rm -f -- %s 2>/dev/null || true; }; "
         'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
         'trap "stop_beat; release_claim; idle_agent" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s "
@@ -4095,15 +4389,17 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
            name, cid, claimed_revision,
            _bf_path, _bf_path, _bf_path,
            _bi,
+           _bf_path,
            name, name, workspace, PI, name, model,
            pi_tools, bf))
     wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
-    inner=shlex.join([
+    inner=[
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
         "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--mail-recipient","all",
         "--","bash","-lc",child,
-    ])
+    ]
     unit=_worker_unit_name(_LANE["name"],cid)
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
@@ -4119,9 +4415,10 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             append_review_launch_receipt(
                 Path(HOME) / ".skcapstone",
                 _review_handoff,
-                actor=name,
+                actor="niobe",
                 claim_revision=claimed_revision,
                 launched=ok,
+                worker_name=name,
             )
             MeroObservation(
                 card_id=cid,

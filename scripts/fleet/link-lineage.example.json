@@ -1,0 +1,17 @@
+{
+  "schema": "skfleet.link-lineage/v1",
+  "records": {},
+  "reviewer_candidates": [
+    {
+      "schema": "skfleet.reviewer-identity/v1",
+      "name": "Seraph",
+      "seat": "seraph",
+      "identity": "seraph@casey.skworld.io",
+      "host": "chiap08",
+      "session": "seraph-card-scoped",
+      "workspace": "/home/skuser01/work/skcapstone",
+      "fingerprint": "<lowercase-sha256-of-seraph-public-key>",
+      "eligible": true
+    }
+  ]
+}

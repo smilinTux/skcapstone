@@ -1,0 +1,19 @@
+[Unit]
+Description=SKFleet Niobe shadow-only successor beat
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=niobe
+Environment=SKCAPSTONE_AGENT=niobe
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.seat_shadow_entrypoint --home %h/.skcapstone --control-plane %h/.skcapstone/coordination/seat-control-plane.json
+TimeoutStartSec=120
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone/coordination/seat-cycles
+ReadWritePaths=%h/.skcapstone/coordination/skmail.d
+
+[Install]
+WantedBy=default.target

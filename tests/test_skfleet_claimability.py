@@ -106,7 +106,7 @@ def _release(ts: str, writer: str, owner: str, revision: str) -> dict[str, objec
                 _event("2026-08-29T10:28:23Z", "worker", "move", column="review"),
                 _release("2026-08-29T11:22:36Z", "lumina", "worker", "rev-a"),
             ],
-            "claimable",
+            "review",
         ),
         (
             "79396786",
@@ -136,7 +136,7 @@ def _release(ts: str, writer: str, owner: str, revision: str) -> dict[str, objec
                 _event("2026-08-29T10:32:16Z", "worker", "move", column="review"),
                 _release("2026-08-29T11:22:44Z", "lumina", "worker", "rev-a"),
             ],
-            "claimable",
+            "review",
         ),
         (
             "dd659b4c",
@@ -228,7 +228,7 @@ def test_terminal_review_dependency_gate_and_host_pin_reasons() -> None:
         core,
         [_event("2026-08-29T10:00:00Z", "worker", "move", column="review")],
     )
-    assert namespace["_claimability_reason"](core, review) == "claimable"
+    assert namespace["_claimability_reason"](core, review) == "review"
 
     dependent_core = {**core, "dependencies": ["missing-dep"]}
     dependent = namespace["_fold_claimability"](dependent_core, [])
@@ -237,7 +237,27 @@ def test_terminal_review_dependency_gate_and_host_pin_reasons() -> None:
 
     namespace["_dep_satisfied"] = lambda _dep: True
     namespace["host_pin"] = lambda _core, _labels: "chiap08"
-    assert namespace["_claimability_reason"](core, review) == "host-pin:chiap08"
+    assert namespace["_claimability_reason"](core, review) == "review"
+
+
+def test_review_markers_are_not_executable_after_claim_release() -> None:
+    namespace = _load_claimability()
+    for labels, description in ((["review"], "ordinary"),
+                                ([], "PASS_FOR_REVIEW evidence exists")):
+        core = {**_core("review-marker", labels=labels),
+                "description": description}
+        state = namespace["_fold_claimability"](core, [])
+        assert namespace["_claimability_reason"](core, state) == "review"
+
+
+def test_review_evidence_and_open_pr_links_are_folded_and_excluded() -> None:
+    namespace = _load_claimability()
+    for links in ({"open_pr": "https://example.invalid/pr/1"},
+                  {"candidate_evidence_sha256": "a" * 64}):
+        core = {**_core("review-link", labels=[]), "links": links}
+        state = namespace["_fold_claimability"](core, [])
+        assert state["links"] == links
+        assert namespace["_claimability_reason"](core, state) == "review"
 
 
 def test_pool_and_preclaim_call_the_same_predicate() -> None:

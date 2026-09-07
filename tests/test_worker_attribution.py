@@ -13,8 +13,8 @@ def _rotate_source() -> str:
     return ROTATE.read_text(encoding="utf-8")
 
 
-def test_review_assignment_uses_reviewer_not_jarvis():
-    """authorize_review_launch must receive the actual reviewer, not 'jarvis'."""
+def test_review_assignment_uses_niobe_launch_authority():
+    """Niobe authorizes the handoff; the reviewer remains the worker target."""
     src = _rotate_source()
     tree = ast.parse(src)
     for node in ast.walk(tree):
@@ -25,23 +25,18 @@ def test_review_assignment_uses_reviewer_not_jarvis():
                     if isinstance(func, ast.Name) and func.id == "authorize_review_launch":
                         for kw in call.keywords:
                             if kw.arg == "actor":
-                                assert isinstance(
-                                    kw.value, ast.Name
-                                ), "actor must be a variable (the reviewer), not a literal"
-                                assert (
-                                    kw.value.id != "jarvis"
-                                ), "actor must not be hardcoded 'jarvis'"
+                                assert isinstance(kw.value, ast.Constant)
+                                assert kw.value.value == "niobe"
                                 return
     pytest.fail("authorize_review_launch call with actor= not found in _review_assignment")
 
 
-def test_launch_receipt_uses_worker_name_not_jarvis():
-    """append_review_launch_receipt must receive the worker name, not 'jarvis'."""
+def test_launch_receipt_uses_niobe_authority_and_worker_name():
+    """The receipt is authorized by Niobe and records the actual worker name."""
     src = _rotate_source()
     # Find the pattern in the launch loop
-    assert (
-        "actor=name," in src or "actor=name" in src
-    ), "launch receipt must use the actual worker name variable"
+    assert 'actor="niobe"' in src
+    assert "worker_name=name" in src
     # Ensure the old hardcoded pattern is gone from the receipt call
     # (it may still exist in authorize_review_launch which is now fixed)
     lines = src.splitlines()

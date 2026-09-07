@@ -34,6 +34,7 @@ HOST_LOCAL_BEAT_NOTICE_S = 120.0
 # Default above measured cross-host p95 with margin.
 DEFAULT_HEARTBEAT_TIMEOUT_S = 600.0
 DEFAULT_TRANSPORT_TIMEOUT_S = 600.0
+DEFAULT_PROGRESS_TIMEOUT_S = 900.0
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,163 @@ class WorkerGeneration:
     card_id: str
     claim_revisions: tuple[str, ...]
     count: int
+
+
+@dataclass(frozen=True)
+class StartupObservation:
+    """Bounded startup proof for one exact worker generation.
+
+    A process existing is not evidence that it started useful work.  The
+    scheduler may use this result for diagnostics, but any actuation still
+    requires the exact claim fence checked by :func:`classify_worker`.
+    """
+
+    owner: str
+    card_id: str
+    session_id: str
+    claim_revision: str
+    expected_claim_revision: str
+    heartbeat_seen: bool
+    executable_evidence_seen: bool
+    heartbeat_at: str | None = None
+    executable_evidence: Mapping[str, object] | None = None
+    process_alive: bool | None = None
+    session_alive: bool | None = None
+
+
+@dataclass(frozen=True)
+class ProgressObservation:
+    """Bounded progress proof for one exact worker generation."""
+
+    owner: str
+    card_id: str
+    session_id: str
+    claim_revision: str
+    expected_claim_revision: str
+    progress_at: str | None
+    terminal_evidence_seen: bool = False
+    process_alive: bool | None = None
+    session_alive: bool | None = None
+
+
+def classify_progress(
+    observation: ProgressObservation,
+    *,
+    now: datetime,
+    progress_timeout_s: float = DEFAULT_PROGRESS_TIMEOUT_S,
+) -> str:
+    """Classify executable progress without performing any actuation."""
+    if not all(
+        (
+            observation.owner,
+            observation.card_id,
+            observation.session_id,
+            observation.claim_revision,
+            observation.expected_claim_revision,
+        )
+    ):
+        return "progress-invalid-identity"
+    if observation.claim_revision != observation.expected_claim_revision:
+        return "progress-claim-mismatch"
+    if observation.process_alive is False and observation.session_alive is False:
+        return "progress-exited"
+    if observation.terminal_evidence_seen:
+        return "progress-terminal-evidence"
+    if not observation.progress_at:
+        return "progress-missing"
+    progress = _parse_time(observation.progress_at)
+    if progress is None:
+        return "progress-malformed"
+    age = (now.astimezone(timezone.utc) - progress).total_seconds()
+    if age < 0:
+        return "progress-clock-skew"
+    if age > progress_timeout_s:
+        return "progress-stale"
+    return "progress-fresh"
+
+
+def classify_startup(
+    observation: StartupObservation,
+    *,
+    now: datetime | None = None,
+    heartbeat_timeout_s: float = DEFAULT_HEARTBEAT_TIMEOUT_S,
+) -> str:
+    """Classify startup without treating a live process as useful work.
+
+    Both an attributable heartbeat and executable evidence are required.  A
+    missing or mismatched identity is fail-closed and never a release signal.
+    """
+    if not all(
+        (
+            observation.owner,
+            observation.card_id,
+            observation.session_id,
+            observation.claim_revision,
+            observation.expected_claim_revision,
+        )
+    ):
+        return "startup-invalid-identity"
+    if observation.claim_revision != observation.expected_claim_revision:
+        return "startup-claim-mismatch"
+    if not observation.heartbeat_seen or not observation.heartbeat_at:
+        return "startup-heartbeat-missing"
+    heartbeat = _parse_time(observation.heartbeat_at)
+    if heartbeat is None:
+        return "startup-heartbeat-malformed"
+    if now is not None:
+        age = (now.astimezone(timezone.utc) - heartbeat).total_seconds()
+        if age < 0:
+            return "startup-heartbeat-clock-skew"
+        if age > heartbeat_timeout_s:
+            return "startup-heartbeat-stale"
+    if not observation.executable_evidence_seen:
+        return "startup-evidence-missing"
+    evidence = observation.executable_evidence
+    if not isinstance(evidence, Mapping):
+        return "startup-evidence-malformed"
+    expected = {
+        "owner": observation.owner,
+        "card_id": observation.card_id,
+        "session_id": observation.session_id,
+        "claim_revision": observation.claim_revision,
+    }
+    if any(evidence.get(key) != value for key, value in expected.items()):
+        return "startup-evidence-mismatch"
+    if evidence.get("kind") != "executable-work":
+        return "startup-evidence-malformed"
+    return "startup-ready"
+
+
+def startup_actuation_fenced(
+    observation: StartupObservation,
+    *,
+    owner: str,
+    claim_revision: str,
+    now: datetime,
+    heartbeat_timeout_s: float = DEFAULT_HEARTBEAT_TIMEOUT_S,
+) -> bool:
+    """Return whether a selector may offer an exact startup release.
+
+    This is deliberately an interface, not an actuator.  It requires a
+    second, host-local observation that both process and session are absent,
+    plus exact owner and claim-revision fencing.  Missing observations never
+    become release permission.
+    """
+    if owner != observation.owner or claim_revision != observation.claim_revision:
+        return False
+    if observation.process_alive is not False or observation.session_alive is not False:
+        return False
+    state = classify_startup(
+        observation, now=now, heartbeat_timeout_s=heartbeat_timeout_s
+    )
+    return state in {
+        "startup-heartbeat-stale",
+        "startup-heartbeat-missing",
+        "startup-heartbeat-malformed",
+        "startup-evidence-missing",
+        "startup-evidence-malformed",
+        "startup-evidence-mismatch",
+    }
 
 
 @dataclass(frozen=True)
