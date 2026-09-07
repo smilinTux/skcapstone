@@ -293,7 +293,9 @@ def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_proj
     assert row.projection_error == ("ValueError" if broken_projection else "")
 
 
-def test_direct_seat_active_requires_exact_process_projection_claim_join(monkeypatch, tmp_path, capsys):
+def test_direct_seat_active_requires_exact_process_projection_claim_join(
+    monkeypatch, tmp_path, capsys
+):
     """The c1841391 seat process is active only after every identity joins."""
     monitor = load_monitor()
     exact = worker(
