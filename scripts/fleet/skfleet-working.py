@@ -83,6 +83,7 @@ units={p[0]:p[1:4] for line in unit_lines if len(p:=line.split()) >= 4}
 seen_units=set()
 process_agents=set()
 projection_agents=set()
+projection_identity={}
 for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
     if '.sync-conflict-' in path.name:
         continue
@@ -93,6 +94,11 @@ for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
         agent=projection.get('agent','')
         if isinstance(agent,str) and agent and agent == path.stem:
             projection_agents.add(agent)
+            projection_identity[agent] = (
+                projection.get('current_task') or '',
+                str(projection.get('_claim_revision') or ''),
+                projection.get('state'),
+            )
     except (OSError,json.JSONDecodeError,TypeError,AttributeError):
         pass
 try:
@@ -144,8 +150,15 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         try:
             folded=CardStore(Path.home()/'.skcapstone').fold(card)
             status=folded.status.value
-            claim='exact' if folded.owner==agent and folded.meta.get('_claim_revision') else 'mismatch'
-            projection_state='valid' if agent in projection_agents else 'missing'
+            folded_revision=str(folded.meta.get('_claim_revision',''))
+            claim='exact' if (folded.owner==agent and folded_revision
+                              and (not direct or folded_revision == revision)) else 'mismatch'
+            identity=projection_identity.get(agent)
+            direct_projection_exact=(identity is not None and identity[0] == card
+                                     and identity[1] == revision and identity[2] == 'active')
+            projection_state=('valid' if (agent in projection_agents and
+                                          (not direct or direct_projection_exact)) else
+                              'mismatch' if direct else 'missing')
             projection_error=''
             claim_owner=folded.owner or ''
             claim_revision=str(folded.meta.get('_claim_revision',''))
@@ -287,6 +300,14 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
         return "MALFORMED PROJECTION", now
     if worker.projection_state == "stale":
         return "STALE PROJECTION", now
+    if worker.evidence_source.startswith("direct-seat-record") and (
+        worker.projection_state != "valid"
+        or worker.claim_state != "exact"
+        or worker.completion_state != "running"
+        or not worker.heartbeat_at
+        or not worker.process_record
+    ):
+        return "STALE PROJECTION", now
     if worker.unit in {"", "not-found"}:
         samples.pop(key, None)
         if worker.claim_state == "exact":
@@ -417,8 +438,8 @@ def main() -> int:
             row.evidence_source.startswith("direct-seat-record")
             and row.claim_state == "exact"
             and row.projection_state == "valid"
-            and row.completion_state == "running"
             and bool(row.heartbeat_at)
+            and bool(row.process_record)
         )
         if direct_active:
             state = "DIRECT SEAT ACTIVE"
@@ -440,7 +461,7 @@ def main() -> int:
         elif row in worker_rows and counts[row.card] > 1:
             state = "DUPLICATE card process"
             alerts.append((row, "duplicate"))
-        elif owner == "orphan-process":
+        elif owner == "orphan-process" and not direct_active:
             state = "ORPHAN: no unit or tmux owner"
             alerts.append((row, "orphan"))
         elif row.claim_state != "exact":
