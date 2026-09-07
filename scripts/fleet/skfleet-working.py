@@ -61,6 +61,9 @@ class Worker:
     unit_sub: str = "dead"
     claim_owner: str = ""
     claim_revision: str = ""
+    launched_owner: str = ""
+    launched_revision: str = ""
+    unit_timestamp: int = 0
     evidence_source: str = "systemd+proc+cardstore"
     projection_state: str = "valid"
     projection_error: str = ""
@@ -136,7 +139,7 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
             claim_owner=''
             claim_revision=''
         state=units.get(unit,['not-found','inactive','dead'])
-        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,launched_owner=agent,launched_revision=claim_revision,unit_timestamp=now-elapsed,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
     except (FileNotFoundError,ProcessLookupError,PermissionError,ValueError,KeyError,json.JSONDecodeError):
         pass
 for unit in sorted(set(units)-seen_units):
@@ -158,9 +161,17 @@ for unit in sorted(set(units)-seen_units):
         claim='malformed-projection'
         projection_state='malformed'
         projection_error=type(exc).__name__
-    pid=int(subprocess.run(['systemctl','--user','show',unit,'-p','MainPID','--value'],capture_output=True,text=True).stdout.strip() or 0)
+    props=subprocess.run(['systemctl','--user','show',unit,'-p','MainPID','-p','Environment','-p','ActiveEnterTimestampMonotonic','--value'],capture_output=True,text=True).stdout.splitlines()
+    pid=int(props[0].strip() or 0) if props else 0
+    environment=props[1] if len(props)>1 else ''
+    launched_owner=next((x.split('=',1)[1] for x in environment.split() if x.startswith('SKAGENT=')), '')
+    launched_revision=next((x.split('=',1)[1] for x in environment.split() if x.startswith('SKCAPSTONE_CLAIM_REVISION=')), '')
+    timestamp=int(props[2].strip() or 0) // 1000000 if len(props)>2 and props[2].strip().isdigit() else now
+    if not owner or not revision: claim='released'
+    elif launched_owner != owner or launched_revision != revision: claim='superseded'
+    else: claim='exact'
     state=units[unit]
-    print(json.dumps(dict(host=host,agent=owner or 'unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state=claim,card_status=status,unit_missing_process=True,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=owner,claim_revision=revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
+    print(json.dumps(dict(host=host,agent=launched_owner or owner or 'unit-without-pi',card=card,pid=pid,elapsed=0,cpu=0,log_bytes=-1,log_age=-1,unit=unit,tmux=False,claim_state=claim,card_status=status,unit_missing_process=True,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=owner,claim_revision=revision,launched_owner=launched_owner,launched_revision=launched_revision,unit_timestamp=timestamp,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
 idle_projections=0
 sync_conflict_projections=0
 for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
@@ -267,7 +278,8 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
         if worker.claim_state == "mismatch":
             return "STALE PROJECTION", now
         return "OK", now
-    if worker.claim_state == "mismatch":
+    if worker.claim_state in {"mismatch", "released", "superseded"}:
+        samples.pop(key, None)
         return "ACTION REQUIRED", now
     previous = samples.get(key)
     first_seen = previous["first_seen"] if previous else now
@@ -275,6 +287,9 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
         samples[key] = {"first_seen": first_seen, "observed": now}
         if worker.unit_active == "failed" and worker.claim_state == "exact":
             return "ACTION REQUIRED", first_seen
+        if worker.unit_timestamp and worker.unit_timestamp < first_seen:
+            first_seen = worker.unit_timestamp
+            samples[key] = {"first_seen": first_seen, "observed": now}
         if (
             previous
             and UNIT_GRACE <= now - previous["observed"] <= UNIT_SAMPLE_FRESHNESS

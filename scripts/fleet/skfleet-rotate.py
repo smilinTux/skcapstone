@@ -4067,7 +4067,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "stop_beat() { kill $BEAT 2>/dev/null || true; }; "
         'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
         'trap "stop_beat; release_claim; idle_agent" EXIT; '
-        "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s %s --approve --name %s "
+        "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKCAPSTONE_CLAIM_REVISION=%s SKFLEET_WORKSPACE=%s %s --approve --name %s "
         "--provider skgateway --model %s --thinking off --no-context-files --no-skills --tools %s "
         '-p "$(cat %s)"; '
         "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; idle_agent; exit $rc"
@@ -4076,7 +4076,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
            name, cid, claimed_revision,
            _bf_path, _bf_path, _bf_path,
            _bi,
-           name, name, workspace, PI, name, model,
+           name, name, claimed_revision, workspace, PI, name, model,
            pi_tools, bf))
     wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
     inner=shlex.join([
