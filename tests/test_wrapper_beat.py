@@ -10,7 +10,7 @@ def test_beat_function_in_child_command():
     """The child shell command must define and start a beat function."""
     src = ROTATE.read_text(encoding="utf-8")
     assert "beat() { while :; do" in src, "beat loop function not in child command"
-    assert "beat & BEAT=$!" in src, "beat loop not backgrounded"
+    assert "beat </dev/null >/dev/null 2>&1 & BEAT=$!" in src, "beat loop not safely backgrounded"
     assert "sleep" in src, "beat loop has no sleep interval"
 
 
