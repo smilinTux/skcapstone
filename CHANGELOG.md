@@ -91,6 +91,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Card `5a71c2dc`: added bounded, restart-safe SKRSI metadata collection with
+  hash-only dead-letter evidence, deterministic replay, and OTel-compatible
+  freshness and quality measurements.
+
 - Card `5a71c2db`: added metadata-only SKRSI target revisions, canonical
   hash-bound architecture records, redaction and fail-closed validation, and
   an append-only idempotent outbox with retention and acknowledgement cursors.
