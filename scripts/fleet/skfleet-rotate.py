@@ -4148,6 +4148,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "- CardStore is append-only. Build JSON with a serializer and parse every line before appending. Never concatenate strings into JSON.\n"
       "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
       "- Return exact PASS, PASS_FOR_REVIEW, or BLOCKED with a real hashed artifact, and notify jarvis and lumina by skmail.\n"
+      "- Never delete your workspace. On success preserve exact source and evidence for handoff and review. On failure, timeout, or interruption preserve a hash-pinned recovery manifest and quarantine locator for the next agent.\n"
       "\n"
       "HOW TO SEND MAIL. This is the ONLY mailbox. Use the command; do not invent a\n"
       "file format or a directory:\n"

@@ -7,6 +7,7 @@ import ast
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -195,8 +196,7 @@ def test_terminal_pass_links_are_fenced_and_idempotent(tmp_path: Path, monkeypat
     home, store, evidence, args = _terminal_link_fixture(tmp_path)
     monkeypatch.setenv("HOME", str(home))
     (evidence / "PASS_FOR_REVIEW.json").write_text(
-        '{"verdict":"PASS_FOR_REVIEW", "pr":"https://example.test/pull/7", '
-        '"commit":"abcdef1"}\n',
+        '{"verdict":"PASS_FOR_REVIEW", "pr":"https://example.test/pull/7", "commit":"abcdef1"}\n',
         encoding="utf-8",
     )
 
@@ -237,6 +237,92 @@ def test_terminal_link_drops_mismatched_claim_generation(tmp_path: Path, monkeyp
     module.record_terminal_card_links(args)
 
     assert not [event for event in store._read_events(args.card) if event["action"] == "link"]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [("success", "HANDOFF_REQUIRED"), ("failure", "RECOVERABLE_QUARANTINE")],
+)
+def test_wrapper_records_workspace_handoff_manifest(
+    tmp_path: Path, monkeypatch, outcome: str, expected: str
+) -> None:
+    module = _wrapper()
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "fixture@example.invalid"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Fixture"], check=True)
+    (repository / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "fixture.txt"], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "fixture"], check=True)
+    monkeypatch.chdir(repository)
+    mail: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        module, "emit_work_mail", lambda _args, kind, body: mail.append((kind, body))
+    )
+    args = argparse.Namespace(
+        card="8c4a9e21",
+        owner="pi-codex-chiap08-8c4a9e21",
+        claim_revision="claim-1",
+        host="chiap08",
+        lane="codex",
+        model="sk-m",
+        evidence_dir=tmp_path / "evidence",
+    )
+
+    module.record_workspace_handoff(args, outcome)
+
+    paths = list(args.evidence_dir.glob("*-workspace.json"))
+    assert len(paths) == 1
+    manifest = json.loads(paths[0].read_text(encoding="utf-8"))
+    assert manifest["state"] == expected
+    assert manifest["proof"]["card_id"] == args.card
+    assert expected in mail[0][1]
+
+
+def test_wrapper_signal_routes_through_interrupted_quarantine(tmp_path: Path, monkeypatch) -> None:
+    module = _wrapper()
+    handlers: dict[int, object] = {}
+    handoffs: list[str] = []
+    args = argparse.Namespace(
+        card="deadbeef",
+        owner="pi-codex-chiap08-deadbeef",
+        claim_revision="claim-1",
+        host="chiap08",
+        lane="codex",
+        model="sk-m",
+        stdout=tmp_path / "stdout.log",
+        evidence_dir=tmp_path / "evidence",
+        mail_recipient="all",
+        command=["synthetic-child"],
+    )
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+    monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    monkeypatch.setattr(module, "emit_work_mail", lambda *_: None)
+    monkeypatch.setattr(module, "poll_mailbox", lambda *_: "none")
+    monkeypatch.setattr(module, "idle_owner_projection", lambda *_: None)
+    monkeypatch.setattr(module, "mail_heartbeat_loop", lambda *_: None)
+    monkeypatch.setattr(
+        module, "record_workspace_handoff", lambda _args, outcome: handoffs.append(outcome)
+    )
+    monkeypatch.setattr(
+        module.signal,
+        "signal",
+        lambda signum, handler: handlers.__setitem__(signum, handler),
+    )
+
+    def interrupted_run(*_: object, **__: object) -> None:
+        handler = handlers[signal.SIGTERM]
+        assert callable(handler)
+        handler(signal.SIGTERM, None)
+
+    monkeypatch.setattr(module.subprocess, "run", interrupted_run)
+    with pytest.raises(SystemExit, match="143"):
+        module.main()
+    assert handoffs == ["interrupted"]
 
 
 def test_transport_exit_is_held_then_does_not_consume_attempt(tmp_path: Path) -> None:

@@ -9,8 +9,8 @@ import hashlib
 import json
 import os
 import re
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -279,20 +279,37 @@ def record_terminal_card_links(args: argparse.Namespace) -> None:
             verdict_value = f"BLOCKED blocked_on=card referent={referent.group(1)}"
         else:
             verdict_value = (
-                f"PASS_FOR_REVIEW|claim_revision={args.claim_revision}|"
-                f"artifact_sha256={digest}"
+                f"PASS_FOR_REVIEW|claim_revision={args.claim_revision}|artifact_sha256={digest}"
             )
         if pr:
             verdict_value += f"|PR={pr}"
         if commit:
             verdict_value += f"|commit={commit}"
-        store.append_event(args.card, "link", args.owner, link_key="evidence",
-                           link_value=evidence_value, transition_id=f"{transition}-evidence")
-        store.append_event(args.card, "link", args.owner, link_key="verdict",
-                           link_value=verdict_value, transition_id=f"{transition}-verdict")
+        store.append_event(
+            args.card,
+            "link",
+            args.owner,
+            link_key="evidence",
+            link_value=evidence_value,
+            transition_id=f"{transition}-evidence",
+        )
+        store.append_event(
+            args.card,
+            "link",
+            args.owner,
+            link_key="verdict",
+            link_value=verdict_value,
+            transition_id=f"{transition}-verdict",
+        )
         if pr:
-            store.append_event(args.card, "link", args.owner, link_key="pr",
-                               link_value=pr, transition_id=f"{transition}-pr")
+            store.append_event(
+                args.card,
+                "link",
+                args.owner,
+                link_key="pr",
+                link_value=pr,
+                transition_id=f"{transition}-pr",
+            )
     except Exception:  # noqa: BLE001
         # Terminal mail and immutable exit evidence remain the fallback record.
         return
@@ -372,6 +389,73 @@ def preflight_worktree() -> int:
     return r.returncode
 
 
+def record_workspace_handoff(args: argparse.Namespace, outcome: str) -> None:
+    """Record preservation-required state without granting cleanup authority."""
+    try:
+        from skcapstone.fleet.workspace_lifecycle import (
+            WorkspaceProof,
+            decide_terminal_state,
+            recovery_manifest,
+            write_manifest,
+        )
+
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z"],
+            capture_output=True,
+            check=False,
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        )
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        entries = [item for item in status.stdout.split(b"\0") if item]
+        proof = WorkspaceProof(
+            card_id=args.card,
+            claim_revision=args.claim_revision,
+            workspace=str(Path.cwd().resolve()),
+            branch=branch.stdout.strip(),
+            head=head.stdout.strip(),
+            porcelain_sha256=hashlib.sha256(status.stdout).hexdigest(),
+            dirty_paths=sum(not item.startswith(b"??") for item in entries),
+            untracked_paths=sum(item.startswith(b"??") for item in entries),
+            custody_kind=None,
+            custody_locator=None,
+            custody_sha256=None,
+            custody_reachable=False,
+            completion_evidence_sha256=None,
+            review_required=True,
+            review_dependency=None,
+            review_status=None,
+            active_processes=0,
+            recovery_instructions=(
+                f"Open exact workspace {Path.cwd().resolve()}",
+                f"Verify card {args.card} claim generation {args.claim_revision}",
+                "Preserve dirty bytes and unique commits before any cleanup decision",
+            ),
+            outcome=outcome,
+        )
+        decision = decide_terminal_state(proof)
+        manifest = recovery_manifest(proof, decision.state)
+        path = args.evidence_dir / f"{args.card}-{args.claim_revision}-workspace.json"
+        digest = write_manifest(path, manifest)
+        emit_work_mail(
+            args,
+            "agent.status",
+            f"workspace_state={decision.state.value} manifest_sha256={digest}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        emit_work_mail(
+            args,
+            "work.blocked",
+            f"workspace_state=RECOVERABLE_QUARANTINE reason={type(exc).__name__}",
+        )
+
+
 def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
@@ -387,7 +471,6 @@ def main() -> int:
     emit_work_mail(args, "agent.status", f"phase=mailbox_poll {poll_mailbox(args.owner)}")
 
     def _stop(signum: int, _frame: object) -> None:
-        idle_owner_projection(args.owner)
         raise SystemExit(128 + signum)
 
     signal.signal(signal.SIGTERM, _stop)
@@ -406,12 +489,21 @@ def main() -> int:
         sys.stderr.buffer.write(child.stderr)
         record_terminal_exit(args, child.stderr, child.returncode)
         record_terminal_card_links(args)
+        record_workspace_handoff(args, "success" if child.returncode == 0 else "failure")
         emit_work_mail(
             args,
             "work.complete" if child.returncode == 0 else "work.blocked",
             f"phase=finished exit_code={child.returncode}",
         )
         return child.returncode
+    except (KeyboardInterrupt, SystemExit) as exc:
+        record_workspace_handoff(args, "interrupted")
+        emit_work_mail(
+            args,
+            "work.blocked",
+            f"phase=interrupted exit_code={getattr(exc, 'code', 130) or 130}",
+        )
+        raise
     finally:
         heartbeat_stop.set()
         heartbeat.join(timeout=5)
