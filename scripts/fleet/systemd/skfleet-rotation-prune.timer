@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily SKFleet rotation report retention timer on chiap08
+Documentation=https://github.com/smilinTux/skcapstone
+ConditionHost=chiap08
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+Unit=skfleet-rotation-prune.service
+
+[Install]
+WantedBy=timers.target
