@@ -70,7 +70,7 @@ def test_exact_five_host_lane_targets_and_chiap08_dry_summary() -> None:
     assert 'GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")' in source
     assert 'QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")' in source
     assert '"target":TARGET' in source
-    assert '"target":0 if glm_held else GLM_TARGET' in source
+    assert '"target":0 if glm_held or not glm_catalog_ready else GLM_TARGET' in source
     assert '"target":QWEN_TARGET' in source
     assert '"target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))' in source
 

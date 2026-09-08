@@ -301,10 +301,10 @@ def test_changed_review_generation_gets_a_distinct_recommendation(tmp_path: Path
 @pytest.mark.parametrize(
     ("title", "expected"),
     [
-        ("[CARD][S] Small", "glm-4.6"),
-        ("[CARD][M] Medium", "glm-4.6"),
-        ("[CARD][L] Large", "glm-4.7"),
-        ("[CARD][XL] Extra large", "glm-5.3"),
+        ("[CARD][S] Small", "sk-glm-s"),
+        ("[CARD][M] Medium", "sk-glm-m"),
+        ("[CARD][L] Large", "sk-glm-l"),
+        ("[CARD][XL] Extra large", "sk-glm-l"),
         ("[CARD] Unspecified", None),
     ],
 )

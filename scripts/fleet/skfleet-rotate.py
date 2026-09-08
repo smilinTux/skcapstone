@@ -551,6 +551,33 @@ try:
         glm_held=bool(json.load(_fh).get("active"))
 except (OSError,ValueError,TypeError):
     pass
+
+def _prepare_pi_glm_catalog():
+    """Install logical GLM metadata before any live alias can be selected."""
+    installed=Path(HOME)/".local/bin/skfleet-pi-model-catalog.py"
+    bundled=Path(__file__).with_name("skfleet-pi-model-catalog.py")
+    helper=installed if installed.exists() else bundled
+    if not helper.is_file():
+        return False,"catalog reconciler missing"
+    try:
+        result=subprocess.run(
+            [sys.executable,str(helper),"--apply"],
+            capture_output=True,text=True,timeout=15,check=False,
+        )
+    except (OSError,subprocess.TimeoutExpired) as exc:
+        return False,"catalog reconciliation failed: %s"%type(exc).__name__
+    if result.returncode:
+        detail=(result.stderr or result.stdout or "reconciler refused").strip().splitlines()[0]
+        return False,detail[:240]
+    return True,(result.stdout or "catalog current").strip().splitlines()[0][:240]
+
+glm_catalog_ready=True
+if not DRY and GLM_TARGET > 0 and not glm_held:
+    glm_catalog_ready,glm_catalog_detail=_prepare_pi_glm_catalog()
+    if not glm_catalog_ready:
+        log(d,"GLM_CATALOG_BLOCKED|%s|%s"%(HOST,glm_catalog_detail))
+    else:
+        log(d,"GLM_CATALOG_READY|%s|%s"%(HOST,glm_catalog_detail))
 # Two worker lanes. GLM sat unused for six hours because the rotation only managed
 # codex-auto-* sessions, so the z.ai account received no traffic at all while nine
 # idle legacy glm panes did nothing. A lane is a prefix, a model alias, a target.
@@ -561,8 +588,8 @@ def _beat_interval():
 LANES=[
     {"name":"codex","prefix":"codex-auto-","model":"sk-codex-mid",
      "target":TARGET},
-    {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","glm-4.6"),
-     "target":0 if glm_held else GLM_TARGET},
+    {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","sk-glm-s"),
+     "target":0 if glm_held or not glm_catalog_ready else GLM_TARGET},
     # Restored. needs_escalation() still exists and still marks a card whose
     # worker reported blocked_on=capability, but the lane it routes to had been
     # dropped, so those cards were marked for a destination that did not exist
@@ -582,7 +609,7 @@ LANES=[
      "model":os.environ.get("SKFLEET_ESC_MODEL", ESC_MODEL if "ESC_MODEL" in dir() else "gpt-5.6-sol"),
      "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
 ]
-_GLM_LEVEL_DEFAULTS={"S":"glm-4.6","M":"glm-4.6","L":"glm-4.7","XL":"glm-5.3"}
+_GLM_LEVEL_DEFAULTS={"S":"sk-glm-s","M":"sk-glm-m","L":"sk-glm-l","XL":"sk-glm-l"}
 _GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
              for key,value in _GLM_LEVEL_DEFAULTS.items()}
 _GLM_SIZE_RE=re.compile(r"\[(S|M|XL|L)\]")

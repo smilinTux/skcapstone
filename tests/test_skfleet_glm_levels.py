@@ -131,12 +131,12 @@ def _review_card(core_title="Fix the widget"):
 @pytest.mark.parametrize(
     ("title", "expected"),
     [
-        ("[GBH-S4-01][XL] Run ten pilots", "glm-5.3"),
-        ("[SKGW-COMPAT-R2-07][L] Qualify clients", "glm-4.7"),
-        ("[SKLEGAL][S1-05B][L] Provision audit", "glm-4.7"),
-        ("[FLEET-GLM-CAP-09][S][DEPLOY] Enforce ceiling", "glm-4.6"),
-        ("[SKCOORD-VOLATILE-CI-R1][S] Stabilize identity", "glm-4.6"),
-        ("[MERO-01][M] Pin the census clock", "glm-4.6"),
+        ("[GBH-S4-01][XL] Run ten pilots", "sk-glm-l"),
+        ("[SKGW-COMPAT-R2-07][L] Qualify clients", "sk-glm-l"),
+        ("[SKLEGAL][S1-05B][L] Provision audit", "sk-glm-l"),
+        ("[FLEET-GLM-CAP-09][S][DEPLOY] Enforce ceiling", "sk-glm-s"),
+        ("[SKCOORD-VOLATILE-CI-R1][S] Stabilize identity", "sk-glm-s"),
+        ("[MERO-01][M] Pin the census clock", "sk-glm-m"),
         ("[SKDASH][LIVE-UI-DATA-R1] Repair icons", None),
         ("[SK CONTROL PLANE][SPRINT 1] Pulse", None),
     ],
@@ -149,10 +149,10 @@ def test_glm_level_selected_from_title_size_marker(title: str, expected) -> None
 def test_glm_levels_default_table_is_exact() -> None:
     namespace = _load_glm_helpers()
     assert namespace["_GLM_LEVELS"] == {
-        "S": "glm-4.6",
-        "M": "glm-4.6",
-        "L": "glm-4.7",
-        "XL": "glm-5.3",
+        "S": "sk-glm-s",
+        "M": "sk-glm-m",
+        "L": "sk-glm-l",
+        "XL": "sk-glm-l",
     }
 
 
