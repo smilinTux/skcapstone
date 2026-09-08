@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import queue
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -42,6 +43,8 @@ _ALLOWED = frozenset(
     }
 )
 _SECRET_PARTS = ("secret", "token", "password", "credential", "private_key")
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
+_QUALITY = frozenset({"complete", "partial", "missing", "degraded", "malformed"})
 DEFAULT_METADATA_KEYS = frozenset(
     {
         "category",
@@ -185,11 +188,23 @@ def _safe_metadata(value: object, allowed: frozenset[str]) -> dict[str, Any]:
     if any(not isinstance(key, str) or key not in allowed for key in value):
         raise SKRSIError("metadata field is not allowlisted")
     _reject_protected(value)
-    clean = redact_metadata(value)
+    clean = _hash_strings(redact_metadata(value))
     encoded = canonical_json(clean)
     if len(encoded) > 4096:
         raise SKRSIError("metadata exceeds bounded size")
     return clean
+
+
+def _hash_strings(value: Any) -> Any:
+    """Retain metadata correlation without persisting unclassified text."""
+
+    if isinstance(value, str):
+        return "sha256:" + hashlib.sha256(value.encode()).hexdigest()
+    if isinstance(value, list):
+        return [_hash_strings(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _hash_strings(item) for key, item in value.items()}
+    return value
 
 
 class BoundedCollector:
@@ -286,13 +301,13 @@ class BoundedCollector:
         self, item: Mapping[str, Any], *, now: datetime
     ) -> tuple[str, str, dict[str, Any], datetime, datetime]:
         natural = item.get("natural_key")
-        if set(item) - _ALLOWED or not isinstance(natural, str) or not natural:
+        if set(item) - _ALLOWED or not isinstance(natural, str) or not _SAFE_ID.fullmatch(natural):
             raise SKRSIError("malformed envelope")
         if item.get("source") != self.contract.source:
             raise SKRSIError("unauthorized source")
         _reject_protected(item)
         cursor = item.get("cursor")
-        if not isinstance(cursor, str) or not cursor:
+        if not isinstance(cursor, str) or not _SAFE_ID.fullmatch(cursor):
             raise SKRSIError("cursor is required")
         occurred = _utc(item.get("occurred_at"), name="occurred_at")
         recorded = _utc(item.get("recorded_at", item.get("occurred_at")), name="recorded_at")
@@ -310,6 +325,9 @@ class BoundedCollector:
         ):
             raise SKRSIError("invalid body hash")
         envelope_hash = hashlib.sha256(canonical_json(item)).hexdigest()
+        quality = item.get("quality", "complete")
+        if quality not in _QUALITY:
+            raise SKRSIError("collection quality is invalid")
         payload = {
             "natural_key": natural,
             "source": self.contract.source,
@@ -321,19 +339,16 @@ class BoundedCollector:
             "unit": "metadata_event",
             "cohort": "estate",
             "sample_id": natural,
-            "collection_quality": item.get("quality", "complete"),
+            "collection_quality": quality,
             "metadata": _safe_metadata(item.get("metadata", {}), self.metadata_keys),
         }
-        for key in (
-            "body_hash",
-            "route",
-            "evidence_ref",
-            "cleanup_ref",
-            "recovery_ref",
-            "status",
-        ):
+        if "body_hash" in item:
+            payload["body_hash"] = item["body_hash"]
+        for key in ("route", "evidence_ref", "cleanup_ref", "recovery_ref", "status"):
             if key in item:
-                payload[key] = item[key]
+                if not isinstance(item[key], str):
+                    raise SKRSIError(f"{key} must be a string")
+                payload[key] = _hash_strings(item[key])
         return natural, cursor, payload, occurred, recorded
 
     def _record_error(self, item: Mapping[str, Any], reason: str, *, now: datetime) -> None:

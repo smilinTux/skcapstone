@@ -1,3 +1,4 @@
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from time import monotonic
@@ -87,6 +88,19 @@ def test_protected_value_becomes_hash_only_dead_letter(tmp_path):
     assert "never-persist-me" not in persisted
     assert "api_token" not in persisted
     assert "skrsi.collection_error" in persisted
+
+
+def test_allowlisted_string_values_are_hash_only(tmp_path):
+    outbox = AppendOnlyOutbox(tmp_path / "outbox.jsonl")
+    worker = collector(outbox)
+    marker = "PROTECTED-BODY-MARKER-5f86fdf6"
+    assert worker.submit(event(metadata={"state": marker}, route=marker, status=marker))
+    assert worker.drain(now=NOW).accepted == 1
+    persisted = (tmp_path / "outbox.jsonl").read_text()
+    assert marker not in persisted
+    decoded = b"\n".join(entry.serialized for entry in outbox.entries()).decode()
+    assert marker not in decoded
+    assert decoded.count(hashlib.sha256(marker.encode()).hexdigest()) == 3
 
 
 @pytest.mark.parametrize(
