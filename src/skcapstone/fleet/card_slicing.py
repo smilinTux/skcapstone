@@ -52,6 +52,8 @@ class LeafRecommendation:
     id: str
     title: str
     depends_on: tuple[str, ...]
+    repository: str
+    base_ref: str
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,18 @@ def _count(card: Any, *names: str) -> int:
         if value is not None:
             return len(_items(value))
     return 0
+
+
+def _linked(card: Any, *names: str) -> Any:
+    """Return the first direct or linked card value for ``names``."""
+    links = _get(card, "links", {})
+    for name in names:
+        value = _get(card, name)
+        if value is None and isinstance(links, Mapping):
+            value = links.get(name)
+        if value is not None:
+            return value
+    return None
 
 
 def classify_card_scope(card: Any) -> ScopeSignals:
@@ -146,13 +160,39 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             signals,
             custody="composition",
         )
+    raw_repository = _linked(card, "repository", "repo")
+    raw_base_ref = _linked(card, "base_ref", "base_reference", "base")
+    repository = raw_repository.strip() if isinstance(raw_repository, str) else ""
+    base_ref = raw_base_ref.strip() if isinstance(raw_base_ref, str) else ""
+    if not repository or not base_ref:
+        return DecompositionRecommendation(
+            "advisory",
+            "repository and base_ref are required for leaf recommendations",
+            signals,
+            custody="composition",
+        )
+    raw_dependencies = _items(_get(card, "dependencies", []))
+    if any(not isinstance(value, str) or not value.strip() for value in raw_dependencies):
+        return DecompositionRecommendation(
+            "advisory",
+            "dependencies must be non-empty card ids",
+            signals,
+            custody="composition",
+        )
+    dependencies = tuple(sorted({value.strip() for value in raw_dependencies}))
+    existing_successors = {
+        str(value) for value in _items(_linked(card, "successors", "successor") or [])
+    }
     leaves = tuple(
         LeafRecommendation(
             _stable_id(card_id, i),
             f"{_get(card, 'title', card_id)}: leaf {i}",
-            (card_id,) if i == 1 else (_stable_id(card_id, i - 1),),
+            dependencies + ((card_id,) if i == 1 else (_stable_id(card_id, i - 1),)),
+            repository,
+            base_ref,
         )
         for i in range(1, leaf_count + 1)
+        if _stable_id(card_id, i) not in existing_successors
     )
     return DecompositionRecommendation(
         "recommend",
