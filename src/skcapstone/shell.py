@@ -341,6 +341,9 @@ def _handle_coord(args: list[str]) -> None:
     elif sub == "claim" and len(args) > 1:
         agent = args[2] if len(args) > 2 else name
         try:
+            from .qualification import require_task_admission
+
+            require_task_admission(board, args[1])
             board.claim_task(agent, args[1])
             console.print(f"  [green]Claimed:[/] {args[1]} by {agent}")
         except ValueError as e:
