@@ -95,3 +95,17 @@ def self_node_name() -> str:
     host = socket.gethostname().split(".")[0].lower()
     host = re.sub(r"[^a-z0-9-]", "-", host).strip("-") or "unknown"
     return f"node-{host}"
+
+
+def self_cluster_name() -> str:
+    """This machine's fleet identity (SKFLEET_CLUSTER override).
+
+    The default is intentionally local and stable, so an unset variable cannot
+    accidentally make NOR authoritative for CHI or vice versa.
+    """
+    value = os.environ.get("SKFLEET_CLUSTER")
+    if value:
+        if not valid_name(value):
+            raise ValueError("SKFLEET_CLUSTER must be a lowercase fleet name")
+        return value
+    return "default"
