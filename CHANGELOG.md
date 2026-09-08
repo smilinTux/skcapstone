@@ -1,5 +1,9 @@
 # Changelog
 
+- **Card `fb3c9be4`: recurring seat cycle overlap detection.** Added pure logic
+  that compares the next half-open run windows for Link and Mero cron schedules,
+  with tests for overlapping, separated, and boundary-touching schedules.
+
 - **Card `1b84d7f4`: Cursor Agent YOLO default.** Added `SK_CURSOR_YOLO`
   (default on) so the SK agent picker launches Cursor Agent CLI (`agent` /
   `cursor-agent`) with `--yolo`, plus doctor harness checks and docs aligned
