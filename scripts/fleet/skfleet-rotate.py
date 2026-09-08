@@ -13,7 +13,20 @@ import importlib.metadata
 from pathlib import Path
 
 from skcapstone.card_store import CardStore
-from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
+from skcapstone.fleet.child_progress import (
+    active_receipt,
+    cancel_exact_child,
+    exact_child_matches,
+    lease_receipts,
+    load_snapshot,
+    receipt_payload,
+    write_receipt,
+)
+from skcapstone.fleet.worker_watchdog import (
+    ChildLeaseConfig,
+    StartupObservation,
+    startup_actuation_fenced,
+)
 from skcapstone.coord_eligibility import leaf_eligibility_counts
 from skcapstone.fleet_lane_health import (
     acquire_lane_snapshot,
@@ -261,6 +274,8 @@ DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
 CARDS=os.path.join(HOME,".skcapstone/cards")
 EVID=os.path.join(HOME,".skcapstone/evidence/fleet-rotation")
+CHILD_PROGRESS=os.path.join(HOME,".skcapstone/evidence/worker-child-progress")
+CHILD_RECEIPTS=os.path.join(HOME,".skcapstone/evidence/worker-child-progress-receipts")
 PI="/home/skuser01/.npm-global/bin/pi"
 PI_CARDSTORE_GUARD=os.environ.get(
     "SKFLEET_PI_CARDSTORE_GUARD",
@@ -273,6 +288,30 @@ PI_MCP_PROXY_LABEL="mcp-required"
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
 STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _positive_float_env(name, default):
+    """Read one finite positive lease setting or fail the cycle closed."""
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = 0.0
+    if not 0 < value < float("inf"):
+        raise SystemExit("BLOCKED|%s|missing or invalid positive number" % name)
+    return value
+
+
+_CHILD_LEASE_CONFIG = ChildLeaseConfig(
+    startup_s=_positive_float_env("SKFLEET_CHILD_STARTUP_LEASE_S", "120"),
+    first_output_s=_positive_float_env("SKFLEET_CHILD_FIRST_OUTPUT_LEASE_S", "300"),
+    provider_response_s=_positive_float_env(
+        "SKFLEET_CHILD_PROVIDER_RESPONSE_LEASE_S", "600"
+    ),
+    progress_s=_positive_float_env("SKFLEET_CHILD_PROGRESS_LEASE_S", "900"),
+)
+_CHILD_LEASE_MODE = os.environ.get("SKFLEET_CHILD_LEASE_MODE", "observe").strip().lower()
+if _CHILD_LEASE_MODE not in {"observe", "act"}:
+    raise SystemExit("BLOCKED|SKFLEET_CHILD_LEASE_MODE|must be observe or act")
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
@@ -844,7 +883,7 @@ def live_report():
 publish_live(sessions, worker_units)
 
 if free==0:
-    log(d,"NOOP|%s|all slots busy"%HOST); sys.exit(0)
+    log(d,"SLOTS_FULL|%s|watchdog and reconciliation still run"%HOST)
 
 # ---- assignable pool: unclaimed, not human, not drift, DEPENDENCIES SATISFIED
 # Cards that were launched before and never produced a claim event cannot be
@@ -1754,6 +1793,44 @@ def _human_gate(cid):
     labels={str(x).strip().lower().replace("_","-") for x in folded_labels(cid,core)}
     return "human-gate" in labels or "[HUMAN]" in str(core.get("title") or "").upper()
 
+
+_SIDE_EFFECT_LABELS = {
+    "deploy",
+    "deployment",
+    "exec",
+    "execution",
+    "external-action",
+    "live-execution",
+    "production",
+}
+
+
+def _child_card_policy(cid, core=None):
+    """Return current no-replay facts for one card."""
+    if core is None:
+        try:
+            core=json.load(open(os.path.join(CARDS,cid,"core.json"),encoding="utf-8"))
+        except (OSError,ValueError):
+            return {
+                "human_gate":False,"side_effects":False,"terminal":False,
+                "superseded":False,"ambiguous":True,
+            }
+    labels={str(x).strip().lower().replace("_","-")
+            for x in folded_labels(cid,core)}
+    title=str(core.get("title") or "").upper()
+    lifecycle=lifecycle_state(cid)
+    return {
+        "human_gate":"human-gate" in labels or "[HUMAN]" in title,
+        "side_effects":bool(labels & _SIDE_EFFECT_LABELS) or "[EXEC]" in title,
+        "terminal":lifecycle in {"complete","void"},
+        "superseded":bool(
+            "superseded" in labels
+            or any(label.startswith("superseded-") for label in labels)
+            or cid in globals().get("_POOL_V2_CLASSES",{}).get("superseded_cards",set())
+        ),
+        "ambiguous":lifecycle=="ambiguous",
+    }
+
 def _human_resolution_epoch(cid,referent,threshold):
     target_match=_CARD_REFERENT_RE.match(referent)
     target=target_match.group(1).lower() if target_match else cid
@@ -1840,8 +1917,47 @@ def _wake_retry_available(cid,generation):
     retries=sum(1 for launched in _wake_launch_times.get(cid,()) if launched>generation)
     return retries<_WAKE_RETRY_LIMIT
 
+
+_child_replay_cache = None
+
+
+def _child_replay_dispositions():
+    """Fold durable child receipts to one current disposition per card."""
+    global _child_replay_cache
+    if _child_replay_cache is not None:
+        return _child_replay_cache
+    latest = {}
+    for path in glob.glob(os.path.join(CHILD_RECEIPTS,"*.json")):
+        try:
+            payload=json.load(open(path,encoding="utf-8"))
+            identity=payload.get("snapshot_identity")
+            cid=str(identity.get("card_id") or "") if isinstance(identity,dict) else ""
+            disposition=str(payload.get("retry_disposition") or "")
+            recorded=_ts_epoch(payload.get("recorded_at"))
+            if (not re.fullmatch(r"[0-9a-f]{8}",cid)
+                    or disposition not in {"retryable","forbidden","unchanged"}
+                    or recorded<=0):
+                continue
+            generation=(recorded,os.path.basename(path),disposition)
+            if generation>latest.get(cid,(0,"","")):
+                latest[cid]=generation
+        except (OSError,TypeError,ValueError):
+            continue
+    _child_replay_cache=latest
+    return latest
+
+
+def _child_replay_held(cid):
+    """Prevent automatic replay until a human-authored card change follows."""
+    generation=_child_replay_dispositions().get(cid)
+    if not generation or generation[2]!="forbidden":
+        return False
+    return not bool(_authored_change_epoch(cid,generation[0]))
+
 def blocked_backoff(cid):
     """True if this card should stay out of the pool for now."""
+    if globals().get("_child_replay_held",lambda _cid:False)(cid):
+        return True
     ts, val = _load_outcomes().get(cid, (None, None))
     # Missing or mixed blocker metadata fails closed. Guessing at its meaning
     # would turn an unresolved human or dependency hold into execution.
@@ -2581,6 +2697,154 @@ def _release_failed_startups():
             log(d, "STARTUP_RELEASE_UNAVAILABLE|%s|%s" % (HOST, type(exc).__name__))
 
 
+def _child_unit_bound(snapshot):
+    """Require the current service to own the exact wrapper and cgroup."""
+    try:
+        if snapshot.unit != _worker_unit_name(snapshot.lane,snapshot.card_id):
+            return False
+        result=subprocess.run(
+            ["systemctl","--user","show",snapshot.unit,
+             "--property=ActiveState,MainPID,ControlGroup"],
+            capture_output=True,text=True,timeout=5)
+        fields=dict(line.split("=",1) for line in result.stdout.splitlines() if "=" in line)
+        return bool(
+            result.returncode==0
+            and fields.get("ActiveState") in {"active","activating"}
+            and fields.get("MainPID")==str(snapshot.wrapper_pid)
+            and fields.get("ControlGroup")==snapshot.control_group
+            and snapshot.control_group.endswith("/"+snapshot.unit)
+        )
+    except (OSError,ValueError,subprocess.TimeoutExpired):
+        return False
+
+
+def _child_projection_terminal(owner,cid):
+    """Read back the exact worker projection after claim release."""
+    try:
+        payload=json.load(open(
+            os.path.join(HOME,".skcapstone/coordination/agents",owner+".json"),
+            encoding="utf-8"))
+        return bool(
+            isinstance(payload,dict)
+            and payload.get("agent")==owner
+            and payload.get("state")=="idle"
+            and payload.get("current_task") is None
+            and cid not in (payload.get("claimed_tasks") or [])
+        )
+    except (OSError,TypeError,ValueError):
+        return False
+
+
+def _persist_child_receipt(snapshot,receipt,stage,outcome,retry_disposition):
+    """Write and log one immutable child watchdog receipt."""
+    global _child_replay_cache
+    payload=receipt_payload(
+        snapshot,receipt,stage=stage,mode=_CHILD_LEASE_MODE,outcome=outcome,
+        retry_disposition=retry_disposition)
+    path,digest=write_receipt(Path(CHILD_RECEIPTS),payload)
+    _child_replay_cache=None
+    log(d,"CHILD_LEASE_RECEIPT|%s|%s|stage=%s state=%s outcome=%s "
+        "sha256=%s path=%s"%
+        (HOST,snapshot.card_id,stage,receipt.state,outcome,digest,path))
+    return path,digest
+
+
+def _release_child_claim(snapshot):
+    """Release and read back only the snapshot's exact claim generation."""
+    result=subprocess.run(
+        [SKC,"coord","release-claim",snapshot.card_id,"--owner",snapshot.owner,
+         "--expected-claim-revision",snapshot.claim_revision,
+         "--agent","fleet-child-watchdog"],
+        capture_output=True,text=True,timeout=10)
+    _rows.pop(snapshot.card_id,None)
+    owner,_claimed_at,revision=_current_claim_identity_fresh(snapshot.card_id)
+    return bool(
+        result.returncode==0
+        and (owner,revision)!=(snapshot.owner,snapshot.claim_revision)
+        and owner is None
+        and _child_projection_terminal(snapshot.owner,snapshot.card_id)
+    )
+
+
+def _reconcile_child_progress(units):
+    """Evaluate local snapshots and safely act on one expired exact child."""
+    unit_names={unit["unit"] for unit in units}
+    acted=0
+    for path in sorted(Path(CHILD_PROGRESS).glob("*.json")):
+        try:
+            snapshot=load_snapshot(path)
+            if snapshot.host!=HOST or snapshot.unit not in unit_names:
+                continue
+            fresh_owner,_claimed_at,fresh_revision=_current_claim_identity_fresh(
+                snapshot.card_id)
+            if ((fresh_owner,fresh_revision)!=(snapshot.owner,snapshot.claim_revision)
+                    or not _child_unit_bound(snapshot)
+                    or not exact_child_matches(snapshot)):
+                log(d,"CHILD_LEASE_STALE_SNAPSHOT|%s|%s|claim or process changed"%
+                    (HOST,snapshot.card_id))
+                continue
+            policy=_child_card_policy(snapshot.card_id)
+            observations=lease_receipts(
+                snapshot,now=time.monotonic(),terminal=policy["terminal"],
+                superseded=policy["superseded"],
+                ambiguous_progress=policy["ambiguous"])
+            receipt=active_receipt(snapshot,observations)
+            protected=bool(
+                snapshot.human_gate or snapshot.side_effects
+                or policy["human_gate"] or policy["side_effects"]
+                or policy["terminal"] or policy["superseded"] or policy["ambiguous"]
+            )
+            disposition="forbidden" if protected or receipt.state in {
+                "not-replayable","ambiguous"} else "unchanged"
+            _persist_child_receipt(
+                snapshot,receipt,"assessment",receipt.reason,disposition)
+            if receipt.state!="child-stalled":
+                continue
+            if protected:
+                continue
+            _persist_child_receipt(
+                snapshot,receipt,"pre-action","exact-child-cancel-planned","retryable")
+            if _CHILD_LEASE_MODE!="act":
+                _persist_child_receipt(
+                    snapshot,receipt,"post-action","observe-only","unchanged")
+                continue
+            fresh_owner,_claimed_at,fresh_revision=_current_claim_identity_fresh(
+                snapshot.card_id)
+            if ((fresh_owner,fresh_revision)!=(snapshot.owner,snapshot.claim_revision)
+                    or not _child_unit_bound(snapshot)
+                    or not exact_child_matches(snapshot)):
+                _persist_child_receipt(
+                    snapshot,receipt,"post-action","precondition-changed","forbidden")
+                continue
+            cancellation=cancel_exact_child(snapshot)
+            fresh_owner,_claimed_at,fresh_revision=_current_claim_identity_fresh(
+                snapshot.card_id)
+            if fresh_owner is None and _child_projection_terminal(
+                    snapshot.owner,snapshot.card_id):
+                _persist_child_receipt(
+                    snapshot,receipt,"post-action",cancellation+"-claim-released",
+                    "retryable")
+                acted+=1
+                continue
+            if (fresh_owner,fresh_revision)!=(snapshot.owner,snapshot.claim_revision):
+                _persist_child_receipt(
+                    snapshot,receipt,"post-action","claim-changed-after-cancel","forbidden")
+                continue
+            if not _release_child_claim(snapshot):
+                _persist_child_receipt(
+                    snapshot,receipt,"post-action","claim-release-readback-failed",
+                    "forbidden")
+                continue
+            _persist_child_receipt(
+                snapshot,receipt,"post-action",cancellation+"-claim-released","retryable")
+            acted+=1
+        except (OSError,RuntimeError,TimeoutError,TypeError,ValueError,
+                subprocess.TimeoutExpired) as exc:
+            log(d,"CHILD_LEASE_FAIL_CLOSED|%s|%s|%s"%
+                (HOST,path.name,type(exc).__name__))
+    return acted
+
+
 def _acts_fresh_rows(cid):
     """Every event for a card, straight from disk."""
     ev = os.path.join(CARDS, cid, "events")
@@ -2931,11 +3195,13 @@ def reap_dead_claims():
 # A dry run must be safe to run at any time, from any host, by anyone. That is the
 # entire point of having one.
 if DRY:
-    log(d, "DRY_SKIPPED|%s|reap_dead_claims, open_provisional_reviews, and "
+    log(d, "DRY_SKIPPED|%s|reconcile_child_progress, reap_dead_claims, "
+           "open_provisional_reviews, and "
            "close_reviewed_parents skipped; "
            "pass --go to mutate the board" % HOST)
 else:
     _release_failed_startups()
+    _reconcile_child_progress(active_worker_units())
     reap_dead_claims()
 
 # ---- open provisional outcomes for review, then close reviewed work --------
@@ -4515,14 +4781,23 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
            name, model,
            pi_tools, bf))
     wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")
+    unit=_worker_unit_name(_LANE["name"],cid)
+    _child_policy=_child_card_policy(cid,fresh_claimability["core"])
     inner=[
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
         "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
-        "--session",sess,"--worker-executable",PI,
-        "--","bash","-lc",child,
+        "--session",sess,"--worker-executable",PI,"--unit",unit,
+        "--startup-timeout",str(_CHILD_LEASE_CONFIG.startup_s),
+        "--first-output-timeout",str(_CHILD_LEASE_CONFIG.first_output_s),
+        "--provider-response-timeout",str(_CHILD_LEASE_CONFIG.provider_response_s),
+        "--progress-timeout",str(_CHILD_LEASE_CONFIG.progress_s),
     ]
-    unit=_worker_unit_name(_LANE["name"],cid)
+    if _child_policy["human_gate"]:
+        inner.append("--human-gate")
+    if _child_policy["side_effects"]:
+        inner.append("--side-effects")
+    inner.extend(["--","bash","-lc",child])
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
     launch_identity=_launch_claim_fields(name,claimed_revision,ok)

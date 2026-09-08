@@ -469,7 +469,7 @@ def register_coord_commands(main: click.Group) -> None:
             current_claim_precondition,
             mirror_coord_release,
         )
-        from skcoord.coordination import _board_mutation_lock
+        from skcoord.coordination import AgentState, _board_mutation_lock
 
         from ..coordination import Board
 
@@ -513,6 +513,11 @@ def register_coord_commands(main: click.Group) -> None:
                     ]
                     if owner_projection.current_task == task_id:
                         owner_projection.current_task = None
+                    if (
+                        not owner_projection.claimed_tasks
+                        and owner_projection.current_task is None
+                    ):
+                        owner_projection.state = AgentState.IDLE
                     board.save_agent(owner_projection)
                 changed = True
         except ValueError as exc:
