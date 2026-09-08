@@ -1,0 +1,22 @@
+{
+  "artifact_version": 1,
+  "card": "1480a869",
+  "product_status": {
+    "candidate_tree": "847b8ddff9d43ee78be6922825143f12e5c7a51e",
+    "evidence_sha256": "67a684f7f59d19bef4c8b25c8a747cc12cfd59f0d745ceef18ab1b85952c7f15",
+    "independent_review": "141c50c7",
+    "review_evidence_sha256": "b92484448ddef6b9d75a2a5aecc0060d0b275914b6680d5f8f2df976f2f10af3",
+    "review_verdict": "PASS"
+  },
+  "routing": {
+    "ordinary_logical_buckets": ["sk-s", "sk-m", "sk-l", "sk-xl"],
+    "provider_neutral": true,
+    "qwen_sovereign_exception": true
+  },
+  "scheduler_admission": {
+    "backend_observation_max_age_seconds": 120,
+    "excessive_future_observations_denied": true,
+    "stale_observations_denied": true
+  },
+  "source_only": true
+}

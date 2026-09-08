@@ -127,43 +127,8 @@ def _domain_state(health: Any, queue: Any, domain: str, observed_at: float) -> d
     evidence before it can claim new work.
 
     The same-cycle snapshot expiry bound is also enforced by `lane_health()` and
-    by the `/queue` timestamp check in `acquire_lane_snapshot()`.conditions: observed up or degraded, not quarantined, positive
-    queue capacity). Its effect was that a lane was admissible only during the
-    120 seconds after somebody else sent traffic to that exact capacity domain.
-    Since fleet dispatch is the only realistic traffic source, the fleet could
-    not start itself and could not restart itself after two quiet minutes.
-
-    Measured at 09:52 UTC on 2026-09-04 against the live dispatch gateway
-    http://chiap01:18790, up 8 hours: `codex` read `status=up observed=true` with
-    `lastCheck` 17801 seconds old, and every one of the four configured lanes
-    resolved to `(False, "unknown")`. Zero lanes admissible on a gateway that was
-    working. That is not fail-closed on ambiguous evidence, it is a refusal that
-    prevents the traffic that would clear the refusal.
-
-    So the recency bound is gone and the documented conditions are all that
-    remain. This does not lower the evidence bar. `observed=true` with a non-down
-    status still means a request actually completed on that backend, which is
-    positive evidence, not absent or ambiguous evidence. Snapshot freshness, the
-    thing MAX_AGE_SECONDS is actually for, is still enforced in `lane_health()`
-    and by the `/queue` timestamp check in `acquire_lane_snapshot()`.
-
-    What is still refused, because it is genuinely no evidence:
-
-    - `observed` false, the fresh-start state after a gateway restart. Nothing
-      has served, so nothing is known. Admission stays closed until one request
-      succeeds on that domain. See the bootstrap section of
-      docs/fleet/lane-admission-health.md. That refusal is self-clearing after
-      one success, permanently, rather than every 120 seconds forever.
-    - A missing, non-numeric, or non-positive `lastCheck`, which contradicts an
-      `observed` claim and is malformed evidence.
-    - A `lastCheck` more than MAX_AGE_SECONDS in the FUTURE. Recency is not
-      required, but a timestamp the serving host cannot yet have produced is
-      ambiguous, so it fails closed.
-
-    Admitting a backend whose host died since its last success costs exactly one
-    failed dispatch, after which the error-rate and quarantine machinery marks it
-    down and the next cycle refuses it correctly. That error self-corrects in one
-    cycle. The recency bound did not self-correct at all.
+    by the `/queue` timestamp check in `acquire_lane_snapshot()`. Missing,
+    malformed, old, or excessively future-dated observations fail closed.
     """
     health_row = health.get(domain) if isinstance(health, dict) else None
     queue_row = queue.get(domain) if isinstance(queue, dict) else None
