@@ -18,6 +18,7 @@ def _helpers() -> dict[str, object]:
         "_LANE_ONLY_LABELS",
         "_kimi_model_for",
         "lane_compatibility",
+        "resolved_lane_compatibility",
         "select_compatible_lane",
     }
     body = [

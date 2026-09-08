@@ -198,15 +198,18 @@ def test_configured_kimi_capacity_domain_matches_gateway_contract() -> None:
     assert '"SKFLEET_KIMI_CAPACITY_DOMAINS","kimi-for-coding,kimi-k3"' not in source
 
 
-def test_glm_and_kimi_snapshot_rows_are_attributable() -> None:
+def test_glm_and_kimi_snapshot_rows_are_attributable(tmp_path: Path) -> None:
     documents = _documents()
     for name in ("zai", "kimi-coding"):
         documents["/health"]["backends"][name] = {
-            "status": "up", "observed": True, "quarantined": False,
+            "status": "up",
+            "observed": True,
+            "quarantined": False,
             "lastCheck": 2_000_000_000_000,
         }
         documents["/queue"]["backends"][name] = {
-            "capacityDomain": name, "max": 4,
+            "capacityDomain": name,
+            "max": 4,
         }
     lanes = [
         {"name": "glm", "model": "glm-4.6"},
@@ -216,7 +219,7 @@ def test_glm_and_kimi_snapshot_rows_are_attributable() -> None:
         ENDPOINT,
         lanes,
         {"glm": ("zai",), "kimi": ("kimi-coding",)},
-        Path("/tmp/fleet-lane-health-test.json"),
+        tmp_path / "fleet-lane-health-test.json",
         "cycle-qualification",
         opener=_opener(documents, []),
         revision_resolver=lambda endpoint: REVISION,

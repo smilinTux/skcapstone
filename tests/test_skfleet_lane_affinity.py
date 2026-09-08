@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ def _load_lane_helpers() -> dict[str, object]:
         "semantic_stage_completed",
         "qwen_first_exclusive",
         "lane_compatibility",
+        "resolved_lane_compatibility",
         "select_compatible_lane",
     }
     body = [
@@ -48,6 +50,12 @@ def _load_lane_helpers() -> dict[str, object]:
     }
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
     assert names <= namespace.keys()
+    namespace["select_compatible_lane"] = partial(
+        namespace["select_compatible_lane"],
+        lane_health_by_name={
+            name: (True, "healthy") for name in ("glm", "kimi", "codex", "escalate", "qwen")
+        },
+    )
     return namespace
 
 
@@ -68,7 +76,7 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
         (["glm-only"], False, (("glm",), "required-lane:glm")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
-        ([], False, (("qwen", "glm", "codex"), "ordinary")),
+        ([], False, (("sk-m",), "logical:sk-m")),
     ],
 )
 def test_exact_lane_compatibility(
@@ -127,10 +135,22 @@ def test_ordinary_card_reassigns_only_to_compatible_healthy_lane() -> None:
         "codex": (True, "healthy"),
     }
     assert namespace["select_compatible_lane"](
-        [], False, ["qwen", "glm", "codex"], {"qwen": 1, "glm": 1, "codex": 1}, True, False, health
+        [],
+        False,
+        ["qwen", "glm", "codex"],
+        {"qwen": 1, "glm": 1, "codex": 1},
+        True,
+        False,
+        lane_health_by_name=health,
     ) == ("codex", "compatible")
     assert namespace["select_compatible_lane"](
-        ["qwen-first"], False, ["qwen", "codex"], {"qwen": 1, "codex": 1}, True, True, health
+        ["qwen-first"],
+        False,
+        ["qwen", "codex"],
+        {"qwen": 1, "codex": 1},
+        True,
+        True,
+        lane_health_by_name=health,
     ) == (None, "no-compatible-healthy-lane:qwen")
 
 
@@ -164,8 +184,8 @@ def test_qwen_first_is_exclusive_until_hash_bound_semantic_completion() -> None:
     ]
     assert namespace["qwen_first_exclusive"]("04acd4b0", labels) is False
     assert namespace["lane_compatibility"](labels, False) == (
-        ("qwen", "glm", "codex"),
-        "ordinary",
+        ("sk-m",),
+        "logical:sk-m",
     )
 
 
@@ -173,18 +193,18 @@ def test_qwen_suitable_is_nonexclusive() -> None:
     namespace = _load_lane_helpers()
     assert namespace["qwen_first_exclusive"]("suitable", ["qwen-suitable"]) is False
     assert namespace["lane_compatibility"](["qwen-suitable"], False) == (
-        ("qwen", "glm", "codex"),
-        "ordinary",
+        ("sk-m",),
+        "logical:sk-m",
     )
 
 
-def test_qwen_gets_first_refusal_only_when_category_allows_it() -> None:
+def test_ordinary_cards_never_use_qwen_even_when_category_allows_it() -> None:
     namespace = _load_lane_helpers()
     order = ["qwen", "glm", "codex", "escalate"]
     remaining = {"qwen": 1, "glm": 1, "codex": 1, "escalate": 1}
 
     selected, reason = namespace["select_compatible_lane"]([], False, order, remaining, True)
-    assert (selected, reason) == ("qwen", "compatible")
+    assert (selected, reason) == ("glm", "compatible")
 
     selected, reason = namespace["select_compatible_lane"]([], False, order, remaining, False)
     assert (selected, reason) == ("glm", "compatible")
@@ -272,7 +292,7 @@ def test_observed_codex_only_glm_misroutes_are_rejected(
 def test_pool_and_immediate_preclaim_use_the_same_affinity_predicate() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert "_lane_name,_defer=select_compatible_lane(" in source
-    assert "compatible,affinity_reason=lane_compatibility(" in source
+    assert "compatible,affinity_reason=resolved_lane_compatibility(" in source
     assert 'fresh_claimability["labels"]' in source
     assert "SKIPPED_LANE_RACE|" in source
     assert "LANE_DEFER|" in source

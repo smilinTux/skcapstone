@@ -106,8 +106,9 @@ def test_preclaim_requires_identical_snapshot_fingerprint() -> None:
 def test_worker_runtime_contract_is_unchanged() -> None:
     """The authority repair does not alter Kimi, wrapper, heartbeat, or attribution."""
     source = ROTATE.read_text(encoding="utf-8")
-    assert 'if _LANE["name"]=="kimi":' in source
-    assert "model=_kimi_model_for(core) or model" in source
+    assert 'if lane["name"]=="kimi":' in source
+    assert "return _kimi_model_for(core)" in source
+    assert "model=_lane_model(_LANE,core,_labels)" in source
     assert 'qwen_suitable(fresh_claimability["core"]),' in source
     assert "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s" in source
     assert '"--session",sess,"--worker-executable",PI,' in source

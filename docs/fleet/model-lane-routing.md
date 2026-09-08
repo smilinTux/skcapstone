@@ -1,5 +1,9 @@
 # Fleet model lane routing
 
+Candidate update: [logical admission repair](logical-admission-8228e30e.md)
+supersedes ordinary Qwen-first selection below. The deployment descriptions
+below are historical; this source candidate does not change a live deployment.
+
 Status: live on chiap01, chiap02, chiap03, chiap08 since 2026-09-03.
 Regression tests: `tests/test_skfleet_glm_levels.py`.
 

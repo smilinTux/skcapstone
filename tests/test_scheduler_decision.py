@@ -412,8 +412,11 @@ def test_legacy_8_pool_v2_8_excludes_review_rows_from_authority(tmp_path) -> Non
         {"_seat_owner": seat_owner, "seat_for": lambda cid, core: None},
     )
     lane_compatibility = _launcher_function("lane_compatibility", {"_LANE_ONLY_LABELS": {}})
+    resolved_compatibility = _launcher_function(
+        "resolved_lane_compatibility", {"lane_compatibility": lane_compatibility}
+    )
     select_lane = _launcher_function(
-        "select_compatible_lane", {"lane_compatibility": lane_compatibility}
+        "select_compatible_lane", {"resolved_lane_compatibility": resolved_compatibility}
     )
     legacy_selector = _launcher_function(
         "_legacy_selector_decision",
@@ -458,7 +461,7 @@ def test_legacy_8_pool_v2_8_excludes_review_rows_from_authority(tmp_path) -> Non
     owners, blocked = owner_map(rows, "chiap08", pinned_ids)
     selected_ids = set()
     for host in rotation_hosts:
-        remaining = {"qwen": 64}
+        remaining = {"glm": 64}
         for row in rows:
             cid = row[2]
             if owners[cid] != host:
@@ -466,10 +469,11 @@ def test_legacy_8_pool_v2_8_excludes_review_rows_from_authority(tmp_path) -> Non
             lane, lane_reason = select_lane(
                 admissions[cid]["labels"],
                 False,
-                [{"name": "qwen"}],
+                [{"name": "glm"}],
                 remaining,
+                lane_health_by_name={"glm": (True, "healthy")},
             )
-            assert (lane, lane_reason) == ("qwen", "compatible")
+            assert (lane, lane_reason) == ("glm", "compatible")
             remaining[lane] -= 1
             selected_ids.add(cid)
     review_id = card_ids[8]

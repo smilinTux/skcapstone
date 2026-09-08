@@ -20,6 +20,7 @@ from skcapstone.fleet_lane_health import (
     cycle_id as new_cycle_id,
     lane_health,
 )
+from skcapstone.fleet_routing import deployment_profile
 from skcapstone.scheduler_decision import (
     SchedulerFacts,
     classify_scheduler_population,
@@ -573,8 +574,8 @@ LANES=[
     {"name":"qwen","prefix":"qwen-auto-",
      "model":os.environ.get("SKFLEET_QWEN_MODEL","qwen3.8-27b-huihui-abliterated-q4_k_m"),
      "target":QWEN_TARGET},
-    # Kimi is explicitly opt-in and defaults to zero slots. Kimi-labelled
-    # cards never fall back to another lane when this lane is unavailable.
+    # Kimi capacity defaults to zero slots. Explicit Kimi-only cards never
+    # fall back; ordinary cards use the logical deployment profile below.
     {"name":"kimi","prefix":"kimi-auto-",
      "model":os.environ.get("SKFLEET_KIMI_MODEL","kimi-for-coding"),
      "target":KIMI_TARGET},
@@ -4016,13 +4017,15 @@ def qwen_first_exclusive(cid,labels):
 
 
 def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
-                       qwen_exclusive=False):
-    """Return compatible lanes and a stable routing reason."""
+                       qwen_exclusive=False, title=""):
+    """Return a logical ordinary contract or an explicit lane exception."""
+    from skcapstone.fleet_routing import logical_contract
+
     normalized={str(label).strip().lower() for label in (labels or [])}
     required={lane for label,lane in _LANE_ONLY_LABELS.items() if label in normalized}
     if normalized & {"kimi", "kimi-only", "kimi-suitable", "kimi-lane"}:
         required.add("kimi")
-    if qwen_exclusive:
+    if qwen_exclusive or normalized & {"qwen-only", "sovereign", "qwen-sovereign"}:
         required.add("qwen")
     if escalation_required:
         required.add("escalate")
@@ -4031,25 +4034,36 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
     if required:
         lane=next(iter(required))
         return (lane,),"required-lane:%s"%lane
-    ordinary=("qwen","glm","codex") if qwen_allowed else ("glm","codex")
-    return ordinary,"ordinary"
+    return logical_contract(normalized, title)
+
+
+def resolved_lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
+                                qwen_exclusive=False, title="", profile=None):
+    """Bind the same card contract during selection and immediate preclaim."""
+    from skcapstone.fleet_routing import deployment_profile, resolve_lanes
+
+    contract, reason = lane_compatibility(
+        labels, escalation_required, qwen_allowed, qwen_exclusive, title
+    )
+    bindings = deployment_profile(None) if profile is None else profile
+    return resolve_lanes(contract, bindings), reason
 
 
 def select_compatible_lane(
         labels, escalation_required, lane_order, remaining, qwen_allowed=True,
-        qwen_exclusive=False, lane_health_by_name=None):
+        qwen_exclusive=False, lane_health_by_name=None, title="", profile=None):
     """Choose the first free compatible lane without consuming another lane."""
-    compatible,reason=lane_compatibility(
-        labels,escalation_required,qwen_allowed,qwen_exclusive)
+    compatible,reason=resolved_lane_compatibility(
+        labels,escalation_required,qwen_allowed,qwen_exclusive,title,profile)
     if not compatible:
         return None,reason
     health=lane_health_by_name or {}
     healthy=[name for name in compatible
-             if health.get(name,(True,"healthy"))[0]]
-    for lane in lane_order:
-        name=lane["name"] if isinstance(lane,dict) else str(lane)
-        admitted=health.get(name,(True,"healthy"))[0]
-        if name in compatible and admitted and remaining.get(name,0)>0:
+             if health.get(name,(False,"unknown"))[0]]
+    available={lane["name"] if isinstance(lane,dict) else str(lane) for lane in lane_order}
+    for name in compatible:
+        admitted=health.get(name,(False,"unknown"))[0]
+        if name in available and admitted and remaining.get(name,0)>0:
             return name,"compatible"
     if not healthy:
         return None,"no-compatible-healthy-lane:%s"%",".join(compatible)
@@ -4092,7 +4106,15 @@ def qwen_suitable(core):
     return not _QWEN_UNSUITABLE.search(str((core or {}).get("title") or ""))
 
 
-def _lane_model(lane, core):
+def _lane_model(lane, core, labels=None):
+    from skcapstone.fleet_routing import logical_contract
+
+    contract, _ = logical_contract(
+        labels if labels is not None else (core or {}).get("labels", []),
+        str((core or {}).get("title") or ""),
+    )
+    if contract:
+        core = {"title": "[%s]" % contract[0][3:].upper()}
     if lane["name"]=="glm":
         return _glm_model_for(core) or lane["model"]
     if lane["name"]=="codex":
@@ -4139,14 +4161,13 @@ def _health_for(lane,model):
 
 picks=[]; _i=0
 remaining={lane["name"]:lane["free"] for lane in LANES}
-_LANE_RANK={"qwen":0,"glm":1,"codex":2,"kimi":3,"escalate":4}
+_LANE_RANK={"glm":0,"kimi":1,"codex":2,"escalate":3,"qwen":4}
 lane_order=sorted(LANES,key=lambda lane:_LANE_RANK.get(lane["name"],9))
+_BUCKET_PROFILE=deployment_profile(os.environ.get("SKFLEET_BUCKET_PROFILE"))
 _esc_waiting=0
 _lane_deferred=collections.Counter()
-# Lane affinity, in both directions. An escalation card may go ONLY to the escalate
-# lane, because returning it to a lane that already refused it just re-derives the
-# same verdict. The escalate lane takes ONLY escalation cards, because the strong
-# model is a scarce budget and must not be spent on work the cheap lanes can do.
+# Explicit escalation stays pinned. Ordinary cards can use that transport only
+# when their logical bucket's deployment profile explicitly maps to it.
 #
 # A card with no compatible free lane is SKIPPED, not allowed to end the loop. The
 # earlier version broke out entirely when the head card could not be placed, which
@@ -4158,11 +4179,11 @@ while _i<len(owned) and len(picks)<MAX_LAUNCH:
     _esc=needs_escalation(_card[2], _card[3], _labels)
     _qwen_exclusive=qwen_first_exclusive(_card[2],_labels)
     _card_lane_health={lane["name"]:_health_for(
-        lane["name"],_lane_model(lane,_card[3]))
+        lane["name"],_lane_model(lane,_card[3],_labels))
         for lane in LANES}
     _lane_name,_defer=select_compatible_lane(
         _labels,_esc,lane_order,remaining,qwen_suitable(_card[3]),_qwen_exclusive,
-        _card_lane_health)
+        _card_lane_health,str(_card[3].get("title") or ""),_BUCKET_PROFILE)
     if _lane_name is None:
         _lane_deferred[_defer]+=1
         if _defer.startswith("no-compatible-healthy-lane:"):
@@ -4391,11 +4412,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     if _seat:
         log(d, "SEAT|%s|%s|running under seat %s as %s" % (HOST, cid, _seat, name))
     sess="%s%s"%(_LANE["prefix"],cid)
-    model=_LANE["model"]
-    if _LANE["name"]=="glm":
-        model=_glm_model_for(core) or model
-    if _LANE["name"]=="kimi":
-        model=_kimi_model_for(core) or model
+    model=_lane_model(_LANE,core,_labels)
     pi_tools=pi_tool_allowlist(_labels)
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
@@ -4421,16 +4438,17 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     _selected_admission=_POOL_V2_ADMISSIONS.get(cid)
     fresh_escalation=needs_escalation(
         cid,fresh_claimability["core"],fresh_claimability["labels"])
-    compatible,affinity_reason=lane_compatibility(
+    compatible,affinity_reason=resolved_lane_compatibility(
         fresh_claimability["labels"],fresh_escalation,
         qwen_suitable(fresh_claimability["core"]),
-        qwen_first_exclusive(cid,fresh_claimability["labels"]))
+        qwen_first_exclusive(cid,fresh_claimability["labels"]),
+        str(fresh_claimability["core"].get("title") or ""),_BUCKET_PROFILE)
     if _LANE["name"] not in compatible:
         lane_drift += 1
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],affinity_reason))
         continue
-    model=_lane_model(_LANE,fresh_claimability["core"])
+    model=_lane_model(_LANE,fresh_claimability["core"],fresh_claimability["labels"])
     admitted,health_reason=_health_for(_LANE["name"],model)
     if not admitted:
         lane_drift += 1
