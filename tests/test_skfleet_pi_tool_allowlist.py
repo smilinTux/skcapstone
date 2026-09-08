@@ -72,7 +72,7 @@ def test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes(tmp_path: Path) -
                 const schemas = tools.map(({name, description, parameters}: any) =>
                   ({name, description, parameters}));
                 const directSchemas = schemas.filter(({name}: any) =>
-                  /^(skcapstone|skcomms|skmemory)_/.test(name));
+                  /^(skcapstone|skcomms|skmemory)_|^mcp__(skcapstone|skcomms|skmemory)$/.test(name));
                 writeFileSync(process.env.PI_TOOL_PROBE_OUT!, JSON.stringify({
                   names: tools.map((tool: any) => tool.name).sort(),
                   count: tools.length,
@@ -117,11 +117,24 @@ def test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes(tmp_path: Path) -
 
     baseline = measure(None)
     allowlisted = measure("read,bash,edit,write,grep,find,ls")
-    direct_tool = "skcapstone_coord_status"
+    direct_tools = {
+        name
+        for name in baseline["names"]
+        if name.startswith(
+            (
+                "skcapstone_",
+                "skcomms_",
+                "skmemory_",
+                "mcp__skcapstone",
+                "mcp__skcomms",
+                "mcp__skmemory",
+            )
+        )
+    }
 
-    assert direct_tool in baseline["names"]
-    assert direct_tool not in allowlisted["names"]
-    assert baseline["direct_count"] == 162
+    assert direct_tools
+    assert direct_tools.isdisjoint(allowlisted["names"])
+    assert baseline["direct_count"] == len(direct_tools)
     assert allowlisted["direct_count"] == 0
     assert allowlisted["names"] == ["bash", "edit", "find", "grep", "ls", "read", "write"]
     assert allowlisted["count"] == 7

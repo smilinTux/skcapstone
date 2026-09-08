@@ -297,11 +297,8 @@ def test_rotate_checks_same_cycle_admission_before_claim() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Card 0e010300: fleet bootstrap. SKGateway writes a backend health row only
-# from proxied request outcomes, so `lastCheck` is when that backend last
-# carried traffic, not when the gateway last looked at it. Observation age must
-# therefore not gate admission, or the fleet can never be the thing that
-# produces its own first observation.
+# Backend observations are leases, not permanent health assertions. Old and
+# excessively future-dated observations cannot admit shared-bucket work.
 # ---------------------------------------------------------------------------
 
 
@@ -344,7 +341,7 @@ def test_unobserved_domain_is_still_refused_after_a_gateway_restart(tmp_path: Pa
 
 
 def test_malformed_or_future_last_check_still_fails_closed(tmp_path: Path) -> None:
-    """Recency is not required, but malformed or impossible evidence is refused."""
+    """Malformed or impossible observation evidence is refused."""
     for last_check in (None, "recently", True, 0, -1):
         snapshot = _acquire_health(
             tmp_path,
@@ -372,7 +369,7 @@ def test_malformed_or_future_last_check_still_fails_closed(tmp_path: Path) -> No
 
 
 def test_idle_domain_that_is_down_or_quarantined_is_still_refused(tmp_path: Path) -> None:
-    """Dropping the recency gate must not admit a domain with negative evidence."""
+    """Stale negative evidence remains refused."""
     idle = (2_000_000_000 - 5 * 3600) * 1000
     down = _acquire_health(
         tmp_path,

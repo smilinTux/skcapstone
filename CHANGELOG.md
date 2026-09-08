@@ -36,6 +36,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Card `1480a869`: scheduler admission now rejects backend observations older
+  than 120 seconds or excessively future-dated, keeps logical buckets
+  provider-neutral, preserves Qwen sovereign controls, and binds the policy to
+  immutable SKLegal Product Status evidence.
+
 - Card `c1a1c003`: atomic task creation resolves identity in the canonical
   `SKAGENT`, `SKCAPSTONE_AGENT`, `SKMEMORY_AGENT`, `SK_DEFAULT_AGENT`, then
   sole-installed-agent order and requires the published SKCoord atomic
