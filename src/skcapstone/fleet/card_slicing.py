@@ -4,11 +4,12 @@ This module deliberately has no CardStore or scheduler side effects.  It turns a
 card projection into a reviewable recommendation; dispatch code may choose to
 persist it through the coordination API.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import re
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 
@@ -23,15 +24,27 @@ class ScopeSignals:
 
     @property
     def independent_axes(self) -> int:
-        return sum(v > 1 for v in (self.deliverables, self.repositories,
-                                   self.mutation_boundaries, self.external_effects,
-                                   self.verification_surfaces))
+        return sum(
+            v > 1
+            for v in (
+                self.deliverables,
+                self.repositories,
+                self.mutation_boundaries,
+                self.external_effects,
+                self.verification_surfaces,
+            )
+        )
 
     @property
     def workload(self) -> int:
-        return max(self.deliverables, self.repositories, self.mutation_boundaries,
-                   self.external_effects, self.verification_surfaces,
-                   self.acceptance_items)
+        return max(
+            self.deliverables,
+            self.repositories,
+            self.mutation_boundaries,
+            self.external_effects,
+            self.verification_surfaces,
+            self.acceptance_items,
+        )
 
 
 @dataclass(frozen=True)
@@ -80,9 +93,13 @@ def classify_card_scope(card: Any) -> ScopeSignals:
     return ScopeSignals(
         deliverables=max(1, _count(card, "deliverables", "outputs", "workstreams")),
         repositories=max(1, _count(card, "repositories", "repos", "projects")),
-        mutation_boundaries=max(1, _count(card, "mutation_boundaries", "boundaries", "write_scopes")),
+        mutation_boundaries=max(
+            1, _count(card, "mutation_boundaries", "boundaries", "write_scopes")
+        ),
         external_effects=max(1, _count(card, "external_effects", "effects", "side_effects")),
-        verification_surfaces=max(1, _count(card, "verification_surfaces", "test_surfaces", "verification")),
+        verification_surfaces=max(
+            1, _count(card, "verification_surfaces", "test_surfaces", "verification")
+        ),
         acceptance_items=len(criteria),
     )
 
@@ -99,25 +116,51 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
     status = str(_get(card, "status", "")).lower()
     labels = {str(x).lower() for x in _items(_get(card, "labels", []))}
     kind = str(_get(card, "kind", "")).lower()
-    active = status in {"claimed", "doing", "in_progress", "active", "started"} or bool(_get(card, "owner"))
-    review = "review" in labels or "review" in kind or "review" in str(_get(card, "title", "")).lower()
+    active = status in {"claimed", "doing", "in_progress", "active", "started"} or bool(
+        _get(card, "owner")
+    )
+    review = (
+        "review" in labels or "review" in kind or "review" in str(_get(card, "title", "")).lower()
+    )
     composition = "composition" in labels or "epic" in labels or kind in {"epic", "composition"}
     oversized = signals.independent_axes >= 2 or signals.workload > 5
     if not oversized:
-        return DecompositionRecommendation("bounded", "scope is within bounded-work threshold", signals,
-                                           custody="composition" if composition else "leaf")
+        return DecompositionRecommendation(
+            "bounded",
+            "scope is within bounded-work threshold",
+            signals,
+            custody="composition" if composition else "leaf",
+        )
     leaf_count = min(max(2, signals.independent_axes + 1), max_leaves, 5)
     if active:
-        return DecompositionRecommendation("advisory", "active custody prevents automatic splitting", signals,
-                                           custody="composition")
+        return DecompositionRecommendation(
+            "advisory",
+            "active custody prevents automatic splitting",
+            signals,
+            custody="composition",
+        )
     if review:
-        return DecompositionRecommendation("advisory", "review custody requires an independent reviewer", signals,
-                                           custody="composition")
-    leaves = tuple(LeafRecommendation(_stable_id(card_id, i), f"{_get(card, 'title', card_id)}: leaf {i}",
-                                      (card_id,) if i == 1 else (_stable_id(card_id, i - 1),))
-                   for i in range(1, leaf_count + 1))
-    return DecompositionRecommendation("recommend", "independent deliverables or verification surfaces exceed threshold",
-                                       signals, leaves, "composition")
+        return DecompositionRecommendation(
+            "advisory",
+            "review custody requires an independent reviewer",
+            signals,
+            custody="composition",
+        )
+    leaves = tuple(
+        LeafRecommendation(
+            _stable_id(card_id, i),
+            f"{_get(card, 'title', card_id)}: leaf {i}",
+            (card_id,) if i == 1 else (_stable_id(card_id, i - 1),),
+        )
+        for i in range(1, leaf_count + 1)
+    )
+    return DecompositionRecommendation(
+        "recommend",
+        "independent deliverables or verification surfaces exceed threshold",
+        signals,
+        leaves,
+        "composition",
+    )
 
 
 preflight = recommend_decomposition
