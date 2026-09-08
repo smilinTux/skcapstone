@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
+import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +26,7 @@ from .seat_boundaries import BoundaryError
 from .seat_cycle_guard import CycleResult, SeatCycleGuard
 from .seat_mail import poll_mail, startup_hello
 
-_SEATS = frozenset({"link", "mero"})
+_SEATS = frozenset({"link", "mero", "seraph"})
 
 
 def _now() -> str:
@@ -178,6 +180,35 @@ def mero_operation(home: Path) -> dict[str, int]:
     }
 
 
+def seraph_operation(home: Path) -> dict[str, int | str]:
+    """Launch at most one governed Seraph review through the fleet selector."""
+
+    dispatcher = Path.home() / ".local/bin/skfleet-rotate.py"
+    env = os.environ.copy()
+    env.update(
+        {
+            "SKFLEET_ONLY_SEAT": "seraph",
+            "SKFLEET_TARGET": "1",
+            "SKFLEET_CODEX_TARGET": "1",
+            "SKFLEET_QWEN_TARGET": "0",
+            "SKFLEET_GLM_TARGET": "0",
+            "SKFLEET_KIMI_TARGET": "0",
+            "SKFLEET_MAX_LAUNCH": "1",
+        }
+    )
+    completed = subprocess.run(
+        [str(dispatcher), "--go"], env=env, capture_output=True, text=True, timeout=240
+    )
+    return {
+        "cards_examined": 1,
+        "recommendations": 1 if completed.returncode == 0 else 0,
+        "suppressed": 0 if completed.returncode == 0 else 1,
+        "reason": (
+            "seraph_dispatch_complete" if completed.returncode == 0 else "seraph_dispatch_failed"
+        ),
+    }
+
+
 def _emit_review_work(home: Path, lineage_path: Path, feed_reason: str) -> dict[str, int | str]:
     try:
         source_revision, evidence_sha256, recommendations = load_review_work(lineage_path)
@@ -279,11 +310,21 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     feed_path = args.observation_feed or args.home / "coordination" / "link-observations.json"
-    operation = (
-        (lambda: mero_operation(args.home))
-        if args.seat == "mero"
-        else (lambda: link_operation(args.home, feed_path))
-    )
+    if args.seat == "mero":
+
+        def operation() -> dict[str, int]:
+            return mero_operation(args.home)
+
+    elif args.seat == "seraph":
+
+        def operation() -> dict[str, int | str]:
+            return seraph_operation(args.home)
+
+    else:
+
+        def operation() -> dict[str, int | str]:
+            return link_operation(args.home, feed_path)
+
     summary = run_cycle(
         seat=args.seat,
         home=args.home,

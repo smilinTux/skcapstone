@@ -1,0 +1,16 @@
+[Unit]
+Description=SKFleet Seraph bounded independent-review dispatcher
+After=network-online.target skfleet-link.service
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=seraph
+Environment=SKCAPSTONE_AGENT=seraph
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.seat_cycle_entrypoint --seat seraph --home %h/.skcapstone --control-plane %h/.skcapstone/coordination/seat-control-plane.json
+TimeoutStartSec=300
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

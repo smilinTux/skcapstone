@@ -6,7 +6,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from skcapstone.seat_cycle_entrypoint import link_operation, load_control_plane, run_cycle
+from skcapstone.seat_cycle_entrypoint import (
+    link_operation,
+    load_control_plane,
+    run_cycle,
+    seraph_operation,
+)
 
 
 def control(path: Path) -> None:
@@ -16,7 +21,7 @@ def control(path: Path) -> None:
                 "schema_version": 1,
                 "revision": "r1",
                 "active_host": "chiap08",
-                "seats": {"link": ["chiap08"], "mero": ["chiap08"]},
+                "seats": {"link": ["chiap08"], "mero": ["chiap08"], "seraph": ["chiap08"]},
             }
         ),
         encoding="utf-8",
@@ -129,6 +134,21 @@ def test_cycle_without_operation_is_explicit_noop(tmp_path: Path) -> None:
     assert result.reason == "operation_not_configured"
 
 
+def test_seraph_dispatch_is_exactly_one_and_seat_scoped(tmp_path, monkeypatch) -> None:
+    captured = {}
+
+    def run(command, **kwargs):
+        captured.update(kwargs["env"])
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
+    result = seraph_operation(tmp_path)
+    assert result["reason"] == "seraph_dispatch_complete"
+    assert captured["SKFLEET_ONLY_SEAT"] == "seraph"
+    assert captured["SKFLEET_MAX_LAUNCH"] == "1"
+    assert captured["SKFLEET_TARGET"] == "1"
+
+
 def test_control_plane_requires_both_seats(tmp_path: Path) -> None:
     path = tmp_path / "control.json"
     path.write_text(
@@ -145,7 +165,7 @@ def test_control_plane_requires_both_seats(tmp_path: Path) -> None:
     try:
         load_control_plane(path)
     except ValueError as exc:
-        assert "mero" in str(exc)
+        assert "mero" in str(exc) or "seraph" in str(exc)
     else:
         raise AssertionError("incomplete control plane accepted")
 
@@ -156,9 +176,15 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     mero = (root / "systemd/skfleet-mero.service").read_text()
     link_timer = (root / "systemd/skfleet-link.timer").read_text()
     mero_timer = (root / "systemd/skfleet-mero.timer").read_text()
+    seraph = (root / "systemd/skfleet-seraph.service").read_text()
+    seraph_timer = (root / "systemd/skfleet-seraph.timer").read_text()
     assert "TimeoutStartSec=120" in link
     assert "TimeoutStartSec=180" in mero
     assert "--seat link" in link and "--seat mero" in mero
     assert "OnUnitActiveSec=5min" in link_timer
     assert "OnUnitActiveSec=10min" in mero_timer
     assert "skfleet-mero.service" in mero_timer
+    assert "TimeoutStartSec=300" in seraph
+    assert "--seat seraph" in seraph
+    assert "SKFLEET_MAX_LAUNCH" not in seraph
+    assert "skfleet-seraph.service" in seraph_timer
