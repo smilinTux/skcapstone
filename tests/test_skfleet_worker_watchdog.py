@@ -31,12 +31,20 @@ NOW = datetime(2026, 9, 4, 14, 0, tzinfo=timezone.utc)
 
 def test_sleeping_child_is_stalled_despite_live_wrapper_heartbeat() -> None:
     observation = ChildLeaseObservation(
-        card="card-1", owner="agent-1", claim_revision="rev-1", host="chiap01",
-        lane="codex", model_bucket="medium", phase="progress", started_at=100.0,
-        last_progress_at=100.0, wrapper_heartbeat_at=199.0,
+        card="card-1",
+        owner="agent-1",
+        claim_revision="rev-1",
+        host="chiap01",
+        lane="codex",
+        model_bucket="medium",
+        phase="progress",
+        started_at=100.0,
+        last_progress_at=100.0,
+        wrapper_heartbeat_at=199.0,
     )
-    receipt = evaluate_child_lease(observation, now=200.0,
-                                  config=ChildLeaseConfig(progress_s=10.0))
+    receipt = evaluate_child_lease(
+        observation, now=200.0, config=ChildLeaseConfig(progress_s=10.0)
+    )
     assert receipt.state == "child-stalled"
     assert receipt.reason == "lease-expired"
     assert receipt.elapsed_s == 100.0
@@ -44,25 +52,52 @@ def test_sleeping_child_is_stalled_despite_live_wrapper_heartbeat() -> None:
 
 
 def test_child_lease_phases_are_independent_and_monotonic() -> None:
-    config = ChildLeaseConfig(startup_s=2, first_output_s=3,
-                              provider_response_s=4, progress_s=5)
-    base = dict(card="c", owner="o", claim_revision="r", host="h", lane="l",
-                model_bucket="m", started_at=10.0)
-    assert evaluate_child_lease(ChildLeaseObservation(**base, phase="startup"), now=11,
-                                config=config).state == "healthy"
-    assert evaluate_child_lease(ChildLeaseObservation(**base, phase="first-output",
-                                last_output_at=10), now=14, config=config).state == "child-stalled"
+    config = ChildLeaseConfig(startup_s=2, first_output_s=3, provider_response_s=4, progress_s=5)
+    base = dict(
+        card="c",
+        owner="o",
+        claim_revision="r",
+        host="h",
+        lane="l",
+        model_bucket="m",
+        started_at=10.0,
+    )
+    assert (
+        evaluate_child_lease(
+            ChildLeaseObservation(**base, phase="startup"), now=11, config=config
+        ).state
+        == "healthy"
+    )
+    assert (
+        evaluate_child_lease(
+            ChildLeaseObservation(**base, phase="first-output", last_output_at=10),
+            now=14,
+            config=config,
+        ).state
+        == "child-stalled"
+    )
     with pytest.raises(ValueError):
-        evaluate_child_lease(ChildLeaseObservation(**base, phase="startup"), now=9,
-                             config=config)
+        evaluate_child_lease(ChildLeaseObservation(**base, phase="startup"), now=9, config=config)
 
 
 def test_protected_or_ambiguous_children_are_not_replayable() -> None:
-    base = dict(card="c", owner="o", claim_revision="r", host="h", lane="l",
-                model_bucket="m", phase="progress", started_at=0, last_progress_at=0)
+    base = dict(
+        card="c",
+        owner="o",
+        claim_revision="r",
+        host="h",
+        lane="l",
+        model_bucket="m",
+        phase="progress",
+        started_at=0,
+        last_progress_at=0,
+    )
     for key in ("side_effects", "human_gate", "terminal", "superseded", "ambiguous_progress"):
-        receipt = evaluate_child_lease(ChildLeaseObservation(**base, **{key: True}), now=100,
-                                       config=ChildLeaseConfig(progress_s=1))
+        receipt = evaluate_child_lease(
+            ChildLeaseObservation(**base, **{key: True}),
+            now=100,
+            config=ChildLeaseConfig(progress_s=1),
+        )
         assert receipt.state == "not-replayable"
 
 
