@@ -115,10 +115,15 @@ def test_only_link_can_evaluate_merge_queue() -> None:
         title="normal source repair",
         categories=("source",),
         head_sha="a" * 40,
+        base_sha="b" * 40,
+        tree_sha="c" * 40,
+        paths=(),
+        diff_sha256="d" * 64,
         author="producer",
         mergeable=False,
-        failed_checks=0,
+        github_checks=(),
         review=None,
+        local_preflight=None,
     )
     decision = evaluate_merge_as_link("link", candidate)
     assert not decision.eligible

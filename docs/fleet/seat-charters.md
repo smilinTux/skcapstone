@@ -79,9 +79,11 @@ Link MAY merge only when ALL of the following conditions are met for the exact P
 1. The PR is mergeable
 2. Zero failed checks
 3. A full-SHA exact-head independent PASS by an author distinct from the source author and from Link
-4. No unresolved FAIL or BLOCKED lineage
-5. The PR is not authored by Link
-6. The title and category exclude: CapAuth, credential, custody, issuer, secret, key, rollback, deploy, production, release, migration, and any other sensitive class
+4. A terminal local CI-parity receipt whose head matches the PR and whose check
+   set is complete under SK Standards `TESTING_AND_CI_STANDARD` section 6.6
+5. No unresolved FAIL or BLOCKED lineage
+6. The PR is not authored by Link
+7. The title and category exclude: CapAuth, credential, custody, issuer, secret, key, rollback, deploy, production, release, migration, and any other sensitive class
 
 Link records the exact head, check state, review identity, review evidence SHA256, lineage result, category result, and merge receipt as immutable evidence. Any failed predicate denies the merge and escalates to Chef.
 

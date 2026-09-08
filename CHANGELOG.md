@@ -84,6 +84,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Card `dec5a948`: exact-head local CI-parity receipts gate fleet producer
+  publication and Link review eligibility before GitHub receives a candidate.
+
 - Daily `coord-maintain` scheduler job (`config/jobs.d/coord-maintain.yaml`) and
   `coord maintain --lock-days` wiring for stale coordination lock prune. Cards
   b0a0d004 / b0a0d005.
