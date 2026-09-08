@@ -25,6 +25,12 @@ class SchedulerFacts:
     not_claimable: bool = False
     sensitive_category: bool = False
     dependency: bool = False
+    review_incomplete: bool = False
+    review_malformed: bool = False
+    review_not_ready: bool = False
+    review_parent_verdict: bool = False
+    review_qwen_only: bool = False
+    review_seat_bound: bool = False
     awaiting_review: bool = False
     backoff: bool = False
     attempt_limit: bool = False
@@ -79,6 +85,12 @@ _PRECEDENCE = (
     ("not_claimable", lambda f: f.not_claimable),
     ("sensitive_category", lambda f: f.sensitive_category),
     ("dependency", lambda f: f.dependency),
+    ("review_incomplete", lambda f: f.review_incomplete),
+    ("review_malformed", lambda f: f.review_malformed),
+    ("review_not_ready", lambda f: f.review_not_ready),
+    ("review_parent_verdict", lambda f: f.review_parent_verdict),
+    ("review_qwen_only", lambda f: f.review_qwen_only),
+    ("review_seat_bound", lambda f: f.review_seat_bound),
     ("awaiting_review", lambda f: f.awaiting_review),
     ("backoff", lambda f: f.backoff),
     ("attempt_limit", lambda f: f.attempt_limit),

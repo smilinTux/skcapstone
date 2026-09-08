@@ -256,9 +256,10 @@ def test_changed_review_generation_gets_a_distinct_recommendation(tmp_path: Path
             id="feedface",
             title="[REVIEW] Review candidate",
             created_by="producer",
-            initial_labels=["review", "parent-deadbeef"],
+            initial_labels=["review", "independent-review", "parent-deadbeef"],
         )
     )
+    store.append_event("feedface", "move", "producer", column="ready")
     core = {
         "links": {
             "producer_identity": "producer",
@@ -268,10 +269,10 @@ def test_changed_review_generation_gets_a_distinct_recommendation(tmp_path: Path
     namespace = _load_real_assignment(home)
 
     _reviewer, first, first_handoff = namespace["_review_assignment"](
-        "feedface", core, ["review"], "reviewer-one"
+        "feedface", core, ["review", "independent-review"], "reviewer-one"
     )
     _reviewer, repeated, repeated_handoff = namespace["_review_assignment"](
-        "feedface", core, ["review"], "reviewer-one"
+        "feedface", core, ["review", "independent-review"], "reviewer-one"
     )
     first_events = [
         event
@@ -280,7 +281,10 @@ def test_changed_review_generation_gets_a_distinct_recommendation(tmp_path: Path
     ]
     store.append_event("feedface", "add_label", "jarvis", label="qwen-suitable")
     _reviewer, changed, changed_handoff = namespace["_review_assignment"](
-        "feedface", core, ["review", "qwen-suitable"], "reviewer-one"
+        "feedface",
+        core,
+        ["review", "independent-review", "qwen-suitable"],
+        "reviewer-one",
     )
     changed_events = [
         event

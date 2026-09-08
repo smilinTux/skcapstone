@@ -173,7 +173,10 @@ def test_zero_capacity_dry_run_is_empty(tmp_path: Path) -> None:
 
     assert board.open(0, dry_run=True) == 0
     assert board.calls == []
-    assert any("capacity=0|eligible=0|batch=0|dry_run=true" in row for row in board.logs)
+    assert any(
+        "REVIEW_OPEN_PLAN|" in row and "capacity=0|eligible=0|batch=0|dry_run=true" in row
+        for row in board.logs
+    )
 
 
 def test_dry_run_bounds_batch_by_free_slots_and_eligible_sources(tmp_path: Path) -> None:

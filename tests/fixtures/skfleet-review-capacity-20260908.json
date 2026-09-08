@@ -1,0 +1,20 @@
+{
+  "observed_at": "2026-09-08T00:40:50-05:00",
+  "rotation_report_sha256": "5ca8a18a95ea6990695bfec31b2a7bdfe10997df263ee484a11360b3d8b80b6f",
+  "slots": {
+    "codex": {"used": 0, "capacity": 2},
+    "glm": {"used": 0, "capacity": 2},
+    "qwen": {"used": 0, "capacity": 0},
+    "kimi": {"used": 0, "capacity": 1},
+    "escalate": {"used": 0, "capacity": 2}
+  },
+  "total_free": 7,
+  "ready_count": 34,
+  "observed_ready_ids": ["b7e8094c", "a13c7010"],
+  "review_batch_eligible": 0,
+  "lane_defer": {
+    "no-free-lane:codex": 3,
+    "no-free-lane:qwen": 2,
+    "no-free-lane:qwen,glm,codex": 3
+  }
+}
