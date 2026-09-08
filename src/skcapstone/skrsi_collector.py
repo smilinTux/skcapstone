@@ -42,6 +42,44 @@ _ALLOWED = frozenset(
     }
 )
 _SECRET_PARTS = ("secret", "token", "password", "credential", "private_key")
+DEFAULT_METADATA_KEYS = frozenset(
+    {
+        "category",
+        "count",
+        "duration_ms",
+        "host",
+        "labels",
+        "latency_ms",
+        "model",
+        "outcome",
+        "owner",
+        "priority",
+        "queue",
+        "revision",
+        "route",
+        "state",
+        "status",
+        "verdict",
+    }
+)
+ARCHITECTURE_METRICS = {
+    "skrsi.throughput": "{event}/min",
+    "skrsi.queue.time": "ms",
+    "skrsi.cycle.time": "ms",
+    "skrsi.review.first_pass_rate": "1",
+    "skrsi.rework.count": "{event}",
+    "skrsi.claim.conflicts": "{event}",
+    "skrsi.blockers.repeated": "{event}",
+    "skrsi.reviewer.latency": "ms",
+    "skrsi.defect.escape_rate": "1",
+    "skrsi.test.stability": "1",
+    "skrsi.cost.token_efficiency": "{event}/{token}",
+    "skrsi.workspace.growth": "By",
+    "skrsi.cleanup.yield": "By",
+    "skrsi.recovery.success_rate": "1",
+    "skrsi.route.attribution": "{event}",
+    "skrsi.delivery.cadence": "{event}/d",
+}
 
 
 @dataclass(frozen=True)
@@ -51,14 +89,39 @@ class AdapterContract:
     source: str
     authority: str
     handoff_owner: str
+    cursor_field: str = "cursor"
+    idempotency_field: str = "natural_key"
+    dead_letter_event: str = "skrsi.collection_error"
     timeout_seconds: float = 2.0
     retry_attempts: int = 2
 
     def __post_init__(self) -> None:
-        if not self.source or not self.authority or not self.handoff_owner:
-            raise ValueError("source, authority, and handoff owner are required")
+        required = (
+            self.source,
+            self.authority,
+            self.handoff_owner,
+            self.cursor_field,
+            self.idempotency_field,
+            self.dead_letter_event,
+        )
+        if not all(required):
+            raise ValueError("adapter identity, fence, and recovery fields are required")
         if self.timeout_seconds <= 0 or self.retry_attempts < 0:
             raise ValueError("invalid adapter bounds")
+
+
+ESTATE_ADAPTERS = {
+    name: AdapterContract(name, authority, owner)
+    for name, authority, owner in (
+        ("cardstore", "CardStore", "atlas"),
+        ("skfleet", "SKFleet", "niobe"),
+        ("skmail", "SKMail envelope index", "mero"),
+        ("route-attribution", "SKGateway audit metadata", "atlas"),
+        ("evidence-reference", "SKCapstone evidence index", "tank"),
+        ("cleanup", "SKFleet cleanup journal", "niobe"),
+        ("recovery", "SKFleet recovery journal", "tank"),
+    )
+}
 
 
 @dataclass(frozen=True)
@@ -110,6 +173,25 @@ def _reject_protected(value: object, path: str = "metadata") -> None:
             _reject_protected(item, f"{path}[{index}]")
 
 
+def _cursor_key(value: str) -> tuple[int, int | str]:
+    """Order common numeric cursors numerically and opaque cursors lexically."""
+
+    return (0, int(value)) if value.isdecimal() else (1, value)
+
+
+def _safe_metadata(value: object, allowed: frozenset[str]) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise SKRSIError("metadata must be an object")
+    if any(not isinstance(key, str) or key not in allowed for key in value):
+        raise SKRSIError("metadata field is not allowlisted")
+    _reject_protected(value)
+    clean = redact_metadata(value)
+    encoded = canonical_json(clean)
+    if len(encoded) > 4096:
+        raise SKRSIError("metadata exceeds bounded size")
+    return clean
+
+
 class BoundedCollector:
     """Collect one canonical observation per natural key without silent loss."""
 
@@ -125,19 +207,25 @@ class BoundedCollector:
         queue_size: int = 10_000,
         timeout_seconds: float = 2.0,
         retry_attempts: int = 2,
+        metadata_keys: frozenset[str] = DEFAULT_METADATA_KEYS,
         max_age: timedelta = timedelta(days=395),
         max_future_skew: timedelta = timedelta(minutes=5),
     ) -> None:
         if queue_size < 1 or max_age <= timedelta(0) or max_future_skew < timedelta(0):
             raise ValueError("invalid collector bounds")
         self.contract = AdapterContract(
-            source, authority or source, handoff_owner, timeout_seconds, retry_attempts
+            source,
+            authority or source,
+            handoff_owner,
+            timeout_seconds=timeout_seconds,
+            retry_attempts=retry_attempts,
         )
         self.outbox = outbox
         self.target_ref = target_ref
         self.target_revision = target_revision
         self.max_age = max_age
         self.max_future_skew = max_future_skew
+        self.metadata_keys = frozenset(metadata_keys)
         self._queue: queue.Queue[Mapping[str, Any]] = queue.Queue(maxsize=queue_size)
         self._seen, self._cursor, self._last_occurred_at = self._load_state()
         self._lock = threading.Lock()
@@ -166,13 +254,15 @@ class BoundedCollector:
             payload = record.get("payload", {})
             if (
                 record.get("actor") == self.contract.source
-                and record.get("event_type") != "skrsi.collection_error"
+                and record.get("event_type") != self.contract.dead_letter_event
                 and isinstance(payload.get("natural_key"), str)
                 and isinstance(payload.get("envelope_hash"), str)
             ):
                 seen[payload["natural_key"]] = payload["envelope_hash"]
                 record_cursor = payload.get("cursor")
-                if isinstance(record_cursor, str) and record_cursor >= cursor:
+                if isinstance(record_cursor, str) and (
+                    not cursor or _cursor_key(record_cursor) >= _cursor_key(cursor)
+                ):
                     cursor = record_cursor
                 occurred = _utc(record.get("occurred_at"), name="occurred_at")
                 if last_occurred_at is None or occurred > last_occurred_at:
@@ -204,8 +294,6 @@ class BoundedCollector:
         cursor = item.get("cursor")
         if not isinstance(cursor, str) or not cursor:
             raise SKRSIError("cursor is required")
-        if self._cursor and cursor < self._cursor:
-            raise SKRSIError("stale cursor")
         occurred = _utc(item.get("occurred_at"), name="occurred_at")
         recorded = _utc(item.get("recorded_at", item.get("occurred_at")), name="recorded_at")
         if occurred > now + self.max_future_skew or recorded > now + self.max_future_skew:
@@ -234,7 +322,7 @@ class BoundedCollector:
             "cohort": "estate",
             "sample_id": natural,
             "collection_quality": item.get("quality", "complete"),
-            "metadata": redact_metadata(item.get("metadata", {})),
+            "metadata": _safe_metadata(item.get("metadata", {}), self.metadata_keys),
         }
         for key in (
             "body_hash",
@@ -264,7 +352,7 @@ class BoundedCollector:
             actor=self.contract.source,
             target_ref=self.target_ref,
             event_id=f"collection-error-{fingerprint[:24]}",
-            event_type="skrsi.collection_error",
+            event_type=self.contract.dead_letter_event,
             occurred_at=now,
             recorded_at=now,
             payload={
@@ -305,6 +393,10 @@ class BoundedCollector:
                         self._metrics["duplicates"] += 1
                         duplicates += 1
                         continue
+                    if self._cursor and _cursor_key(cursor) <= _cursor_key(self._cursor):
+                        raise SKRSIError("stale cursor")
+                    if self._last_occurred_at is not None and occurred < self._last_occurred_at:
+                        raise SKRSIError("timestamp regressed")
                     record = make_record(
                         "Observation",
                         actor=self.contract.source,
@@ -318,7 +410,7 @@ class BoundedCollector:
                     self.outbox.append(record)
                     self._seen[natural] = envelope_hash
                     self._cursor = cursor
-                    self._last_occurred_at = occurred
+                    self._last_occurred_at = max(occurred, self._last_occurred_at or occurred)
                     self._metrics["accepted"] += 1
                     accepted += 1
             except (SKRSIError, TypeError, ValueError) as exc:
@@ -350,14 +442,16 @@ class BoundedCollector:
             "authority": self.contract.authority,
             "handoff_owner": self.contract.handoff_owner,
         }
-        values = (
+        values = [
             ("skrsi.collector.events.accepted", accepted, "{event}", "complete"),
             ("skrsi.collector.events.rejected", rejected, "{event}", "malformed"),
             ("skrsi.collector.events.duplicate", duplicates, "{event}", "complete"),
             ("skrsi.collector.events.overload", self._metrics["overload"], "{event}", "degraded"),
             ("skrsi.collector.queue.depth", self._queue.qsize(), "{event}", "complete"),
             ("skrsi.collector.cursor.present", int(bool(self._cursor)), "1", "complete"),
-        )
+        ]
+        values.extend((name, 0, unit, "missing") for name, unit in ARCHITECTURE_METRICS.items())
+        collector_names = {name for name, _, _, _ in values[:6]}
         return tuple(
             Measurement(
                 name,
@@ -366,8 +460,10 @@ class BoundedCollector:
                 self.target_revision,
                 accepted + rejected + duplicates,
                 freshness,
-                missing=freshness is None,
-                quality="missing" if freshness is None else quality,
+                missing=freshness is None or name not in collector_names,
+                quality=(
+                    "missing" if freshness is None or name not in collector_names else quality
+                ),
                 dimensions=dimensions,
             )
             for name, value, unit, quality in values

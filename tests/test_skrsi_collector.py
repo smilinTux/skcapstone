@@ -1,9 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 
 import pytest
 
-from skcapstone.skrsi_collector import BoundedCollector
+from skcapstone.skrsi_collector import (
+    ARCHITECTURE_METRICS,
+    ESTATE_ADAPTERS,
+    BoundedCollector,
+)
 from skcapstone.skrsi_registry import AppendOnlyOutbox
 
 NOW = datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc)
@@ -58,6 +63,20 @@ def test_restart_dedup_cursor_and_overload(tmp_path):
     assert (result.accepted, result.duplicates, result.rejected) == (0, 1, 1)
 
 
+def test_restart_replay_deduplicates_before_cursor_fence(tmp_path):
+    path = tmp_path / "outbox.jsonl"
+    first = collector(AppendOnlyOutbox(path))
+    assert first.submit(event(cursor="9"))
+    assert first.submit(event("event-2", cursor="10"))
+    assert first.drain(now=NOW).accepted == 2
+
+    restarted = collector(AppendOnlyOutbox(path))
+    assert restarted.cursor == "10"
+    assert restarted.submit(event(cursor="9"))
+    result = restarted.drain(now=NOW)
+    assert (result.duplicates, result.rejected) == (1, 0)
+
+
 def test_protected_value_becomes_hash_only_dead_letter(tmp_path):
     outbox = AppendOnlyOutbox(tmp_path / "outbox.jsonl")
     worker = collector(outbox)
@@ -92,6 +111,15 @@ def test_natural_key_conflict_is_rejected():
     assert worker.drain(now=NOW).rejected == 1
 
 
+def test_timestamp_progress_cannot_regress():
+    worker = collector(AppendOnlyOutbox())
+    assert worker.submit(event(cursor="1"))
+    assert worker.submit(event("event-2", cursor="2", occurred_at=NOW - timedelta(days=1)))
+    result = worker.drain(now=NOW)
+    assert (result.accepted, result.rejected) == (1, 1)
+    assert all(metric.freshness_seconds == 0 for metric in result.measurements)
+
+
 def test_concurrent_replay_persists_exactly_once():
     outbox = AppendOnlyOutbox()
     worker = collector(outbox, queue_size=64)
@@ -105,12 +133,21 @@ def test_concurrent_replay_persists_exactly_once():
 
 def test_ten_thousand_event_capacity_without_silent_loss():
     worker = collector(AppendOnlyOutbox(), queue_size=10_000)
+    started = monotonic()
     for index in range(10_000):
         assert worker.submit(event(f"event-{index}", cursor=f"{index:06d}"))
     assert not worker.submit(event("overflow", cursor="010000"))
     result = worker.drain(now=NOW)
     assert (result.accepted, result.rejected, result.overloaded) == (10_000, 0, True)
     assert result.cursor == "009999"
+    assert monotonic() - started < 60
+
+    for index in range(10_000):
+        assert worker.submit(event(f"event-{index}", cursor=f"{index:06d}"))
+    replay_started = monotonic()
+    replay = worker.drain(now=NOW)
+    assert (replay.accepted, replay.duplicates, replay.rejected) == (0, 10_000, 0)
+    assert monotonic() - replay_started < 60
 
 
 @pytest.mark.parametrize(
@@ -120,6 +157,7 @@ def test_ten_thousand_event_capacity_without_silent_loss():
         event(source="other"),
         event(body_hash="bad"),
         event(metadata={"password": "hidden"}),
+        event(metadata={"description": "PROTECTED-BODY-MARKER"}),
     ],
 )
 def test_malformed_or_unauthorized_event_is_rejected(value):
@@ -142,3 +180,26 @@ def test_measurements_include_quality_freshness_and_bounded_dimensions():
     assert all(metric.target_revision == "1" for metric in result.measurements)
     assert all(metric.sample_count == 1 for metric in result.measurements)
     assert all(metric.freshness_seconds == 3 for metric in result.measurements)
+    by_name = {metric.name: metric for metric in result.measurements}
+    assert ARCHITECTURE_METRICS.keys() <= by_name.keys()
+    assert all(by_name[name].missing for name in ARCHITECTURE_METRICS)
+
+
+def test_every_estate_adapter_names_authority_fences_and_recovery():
+    assert set(ESTATE_ADAPTERS) == {
+        "cardstore",
+        "skfleet",
+        "skmail",
+        "route-attribution",
+        "evidence-reference",
+        "cleanup",
+        "recovery",
+    }
+    for contract in ESTATE_ADAPTERS.values():
+        assert contract.authority
+        assert contract.cursor_field == "cursor"
+        assert contract.idempotency_field == "natural_key"
+        assert contract.timeout_seconds > 0
+        assert contract.retry_attempts >= 0
+        assert contract.dead_letter_event == "skrsi.collection_error"
+        assert contract.handoff_owner
