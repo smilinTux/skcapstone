@@ -88,6 +88,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Card `c4a2ab8f`: conservative long-runner liveness classification preserves
+  quiet tool waits, requests assistance after one hour, and permits retirement
+  only after attributable terminal and recoverable-workspace evidence.
+
 - Card `5a71c2db`: added metadata-only SKRSI target revisions, canonical
   hash-bound architecture records, redaction and fail-closed validation, and
   an append-only idempotent outbox with retention and acknowledgement cursors.
