@@ -279,14 +279,16 @@ STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
 _WORKER_UNIT_RE = re.compile(
-    r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
+    r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([a-z0-9][a-z0-9-]*[a-z0-9])\.service$"
 )
 
 
 def _worker_unit_name(lane, cid):
     """Return the transient service name for one newly launched worker."""
-    if lane not in {"codex", "glm", "qwen", "kimi", "escalate"} or not re.fullmatch(
-        r"[0-9a-f]{8}", cid
+    if lane not in {"codex", "glm", "qwen", "kimi", "escalate"} or not (
+        isinstance(cid, str)
+        and 8 <= len(cid) <= 64
+        and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", cid)
     ):
         raise ValueError("invalid worker unit identity")
     return "skfleet-worker-%s-%s.service" % (lane, cid)
@@ -298,7 +300,11 @@ def _parse_worker_units(output):
     for line in output.splitlines():
         fields = line.split()
         match = _WORKER_UNIT_RE.fullmatch(fields[0]) if fields else None
-        if match:
+        if (
+            match
+            and len(match.group(2)) <= 64
+            and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", match.group(2))
+        ):
             found.append({"unit": fields[0], "lane": match.group(1), "card": match.group(2)})
     return found
 
@@ -4592,6 +4598,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 (HOST,sess,cid,fresh_claimability.get("reason","unknown")))
             continue
         log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
+        continue
+    try:
+        unit=_worker_unit_name(_LANE["name"],cid)
+    except ValueError as exc:
+        log(d,"WORKER_ID_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
         continue
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
