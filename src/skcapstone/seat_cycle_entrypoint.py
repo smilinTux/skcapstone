@@ -198,6 +198,7 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
             "SKFLEET_ONLY_SEAT": "seraph",
             "SKFLEET_TARGET": "1",
             "SKFLEET_CODEX_TARGET": "1",
+            "SKFLEET_CODEX_MODEL_S": "sk-codex-mid",
             "SKFLEET_QWEN_TARGET": "0",
             "SKFLEET_GLM_TARGET": "0",
             "SKFLEET_KIMI_TARGET": "0",
@@ -236,6 +237,7 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
         or status != "doing"
         or card.owner != launch["owner"]
         or card.meta.get("_claim_revision") != launch["revision"]
+        or launch["model"] != "sk-codex-mid"
         or not launch["owner"].startswith("pi-seraph-")
         or (producer and producer in launch["owner"])
     ):
