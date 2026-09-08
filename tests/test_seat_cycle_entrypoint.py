@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
+from skcapstone.card_store import CardCore, CardStore
+from skcapstone.link_review_work import card_generation, reconcile_review_work
 from skcapstone.seat_cycle_entrypoint import (
     link_operation,
     load_control_plane,
@@ -199,6 +202,82 @@ def test_seraph_rejects_duplicate_launch_receipts(tmp_path, monkeypatch) -> None
     result = seraph_operation(tmp_path)
     assert result["reason"] == "seraph_launch_receipt_missing"
     assert result["recommendations"] == 0
+
+
+def test_link_materialization_race_launches_once_and_replay_is_denied(
+    tmp_path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    store = CardStore(home)
+    store.create(
+        CardCore(
+            id="source01",
+            title="Source candidate",
+            created_by="builder",
+            created_at="2026-09-08T00:00:00+00:00",
+        )
+    )
+    item = {
+        "source_card": "source01",
+        "head_revision": "a" * 40,
+        "card_generation": card_generation(store.fold("source01")),
+        "source_owner": "builder",
+        "reviewer_candidates": [{"name": "Seraph", "seat": "seraph", "identity": "seraph"}],
+    }
+    launched = False
+
+    def run(command, **_kwargs):
+        nonlocal launched
+        if command[0] == "systemctl":
+            return SimpleNamespace(returncode=0)
+        if launched:
+            return SimpleNamespace(returncode=0, stdout="SELECTION_EMPTY\n")
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(
+                pool.map(
+                    lambda _: reconcile_review_work(home, item, evidence_sha256="f" * 64),
+                    range(8),
+                )
+            )
+        assert len({result.review_card_id for result in results}) == 1
+        assert sum(result.created for result in results) == 1
+        card_id = results[0].review_card_id
+        owner = f"pi-seraph-chiap08-{card_id}"
+        revision = "revision-1"
+        store.append_event(
+            card_id,
+            "claim",
+            owner,
+            owner=owner,
+            claim_revision=revision,
+        )
+        launched = True
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
+                f"model=sk-codex-mid|owner={owner}|claim_revision={revision}\n"
+            ),
+        )
+
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
+    first = seraph_operation(home)
+    second = seraph_operation(home)
+
+    assert first["reason"] == "seraph_dispatch_complete"
+    assert second["reason"] == "seraph_launch_receipt_missing"
+    review_cards = [card for card in store.list_cards() if "parent-source01" in card.labels]
+    assert len(review_cards) == 1
+    assert review_cards[0].owner.startswith("pi-seraph-")
+    claim_events = []
+    for path in (home / "cards" / review_cards[0].id / "events").glob("*.jsonl"):
+        claim_events.extend(
+            event
+            for line in path.read_text().splitlines()
+            if (event := json.loads(line)).get("action") == "claim"
+        )
+    assert len(claim_events) == 1
 
 
 def test_control_plane_requires_both_seats(tmp_path: Path) -> None:
