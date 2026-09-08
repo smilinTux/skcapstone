@@ -121,7 +121,7 @@ def test_pool_v2_is_a_complete_partition() -> None:
     assert report.population == report.ready + report.ineligible == 3
     assert report.reasons == {"dependency": 2}
     assert report.render() == (
-        "POOL_V2|chiap01|population=3 ready=1 ineligible=2 " 'reasons={"dependency":2}'
+        'POOL_V2|chiap01|population=3 ready=1 ineligible=2 reasons={"dependency":2}'
     )
 
 
@@ -187,6 +187,22 @@ def _authoritative_claimability_for(card_home: Path):
     def host_pin(_core, _labels):
         return None
 
+    metadata = _launcher_function("_governed_review_metadata", {"re": re})
+    governed_reason = _launcher_function(
+        "_governed_review_reason",
+        {
+            "_governed_review_metadata": metadata,
+            "_REVIEW_SHA1_KEYS": ("candidate_commit", "candidate_tree"),
+            "_REVIEW_SHA256_KEYS": (
+                "candidate_patch_sha256",
+                "candidate_evidence_sha256",
+            ),
+            "_SEAT_LABEL_PREFIX": "seat-",
+            "_PROVISIONAL_PASS_RE": re.compile(r"^PASS_FOR_[A-Z_]+", re.I),
+            "_load_outcomes": lambda: {},
+            "re": re,
+        },
+    )
     reason = _launcher_function(
         "_claimability_reason",
         {
@@ -202,6 +218,7 @@ def _authoritative_claimability_for(card_home: Path):
                 "[HUMAN]" in str(core.get("title") or "").upper() or "human-gate" in labels
             ),
             "_dep_satisfied": lambda _dependency: True,
+            "_governed_review_reason": governed_reason,
             "host_pin": host_pin,
             "HOST": "chiap08",
         },

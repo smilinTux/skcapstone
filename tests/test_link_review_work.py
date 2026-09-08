@@ -140,7 +140,7 @@ def test_new_head_gets_distinct_review_card(tmp_path):
     assert first.review_card_id != second.review_card_id
 
 
-def test_ready_review_card_reproduces_reviewer_preflight_rejection(tmp_path):
+def test_ready_link_review_card_remains_launchable(tmp_path):
     home = _home_with_source(tmp_path)
     store = CardStore(home)
     item = _item(home)
@@ -163,8 +163,8 @@ def test_ready_review_card_reproduces_reviewer_preflight_rejection(tmp_path):
 
     result = reconcile_review_work(home, item, evidence_sha256="6" * 64)
 
-    assert result.launchable is False
-    assert result.reason == "review card is not unclaimed review work"
+    assert result.launchable is True
+    assert result.reason == "ready"
 
 
 def test_duplicate_matching_cards_fail_closed(tmp_path):

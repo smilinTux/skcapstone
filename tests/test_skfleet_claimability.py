@@ -21,6 +21,8 @@ def _load_claimability() -> dict[str, object]:
         "_coord_task_claimable",
         "_dependency_value",
         "_fold_claimability",
+        "_governed_review_metadata",
+        "_governed_review_reason",
         "_claimability_reason",
         "_authoritative_card_snapshot",
         "_authoritative_card_state",
@@ -44,6 +46,14 @@ def _load_claimability() -> dict[str, object]:
             re.I,
         ),
         "_CATEGORY_OPT_IN": "dispatch-approved",
+        "_REVIEW_SHA1_KEYS": ("candidate_commit", "candidate_tree"),
+        "_REVIEW_SHA256_KEYS": (
+            "candidate_patch_sha256",
+            "candidate_evidence_sha256",
+        ),
+        "_SEAT_LABEL_PREFIX": "seat-",
+        "_PROVISIONAL_PASS_RE": re.compile(r"^PASS_FOR_[A-Z_]+", re.I),
+        "_load_outcomes": lambda: {"b846db3c": ("2026-09-08T05:00:00Z", "PASS_FOR_REVIEW")},
         "_dep_satisfied": lambda _dep: True,
         "host_pin": lambda _core, _labels: None,
         "json": json,
@@ -110,7 +120,7 @@ def _release(ts: str, writer: str, owner: str, revision: str) -> dict[str, objec
                 _event("2026-08-29T10:28:23Z", "worker", "move", column="review"),
                 _release("2026-08-29T11:22:36Z", "lumina", "worker", "rev-a"),
             ],
-            "review",
+            "review_not_ready",
         ),
         (
             "79396786",
@@ -140,7 +150,7 @@ def _release(ts: str, writer: str, owner: str, revision: str) -> dict[str, objec
                 _event("2026-08-29T10:32:16Z", "worker", "move", column="review"),
                 _release("2026-08-29T11:22:44Z", "lumina", "worker", "rev-a"),
             ],
-            "review",
+            "review_not_ready",
         ),
         (
             "dd659b4c",
@@ -232,7 +242,7 @@ def test_terminal_review_dependency_gate_and_host_pin_reasons() -> None:
         core,
         [_event("2026-08-29T10:00:00Z", "worker", "move", column="review")],
     )
-    assert namespace["_claimability_reason"](core, review) == "review"
+    assert namespace["_claimability_reason"](core, review) == "review_not_ready"
 
     dependent_core = {**core, "dependencies": ["missing-dep"]}
     dependent = namespace["_fold_claimability"](dependent_core, [])
@@ -252,14 +262,14 @@ def test_governed_reviewer_reaches_assignment_without_admitting_source_cards() -
         "links": {"producer_identity": "producer", "candidate_evidence_sha256": "a" * 64},
     }
     state = namespace["_fold_claimability"](core, [])
-    assert namespace["_claimability_reason"](core, state) == "review"
+    assert namespace["_claimability_reason"](core, state) == "review_not_ready"
     for links in (
         {"open_pr": "https://example.invalid/pr/1"},
         {"candidate_evidence_sha256": "a" * 64},
     ):
         source = {**core, "links": links, "description": "PASS_FOR_REVIEW source candidate"}
         folded = namespace["_fold_claimability"](source, [])
-        assert namespace["_claimability_reason"](source, folded) == "review"
+        assert namespace["_claimability_reason"](source, folded) == "review_not_ready"
 
 
 def test_review_markers_are_not_executable_after_claim_release() -> None:
@@ -267,7 +277,7 @@ def test_review_markers_are_not_executable_after_claim_release() -> None:
     for labels, description in ((["review"], "ordinary"), ([], "PASS_FOR_REVIEW evidence exists")):
         core = {**_core("review-marker", labels=labels), "description": description}
         state = namespace["_fold_claimability"](core, [])
-        assert namespace["_claimability_reason"](core, state) == "review"
+        assert namespace["_claimability_reason"](core, state) == "review_not_ready"
 
 
 @pytest.mark.parametrize(
@@ -314,14 +324,14 @@ def test_review_evidence_and_open_pr_links_are_folded_and_excluded() -> None:
         core = {**_core("review-link", labels=[]), "links": links}
         state = namespace["_fold_claimability"](core, [])
         assert state["links"] == links
-        assert namespace["_claimability_reason"](core, state) == "review"
+        assert namespace["_claimability_reason"](core, state) == "review_not_ready"
 
 
 def test_pool_and_preclaim_call_the_same_predicate() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert "decision=authoritative_claimability(cid,core)" in source
     assert (
-        "fresh_claimability=authoritative_claimability(" "cid,core=_fresh_core,fresh=True)"
+        "fresh_claimability=authoritative_claimability(cid,core=_fresh_core,fresh=True)"
     ) in source
     assert source.index("if blocked_backoff(cid):") < source.index(
         "decision=authoritative_claimability(cid,core)"
@@ -531,7 +541,7 @@ def test_explicit_return_to_ready_clears_review_history(action: str) -> None:
         _release("2026-09-04T11:00:00Z", "worker", "worker", "rev-a"),
     ]
     folded = namespace["_fold_claimability"](core, events)
-    assert namespace["_claimability_reason"](core, folded) == "review"
+    assert namespace["_claimability_reason"](core, folded) == "review_not_ready"
     events.append(_event("2026-09-04T12:00:00Z", "coordinator", action, column="ready"))
     folded = namespace["_fold_claimability"](core, events)
     assert namespace["_claimability_reason"](core, folded) == "claimable"
@@ -552,7 +562,7 @@ def test_explicit_executable_transition_preserves_but_supersedes_review_markers(
         core["description"] = "PASS_FOR_REVIEW historical candidate"
         new_marker = dict(action="describe", description="PASS_FOR_REVIEW new candidate")
     prior = namespace["_fold_claimability"](core, [])
-    assert namespace["_claimability_reason"](core, prior) == "review"
+    assert namespace["_claimability_reason"](core, prior) == "review_not_ready"
     events = [_event("2026-09-04T12:00:00Z", "coordinator", action, column="ready")]
     current = namespace["_fold_claimability"](core, events)
     assert namespace["_claimability_reason"](core, current) == "claimable"
@@ -560,7 +570,7 @@ def test_explicit_executable_transition_preserves_but_supersedes_review_markers(
         assert current[key] == prior[key]
     events.append(_event("2026-09-04T13:00:00Z", "worker", **new_marker))
     newer = namespace["_fold_claimability"](core, events)
-    assert namespace["_claimability_reason"](core, newer) == "review"
+    assert namespace["_claimability_reason"](core, newer) == "review_incomplete"
 
 
 def test_historical_4d98b588_stream_stays_done() -> None:

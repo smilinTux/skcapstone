@@ -31,9 +31,10 @@ def card(home: Path) -> None:
             id="feedface",
             title="[REVIEW] Review candidate",
             created_by="producer",
-            initial_labels=["review", "parent-deadbeef"],
+            initial_labels=["review", "independent-review", "parent-deadbeef"],
         )
     )
+    CardStore(home).append_event("feedface", "move", "producer", column="ready")
 
 
 def test_link_recommends_and_exact_reviewer_authorizes_fresh_assignment(
@@ -149,6 +150,63 @@ def test_reviewer_rejects_process_drift(tmp_path: Path) -> None:
             current_process={"sessions": ["codex-auto-feedface"]},
             used_recommendation_ids=set(),
         )
+
+
+def test_concurrent_reviewer_recommendation_is_fenced_by_first_claim(
+    tmp_path: Path,
+) -> None:
+    """Only the reviewer whose exact claim landed may continue."""
+
+    card(tmp_path)
+    first = recommend_reviewer(
+        tmp_path,
+        card_id="feedface",
+        recommendation_id="assignment-1",
+        author="producer",
+        candidates=["reviewer-one"],
+        observed_process={"sessions": []},
+        evidence_sha256=HASH,
+    )
+    second = recommend_reviewer(
+        tmp_path,
+        card_id="feedface",
+        recommendation_id="assignment-2",
+        author="producer",
+        candidates=["reviewer-two"],
+        observed_process={"sessions": []},
+        evidence_sha256=HASH,
+    )
+    first_handoff = authorize_review_launch(
+        tmp_path,
+        first,
+        actor="reviewer-one",
+        current_process={"sessions": []},
+        used_recommendation_ids=set(),
+    )
+    CardStore(tmp_path).append_event(
+        "feedface",
+        "claim",
+        "reviewer-one",
+        owner="reviewer-one",
+        claim_revision="claim-revision-1",
+    )
+
+    with pytest.raises(BoundaryError, match="no longer unclaimed"):
+        authorize_review_launch(
+            tmp_path,
+            second,
+            actor="reviewer-two",
+            current_process={"sessions": []},
+            used_recommendation_ids=set(),
+        )
+    receipt = append_review_launch_receipt(
+        tmp_path,
+        first_handoff,
+        actor="reviewer-one",
+        claim_revision="claim-revision-1",
+        launched=True,
+    )
+    assert receipt["reviewer"] == "reviewer-one"
 
 
 def test_only_exact_reviewer_authorizes_launch(tmp_path: Path) -> None:

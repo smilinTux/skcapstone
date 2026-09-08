@@ -1,0 +1,20 @@
+{
+  "card_id": "e125b710",
+  "parent_id": "b846db3c",
+  "producer_identity": "codex-type-vendor-r2-b846db3c",
+  "labels": [
+    "sklegal",
+    "review",
+    "independent-review",
+    "source-only",
+    "codex-only",
+    "parent-b846db3c"
+  ],
+  "links": {
+    "producer_identity": "codex-type-vendor-r2-b846db3c",
+    "candidate_commit": "d1eaf337142189e1af182d5485ac1df1191c9290",
+    "candidate_tree": "e6d53401004952edec1e3f50ae85a0ff62221aa1",
+    "candidate_patch_sha256": "67fa42577f3b6502cfbf6e7cea5a46cc5c9be0bb473cec19bf19cf4da29b9612",
+    "candidate_evidence_sha256": "215ef9ff82a34fe9c77fbb7e8e9cffd1df1119d9f33e02df2825107ee29bf620"
+  }
+}

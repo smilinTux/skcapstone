@@ -151,10 +151,12 @@ class OpenerHarness:
         ]
 
     def _run(self, command: list[str], **_kwargs: object) -> _Result:
-        index = len(self.calls)
         self.calls.append(command)
-        result = self.results[index] if index < len(self.results) else _Result()
-        if result.returncode or index in self.suppress_create:
+        if "move" in command:
+            return _Result()
+        create_index = sum("create" in call for call in self.calls[:-1])
+        result = self.results[create_index] if create_index < len(self.results) else _Result()
+        if result.returncode or create_index in self.suppress_create:
             return result
         review_id = command[command.index("--id") + 1]
         title = command[command.index("--title") + 1]
@@ -173,7 +175,10 @@ def test_zero_capacity_dry_run_is_empty(tmp_path: Path) -> None:
 
     assert board.open(0, dry_run=True) == 0
     assert board.calls == []
-    assert any("capacity=0|eligible=0|batch=0|dry_run=true" in row for row in board.logs)
+    assert any(
+        "REVIEW_OPEN_PLAN|" in row and "capacity=0|eligible=0|batch=0|dry_run=true" in row
+        for row in board.logs
+    )
 
 
 def test_dry_run_bounds_batch_by_free_slots_and_eligible_sources(tmp_path: Path) -> None:
@@ -205,6 +210,8 @@ def test_created_review_has_exact_lineage_evidence_and_distinctness(tmp_path: Pa
     command = board.calls[0]
     labels = [command[i + 1] for i, value in enumerate(command) if value == "--tag"]
     assert [label for label in labels if label.startswith("parent-")] == ["parent-a1b2c3d4"]
+    assert "independent-review" in labels
+    assert command[command.index("--dep") + 1] == "a1b2c3d4"
     description = command[command.index("--desc") + 1]
     assert "Producer identity: pi-codex-source." in description
     assert "Candidate evidence:" in description and "sha256=" in description
@@ -212,7 +219,8 @@ def test_created_review_has_exact_lineage_evidence_and_distinctness(tmp_path: Pa
     assert "Reviewer identity must differ from source implementer pi-codex-source." in criteria
 
     assert board.open(1) == 0
-    assert len(board.calls) == 1
+    assert board.calls[1][-3:] == ["ready", "--agent", "fleet-review-opener"]
+    assert len(board.calls) == 2
 
 
 def test_missing_or_hash_mismatched_candidate_fails_closed(tmp_path: Path) -> None:
@@ -401,7 +409,7 @@ def test_partial_create_failure_stops_without_spending_extra_budget(tmp_path: Pa
     board.results = [_Result(), _Result(returncode=1, stderr="transport failed")]
 
     assert board.open(3) == 1
-    assert len(board.calls) == 2
+    assert len(board.calls) == 3
     assert any("OPEN_REVIEW_FAILED" in row for row in board.logs)
 
 
@@ -412,7 +420,7 @@ def test_stale_readback_blocks_launch_eligibility_and_stops(tmp_path: Path) -> N
     board.suppress_create.add(0)
 
     assert board.open(2) == 0
-    assert len(board.calls) == 1
+    assert len(board.calls) == 2
     review_id = board.calls[0][board.calls[0].index("--id") + 1]
     assert review_id in board.ns["_REVIEW_READBACK_BLOCKED"]
     assert any("OPEN_REVIEW_STALE_READBACK" in row for row in board.logs)

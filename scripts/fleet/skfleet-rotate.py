@@ -164,9 +164,14 @@ def _card_process_snapshot(cid):
     }
 
 
+_REVIEW_SHA1_KEYS = ("candidate_commit", "candidate_tree")
+_REVIEW_SHA256_KEYS = ("candidate_patch_sha256", "candidate_evidence_sha256")
+
+
 def _governed_review_metadata(core, labels):
-    """Return complete producer evidence for an explicitly labeled review."""
-    if "review" not in {str(label).strip().lower() for label in labels}:
+    """Return producer evidence for an explicitly labeled review."""
+    normalized = {str(label).strip().lower() for label in labels}
+    if "review" not in normalized:
         return None
     links = core.get("links") if isinstance(core.get("links"), dict) else {}
     typed_producer = links.get("producer_identity")
@@ -185,6 +190,49 @@ def _governed_review_metadata(core, labels):
         producer = producer_match.group(1).strip()
         evidence = evidence_match.group(1)
     return producer, evidence
+
+
+def _governed_review_reason(core, labels, state):
+    """Return one stable eligibility result for review-shaped work."""
+    normalized = {str(label).strip().lower() for label in labels}
+    if "qwen-only" in normalized:
+        return "review_qwen_only"
+    if any(label.startswith(_SEAT_LABEL_PREFIX) for label in normalized):
+        return "review_seat_bound"
+    if state["status"] != "ready":
+        return "review_not_ready"
+    if not {"review", "independent-review"} <= normalized:
+        return "review_incomplete"
+    parents = sorted(label for label in normalized if label.startswith("parent-"))
+    if not parents:
+        return "review_incomplete"
+    if len(parents) != 1 or not re.fullmatch(r"parent-[0-9a-f]{8}", parents[0]):
+        return "review_malformed"
+    parent = parents[0][7:]
+    if parent not in state["dependencies"]:
+        return "review_incomplete"
+    _parent_ts, parent_verdict = _load_outcomes().get(parent, (None, None))
+    if not _PROVISIONAL_PASS_RE.match(str(parent_verdict or "")):
+        return "review_parent_verdict"
+    links = core.get("links") if isinstance(core.get("links"), dict) else {}
+    metadata = _governed_review_metadata(core, labels)
+    if metadata is None:
+        return "review_incomplete"
+    optional_identity = (*_REVIEW_SHA1_KEYS, "candidate_patch_sha256")
+    present_identity = [key for key in optional_identity if str(links.get(key) or "").strip()]
+    if present_identity and len(present_identity) != len(optional_identity):
+        return "review_incomplete"
+    malformed_sha1 = any(
+        not re.fullmatch(r"[0-9a-f]{40}", str(links[key]).strip().lower())
+        for key in _REVIEW_SHA1_KEYS if key in links
+    )
+    malformed_sha256 = any(
+        not re.fullmatch(r"[0-9a-f]{64}", str(links[key]).strip().lower())
+        for key in _REVIEW_SHA256_KEYS if key in links
+    )
+    if malformed_sha1 or malformed_sha256:
+        return "review_malformed"
+    return "claimable"
 
 
 def _review_assignment(cid, core, labels, reviewer):
@@ -1143,6 +1191,7 @@ def _fold_claimability(core, rows):
             state["acceptance_criteria"] = list(criteria)
         elif action == "link" and event.get("link_key") in {
             "producer_identity", "candidate_evidence_sha256", "pr",
+            "candidate_commit", "candidate_tree", "candidate_patch_sha256",
             "pull_request", "open_pr", "evidence", "evidence_sha256",
         }:
             value = event.get("link_value")
@@ -1186,6 +1235,7 @@ def _claimability_reason(core, state):
     review_marked = (
         state["status"] == "review"
         or state["review_seen"]
+        or "review" in {str(label).strip().lower() for label in labels}
         or any(state["review_markers"].values())
     )
     if non_implementation(folded_core, labels):
@@ -1203,7 +1253,9 @@ def _claimability_reason(core, state):
     pin = host_pin(folded_core, labels)
     if pin and pin != HOST:
         return "host-pin:%s" % pin
-    return "review" if review_marked else "claimable"
+    if review_marked:
+        return _governed_review_reason(folded_core, labels, state)
+    return "claimable"
 
 
 def _authoritative_card_snapshot(cid, core=None, fresh=False):
@@ -3385,7 +3437,7 @@ _REVIEW_READBACK_BLOCKED = set()
 def open_provisional_reviews(capacity, dry_run=False):
     """Plan or create a bounded batch of governed provisional-pass reviews."""
     selected = _eligible_provisional_reviews(capacity)
-    log(d, "REVIEW_BATCH_PLAN|%s|capacity=%d|eligible=%d|batch=%d|dry_run=%s" %
+    log(d, "REVIEW_OPEN_PLAN|%s|capacity=%d|eligible=%d|batch=%d|dry_run=%s" %
         (HOST, max(0, int(capacity)), len(selected), len(selected),
          str(bool(dry_run)).lower()))
     if dry_run:
@@ -3415,7 +3467,8 @@ def open_provisional_reviews(capacity, dry_run=False):
              "--title", "[REVIEW] Review provisional outcome for %s" % parent,
              "--desc", description,
              "--priority", "high", "--tag", "parent-%s" % parent,
-             "--tag", "review", "--tag", "qwen-suitable",
+             "--tag", "review", "--tag", "independent-review",
+             "--tag", "qwen-suitable", "--dep", parent,
              "--tag", "source-implementer-%s" % producer,
              "--by", "fleet-review-opener",
              "--criteria", "Verify exact candidate %s at sha256 %s." % (path, digest),
@@ -3425,6 +3478,15 @@ def open_provisional_reviews(capacity, dry_run=False):
             capture_output=True, text=True,
             env=dict(os.environ, SKCOORD_CARD_STORE="1"))
         if r.returncode == 0:
+            moved = subprocess.run(
+                [SKC, "coord", "move", review_id, "ready", "--agent", "fleet-review-opener"],
+                capture_output=True, text=True,
+                env=dict(os.environ, SKCOORD_CARD_STORE="1"))
+            if moved.returncode != 0:
+                error = ((moved.stderr or "") + " " + (moved.stdout or "")).strip()
+                log(d, "OPEN_REVIEW_READY_FAILED|%s|%s|review=%s|%s" %
+                    (HOST, parent, review_id, error[:110]))
+                break
             _rows.pop(review_id, None)
             if not _authoritative_review_readback(
                     review_id, parent, producer, path, digest, generation,
@@ -3771,6 +3833,7 @@ def _pool_v2_overlay(cid, core, reason):
 def _pool_v2_admission(cid, core, claimability, fresh=False):
     """Build the complete bounded admission record for one card."""
     reason = str(claimability.get("reason") or "")
+    labels = claimability.get("labels") or ()
     return {
         "card_id": cid,
         "claimable": claimability.get("claimable"),
@@ -3779,8 +3842,12 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         "title": claimability.get("title"),
         "labels": claimability.get("labels"),
         "core": claimability.get("core"),
+        "review_candidate": (
+            "review" in {str(label).strip().lower() for label in labels}
+            or reason.startswith("review_")
+        ),
         "governed_review": _governed_review_metadata(
-            claimability.get("core") or core, claimability.get("labels") or ()
+            claimability.get("core") or core, labels
         ) is not None,
         "overlay": _pool_v2_overlay(cid, core, reason),
         "source_revision": claimability.get("source_revision"),
@@ -3834,10 +3901,42 @@ def _pool_v2_owner_map(rows, host, pinned_ids):
     return owners, blocked
 
 
+def _review_batch_plan(decisions, admissions, capacity):
+    """Return a complete partition of review candidates for one cycle."""
+    decision_by_id = {row.card_id: row for row in decisions}
+    review_ids = sorted(
+        cid for cid, admission in admissions.items()
+        if isinstance(admission, dict) and admission.get("review_candidate") is True
+    )
+    eligible = [
+        cid for cid in review_ids
+        if cid in decision_by_id
+        and decision_by_id[cid].eligible is True
+        and admissions[cid].get("governed_review") is True
+        and _pool_v2_dispatchable(admissions[cid])
+    ]
+    reasons = collections.Counter(
+        decision_by_id[cid].primary_reason
+        if cid in decision_by_id else "missing_decision"
+        for cid in review_ids if cid not in eligible
+    )
+    if len(review_ids) != len(eligible) + sum(reasons.values()):
+        raise ValueError("review batch partition invariant failed")
+    return {
+        "population": len(review_ids),
+        "eligible": len(eligible),
+        "batch": min(max(0, int(capacity)), len(eligible)),
+        "reasons": dict(sorted(reasons.items())),
+        "eligible_ids": tuple(eligible),
+    }
+
+
 def _pool_v2_preclaim_handoff(cid, selected, fresh, reviewer):
     """Authorize review assignment only after the final admission comparison."""
     if not _pool_v2_preclaim_matches(selected, fresh):
         raise BoundaryError("POOL_V2 admission changed before claim")
+    if not reviewer.endswith("-" + cid):
+        raise BoundaryError("reviewer identity is not isolated to the card")
     return _review_assignment(cid, fresh["core"], fresh["labels"], reviewer)
 
 
@@ -3914,7 +4013,13 @@ def _shadow_pool_v2():
                         reason == "dependency"
                         or cid in class_ids.get("void_dependency_edges", set())
                     ),
-                    awaiting_review=awaiting_review(cid) or reason == "review",
+                    review_incomplete=reason == "review_incomplete",
+                    review_malformed=reason == "review_malformed",
+                    review_not_ready=reason == "review_not_ready",
+                    review_parent_verdict=reason == "review_parent_verdict",
+                    review_qwen_only=reason == "review_qwen_only",
+                    review_seat_bound=reason == "review_seat_bound",
+                    awaiting_review=awaiting_review(cid),
                     backoff=blocked_backoff(cid),
                     attempt_limit=unclaimable(cid),
                     host_pin_elsewhere=reason.startswith("host-pin:"),
@@ -3978,6 +4083,21 @@ pool, _PINNED_IDS = _pool_v2_authority_rows(
 )
 log(d, "POOL_AUTHORITY|%s|source=POOL_V2|ready=%d|legacy_ready=%d" %
     (HOST, len(pool), _legacy_ready))
+_review_plan = _review_batch_plan(
+    _POOL_V2_DECISIONS or (), _POOL_V2_ADMISSIONS, review_capacity
+)
+log(
+    d,
+    "REVIEW_BATCH_PLAN|%s|capacity=%d|population=%d|eligible=%d|batch=%d|reasons=%s"
+    % (
+        HOST,
+        review_capacity,
+        _review_plan["population"],
+        _review_plan["eligible"],
+        _review_plan["batch"],
+        json.dumps(_review_plan["reasons"], sort_keys=True, separators=(",", ":")),
+    ),
+)
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
