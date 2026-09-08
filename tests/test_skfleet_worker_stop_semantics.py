@@ -6,7 +6,7 @@ performing any live service action. The proof is static and deterministic:
 
 1. Every launch goes through _worker_launch_command, so one worker IS one
    transient user service unit whose name pins the lane and the exact
-   8-hex card generation.
+   bounded canonical card ID.
 2. Each worker unit carries KillMode=control-group on itself, so systemd stops
    the worker's whole descendant subtree when that exact unit stops, while
    sibling units are untouched because they are separate cgroups under the
@@ -32,7 +32,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
-LANES = ("codex", "glm", "qwen", "escalate")
+LANES = ("codex", "glm", "qwen", "kimi", "escalate")
 
 
 def _functions(*names: str) -> dict[str, object]:
@@ -45,7 +45,7 @@ def _functions(*names: str) -> dict[str, object]:
     assert set(nodes) == set(names), f"missing functions: {set(names) - set(nodes)}"
     namespace: dict[str, object] = {
         "_WORKER_UNIT_RE": re.compile(
-            r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
+            r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([a-z0-9][a-z0-9-]*[a-z0-9])\.service$"
         ),
         "re": re,
     }
@@ -82,8 +82,10 @@ def test_worker_unit_owner_cannot_be_widened() -> None:
 
     with pytest.raises(ValueError):
         make("glm", "280e3c1")  # 7 hex: short generation
+    assert make("glm", "280e3c166") == "skfleet-worker-glm-280e3c166.service"
+    assert make("glm", "a8100002-1") == "skfleet-worker-glm-a8100002-1.service"
     with pytest.raises(ValueError):
-        make("glm", "280e3c166")  # 9 hex: extended generation
+        make("glm", "a" * 65)  # bounded systemd identity
     with pytest.raises(ValueError):
         make("glm", "280e3c16.service")  # unit smuggling into the card field
     with pytest.raises(ValueError):
@@ -126,8 +128,8 @@ def test_launcher_issues_no_stop_against_other_workers() -> None:
     assert '["tmux","new-session"' not in source
 
 
-def test_worker_scope_is_lane_and_generation_only() -> None:
-    """Unit discovery matches exactly one lane and one 8-hex generation."""
+def test_worker_scope_is_lane_and_canonical_card_id_only() -> None:
+    """Unit discovery matches exactly one lane and canonical card ID."""
     functions = _functions("_parse_worker_units")
     parse = functions["_parse_worker_units"]
 
@@ -137,19 +139,21 @@ def test_worker_scope_is_lane_and_generation_only() -> None:
             "  skfleet-worker-glm-3b227de2.service loaded active running worker",
             "  skfleet-worker-codex-280e3c16.service loaded active running worker",
             "  skfleet-rotate.service loaded active running rotation",
-            "  skfleet-worker-glm-280e3c166.service loaded active running other",
+            "  skfleet-worker-glm-a8100002-1.service loaded active running worker",
+            "  skfleet-worker-glm-bad--id1.service loaded active running other",
             "  skfleet-worker-all-280e3c16.service loaded active running other",
         ]
     )
     units = parse(output)
     names = sorted(unit["unit"] for unit in units)
 
-    # Only exact lane-plus-generation units are recognized; the rotation unit,
-    # overlong generations, and wildcard lanes never enter the managed set.
+    # Only exact lane-plus-card units are recognized; malformed IDs, the
+    # rotation unit, and wildcard lanes never enter the managed set.
     assert names == [
         "skfleet-worker-codex-280e3c16.service",
         "skfleet-worker-glm-280e3c16.service",
         "skfleet-worker-glm-3b227de2.service",
+        "skfleet-worker-glm-a8100002-1.service",
     ]
 
 

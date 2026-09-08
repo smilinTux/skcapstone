@@ -64,7 +64,7 @@ def test_worker_unit_identity_rejects_unbounded_values(lane: str, card: str) -> 
         function(lane, card)
 
 
-def test_invalid_legacy_id_does_not_block_valid_subsequent_unit() -> None:
+def test_canonical_cardstore_id_and_legacy_id_get_unique_units() -> None:
     make = _load("_worker_unit_name")["_worker_unit_name"]
     launched = []
     for card_id in ("a8100002-1", "5a71c2dd"):
@@ -74,7 +74,10 @@ def test_invalid_legacy_id_does_not_block_valid_subsequent_unit() -> None:
             continue
         launched.append((card_id, unit))
 
-    assert launched == [("5a71c2dd", "skfleet-worker-codex-5a71c2dd.service")]
+    assert launched == [
+        ("a8100002-1", "skfleet-worker-codex-a8100002-1.service"),
+        ("5a71c2dd", "skfleet-worker-codex-5a71c2dd.service"),
+    ]
 
 
 def test_unit_identity_skip_precedes_workspace_and_claim() -> None:
