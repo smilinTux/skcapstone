@@ -36,6 +36,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Card `f1a9711b`: SKLegal routing labels now use one guard across CLI, SDK,
+  MCP, and fleet claimability. Exact `sk-glm-s`, `sk-glm-m`, and `sk-glm-l`
+  requests remain on the GLM lane and fail closed instead of falling back.
+
 - Card `c1a1c003`: atomic task creation resolves identity in the canonical
   `SKAGENT`, `SKCAPSTONE_AGENT`, `SKMEMORY_AGENT`, `SK_DEFAULT_AGENT`, then
   sole-installed-agent order and requires the published SKCoord atomic

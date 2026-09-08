@@ -270,17 +270,22 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
 async def _handle_coord_create(args: dict) -> list[TextContent]:
     """Create a new task on the board."""
     from ..coordination import Board, Task, TaskPriority
+    from ..routing_guard import classify_card_routing
 
     title = args.get("title", "")
     if not title:
         return _error_response("title is required")
+
+    routing = classify_card_routing(args.get("tags", []), normalize_missing=True)
+    if not routing.valid:
+        return _error_response("routing labels rejected: " + routing.diagnostic)
 
     board = Board(_home())
     task = Task(
         title=title,
         description=args.get("description", ""),
         priority=TaskPriority(args.get("priority", "medium")),
-        tags=args.get("tags", []),
+        tags=list(routing.labels),
         created_by=args.get("created_by", "mcp"),
     )
     path = board.create_task(task)

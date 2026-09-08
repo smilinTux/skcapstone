@@ -343,12 +343,17 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_create(home, task_id, title, desc, priority, tag, by, criteria, dep, claim_for_me):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
+        from ..routing_guard import classify_card_routing
 
         validate_agent_name(by)
         if task_id:
             validate_task_id(task_id)
         for d in dep:
             validate_task_id(d)
+
+        routing = classify_card_routing(tag, normalize_missing=True)
+        if not routing.valid:
+            raise click.ClickException("routing labels rejected: " + routing.diagnostic)
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
@@ -357,7 +362,7 @@ def register_coord_commands(main: click.Group) -> None:
             title=title,
             description=desc,
             priority=TaskPriority(priority),
-            tags=list(tag),
+            tags=list(routing.labels),
             created_by=by,
             acceptance_criteria=list(criteria),
             dependencies=list(dep),
@@ -991,8 +996,17 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_label(task_id, label, home, remove, agent):
         """Add (or remove) a label on a card."""
         from ..card import CardEvent, CardEventLog
+        from ..routing_guard import validate_label_transition
 
         home_path = Path(home).expanduser()
+        try:
+            changed, _routing = validate_label_transition(home_path, task_id, label, remove=remove)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        if not changed:
+            state = "absent" if remove else "present"
+            console.print(f"\n  [green]Label '{label}' already {state} on {task_id}.[/]\n")
+            return
         action = "remove_label" if remove else "add_label"
         CardEventLog(home_path).append(
             CardEvent(card_id=task_id, action=action, label=label, writer=agent or "")

@@ -66,6 +66,9 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
     [
         (["codex-only"], False, (("codex",), "required-lane:codex")),
         (["glm-only"], False, (("glm",), "required-lane:glm")),
+        (["sk-glm-s"], False, (("glm",), "required-lane:glm")),
+        (["sk-glm-m"], False, (("glm",), "required-lane:glm")),
+        (["sk-glm-l"], False, (("glm",), "required-lane:glm")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
         ([], False, (("qwen", "glm", "codex"), "ordinary")),
@@ -117,6 +120,20 @@ def test_no_compatible_slot_does_not_consume_another_lane() -> None:
     assert selected is None
     assert reason == "no-free-lane:codex"
     assert remaining == {"codex": 0, "glm": 3, "escalate": 2}
+
+
+@pytest.mark.parametrize("label", ["sk-glm-s", "sk-glm-m", "sk-glm-l"])
+def test_exact_glm_card_never_falls_back(label: str) -> None:
+    namespace = _load_lane_helpers()
+    selected, reason = namespace["select_compatible_lane"](
+        [label],
+        False,
+        ["qwen", "glm", "codex"],
+        {"qwen": 2, "glm": 0, "codex": 2},
+    )
+
+    assert selected is None
+    assert reason == "no-free-lane:glm"
 
 
 def test_ordinary_card_reassigns_only_to_compatible_healthy_lane() -> None:

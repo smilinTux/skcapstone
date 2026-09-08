@@ -249,18 +249,23 @@ def coord_create(
         The new task's id.
     """
     from .coordination import Board, Task, TaskPriority
+    from .routing_guard import classify_card_routing
 
     try:
         prio = TaskPriority(priority)
     except ValueError:
         prio = TaskPriority.MEDIUM
 
+    routing = classify_card_routing(tags or [], normalize_missing=True)
+    if not routing.valid:
+        raise ValueError("routing labels rejected: " + routing.diagnostic)
+
     board = Board(_shared_home())
     task = Task(
         title=title,
         description=description,
         priority=prio,
-        tags=tags or [],
+        tags=list(routing.labels),
         created_by=created_by or _agent_name(),
         acceptance_criteria=acceptance_criteria or [],
         dependencies=dependencies or [],

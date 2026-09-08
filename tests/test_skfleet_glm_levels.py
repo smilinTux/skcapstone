@@ -48,7 +48,13 @@ def _rotate_namespace(nodes: set[str]) -> dict[str, object]:
 
 def _load_glm_helpers() -> dict[str, object]:
     return _rotate_namespace(
-        {"_GLM_LEVEL_DEFAULTS", "_GLM_LEVELS", "_GLM_SIZE_RE", "_glm_model_for"}
+        {
+            "_GLM_LEVEL_DEFAULTS",
+            "_GLM_LEVELS",
+            "_GLM_SIZE_RE",
+            "_glm_model_for",
+            "_lane_model",
+        }
     )
 
 
@@ -154,6 +160,18 @@ def test_glm_levels_default_table_is_exact() -> None:
         "L": "glm-4.7",
         "XL": "glm-5.3",
     }
+
+
+@pytest.mark.parametrize("label", ["sk-glm-s", "sk-glm-m", "sk-glm-l"])
+def test_exact_glm_label_is_the_requested_model(label: str) -> None:
+    namespace = _load_glm_helpers()
+
+    assert (
+        namespace["_lane_model"](
+            {"name": "glm", "model": "fallback"}, {"title": "[XL] Work"}, [label]
+        )
+        == label
+    )
 
 
 def test_launch_receipt_fences_only_its_live_claim_generation() -> None:

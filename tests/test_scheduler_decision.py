@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from skcoord.card_store import CardCore, CardStore
 
+from skcapstone.routing_guard import classify_card_routing
 from skcapstone.scheduler_decision import (
     SchedulerDecision,
     SchedulerFacts,
@@ -121,7 +122,7 @@ def test_pool_v2_is_a_complete_partition() -> None:
     assert report.population == report.ready + report.ineligible == 3
     assert report.reasons == {"dependency": 2}
     assert report.render() == (
-        "POOL_V2|chiap01|population=3 ready=1 ineligible=2 " 'reasons={"dependency":2}'
+        'POOL_V2|chiap01|population=3 ready=1 ineligible=2 reasons={"dependency":2}'
     )
 
 
@@ -198,6 +199,7 @@ def _authoritative_claimability_for(card_home: Path):
                 re.I,
             ),
             "_CATEGORY_OPT_IN": "dispatch-approved",
+            "classify_card_routing": classify_card_routing,
             "non_implementation": lambda core, labels: (
                 "[HUMAN]" in str(core.get("title") or "").upper() or "human-gate" in labels
             ),

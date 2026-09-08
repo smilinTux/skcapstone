@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.routing_guard import classify_card_routing
+
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
@@ -49,6 +51,7 @@ def _load_claimability() -> dict[str, object]:
         "json": json,
         "hashlib": hashlib,
         "re": re,
+        "classify_card_routing": classify_card_routing,
         "non_implementation": lambda core, labels: (
             "[HUMAN]" in str(core.get("title") or "").upper() or "human-gate" in labels
         ),
@@ -321,7 +324,7 @@ def test_pool_and_preclaim_call_the_same_predicate() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert "decision=authoritative_claimability(cid,core)" in source
     assert (
-        "fresh_claimability=authoritative_claimability(" "cid,core=_fresh_core,fresh=True)"
+        "fresh_claimability=authoritative_claimability(cid,core=_fresh_core,fresh=True)"
     ) in source
     assert source.index("if blocked_backoff(cid):") < source.index(
         "decision=authoritative_claimability(cid,core)"
@@ -339,6 +342,28 @@ def test_sensitive_category_requires_explicit_dispatch_approval() -> None:
     approved = {**core, "initial_labels": ["dispatch-approved"]}
     state = namespace["_fold_claimability"](approved, [])
     assert namespace["_claimability_reason"](approved, state) == "claimable"
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        (
+            ["sklegal"],
+            "routing:missing-logical-bucket:add-one-of-sk-s,sk-m,sk-l,sk-xl,"
+            "sk-glm-s,sk-glm-m,sk-glm-l",
+        ),
+        (["sklegal", "sk-s", "sk-xl"], "routing:multiple-logical-buckets:sk-s,sk-xl"),
+        (["sklegal", "sk-m", "kimi-only"], "routing:provider-family-label:kimi-only"),
+        (["sklegal", "qwen-first"], "claimable"),
+        (["sklegal", "sk-m", "review", "seat-link"], "review"),
+    ],
+)
+def test_dispatch_uses_canonical_routing_guard(labels: list[str], expected: str) -> None:
+    namespace = _load_claimability()
+    core = _core("routing1", labels=labels)
+    state = namespace["_fold_claimability"](core, [])
+
+    assert namespace["_claimability_reason"](core, state) == expected
 
 
 def test_refreshed_description_criteria_and_review_links_are_folded() -> None:
