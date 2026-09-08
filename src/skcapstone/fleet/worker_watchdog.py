@@ -100,6 +100,7 @@ class StartupObservation:
     card_id: str
     session_id: str
     claim_revision: str
+    attempt_id: str
     expected_claim_revision: str
     heartbeat_seen: bool
     executable_evidence_seen: bool
@@ -126,6 +127,7 @@ def classify_startup(
             observation.card_id,
             observation.session_id,
             observation.claim_revision,
+            observation.attempt_id,
             observation.expected_claim_revision,
         )
     ):
@@ -153,6 +155,7 @@ def classify_startup(
         "card_id": observation.card_id,
         "session_id": observation.session_id,
         "claim_revision": observation.claim_revision,
+        "attempt_id": observation.attempt_id,
     }
     if any(evidence.get(key) != value for key, value in expected.items()):
         return "startup-evidence-mismatch"

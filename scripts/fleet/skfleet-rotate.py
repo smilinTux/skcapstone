@@ -2560,6 +2560,7 @@ def _startup_release_ready(report):
         observation = StartupObservation(
             owner=owner, card_id=cid, session_id=report["session_id"],
             claim_revision=revision, expected_claim_revision=fresh_revision,
+            attempt_id=report["attempt_id"],
             heartbeat_seen=bool(report.get("heartbeat_at")),
             heartbeat_at=report.get("heartbeat_at"),
             executable_evidence_seen=bool(report.get("executable_evidence")),
@@ -4507,6 +4508,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "mkdir -p ~/.skcapstone/fleet/beats; "
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
         "\"session_id\":\"%s\","
+        "\"attempt_id\":\"'$SKFLEET_ATTEMPT_ID'\","
         "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
         "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
         "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "

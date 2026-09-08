@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -1097,15 +1098,40 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         try:
-            CardEventLog(home_path).append(
-                CardEvent(
-                    card_id=task_id,
-                    action="link",
+            fleet_identity = {
+                "claim_revision": os.environ.get("SKFLEET_CLAIM_REVISION", ""),
+                "attempt_id": os.environ.get("SKFLEET_ATTEMPT_ID", ""),
+                "session_id": os.environ.get("SKFLEET_SESSION_ID", ""),
+            }
+            fleet_marked = any(fleet_identity.values()) or os.environ.get("SKFLEET_CARD_ID")
+            writer = agent or ""
+            if fleet_marked and key in {"verdict", "evidence"}:
+                from ..card_store import CardStore
+
+                if not all(fleet_identity.values()):
+                    raise ValueError("fleet outcome identity is incomplete")
+                if os.environ.get("SKFLEET_CARD_ID") != task_id:
+                    raise ValueError("fleet outcome card does not match the active attempt")
+                if os.environ.get("SKAGENT") != writer:
+                    raise ValueError("fleet outcome writer does not match the active attempt")
+                CardStore(home_path).append_event(
+                    task_id,
+                    "link",
+                    writer,
                     link_key=key,
                     link_value=value,
-                    writer=agent or "",
+                    **fleet_identity,
                 )
-            )
+            else:
+                CardEventLog(home_path).append(
+                    CardEvent(
+                        card_id=task_id,
+                        action="link",
+                        link_key=key,
+                        link_value=value,
+                        writer=writer,
+                    )
+                )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
         console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")

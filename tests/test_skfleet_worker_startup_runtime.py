@@ -58,6 +58,7 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
         card_id="feedbeef",
         owner="worker",
         claim_revision="rev-1",
+        attempt_id="attempt-1",
         session_id="session-1",
         lane="codex",
         state="startup-heartbeat-missing",
@@ -154,7 +155,7 @@ def wrapper():
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "heartbeat", "session", "executable", "attribution", "node"]
+    "fault", [None, "heartbeat", "session", "attempt", "executable", "attribution", "node"]
 )
 def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, fault):
     module = wrapper()
@@ -165,6 +166,7 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         card="feedbeef",
         session="session-1",
         claim_revision="rev-1",
+        attempt_id="attempt-1",
         host="host-1",
         lane="codex",
         started_at=int(time.time()),
@@ -178,6 +180,7 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         "SKFLEET_CARD_ID": args.card,
         "SKFLEET_SESSION_ID": args.session,
         "SKFLEET_CLAIM_REVISION": args.claim_revision,
+        "SKFLEET_ATTEMPT_ID": args.attempt_id,
     }
     if fault == "attribution":
         env["SKFLEET_CLAIM_REVISION"] = "older-revision"
@@ -186,10 +189,13 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         "card_id": args.card,
         "session_id": args.session,
         "claim_revision": args.claim_revision,
+        "attempt_id": args.attempt_id,
         "beat_at": args.started_at,
     }
     if fault == "session":
         beat["session_id"] = "previous-session"
+    if fault == "attempt":
+        beat["attempt_id"] = "previous-attempt"
     if fault != "heartbeat":
         path = tmp_path / ".skcapstone/fleet/beats/worker.json"
         path.parent.mkdir(parents=True)

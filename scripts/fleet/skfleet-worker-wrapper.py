@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from skcapstone.card_store import CardStore
+from skcapstone.card_store import CardStore, card_mutation_lock
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 
 
@@ -32,6 +32,7 @@ def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObse
         card_id=args.card,
         session_id=args.session,
         claim_revision=args.claim_revision,
+        attempt_id=args.attempt_id,
     )
     heartbeat_at = None
     beat_path = Path.home() / ".skcapstone/fleet/beats" / f"{args.owner}.json"
@@ -54,6 +55,7 @@ def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObse
         "SKFLEET_CARD_ID": args.card,
         "SKFLEET_CLAIM_REVISION": args.claim_revision,
         "SKFLEET_SESSION_ID": args.session,
+        "SKFLEET_ATTEMPT_ID": args.attempt_id,
     }
     while pending and len(visited) < 256:
         pid = pending.pop()
@@ -107,6 +109,7 @@ def write_startup_report(
         "owner": args.owner,
         "card_id": args.card,
         "claim_revision": args.claim_revision,
+        "attempt_id": args.attempt_id,
         "session_id": args.session,
         "host": args.host,
         "state": state,
@@ -205,12 +208,21 @@ def validate_cardstore_completion(args: argparse.Namespace) -> tuple[bool, str, 
     """Validate terminal evidence against one exact CardStore claim generation."""
     if not args.session or not args.attempt_id:
         return False, "missing_attempt_identity", None
+    home = Path.home() / ".skcapstone"
     try:
-        store = CardStore(Path.home() / ".skcapstone")
-        card = store.fold(args.card)
-        events = _card_events(store, args.card)
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        store = CardStore(home)
+        with card_mutation_lock(home, args.card):
+            return _validate_and_consume_cardstore_completion(store, args)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, TimeoutError):
         return False, "cardstore_unavailable", None
+
+
+def _validate_and_consume_cardstore_completion(
+    store: CardStore, args: argparse.Namespace
+) -> tuple[bool, str, str | None]:
+    """Validate and consume one exact attempt outcome while holding the card lock."""
+    card = store.fold(args.card)
+    events = _card_events(store, args.card)
     if card is None:
         return False, "card_missing", None
     claim_indexes = [
@@ -225,23 +237,36 @@ def validate_cardstore_completion(args: argparse.Namespace) -> tuple[bool, str, 
     claim_index = claim_indexes[-1]
     if any(event.get("action") in {"claim", "reopen"} for event in events[claim_index + 1 :]):
         return False, "stale_claim", None
-    verdict_events = [
+    identity = {
+        "claim_revision": args.claim_revision,
+        "attempt_id": args.attempt_id,
+        "session_id": args.session,
+    }
+    outcome_events = [
         event
         for event in events[claim_index + 1 :]
         if event.get("action") == "link"
-        and event.get("link_key") == "verdict"
         and event.get("writer") == args.owner
+        and event.get("link_key") in {"verdict", "evidence"}
     ]
-    evidence_events = [
+    matching_events = [
         event
-        for event in events[claim_index + 1 :]
-        if event.get("action") == "link"
-        and event.get("link_key") == "evidence"
-        and event.get("link_value")
-        and event.get("writer") == args.owner
+        for event in outcome_events
+        if all(event.get(key) == value for key, value in identity.items())
     ]
+    verdict_events = [event for event in matching_events if event.get("link_key") == "verdict"]
+    evidence_events = [event for event in matching_events if event.get("link_key") == "evidence"]
+    if not matching_events and outcome_events:
+        if any(event.get("claim_revision") != args.claim_revision for event in outcome_events):
+            return False, "cross_revision_outcome", None
+        if any(event.get("session_id") != args.session for event in outcome_events):
+            return False, "cross_session_outcome", None
+        if any(event.get("attempt_id") != args.attempt_id for event in outcome_events):
+            return False, "cross_attempt_outcome", None
     if not verdict_events:
         return False, "missing_terminal_card_outcome", None
+    if len(verdict_events) != 1 or len(evidence_events) > 1:
+        return False, "duplicate_terminal_outcome", None
     outcome = str(verdict_events[-1].get("link_value") or "").strip().upper()
     if outcome in BLOCKED_OUTCOMES:
         return False, "blocked_outcome", outcome
@@ -257,6 +282,26 @@ def validate_cardstore_completion(args: argparse.Namespace) -> tuple[bool, str, 
     )
     if not live_claim and not (str(card.status.value) == "done" and completed_by_claim):
         return False, "stale_claim", outcome
+    verdict_id = verdict_events[0].get("event_id")
+    evidence_id = evidence_events[0].get("event_id")
+    if not verdict_id or not evidence_id:
+        return False, "malformed_terminal_outcome", outcome
+    consumed = any(
+        event.get("action") == "consume_terminal_outcome"
+        and event.get("claim_revision") == args.claim_revision
+        for event in events[claim_index + 1 :]
+    )
+    if consumed:
+        return False, "claim_outcome_already_consumed", outcome
+    store.append_event(
+        args.card,
+        "consume_terminal_outcome",
+        args.owner,
+        **identity,
+        verdict_event_id=verdict_id,
+        evidence_event_id=evidence_id,
+        transition_id=f"consume:{args.card}:{args.claim_revision}",
+    )
     return True, "valid_cardstore_completion", outcome
 
 

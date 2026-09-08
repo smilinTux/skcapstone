@@ -36,6 +36,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Card `30a7ad15`: fleet terminal outcomes now bind exact card, owner, claim
+  revision, attempt, and session identity, with atomic single-consumer fencing
+  and fresh attempt-bound startup evidence.
+
 - Card `c1a1c003`: atomic task creation resolves identity in the canonical
   `SKAGENT`, `SKCAPSTONE_AGENT`, `SKMEMORY_AGENT`, `SK_DEFAULT_AGENT`, then
   sole-installed-agent order and requires the published SKCoord atomic
