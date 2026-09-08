@@ -11,12 +11,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+from skcoord.card_store import CardStore
 
 from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
@@ -27,6 +30,11 @@ from .seat_cycle_guard import CycleResult, SeatCycleGuard
 from .seat_mail import poll_mail, startup_hello
 
 _SEATS = frozenset({"link", "mero", "seraph"})
+_LAUNCH = re.compile(
+    r"^LAUNCHED\|(?P<host>[^|]+)\|(?P<session>[^|]+)\|(?P<card>[^|]+)"
+    r"\|lane=(?P<lane>[^|]+)\|model=(?P<model>[^|]+)"
+    r"\|owner=(?P<owner>[^|]+)\|claim_revision=(?P<revision>[^|]+)$"
+)
 
 
 def _now() -> str:
@@ -199,13 +207,62 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
     completed = subprocess.run(
         [str(dispatcher), "--go"], env=env, capture_output=True, text=True, timeout=240
     )
+    launches = [
+        match.groupdict()
+        for line in completed.stdout.splitlines()
+        if (match := _LAUNCH.fullmatch(line.strip()))
+    ]
+    if completed.returncode != 0:
+        return {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "reason": "seraph_dispatch_failed",
+        }
+    if len(launches) != 1:
+        return {
+            "cards_examined": len(launches),
+            "recommendations": 0,
+            "suppressed": 1,
+            "reason": "seraph_launch_receipt_missing",
+        }
+    launch = launches[0]
+    card = CardStore(home).fold(launch["card"])
+    status = getattr(getattr(card, "status", None), "value", getattr(card, "status", None))
+    producer = str((getattr(card, "links", {}) or {}).get("producer_identity") or "")
+    if (
+        card is None
+        or "review" not in card.labels
+        or status != "doing"
+        or card.owner != launch["owner"]
+        or card.meta.get("_claim_revision") != launch["revision"]
+        or not launch["owner"].startswith("pi-seraph-")
+        or (producer and producer in launch["owner"])
+    ):
+        return {
+            "cards_examined": 1,
+            "recommendations": 0,
+            "suppressed": 1,
+            "reason": "seraph_claim_receipt_mismatch",
+        }
+    unit = f"skfleet-worker-{launch['lane']}-{launch['card']}.service"
+    active = subprocess.run(
+        ["systemctl", "--user", "is-active", "--quiet", unit],
+        capture_output=True,
+        timeout=10,
+    )
+    if active.returncode != 0:
+        return {
+            "cards_examined": 1,
+            "recommendations": 0,
+            "suppressed": 1,
+            "reason": "seraph_worker_not_active",
+        }
     return {
         "cards_examined": 1,
-        "recommendations": 1 if completed.returncode == 0 else 0,
-        "suppressed": 0 if completed.returncode == 0 else 1,
-        "reason": (
-            "seraph_dispatch_complete" if completed.returncode == 0 else "seraph_dispatch_failed"
-        ),
+        "recommendations": 1,
+        "suppressed": 0,
+        "reason": "seraph_dispatch_complete",
     }
 
 

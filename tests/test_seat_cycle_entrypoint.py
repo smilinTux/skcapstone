@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from skcapstone.seat_cycle_entrypoint import (
     link_operation,
@@ -134,19 +135,70 @@ def test_cycle_without_operation_is_explicit_noop(tmp_path: Path) -> None:
     assert result.reason == "operation_not_configured"
 
 
-def test_seraph_dispatch_is_exactly_one_and_seat_scoped(tmp_path, monkeypatch) -> None:
+def test_seraph_dispatch_is_exactly_one_claimed_live_and_seat_scoped(
+    tmp_path, monkeypatch
+) -> None:
     captured = {}
+    calls = []
 
     def run(command, **kwargs):
-        captured.update(kwargs["env"])
-        return type("Result", (), {"returncode": 0})()
+        calls.append(command)
+        if len(calls) == 1:
+            captured.update(kwargs["env"])
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|"
+                    "model=sk-codex-mid|owner=pi-seraph-chiap08-review01|"
+                    "claim_revision=revision-1\n"
+                ),
+            )
+        return SimpleNamespace(returncode=0)
+
+    card = SimpleNamespace(
+        labels=["review", "seat-seraph"],
+        status=SimpleNamespace(value="doing"),
+        owner="pi-seraph-chiap08-review01",
+        meta={"_claim_revision": "revision-1"},
+        links={"producer_identity": "builder"},
+    )
 
     monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
     result = seraph_operation(tmp_path)
     assert result["reason"] == "seraph_dispatch_complete"
     assert captured["SKFLEET_ONLY_SEAT"] == "seraph"
     assert captured["SKFLEET_MAX_LAUNCH"] == "1"
     assert captured["SKFLEET_TARGET"] == "1"
+    assert calls[1][-1] == "skfleet-worker-codex-review01.service"
+
+
+def test_seraph_zero_launch_is_not_reported_as_success(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="SELECTION_EMPTY\n"),
+    )
+    result = seraph_operation(tmp_path)
+    assert result == {
+        "cards_examined": 0,
+        "recommendations": 0,
+        "suppressed": 1,
+        "reason": "seraph_launch_receipt_missing",
+    }
+
+
+def test_seraph_rejects_duplicate_launch_receipts(tmp_path, monkeypatch) -> None:
+    receipt = (
+        "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|model=model|"
+        "owner=pi-seraph-chiap08-review01|claim_revision=revision-1\n"
+    )
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=receipt + receipt),
+    )
+    result = seraph_operation(tmp_path)
+    assert result["reason"] == "seraph_launch_receipt_missing"
+    assert result["recommendations"] == 0
 
 
 def test_control_plane_requires_both_seats(tmp_path: Path) -> None:

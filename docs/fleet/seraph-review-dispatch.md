@@ -7,10 +7,14 @@ duplicates fail closed.
 
 Seraph runs as a bounded recurring seat on the active control-plane host. Each
 cycle invokes the ordinary fleet selector with `SKFLEET_ONLY_SEAT=seraph` and a
-maximum launch count of one. The selector then performs the existing final
+maximum launch count of one on `sk-codex-mid`. The selector then performs the existing final
 admission comparison, Link recommendation, exact claim readback, worker launch,
-and launch-receipt checks. A producer cannot review its own candidate, and
-state drift or recommendation replay prevents launch.
+and launch-receipt checks. Seraph reports success only after it observes exactly
+one canonical `LAUNCHED` receipt, the same owner and claim revision in
+CardStore, a producer-independent review card in `doing`, and its active worker
+unit. An empty selector cycle, duplicate receipt, stale claim, or dead process
+is a suppressed failure. A producer cannot review its own candidate, and state
+drift or recommendation replay prevents launch.
 
 The packaged `skfleet-seraph.service` has a five-minute offset timer and a
 five-minute service timeout. Link and Seraph retain separate cycle locks, while
