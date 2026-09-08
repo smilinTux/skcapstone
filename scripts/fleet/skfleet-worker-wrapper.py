@@ -244,7 +244,10 @@ def idle_owner_projection(owner: str) -> None:
     state=active with current_task set. skfleet-working then shows
     STALE PROJECTION after the unit is gone. Fail soft: never block exit.
     """
-    path = Path.home() / ".skcapstone" / "coordination" / "agents" / f"{owner}.json"
+    # Mutable projections are host-scoped so Syncthing never merges writers.
+    host = os.uname().nodename.split('.')[0]
+    safe_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host).strip("._") or "unknown-host"
+    path = (Path.home() / ".skcapstone" / "coordination" / "agents" / safe_host / f"{owner}.json")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

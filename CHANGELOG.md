@@ -1,5 +1,9 @@
 # Changelog
 
+- **Card `556491d9`: multi-host-safe agent projections.** Isolated mutable agent
+  projections by host, preserved Syncthing conflicts for reconciliation, removed
+  overlapping coordination folders, and added multi-host federation coverage.
+
 - **Card `1b84d7f4`: Cursor Agent YOLO default.** Added `SK_CURSOR_YOLO`
   (default on) so the SK agent picker launches Cursor Agent CLI (`agent` /
   `cursor-agent`) with `--yolo`, plus doctor harness checks and docs aligned

@@ -348,12 +348,9 @@ def _backup_stamp() -> str:
 def configure_syncthing_folder() -> bool:
     """Add or update the skcapstone shared folder in Syncthing config.
 
-    Points Syncthing at the entire agent home (~/.skcapstone/) so all
-    pillar data - identity, memory, trust, security, coordination, and
-    sync seeds - replicates automatically across every node.
-
-    If an older config pointed at the sync/ subfolder, it gets upgraded
-    to share the full agent home instead.
+    Points Syncthing at exactly the coordination root. Other pillars and
+    broad home folders are deliberately excluded to prevent nested overlap.
+    Existing folder identity is preserved while its path is narrowed.
 
     Returns:
         bool: True if configuration was added/updated.
@@ -367,19 +364,55 @@ def configure_syncthing_folder() -> bool:
     except ET.ParseError:
         return False
 
-    agent_home_str = str(AGENT_HOME)
-    str(SYNC_DIR)
+    # Only the coordination root is federated. Sharing AGENT_HOME creates
+    # nested/broad overlaps and lets hosts mutate one projection filename.
+    coordination_root = AGENT_HOME / "coordination"
+    coordination_root.mkdir(parents=True, exist_ok=True)
+    agent_home_str = str(coordination_root)
 
-    for folder in root.iter("folder"):
+    # A Syncthing folder may not be nested inside, or contain, the
+    # coordination root.  In particular, retaining the historical broad
+    # ``~/.skcapstone`` folder would make every host contend for the same
+    # mutable projection names.  Remove only overlapping folder definitions;
+    # CardStore data itself is never touched by this configuration migration.
+    try:
+        coordination_real = coordination_root.resolve()
+    except OSError:
+        coordination_real = coordination_root.absolute()
+    folders = list(root.iter("folder"))
+    canonical = None
+    changed = False
+    for folder in folders:
+        raw_path = folder.get("path", "")
+        try:
+            folder_real = Path(raw_path).expanduser().resolve()
+        except (OSError, RuntimeError):
+            folder_real = Path(raw_path).expanduser().absolute()
+        overlaps = (
+            folder_real == coordination_real
+            or coordination_real in folder_real.parents
+            or folder_real in coordination_real.parents
+        )
         if folder.get("id") == SHARED_FOLDER_ID:
-            current_path = folder.get("path", "")
-            if current_path == agent_home_str:
-                return True
-            # Reason: upgrade old sync/-only share to full agent home
-            folder.set("path", agent_home_str)
-            folder.set("label", "SKCapstone Sovereign")
+            if canonical is None:
+                canonical = folder
+                if folder.get("path") != agent_home_str:
+                    folder.set("path", agent_home_str)
+                    changed = True
+                if folder.get("label") != "SKCapstone Sovereign":
+                    folder.set("label", "SKCapstone Sovereign")
+                    changed = True
+            else:
+                root.remove(folder)
+                changed = True
+        elif overlaps:
+            root.remove(folder)
+            changed = True
+
+    if canonical is not None:
+        if changed:
             tree.write(str(SYNCTHING_CONFIG_FILE), xml_declaration=True)
-            return True
+        return True
 
     folder_elem = ET.SubElement(root, "folder")
     folder_elem.set("id", SHARED_FOLDER_ID)
