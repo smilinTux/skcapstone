@@ -4112,7 +4112,7 @@ _CAPACITY_DOMAINS={
     "qwen":tuple(os.environ.get(
         "SKFLEET_QWEN_CAPACITY_DOMAINS","chiap01-qwen38,chiap08-qwen38").split(",")),
     "kimi":tuple(os.environ.get(
-        "SKFLEET_KIMI_CAPACITY_DOMAINS","kimi-for-coding,kimi-k3").split(",")),
+        "SKFLEET_KIMI_CAPACITY_DOMAINS","kimi-coding,kimi-k3").split(",")),
     "escalate":tuple(os.environ.get("SKFLEET_ESC_CAPACITY_DOMAINS","codex").split(",")),
 }
 _health_lanes=list(LANES)
