@@ -15,6 +15,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
+from . import child_leases as _child_leases
+
+DEFAULT_FIRST_OUTPUT_LEASE_S = _child_leases.DEFAULT_FIRST_OUTPUT_LEASE_S
+DEFAULT_PROGRESS_LEASE_S = _child_leases.DEFAULT_PROGRESS_LEASE_S
+DEFAULT_PROVIDER_RESPONSE_LEASE_S = _child_leases.DEFAULT_PROVIDER_RESPONSE_LEASE_S
+DEFAULT_STARTUP_LEASE_S = _child_leases.DEFAULT_STARTUP_LEASE_S
+ChildLeaseConfig = _child_leases.ChildLeaseConfig
+ChildLeaseObservation = _child_leases.ChildLeaseObservation
+ChildLeaseReceipt = _child_leases.ChildLeaseReceipt
+evaluate_child_lease = _child_leases.evaluate_child_lease
+
 WORKER_STATES = frozenset(
     {
         "running",

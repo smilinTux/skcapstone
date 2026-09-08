@@ -192,6 +192,11 @@ def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path):
     assert first.exit_code == 0, first.output
     view = next(view for view in Board(tmp_path).get_task_views() if view.task.id == "a1e10001")
     assert view.status.value == "open"
+    projection = Board(tmp_path).load_agent("probe")
+    assert projection is not None
+    assert projection.state.value == "idle"
+    assert projection.current_task is None
+    assert projection.claimed_tasks == []
     replay = runner.invoke(_main(), args)
     assert replay.exit_code == 0, replay.output
     releases = [
