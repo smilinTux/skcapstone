@@ -15,6 +15,7 @@ from pathlib import Path
 from skcapstone.card_store import CardStore
 from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
 from skcapstone.coord_eligibility import leaf_eligibility_counts
+from skcapstone.routing_guard import classify_card_routing
 from skcapstone.fleet_lane_health import (
     acquire_lane_snapshot,
     cycle_id as new_cycle_id,
@@ -1173,6 +1174,9 @@ def _claimability_reason(core, state):
         return "sensitive-category"
     if any(not _dep_satisfied(dep) for dep in state["dependencies"]):
         return "dependency"
+    routing = classify_card_routing(labels)
+    if not routing.valid:
+        return "routing:" + routing.diagnostic
     pin = host_pin(folded_core, labels)
     if pin and pin != HOST:
         return "host-pin:%s" % pin
@@ -3545,6 +3549,7 @@ pinned_elsewhere=0
 skipped_claimed=0
 owned_ready=0
 claimability_errors=[]
+routing_violations=[]
 sensitive_withheld=0
 historical_review_terminal=0
 historical_review_claimed=0
@@ -3574,6 +3579,8 @@ for cd in sorted(glob.glob(CARDS+"/*")):
             skipped_terminal += 1
         elif legacy_reason == "malformed":
             claimability_errors.append("%s:%s" % (cid, legacy.get("detail", "malformed")))
+        elif legacy_reason.startswith("routing:"):
+            routing_violations.append("%s:%s" % (cid, legacy_reason.removeprefix("routing:")))
         elif legacy_reason in {"claimed", "historical_review_claimed"}:
             skipped_claimed += 1
             historical_review_claimed += int(legacy_reason == "historical_review_claimed")
@@ -3650,17 +3657,22 @@ for x in pool: lc[x[0]]+=1
 top=pool[0][5] if pool else 0
 if claimability_errors:
     log(d,"CLAIMABILITY_EXCLUDED|%s|%s"%(HOST,",".join(claimability_errors)))
+if routing_violations:
+    shown, omitted = _bounded_ids(row.split(":", 1)[0] for row in routing_violations)
+    log(d,"ROUTING_VIOLATIONS|%s|count=%d ids=%s omitted=%d" %
+        (HOST,len(routing_violations),shown,omitted))
 log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d "
       "unclaimable=%d claimed=%d itil_closed=%d blocked_backoff=%d "
       "awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d "
       "historical_review_terminal=%d historical_review_claimed=%d "
+      "routing_violations=%d "
       "category_withheld=%d owned_ready=%d "
       "structural_leaf=%d human_gated=%d "
       "safety_filtered=%d top_unblocks=%d"
       %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,
         skipped_claimed,skipped_terminal,skipped_blocked,skipped_review,
         pinned_elsewhere,foreign_skipped,not_claimable_skipped,
-        historical_review_terminal,historical_review_claimed,
+        historical_review_terminal,historical_review_claimed,len(routing_violations),
         sensitive_withheld,owned_ready,
         structural_leaf,human_gated,
         skipped_unclaimable+sensitive_withheld+not_claimable_skipped+foreign_skipped,top))
@@ -3979,6 +3991,9 @@ _ESCALATE_LABEL="needs-stronger-model"
 _LANE_ONLY_LABELS={
     "codex-only":"codex",
     "glm-only":"glm",
+    "sk-glm-s":"glm",
+    "sk-glm-m":"glm",
+    "sk-glm-l":"glm",
     "kimi-only":"kimi",
     "escalation-only":"escalate",
 }
@@ -4092,8 +4107,12 @@ def qwen_suitable(core):
     return not _QWEN_UNSUITABLE.search(str((core or {}).get("title") or ""))
 
 
-def _lane_model(lane, core):
+def _lane_model(lane, core, labels=()):
     if lane["name"]=="glm":
+        exact=sorted({str(label).strip().lower() for label in labels}
+                     & {"sk-glm-s","sk-glm-m","sk-glm-l"})
+        if exact:
+            return exact[0]
         return _glm_model_for(core) or lane["model"]
     if lane["name"]=="codex":
         return _codex_model_for(core) or lane["model"]
@@ -4158,7 +4177,7 @@ while _i<len(owned) and len(picks)<MAX_LAUNCH:
     _esc=needs_escalation(_card[2], _card[3], _labels)
     _qwen_exclusive=qwen_first_exclusive(_card[2],_labels)
     _card_lane_health={lane["name"]:_health_for(
-        lane["name"],_lane_model(lane,_card[3]))
+        lane["name"],_lane_model(lane,_card[3],_labels))
         for lane in LANES}
     _lane_name,_defer=select_compatible_lane(
         _labels,_esc,lane_order,remaining,qwen_suitable(_card[3]),_qwen_exclusive,
@@ -4393,7 +4412,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     sess="%s%s"%(_LANE["prefix"],cid)
     model=_LANE["model"]
     if _LANE["name"]=="glm":
-        model=_glm_model_for(core) or model
+        model=_lane_model(_LANE,core,_labels)
     if _LANE["name"]=="kimi":
         model=_kimi_model_for(core) or model
     pi_tools=pi_tool_allowlist(_labels)
@@ -4430,7 +4449,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],affinity_reason))
         continue
-    model=_lane_model(_LANE,fresh_claimability["core"])
+    model=_lane_model(
+        _LANE,fresh_claimability["core"],fresh_claimability["labels"])
     admitted,health_reason=_health_for(_LANE["name"],model)
     if not admitted:
         lane_drift += 1
