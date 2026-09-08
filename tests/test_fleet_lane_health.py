@@ -317,13 +317,8 @@ def _codex_state(snapshot: dict[str, Any]) -> str:
     return row["domains"][0]["state"]
 
 
-def test_idle_but_observed_domain_stays_admissible(tmp_path: Path) -> None:
-    """An observed, up, unquarantined domain is admissible however long it idled.
-
-    Measured on the live dispatch gateway 2026-09-04: codex read up/observed
-    with a lastCheck five hours old and every lane refused, which meant the
-    fleet could not restart itself after two quiet minutes.
-    """
+def test_stale_observed_domain_is_refused(tmp_path: Path) -> None:
+    """Old provider evidence cannot satisfy a shared logical bucket."""
     stale = _acquire_health(
         tmp_path,
         {
@@ -334,8 +329,8 @@ def test_idle_but_observed_domain_stays_admissible(tmp_path: Path) -> None:
             "lastCheck": (2_000_000_000 - 5 * 3600) * 1000,
         },
     )
-    assert _codex_state(stale) == "healthy"
-    assert _admit(stale, "codex", "sk-codex") == (True, "healthy")
+    assert _codex_state(stale) == "unknown"
+    assert _admit(stale, "codex", "sk-codex") == (False, "unknown")
 
 
 def test_unobserved_domain_is_still_refused_after_a_gateway_restart(tmp_path: Path) -> None:
@@ -383,7 +378,7 @@ def test_idle_domain_that_is_down_or_quarantined_is_still_refused(tmp_path: Path
         tmp_path,
         {"status": "down", "observed": True, "quarantined": False, "lastCheck": idle},
     )
-    assert _admit(down, "codex", "sk-codex") == (False, "model_owner_backend_down")
+    assert _admit(down, "codex", "sk-codex") == (False, "unknown")
 
     quarantined = _acquire_health(
         tmp_path,
@@ -403,5 +398,5 @@ def test_snapshot_freshness_is_still_enforced_independently(tmp_path: Path) -> N
             "lastCheck": (2_000_000_000 - 5 * 3600) * 1000,
         },
     )
-    assert _admit(snapshot, "codex", "sk-codex") == (True, "healthy")
+    assert _admit(snapshot, "codex", "sk-codex") == (False, "unknown")
     assert _admit(snapshot, "codex", "sk-codex", now=2_000_000_600.0) == (False, "stale")
