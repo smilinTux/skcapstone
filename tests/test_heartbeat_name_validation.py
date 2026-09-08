@@ -1,8 +1,8 @@
-"""Path traversal rejection in heartbeat agent names (card 34006183 / F)."""
+"""Path traversal rejection in heartbeat agent names (card 61852c77)."""
 
 import pytest
 
-from skcapstone.heartbeat import validate_agent_name
+from skcapstone.heartbeat import HeartbeatBeacon, validate_agent_name
 
 
 class TestValidateAgentName:
@@ -39,3 +39,17 @@ class TestValidateAgentName:
             validate_agent_name("-agent")
         with pytest.raises(ValueError):
             validate_agent_name("---")
+
+    def test_traversal_name_cannot_write_outside_heartbeat_directory(self, tmp_path):
+        heartbeat_dir = tmp_path / "heartbeats"
+        outside = tmp_path / "outside.json"
+
+        with pytest.raises(ValueError, match="path traversal"):
+            HeartbeatBeacon(
+                tmp_path,
+                agent_name="../outside",
+                heartbeats_dir=heartbeat_dir,
+            )
+
+        assert not heartbeat_dir.exists()
+        assert not outside.exists()
