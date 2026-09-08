@@ -46,6 +46,32 @@ def fleet() -> None:
     """SKWorld fleet control plane (skfleet)."""
 
 
+@fleet.command("archive-workspaces")
+@click.option(
+    "--home", type=click.Path(path_type=Path), default="~/.skcapstone", show_default=True
+)
+@click.option("--dry-run", is_flag=True, help="Report eligible workspaces without changing them.")
+def archive_workspaces_cmd(home: Path, dry_run: bool) -> None:
+    """Archive workspaces whose cards have been terminal for over seven days."""
+    from .workspace_retention import archive_workspaces, format_size
+
+    try:
+        results = archive_workspaces(home, dry_run=dry_run)
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    selected = [
+        result for result in results if result.disposition in {"would_archive", "archived"}
+    ]
+    for result in results:
+        detail = str(result.archive) if result.archive else result.reason or ""
+        click.echo(
+            f"{result.disposition}\t{format_size(result.size_bytes)}\t{result.workspace.name}\t{detail}"
+        )
+    action = "would archive" if dry_run else "archived"
+    selected_size = format_size(sum(result.size_bytes for result in selected))
+    click.echo(f"{action} {len(selected)} workspace(s), {selected_size}")
+
+
 @fleet.command("nodes")
 def nodes_cmd() -> None:
     """List all fleet nodes with phase, labels, and capacity."""
