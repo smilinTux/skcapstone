@@ -5,10 +5,11 @@ collector and decisions never mutate CardStore, sessions, or workspaces.
 Missing or contradictory evidence is quarantined rather than interpreted as
 worker death.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Iterable, Mapping
 
 
@@ -43,21 +44,43 @@ TERMINAL_MARKERS = frozenset({"PASS", "PASS_FOR_REVIEW", "BLOCKED"})
 
 
 def _attributable(o: LivenessObservation) -> bool:
-    return bool(o.owner and o.card_id and o.claim_generation and o.process_identity and o.managed_session)
+    return bool(
+        o.owner and o.card_id and o.claim_generation and o.process_identity and o.managed_session
+    )
 
 
-def classify(o: LivenessObservation, *, now: datetime, assist_after: timedelta = timedelta(hours=1), checkpoint_after: timedelta = timedelta(minutes=15)) -> LivenessDecision:
+def classify(
+    o: LivenessObservation,
+    *,
+    now: datetime,
+    assist_after: timedelta = timedelta(hours=1),
+    checkpoint_after: timedelta = timedelta(minutes=15),
+) -> LivenessDecision:
     """Classify without treating an idle tool wait as a dead worker."""
     if not _attributable(o):
-        return LivenessDecision("ambiguous", False, quarantine=True, reason="incomplete-identity-or-session")
+        return LivenessDecision(
+            "ambiguous", False, quarantine=True, reason="incomplete-identity-or-session"
+        )
     if o.interrupted:
         return LivenessDecision("interrupted", True, quarantine=True, reason="signal-interruption")
     if o.terminal_marker not in (None, *TERMINAL_MARKERS):
-        return LivenessDecision("ambiguous", True, quarantine=True, reason="invalid-terminal-marker")
+        return LivenessDecision(
+            "ambiguous", True, quarantine=True, reason="invalid-terminal-marker"
+        )
     if o.terminal_marker:
         if o.live_children == 0 and o.workspace_recoverable and o.workspace_custody:
-            return LivenessDecision("terminal", True, retire=True, reason="terminal-zero-children-recoverable-workspace")
-        return LivenessDecision("terminal-orphan", True, quarantine=True, reason="terminal-with-live-children-or-unrecoverable-workspace")
+            return LivenessDecision(
+                "terminal",
+                True,
+                retire=True,
+                reason="terminal-zero-children-recoverable-workspace",
+            )
+        return LivenessDecision(
+            "terminal-orphan",
+            True,
+            quarantine=True,
+            reason="terminal-with-live-children-or-unrecoverable-workspace",
+        )
     if o.quiet_tool_wait:
         return LivenessDecision("waiting", True, reason="quiet-tool-wait-is-not-death")
     if o.heartbeat_at is None:
@@ -69,7 +92,9 @@ def classify(o: LivenessObservation, *, now: datetime, assist_after: timedelta =
     # still proving the worker is alive, so it does not itself authorize retire.
     if o.skmail_response_at and o.skmail_response_at >= o.heartbeat_at:
         return LivenessDecision("assisted", True, reason="status-response-received")
-    return LivenessDecision("assistance-due", True, escalate=True, reason="heartbeat-quiet-past-assistance-window")
+    return LivenessDecision(
+        "assistance-due", True, escalate=True, reason="heartbeat-quiet-past-assistance-window"
+    )
 
 
 def reconcile(decisions: Iterable[LivenessDecision]) -> tuple[LivenessDecision, ...]:
@@ -77,7 +102,13 @@ def reconcile(decisions: Iterable[LivenessDecision]) -> tuple[LivenessDecision, 
     return tuple(decisions)
 
 
-def metrics(decisions: Iterable[LivenessDecision], *, assistance_latencies: Iterable[float] = (), retirement_latencies: Iterable[float] = (), preserved_work: Iterable[bool] = ()) -> Mapping[str, float | int]:
+def metrics(
+    decisions: Iterable[LivenessDecision],
+    *,
+    assistance_latencies: Iterable[float] = (),
+    retirement_latencies: Iterable[float] = (),
+    preserved_work: Iterable[bool] = (),
+) -> Mapping[str, float | int]:
     rows = tuple(decisions)
     assists = tuple(assistance_latencies)
     retires = tuple(retirement_latencies)
