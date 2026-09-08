@@ -52,6 +52,9 @@ class LeafRecommendation:
     id: str
     title: str
     depends_on: tuple[str, ...]
+    repository: str = "unknown"
+    base_revision: str = "unknown"
+    dependencies_complete: bool = True
 
 
 @dataclass(frozen=True)
@@ -146,11 +149,20 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             signals,
             custody="composition",
         )
+    repository = str(_get(card, "repository", _get(card, "repo", "unknown")))
+    base_revision = str(_get(card, "base_revision", _get(card, "base", "unknown")))
+    dependencies = _items(_get(card, "dependencies", []))
+    dependencies_complete = bool(
+        _get(card, "dependencies_complete", _get(card, "dependency_complete", True))
+    ) and all(str(dep).strip() for dep in dependencies)
     leaves = tuple(
         LeafRecommendation(
             _stable_id(card_id, i),
             f"{_get(card, 'title', card_id)}: leaf {i}",
             (card_id,) if i == 1 else (_stable_id(card_id, i - 1),),
+            repository=repository,
+            base_revision=base_revision,
+            dependencies_complete=dependencies_complete,
         )
         for i in range(1, leaf_count + 1)
     )
