@@ -38,24 +38,34 @@ def test_classifies_without_mutating_and_is_deterministic(tmp_path: Path) -> Non
         tmp_path / "pi-codex-chiap08-null.json",
         {"agent": "pi-codex-chiap08-null", "last_seen": None},
     )
-    write(tmp_path / "pi-codex-chiap08-live.sync-conflict-20260904.json", {})
+    conflict = tmp_path / "pi-codex-chiap08-live.sync-conflict-20260904.json"
+    # Both matching and mismatching bytes are quarantined before parsing.
+    write(conflict, {"agent": "pi-codex-chiap08-live", "last_seen": "bad"})
+    mismatch = tmp_path / "pi-codex-chiap08-bad.sync-conflict-20260904.json"
+    write(mismatch, {"agent": "unrelated", "last_seen": "bad"})
     before = {p: p.read_bytes() for p in tmp_path.iterdir()}
     now = datetime(2026, 9, 4, 12, 1, tzinfo=timezone.utc)
     report = module.build_report(tmp_path, now=now, stale_after=900)
     assert report["counts"] == {
-        "conflict-copy": 1,
+        "conflict-copy": 2,
         "identity-mismatch": 1,
         "malformed": 1,
         "canonical": 1,
     }
     assert report["capacity"] == 1
-    conflict = next(r for r in report["records"] if r["disposition"] == "conflict-copy")
-    assert conflict["canonical_path"].endswith("pi-codex-chiap08-live.json")
-    assert conflict["sha256"]
-    assert conflict["first_seen"]
+    conflict_record = next(r for r in report["records"] if r["filename"] == conflict.name)
+    assert conflict_record["canonical_path"].endswith("pi-codex-chiap08-live.json")
+    assert conflict_record["sha256"]
+    assert conflict_record["first_seen"]
+    mismatch_record = next(r for r in report["records"] if r["filename"] == mismatch.name)
+    assert mismatch_record["disposition"] == "conflict-copy"
+    assert mismatch_record["canonical_path"].endswith("pi-codex-chiap08-bad.json")
+    assert mismatch_record["sha256"]
     assert report["source_mutated"] is False
     assert before == {p: p.read_bytes() for p in tmp_path.iterdir()}
-    assert report == module.build_report(tmp_path, now=now, stale_after=900)
+    repeated = module.build_report(tmp_path, now=now, stale_after=900)
+    assert report == repeated
+    assert before == {p: p.read_bytes() for p in tmp_path.iterdir()}
 
 
 def test_stale_and_invalid_json_are_diagnostic_only(tmp_path: Path) -> None:
