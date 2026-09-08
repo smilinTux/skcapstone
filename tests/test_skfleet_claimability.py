@@ -537,6 +537,51 @@ def test_explicit_return_to_ready_clears_review_history(action: str) -> None:
     assert namespace["_claimability_reason"](core, folded) == "claimable"
 
 
+def test_source_binding_link_events_survive_authoritative_fold() -> None:
+    namespace = _load_claimability()
+    core = _core("source01")
+    events = [
+        _event(
+            "2026-09-08T22:00:00Z",
+            "jarvis",
+            "link",
+            link_key="repository",
+            link_value="https://github.com/smilinTux/sklegal",
+        ),
+        _event(
+            "2026-09-08T22:00:01Z",
+            "jarvis",
+            "link",
+            link_key="base_ref",
+            link_value="main",
+        ),
+    ]
+
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+
+    assert state["links"] == {
+        "repository": "https://github.com/smilinTux/sklegal",
+        "base_ref": "main",
+    }
+    assert namespace["_claimability_reason"](core, state) == "claimable"
+
+
+@pytest.mark.parametrize("link_key", ["repository", "base_ref"])
+def test_empty_source_binding_link_event_fails_closed(link_key: str) -> None:
+    namespace = _load_claimability()
+    core = _core("source02")
+    event = _event(
+        "2026-09-08T22:00:00Z",
+        "jarvis",
+        "link",
+        link_key=link_key,
+        link_value="",
+    )
+
+    with pytest.raises(ValueError, match="typed review metadata is malformed"):
+        namespace["_fold_claimability"](core, [event])
+
+
 @pytest.mark.parametrize("action", ["move", "reopen"])
 @pytest.mark.parametrize("marker", ["evidence_sha256", "pr", "title", "description"])
 def test_explicit_executable_transition_preserves_but_supersedes_review_markers(action, marker):

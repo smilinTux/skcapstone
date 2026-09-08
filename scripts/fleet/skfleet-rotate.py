@@ -1149,6 +1149,7 @@ def _fold_claimability(core, rows):
         "pr", "pull_request", "open_pr", "candidate_evidence_sha256",
         "evidence", "evidence_sha256",
     }
+    source_link_keys = {"repository", "base_ref"}
     # Retain metadata as history while tracking which review markers belong
     # to the current workflow phase. An explicit executable transition starts
     # a new phase; an automatic claim release never does.
@@ -1246,10 +1247,9 @@ def _fold_claimability(core, rows):
             ):
                 raise ValueError("amended acceptance criteria are malformed")
             state["acceptance_criteria"] = list(criteria)
-        elif action == "link" and event.get("link_key") in {
-            "producer_identity", "candidate_evidence_sha256", "pr",
-            "pull_request", "open_pr", "evidence", "evidence_sha256",
-        }:
+        elif action == "link" and event.get("link_key") in (
+            review_link_keys | source_link_keys | {"producer_identity"}
+        ):
             value = event.get("link_value")
             if not isinstance(value, str) or not value.strip():
                 raise ValueError("typed review metadata is malformed")
