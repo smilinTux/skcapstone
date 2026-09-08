@@ -4537,8 +4537,6 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     unit=_worker_unit_name(_LANE["name"],cid)
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
-    if not ok:
-        _restore_planned_lane(_LANE, "launch-failure")
     launch_identity=_launch_claim_fields(name,claimed_revision,ok)
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
@@ -4575,6 +4573,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
                         "--expected-claim-revision",claimed_revision,"--agent",name],
                        capture_output=True,text=True)
+        _restore = globals().get("_restore_planned_lane")
+        if _restore is not None:
+            _restore(_LANE, "launch-failure")
     time.sleep(2)
 
 # Republish after launching, because the first publish is a snapshot of the
