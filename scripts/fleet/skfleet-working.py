@@ -64,6 +64,12 @@ class Worker:
     evidence_source: str = "systemd+proc+cardstore"
     projection_state: str = "valid"
     projection_error: str = ""
+    pane_id: str = ""
+    pane_pid: int = 0
+    child_pid: int = 0
+    phase: str = ""
+    last_activity: str = ""
+    current_outcome: str = ""
 
 
 REMOTE = r"""
@@ -92,10 +98,21 @@ for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
             projection_agents.add(agent)
     except (OSError,json.JSONDecodeError,TypeError,AttributeError):
         pass
+# Inventory panes, not tmux-server or command-line matches.  The pane
+# identity is stable for the lifetime of a worker generation and its PID is
+# useful fencing evidence when a finalizer is deciding what may be stopped.
 try:
-    tmux=set(subprocess.run(['tmux','list-sessions','-F','#{session_name}'],capture_output=True,text=True).stdout.split())
+    pane_lines=subprocess.run(
+        ['tmux','list-panes','-a','-F','#{session_name}\t#{window_id}.#{pane_index}\t#{pane_pid}'],
+        capture_output=True,text=True,check=False,
+    ).stdout.splitlines()
+    panes={}
+    for line in pane_lines:
+        parts=line.split('\t')
+        if len(parts) == 3 and parts[2].isdigit():
+            panes[parts[0]]=(parts[1],int(parts[2]))
 except Exception:
-    tmux=set()
+    panes={}
 for raw in glob.glob('/proc/[0-9]*/comm'):
     try:
         pid=int(raw.split('/')[2])
@@ -117,7 +134,17 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         log=max(logs,key=os.path.getmtime) if logs else ''
         size=os.path.getsize(log) if log else -1
         age=now-int(os.path.getmtime(log)) if log else -1
-        legacy_live=any(card in name for name in tmux)
+        session=next((name for name in panes if name.endswith('-'+card) or name == card), '')
+        pane_id,pane_pid=panes.get(session, ('', 0))
+        legacy_live=bool(session)
+        beat={}
+        try:
+            beat_path=Path.home()/'.skcapstone/fleet/beats'/f'{agent}.json'
+            beat=json.loads(beat_path.read_text(encoding='utf-8'))
+            if not all(beat.get(k) == v for k,v in {'owner': agent, 'card_id': card}.items()):
+                beat={}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            beat={}
         try:
             folded=CardStore(Path.home()/'.skcapstone').fold(card)
             status=folded.status.value
@@ -136,7 +163,7 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
             claim_owner=''
             claim_revision=''
         state=units.get(unit,['not-found','inactive','dead'])
-        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,pane_id=pane_id,pane_pid=pane_pid,child_pid=int(beat.get('child_pid') or 0),phase=str(beat.get('phase','')),last_activity=str(beat.get('beat_at','')),current_outcome=str(beat.get('outcome','')),claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
     except (FileNotFoundError,ProcessLookupError,PermissionError,ValueError,KeyError,json.JSONDecodeError):
         pass
 for unit in sorted(set(units)-seen_units):
