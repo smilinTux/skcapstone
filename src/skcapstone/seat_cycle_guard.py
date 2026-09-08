@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Generic, Literal, TypeVar
 
-Seat = Literal["link", "mero"]
+Seat = Literal["link", "mero", "seraph"]
 T = TypeVar("T")
-_ALLOWED_SEATS = frozenset({"link", "mero"})
+_ALLOWED_SEATS = frozenset({"link", "mero", "seraph"})
 
 
 def _utc_now() -> str:

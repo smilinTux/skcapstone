@@ -1530,6 +1530,9 @@ def _load_seat_placement(path=None):
 
 
 _SEAT_PLACEMENT, _SEAT_PLACEMENT_ERROR = _load_seat_placement()
+_ONLY_SEAT = os.environ.get("SKFLEET_ONLY_SEAT", "").strip().lower()
+if _ONLY_SEAT and not _SEAT_RE.fullmatch(_ONLY_SEAT):
+    raise SystemExit("BLOCKED|SKFLEET_ONLY_SEAT|invalid seat")
 
 def seat_for(cid, core):
     """Return the named seat this card belongs to, or None.
@@ -3793,6 +3796,9 @@ def _pool_v2_authority_rows(decisions, admissions, failed, unblocks, priorities,
     for cid in sorted(ready_ids):
         admission = admissions[cid]
         core = admission["core"]
+        only_seat = globals().get("_ONLY_SEAT", "")
+        if only_seat and seat_for(cid, core) != only_seat:
+            continue
         title = admission["title"]
         labels = admission["labels"]
         blob = (title + " " + json.dumps(labels)).upper()
