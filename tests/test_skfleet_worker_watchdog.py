@@ -32,6 +32,7 @@ def _startup(**changes: object) -> StartupObservation:
         "card_id": "card-1",
         "session_id": "session-1",
         "claim_revision": "revision-1",
+        "attempt_id": "attempt-1",
         "expected_claim_revision": "revision-1",
         "heartbeat_seen": True,
         "executable_evidence_seen": True,
@@ -42,6 +43,7 @@ def _startup(**changes: object) -> StartupObservation:
             "card_id": "card-1",
             "session_id": "session-1",
             "claim_revision": "revision-1",
+            "attempt_id": "attempt-1",
         },
     }
     values.update(changes)
@@ -56,6 +58,7 @@ def _startup(**changes: object) -> StartupObservation:
         ({"executable_evidence_seen": False}, "startup-evidence-missing"),
         ({"claim_revision": "other"}, "startup-claim-mismatch"),
         ({"session_id": ""}, "startup-invalid-identity"),
+        ({"attempt_id": ""}, "startup-invalid-identity"),
         ({"heartbeat_at": "not-a-time"}, "startup-heartbeat-malformed"),
         ({"executable_evidence": None}, "startup-evidence-malformed"),
         (

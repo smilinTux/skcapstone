@@ -1904,6 +1904,8 @@ def blocked_backoff(cid):
     # fresh structured failure and starts a new bounded interval.
     if _transport_retry_held(cid):
         return True
+    if _completion_retry_held(cid):
+        return True
     if launch_attempts(cid) >= 3 and lifecycle_state(cid)!="complete":
         # ...unless the world changed since the last attempt. Without this the
         # counter is a one-way door: nothing resets it, so a card parked here is
@@ -2018,6 +2020,9 @@ _LAUNCH_TTL_H = float(os.environ.get("SKFLEET_LAUNCH_TTL_H", "6"))
 _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
 _TRANSPORT_RETRY_COOLDOWN_S = float(
     os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
+)
+_COMPLETION_RETRY_COOLDOWN_S = float(
+    os.environ.get("SKFLEET_COMPLETION_RETRY_COOLDOWN_S", "300")
 )
 _GATEWAY_ERROR_RE = re.compile(r"^\s*(404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
 
@@ -2156,6 +2161,18 @@ def _transport_retry_held(cid):
     """Hold a failed transport until the bounded recovery interval opens."""
     failed_at = _latest_transport_failure_epoch(cid)
     return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
+
+def _completion_retry_held(cid):
+    """Durably fence an invalid completion for one bounded recovery interval."""
+    latest = 0.0
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if event.get("card_id") == cid and event.get("completion_failure"):
+                latest = max(latest, _ts_epoch(event.get("attempted_at")))
+        except (OSError, TypeError, ValueError):
+            continue
+    return bool(latest and time.time() - latest < _COMPLETION_RETRY_COOLDOWN_S)
 
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
@@ -2543,6 +2560,7 @@ def _startup_release_ready(report):
         observation = StartupObservation(
             owner=owner, card_id=cid, session_id=report["session_id"],
             claim_revision=revision, expected_claim_revision=fresh_revision,
+            attempt_id=report["attempt_id"],
             heartbeat_seen=bool(report.get("heartbeat_at")),
             heartbeat_at=report.get("heartbeat_at"),
             executable_evidence_seen=bool(report.get("executable_evidence")),
@@ -4490,6 +4508,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "mkdir -p ~/.skcapstone/fleet/beats; "
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
         "\"session_id\":\"%s\","
+        "\"attempt_id\":\"'$SKFLEET_ATTEMPT_ID'\","
         "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
         "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
         "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "

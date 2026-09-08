@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 
+from skcapstone.card_store import CardStore, card_mutation_lock
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 
 
@@ -31,6 +32,7 @@ def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObse
         card_id=args.card,
         session_id=args.session,
         claim_revision=args.claim_revision,
+        attempt_id=args.attempt_id,
     )
     heartbeat_at = None
     beat_path = Path.home() / ".skcapstone/fleet/beats" / f"{args.owner}.json"
@@ -46,13 +48,14 @@ def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObse
         pass
     evidence = None
     pending = [child_pid]
-    visited = set()
+    visited: set[int] = set()
     expected_executable = Path(args.worker_executable).resolve()
     expected_env = {
         "SKAGENT": args.owner,
         "SKFLEET_CARD_ID": args.card,
         "SKFLEET_CLAIM_REVISION": args.claim_revision,
         "SKFLEET_SESSION_ID": args.session,
+        "SKFLEET_ATTEMPT_ID": args.attempt_id,
     }
     while pending and len(visited) < 256:
         pid = pending.pop()
@@ -106,6 +109,7 @@ def write_startup_report(
         "owner": args.owner,
         "card_id": args.card,
         "claim_revision": args.claim_revision,
+        "attempt_id": args.attempt_id,
         "session_id": args.session,
         "host": args.host,
         "state": state,
@@ -183,10 +187,134 @@ def classify_transport_failure(text: str) -> str | None:
     return None
 
 
-def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | None:
-    """Classify only terminal diagnostics that precede substantive output."""
+SUCCESS_OUTCOMES = frozenset({"PASS", "PASS_FOR_REVIEW"})
+BLOCKED_OUTCOMES = frozenset({"BLOCKED", "FAIL_CLOSED"})
+
+
+def _card_events(store: CardStore, card_id: str) -> list[dict]:
+    """Return the same ordered event union used by the authoritative fold."""
+    events = store._read_events(card_id) + store._legacy_events(card_id)
+    return sorted(
+        events,
+        key=lambda event: (
+            str(event.get("ts") or ""),
+            str(event.get("writer") or ""),
+            event.get("seq", 0),
+        ),
+    )
+
+
+def validate_cardstore_completion(args: argparse.Namespace) -> tuple[bool, str, str | None]:
+    """Validate terminal evidence against one exact CardStore claim generation."""
+    if not args.session or not args.attempt_id:
+        return False, "missing_attempt_identity", None
+    home = Path.home() / ".skcapstone"
+    try:
+        store = CardStore(home)
+        with card_mutation_lock(home, args.card):
+            return _validate_and_consume_cardstore_completion(store, args)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, TimeoutError):
+        return False, "cardstore_unavailable", None
+
+
+def _validate_and_consume_cardstore_completion(
+    store: CardStore, args: argparse.Namespace
+) -> tuple[bool, str, str | None]:
+    """Validate and consume one exact attempt outcome while holding the card lock."""
+    card = store.fold(args.card)
+    events = _card_events(store, args.card)
+    if card is None:
+        return False, "card_missing", None
+    claim_indexes = [
+        index
+        for index, event in enumerate(events)
+        if event.get("action") == "claim"
+        and event.get("owner") == args.owner
+        and event.get("claim_revision") == args.claim_revision
+    ]
+    if not claim_indexes:
+        return False, "claim_missing", None
+    claim_index = claim_indexes[-1]
+    if any(event.get("action") in {"claim", "reopen"} for event in events[claim_index + 1 :]):
+        return False, "stale_claim", None
+    identity = {
+        "claim_revision": args.claim_revision,
+        "attempt_id": args.attempt_id,
+        "session_id": args.session,
+    }
+    outcome_events = [
+        event
+        for event in events[claim_index + 1 :]
+        if event.get("action") == "link"
+        and event.get("writer") == args.owner
+        and event.get("link_key") in {"verdict", "evidence"}
+    ]
+    matching_events = [
+        event
+        for event in outcome_events
+        if all(event.get(key) == value for key, value in identity.items())
+    ]
+    verdict_events = [event for event in matching_events if event.get("link_key") == "verdict"]
+    evidence_events = [event for event in matching_events if event.get("link_key") == "evidence"]
+    if not matching_events and outcome_events:
+        if any(event.get("claim_revision") != args.claim_revision for event in outcome_events):
+            return False, "cross_revision_outcome", None
+        if any(event.get("session_id") != args.session for event in outcome_events):
+            return False, "cross_session_outcome", None
+        if any(event.get("attempt_id") != args.attempt_id for event in outcome_events):
+            return False, "cross_attempt_outcome", None
+    if not verdict_events:
+        return False, "missing_terminal_card_outcome", None
+    if len(verdict_events) != 1 or len(evidence_events) > 1:
+        return False, "duplicate_terminal_outcome", None
+    outcome = str(verdict_events[-1].get("link_value") or "").strip().upper()
+    if outcome in BLOCKED_OUTCOMES:
+        return False, "blocked_outcome", outcome
+    if outcome not in SUCCESS_OUTCOMES:
+        return False, "invalid_outcome", outcome or None
+    if not evidence_events:
+        return False, "missing_evidence", outcome
+    revision = card.meta.get("_claim_revision")
+    live_claim = card.owner == args.owner and revision == args.claim_revision
+    completed_by_claim = any(
+        event.get("action") == "complete" and event.get("writer") == args.owner
+        for event in events[claim_index + 1 :]
+    )
+    if not live_claim and not (str(card.status.value) == "done" and completed_by_claim):
+        return False, "stale_claim", outcome
+    verdict_id = verdict_events[0].get("event_id")
+    evidence_id = evidence_events[0].get("event_id")
+    if not verdict_id or not evidence_id:
+        return False, "malformed_terminal_outcome", outcome
+    consumed = any(
+        event.get("action") == "consume_terminal_outcome"
+        and event.get("claim_revision") == args.claim_revision
+        for event in events[claim_index + 1 :]
+    )
+    if consumed:
+        return False, "claim_outcome_already_consumed", outcome
+    store.append_event(
+        args.card,
+        "consume_terminal_outcome",
+        args.owner,
+        **identity,
+        verdict_event_id=verdict_id,
+        evidence_event_id=evidence_id,
+        transition_id=f"consume:{args.card}:{args.claim_revision}",
+    )
+    return True, "valid_cardstore_completion", outcome
+
+
+def classify_pre_agent_failure(
+    stdout: bytes,
+    stderr: bytes,
+    rc: int,
+    completion: tuple[bool, str, str | None] | None = None,
+) -> str | None:
+    """Classify terminal diagnostics, including invalid zero-exit completion."""
     if rc == 0:
-        return None
+        valid, reason, _outcome = completion or (False, "missing_completion_check", None)
+        return None if valid else ("incomplete_" + reason)
     if not stdout:
         return classify_transport_failure(redact_stderr(stderr))
     text = stdout.decode("utf-8", errors="replace").strip()
@@ -266,19 +394,27 @@ def idle_owner_projection(owner: str) -> None:
             pass
 
 
-def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> None:
+def record_terminal_exit(
+    args: argparse.Namespace,
+    stderr: bytes,
+    rc: int,
+    completion: tuple[bool, str, str | None] | None = None,
+) -> None:
     """Create one immutable, claim-scoped terminal evidence record."""
     stdout_size = args.stdout.stat().st_size
     stdout_tail = b""
     if stdout_size <= STDERR_LIMIT:
         stdout_tail = args.stdout.read_bytes()
-    failure = classify_pre_agent_failure(stdout_tail, stderr, rc)
-    if stdout_size and not failure:
-        return
+    failure = classify_pre_agent_failure(stdout_tail, stderr, rc, completion)
     attempted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    redacted = redact_stderr(stderr)
+    valid, completion_reason, completion_outcome = completion or (
+        False,
+        "child_exit",
+        None,
+    )
     payload = {
         "attempted_at": attempted_at,
+        "attempt_id": args.attempt_id,
         "card_id": args.card,
         "child_exit_code": rc,
         "claim_revision": args.claim_revision,
@@ -286,12 +422,17 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
         "lane": args.lane,
         "model": args.model,
         "owner": args.owner,
-        "stderr": redacted,
+        "session_id": args.session,
+        "completion_outcome": completion_outcome if valid else None,
+        "stderr_bytes": len(stderr),
+        "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
         "stdout_log": args.stdout.name,
-        "transport_failure": failure,
+        "transport_failure": failure if failure in TRANSPORT_PATTERNS else None,
+        "completion_failure": failure if failure and failure.startswith("incomplete_") else None,
+        "reason": failure or completion_reason,
     }
     digest = hashlib.sha256(
-        f"{args.card}\0{args.claim_revision}\0{attempted_at}".encode()
+        f"{args.card}\0{args.claim_revision}\0{args.attempt_id}\0{attempted_at}".encode()
     ).hexdigest()[:16]
     args.evidence_dir.mkdir(parents=True, exist_ok=True)
     path = args.evidence_dir / f"{args.card}-{digest}.json"
@@ -349,6 +490,10 @@ def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
     args.started_at = int(time.time())
+    args.attempt_id = hashlib.sha256(
+        f"{args.card}\0{args.owner}\0{args.claim_revision}\0{args.session}\0"
+        f"{args.started_at}\0{os.getpid()}".encode()
+    ).hexdigest()
     preflight = preflight_worktree()
     if preflight == 2:
         write_startup_report(args, os.getpid(), "startup-preflight-blocked")
@@ -366,7 +511,12 @@ def main() -> int:
     startup_thread = None
     try:
         with args.stdout.open("wb") as stdout:
-            child = subprocess.Popen(args.command, stdout=stdout, stderr=subprocess.PIPE)
+            child = subprocess.Popen(
+                args.command,
+                stdout=stdout,
+                stderr=subprocess.PIPE,
+                env={**os.environ, "SKFLEET_ATTEMPT_ID": args.attempt_id},
+            )
             if args.session and args.worker_executable:
                 startup_thread = threading.Thread(
                     target=monitor_startup, args=(args, child, startup_stop), daemon=True
@@ -374,13 +524,21 @@ def main() -> int:
                 startup_thread.start()
             _, stderr = child.communicate()
         sys.stderr.buffer.write(stderr)
-        record_terminal_exit(args, stderr, child.returncode)
+        completion = (
+            validate_cardstore_completion(args)
+            if child.returncode == 0
+            else (False, "child_exit", None)
+        )
+        record_terminal_exit(args, stderr, child.returncode, completion)
+        valid, completion_reason, outcome = completion
+        effective_rc = child.returncode if child.returncode else (0 if valid else 75)
         emit_work_mail(
             args,
-            "work.complete" if child.returncode == 0 else "work.blocked",
-            f"phase=finished exit_code={child.returncode}",
+            "work.complete" if valid else "work.blocked",
+            f"phase=finished exit_code={child.returncode} reason={completion_reason} "
+            f"outcome={outcome or 'none'} attempt_id={args.attempt_id}",
         )
-        return child.returncode
+        return effective_rc
     finally:
         startup_stop.set()
         if startup_thread:

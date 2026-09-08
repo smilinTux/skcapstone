@@ -6,7 +6,6 @@ import datetime
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import signal
@@ -14,8 +13,10 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
+
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_HEARTBEAT_TIMEOUT_S,
     HOST_LOCAL_BEAT_NOTICE_S,
@@ -57,6 +58,7 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
         card_id="feedbeef",
         owner="worker",
         claim_revision="rev-1",
+        attempt_id="attempt-1",
         session_id="session-1",
         lane="codex",
         state="startup-heartbeat-missing",
@@ -153,7 +155,7 @@ def wrapper():
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "heartbeat", "session", "executable", "attribution", "node"]
+    "fault", [None, "heartbeat", "session", "attempt", "executable", "attribution", "node"]
 )
 def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, fault):
     module = wrapper()
@@ -164,6 +166,7 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         card="feedbeef",
         session="session-1",
         claim_revision="rev-1",
+        attempt_id="attempt-1",
         host="host-1",
         lane="codex",
         started_at=int(time.time()),
@@ -177,6 +180,7 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         "SKFLEET_CARD_ID": args.card,
         "SKFLEET_SESSION_ID": args.session,
         "SKFLEET_CLAIM_REVISION": args.claim_revision,
+        "SKFLEET_ATTEMPT_ID": args.attempt_id,
     }
     if fault == "attribution":
         env["SKFLEET_CLAIM_REVISION"] = "older-revision"
@@ -185,10 +189,13 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         "card_id": args.card,
         "session_id": args.session,
         "claim_revision": args.claim_revision,
+        "attempt_id": args.attempt_id,
         "beat_at": args.started_at,
     }
     if fault == "session":
         beat["session_id"] = "previous-session"
+    if fault == "attempt":
+        beat["attempt_id"] = "previous-attempt"
     if fault != "heartbeat":
         path = tmp_path / ".skcapstone/fleet/beats/worker.json"
         path.parent.mkdir(parents=True)
@@ -232,6 +239,11 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
     monkeypatch.setattr(module, "preflight_worktree", lambda: preflight)
+    monkeypatch.setattr(
+        module,
+        "validate_cardstore_completion",
+        lambda _args: (True, "valid_cardstore_completion", "PASS_FOR_REVIEW"),
+    )
     args = argparse.Namespace(
         owner="worker",
         card="feedbeef",
@@ -382,7 +394,7 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
     sleeper_pids = tmp_path / "sleeper-pids"
     sleep = tmp_path / "sleep"
     sleep.write_text(
-        '#!/bin/bash\nprintf "%s\\n" "$BASHPID" >> "$SLEEP_PID_FILE"\n' 'exec /bin/sleep "$@"\n'
+        '#!/bin/bash\nprintf "%s\\n" "$BASHPID" >> "$SLEEP_PID_FILE"\nexec /bin/sleep "$@"\n'
     )
     sleep.chmod(0o700)
     pi = tmp_path / "pi"
@@ -417,6 +429,8 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
         "s=importlib.util.spec_from_file_location('wrapper',sys.argv.pop(1)); "
         "m=importlib.util.module_from_spec(s);s.loader.exec_module(m); "
         "m.emit_work_mail=lambda *a:None;m.preflight_worktree=lambda:0; "
+        "m.validate_cardstore_completion=lambda a:"
+        "(True,'valid_cardstore_completion','PASS_FOR_REVIEW'); "
         "raise SystemExit(m.main())"
     )
     command = [
