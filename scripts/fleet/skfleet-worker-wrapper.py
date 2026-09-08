@@ -98,6 +98,34 @@ def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObse
     )
 
 
+def write_process_record(
+    args: argparse.Namespace,
+    *,
+    pid: int,
+    completion_state: str,
+    heartbeat_at: str | None = None,
+) -> None:
+    """Publish bounded identity evidence for direct-seat execution."""
+    record = {
+        "card": args.card,
+        "owner": args.owner,
+        "claim_revision": args.claim_revision,
+        "heartbeat_at": heartbeat_at or datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "completion_state": completion_state,
+        "pid": pid,
+    }
+    path = Path.home() / ".skcapstone/fleet/direct-seats" / (args.owner + ".json")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".tmp")
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(record, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+        os.replace(temporary, path)
+    except OSError:
+        pass
+
+
 def write_startup_report(
     args: argparse.Namespace, pid: int, state: str, observation: StartupObservation | None = None
 ) -> None:
@@ -367,6 +395,7 @@ def main() -> int:
     try:
         with args.stdout.open("wb") as stdout:
             child = subprocess.Popen(args.command, stdout=stdout, stderr=subprocess.PIPE)
+            write_process_record(args, pid=child.pid, completion_state="running")
             if args.session and args.worker_executable:
                 startup_thread = threading.Thread(
                     target=monitor_startup, args=(args, child, startup_stop), daemon=True
@@ -375,6 +404,11 @@ def main() -> int:
             _, stderr = child.communicate()
         sys.stderr.buffer.write(stderr)
         record_terminal_exit(args, stderr, child.returncode)
+        write_process_record(
+            args,
+            pid=child.pid,
+            completion_state="completed" if child.returncode == 0 else "failed",
+        )
         emit_work_mail(
             args,
             "work.complete" if child.returncode == 0 else "work.blocked",
