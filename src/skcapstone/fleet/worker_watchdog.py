@@ -35,6 +35,103 @@ HOST_LOCAL_BEAT_NOTICE_S = 120.0
 DEFAULT_HEARTBEAT_TIMEOUT_S = 600.0
 DEFAULT_TRANSPORT_TIMEOUT_S = 600.0
 
+# Child progress is intentionally independent from wrapper heartbeats.  A
+# wrapper can be alive while its model child is asleep or wedged.
+DEFAULT_STARTUP_LEASE_S = 120.0
+DEFAULT_FIRST_OUTPUT_LEASE_S = 300.0
+DEFAULT_PROVIDER_RESPONSE_LEASE_S = 600.0
+DEFAULT_PROGRESS_LEASE_S = 900.0
+
+
+@dataclass(frozen=True)
+class ChildLeaseConfig:
+    """Independent, bounded leases for one exact child generation."""
+
+    startup_s: float = DEFAULT_STARTUP_LEASE_S
+    first_output_s: float = DEFAULT_FIRST_OUTPUT_LEASE_S
+    provider_response_s: float = DEFAULT_PROVIDER_RESPONSE_LEASE_S
+    progress_s: float = DEFAULT_PROGRESS_LEASE_S
+
+    def __post_init__(self) -> None:
+        if any(v <= 0 for v in (self.startup_s, self.first_output_s,
+                                self.provider_response_s, self.progress_s)):
+            raise ValueError("child leases must be positive")
+
+
+@dataclass(frozen=True)
+class ChildLeaseObservation:
+    """Read-only timestamps and identity for a child lease evaluation."""
+
+    card: str
+    owner: str
+    claim_revision: str
+    host: str
+    lane: str
+    model_bucket: str
+    phase: str
+    started_at: float
+    last_output_at: float | None = None
+    provider_started_at: float | None = None
+    last_progress_at: float | None = None
+    wrapper_heartbeat_at: float | None = None
+    child_alive: bool = True
+    side_effects: bool = False
+    human_gate: bool = False
+    terminal: bool = False
+    superseded: bool = False
+    ambiguous_progress: bool = False
+
+
+@dataclass(frozen=True)
+class ChildLeaseReceipt:
+    """Non-secret, machine-readable lease result.  No prompt or output data."""
+
+    card: str
+    owner: str
+    claim_revision: str
+    host: str
+    lane: str
+    model_bucket: str
+    phase: str
+    elapsed_s: float
+    lease_s: float
+    state: str
+    reason: str
+
+
+def evaluate_child_lease(observation: ChildLeaseObservation, *, now: float,
+                         config: ChildLeaseConfig = ChildLeaseConfig()) -> ChildLeaseReceipt:
+    """Classify child progress, not wrapper liveness, using monotonic seconds."""
+    if now < observation.started_at:
+        raise ValueError("monotonic clock moved backwards")
+    phase = observation.phase
+    marks = {"startup": observation.started_at,
+             "first-output": observation.last_output_at,
+             "provider-response": observation.provider_started_at,
+             "progress": observation.last_progress_at}
+    limits = {"startup": config.startup_s, "first-output": config.first_output_s,
+              "provider-response": config.provider_response_s, "progress": config.progress_s}
+    mark = marks.get(phase)
+    limit = limits.get(phase)
+    if mark is None or limit is None:
+        return ChildLeaseReceipt(observation.card, observation.owner, observation.claim_revision,
+            observation.host, observation.lane, observation.model_bucket, phase, 0.0, 0.0,
+            "ambiguous", "unknown-phase-or-missing-progress")
+    elapsed = max(0.0, now - mark)
+    protected = (observation.side_effects or observation.human_gate or observation.terminal
+                 or observation.superseded or observation.ambiguous_progress)
+    if protected:
+        state, reason = "not-replayable", "protected-or-ambiguous"
+    elif not observation.child_alive:
+        state, reason = "child-exited", "child-not-alive"
+    elif elapsed > limit:
+        state, reason = "child-stalled", "lease-expired"
+    else:
+        state, reason = "healthy", "child-progress-within-lease"
+    return ChildLeaseReceipt(observation.card, observation.owner, observation.claim_revision,
+        observation.host, observation.lane, observation.model_bucket, phase, elapsed, limit,
+        state, reason)
+
 
 @dataclass(frozen=True)
 class WorkerObservation:
