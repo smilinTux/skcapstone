@@ -22,4 +22,4 @@ Type=oneshot
 Environment=SKAGENT=%i
 Environment=SKCAPSTONE_AGENT=%i
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/bin/sh -c 'msg="skcapstone agent %i entered the failed state on $(hostname) at $(date -Is)"; echo "$msg" | systemd-cat -t skcapstone-alert -p err; command -v sk-alert >/dev/null 2>&1 && sk-alert send "$msg" >/dev/null 2>&1 || true'
+ExecStart=/bin/sh -c 'msg="skcapstone unit %i entered the failed state on $(hostname) at $(date -Is)"; echo "$msg" | systemd-cat -t skcapstone-alert -p err; if [ "%i" = "skfleet-rotate.service" ] && command -v skfleet-rotate-alert >/dev/null 2>&1; then skfleet-rotate-alert --unit "%i" --error "systemd failure; inspect journal for the exception"; fi; command -v sk-alert >/dev/null 2>&1 && sk-alert send "$msg" >/dev/null 2>&1 || true'
