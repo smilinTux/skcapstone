@@ -6,7 +6,6 @@ referenced immutable files.  Callers must run it before recording a claim.
 from __future__ import annotations
 
 import hashlib
-import json
 import shlex
 import shutil
 from dataclasses import dataclass
@@ -89,7 +88,9 @@ def admit_work_packet(packet: Mapping[str, Any] | None, *, repository: str | Non
         return error
 
     deps = packet.get("dependencies")
-    if not isinstance(deps, (list, tuple)) or any(not isinstance(dep, str) or not dep for dep in deps):
+    if not isinstance(deps, (list, tuple)) or any(
+        not isinstance(dep, str) or not dep for dep in deps
+    ):
         return _reject(AdmissionReason.MISSING_DEPENDENCY)
     if dependencies is not None and any(not dependencies.get(dep, False) for dep in deps):
         return _reject(AdmissionReason.MISSING_DEPENDENCY)
@@ -98,7 +99,11 @@ def admit_work_packet(packet: Mapping[str, Any] | None, *, repository: str | Non
     if not isinstance(commands, (list, tuple)) or not commands:
         return _reject(AdmissionReason.UNVERIFIABLE_COMMAND)
     for command in commands:
-        if not isinstance(command, str) or not command.strip() or any(c in command for c in (";", "&&", "||", "|")):
+        if (
+            not isinstance(command, str)
+            or not command.strip()
+            or any(c in command for c in (";", "&&", "||", "|"))
+        ):
             return _reject(AdmissionReason.UNVERIFIABLE_COMMAND)
         try:
             argv = shlex.split(command)
@@ -113,15 +118,41 @@ def admit_work_packet(packet: Mapping[str, Any] | None, *, repository: str | Non
             return _reject(AdmissionReason.UNVERIFIABLE_COMMAND)
 
     required = ("expected_manifest", "prohibited_effects", "rollback", "workspace")
-    if any(key not in packet for key in required) or not isinstance(packet["expected_manifest"], Mapping):
+    if any(key not in packet for key in required) or not isinstance(
+        packet["expected_manifest"], Mapping
+    ):
         return _reject(AdmissionReason.INVALID_PACKET)
-    if not isinstance(packet["prohibited_effects"], (list, tuple)) or not packet["prohibited_effects"]:
+    if (
+        not isinstance(packet["prohibited_effects"], (list, tuple))
+        or not packet["prohibited_effects"]
+    ):
         return _reject(AdmissionReason.INVALID_PACKET)
     if not isinstance(packet["rollback"], str) or not packet["rollback"].strip():
         return _reject(AdmissionReason.INVALID_PACKET)
     if packet["workspace"] not in {"read-only", "writable"}:
         return _reject(AdmissionReason.INVALID_PACKET)
     return AdmissionResult(True, source_sha256=source, evidence_sha256=evidence, packet=packet)
+
+
+def admit_task(board: Any, task_id: str) -> AdmissionResult:
+    """Admit a board task packet immediately before a claim mutation."""
+    views = {view.task.id: view for view in board.get_task_views(include_archived=True)}
+    view = views.get(task_id)
+    packet = view.task.meta.get("work_packet") if view is not None else None
+    dependencies = {
+        dependency: views.get(dependency) is not None
+        and views[dependency].status.value == "done"
+        for dependency in (view.task.dependencies if view is not None else [])
+    }
+    return admit_work_packet(packet, repository="skcapstone", dependencies=dependencies)
+
+
+def require_task_admission(board: Any, task_id: str) -> AdmissionResult:
+    """Raise before claim mutation when the task packet is not admissible."""
+    result = admit_task(board, task_id)
+    if not result.admitted:
+        raise ValueError(f"work packet rejected: {result.reason}")
+    return result
 
 
 preclaim_admission = admit_work_packet

@@ -505,6 +505,9 @@ class SubAgentSpawner:
             from .coordination import Board
 
             board = Board(home=self._home)
+            from .qualification import require_task_admission
+
+            require_task_admission(board, task_id)
             board.claim_task(agent_name, task_id)
             logger.info("Claimed coord task %s for %s", task_id, agent_name)
         except Exception as exc:

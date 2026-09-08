@@ -216,6 +216,9 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
 
     board = Board(_home())
     try:
+        from ..qualification import require_task_admission
+
+        require_task_admission(board, task_id)
         agent = board.claim_task(agent_name, task_id, force=bool(args.get("force", False)))
         return _json_response(
             {

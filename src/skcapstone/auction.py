@@ -288,6 +288,9 @@ class AuctionManager:
             from .coordination import Board
 
             board = Board(self.shared_root)
+            from .qualification import require_task_admission
+
+            require_task_admission(board, task_id)
             board.claim_task(winner, task_id)
             logger.info(
                 "Auction %s: resolved - winner=%s (score=%.3f)",

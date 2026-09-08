@@ -8,7 +8,14 @@ from .checkpoint import (
     seal_completion,
     verify_checkpoint,
 )
-from .preclaim import AdmissionReason, AdmissionResult, admit_work_packet, preclaim_admission
+from .preclaim import (
+    AdmissionReason,
+    AdmissionResult,
+    admit_task,
+    admit_work_packet,
+    preclaim_admission,
+    require_task_admission,
+)
 from .vcs_audit import (
     VcsAuditError,
     VcsDependencyPolicy,
@@ -21,7 +28,9 @@ __all__ = [
     "CheckpointError",
     "AdmissionReason",
     "AdmissionResult",
+    "admit_task",
     "admit_work_packet",
+    "require_task_admission",
     "preclaim_admission",
     "VcsAuditError",
     "VcsDependencyPolicy",

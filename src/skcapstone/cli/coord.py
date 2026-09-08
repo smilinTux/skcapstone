@@ -381,6 +381,9 @@ def register_coord_commands(main: click.Group) -> None:
         home_path = Path(home).expanduser()
         board = Board(home_path)
         try:
+            from ..qualification import require_task_admission
+
+            require_task_admission(board, task_id)
             ag = board.claim_task(agent, task_id, force=force)
             console.print(f"\n  [green]Claimed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
         except ValueError as e:

@@ -11,7 +11,8 @@ def packet(tmp_path: Path) -> dict:
     evidence = tmp_path / "evidence.sha256"
     candidate.write_text("candidate\n")
     evidence.write_text("evidence\n")
-    digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
     return {
         "repository": "skcapstone",
         "candidate": {"path": str(candidate), "sha256": digest(candidate)},
@@ -25,10 +26,22 @@ def packet(tmp_path: Path) -> dict:
 def test_rejections(tmp_path):
     assert admit_work_packet(None).reason == AdmissionReason.EMPTY
     p = packet(tmp_path)
-    assert admit_work_packet({**p, "repository": "other"}, repository="skcapstone").reason == AdmissionReason.WRONG_REPOSITORY
-    assert admit_work_packet({**p, "candidate": {"path": "no", "sha256": "x"}}).reason == AdmissionReason.MISSING_CANDIDATE
-    assert admit_work_packet({**p, "dependencies": ["gone"]}, dependencies={}).reason == AdmissionReason.MISSING_DEPENDENCY
-    assert admit_work_packet({**p, "commands": ["pytest; rm -rf /"]}).reason == AdmissionReason.UNVERIFIABLE_COMMAND
+    assert (
+        admit_work_packet({**p, "repository": "other"}, repository="skcapstone").reason
+        == AdmissionReason.WRONG_REPOSITORY
+    )
+    assert (
+        admit_work_packet({**p, "candidate": {"path": "no", "sha256": "x"}}).reason
+        == AdmissionReason.MISSING_CANDIDATE
+    )
+    assert (
+        admit_work_packet({**p, "dependencies": ["gone"]}, dependencies={}).reason
+        == AdmissionReason.MISSING_DEPENDENCY
+    )
+    assert (
+        admit_work_packet({**p, "commands": ["pytest; rm -rf /"]}).reason
+        == AdmissionReason.UNVERIFIABLE_COMMAND
+    )
 
 
 def test_valid_packet_preserves_hashes(tmp_path):
