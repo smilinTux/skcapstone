@@ -5,10 +5,12 @@ import pytest
 from skcapstone.fleet_beat import (
     Beat,
     BeatThresholds,
+    DISPOSITIONS,
     classify,
     read_beats,
     validate_beat_owner,
     write_beat,
+    write_agent_beat,
 )
 
 
@@ -83,7 +85,7 @@ class TestClassify:
 
     def test_live(self):
         r = classify([self._beat(age_s=60)], "w", now=self.BASE_TS, thresholds=self.TH)
-        assert r.state == "LIVE"
+        assert r.state == "LIVE PROGRESS UNKNOWN"
         assert r.evidence == "wrapper_beat"
 
     def test_agent_beat_preferred(self):
@@ -139,11 +141,43 @@ class TestAgentBeat:
         assert beats[0].emitter == "agent"
         assert beats[0].progress_token == "step-42"
 
-    def test_agent_blocked_sends_mail(self, tmp_path):
-        """Non-RUNNING disposition triggers skmail (Card C)."""
-        # We can't easily mock subprocess in this test, but verify the
-        # function exists and doesn't raise on RUNNING (no mail path)
-        beat = write_beat(tmp_path, "agent-w", emitter="agent", disposition="RUNNING")
+    def test_disposition_vocabulary_is_closed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        for disposition in DISPOSITIONS:
+            beat = write_agent_beat(tmp_path, "agent-w", disposition=disposition)
+            assert beat.disposition == disposition
+        with pytest.raises(ValueError, match="vocabulary"):
+            write_agent_beat(tmp_path, "agent-w", disposition="PAUSED")
+
+    def test_non_running_emits_one_mail_with_one_line_reason(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        beat = write_agent_beat(
+            tmp_path,
+            "agent-w",
+            card_id="abc12345",
+            disposition="BLOCKED_NEEDS_HUMAN",
+            reason="approval\nneeded",
+        )
+        assert beat.disposition == "BLOCKED_NEEDS_HUMAN"
+        assert len(calls) == 1
+        assert calls[0][0][:5] == [
+            "skmail",
+            "send",
+            "agent-w",
+            "heartbeat",
+            "normal",
+        ]
+        assert "\n" not in calls[0][0][-1]
+        assert "approval needed" in calls[0][0][-1]
+
+    def test_running_emits_no_mail(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: pytest.fail("mail sent"))
+        beat = write_agent_beat(tmp_path, "agent-w", disposition="RUNNING")
         assert beat.disposition == "RUNNING"
 
     def test_wrapper_still_cannot_set_progress(self, tmp_path):
