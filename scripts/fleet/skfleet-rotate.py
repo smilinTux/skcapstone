@@ -14,6 +14,12 @@ from pathlib import Path
 
 from skcapstone.card_store import CardStore
 from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
+from skcapstone.fleet.worker_brief import (
+    BriefEvidenceError,
+    format_work_envelope,
+    materialize_work_envelope,
+    write_missing_report,
+)
 from skcapstone.coord_eligibility import leaf_eligibility_counts
 from skcapstone.fleet_lane_health import (
     acquire_lane_snapshot,
@@ -1115,8 +1121,12 @@ def _fold_claimability(core, rows):
                 raise ValueError("amended acceptance criteria are malformed")
             state["acceptance_criteria"] = list(criteria)
         elif action == "link" and event.get("link_key") in {
-            "producer_identity", "candidate_evidence_sha256", "pr",
-            "pull_request", "open_pr", "evidence", "evidence_sha256",
+            "artifact_sha256", "artifacts_sha256", "candidate_commit",
+            "candidate_evidence_sha256", "candidate_patch_sha256",
+            "candidate_tree", "evidence", "evidence_path", "evidence_sha256",
+            "incident_receipt", "open_pr", "pr", "producer_identity",
+            "pull_request", "repository_scope", "source_manifest_sha256",
+            "source_scope", "supersedes",
         }:
             value = event.get("link_value")
             if not isinstance(value, str) or not value.strip():
@@ -4262,7 +4272,6 @@ if not picks:
 raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_labels,_nb) in picks:
-    ac="\n".join("  %d. %s"%(i+1,x) for i,x in enumerate(core.get("acceptance_criteria") or []))
     # PREFIX CACHE ORDERING. vLLM caches on a shared PROMPT PREFIX. This brief
     # used to open with the card id and the card body, so every request diverged
     # within a few tokens and the ~1,700 invariant tokens after it could never be
@@ -4374,15 +4383,6 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "If the card needs no repository change, say so explicitly in your verdict so the\n"
       "absence of a PR is a recorded decision rather than an omission.\n"
       "- Never use an em dash or en dash.\n")
-    brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
-      "for your exact agent identity. Verify that ownership before working and never "
-      "claim or substitute another card. If ownership is absent, or a dependency is "
-      "incomplete, say so and stop rather than working it anyway.\n\n"
-      "COORDINATION WRITE BOUNDARY: Use skcapstone coord for every verdict, "
-      "evidence, status, claim, label, dependency, and lifecycle write. Never create, "
-      "append, rewrite, rename, or delete CardStore JSONL. Use CLI reads for normal "
-      "verification; raw file inspection is emergency operator diagnostics only.\n\n"
-      "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
     _seat = seat_for(cid, core)
     # A seat-owned card runs under the seat's identity, not the lane's. The
     # Worker identity stays lane-based so slot accounting, liveness, and reaping
@@ -4409,7 +4409,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         continue
     if workspace == default_workspace:
         os.makedirs(workspace,exist_ok=True)
-    bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
+    bf=os.path.join(logdir,"brief-%s.txt"%cid)
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
     # Last-moment re-check through the same fold that built the pool.
     with open(os.path.join(CARDS,cid,"core.json"),encoding="utf-8") as _handle:
@@ -4454,6 +4454,39 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             continue
         log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
         continue
+    try:
+        envelope = materialize_work_envelope(
+            fresh_claimability["core"],
+            labels=fresh_claimability["labels"],
+            lane=_LANE["name"],
+            model=model,
+            seat=_seat,
+            evidence_root=Path(HOME) / ".skcapstone" / "evidence",
+        )
+    except BriefEvidenceError as exc:
+        report_path, report_sha256 = write_missing_report(
+            exc.report, Path(HOME) / ".skcapstone" / "evidence"
+        )
+        report = json.dumps(exc.report, sort_keys=True, separators=(",", ":"))
+        log(
+            d,
+            "WORKER_BRIEF_BLOCKED|%s|%s|%s|report=%s|sha256=%s"
+            % (HOST, cid, report, report_path, report_sha256),
+        )
+        continue
+    brief = _RAILS + (
+        "Work only SKCapstone card %s. The fleet selector has already claimed it "
+        "for your exact agent identity. Verify that ownership before working and never "
+        "claim or substitute another card. If ownership is absent, or a dependency is "
+        "incomplete, say so and stop rather than working it anyway.\n\n"
+        "COORDINATION WRITE BOUNDARY: Use skcapstone coord for every verdict, "
+        "evidence, status, claim, label, dependency, and lifecycle write. Never create, "
+        "append, rewrite, rename, or delete CardStore JSONL. Use CLI reads for normal "
+        "verification; raw file inspection is emergency operator diagnostics only.\n\n"
+        "WORK ENVELOPE (canonical JSON):\n" + format_work_envelope(envelope)
+    )
+    with open(bf, "w", encoding="utf-8") as brief_handle:
+        brief_handle.write(brief)
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
     claim_outcome=_classify_claim_outcome(
