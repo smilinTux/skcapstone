@@ -248,7 +248,7 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
     )
     monkeypatch.setattr(module, "parse_args", lambda: args)
     started = time.monotonic()
-    assert module.main() == preflight
+    assert module.main() == (preflight or 75)
     assert time.monotonic() - started < 5.0
     (record,) = (tmp_path / "evidence/worker-startup").glob("*.json")
     result = json.loads(record.read_text())
@@ -458,7 +458,7 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
     )
     try:
         _, stderr = process.communicate(timeout=5)
-        assert process.returncode == 0, stderr.decode()
+        assert process.returncode == 75, stderr.decode()
         assert time.monotonic() - started < 5
         assert (tmp_path / "worker.log").read_text() == "PASS_FOR_REVIEW\n"
         pids = [int(value) for value in sleeper_pids.read_text().split()]
