@@ -34,6 +34,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Card 6ba25aa4: record SKDASH-AUTH-IDENTITY-01R independent review verdict.**
+  Independent review of SKDashboard PR143 exact head f407bed: verified
+  fail-closed multi-principal authorization (unknown, expired, duplicate, and
+  mismatched principals all denied), confirmed DCE38 remains the fixed service
+  signer, and verified per-subject owner revision selection. Full test suite
+  724 passed; ruff clean. Verdict PASS recorded as an append-only evidence
+  link, with SHA256-hashed review report, on the shared CardStore.
+
 ### Fixed
 
 - Card `c1a1c003`: atomic task creation resolves identity in the canonical
