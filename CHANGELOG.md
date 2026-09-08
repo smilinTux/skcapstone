@@ -1,5 +1,11 @@
 # Changelog
 
+- **PR 516: child-progress lease watchdog.** Added deterministic child-progress
+  lease observation and classification so progress leases are evaluated
+  independently from wrapper heartbeats. A live wrapper heartbeat therefore does
+  not mask an expired child-progress lease; the watchdog remains observational
+  and does not release claims or terminate workers.
+
 - **Card `1b84d7f4`: Cursor Agent YOLO default.** Added `SK_CURSOR_YOLO`
   (default on) so the SK agent picker launches Cursor Agent CLI (`agent` /
   `cursor-agent`) with `--yolo`, plus doctor harness checks and docs aligned
