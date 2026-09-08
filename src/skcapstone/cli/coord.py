@@ -70,6 +70,53 @@ def register_coord_commands(main: click.Group) -> None:
     register_coord_amend_commands(coord)
     register_portfolio_plan_command(coord)
 
+    @coord.command("validate-store")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_validate_store(home):
+        """Report every malformed structural CardStore JSONL line.
+
+        Output is one JSON object per finding and contains no event payload:
+        only card, relative file, physical line, exact-byte SHA-256, and parser
+        reason. The scan is exhaustive and read-only. A finding exits 1.
+        """
+        import json
+
+        from skcoord.card_store_validator import find_malformed_cardstore_lines
+
+        findings = find_malformed_cardstore_lines(Path(home).expanduser())
+        for finding in findings:
+            click.echo(json.dumps(finding.as_dict(), sort_keys=True))
+        if findings:
+            raise click.exceptions.Exit(1)
+
+    @coord.command("get")
+    @click.argument("card_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--json", "as_json", is_flag=True, help="Emit deterministic JSON for automation.")
+    def coord_get(card_id, home, as_json):
+        """Read one folded card without appending or mutating anything.
+
+        Use GET for reads.  ``describe`` is a write-only amendment command.
+        """
+        import json
+
+        if not card_id or len(card_id) > 64 or any(c not in "0123456789abcdefABCDEF-" for c in card_id):
+            raise click.ClickException("invalid_card_id: card ID must contain only hex characters and hyphens")
+        from skcoord.card_store import CardStore
+        try:
+            card = CardStore(Path(home).expanduser()).fold(card_id)
+        except (ValueError, OSError) as exc:
+            raise click.ClickException(f"malformed_card: {exc}") from exc
+        if card is None:
+            raise click.ClickException(f"card_not_found: {card_id}")
+        payload = card.model_dump(mode="json")
+        if as_json:
+            click.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        else:
+            click.echo(f"{payload['id']} [{payload['status']}] {payload['title']}")
+            click.echo(f"kind={payload['kind']} priority={payload['priority']} owner={payload['owner'] or '-'}")
+            click.echo(f"updated_at={payload['updated_at'] or '-'}")
+
     @coord.command("status")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--tag", multiple=True, help="Only tasks carrying this tag (repeatable).")
