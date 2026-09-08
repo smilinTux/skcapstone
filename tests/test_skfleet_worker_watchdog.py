@@ -8,11 +8,10 @@ import skcapstone.fleet.worker_watchdog as worker_watchdog
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_HEARTBEAT_TIMEOUT_S,
     DEFAULT_TRANSPORT_TIMEOUT_S,
-    ChildLeaseConfig,
-    ChildLeaseObservation,
-    evaluate_child_lease,
     HOST_LOCAL_BEAT_NOTICE_S,
     MEASURED_CROSS_HOST_P95_S,
+    ChildLeaseConfig,
+    ChildLeaseObservation,
     GatewayRequest,
     StartupObservation,
     WorkerClassification,
@@ -22,6 +21,7 @@ from skcapstone.fleet.worker_watchdog import (
     classify_worker,
     correlate_request,
     duplicate_worker_owners,
+    evaluate_child_lease,
     startup_actuation_fenced,
     summarize_workers,
 )

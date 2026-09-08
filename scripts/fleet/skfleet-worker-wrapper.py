@@ -16,7 +16,12 @@ import threading
 import time
 from pathlib import Path
 
-from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
+from skcapstone.fleet.child_progress_monitor import monitor_child_progress
+from skcapstone.fleet.worker_watchdog import (
+    ChildLeaseConfig,
+    StartupObservation,
+    classify_startup,
+)
 
 
 def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObservation:
@@ -315,7 +320,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mail-recipient", default="jarvis")
     parser.add_argument("--session", default="")
     parser.add_argument("--worker-executable", default="")
+    parser.add_argument("--unit", default="")
+    parser.add_argument("--human-gate", action="store_true")
+    parser.add_argument("--side-effects", action="store_true")
     parser.add_argument("--startup-timeout", type=float, default=120.0)
+    parser.add_argument("--first-output-timeout", type=float, default=300.0)
+    parser.add_argument("--provider-response-timeout", type=float, default=600.0)
+    parser.add_argument("--progress-timeout", type=float, default=900.0)
+    parser.add_argument("--observation-interval", type=float, default=5.0)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command[:1] == ["--"]:
@@ -324,6 +336,17 @@ def parse_args() -> argparse.Namespace:
         parser.error("child command is required")
     if args.startup_timeout <= 0 or not args.startup_timeout < float("inf"):
         parser.error("startup timeout must be finite and positive")
+    try:
+        args.child_lease_config = ChildLeaseConfig(
+            startup_s=args.startup_timeout,
+            first_output_s=args.first_output_timeout,
+            provider_response_s=args.provider_response_timeout,
+            progress_s=args.progress_timeout,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not 0 < args.observation_interval <= 60:
+        parser.error("observation interval must be in (0, 60]")
     return args
 
 
@@ -349,6 +372,7 @@ def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
     args.started_at = int(time.time())
+    args.started_monotonic = time.monotonic()
     preflight = preflight_worktree()
     if preflight == 2:
         write_startup_report(args, os.getpid(), "startup-preflight-blocked")
@@ -364,14 +388,34 @@ def main() -> int:
     signal.signal(signal.SIGINT, _stop)
     startup_stop = threading.Event()
     startup_thread = None
+    progress_stop = threading.Event()
+    progress_thread = None
     try:
         with args.stdout.open("wb") as stdout:
-            child = subprocess.Popen(args.command, stdout=stdout, stderr=subprocess.PIPE)
+            child_env = os.environ.copy()
+            child_env.update(
+                {
+                    "SKAGENT": args.owner,
+                    "SKFLEET_CARD_ID": args.card,
+                    "SKFLEET_CLAIM_REVISION": args.claim_revision,
+                    "SKFLEET_SESSION_ID": args.session,
+                }
+            )
+            child = subprocess.Popen(
+                args.command, stdout=stdout, stderr=subprocess.PIPE, env=child_env
+            )
             if args.session and args.worker_executable:
                 startup_thread = threading.Thread(
                     target=monitor_startup, args=(args, child, startup_stop), daemon=True
                 )
                 startup_thread.start()
+            if getattr(args, "unit", ""):
+                progress_thread = threading.Thread(
+                    target=monitor_child_progress,
+                    args=(args, child, progress_stop, startup_observation),
+                    daemon=True,
+                )
+                progress_thread.start()
             _, stderr = child.communicate()
         sys.stderr.buffer.write(stderr)
         record_terminal_exit(args, stderr, child.returncode)
@@ -383,8 +427,11 @@ def main() -> int:
         return child.returncode
     finally:
         startup_stop.set()
+        progress_stop.set()
         if startup_thread:
             startup_thread.join(timeout=6)
+        if progress_thread:
+            progress_thread.join(timeout=6)
         # Always idle the worker projection on any exit path, including SIGTERM.
         idle_owner_projection(args.owner)
 
