@@ -1,0 +1,44 @@
+# SKCAPSTONE-BRANCH-GATE-01: main-branch merge gate (GitHub branch protection).
+#
+# Applies to the skcapstone repository's `main` branch. This file is the
+# machine-checkable contract for the merge gate; apply it via the GitHub UI
+# (Settings > Branches > Add branch protection rule) or the REST API.
+#
+# The unit-test jobs (py3.11 and py3.12) come from .github/workflows/pytest.yml
+# (job `unit`), which already runs the full suite on both Python versions.
+# Requiring their TERMINAL SUCCESS means: a PR cannot merge while either job
+# is pending or failed, and can merge only after both pass. All existing
+# required checks (lint, build, shim-imports, docs-check, gitleaks, providers)
+# are preserved as required status checks.
+
+repo: smilinTux/skcapstone
+branch: main
+
+protection:
+  required_status_checks:
+    # Terminal success of the Python 3.11 and 3.12 unit-test matrix.
+    - "unit tests (py3.11)"
+    - "unit tests (py3.12)"
+    # Existing required checks, preserved:
+    - lint
+    - build
+    - "shim-imports"
+    - "docs / docs-check"
+    - gitleaks
+    - "provider tests (cloud)"
+    - "provider tests (docker)"
+  require_pull_request_reviews:
+    required_approving_review_count: 1
+  restriction:
+    allow:
+      - smilinTux/skcapstone[write]
+    deny:
+      - bot[write]
+    description: main is protected; only maintainers can push directly.
+
+# Rollback target: the prior exact ruleset is recorded under
+# ~/.skcapstone/evidence/smilinTux/skcapstone/ruleset-*.json (see
+# `skcapstone fleet ruleset-inventory`). If the gate misbehaves, restore the
+# recorded snapshot with `skcapstone fleet ruleset-rollback`.
+rollback:
+  prior_snapshot: "~/.skcapstone/evidence/smilinTux/skcapstone/ruleset-<captured>.json"
