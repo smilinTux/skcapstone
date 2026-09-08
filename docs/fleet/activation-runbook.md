@@ -103,12 +103,16 @@ the named unit, exact rollback action, and a future expiry.
 
 ## 4. Tank and Seraph
 
-Tank and Seraph are enabled as card-scoped workers, not permanent daemons.
-Tank executes only an exact approved release or deployment card with pinned
-artifact and rollback evidence. Seraph independently verifies candidate,
-release, deployment, health, rollback, and rerun behavior. Their ordinary
-card work is automatic and notify-only; production authority remains an
-external gate.
+Tank is enabled as a card-scoped worker, not a permanent daemon. Tank executes
+only an exact approved release or deployment card with pinned artifact and
+rollback evidence.
+
+Seraph uses the bounded `skfleet-seraph.timer` on the active control-plane
+host. Each invocation may claim and launch at most one canonical review card,
+and the launched reviewer must be independent of the candidate producer.
+Seraph independently verifies candidate, release, deployment, health,
+rollback, and rerun behavior. Ordinary review work is automatic and
+notify-only; production authority remains an external gate.
 
 ## 5. ATLAS and Jarvis
 
@@ -133,6 +137,7 @@ The initial review `c4e7a9b3` failed closed on a stale-card fence. Rereview
 passed the final candidate. The 2026-09-06 cutover disabled the legacy
 `skfleet-rotate.timer` before enabling `skfleet-niobe-live.timer`, so there is
 only one live dispatcher. The read-only shadow timer remains enabled. Tank
-and Seraph roll back through their card-pinned artifact procedure. A feed
-failure disables Link's eligibility input; it does not trigger GitHub
-mutations.
+rolls back through its card-pinned artifact procedure. Seraph rolls back by
+disabling `skfleet-seraph.timer`, preserving append-only review evidence, and
+reverting its pinned source commit. A feed failure disables Link's eligibility
+input; it does not trigger GitHub mutations.
