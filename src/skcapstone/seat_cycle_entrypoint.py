@@ -311,14 +311,20 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     feed_path = args.observation_feed or args.home / "coordination" / "link-observations.json"
     if args.seat == "mero":
+
         def operation() -> dict[str, int]:
             return mero_operation(args.home)
+
     elif args.seat == "seraph":
+
         def operation() -> dict[str, int | str]:
             return seraph_operation(args.home)
+
     else:
+
         def operation() -> dict[str, int | str]:
             return link_operation(args.home, feed_path)
+
     summary = run_cycle(
         seat=args.seat,
         home=args.home,
