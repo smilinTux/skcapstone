@@ -99,20 +99,30 @@ def review_drain(cards: list[Any]) -> dict[str, Any]:
 
 
 def propagation_watch() -> dict[str, Any]:
-    missing = []
+    """Check every card's two structural files on every host.
+
+    This deliberately never copies or mutates remote state.  The rotation's
+    propagation worker owns that action; this report is its trigger and audit
+    trail.
+    """
     cards_root = HOME / "cards"
+    card_ids = sorted(p.name for p in cards_root.iterdir() if p.is_dir()) if cards_root.is_dir() else []
+    missing: dict[str, list[str]] = {}
     for host in HOSTS:
-        # Read-only probe. Direct SSH copy remains fenced and is only reported.
-        check = f"test -d {cards_root} && find {cards_root} -name core.json -type f -print -quit | grep -q ."
-        cmd = ["bash", "-lc", check] if host in {os.uname().nodename, "localhost"} else ["ssh", host, "bash", "-lc", check]
+        checks = " && ".join(
+            f"test -f {cards_root / card_id / 'core.json'} && test -d {cards_root / card_id / 'events'}"
+            for card_id in card_ids
+        ) or "true"
+        cmd = ["bash", "-lc", checks] if host in {os.uname().nodename, "localhost"} else ["ssh", host, "bash", "-lc", checks]
         try:
             failed = subprocess.run(cmd, capture_output=True, timeout=15).returncode != 0
         except (OSError, subprocess.TimeoutExpired):
             failed = True
         if failed:
-            missing.append(host)
-    return {"hosts": list(HOSTS), "missing": missing, "complete": not missing,
-            "alert": bool(missing), "fallback_due": bool(missing)}
+            missing[host] = card_ids
+    return {"hosts": list(HOSTS), "cards": len(card_ids), "missing": missing,
+            "complete": not missing, "alert": bool(missing),
+            "fallback_due": bool(missing), "action": "direct_ssh_copy" if missing else None}
 
 
 def launch_health() -> dict[str, Any]:
@@ -138,12 +148,27 @@ def launch_health() -> dict[str, Any]:
 
 def pool_starvation(cards: list[Any]) -> dict[str, Any]:
     counts: dict[str, int] = {}
+    stuck_cards: list[dict[str, Any]] = []
     for card in cards:
-        status = str(_card_dict(card).get("status", "unknown")).lower()
+        d = _card_dict(card)
+        status = str(d.get("status", "unknown")).lower()
         counts[status] = counts.get(status, 0) + 1
+        if status in {"review", "backoff"}:
+            meta = d.get("meta") or {}
+            reviewers = meta.get("reviewers", meta.get("reviewer_claims", []))
+            if status == "review" and not reviewers:
+                action = "dispatch_reviewer" if meta.get("pass_for_review_evidence") else "redispatch_producer"
+                stuck_cards.append({"card": d.get("id"), "status": status, "action": action})
+            elif status == "backoff" and meta.get("retryable", True):
+                stuck_cards.append({"card": d.get("id"), "status": status, "action": "retry_backoff"})
     ready = counts.get("ready", 0)
-    return {"ready": ready, "threshold": 3, "starved": ready < 3, "ineligible": counts,
-            "classification": "healthy" if counts.get("review", 0) + counts.get("backoff", 0) else "stuck"}
+    starved = ready < 3
+    return {"ready": ready, "threshold": 3, "starved": starved, "ineligible": counts,
+            "duration_minutes": float(os.environ.get("SKFLEET_POOL_STARVATION_MINUTES", "0")),
+            "alert": starved and float(os.environ.get("SKFLEET_POOL_STARVATION_MINUTES", "0")) >= 15,
+            "classification": "stuck" if stuck_cards else "healthy",
+            "stuck_cards": stuck_cards,
+            "highest_return_action": stuck_cards[0]["action"] if stuck_cards else None}
 
 
 def run(apply: bool = False) -> dict[str, Any]:
