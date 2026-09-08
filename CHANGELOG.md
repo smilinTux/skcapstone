@@ -84,6 +84,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Card `4388d7d6`: added deterministic, source-only card-slicing preflight that
+  keeps active and review custody advisory and bounds recommendations to five
+  dependency-linked leaves without mutating CardStore or scheduler state.
+
 - Card `5a71c2db`: added metadata-only SKRSI target revisions, canonical
   hash-bound architecture records, redaction and fail-closed validation, and
   an append-only idempotent outbox with retention and acknowledgement cursors.
