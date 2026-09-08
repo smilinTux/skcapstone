@@ -1,0 +1,34 @@
+# Sensitive repository controls require review by both repository administrators.
+# Keep these rules path-specific so ordinary application changes are unaffected.
+
+/.github/ @dounoit @chefboyrdave21
+/.forgejo/ @dounoit @chefboyrdave21
+
+/deploy/ @dounoit @chefboyrdave21
+/docker/ @dounoit @chefboyrdave21
+/installer/ @dounoit @chefboyrdave21
+/launchd/ @dounoit @chefboyrdave21
+/systemd/ @dounoit @chefboyrdave21
+/data/systemd/ @dounoit @chefboyrdave21
+/docs/deploy-plan/ @dounoit @chefboyrdave21
+
+/pyproject.toml @dounoit @chefboyrdave21
+/MANIFEST.in @dounoit @chefboyrdave21
+/scripts/build_reproducible.py @dounoit @chefboyrdave21
+/scripts/bump_version.py @dounoit @chefboyrdave21
+/scripts/release.sh @dounoit @chefboyrdave21
+
+/src/skcapstone/change_deploy.py @dounoit @chefboyrdave21
+/src/skcapstone/key_io.py @dounoit @chefboyrdave21
+/src/skcapstone/kms.py @dounoit @chefboyrdave21
+/src/skcapstone/message_crypto.py @dounoit @chefboyrdave21
+/src/skcapstone/operator_seat/ @dounoit @chefboyrdave21
+/src/skcapstone/seat_boundaries.py @dounoit @chefboyrdave21
+/src/skcapstone/seat_runtime.py @dounoit @chefboyrdave21
+/src/skcapstone/send_authority.py @dounoit @chefboyrdave21
+/src/skcapstone/sync_policy/ @dounoit @chefboyrdave21
+
+/.gitleaks.toml @dounoit @chefboyrdave21
+/config/ @dounoit @chefboyrdave21
+/SECURITY.md @dounoit @chefboyrdave21
+/SOP.md @dounoit @chefboyrdave21
