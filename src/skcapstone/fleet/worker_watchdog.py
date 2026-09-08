@@ -25,6 +25,7 @@ WORKER_STATES = frozenset(
         "transport-stale",
         "worker-stale",
         "telemetry-fault",
+        "hung",
     }
 )
 MEASURED_CROSS_HOST_P95_S = 292.336
@@ -57,6 +58,13 @@ class WorkerObservation:
     heartbeat_received_at: str | None = None
     observer_host: str | None = None
     unit_active: bool | None = None
+    # Heartbeats establish reachability, not progress.  Callers that monitor
+    # an active worker set progress_required and provide either fresh
+    # executable progress or terminal evidence.
+    progress_required: bool = False
+    executable_progress_at: str | None = None
+    terminal_evidence: bool = False
+    progress_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +82,8 @@ class WorkerClassification:
     lane: str | None = None
     model: str | None = None
     releasable: bool = False
+    progress_at: str | None = None
+    terminal_evidence: bool = False
 
 
 @dataclass(frozen=True)
@@ -253,6 +263,8 @@ def _result(
         reason,
         *_identity(observation),
         releasable=releasable,
+        progress_at=observation.executable_progress_at,
+        terminal_evidence=observation.terminal_evidence,
     )
 
 
@@ -327,10 +339,30 @@ def classify_worker(
                 "transport-stale",
                 releasable=False,
             )
+        if observation.progress_required and not observation.terminal_evidence:
+            progress = _parse_time(observation.executable_progress_at)
+            if progress is None or (current - progress).total_seconds() > heartbeat_timeout_s:
+                return _result(observation, "hung", "heartbeat-live-no-progress", releasable=False)
+        if observation.terminal_evidence:
+            return _result(observation, "exited", "terminal-evidence", releasable=False)
         return _result(observation, "running", "heartbeat-fresh")
 
     if source_age > heartbeat_timeout_s:
         return _result(observation, "worker-stale", "worker-stale", releasable=False)
+
+    # A heartbeat is a liveness signal only.  For active monitoring, require
+    # an independently timestamped executable marker (or terminal evidence)
+    # within the bounded progress window.  This is deliberately a pure
+    # classification: release remains the caller's exact-generation decision.
+    if observation.progress_required and not observation.terminal_evidence:
+        progress = _parse_time(observation.executable_progress_at)
+        if progress is None:
+            return _result(observation, "hung", "heartbeat-live-no-progress", releasable=False)
+        progress_age = (current - progress).total_seconds()
+        if progress_age < 0 or progress_age > heartbeat_timeout_s:
+            return _result(observation, "hung", "heartbeat-live-no-progress", releasable=False)
+    if observation.terminal_evidence:
+        return _result(observation, "exited", "terminal-evidence", releasable=False)
     return _result(observation, "running", "heartbeat-fresh")
 
 

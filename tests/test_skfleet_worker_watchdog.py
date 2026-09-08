@@ -107,6 +107,24 @@ INVARIANT = (
 )
 
 
+def test_heartbeat_without_progress_is_hung_and_progress_or_terminal_is_live():
+    hung = worker_watchdog.classify_worker(
+        _worker(progress_required=True), now=NOW
+    )
+    assert (hung.state, hung.reason, hung.releasable) == (
+        "hung", "heartbeat-live-no-progress", False
+    )
+    progressing = worker_watchdog.classify_worker(
+        _worker(progress_required=True, executable_progress_at="2026-09-04T13:59:45Z"),
+        now=NOW,
+    )
+    assert progressing.state == "running"
+    terminal = worker_watchdog.classify_worker(
+        _worker(progress_required=True, terminal_evidence=True), now=NOW
+    )
+    assert (terminal.state, terminal.reason) == ("exited", "terminal-evidence")
+
+
 def _worker(**changes: object) -> WorkerObservation:
     values: dict[str, object] = {
         "owner": "pi-codex-chiap08-abcd1234",
