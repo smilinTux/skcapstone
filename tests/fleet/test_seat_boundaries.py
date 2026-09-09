@@ -149,6 +149,7 @@ def test_niobe_fleet_authority_does_not_imply_application_actuation() -> None:
     [
         Action.CREATE_CARD,
         Action.CLAIM,
+        Action.MOVE_CARD,
         Action.COMPLETE_CARD,
         Action.LAUNCH,
         Action.MERGE,

@@ -965,17 +965,31 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--order", default=None, type=int, help="Position within the column.")
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_move(task_id, column, home, order, agent):
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_move(task_id, column, home, order, agent, casey_authorization, casey_change_id):
         """Move a card to a kanban column (backlog/ready/doing/review/done)."""
         home_path = Path(home).expanduser()
         from skcoord.lifecycle import transition_task
+
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        actor = agent or "coord-move"
+        authorize_jarvis_entrypoint(
+            actor,
+            Action.MOVE_CARD,
+            f"{task_id}:{column}",
+            casey_authorization,
+            casey_change_id,
+        )
 
         try:
             receipt = transition_task(
                 home_path,
                 task_id=task_id,
                 column=column,
-                actor=agent or "coord-move",
+                actor=actor,
                 order=order,
             )
         except (OSError, RuntimeError, ValueError) as exc:

@@ -122,6 +122,8 @@ TOOLS: list[Tool] = [
                 },
                 "order": {"description": "Position within the column", "type": "integer"},
                 "task_id": {"description": "The card/task ID", "type": "string"},
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
             },
             "required": ["task_id", "column"],
             "type": "object",
@@ -424,12 +426,27 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
     if column not in {c.value for c in Column}:
         return _error_response(f"invalid column '{column}'")
 
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..seat_boundaries import Action
+
+    actor = args.get("agent", "") or "coord-move"
+    auth = args.get("casey_authorization")
+
     try:
+        authorize_jarvis_entrypoint(
+            actor,
+            Action.MOVE_CARD,
+            f"{task_id}:{column}",
+            Path(auth) if auth else None,
+            args.get("casey_change_id"),
+        )
         receipt = transition_task(
             _shared_root(),
             task_id=task_id,
             column=column,
-            actor=args.get("agent", "") or "coord-move",
+            actor=actor,
             order=args.get("order"),
         )
     except (OSError, RuntimeError, ValueError) as exc:

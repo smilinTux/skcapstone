@@ -51,6 +51,7 @@ class Action(StrEnum):
     DEPLOY = "deploy"
     ACTUATE_APPLICATION = "actuate_application"
     CREATE_CARD = "create_card"
+    MOVE_CARD = "move_card"
     COMPLETE_CARD = "complete_card"
     RELEASE_ARTIFACT = "release_artifact"
     VERIFY = "verify"
@@ -96,6 +97,7 @@ _ALLOWED = {
             Action.ROTATE,
             Action.REPAIR_WORKER,
             Action.CREATE_CARD,
+            Action.MOVE_CARD,
             Action.COMPLETE_CARD,
             Action.MERGE,
             Action.DEPLOY,

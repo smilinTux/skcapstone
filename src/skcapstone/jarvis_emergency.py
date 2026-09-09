@@ -100,6 +100,9 @@ class JarvisEmergencyGateway:
     def claim_card(self, target: str, /, *args: Any, **kwargs: Any) -> Any:
         return self._run(Action.CLAIM, target, *args, **kwargs)
 
+    def move_card(self, target: str, /, *args: Any, **kwargs: Any) -> Any:
+        return self._run(Action.MOVE_CARD, target, *args, **kwargs)
+
     def complete_card(self, target: str, /, *args: Any, **kwargs: Any) -> Any:
         return self._run(Action.COMPLETE_CARD, target, *args, **kwargs)
 

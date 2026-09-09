@@ -35,6 +35,7 @@ def _envelope(action: Action, *, issuer: str = "casey", target: str = TARGET):
 ENTRYPOINTS = [
     ("create_card", Action.CREATE_CARD),
     ("claim_card", Action.CLAIM),
+    ("move_card", Action.MOVE_CARD),
     ("complete_card", Action.COMPLETE_CARD),
     ("fleet", Action.LAUNCH),
     ("merge", Action.MERGE),

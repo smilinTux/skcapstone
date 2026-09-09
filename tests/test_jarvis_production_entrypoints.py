@@ -30,6 +30,68 @@ def test_mcp_complete_fails_before_board_mutation_for_unsigned_jarvis(
     assert "casey-authorization" in response[0].text
 
 
+def test_cli_move_fails_before_board_mutation_for_unsigned_jarvis(tmp_path) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "move",
+            "deadbeef",
+            "doing",
+            "--home",
+            str(tmp_path),
+            "--agent",
+            "jarvis",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--casey-authorization" in str(result.exception)
+
+
+def test_cli_move_does_not_gate_non_jarvis_actor(tmp_path) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "move",
+            "deadbeef",
+            "doing",
+            "--home",
+            str(tmp_path),
+            "--agent",
+            "link",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "casey-authorization" not in str(result.exception)
+
+
+def test_mcp_move_fails_before_board_mutation_for_unsigned_jarvis(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
+    response = asyncio.run(
+        call_tool(
+            "coord_move",
+            {"task_id": "deadbeef", "column": "doing", "agent": "jarvis"},
+        )
+    )
+
+    assert "casey-authorization" in response[0].text
+
+
+def test_mcp_move_does_not_gate_non_jarvis_actor(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
+    response = asyncio.run(
+        call_tool(
+            "coord_move",
+            {"task_id": "deadbeef", "column": "doing", "agent": "link"},
+        )
+    )
+
+    assert "casey-authorization" not in response[0].text
+
+
 def test_sdk_create_fails_before_board_mutation_for_unsigned_jarvis(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(sdk, "_shared_home", lambda: tmp_path)
 
