@@ -34,8 +34,10 @@ observations, not permission to release a claim. Existing exact-generation
 release and worker shutdown fences remain authoritative.
 
 If a claimed receipt cannot be persisted, Niobe releases only the exact claim
-generation and does not launch. If a launch receipt cannot be persisted, Niobe
-stops the just-created unit and releases that exact claim generation.
+generation and does not launch. If a launch receipt cannot be persisted after
+the detached unit exists, Niobe leaves the exact unit and claim intact. The
+next reconciliation cycle recovers its occupancy receipt from process and
+claim truth. The launcher never adds a broad worker stop surface.
 
 ## Producer example
 

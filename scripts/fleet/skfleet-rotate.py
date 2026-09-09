@@ -4818,13 +4818,6 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 claim_owner=name,claim_revision=claimed_revision,
                 process={"host":HOST,"session":sess,"unit":unit,"alive":ok})
         except (FanoutBoundaryError, OSError, ValueError) as exc:
-            if ok:
-                stopped=subprocess.run(
-                    ["systemctl","--user","stop",unit],capture_output=True,text=True)
-                if stopped.returncode==0:
-                    ok=False
-                else:
-                    log(d,"FANOUT_STOP_FAILED|%s|%s|unit=%s"%(HOST,cid,unit))
             log(d,"FANOUT_LAUNCH_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
     if _review_recommendation is not None:
         _observation_evidence = hashlib.sha256(
