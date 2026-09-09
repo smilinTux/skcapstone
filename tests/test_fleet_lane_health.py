@@ -291,7 +291,7 @@ def test_endpoint_failure_and_revision_failure_seal_fail_closed_evidence(tmp_pat
 def test_rotate_checks_same_cycle_admission_before_claim() -> None:
     source = (Path(__file__).resolve().parents[1] / "scripts/fleet/skfleet-rotate.py").read_text()
     acquire = source.index("_lane_health_snapshot=acquire_lane_snapshot(")
-    selection = source.index("while _i<len(owned)")
+    selection = source.index("while _i<len(owned) and _i<len(_candidate_scan)")
     preclaim = source.index("admitted,health_reason=_health_for(")
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"')
     assert acquire < selection < preclaim < claim
