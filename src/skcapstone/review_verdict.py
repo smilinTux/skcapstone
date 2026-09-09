@@ -48,7 +48,7 @@ _OUTCOME_KEY_RE = re.compile(
     r"(verdict|outcome|result|disposition|review_decision)", re.IGNORECASE
 )
 _CHECK_KEY_RE = re.compile(r"(?:^|_)(?:check|checks|ci)(?:_|$)", re.IGNORECASE)
-_SUCCESS_CHECK_STATES = frozenset({"success", "successful", "passed", "pass"})
+_SUCCESS_CHECK_STATE = "SUCCESS"
 _REQUIRED_CI_LINK_KEYS = frozenset(
     {
         "ci_check_docs",
@@ -146,7 +146,7 @@ def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
     return sorted(
         key
         for key in _REQUIRED_CI_LINK_KEYS
-        if key not in latest or str(latest[key][1]).strip().lower() not in _SUCCESS_CHECK_STATES
+        if key not in latest or latest[key][1] != _SUCCESS_CHECK_STATE
     )
 
 

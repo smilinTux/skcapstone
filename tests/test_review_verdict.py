@@ -171,19 +171,58 @@ def test_every_non_success_required_check_state_blocks_completion(tmp_path, stat
         validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
 
 
-@pytest.mark.parametrize("state", ["success", "successful", "passed", "pass"])
-def test_canonical_success_required_check_states_allow_completion(tmp_path, state):
+@pytest.mark.parametrize("title", ["[X][REVIEW] review", "[X][REREVIEW] rereview"])
+def test_exact_canonical_success_allows_completion(tmp_path, title):
     home = _home(
         tmp_path,
         "bbbbbbbb",
-        "[X][REVIEW] review",
+        title,
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00"),
+            *_SUCCESSFUL_CI[:-1],
+            ("ci_check_python312", "SUCCESS", "2026-08-28T03:02:00"),
+        ],
+    )
+    validate_review_completion("bbbbbbbb", title, home)
+
+
+@pytest.mark.parametrize("title", ["[X][REVIEW] review", "[X][REREVIEW] rereview"])
+@pytest.mark.parametrize(
+    "state",
+    [
+        "PASS",
+        "PASSED",
+        "SUCCESSFUL",
+        "SUCCESS extra",
+        "SUCCESSFUL_PREFIX",
+        "success",
+        "Success",
+        " success ",
+        "UNKNOWN",
+        "",
+        "IN_PROGRESS",
+        "PENDING",
+        "QUEUED",
+        "WAITING",
+        "FAILURE",
+        "CANCELLED",
+        "SKIPPED",
+        "TIMED_OUT",
+    ],
+)
+def test_noncanonical_required_check_states_fail_closed(tmp_path, title, state):
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        title,
         [
             ("verdict", "PASS", "2026-08-28T03:00:00"),
             *_SUCCESSFUL_CI[:-1],
             ("ci_check_python312", state, "2026-08-28T03:02:00"),
         ],
     )
-    validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
+    with pytest.raises(ValueError, match="ci_check_python312"):
+        validate_review_completion("bbbbbbbb", title, home)
 
 
 def test_later_green_check_allows_terminal_pass(tmp_path):
@@ -195,7 +234,7 @@ def test_later_green_check_allows_terminal_pass(tmp_path):
             ("verdict", "PASS", "2026-08-28T03:00:00"),
             *_SUCCESSFUL_CI[:-1],
             ("ci_check_python312", "pending", "2026-08-28T03:01:00"),
-            ("ci_check_python312", "success", "2026-08-28T03:02:00"),
+            ("ci_check_python312", "SUCCESS", "2026-08-28T03:02:00"),
         ],
     )
     validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
