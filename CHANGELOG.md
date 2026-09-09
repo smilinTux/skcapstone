@@ -11,6 +11,8 @@
   atomic cross-card source-head reservation, verified runtime-seat authority,
   exact claim and launch receipts, and request plus claim-generation-bound
   recovery receipts.
+  Also allow the shared SKRSI handoff ledger to wait through bounded transient
+  SQLite writer contention instead of failing concurrent fan-out admission.
 
 - Cards `2e6bb78e` and `30c6909d`: add role-bounded lifecycle-seat fan-out
   allocation with source-head deduplication, the `sk-codex-mid` child default,
