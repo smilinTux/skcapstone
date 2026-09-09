@@ -300,6 +300,62 @@ def test_handoff_admission_waits_through_transient_sqlite_writer_contention(tmp_
         blocker.close()
 
 
+def test_link_materialization_waits_for_bounded_sqlite_contention(tmp_path):
+    runtime = executor(tmp_path)
+    api = facade(runtime)
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    locked = threading.Event()
+
+    def hold_lock():
+        with sqlite3.connect(runtime.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            locked.set()
+            time.sleep(0.15)
+
+    thread = threading.Thread(target=hold_lock)
+    thread.start()
+    assert locked.wait(1)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(
+            pool.map(lambda _: api.review(home, item, "4" * 64, revision="revision-1"), range(16))
+        )
+    thread.join()
+    assert len({result["review_card_id"] for result in results}) == 1
+    store = CardStore(home)
+    review = results[0]["review_card_id"]
+    assert len(store.list_cards()) == 2
+    assert (
+        sum(
+            event["action"] == "review_assignment_recommendation"
+            for event in store._read_events(review)
+        )
+        == 1
+    )
+    assert store.fold(review).owner is None
+
+
+def test_handoff_contention_fails_closed_after_bounded_wait(tmp_path, monkeypatch):
+    runtime = executor(tmp_path)
+    monkeypatch.setattr("skcapstone.skrsi_handoffs._SQLITE_BUSY_TIMEOUT_MS", 25)
+    with sqlite3.connect(runtime.path) as blocker:
+        blocker.execute("BEGIN IMMEDIATE")
+        started = time.monotonic()
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            runtime.execute(
+                "evidence-to-review",
+                "source01+revision-1",
+                "4" * 64,
+                lambda: {"unexpected": True},
+                authorize=lambda: True,
+                quality=lambda: True,
+                authority=lambda: "revision-1",
+                expected_revision="revision-1",
+            )
+        assert time.monotonic() - started < 0.5
+    assert runtime.read("evidence-to-review", "source01+revision-1") is None
+
+
 def test_consumers_enforce_contract_limits_and_bad_projection(tmp_path):
     runtime = executor(tmp_path, queue_bound=1)
     api = facade(runtime)

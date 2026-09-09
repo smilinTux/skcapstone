@@ -412,6 +412,14 @@ def _verify_source_workspace(path, repository, base_ref, runner=subprocess.run):
         raise ValueError("workspace HEAD does not match fetched base_ref")
 
 
+def _preclaim_source_ref(repository, base_ref, runner=subprocess.run):
+    """Check reconstructability before creating a reviewer workspace."""
+    result = runner(["git", "ls-remote", "--exit-code", repository, base_ref],
+                    capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError("reconstructability_blocked: exact source ref absent from credential-free remote")
+
+
 def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     """Materialize one source checkout atomically before a worker is claimed."""
     configured = os.environ.get("SKFLEET_WORKSPACE")
@@ -937,11 +945,27 @@ def publish_live(sessions, units=()):
         os.makedirs(LIVE, exist_ok=True)
         p = os.path.join(LIVE, HOST + ".json")
         tmp = p + ".new"
+        workers = []
+        for card in cards:
+            try:
+                folded = CardStore(Path(HOME) / ".skcapstone").fold(card)
+                owner = str(getattr(folded, "owner", "") or "")
+                revision = str(getattr(folded, "meta", {}).get("_claim_revision") or "")
+                if owner and revision:
+                    workers.append({
+                        "card_id": card,
+                        "owner": owner,
+                        "claim_revision": revision,
+                    })
+            except (OSError, TypeError, ValueError):
+                # Unresolved identity remains represented in cards and occupied.
+                continue
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({
                 "host": HOST,
                 "ts": time.time(),
                 "cards": cards,
+                "workers": workers,
                 "lanes": {
                     lane.get("name", lane.get("prefix", "unknown").rstrip("-")): {
                         "target": lane.get("target", 0),
@@ -4706,6 +4730,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 % _fanout_env)
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
+        _source_spec = _source_workspace_spec(
+            fresh_claimability["core"], fresh_claimability["labels"]
+        )
+        if _source_spec is not None:
+            _preclaim_source_ref(*_source_spec)
         workspace=_materialize_worker_workspace(
             default_workspace,
             fresh_claimability["core"],
@@ -4748,15 +4777,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 capture_output=True,text=True)
             log(d,"FANOUT_CLAIM_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
             continue
-    # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
-    # returns normally. Releasing only after the Pi command leaves a dead claim
-    # in that case and drains the assignable pool. Bind cleanup to this exact
-    # claim generation so it cannot release a newer same-owner worker.
+    # The wrapper owns exact-generation release and snapshot retirement under
+    # one CardStore fence. The child must never release independently.
     _bi = _beat_interval()
     _bf_path = "~/.skcapstone/fleet/beats/" + name + ".json"
     child=(
-        "release_claim() { %s coord release-claim %s --owner %s "
-        "--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; "
         "idle_agent() { python3 -c \"import json,datetime;from pathlib import Path;"
         "p=Path.home()/'.skcapstone/coordination/agents'/('%s.json');"
         "d=json.loads(p.read_text());"
@@ -4777,8 +4802,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "sleep %s & wait $!; done; }; "
         "beat & BEAT=$!; "
         "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; }; "
-        'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
-        'trap "stop_beat; release_claim; idle_agent" EXIT; '
+        'trap "stop_beat; idle_agent; exit 143" HUP INT TERM; '
+        'trap "stop_beat; idle_agent" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s "
         "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s "
         "SKFLEET_FANOUT_REQUEST_ID=%s SKFLEET_FANOUT_REQUESTER=%s "
@@ -4786,9 +4811,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "%s --approve --extension %s --name %s "
         "--provider skgateway --model %s --thinking off --no-context-files --no-skills --tools %s "
         '-p "$(cat %s)"; '
-        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; idle_agent; exit $rc"
-        % (SKC, cid, name, claimed_revision, name,
-           name,
+        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; idle_agent; exit $rc"
+        % (name,
            name, cid, claimed_revision, sess,
            _bf_path, _bf_path, _bf_path,
            _bi,
@@ -4804,6 +4828,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
         "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--live-snapshot",os.path.join(LIVE, HOST + ".json"),
         "--session",sess,"--worker-executable",PI,
         "--","bash","-lc",child,
     ]
