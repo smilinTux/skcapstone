@@ -143,8 +143,10 @@ def authorize_link_merge(
             failures.append("candidate-patch-changed")
         if not protected.mergeable:
             failures.append("not-mergeable")
-        if any(protected.checks.get(name) not in {"SUCCESS", "NEUTRAL", "SKIPPED"}
-               for name in candidate.required_checks):
+        if any(
+            protected.checks.get(name) not in {"SUCCESS", "NEUTRAL", "SKIPPED"}
+            for name in candidate.required_checks
+        ):
             failures.append("required-ci-not-success")
         if review is None:
             failures.append("missing-terminal-cardstore-pass")
@@ -181,8 +183,7 @@ def authorize_link_merge(
             if review.merged_at is not None:
                 failures.append("post-merge-review")
             if not (
-                review.terminalized_at < now
-                and review.materialized_at <= review.terminalized_at
+                review.terminalized_at < now and review.materialized_at <= review.terminalized_at
             ):
                 failures.append("review-timestamp-order-invalid")
         payload = {
