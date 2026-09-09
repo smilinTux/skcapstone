@@ -29,7 +29,7 @@ HEAD = "a" * 40
 def _verified_niobe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "skcapstone.niobe_fanout.resolve_niobe_runtime_identity",
-        lambda _home: NiobeRuntimeIdentity("decision", "f" * 64, "chiap08", "unit"),
+        lambda _home: NiobeRuntimeIdentity("decision", "f" * 64, "chiap08", "unit", "a" * 32),
     )
     monkeypatch.setattr(
         "skcapstone.niobe_fanout.resolve_requesting_seat_identity",
@@ -214,8 +214,40 @@ def test_runtime_identity_rejects_spoofed_seat_without_systemd_service(tmp_path:
     path = home / "coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation))
-    environment = {"SKFLEET_NIOBE_ACTIVATION": str(path), "INVOCATION_ID": "a" * 32}
+    environment = {
+        "SKFLEET_NIOBE_ACTIVATION": str(path),
+        "INVOCATION_ID": "a" * 32,
+        "SKAGENT": "niobe",
+        "SKCAPSTONE_AGENT": "niobe",
+    }
 
+    with pytest.raises(FanoutBoundaryError, match="activation is missing"):
+        resolve_niobe_runtime_identity(home, environ={}, hostname="chiap08", cgroup_text="")
+    with pytest.raises(FanoutBoundaryError, match="host is not authorized"):
+        resolve_niobe_runtime_identity(
+            home,
+            environ=environment,
+            hostname="chiap03",
+            cgroup_text="0::/skfleet-niobe-live.service",
+        )
+    with pytest.raises(FanoutBoundaryError, match="agent identity is mismatched"):
+        resolve_niobe_runtime_identity(
+            home,
+            environ={**environment, "SKAGENT": "link"},
+            hostname="chiap08",
+            cgroup_text="0::/skfleet-niobe-live.service",
+        )
+    with pytest.raises(FanoutBoundaryError, match="no verified systemd invocation"):
+        resolve_niobe_runtime_identity(
+            home,
+            environ={
+                "SKFLEET_NIOBE_ACTIVATION": str(path),
+                "SKAGENT": "niobe",
+                "SKCAPSTONE_AGENT": "niobe",
+            },
+            hostname="chiap08",
+            cgroup_text="0::/skfleet-niobe-live.service",
+        )
     with pytest.raises(FanoutBoundaryError, match="outside its authorized service"):
         resolve_niobe_runtime_identity(
             home, environ=environment, hostname="chiap08", cgroup_text="0::/user.slice"
@@ -228,6 +260,104 @@ def test_runtime_identity_rejects_spoofed_seat_without_systemd_service(tmp_path:
             cgroup_text="0::/skfleet-niobe-live.service",
         ).decision_id
         == "casey-niobe"
+    )
+    core.write_text('{"id":"changed"}\n')
+    with pytest.raises(FanoutBoundaryError, match="activation card is stale"):
+        resolve_niobe_runtime_identity(
+            home,
+            environ=environment,
+            hostname="chiap08",
+            cgroup_text="0::/skfleet-niobe-live.service",
+        )
+    activation["card_revision"] = hashlib.sha256(core.read_bytes()).hexdigest()
+    activation["expires_at"] = "2000-01-01T00:00:00+00:00"
+    path.write_text(json.dumps(activation))
+    with pytest.raises(ValueError, match="activation has expired"):
+        resolve_niobe_runtime_identity(
+            home,
+            environ=environment,
+            hostname="chiap08",
+            cgroup_text="0::/skfleet-niobe-live.service",
+        )
+
+
+@pytest.mark.parametrize("entrypoint", ["append", "reconcile"])
+def test_receipt_mutations_require_verified_niobe_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entrypoint: str
+) -> None:
+    store, request = _launched_request(tmp_path)
+    monkeypatch.setattr(
+        "skcapstone.niobe_fanout.resolve_niobe_runtime_identity",
+        lambda _home: (_ for _ in ()).throw(FanoutBoundaryError("unauthorized runtime")),
+    )
+
+    with pytest.raises(FanoutBoundaryError, match="unauthorized runtime"):
+        if entrypoint == "append":
+            append_fanout_receipt(
+                tmp_path,
+                request,
+                state="launched",
+                claim_owner="worker",
+                claim_revision="claim-1",
+            )
+        else:
+            reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
+
+    assert len(store._read_events("deadbeef")) == 3
+
+
+def test_reconciliation_rejects_forged_writer_receipt(tmp_path: Path) -> None:
+    store = _card(tmp_path)
+    request = submit_fanout_request(tmp_path, _request())
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="claim-1")
+    store.append_event(
+        "deadbeef",
+        "niobe_fanout_receipt",
+        "niobe",
+        schema="skfleet.niobe-fanout-receipt/v1",
+        request_id=request.request_id,
+        source_head=request.source_head,
+        state="launched",
+        claim_owner="worker",
+        claim_revision="claim-1",
+        process={
+            "request_id": request.request_id,
+            "card_id": "deadbeef",
+            "owner": "worker",
+            "claim_revision": "claim-1",
+            "session_id": "session-1",
+            "unit": "unit-1.service",
+        },
+    )
+
+    with pytest.raises(FanoutBoundaryError, match="authority is stale or forged"):
+        reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
+
+
+def test_reconciliation_rejects_replayed_runtime_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _launched_request(tmp_path)
+    monkeypatch.setattr(
+        "skcapstone.niobe_fanout.resolve_niobe_runtime_identity",
+        lambda _home: NiobeRuntimeIdentity("decision", "e" * 64, "chiap08", "unit", "b" * 32),
+    )
+
+    with pytest.raises(FanoutBoundaryError, match="authority is stale or forged"):
+        reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
+
+
+def test_exact_receipt_replay_is_idempotent(tmp_path: Path) -> None:
+    store = _card(tmp_path)
+    request = submit_fanout_request(tmp_path, _request())
+
+    first = append_fanout_receipt(tmp_path, request, state="materialized")
+    second = append_fanout_receipt(tmp_path, request, state="materialized")
+
+    assert second["event_id"] == first["event_id"]
+    assert (
+        sum(row.get("action") == "niobe_fanout_receipt" for row in store._read_events("deadbeef"))
+        == 1
     )
 
 
@@ -398,17 +528,25 @@ def test_recovery_rejects_mismatched_or_incomplete_worker_tuple(
     launched = next(row for row in reversed(rows) if row.get("state") == "launched")
     process = dict(launched["process"])
     process[field] = value
+    receipt = {
+        "request_id": request.request_id,
+        "source_head": request.source_head,
+        "state": "occupied",
+        "claim_owner": "worker",
+        "claim_revision": "claim-1",
+        "process": process,
+        "authority_decision": "decision",
+        "authority_revision": "f" * 64,
+        "authority_host": "chiap08",
+        "authority_unit": "unit",
+        "authority_invocation": "a" * 32,
+    }
     store.append_event(
         "deadbeef",
         "niobe_fanout_receipt",
         "niobe",
         schema="skfleet.niobe-fanout-receipt/v1",
-        request_id=request.request_id,
-        source_head=request.source_head,
-        state="occupied",
-        claim_owner="worker",
-        claim_revision="claim-1",
-        process=process,
+        **receipt,
     )
 
     with pytest.raises(FanoutBoundaryError, match="worker tuple is stale or incomplete"):

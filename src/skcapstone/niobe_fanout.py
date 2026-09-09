@@ -46,6 +46,7 @@ class NiobeRuntimeIdentity:
     card_revision: str
     host: str
     unit: str
+    invocation_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,11 @@ def resolve_niobe_runtime_identity(
     supplied = Path(values.get("SKFLEET_NIOBE_ACTIVATION", "")).expanduser()
     if not supplied or supplied.resolve() != expected or not expected.is_file():
         raise FanoutBoundaryError("Niobe runtime activation is missing")
+    if (
+        values.get("SKAGENT", "").strip().lower() != "niobe"
+        or values.get("SKCAPSTONE_AGENT", "").strip().lower() != "niobe"
+    ):
+        raise FanoutBoundaryError("Niobe runtime agent identity is mismatched")
     activation = parse_activation(json.loads(expected.read_text(encoding="utf-8")))
     actual_host = (hostname or socket.gethostname()).strip().lower()
     if actual_host != activation.host:
@@ -131,6 +137,7 @@ def resolve_niobe_runtime_identity(
         activation.card_revision,
         activation.host,
         LIVE_UNIT,
+        invocation.lower(),
     )
 
 
@@ -138,6 +145,18 @@ def _digest(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
     ).hexdigest()
+
+
+def _receipt_has_authority(receipt: Mapping[str, object], authority: NiobeRuntimeIdentity) -> bool:
+    """Verify persisted authority without requiring the old process to remain live."""
+
+    return (
+        receipt.get("authority_decision") == authority.decision_id
+        and receipt.get("authority_revision") == authority.card_revision
+        and receipt.get("authority_host") == authority.host
+        and receipt.get("authority_unit") == authority.unit
+        and bool(re.fullmatch(r"[0-9a-f]{32}", str(receipt.get("authority_invocation") or "")))
+    )
 
 
 @dataclass(frozen=True)
@@ -312,6 +331,7 @@ def append_fanout_receipt(
 ) -> dict[str, object]:
     """Append one immutable Niobe transition receipt for an exact request."""
 
+    authority = resolve_niobe_runtime_identity(home)
     normalized_state = state.strip().lower()
     if normalized_state not in _TRANSITIONS:
         raise FanoutBoundaryError("unknown fan-out receipt state")
@@ -364,6 +384,11 @@ def append_fanout_receipt(
         "claim_owner": claim_owner,
         "claim_revision": claim_revision,
         "process": dict(process or {}),
+        "authority_decision": authority.decision_id,
+        "authority_revision": authority.card_revision,
+        "authority_host": authority.host,
+        "authority_unit": authority.unit,
+        "authority_invocation": authority.invocation_id,
     }
     return store.append_event(
         request.card_id,
@@ -408,6 +433,7 @@ def reconcile_fanout_receipt(
 ) -> dict[str, object] | None:
     """Recover one request from its exact claim and worker-runtime tuple."""
 
+    authority = resolve_niobe_runtime_identity(home)
     store = CardStore(home)
     rows = store._read_events(card_id)
     requests = [row for row in rows if row.get("action") == "niobe_fanout_request"]
@@ -428,6 +454,8 @@ def reconcile_fanout_receipt(
         raise FanoutBoundaryError("fan-out card is missing")
     request.validate(card, require_unclaimed=False)
     prior = receipts[-1]
+    if not _receipt_has_authority(prior, authority):
+        raise FanoutBoundaryError("fan-out recovery receipt authority is stale or forged")
     prior_owner = str(prior.get("claim_owner") or "")
     prior_revision = str(prior.get("claim_revision") or "")
     if (prior_owner or prior_revision) and (not prior_owner or not prior_revision):
@@ -438,6 +466,8 @@ def reconcile_fanout_receipt(
     )
     if binding is None:
         return None
+    if not _receipt_has_authority(binding, authority):
+        raise FanoutBoundaryError("fan-out recovery binding authority is stale or forged")
     process = binding.get("process")
     if not isinstance(process, Mapping):
         raise FanoutBoundaryError("fan-out recovery receipt has no worker tuple")
