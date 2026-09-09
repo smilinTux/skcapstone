@@ -10,6 +10,11 @@
   allocation with source-head deduplication, the `sk-codex-mid` child default,
   and explicit exclusion of Jarvis from recurring lifecycle scheduling.
 
+- Card `2ea03ff7`: publish terminal worker capacity atomically before claim
+  release, preserve concurrent live siblings, and reject source work whose
+  exact credential-free remote ref cannot be reconstructed before workspace
+  creation or claim.
+
 - Card `2d2a6d4d`: define SKRSI as SK Recursive SELF Improvement, with
   SELF meaning Systematic Evaluation, Learning, and Feedback, and link the
   canonical standalone project documentation.

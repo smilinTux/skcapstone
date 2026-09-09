@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 
+from skcapstone.fleet.terminal_capacity import invalidate_worker
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 
 
@@ -313,6 +314,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stdout", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--mail-recipient", default="jarvis")
+    parser.add_argument("--live-snapshot", type=Path, default=None)
     parser.add_argument("--session", default="")
     parser.add_argument("--worker-executable", default="")
     parser.add_argument("--startup-timeout", type=float, default=120.0)
@@ -345,6 +347,46 @@ def preflight_worktree() -> int:
     return r.returncode
 
 
+def publish_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen | None) -> bool:
+    """Publish capacity only after local process and cgroup exit evidence."""
+    if args.live_snapshot is None or child is None or child.poll() is None:
+        return False
+
+    # Older host snapshots contain only the card occupancy list. Keep their
+    # atomic, lock-protected removal semantics, while generation-aware
+    # snapshots must use the stricter identity and cgroup fence below. This
+    # avoids treating a missing generation record as proof of ownership.
+    try:
+        snapshot = json.loads(args.live_snapshot.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        snapshot = None
+    generation_aware = isinstance(snapshot, dict) and isinstance(
+        snapshot.get("generations"), dict
+    )
+    if not generation_aware:
+        invalidate_worker(
+            args.live_snapshot,
+            args.host,
+            args.card,
+            process_evidence=True,
+            cgroup_evidence=True,
+        )
+    else:
+        invalidate_worker(
+            args.live_snapshot,
+            args.host,
+            args.card,
+            owner=args.owner,
+            card_id=args.card,
+            claim_revision=args.claim_revision,
+            process_evidence=True,
+            cgroup_evidence=bool(
+                getattr(args, "cgroup", None) or getattr(args, "unit", None)
+            ),
+        )
+    return True
+
+
 def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
@@ -364,6 +406,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, _stop)
     startup_stop = threading.Event()
     startup_thread = None
+    child = None
     try:
         with args.stdout.open("wb") as stdout:
             child = subprocess.Popen(args.command, stdout=stdout, stderr=subprocess.PIPE)
@@ -387,6 +430,12 @@ def main() -> int:
             startup_thread.join(timeout=6)
         # Always idle the worker projection on any exit path, including SIGTERM.
         idle_owner_projection(args.owner)
+        # Publish terminal capacity before the claim can be released. The
+        # fenced, atomic update removes only this card and preserves siblings.
+        try:
+            publish_terminal_capacity(args, child)
+        except OSError as exc:
+            sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
 
 
 if __name__ == "__main__":

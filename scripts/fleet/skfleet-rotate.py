@@ -406,6 +406,14 @@ def _verify_source_workspace(path, repository, base_ref, runner=subprocess.run):
         raise ValueError("workspace HEAD does not match fetched base_ref")
 
 
+def _preclaim_source_ref(repository, base_ref, runner=subprocess.run):
+    """Check reconstructability before creating a reviewer workspace."""
+    result = runner(["git", "ls-remote", "--exit-code", repository, base_ref],
+                    capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError("reconstructability_blocked: exact source ref absent from credential-free remote")
+
+
 def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     """Materialize one source checkout atomically before a worker is claimed."""
     configured = os.environ.get("SKFLEET_WORKSPACE")
@@ -4669,6 +4677,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         continue
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
+        _source_spec = _source_workspace_spec(
+            fresh_claimability["core"], fresh_claimability["labels"]
+        )
+        if _source_spec is not None:
+            _preclaim_source_ref(*_source_spec)
         workspace=_materialize_worker_workspace(
             default_workspace,
             fresh_claimability["core"],
@@ -4742,6 +4755,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
         "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--live-snapshot",os.path.join(LIVE, HOST + ".json"),
         "--session",sess,"--worker-executable",PI,
         "--","bash","-lc",child,
     ]
