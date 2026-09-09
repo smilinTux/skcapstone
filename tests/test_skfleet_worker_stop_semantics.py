@@ -153,12 +153,14 @@ def test_worker_scope_is_lane_and_generation_only() -> None:
     ]
 
 
-def test_exact_generation_claim_release_survives_the_stop_model() -> None:
-    """A stopped worker's claim release stays fenced to its own generation."""
+def test_exact_generation_claim_release_is_owned_by_the_wrapper() -> None:
+    """The child cannot release before wrapper snapshot invalidation."""
     source = _source()
 
-    assert "expected-claim-revision %s --agent %s" in source
-    assert 'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM' in source
-    assert 'trap "stop_beat; release_claim; idle_agent" EXIT' in source
+    child = source[source.index("child=(") : source.index("wrapper=os.path")]
+    assert "release-claim" not in child
+    assert 'trap "stop_beat; idle_agent; exit 143" HUP INT TERM' in source
+    assert 'trap "stop_beat; idle_agent" EXIT' in source
+    assert '"--claim-revision",claimed_revision' in source
     # Launches still flow through the single detached launch command.
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
