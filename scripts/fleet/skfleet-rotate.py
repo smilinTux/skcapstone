@@ -4473,6 +4473,14 @@ if not picks:
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail)); sys.exit(0)
 
 raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0
+
+def _restore_planned_lane(lane, reason):
+    """Return exactly one reservation when a planned pick is discarded."""
+    name=lane["name"]
+    remaining[name]=min(lane["free"], remaining.get(name, 0)+1)
+    log(d, "LANE_RESERVATION_RESTORED|%s|lane=%s|reason=%s|remaining=%d" %
+        (HOST, name, reason, remaining[name]))
+
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     try:
@@ -4642,6 +4650,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         lane_drift += 1
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],affinity_reason))
+        _restore_planned_lane(_LANE, "lane-drift")
         continue
     model=_lane_model(_LANE,fresh_claimability["core"])
     admitted,health_reason=_health_for(_LANE["name"],model)
@@ -4651,6 +4660,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             d,"lane_admission",cid,
             "SKIPPED_LANE_HEALTH|%s|%s|%s|lane=%s|model=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],model,health_reason))
+        _restore_planned_lane(_LANE, "lane-health-drift")
         continue
     # Link's recommendation appends evidence. Compare the bounded admission
     # after lane health so no event mutates the card before the final preclaim.
@@ -4664,6 +4674,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             _raced_ids.append(cid)
             log(d,"SKIPPED_ADMISSION_DRIFT|%s|%s|%s|reason=%s"%
                 (HOST,sess,cid,fresh_claimability.get("reason","unknown")))
+            _restore_planned_lane(_LANE, "admission-drift")
             continue
         log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
         continue
@@ -4689,6 +4700,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         detail=(claim.stderr or claim.stdout or
                 "claim not visible with an explicit revision in CardStore fold").strip()[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
+        _restore_planned_lane(_LANE, "claim-refused")
         continue
     # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
     # returns normally. Releasing only after the Pi command leaves a dead claim
@@ -4747,6 +4759,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     ]
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
+    if not ok:
+        _restore_planned_lane(_LANE, "launch-failure")
     launch_identity=_launch_claim_fields(name,claimed_revision,ok)
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
