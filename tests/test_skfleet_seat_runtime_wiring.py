@@ -87,11 +87,26 @@ def test_mero_blocked_and_stale_states_fail_closed() -> None:
 
 
 def test_rotation_uses_the_packaged_runtime_interpreter() -> None:
-    """The source-backed drop-in uses the environment that owns SKCapstone."""
+    """The drop-in uses the wheel-owned interpreter and launcher."""
 
     dropin = ROOT / "scripts/fleet/systemd/skfleet-rotate.service.d/seat-runtime-python.conf"
     assert dropin.read_bytes() == (
         b"[Service]\n"
         b"ExecStart=\n"
-        b"ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-rotate.py --go\n"
+        b"ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet-rotate.py --go\n"
     )
+
+
+def test_rotation_launcher_is_installed_by_the_wheel() -> None:
+    """A package upgrade cannot leave the active dispatcher outside the wheel."""
+
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    assert 'script-files = ["scripts/fleet/skfleet-rotate.py"]' in pyproject
+
+    for unit in (
+        ROOT / "systemd/skfleet-niobe-live.service",
+        ROOT / "src/skcapstone/data/systemd/skfleet-niobe-live.service",
+    ):
+        text = unit.read_text()
+        assert "%h/.skenv/bin/skfleet-rotate.py" in text
+        assert "%h/.local/bin/skfleet-rotate.py" not in text

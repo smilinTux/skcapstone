@@ -17,7 +17,7 @@ Environment=SKFLEET_CODEX_MODEL_S=sk-codex-mid
 Environment=SKFLEET_CODEX_MODEL_M=sk-codex-mid
 Environment=SKFLEET_CODEX_MODEL_L=sk-codex-mid
 Environment=SKFLEET_CODEX_MODEL_XL=sk-codex-mid
-ExecStart=%h/.skenv/bin/python3 -m skcapstone.niobe_live_entrypoint --activation %h/.skcapstone/coordination/niobe-activation.json --dispatcher %h/.local/bin/skfleet-rotate.py --unit skfleet-niobe-live.timer
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.niobe_live_entrypoint --activation %h/.skcapstone/coordination/niobe-activation.json --dispatcher %h/.skenv/bin/skfleet-rotate.py --unit skfleet-niobe-live.timer
 TimeoutStartSec=300
 NoNewPrivileges=yes
 PrivateTmp=yes
