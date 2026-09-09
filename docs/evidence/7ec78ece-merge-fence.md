@@ -7,10 +7,10 @@ external actuation was performed.
 ## Exact source
 
 - protected base: `1683ca48eff1b44fb4c15451f2df7882be54ea80`
-- implementation commits: `e2d19374` and `c87c60433cc6f4febb7c3b6053e5b80451bde78e`
-- implementation head: `c87c60433cc6f4febb7c3b6053e5b80451bde78e`
-- implementation tree: `c19d977bb5f7a3316c9186b662d7fca17086902c`
-- implementation patch SHA256, `git diff --binary BASE..HEAD -- src tests`: `872f2e3c10a266f40b82897747948060f1a448593e4a3723ca25e304c0a7b504`
+- implementation commits: `e2d19374`, `c87c6043`, and `a528dbdb218ed68c18e986b5b0d5ec540f62d47e`
+- implementation head: `a528dbdb218ed68c18e986b5b0d5ec540f62d47e`
+- implementation tree: `73e3207a4f8fe427cd69ec11239b4288b5fcf006`
+- implementation patch SHA256, `git diff --binary BASE..HEAD -- src tests`: `1101e3e1e3508fd4950984384947f8fdfba9e7f771736136007db40ae297816a`
 - branch: `fix/7ec78ece-merge-fence`
 - isolated worktree: `/mnt/cloud/onedrive/projects/DAVE-AI/worktrees/skcapstone-7ec78ece`
 
@@ -21,7 +21,7 @@ not reused for this candidate.
 ## Changed file hashes
 
 ```text
-5fb58750f98398dee4fd272d7e454019adf993d1792bdba7620bd9903a66838d  src/skcapstone/link_merge_authority.py
+30a012365c59ccc136959479fb96b071edf20ae5d9b84dd93a1dee925c60d2a5  src/skcapstone/link_merge_authority.py
 f48e8ca5e0a0c4788d68247f6d8988183d5b6bfc810659bd166b747cc92cd75e  src/skcapstone/seat_boundaries.py
 f9f8fbb67d668f0b44d52e48d29d6626ec44f726bc1dd22ee932311ea8822ee2  tests/test_link_merge_authority.py
 ```
@@ -49,13 +49,13 @@ ruff check src/skcapstone/link_merge_authority.py src/skcapstone/seat_boundaries
 All checks passed!
 
 python -m pytest -q tests/test_link_merge_authority.py tests/test_link_cycle.py tests/fleet/test_seat_boundaries.py tests/test_link_review_work.py tests/test_review_freshness_gate.py
-161 passed in 1.43s
+161 passed in 1.81s
 
 python -m pytest -q tests/test_link_merge_authority.py::test_final_fence_rereads_exact_state_and_seals_receipt tests/test_link_merge_authority.py::test_final_fence_rejects_stale_or_post_merge_review tests/test_link_merge_authority.py::test_final_fence_rejects_missing_or_nonterminal_cardstore_pass tests/test_link_merge_authority.py::test_pr582_merge_cannot_beat_review_terminalization
 9 passed in 0.48s
 
 python -m pytest -q tests/test_integration.py tests/test_integration_backbone.py
-111 passed, 16 skipped in 11.50s
+111 passed, 16 skipped in 11.99s
 
 python -m compileall -q src/skcapstone/link_merge_authority.py src/skcapstone/seat_boundaries.py
 git diff --check
