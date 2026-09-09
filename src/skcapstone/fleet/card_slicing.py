@@ -101,6 +101,30 @@ def _linked(card: Any, *names: str) -> Any:
     return None
 
 
+def _identity(card: Any, *names: str) -> tuple[str, bool]:
+    """Return one identity value, rejecting conflicting direct/link inputs."""
+    links = _get(card, "links", {})
+    values: list[str] = []
+    for name in names:
+        for source in (_get(card, name), links.get(name) if isinstance(links, Mapping) else None):
+            if source is not None:
+                if not isinstance(source, str) or not source.strip():
+                    return "", False
+                values.append(source.strip())
+    return (values[0], len(set(values)) == 1) if values else ("", False)
+
+
+def _successor_ids(card: Any) -> set[str]:
+    values = _items(_linked(card, "successors", "successor") or [])
+    ids: set[str] = set()
+    for value in values:
+        if isinstance(value, Mapping):
+            value = value.get("id", value.get("card_id", ""))
+        if isinstance(value, str) and value.strip():
+            ids.add(value.strip())
+    return ids
+
+
 def classify_card_scope(card: Any) -> ScopeSignals:
     """Extract stable scope signals, never consulting model/provider metadata."""
     criteria = _items(_get(card, "acceptance_criteria", _get(card, "criteria", [])))
@@ -160,18 +184,21 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             signals,
             custody="composition",
         )
-    raw_repository = _linked(card, "repository", "repo")
-    raw_base_ref = _linked(card, "base_ref", "base_reference", "base")
-    repository = raw_repository.strip() if isinstance(raw_repository, str) else ""
-    base_ref = raw_base_ref.strip() if isinstance(raw_base_ref, str) else ""
-    if not repository or not base_ref:
+    repository, repository_valid = _identity(card, "repository", "repo")
+    base_ref, base_ref_valid = _identity(card, "base_ref", "base_reference", "base")
+    if not repository_valid or not base_ref_valid or not repository or not base_ref:
         return DecompositionRecommendation(
             "advisory",
             "repository and base_ref are required for leaf recommendations",
             signals,
             custody="composition",
         )
-    raw_dependencies = _items(_get(card, "dependencies", []))
+    raw_dependencies: list[Any] = []
+    links = _get(card, "links", {})
+    for name in ("dependencies", "depends_on"):
+        for source in (_get(card, name), links.get(name) if isinstance(links, Mapping) else None):
+            if source is not None:
+                raw_dependencies.extend(_items(source))
     if any(not isinstance(value, str) or not value.strip() for value in raw_dependencies):
         return DecompositionRecommendation(
             "advisory",
@@ -180,9 +207,7 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             custody="composition",
         )
     dependencies = tuple(sorted({value.strip() for value in raw_dependencies}))
-    existing_successors = {
-        str(value) for value in _items(_linked(card, "successors", "successor") or [])
-    }
+    existing_successors = _successor_ids(card)
     leaves = tuple(
         LeafRecommendation(
             _stable_id(card_id, i),
@@ -194,6 +219,15 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
         for i in range(1, leaf_count + 1)
         if _stable_id(card_id, i) not in existing_successors
     )
+    # A partial rerun must not emit a one-leaf recommendation, while a complete
+    # rerun is an idempotent no-op. Both cases preserve the bounded contract.
+    if existing_successors and len(leaves) < 2:
+        return DecompositionRecommendation(
+            "bounded",
+            "all recommended successors already exist",
+            signals,
+            custody="composition",
+        )
     return DecompositionRecommendation(
         "recommend",
         "independent deliverables or verification surfaces exceed threshold",
