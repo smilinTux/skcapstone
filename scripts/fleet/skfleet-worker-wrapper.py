@@ -16,8 +16,8 @@ import threading
 import time
 from pathlib import Path
 
-from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 from skcapstone.fleet.terminal_capacity import invalidate_worker
+from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 
 
 def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObservation:
@@ -347,6 +347,14 @@ def preflight_worktree() -> int:
     return r.returncode
 
 
+def publish_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen | None) -> bool:
+    """Publish capacity only after local process evidence proves child exit."""
+    if args.live_snapshot is None or child is None or child.poll() is None:
+        return False
+    invalidate_worker(args.live_snapshot, args.host, args.card)
+    return True
+
+
 def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
@@ -366,6 +374,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, _stop)
     startup_stop = threading.Event()
     startup_thread = None
+    child = None
     try:
         with args.stdout.open("wb") as stdout:
             child = subprocess.Popen(args.command, stdout=stdout, stderr=subprocess.PIPE)
@@ -391,11 +400,10 @@ def main() -> int:
         idle_owner_projection(args.owner)
         # Publish terminal capacity before the claim can be released. The
         # fenced, atomic update removes only this card and preserves siblings.
-        if args.live_snapshot is not None:
-            try:
-                invalidate_worker(args.live_snapshot, args.host, args.card)
-            except OSError as exc:
-                sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
+        try:
+            publish_terminal_capacity(args, child)
+        except OSError as exc:
+            sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
 
 
 if __name__ == "__main__":

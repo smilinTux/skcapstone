@@ -3,11 +3,13 @@
 Snapshots are shared coordination evidence, not CardStore records. Updates use a
 lock and atomic replacement so concurrent workers cannot erase one another.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,13 +34,14 @@ def invalidate_worker(path: str | Path, host: str, card: str) -> dict[str, Any]:
     lock_path = target.with_name(target.name + ".lock")
     with lock_path.open("a+", encoding="utf-8") as lock:
         import fcntl
+
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         snapshot = _load(target)
         cards = [str(item) for item in snapshot.get("cards", []) if str(item) != str(card)]
         snapshot["host"] = host
         snapshot["cards"] = cards
         snapshot["invalidated_card"] = str(card)
-        snapshot["invalidated_at"] = __import__("time").time()
+        snapshot["invalidated_at"] = time.time()
         payload = json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n"
         fd, temporary = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
         try:
