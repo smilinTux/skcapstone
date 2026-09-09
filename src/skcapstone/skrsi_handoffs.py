@@ -22,6 +22,8 @@ from typing import Any, Callable
 
 from .skrsi_registry import SKRSIError, canonical_json
 
+_SQLITE_BUSY_TIMEOUT_MS = 2_000
+
 
 @dataclass(frozen=True)
 class HandoffContract:
@@ -120,8 +122,12 @@ class HandoffRuntime:
 
     @contextmanager
     def _db(self):
-        db = sqlite3.connect(self.path, timeout=0.1)
+        # SQLite's native busy handler retries only lock contention. Keep the
+        # wait bounded below the handoff deadline while allowing concurrent
+        # source-head replays to serialize at the shared transaction boundary.
+        db = sqlite3.connect(self.path, timeout=_SQLITE_BUSY_TIMEOUT_MS / 1_000)
         try:
+            db.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
             with db:
                 yield db
         finally:

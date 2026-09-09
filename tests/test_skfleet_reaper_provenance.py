@@ -20,6 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
+WRAPPER = ROOT / "scripts" / "fleet" / "skfleet-worker-wrapper.py"
 
 
 def _claim_event(
@@ -753,12 +754,19 @@ def _assert_release_command_fenced(path: str, argv: list[object]) -> None:
 
 
 def test_every_fleet_release_call_supplies_expected_revision() -> None:
-    """Enumerate every release path without depending on an occurrence count."""
-    commands = _release_commands(ROTATE.read_text(encoding="utf-8"))
+    """Enumerate every release path across rotation and wrapper ownership."""
+    commands = []
+    for path in (ROTATE, WRAPPER):
+        commands.extend(_release_commands(path.read_text(encoding="utf-8")))
     assert any(path.startswith("subprocess") for path, _ in commands)
-    assert any(path.startswith("shell") for path, _ in commands)
     for path, argv in commands:
         _assert_release_command_fenced(path, argv)
+
+
+def test_rotation_child_has_no_independent_release_path() -> None:
+    """Only the wrapper may atomically release and retire one generation."""
+    commands = _release_commands(ROTATE.read_text(encoding="utf-8"))
+    assert not any(path.startswith("shell") for path, _ in commands)
 
 
 def test_launch_failure_releases_the_exact_claimed_revision() -> None:

@@ -6,7 +6,6 @@ import datetime
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import signal
@@ -14,8 +13,11 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
+from skcoord.card_store import CardCore, CardStore
+
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_HEARTBEAT_TIMEOUT_S,
     HOST_LOCAL_BEAT_NOTICE_S,
@@ -241,6 +243,7 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
         lane="codex",
         model="fake",
         stdout=tmp_path / "stdout.log",
+        live_snapshot=None,
         worker_executable=sys.executable,
         startup_timeout=120.0,
         command=[sys.executable, "-c", "pass"],
@@ -261,6 +264,214 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
         assert result["heartbeat_at"] is None
         assert result["executable_evidence"] is None
         assert not args.stdout.exists()
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monkeypatch, exit_code):
+    module = wrapper()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
+    monkeypatch.setattr(module, "idle_owner_projection", lambda *args: None)
+    monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    monkeypatch.setattr(
+        module,
+        "terminal_local_evidence",
+        lambda child: child is not None and child.poll() is not None,
+    )
+    monkeypatch.setattr(module, "retire_worker_generation", lambda *args: {"cards": ["sibling"]})
+    snapshot = tmp_path / "fleet-live.json"
+    snapshot.write_text(json.dumps({"cards": ["feedbeef", "sibling"]}))
+    args = argparse.Namespace(
+        owner="worker",
+        card="feedbeef",
+        session="",
+        claim_revision="rev-1",
+        host="host-1",
+        lane="codex",
+        model="fake",
+        stdout=tmp_path / "stdout.log",
+        live_snapshot=snapshot,
+        worker_executable="",
+        startup_timeout=120.0,
+        command=[sys.executable, "-c", f"raise SystemExit({exit_code})"],
+        evidence_dir=tmp_path / "evidence/worker-exits",
+    )
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+
+    assert module.main() == exit_code
+    assert module.publish_terminal_capacity(args, None) is False
+
+
+def test_wrapper_keeps_ambiguous_live_child_occupied(tmp_path, monkeypatch):
+    module = wrapper()
+    snapshot = tmp_path / "fleet-live.json"
+    snapshot.write_text(json.dumps({"cards": ["feedbeef", "sibling"]}))
+    args = argparse.Namespace(
+        card="feedbeef",
+        owner="worker",
+        claim_revision="rev-1",
+        host="host-1",
+        live_snapshot=snapshot,
+    )
+
+    class LiveChild:
+        @staticmethod
+        def poll():
+            return None
+
+    assert module.publish_terminal_capacity(args, LiveChild()) is False
+    assert json.loads(snapshot.read_text())["cards"] == ["feedbeef", "sibling"]
+
+
+def test_wrapper_keeps_capacity_when_no_child_was_started(tmp_path):
+    module = wrapper()
+    snapshot = tmp_path / "fleet-live.json"
+    snapshot.write_text(json.dumps({"cards": ["feedbeef"]}))
+    args = argparse.Namespace(
+        card="feedbeef",
+        owner="worker",
+        claim_revision="rev-1",
+        host="host-1",
+        live_snapshot=snapshot,
+    )
+
+    assert module.publish_terminal_capacity(args, None) is False
+    assert json.loads(snapshot.read_text())["cards"] == ["feedbeef"]
+
+
+def test_terminal_wrapper_exit_allows_real_next_claim_and_managed_launch(tmp_path, monkeypatch):
+    module = wrapper()
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = CardStore(home)
+    store.create(
+        CardCore(
+            id="feedbeef",
+            title="first worker",
+            initial_owner="worker-1",
+            initial_claim_revision="rev-1",
+        )
+    )
+    snapshot = tmp_path / "fleet-live.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "host": "host-1",
+                "cards": ["feedbeef"],
+                "workers": [
+                    {"card_id": "feedbeef", "owner": "worker-1", "claim_revision": "rev-1"}
+                ],
+                "lanes": {"codex": {"busy": 1, "free": 0, "target": 1}},
+            }
+        )
+    )
+    args = argparse.Namespace(
+        owner="worker-1",
+        card="feedbeef",
+        session="",
+        claim_revision="rev-1",
+        host="host-1",
+        lane="codex",
+        model="fake",
+        stdout=tmp_path / "first.log",
+        live_snapshot=snapshot,
+        worker_executable="",
+        startup_timeout=120.0,
+        command=[sys.executable, "-c", "print('first-terminal')"],
+        evidence_dir=tmp_path / "exits",
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+    monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
+    monkeypatch.setattr(module, "idle_owner_projection", lambda *args: None)
+    monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    monkeypatch.setattr(module, "terminal_local_evidence", lambda child: child.poll() is not None)
+
+    assert module.main() == 0
+    assert store.fold("feedbeef").owner is None
+    assert json.loads(snapshot.read_text())["cards"] == []
+
+    cli = shutil.which("skcapstone")
+    assert cli is not None
+    claim = subprocess.run(
+        [cli, "coord", "claim", "feedbeef", "--agent", "worker-2", "--home", str(home)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+    )
+    assert claim.returncode == 0, claim.stderr
+
+    rotate_tree = ast.parse((ROOT / "scripts/fleet/skfleet-rotate.py").read_text())
+    launch_node = next(
+        node
+        for node in rotate_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_worker_launch_command"
+    )
+    namespace = {}
+    exec(
+        compile(ast.Module(body=[launch_node], type_ignores=[]), "managed-launch", "exec"),
+        namespace,
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    systemd_run = fake_bin / "systemd-run"
+    systemd_run.write_text(
+        f"#!{sys.executable}\n"
+        "import subprocess,sys\n"
+        "args=sys.argv[1:]\n"
+        "i=args.index('--working-directory')\n"
+        "raise SystemExit(subprocess.run(args[i+2:],cwd=args[i+1]).returncode)\n"
+    )
+    systemd_run.chmod(0o700)
+    marker = tmp_path / "second-launched"
+    command = namespace["_worker_launch_command"](
+        "skfleet-worker-codex-feedbeef",
+        str(tmp_path),
+        [sys.executable, "-c", f"from pathlib import Path;Path({str(marker)!r}).touch()"],
+    )
+    launched = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"]},
+    )
+    assert launched.returncode == 0, launched.stderr
+    assert marker.exists()
+    assert store.fold("feedbeef").owner == "worker-2"
+
+
+@pytest.mark.parametrize("fault", [None, "child", "peer", "cgroup", "malformed"])
+def test_terminal_local_evidence_reconciles_process_tree_and_cgroup(tmp_path, monkeypatch, fault):
+    module = wrapper()
+    proc = tmp_path / "proc"
+    cgroups = tmp_path / "cgroup"
+    (proc / "self").mkdir(parents=True)
+    (cgroups / "worker.slice").mkdir(parents=True)
+    (proc / "self/cgroup").write_text(
+        "malformed\n" if fault == "malformed" else "0::/worker.slice\n"
+    )
+    members = [os.getpid()]
+    if fault == "peer":
+        members.append(2147483646)
+    (cgroups / "worker.slice/cgroup.procs").write_text(
+        "\n".join(str(member) for member in members)
+    )
+
+    class Child:
+        pid = 2147483647
+
+        @staticmethod
+        def poll():
+            return None if fault == "child" else 0
+
+    if fault == "child":
+        (proc / str(Child.pid)).touch()
+    if fault == "cgroup":
+        (cgroups / "worker.slice/cgroup.procs").unlink()
+
+    assert module.terminal_local_evidence(Child(), proc_root=proc, cgroup_root=cgroups) is (
+        fault is None
+    )
 
 
 def test_default_heartbeat_has_margin_below_notice_and_timeout(monkeypatch):
@@ -313,15 +524,7 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
     brief = tmp_path / "brief"
     brief.write_text("synthetic")
     beat = tmp_path / "beat.json"
-    skc = tmp_path / "fake-skc"
-    skc.write_text(
-        f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\n"
-        "Path(os.environ['FENCE_ARGS']).write_text(json.dumps(sys.argv[1:]))\n"
-    )
-    skc.chmod(0o700)
-    fence_args = tmp_path / "fence-args.json"
     namespace = dict(
-        SKC=str(skc),
         cid="feedbeef",
         name="worker",
         claimed_revision="rev-1",
@@ -350,24 +553,14 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
         capture_output=True,
         text=True,
         timeout=5,
-        env={**os.environ, "HOME": str(tmp_path), "FENCE_ARGS": str(fence_args)},
+        env={**os.environ, "HOME": str(tmp_path)},
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == str(workspace)
     payload = json.loads(beat.read_text())
     assert payload["session_id"] == "session-1"
     assert payload["claim_revision"] == "rev-1"
-    assert json.loads(fence_args.read_text()) == [
-        "coord",
-        "release-claim",
-        "feedbeef",
-        "--owner",
-        "worker",
-        "--expected-claim-revision",
-        "rev-1",
-        "--agent",
-        "worker",
-    ]
+    assert "release-claim" not in namespace["child"]
 
 
 def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_path):
