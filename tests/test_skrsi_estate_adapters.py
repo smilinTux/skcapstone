@@ -11,6 +11,7 @@ from skcapstone.skrsi_estate_adapters import (
     BoundedFleetFanout,
     EligibleWork,
     FanoutBudget,
+    LIFECYCLE_SEATS,
     ReviewHandoff,
     append_metric_event,
     canonical_review_card,
@@ -90,10 +91,24 @@ def test_load_fans_out_extra_work_without_duplicates_or_cross_seat_ownership():
     assert not any(receipt.seat == "seat-conflict" for receipt in receipts)
     assert max(sum(r.seat == value for r in receipts) for value in {r.seat for r in receipts}) <= 2
     assert max(sum(r.host == value for r in receipts) for value in {r.host for r in receipts}) <= 3
-    evaluators = {receipt.evaluator for receipt in receipts}
-    routes = {receipt.route for receipt in receipts}
-    assert max(sum(r.evaluator == value for r in receipts) for value in evaluators) <= 3
-    assert max(sum(r.route == value for r in receipts) for value in routes) <= 4
+    assert max(sum(r.evaluator == value for r in receipts) for value in {r.evaluator for r in receipts}) <= 3
+    assert max(sum(r.route == value for r in receipts) for value in {r.route for r in receipts}) <= 4
+
+
+def test_source_head_deduplication_and_lifecycle_scope():
+    fanout = BoundedFleetFanout(FanoutBudget(3, 3, 3, 3, 10))
+    snapshot = AuthoritySnapshot("fleet-7", NOW)
+    first = eligible("natural-a", seat="link", route="integration", source_head="head-1")
+    alias = eligible("natural-b", seat="link", route="integration", source_head="head-1")
+    receipts = fanout.allocate([first, alias], snapshot, now=NOW)
+    assert len(receipts) == 1
+    assert receipts[0].natural_key == "natural-a"
+    with pytest.raises(SKRSIError, match="scope"):
+        fanout.allocate([eligible("bad", seat="tank", route="deploy")], snapshot, now=NOW)
+
+
+def test_jarvis_is_not_a_recurring_lifecycle_seat():
+    assert "jarvis" not in LIFECYCLE_SEATS
 
 
 def test_saturation_keeps_quality_authorization_review_and_revision_fences():

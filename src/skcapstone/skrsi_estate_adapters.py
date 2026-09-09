@@ -73,6 +73,9 @@ class EligibleWork:
     quality_ok: bool
     authorized: bool
     review_invariants_ok: bool
+    # A source head is a second, immutable idempotency fence.  It prevents a
+    # retry from launching the same work under a different natural key.
+    source_head: str = ""
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,34 @@ class FanoutReceipt:
     route: str
     authority_revision: str
     receipt_id: str
+    source_head: str = ""
+
+
+LIFECYCLE_SEATS = frozenset({"seraph", "link", "mero", "niobe", "tank", "atlas", "skcapstone", "skdashboard", "skworld"})
+DEFAULT_CHILD_MODEL = "sk-codex-mid"
+# Child lanes are narrower than their parent seat.  Jarvis is intentionally
+# absent: it is an authority seat, never a recurring lifecycle scheduler.
+SEAT_CHILD_ROUTES = {
+    "seraph": frozenset({"review"}),
+    "link": frozenset({"integration", "review"}),
+    "mero": frozenset({"lifecycle-analysis", "review"}),
+    "niobe": frozenset({"dispatch"}),
+    "tank": frozenset({"verification"}),
+    "atlas": frozenset({"governance"}),
+    "skcapstone": frozenset({"lifecycle"}),
+    "skdashboard": frozenset({"lifecycle"}),
+    "skworld": frozenset({"lifecycle"}),
+}
+
+
+def validate_child_request(seat: str, route: str, *, model: str = DEFAULT_CHILD_MODEL) -> None:
+    """Fail closed when a lifecycle seat requests an out-of-scope child."""
+    # Generic evaluator lanes remain valid for existing adapter callers; the
+    # named lifecycle seats are the ones subject to the explicit role fence.
+    if seat in LIFECYCLE_SEATS and route not in SEAT_CHILD_ROUTES[seat]:
+        raise SKRSIError("child route exceeds lifecycle seat scope")
+    if model != DEFAULT_CHILD_MODEL:
+        raise SKRSIError("child model must use the bounded default")
 
 
 class BoundedFleetFanout:
@@ -98,6 +129,7 @@ class BoundedFleetFanout:
         self.budget = budget
         self.max_snapshot_age = max_snapshot_age
         self._claims: dict[str, FanoutReceipt] = {}
+        self._source_claims: dict[str, FanoutReceipt] = {}
         self._lock = threading.Lock()
 
     def allocate(
@@ -123,6 +155,7 @@ class BoundedFleetFanout:
                 ):
                     counts[(dimension, value)] = counts.get((dimension, value), 0) + 1
             for item in work:
+                validate_child_request(item.seat, item.route)
                 if len(self._claims) >= self.budget.queue:
                     break
                 if not item.natural_key or item.authority_revision != snapshot.revision:
@@ -130,6 +163,14 @@ class BoundedFleetFanout:
                 if not (item.quality_ok and item.authorized and item.review_invariants_ok):
                     continue
                 prior = self._claims.get(item.natural_key)
+                # Source heads are globally unique launch identities.  This is
+                # deliberately checked before capacity so retries remain
+                # harmless even while the fleet is saturated.
+                source_prior = self._source_claims.get(item.source_head) if item.source_head else None
+                if source_prior is not None:
+                    # A source-head replay is acknowledged by suppression, not
+                    # returned as a second launch receipt.
+                    continue
                 if prior is not None:
                     # Replay is harmless, but a different seat can never inherit the claim.
                     if prior.seat == item.seat and prior.authority_revision == snapshot.revision:
@@ -160,6 +201,7 @@ class BoundedFleetFanout:
                         "evaluator": item.evaluator,
                         "route": item.route,
                         "authority_revision": snapshot.revision,
+                        "source_head": item.source_head,
                     }
                 )
                 receipt = FanoutReceipt(
@@ -170,8 +212,11 @@ class BoundedFleetFanout:
                     item.route,
                     snapshot.revision,
                     hashlib.sha256(identity).hexdigest(),
+                    item.source_head,
                 )
                 self._claims[item.natural_key] = receipt
+                if item.source_head:
+                    self._source_claims[item.source_head] = receipt
                 selected.append(receipt)
                 for kind, value in dimensions.items():
                     counts[(kind, value)] = counts.get((kind, value), 0) + 1
