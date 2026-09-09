@@ -18,6 +18,19 @@ def test_mail_command_prefers_active_interpreter_sibling(monkeypatch, tmp_path: 
     assert seat_mail._mail_command() == str(sibling)
 
 
+def test_mail_command_preserves_virtualenv_sibling_with_restricted_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    interpreter = tmp_path / "python"
+    interpreter.symlink_to("/usr/bin/python3")
+    sibling = tmp_path / "skmail"
+    sibling.write_text("#!/bin/sh\n")
+    sibling.chmod(0o755)
+    monkeypatch.setattr(seat_mail.sys, "executable", str(interpreter))
+    monkeypatch.setattr(seat_mail.shutil, "which", lambda name: None)
+    assert seat_mail._mail_command() == str(sibling)
+
+
 def test_mail_command_uses_bounded_path_fallback(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(seat_mail.sys, "executable", str(tmp_path / "python"))
     monkeypatch.setattr(seat_mail.Path, "resolve", lambda path: path)

@@ -51,7 +51,7 @@ def _mail_command() -> str | None:
     configured = os.environ.get("SKMAIL_BIN")
     if configured:
         return configured
-    sibling = Path(sys.executable).resolve().parent / "skmail"
+    sibling = Path(sys.executable).parent / "skmail"
     if sibling.is_file() and os.access(sibling, os.X_OK):
         return str(sibling)
     found = shutil.which("skmail")
