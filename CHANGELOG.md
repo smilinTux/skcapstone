@@ -13,6 +13,9 @@
   process replaces its command line with its process title, while retaining
   exact descendant, interpreter, shebang, title, and fleet identity checks.
 
+- Card `c6a5ce66`: preserve the invoked virtualenv interpreter directory when
+  resolving the adjacent SKMail executable under a restricted service PATH.
+
 - Card `a9f40c21`: resolve worker SKMail beside the active interpreter,
   require one startup hello and read-only direct-plus-all mailbox poll before
   work, and distinguish fast provider exits from missing executable evidence.
@@ -205,6 +208,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Card `5a71c2db`: added metadata-only SKRSI target revisions, canonical
   hash-bound architecture records, redaction and fail-closed validation, and
   an append-only idempotent outbox with retention and acknowledgement cursors.
+
+- Card `c4a2ab8f`: conservative long-runner liveness classification preserves
+  quiet tool waits and drives assistance, reconciliation, metrics, and safe
+  retirement through one decision cycle. Retirement receipts bind exact host,
+  unit, process tree, cgroup, claim generation, beat, and workspace custody;
+  concurrent SQLite writers wait safely instead of losing lifecycle evidence.
 
 - Daily `coord-maintain` scheduler job (`config/jobs.d/coord-maintain.yaml`) and
   `coord maintain --lock-days` wiring for stale coordination lock prune. Cards
