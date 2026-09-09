@@ -73,6 +73,9 @@ def leaf_eligibility_counts(
             continue
         if card.status not in {Column.BACKLOG, Column.REVIEW} or card.owner:
             continue
+        # Void is authoritative CardStore state, not a projection detail.
+        if card.meta.get("voided"):
+            continue
         if (
             _is_container(card, labels, parent_ids)
             or _has_excluded_label(labels)
@@ -80,7 +83,9 @@ def leaf_eligibility_counts(
         ):
             continue
         if any(
-            dependency not in by_id or by_id[dependency].status != Column.DONE
+            dependency not in by_id
+            or by_id[dependency].status != Column.DONE
+            or by_id[dependency].meta.get("voided")
             for dependency in card.dependencies
         ):
             continue
