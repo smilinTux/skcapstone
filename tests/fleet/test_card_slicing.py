@@ -85,21 +85,26 @@ def test_oversized_card_with_invalid_dependency_fails_closed():
 
 
 def test_conflicting_repository_identity_fails_closed():
-    result = recommend_decomposition({
-        "id": "conflict",
-        "repository": "https://example/one",
-        "links": {"repository": "https://example/two", "base_ref": "main"},
-        "deliverables": [1, 2],
-        "verification_surfaces": [1, 2],
-    })
+    result = recommend_decomposition(
+        {
+            "id": "conflict",
+            "repository": "https://example/one",
+            "links": {"repository": "https://example/two", "base_ref": "main"},
+            "deliverables": [1, 2],
+            "verification_surfaces": [1, 2],
+        }
+    )
     assert result.decision == "advisory"
     assert result.leaves == ()
 
 
 def test_duplicate_successors_are_omitted_and_complete_rerun_is_bounded():
     card = {
-        "id": "rerun", "repository": "https://example/repo", "base_ref": "main",
-        "deliverables": [1, 2], "verification_surfaces": [1, 2],
+        "id": "rerun",
+        "repository": "https://example/repo",
+        "base_ref": "main",
+        "deliverables": [1, 2],
+        "verification_surfaces": [1, 2],
     }
     first = recommend_decomposition(card)
     card["successors"] = [leaf.id for leaf in first.leaves] + [first.leaves[0].id]
