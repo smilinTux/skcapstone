@@ -189,6 +189,8 @@ def test_status_leaf_eligible_known_mix_uses_folded_cards(tmp_path):
     add("super01", "Superseded", labels=("superseded",))
     add("noclaim1", "Do not claim", labels=("do-not-claim",))
     add("noclaim2", "Not claimable", labels=("not-claimable",))
+    add("voidleaf", "Voided leaf")
+    store.append_event("voidleaf", "void", "fixture", reason="terminal")
     add("owned001", "Owned")
     store.append_event("owned001", "assign", "fixture", owner="agent")
     add("review01", "Needs reviewer")
