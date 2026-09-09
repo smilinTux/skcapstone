@@ -302,3 +302,5 @@ def test_seraph_selector_does_not_publish_seat_snapshot_as_global_capacity() -> 
     assert "if not ONLY_SEAT:\n    publish_live(sessions, worker_units)" in rotate
     assert "NOOP_RECEIPT|%s|reason=no_available_capacity|seat=%s" in rotate
     assert "NOOP_RECEIPT|%s|reason=%s|seat=%s" in rotate
+    assert 'if _ONLY_SEAT == "seraph" and launch_receipts == 0:' in rotate
+    assert "NOOP_RECEIPT|%s|reason=all_candidates_suppressed|seat=seraph" in rotate

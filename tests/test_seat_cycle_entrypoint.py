@@ -293,6 +293,27 @@ def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) 
     assert result["suppressed"] == 0
 
 
+def test_seraph_all_candidates_suppressed_is_truthful_noop(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "REVIEW_ASSIGNMENT_BLOCKED|chiap08|review01|missing metadata\n"
+                "NOOP_RECEIPT|chiap08|reason=all_candidates_suppressed|seat=seraph\n"
+            ),
+            stderr="",
+        ),
+    )
+    result = seraph_operation(tmp_path)
+    assert result == {
+        "cards_examined": 0,
+        "recommendations": 0,
+        "suppressed": 0,
+        "reason": "seraph_all_candidates_suppressed",
+    }
+
+
 def test_seraph_rejects_duplicate_launch_receipts(tmp_path, monkeypatch) -> None:
     receipt = (
         "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|model=model|"

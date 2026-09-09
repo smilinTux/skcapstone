@@ -245,7 +245,11 @@ def verify_seraph_dispatch(
         }
     if not launches and len(noops) == 1 and noops[0]["seat"] == "seraph":
         reason = noops[0]["reason"]
-        if reason in {"no_eligible_work", "no_available_capacity"}:
+        if reason in {
+            "no_eligible_work",
+            "no_available_capacity",
+            "all_candidates_suppressed",
+        }:
             return {
                 "cards_examined": 0,
                 "recommendations": 0,

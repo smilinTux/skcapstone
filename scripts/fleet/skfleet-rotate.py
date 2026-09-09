@@ -4590,7 +4590,7 @@ if not picks:
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail)); sys.exit(0)
 
 raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0
-launched=0
+launched=0; launch_receipts=0
 launch_remaining={lane["name"]:lane["free"] for lane in LANES}
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_labels,_nb) in picks:
@@ -4933,6 +4933,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
         (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))
+    launch_receipts+=1
     if _fanout_request is not None:
         try:
             append_fanout_receipt(
@@ -4987,6 +4988,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         launched+=1
         launch_remaining[_LANE["name"]]-=1
     time.sleep(2)
+
+if _ONLY_SEAT == "seraph" and launch_receipts == 0:
+    log(d,"NOOP_RECEIPT|%s|reason=all_candidates_suppressed|seat=seraph"%HOST)
 
 # Republish after launching, because the first publish is a snapshot of the
 # workers that existed when this tick STARTED. Publishing only there means a host
