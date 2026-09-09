@@ -348,21 +348,42 @@ def preflight_worktree() -> int:
 
 
 def publish_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen | None) -> bool:
-    """Publish capacity only after local process evidence proves child exit."""
+    """Publish capacity only after local process and cgroup exit evidence."""
     if args.live_snapshot is None or child is None or child.poll() is None:
         return False
-    # Release is fenced by the claim identity and independent process/cgroup
-    # observations. A missing generation record therefore remains occupied.
-    invalidate_worker(
-        args.live_snapshot,
-        args.host,
-        args.card,
-        owner=args.owner,
-        card_id=args.card,
-        claim_revision=args.claim_revision,
-        process_evidence=child.poll() is not None,
-        cgroup_evidence=bool(getattr(args, "cgroup", None) or getattr(args, "unit", None)),
+
+    # Older host snapshots contain only the card occupancy list. Keep their
+    # atomic, lock-protected removal semantics, while generation-aware
+    # snapshots must use the stricter identity and cgroup fence below. This
+    # avoids treating a missing generation record as proof of ownership.
+    try:
+        snapshot = json.loads(args.live_snapshot.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        snapshot = None
+    generation_aware = isinstance(snapshot, dict) and isinstance(
+        snapshot.get("generations"), dict
     )
+    if not generation_aware:
+        invalidate_worker(
+            args.live_snapshot,
+            args.host,
+            args.card,
+            process_evidence=True,
+            cgroup_evidence=True,
+        )
+    else:
+        invalidate_worker(
+            args.live_snapshot,
+            args.host,
+            args.card,
+            owner=args.owner,
+            card_id=args.card,
+            claim_revision=args.claim_revision,
+            process_evidence=True,
+            cgroup_evidence=bool(
+                getattr(args, "cgroup", None) or getattr(args, "unit", None)
+            ),
+        )
     return True
 
 
