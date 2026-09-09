@@ -152,6 +152,30 @@ def test_five_leaf_partition_covers_parent_without_overlap_or_omission():
         card["mutation_boundaries"]
     )
     assert sorted(_flatten(result.leaves, "external_effects")) == sorted(card["external_effects"])
+    assert _flatten(result.leaves, "repositories") == tuple(card["repositories"])
+    assert _flatten(result.leaves, "base_identities") == tuple(
+        f"{repository}@main" for repository in card["repositories"]
+    )
+
+
+def test_every_bounded_leaf_count_partitions_all_repositories():
+    for count in range(2, 6):
+        repositories = [f"repo-{index}" for index in range(count)]
+        bases = [f"sha-{index}" for index in range(count)]
+        result = recommend_decomposition(
+            _card(
+                count,
+                repository=None,
+                base_ref=None,
+                repositories=repositories,
+                base_refs=bases,
+            )
+        )
+        assert len(result.leaves) == count
+        assert _flatten(result.leaves, "repositories") == tuple(repositories)
+        assert _flatten(result.leaves, "base_identities") == tuple(
+            f"{repository}@{base}" for repository, base in zip(repositories, bases, strict=True)
+        )
 
 
 def test_partition_is_deterministic():
