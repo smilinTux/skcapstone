@@ -6,7 +6,6 @@ import datetime
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import signal
@@ -14,8 +13,10 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
+
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_HEARTBEAT_TIMEOUT_S,
     HOST_LOCAL_BEAT_NOTICE_S,
@@ -241,6 +242,7 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
         lane="codex",
         model="fake",
         stdout=tmp_path / "stdout.log",
+        live_snapshot=None,
         worker_executable=sys.executable,
         startup_timeout=120.0,
         command=[sys.executable, "-c", "pass"],
@@ -261,6 +263,64 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
         assert result["heartbeat_at"] is None
         assert result["executable_evidence"] is None
         assert not args.stdout.exists()
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monkeypatch, exit_code):
+    module = wrapper()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
+    monkeypatch.setattr(module, "idle_owner_projection", lambda *args: None)
+    monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    snapshot = tmp_path / "fleet-live.json"
+    snapshot.write_text(json.dumps({"cards": ["feedbeef", "sibling"]}))
+    args = argparse.Namespace(
+        owner="worker",
+        card="feedbeef",
+        session="",
+        claim_revision="rev-1",
+        host="host-1",
+        lane="codex",
+        model="fake",
+        stdout=tmp_path / "stdout.log",
+        live_snapshot=snapshot,
+        worker_executable="",
+        startup_timeout=120.0,
+        command=[sys.executable, "-c", f"raise SystemExit({exit_code})"],
+        evidence_dir=tmp_path / "evidence/worker-exits",
+    )
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+
+    assert module.main() == exit_code
+    published = json.loads(snapshot.read_text())
+    assert published["cards"] == ["sibling"]
+    assert published["invalidated_card"] == "feedbeef"
+    assert published["host"] == "host-1"
+
+
+def test_wrapper_keeps_ambiguous_live_child_occupied(tmp_path):
+    module = wrapper()
+    snapshot = tmp_path / "fleet-live.json"
+    snapshot.write_text(json.dumps({"cards": ["feedbeef", "sibling"]}))
+    args = argparse.Namespace(card="feedbeef", host="host-1", live_snapshot=snapshot)
+
+    class LiveChild:
+        @staticmethod
+        def poll():
+            return None
+
+    assert module.publish_terminal_capacity(args, LiveChild()) is False
+    assert json.loads(snapshot.read_text())["cards"] == ["feedbeef", "sibling"]
+
+
+def test_wrapper_keeps_capacity_when_no_child_was_started(tmp_path):
+    module = wrapper()
+    snapshot = tmp_path / "fleet-live.json"
+    snapshot.write_text(json.dumps({"cards": ["feedbeef"]}))
+    args = argparse.Namespace(card="feedbeef", host="host-1", live_snapshot=snapshot)
+
+    assert module.publish_terminal_capacity(args, None) is False
+    assert json.loads(snapshot.read_text())["cards"] == ["feedbeef"]
 
 
 def test_default_heartbeat_has_margin_below_notice_and_timeout(monkeypatch):
