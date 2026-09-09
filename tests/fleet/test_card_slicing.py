@@ -40,6 +40,87 @@ def _assert_exact_partition(result, card):
     assert "parent composition and full-suite verification pass" in contract.checks
 
 
+def test_multi_repository_partition_covers_every_repository_and_matching_base_once():
+    card = _card(
+        2,
+        repository=None,
+        base_ref=None,
+        repositories=["repo-a", "repo-b"],
+        base_refs=["sha-a", "sha-b"],
+        external_effects=["effect-a", "effect-b"],
+    )
+    result = recommend_decomposition(card)
+    assert result.decision == "reject"
+    assert _flatten(result.leaves, "repositories") == ("repo-a", "repo-b")
+    assert _flatten(result.leaves, "base_identities") == (
+        "repo-a@sha-a",
+        "repo-b@sha-b",
+    )
+    assert result.composition_verification.repositories == ("repo-a", "repo-b")
+    assert result.composition_verification.base_identities == (
+        "repo-a@sha-a",
+        "repo-b@sha-b",
+    )
+    assert result.composition_verification.mutation_boundaries == tuple(
+        card["mutation_boundaries"]
+    )
+    assert result.composition_verification.external_effects == tuple(card["external_effects"])
+    assert result.composition_verification.dependencies == ()
+    for field in (
+        "repositories",
+        "base_identities",
+        "deliverables",
+        "acceptance_criteria",
+        "verification_scope",
+        "focused_gates",
+        "mutation_boundaries",
+        "external_effects",
+    ):
+        assigned = _flatten(result.leaves, field)
+        assert len(assigned) == len(set(assigned)), field
+
+
+def test_composition_digest_covers_every_parent_axis():
+    card = _card(
+        2,
+        repositories=["repo-a", "repo-b"],
+        base_refs=["sha-a", "sha-b"],
+        external_effects=["effect-a", "effect-b"],
+        dependencies=["dependency-a"],
+    )
+    original = recommend_decomposition(card).composition_verification
+    assert original is not None
+    mutations = {
+        "repositories": ["repo-a", "repo-c"],
+        "base_refs": ["sha-a", "sha-c"],
+        "deliverables": ["changed", "deliverable-1"],
+        "acceptance_criteria": ["changed", "criterion-1"],
+        "verification_surfaces": ["changed", "tests/surface_1.py"],
+        "focused_gates": ["changed", "python -m pytest -q tests/surface_1.py"],
+        "mutation_boundaries": ["changed", "src/part_1.py"],
+        "external_effects": ["changed", "effect-b"],
+        "dependencies": ["dependency-b"],
+    }
+    for field, value in mutations.items():
+        changed = recommend_decomposition({**card, field: value}).composition_verification
+        assert changed is not None
+        assert changed.coverage_sha256 != original.coverage_sha256, field
+
+
+def test_mismatched_repository_base_identity_fails_closed():
+    result = recommend_decomposition(
+        _card(
+            2,
+            repository=None,
+            base_ref=None,
+            repositories=["repo-a", "repo-b"],
+            base_refs=["sha-a", "sha-b", "sha-c"],
+        )
+    )
+    assert result.decision == "advisory"
+    assert result.leaves == ()
+
+
 def test_small_card_is_bounded():
     result = recommend_decomposition({"id": "small", "acceptance_criteria": ["one"]})
     assert result.decision == "bounded"

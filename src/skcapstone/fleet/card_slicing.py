@@ -8,6 +8,7 @@ persist it through the coordination API.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
@@ -60,6 +61,8 @@ class LeafRecommendation:
     focused_gates: tuple[str, ...]
     mutation_boundaries: tuple[str, ...] = ()
     external_effects: tuple[str, ...] = ()
+    repositories: tuple[str, ...] = ()
+    base_identities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,10 +70,15 @@ class CompositionVerificationContract:
     """Proof obligation retained by the parent after all leaves complete."""
 
     leaf_ids: tuple[str, ...]
+    repositories: tuple[str, ...]
+    base_identities: tuple[str, ...]
     deliverables: tuple[str, ...]
     acceptance_criteria: tuple[str, ...]
     verification_scope: tuple[str, ...]
     focused_gates: tuple[str, ...]
+    mutation_boundaries: tuple[str, ...]
+    external_effects: tuple[str, ...]
+    dependencies: tuple[str, ...]
     coverage_sha256: str
     checks: tuple[str, ...] = (
         "every parent item is assigned to exactly one leaf",
@@ -168,12 +176,22 @@ def _partition(items: tuple[str, ...], count: int) -> tuple[tuple[str, ...], ...
 
 
 def _coverage_digest(*groups: tuple[str, ...]) -> str:
-    payload = "\n".join(
-        f"{group_index}:{item_index}:{item}"
-        for group_index, group in enumerate(groups)
-        for item_index, item in enumerate(group)
-    )
+    payload = json.dumps(groups, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _repository_identities(card: Any) -> tuple[tuple[str, str], ...]:
+    repositories = _strings(card, "repositories", "repos", "projects", "repository", "repo")
+    bases = _strings(
+        card, "base_refs", "base_references", "bases", "base_ref", "base_reference", "base"
+    )
+    if not repositories or not bases:
+        return ()
+    if len(bases) == 1:
+        bases = bases * len(repositories)
+    if len(repositories) != len(bases):
+        return ()
+    return tuple(zip(repositories, bases, strict=True))
 
 
 def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionRecommendation:
@@ -213,11 +231,8 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             signals,
             custody="composition",
         )
-    raw_repository = _linked(card, "repository", "repo")
-    raw_base_ref = _linked(card, "base_ref", "base_reference", "base")
-    repository = raw_repository.strip() if isinstance(raw_repository, str) else ""
-    base_ref = raw_base_ref.strip() if isinstance(raw_base_ref, str) else ""
-    if not repository or not base_ref:
+    identities = _repository_identities(card)
+    if not identities:
         return DecompositionRecommendation(
             "advisory",
             "repository and base_ref are required for leaf recommendations",
@@ -253,6 +268,8 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
         len(verification),
         len(gates),
     )
+    if len(identities) > 1:
+        leaf_count = min(leaf_count, len(identities))
     deliverable_parts = _partition(deliverables, leaf_count)
     criteria_parts = _partition(criteria, leaf_count)
     verification_parts = _partition(verification, leaf_count)
@@ -263,6 +280,10 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
     effect_parts = _partition(
         _strings(card, "external_effects", "effects", "side_effects"), leaf_count
     )
+    if len(identities) == 1:
+        identity_parts = tuple((identities[0],) for _ in range(leaf_count))
+    else:
+        identity_parts = _partition(identities, leaf_count)
     existing_successors = {
         str(value) for value in _items(_linked(card, "successors", "successor") or [])
     }
@@ -272,14 +293,16 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             leaf_ids[i - 1],
             f"{_get(card, 'title', card_id)}: leaf {i}",
             dependencies,
-            repository,
-            base_ref,
+            identity_parts[i - 1][0][0],
+            identity_parts[i - 1][0][1],
             deliverable_parts[i - 1],
             criteria_parts[i - 1],
             verification_parts[i - 1],
             gate_parts[i - 1],
             mutation_parts[i - 1],
             effect_parts[i - 1],
+            tuple(repository for repository, _ in identity_parts[i - 1]),
+            tuple(f"{repository}@{base}" for repository, base in identity_parts[i - 1]),
         )
         for i in range(1, leaf_count + 1)
         if leaf_ids[i - 1] not in existing_successors
@@ -293,11 +316,28 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
         leaf_ids,
         CompositionVerificationContract(
             leaf_ids=leaf_ids,
+            repositories=tuple(repository for repository, _ in identities),
+            base_identities=tuple(f"{repository}@{base}" for repository, base in identities),
             deliverables=deliverables,
             acceptance_criteria=criteria,
             verification_scope=verification,
             focused_gates=gates,
-            coverage_sha256=_coverage_digest(deliverables, criteria, verification, gates),
+            mutation_boundaries=_strings(
+                card, "mutation_boundaries", "boundaries", "write_scopes"
+            ),
+            external_effects=_strings(card, "external_effects", "effects", "side_effects"),
+            dependencies=dependencies,
+            coverage_sha256=_coverage_digest(
+                tuple(repository for repository, _ in identities),
+                tuple(f"{repository}@{base}" for repository, base in identities),
+                deliverables,
+                criteria,
+                verification,
+                gates,
+                _strings(card, "mutation_boundaries", "boundaries", "write_scopes"),
+                _strings(card, "external_effects", "effects", "side_effects"),
+                dependencies,
+            ),
         ),
     )
 
