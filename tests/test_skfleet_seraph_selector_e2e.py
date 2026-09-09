@@ -321,6 +321,7 @@ cycle("replay", "seraph")
         "suppressed": 0,
         "dispatch_succeeded": 1,
         "dispatch_failed": 0,
+        "dispatch_retryable": 0,
         "reason": "seraph_dispatch_complete",
     }
     claim_events = [

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from skcoord.card import Column
 from skcoord.card_store import CardStore
 
 from .link_cycle import recommend_one_reviewer
@@ -57,6 +58,7 @@ class CycleSummary:
     suppressed: int = 0
     dispatch_succeeded: int = 0
     dispatch_failed: int = 0
+    dispatch_retryable: int = 0
     reason: str | None = None
     source_revision: str | None = None
     evidence_sha256: str | None = None
@@ -174,6 +176,7 @@ def run_cycle(
             suppressed=int(values.get("suppressed", 0)),
             dispatch_succeeded=int(values.get("dispatch_succeeded", 0)),
             dispatch_failed=int(values.get("dispatch_failed", 0)),
+            dispatch_retryable=int(values.get("dispatch_retryable", 0)),
             reason=str(reason) if reason is not None else None,
             source_revision=(
                 str(values["source_revision"]) if values.get("source_revision") else None
@@ -310,7 +313,7 @@ def verify_seraph_dispatch(
                 invalid += 1
                 continue
             succeeded += 1
-        elif card.owner is None:
+        elif _failed_launch_is_retryable(store, launch, card, events, receipts[0]):
             failed += 1
         else:
             invalid += 1
@@ -327,8 +330,60 @@ def verify_seraph_dispatch(
         "suppressed": suppressed,
         "dispatch_succeeded": succeeded,
         "dispatch_failed": suppressed,
+        "dispatch_retryable": failed,
         "reason": reason,
     }
+
+
+def _failed_launch_is_retryable(
+    store: CardStore,
+    launch: dict[str, str],
+    card: object,
+    events: list[dict[str, object]],
+    receipt: dict[str, object],
+) -> bool:
+    """Bind a failed launch to its exact released, currently claimable generation."""
+
+    owner = launch["owner"]
+    revision = launch["revision"]
+    claims = [
+        index
+        for index, event in enumerate(events)
+        if event.get("action") == "claim"
+        and event.get("owner") == owner
+        and (event.get("claim_revision") or event.get("event_id")) == revision
+    ]
+    releases = [
+        index
+        for index, event in enumerate(events)
+        if event.get("action") == "release_claim"
+        and event.get("released_owner") == owner
+        and event.get("expected_claim_revision") == revision
+    ]
+    try:
+        receipt_index = next(index for index, event in enumerate(events) if event is receipt)
+    except StopIteration:
+        return False
+    if (
+        len(claims) != 1
+        or len(releases) != 1
+        or not claims[0] < receipt_index < releases[0]
+        or getattr(card, "owner", None) is not None
+        or getattr(card, "status", None) != Column.BACKLOG
+        or bool(getattr(card, "archived", False))
+    ):
+        return False
+    labels = {str(label).lower() for label in getattr(card, "labels", ())}
+    if (
+        labels & {"do-not-claim", "human-gate", "not-claimable", "superseded"}
+        or any(label.startswith("superseded-") or "do-not-claim" in label for label in labels)
+        or "[human]" in str(getattr(card, "title", "")).lower()
+    ):
+        return False
+    return all(
+        (dependency := store.fold(dependency_id)) is not None and dependency.status == Column.DONE
+        for dependency_id in getattr(card, "dependencies", ())
+    )
 
 
 def seraph_operation(home: Path) -> dict[str, int | str]:

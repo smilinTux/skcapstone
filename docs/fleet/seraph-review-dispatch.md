@@ -27,7 +27,10 @@ when every canonical `LAUNCHED` receipt matches the Link recommendation, exact
 claim revision, producer-independent review card in `doing`, and active worker
 unit. It reports a partial result when only part of the batch validates. A failed
 launch must carry its exact claim revision, have a matching negative launch
-receipt, and be released so the card remains retryable. Duplicate cards or two
+receipt, and have that exact generation released after the receipt. CardStore
+must then confirm a fresh unowned, nonterminal, dependency-complete, claimable
+state. Generation mismatch, stale release order, ownership, terminal state, or
+a claim-excluding label fails closed. Duplicate cards or two
 cards for the same source-card and head-revision pair fail validation. Zero
 eligible work and zero remaining physical or provider capacity emit
 distinct `NOOP_RECEIPT` reasons and are honest successful no-ops. A missing,

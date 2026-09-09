@@ -8,6 +8,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from skcapstone.card import Column
 from skcapstone.card_store import CardCore, CardStore
 from skcapstone.link_review_work import card_generation, reconcile_review_work
 from skcapstone.seat_cycle_entrypoint import (
@@ -19,9 +22,14 @@ from skcapstone.seat_cycle_entrypoint import (
 
 
 def review_events(
-    owner: str, revision: str, *, author: str = "builder", launched: bool = True
+    owner: str,
+    revision: str,
+    *,
+    author: str = "builder",
+    launched: bool = True,
+    release_revision: str | None = None,
 ) -> list[dict[str, object]]:
-    return [
+    events = [
         {
             "action": "review_assignment_recommendation",
             "writer": "link",
@@ -29,6 +37,7 @@ def review_events(
             "author": author,
             "reviewer": owner,
         },
+        {"action": "claim", "owner": owner, "claim_revision": revision},
         {
             "action": "review_assignment_launch",
             "recommendation_id": "recommendation-1",
@@ -37,6 +46,15 @@ def review_events(
             "launched": launched,
         },
     ]
+    if not launched:
+        events.append(
+            {
+                "action": "release_claim",
+                "released_owner": owner,
+                "expected_claim_revision": release_revision or revision,
+            }
+        )
+    return events
 
 
 def control(path: Path) -> None:
@@ -289,8 +307,10 @@ def test_seraph_reports_partial_batch_and_leaves_failed_item_retryable(
     cards = {
         card_id: SimpleNamespace(
             labels=["review", "seat-seraph"],
-            status=SimpleNamespace(value="doing" if card_id == "review01" else "review"),
+            status=(SimpleNamespace(value="doing") if card_id == "review01" else Column.BACKLOG),
             owner=owner if card_id == "review01" else None,
+            archived=False,
+            dependencies=[],
             meta={
                 "_claim_revision": "revision-1" if card_id == "review01" else None,
                 "link_source_card": "source" + card_id[-2:],
@@ -341,9 +361,96 @@ def test_seraph_reports_partial_batch_and_leaves_failed_item_retryable(
         "suppressed": 1,
         "dispatch_succeeded": 1,
         "dispatch_failed": 1,
+        "dispatch_retryable": 1,
         "reason": "seraph_dispatch_partial",
     }
     assert cards["review02"].owner is None
+
+
+def _failed_seraph_result(
+    tmp_path,
+    monkeypatch,
+    *,
+    status="backlog",
+    owner=None,
+    labels=None,
+    release_revision=None,
+    events=None,
+):
+    reviewer = "pi-seraph-chiap08-review01"
+    output = (
+        "LAUNCH_FAILED|chiap08|codex-auto-review01|review01|lane=codex|"
+        f"model=sk-codex-mid|owner={reviewer}|claim_revision=revision-1\n"
+    )
+    card = SimpleNamespace(
+        labels=labels or ["review", "seat-seraph"],
+        status=Column(status),
+        owner=owner,
+        archived=False,
+        dependencies=[],
+        meta={"link_source_card": "source01", "link_head_revision": "a" * 40},
+        links={"producer_identity": "builder"},
+    )
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=output),
+    )
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
+        lambda *_: events
+        or review_events(
+            reviewer,
+            "revision-1",
+            launched=False,
+            release_revision=release_revision,
+        ),
+    )
+    return seraph_operation(tmp_path)
+
+
+def test_seraph_failed_launch_rejects_claim_release_generation_mismatch(
+    tmp_path, monkeypatch
+) -> None:
+    result = _failed_seraph_result(tmp_path, monkeypatch, release_revision="revision-old")
+    assert result["reason"] == "seraph_dispatch_failed"
+    assert result["dispatch_failed"] == 1
+    assert result["dispatch_retryable"] == 0
+
+
+def test_seraph_failed_launch_rejects_stale_release_order(tmp_path, monkeypatch) -> None:
+    events = review_events("pi-seraph-chiap08-review01", "revision-1", launched=False)
+    events[-1], events[-2] = events[-2], events[-1]
+    result = _failed_seraph_result(tmp_path, monkeypatch, events=events)
+    assert result["reason"] == "seraph_dispatch_failed"
+    assert result["dispatch_retryable"] == 0
+
+
+@pytest.mark.parametrize(
+    ("status", "owner", "labels"),
+    [
+        ("backlog", "another-worker", ["review", "seat-seraph"]),
+        ("done", None, ["review", "seat-seraph"]),
+        ("backlog", None, ["review", "seat-seraph", "not-claimable"]),
+    ],
+)
+def test_seraph_failed_launch_rejects_owned_or_nonclaimable_state(
+    tmp_path, monkeypatch, status, owner, labels
+) -> None:
+    result = _failed_seraph_result(
+        tmp_path, monkeypatch, status=status, owner=owner, labels=labels
+    )
+    assert result["reason"] == "seraph_dispatch_failed"
+    assert result["dispatch_retryable"] == 0
+
+
+def test_seraph_failed_launch_accepts_exact_released_claimable_generation(
+    tmp_path, monkeypatch
+) -> None:
+    result = _failed_seraph_result(tmp_path, monkeypatch)
+    assert result["reason"] == "seraph_dispatch_failed"
+    assert result["dispatch_failed"] == 1
+    assert result["dispatch_retryable"] == 1
 
 
 def test_seraph_preserves_valid_launch_when_selector_exits_nonzero(tmp_path, monkeypatch) -> None:
