@@ -9,11 +9,13 @@ or invalid Link feed is recorded as an honest bounded no-op.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import socket
 import subprocess
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +42,16 @@ _LAUNCH = re.compile(
 _MAX_SERAPH_BATCH = 8
 _NOOP = re.compile(
     r"^NOOP_RECEIPT\|(?P<host>[^|]+)\|reason=(?P<reason>[^|]+)" r"\|seat=(?P<seat>[^|]+)$"
+)
+_SERAPH_RECEIPT_SCHEMA = "skfleet.seraph-cycle-receipt/v1"
+_SERAPH_RECEIPT_KEY = (
+    "cycle_id",
+    "source_card",
+    "head_revision",
+    "review_card",
+    "claim_generation",
+    "reviewer_identity",
+    "result",
 )
 
 
@@ -103,6 +115,58 @@ def _append_health(home: Path, summary: CycleSummary) -> None:
         stream.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
 
 
+def _append_seraph_receipt(
+    home: Path,
+    *,
+    cycle_id: str,
+    source_card: str | None,
+    head_revision: str | None,
+    review_card: str | None,
+    claim_generation: str | None,
+    reviewer_identity: str | None,
+    result: str,
+) -> None:
+    """Append one immutable, deduplicated receipt for a live Seraph outcome."""
+
+    path = home / "coordination" / "seat-cycles" / "seraph.candidate.receipts.jsonl"
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    payload = {
+        "schema": _SERAPH_RECEIPT_SCHEMA,
+        "event": "seraph_cycle_candidate",
+        "seat": "seraph",
+        "cycle_id": cycle_id,
+        "source_card": source_card,
+        "head_revision": head_revision,
+        "review_card": review_card,
+        "claim_generation": claim_generation,
+        "reviewer_identity": reviewer_identity,
+        "result": result,
+        "at": _now(),
+    }
+    key = tuple(payload[field] for field in _SERAPH_RECEIPT_KEY)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            existing = []
+            if path.exists():
+                with path.open(encoding="utf-8") as receipt_file:
+                    existing = [json.loads(line) for line in receipt_file]
+            if any(
+                tuple(event.get(field) for field in _SERAPH_RECEIPT_KEY) == key
+                for event in existing
+            ):
+                return
+            with path.open("a", encoding="utf-8") as receipt_file:
+                receipt_file.write(
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+                )
+                receipt_file.flush()
+                os.fsync(receipt_file.fileno())
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def run_cycle(
     *,
     seat: str,
@@ -110,7 +174,7 @@ def run_cycle(
     control_plane: Path,
     local_host: str | None = None,
     dry_run: bool = False,
-    operation: Callable[[], dict[str, int]] | None = None,
+    operation: Callable[..., dict[str, int]] | None = None,
 ) -> CycleSummary:
     """Run one fenced lifecycle-seat cycle, or record a bounded no-op."""
 
@@ -150,6 +214,8 @@ def run_cycle(
                 "suppressed": 0,
                 "reason": "operation_not_configured",
             }
+        if seat == "seraph":
+            return operation(_cycle_id)
         return operation()
 
     result: CycleResult[dict[str, int | str]] = guard.run(guarded_operation)
@@ -214,9 +280,12 @@ def presence_operation() -> dict[str, int | str]:
 def verify_seraph_dispatch(
     home: Path,
     completed: subprocess.CompletedProcess[str],
+    *,
+    cycle_id: str | None = None,
 ) -> dict[str, int | str]:
     """Verify every selector result independently and report partial outcomes."""
 
+    cycle_id = cycle_id or str(uuid.uuid4())
     launches = [
         match.groupdict()
         for line in completed.stdout.splitlines()
@@ -228,6 +297,16 @@ def verify_seraph_dispatch(
         if (match := _NOOP.fullmatch(line.strip()))
     ]
     if completed.returncode != 0 and not launches:
+        _append_seraph_receipt(
+            home,
+            cycle_id=cycle_id,
+            source_card=None,
+            head_revision=None,
+            review_card=None,
+            claim_generation=None,
+            reviewer_identity=None,
+            result="dispatch_failed",
+        )
         return {
             "cards_examined": 0,
             "recommendations": 0,
@@ -237,6 +316,16 @@ def verify_seraph_dispatch(
     if not launches and len(noops) == 1 and noops[0]["seat"] == "seraph":
         reason = noops[0]["reason"]
         if reason in {"no_eligible_work", "no_available_capacity"}:
+            _append_seraph_receipt(
+                home,
+                cycle_id=cycle_id,
+                source_card=None,
+                head_revision=None,
+                review_card=None,
+                claim_generation=None,
+                reviewer_identity=None,
+                result="no_work",
+            )
             return {
                 "cards_examined": 0,
                 "recommendations": 0,
@@ -244,6 +333,16 @@ def verify_seraph_dispatch(
                 "reason": f"seraph_{reason}",
             }
     if not launches or noops:
+        _append_seraph_receipt(
+            home,
+            cycle_id=cycle_id,
+            source_card=None,
+            head_revision=None,
+            review_card=None,
+            claim_generation=None,
+            reviewer_identity=None,
+            result="suppressed",
+        )
         return {
             "cards_examined": len(launches),
             "recommendations": 0,
@@ -297,13 +396,35 @@ def verify_seraph_dispatch(
             and producer != recommendations[0].get("reviewer")
             and receipts[0].get("recommendation_id") == recommendations[0].get("recommendation_id")
         )
+        duplicate_card = launch["card"] in seen_cards
         seen_cards.add(launch["card"])
         source_heads.add(source_head)
         if not common_valid:
+            if not duplicate_card:
+                _append_seraph_receipt(
+                    home,
+                    cycle_id=cycle_id,
+                    source_card=source_head[0] or None,
+                    head_revision=source_head[1] or None,
+                    review_card=launch["card"],
+                    claim_generation=launch["revision"],
+                    reviewer_identity=launch["owner"],
+                    result="suppressed",
+                )
             invalid += 1
             continue
         launched = launch["outcome"] == "LAUNCHED"
         if receipts[0].get("launched") is not launched:
+            _append_seraph_receipt(
+                home,
+                cycle_id=cycle_id,
+                source_card=source_head[0],
+                head_revision=source_head[1],
+                review_card=launch["card"],
+                claim_generation=launch["revision"],
+                reviewer_identity=launch["owner"],
+                result="suppressed",
+            )
             invalid += 1
             continue
         if launched:
@@ -313,6 +434,16 @@ def verify_seraph_dispatch(
                 or card.owner != launch["owner"]
                 or card.meta.get("_claim_revision") != launch["revision"]
             ):
+                _append_seraph_receipt(
+                    home,
+                    cycle_id=cycle_id,
+                    source_card=source_head[0],
+                    head_revision=source_head[1],
+                    review_card=launch["card"],
+                    claim_generation=launch["revision"],
+                    reviewer_identity=launch["owner"],
+                    result="suppressed",
+                )
                 invalid += 1
                 continue
             unit = f"skfleet-worker-{launch['lane']}-{launch['card']}.service"
@@ -322,12 +453,52 @@ def verify_seraph_dispatch(
                 timeout=10,
             )
             if active.returncode != 0:
+                _append_seraph_receipt(
+                    home,
+                    cycle_id=cycle_id,
+                    source_card=source_head[0],
+                    head_revision=source_head[1],
+                    review_card=launch["card"],
+                    claim_generation=launch["revision"],
+                    reviewer_identity=launch["owner"],
+                    result="suppressed",
+                )
                 invalid += 1
                 continue
             succeeded += 1
+            _append_seraph_receipt(
+                home,
+                cycle_id=cycle_id,
+                source_card=source_head[0],
+                head_revision=source_head[1],
+                review_card=launch["card"],
+                claim_generation=launch["revision"],
+                reviewer_identity=launch["owner"],
+                result="launched",
+            )
         elif _failed_launch_is_retryable(store, launch, card, events, receipts[0]):
             failed += 1
+            _append_seraph_receipt(
+                home,
+                cycle_id=cycle_id,
+                source_card=source_head[0],
+                head_revision=source_head[1],
+                review_card=launch["card"],
+                claim_generation=launch["revision"],
+                reviewer_identity=launch["owner"],
+                result="launch_failed",
+            )
         else:
+            _append_seraph_receipt(
+                home,
+                cycle_id=cycle_id,
+                source_card=source_head[0],
+                head_revision=source_head[1],
+                review_card=launch["card"],
+                claim_generation=launch["revision"],
+                reviewer_identity=launch["owner"],
+                result="suppressed",
+            )
             invalid += 1
     suppressed = failed + invalid
     if succeeded and suppressed:
@@ -398,7 +569,7 @@ def _failed_launch_is_retryable(
     )
 
 
-def seraph_operation(home: Path) -> dict[str, int | str]:
+def seraph_operation(home: Path, cycle_id: str | None = None) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch."""
 
     dispatcher = Path.home() / ".local/bin/skfleet-rotate.py"
@@ -430,7 +601,7 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
     completed = subprocess.run(
         [str(dispatcher), "--go"], env=env, capture_output=True, text=True, timeout=240
     )
-    return verify_seraph_dispatch(home, completed)
+    return verify_seraph_dispatch(home, completed, cycle_id=cycle_id)
 
 
 def _emit_review_work(home: Path, lineage_path: Path, feed_reason: str) -> dict[str, int | str]:
@@ -541,8 +712,8 @@ def main(argv: list[str] | None = None) -> int:
 
     elif args.seat == "seraph":
 
-        def operation() -> dict[str, int | str]:
-            return seraph_operation(args.home)
+        def operation(cycle_id: str) -> dict[str, int | str]:
+            return seraph_operation(args.home, cycle_id=cycle_id)
 
     elif args.seat == "link":
 

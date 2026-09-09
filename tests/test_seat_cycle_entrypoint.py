@@ -14,6 +14,7 @@ from skcapstone.card import Column
 from skcapstone.card_store import CardCore, CardStore
 from skcapstone.link_review_work import card_generation, reconcile_review_work
 from skcapstone.seat_cycle_entrypoint import (
+    _append_seraph_receipt,
     link_operation,
     load_control_plane,
     run_cycle,
@@ -256,6 +257,61 @@ def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) 
     assert result["suppressed"] == 0
 
 
+def test_seraph_no_work_emits_one_typed_cycle_receipt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat=seraph\n",
+        ),
+    )
+
+    assert seraph_operation(tmp_path, cycle_id="cycle-no-work")["reason"] == (
+        "seraph_no_eligible_work"
+    )
+    receipt = json.loads(
+        (tmp_path / "coordination/seat-cycles/seraph.candidate.receipts.jsonl").read_text().strip()
+    )
+    assert receipt == {
+        "at": receipt["at"],
+        "claim_generation": None,
+        "cycle_id": "cycle-no-work",
+        "event": "seraph_cycle_candidate",
+        "head_revision": None,
+        "review_card": None,
+        "result": "no_work",
+        "reviewer_identity": None,
+        "schema": "skfleet.seraph-cycle-receipt/v1",
+        "seat": "seraph",
+        "source_card": None,
+    }
+
+
+def test_seraph_receipt_append_is_concurrent_and_idempotent(tmp_path) -> None:
+    kwargs = {
+        "home": tmp_path,
+        "cycle_id": "cycle-concurrent",
+        "source_card": "source01",
+        "head_revision": "a" * 40,
+        "review_card": "review01",
+        "claim_generation": "claim-1",
+        "reviewer_identity": "pi-seraph-chiap08-review01",
+        "result": "suppressed",
+    }
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda _index: _append_seraph_receipt(**kwargs), range(8)))
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "coordination/seat-cycles/seraph.candidate.receipts.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["cycle_id"] == "cycle-concurrent"
+    assert rows[0]["result"] == "suppressed"
+
+
 def test_seraph_rejects_duplicate_launch_receipts(tmp_path, monkeypatch) -> None:
     receipt = (
         "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|model=model|"
@@ -401,12 +457,14 @@ def _failed_seraph_result(
     monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: events
-        or review_events(
-            reviewer,
-            "revision-1",
-            launched=False,
-            release_revision=release_revision,
+        lambda *_: (
+            events
+            or review_events(
+                reviewer,
+                "revision-1",
+                launched=False,
+                release_revision=release_revision,
+            )
         ),
     )
     return seraph_operation(tmp_path)
