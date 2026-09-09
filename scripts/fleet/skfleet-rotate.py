@@ -259,6 +259,10 @@ GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")
 QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")
 KIMI_TARGET=_required_lane_target("SKFLEET_KIMI_TARGET", default="0")
 MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
+MAX_CANDIDATE_SCAN=max(
+    MAX_LAUNCH,
+    int(os.environ.get("SKFLEET_MAX_CANDIDATE_SCAN",str(MAX_LAUNCH*8))),
+)
 ONLY_SEAT=os.environ.get("SKFLEET_ONLY_SEAT","").strip().lower()
 SEAT_TARGET=_required_lane_target("SKFLEET_SEAT_TARGET", default="0")
 CODEX_PHYSICAL_LIMIT=_required_lane_target(
@@ -4386,8 +4390,8 @@ _lane_deferred=collections.Counter()
 # card queued behind it.
 # Scan a bounded, deterministic sequence once per cycle.  Rejected candidates
 # are consumed by the scan and cannot be selected again during this rotation.
-_candidate_scan = _bounded_candidate_sequence(owned, MAX_LAUNCH)
-while _i<len(_candidate_scan) and len(picks)<MAX_LAUNCH:
+_candidate_scan = _bounded_candidate_sequence(owned, MAX_CANDIDATE_SCAN)
+while _i<len(owned) and _i<len(_candidate_scan):
     _card=_candidate_scan[_i]; _i+=1
     _labels=_card[4]
     _esc=needs_escalation(_card[2], _card[3], _labels)
@@ -4415,7 +4419,7 @@ while _i<len(_candidate_scan) and len(picks)<MAX_LAUNCH:
     if DRY:
         log(d,"DRY_SELECTION|%s|%s|selected=%s|reason=%s"%
             (HOST,_card[2],_lane_name,"qwen-first" if _qwen_exclusive else "compatible"))
-    picks.append((_lane,_card)); remaining[_lane["name"]]-=1
+    picks.append((_lane,_card))
 if _lane_deferred:
     log(d,"LANE_DEFER|%s|%s"%(HOST,",".join(
         "%s=%d"%(reason,_lane_deferred[reason]) for reason in sorted(_lane_deferred))))
@@ -4497,8 +4501,23 @@ if not picks:
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail)); sys.exit(0)
 
 raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0
+launched=0
+launch_remaining={lane["name"]:lane["free"] for lane in LANES}
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_labels,_nb) in picks:
+    if launched>=MAX_LAUNCH or not any(launch_remaining.values()):
+        break
+    _attempt_escalation=needs_escalation(cid,core,_labels)
+    _attempt_health={lane["name"]:_health_for(
+        lane["name"],_lane_model(lane,core)) for lane in LANES}
+    _attempt_lane_name,_attempt_defer=select_compatible_lane(
+        _labels,_attempt_escalation,lane_order,launch_remaining,
+        qwen_suitable(core),qwen_first_exclusive(cid,_labels),_attempt_health)
+    if _attempt_lane_name is None:
+        log(d,"SKIPPED_ATTEMPT_ADMISSION|%s|%s|reason=%s"%
+            (HOST,cid,_attempt_defer))
+        continue
+    _LANE=next(lane for lane in LANES if lane["name"]==_attempt_lane_name)
     try:
         unit=_worker_unit_name(_LANE["name"],cid)
     except ValueError as exc:
@@ -4643,7 +4662,10 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         model=_kimi_model_for(core) or model
     pi_tools=pi_tool_allowlist(_labels)
     if DRY:
-        log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40])); continue
+        log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40]))
+        launched+=1
+        launch_remaining[_LANE["name"]]-=1
+        continue
     _review_recommendation = None
     _review_handoff = None
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
@@ -4807,6 +4829,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
                         "--expected-claim-revision",claimed_revision,"--agent",name],
                        capture_output=True,text=True)
+    else:
+        launched+=1
+        launch_remaining[_LANE["name"]]-=1
     time.sleep(2)
 
 # Republish after launching, because the first publish is a snapshot of the
