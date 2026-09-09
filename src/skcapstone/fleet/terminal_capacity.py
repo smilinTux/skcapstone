@@ -56,10 +56,15 @@ def invalidate_worker(
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    identity = {"card_id": str(card_id or card), "owner": str(owner),
-                "claim_revision": str(claim_revision)} if any(
-                    value is not None for value in (owner, claim_revision, card_id)
-                ) else {}
+    identity = (
+        {
+            "card_id": str(card_id or card),
+            "owner": str(owner),
+            "claim_revision": str(claim_revision),
+        }
+        if any(value is not None for value in (owner, claim_revision, card_id))
+        else {}
+    )
     with (target.with_name(target.name + ".lock")).open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         snapshot = _load(target)
