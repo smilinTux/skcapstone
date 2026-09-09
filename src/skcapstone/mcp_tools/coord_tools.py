@@ -231,23 +231,25 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
 
 async def _handle_coord_complete(args: dict) -> list[TextContent]:
     """Complete a task on the board."""
-    from ..coordination import Board
+    from ..coord_completion import complete_coord_task
 
     task_id = args.get("task_id", "")
     agent_name = args.get("agent_name", "")
     if not task_id or not agent_name:
         return _error_response("task_id and agent_name are required")
 
-    board = Board(_home())
-    # board.complete_task() automatically mints Joules via _mint_joules_for_task
-    agent = board.complete_task(agent_name, task_id)
+    home = _home()
+    try:
+        agent = complete_coord_task(home, agent_name, task_id)
+    except ValueError as exc:
+        return _error_response(str(exc))
 
     # Report minted Joules in the response (best-effort)
     joules_minted = 0
     try:
-        from ..coordination import _PRIORITY_JOULE_MAP
+        from ..coordination import _PRIORITY_JOULE_MAP, Board
 
-        for t in board.load_tasks():
+        for t in Board(home).load_tasks():
             if t.id == task_id:
                 _cat, _evt, joules_minted = _PRIORITY_JOULE_MAP.get(
                     t.priority.value, ("community", "support_ticket", 50)
@@ -368,9 +370,8 @@ async def _handle_coord_kanban(_args: dict) -> list[TextContent]:
 
 async def _handle_coord_move(args: dict) -> list[TextContent]:
     """Move a card to a kanban column."""
-    from skcoord.lifecycle import transition_task
-
     from ..card import Column
+    from ..coord_completion import move_coord_task
 
     task_id = args.get("task_id", "")
     column = args.get("column", "")
@@ -380,12 +381,12 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
         return _error_response(f"invalid column '{column}'")
 
     try:
-        receipt = transition_task(
+        receipt = move_coord_task(
             _shared_root(),
-            task_id=task_id,
-            column=column,
-            actor=args.get("agent", "") or "coord-move",
-            order=args.get("order"),
+            args.get("agent", "") or "coord-move",
+            task_id,
+            column,
+            args.get("order"),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         message = str(exc)

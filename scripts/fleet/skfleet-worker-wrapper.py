@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 
+from skcapstone.fleet.terminal_capacity import retire_worker_generation
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 
 
@@ -313,6 +314,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stdout", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--mail-recipient", default="jarvis")
+    parser.add_argument("--live-snapshot", type=Path, default=None)
     parser.add_argument("--session", default="")
     parser.add_argument("--worker-executable", default="")
     parser.add_argument("--startup-timeout", type=float, default=120.0)
@@ -345,6 +347,53 @@ def preflight_worktree() -> int:
     return r.returncode
 
 
+def terminal_local_evidence(
+    child: subprocess.Popen | None,
+    *,
+    proc_root: Path = Path("/proc"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> bool:
+    """Prove that the exact child and every peer in this worker cgroup exited."""
+    if child is None or child.poll() is None or (proc_root / str(child.pid)).exists():
+        return False
+    try:
+        control_group = next(
+            line[3:]
+            for line in (proc_root / "self/cgroup").read_text(encoding="utf-8").splitlines()
+            if line.startswith("0::")
+        )
+        if not control_group.startswith("/") or ".." in control_group.split("/"):
+            return False
+        members = {
+            int(value)
+            for value in (cgroup_root / control_group.lstrip("/") / "cgroup.procs")
+            .read_text(encoding="utf-8")
+            .split()
+        }
+    except (FileNotFoundError, OSError, StopIteration, TypeError, ValueError):
+        return False
+    if members - {os.getpid()}:
+        return False
+    return True
+
+
+def publish_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen | None) -> bool:
+    """Publish only after CardStore, process-tree, and cgroup evidence agree."""
+    if args.live_snapshot is None or not terminal_local_evidence(child):
+        return False
+    return (
+        retire_worker_generation(
+            args.live_snapshot,
+            Path.home() / ".skcapstone",
+            args.host,
+            args.card,
+            args.owner,
+            args.claim_revision,
+        )
+        is not None
+    )
+
+
 def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
@@ -364,6 +413,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, _stop)
     startup_stop = threading.Event()
     startup_thread = None
+    child = None
     try:
         with args.stdout.open("wb") as stdout:
             child = subprocess.Popen(args.command, stdout=stdout, stderr=subprocess.PIPE)
@@ -387,6 +437,12 @@ def main() -> int:
             startup_thread.join(timeout=6)
         # Always idle the worker projection on any exit path, including SIGTERM.
         idle_owner_projection(args.owner)
+        # Publish terminal capacity before the claim can be released. The
+        # fenced, atomic update removes only this card and preserves siblings.
+        try:
+            publish_terminal_capacity(args, child)
+        except OSError as exc:
+            sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
 
 
 if __name__ == "__main__":

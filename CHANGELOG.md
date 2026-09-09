@@ -1,5 +1,12 @@
 # Changelog
 
+- Card `35a61efb`: changed Seraph's hard-coded single review launch into a
+  configurable batch bounded from one through eight, validated every exact
+  recommendation, claim revision, launch receipt, active worker, source head,
+  and producer identity independently. A failed launch is retryable only after
+  its exact claim generation is released and CardStore confirms the card is
+  currently claimable. The default remains `sk-codex-mid`.
+
 ## Unreleased
 
 - Card `cf9ccb43`: reject oversized unclaimed cards before dispatch with a
@@ -19,6 +26,23 @@
 - Cards `2e6bb78e` and `30c6909d`: add role-bounded lifecycle-seat fan-out
   allocation with source-head deduplication, the `sk-codex-mid` child default,
   and explicit exclusion of Jarvis from recurring lifecycle scheduling.
+
+- Card `be4e7d37`: make governed review authoring fail fast, keep consumer
+  review metadata out of consumer outcomes, require terminal review verdicts
+  and the complete successful required-CI link set for both `[REVIEW]` and
+  `[REREVIEW]`, and validate Seraph launch receipts against the exact reviewer
+  claim identity. Add `coord gates` parity and bounded POOL_V2 review
+  diagnostics, preserve ordinary `[REPAIR]` authoring, and serialize concurrent
+  SQLite handoff initialization across Python runtimes.
+
+- Card `2ea03ff7`: publish terminal worker capacity only for an exact
+  claim generation after child-process and cgroup reconciliation. Claim
+  release and snapshot invalidation now share one CardStore fence; failures
+  retain occupied capacity. Malformed reports remain unchanged, sibling
+  occupancy is preserved, and a real next coordination claim can use the
+  managed launch path immediately. Source work whose exact credential-free
+  remote ref cannot be reconstructed is rejected before workspace creation or
+  claim.
 
 - Card `2d2a6d4d`: define SKRSI as SK Recursive SELF Improvement, with
   SELF meaning Systematic Evaluation, Learning, and Feedback, and link the

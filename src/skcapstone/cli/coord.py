@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -219,6 +220,16 @@ def register_coord_commands(main: click.Group) -> None:
                 )
         console.print()
 
+    @coord.command("gates")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_gates(task_id, home):
+        """Explain why TASK_ID is or is not admitted for dispatch."""
+        validate_task_id(task_id)
+        from ..coord_gate_diagnostic import diagnose
+
+        console.print(json.dumps(diagnose(Path(home).expanduser(), task_id), sort_keys=True))
+
     @coord.command(
         "create",
         epilog=(
@@ -336,13 +347,62 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--criteria", multiple=True, help="Acceptance criteria (repeatable).")
     @click.option("--dep", multiple=True, help="Dependency task IDs (repeatable).")
     @click.option(
+        "--producer-identity",
+        default=None,
+        help="Typed producer identity for governed review cards.",
+    )
+    @click.option(
+        "--candidate-evidence-sha256",
+        default=None,
+        help="64-hex candidate evidence digest for governed review cards.",
+    )
+    @click.option(
         "--claim-for-me",
         is_flag=True,
         help="Atomically create and claim for the resolved active agent.",
     )
-    def coord_create(home, task_id, title, desc, priority, tag, by, criteria, dep, claim_for_me):
+    def coord_create(
+        home,
+        task_id,
+        title,
+        desc,
+        priority,
+        tag,
+        by,
+        criteria,
+        dep,
+        producer_identity,
+        candidate_evidence_sha256,
+        claim_for_me,
+    ):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
+
+        labels = {str(value).strip().lower() for value in tag}
+        governed_review = "review" in labels or any(
+            marker in title.upper() for marker in ("[REVIEW]", "[REREVIEW]")
+        )
+        if governed_review:
+            missing = []
+            if "review" not in labels:
+                missing.append("review label")
+            if "seat-seraph" not in labels:
+                missing.append("seat-seraph")
+            if not str(producer_identity or "").strip():
+                missing.append("producer_identity")
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", str(candidate_evidence_sha256 or "")):
+                missing.append("candidate_evidence_sha256")
+            if missing:
+                raise click.ClickException(
+                    "incomplete governed review card; missing: " + ", ".join(missing)
+                )
+
+        meta = {}
+        if governed_review:
+            meta = {
+                "producer_identity": str(producer_identity).strip(),
+                "candidate_evidence_sha256": str(candidate_evidence_sha256).lower(),
+            }
 
         validate_agent_name(by)
         if task_id:
@@ -361,6 +421,7 @@ def register_coord_commands(main: click.Group) -> None:
             created_by=by,
             acceptance_criteria=list(criteria),
             dependencies=list(dep),
+            meta=meta,
         )
         if claim_for_me:
             from .. import active_agent_name
@@ -416,35 +477,14 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--agent", required=True, help="Agent name completing the task.")
     def coord_complete(task_id, home, agent):
         """Mark a task as completed."""
-        from ..coordination import Board
-
         validate_task_id(task_id)
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
+        from ..coord_completion import complete_coord_task
 
-        # A review card must have said something before it can be closed. Without
-        # this, completing one marks the parent as reviewed while leaving no record
-        # of what was found, and silence reads as approval. Measured 2026-08-28:
-        # 39 of 317 completed review cards had recorded no verdict at all.
-        from ..review_verdict import validate_review_completion
-
-        _title = ""
-        _core = home_path / "cards" / task_id / "core.json"
-        if _core.exists():
-            try:
-                _title = str(json.loads(_core.read_text()).get("title") or "")
-            except (ValueError, OSError):
-                _title = ""
         try:
-            validate_review_completion(task_id, _title, home_path)
-        except ValueError as e:
-            console.print(f"\n  [red]Refused:[/] {e}\n")
-            sys.exit(1)
-
-        board = Board(home_path)
-        try:
-            ag = board.complete_task(agent, task_id)
+            ag = complete_coord_task(home_path, agent, task_id)
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
             sys.exit(1)
@@ -931,15 +971,15 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_move(task_id, column, home, order, agent):
         """Move a card to a kanban column (backlog/ready/doing/review/done)."""
         home_path = Path(home).expanduser()
-        from skcoord.lifecycle import transition_task
+        from ..coord_completion import move_coord_task
 
         try:
-            receipt = transition_task(
+            receipt = move_coord_task(
                 home_path,
-                task_id=task_id,
-                column=column,
-                actor=agent or "coord-move",
-                order=order,
+                agent or "coord-move",
+                task_id,
+                column,
+                order,
             )
         except (OSError, RuntimeError, ValueError) as exc:
             message = str(exc)

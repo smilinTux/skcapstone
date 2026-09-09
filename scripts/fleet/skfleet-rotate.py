@@ -27,6 +27,9 @@ from skcapstone.scheduler_decision import (
     classify_scheduler_population,
     pool_v2,
 )
+from skcapstone.review_admission import (
+    governed_review_gate_reasons,
+)
 from skcapstone.seat_boundaries import BoundaryError
 from skcapstone.seat_runtime import (
     MeroObservation,
@@ -171,8 +174,11 @@ def _governed_review_metadata(core, labels):
     if "review" not in {str(label).strip().lower() for label in labels}:
         return None
     links = core.get("links") if isinstance(core.get("links"), dict) else {}
-    typed_producer = links.get("producer_identity")
-    typed_evidence = links.get("candidate_evidence_sha256")
+    meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
+    typed_producer = links.get("producer_identity") or meta.get("producer_identity")
+    typed_evidence = links.get("candidate_evidence_sha256") or meta.get(
+        "candidate_evidence_sha256"
+    )
     if typed_producer is not None or typed_evidence is not None:
         producer = str(typed_producer or "").strip()
         evidence = str(typed_evidence or "").strip().lower()
@@ -408,6 +414,14 @@ def _verify_source_workspace(path, repository, base_ref, runner=subprocess.run):
         raise ValueError("workspace contains uncommitted custody state")
     if not values["head"] or values["head"] != values["base"]:
         raise ValueError("workspace HEAD does not match fetched base_ref")
+
+
+def _preclaim_source_ref(repository, base_ref, runner=subprocess.run):
+    """Check reconstructability before creating a reviewer workspace."""
+    result = runner(["git", "ls-remote", "--exit-code", repository, base_ref],
+                    capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError("reconstructability_blocked: exact source ref absent from credential-free remote")
 
 
 def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
@@ -935,11 +949,27 @@ def publish_live(sessions, units=()):
         os.makedirs(LIVE, exist_ok=True)
         p = os.path.join(LIVE, HOST + ".json")
         tmp = p + ".new"
+        workers = []
+        for card in cards:
+            try:
+                folded = CardStore(Path(HOME) / ".skcapstone").fold(card)
+                owner = str(getattr(folded, "owner", "") or "")
+                revision = str(getattr(folded, "meta", {}).get("_claim_revision") or "")
+                if owner and revision:
+                    workers.append({
+                        "card_id": card,
+                        "owner": owner,
+                        "claim_revision": revision,
+                    })
+            except (OSError, TypeError, ValueError):
+                # Unresolved identity remains represented in cards and occupied.
+                continue
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({
                 "host": HOST,
                 "ts": time.time(),
                 "cards": cards,
+                "workers": workers,
                 "lanes": {
                     lane.get("name", lane.get("prefix", "unknown").rstrip("-")): {
                         "target": lane.get("target", 0),
@@ -1553,10 +1583,19 @@ def _load_outcomes():
 
     for cid,rows in _load_evidence_events().items():
         blocked_parts={}
+        has_independent_review=any(
+            e.get("action")=="link"
+            and _fold_key(e.get("link_key"))=="independent_review"
+            and str(e.get("link_value") or "").strip()
+            for e in rows)
         for e in rows:
             if e.get("action") != "link": continue
             fk = _fold_key(e.get("link_key"))
             val = str(e.get("link_value") or "")
+            # A consumer may copy its dependency's result for audit. That is
+            # not the consumer's own outcome and must not park it in review.
+            if fk=="review_verdict" and has_independent_review:
+                continue
             if any(o in fk for o in _OUTCOME_KEYS):
                 blocked_parts.clear()
                 # A link named verdict_artifact is not an outcome. Several such
@@ -4171,7 +4210,6 @@ _OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(pool, HOST, _PINNED_IDS)
 for _cid, _reason in sorted(_SEAT_BLOCKED.items()):
     log(d, "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" % (HOST, _cid, _reason))
 
-
 def owner_host(cid):
     """Return the one stable host authorized to select this card."""
     return _OWNER_BY_ID.get(cid, "unassigned:not-authoritative")
@@ -4381,6 +4419,7 @@ _LANE_RANK={"qwen":0,"glm":1,"codex":2,"kimi":3,"escalate":4}
 lane_order=sorted(LANES,key=lambda lane:_LANE_RANK.get(lane["name"],9))
 _esc_waiting=0
 _lane_deferred=collections.Counter()
+_lane_deferred_cards={}
 # Lane affinity, in both directions. An escalation card may go ONLY to the escalate
 # lane, because returning it to a lane that already refused it just re-derives the
 # same verdict. The escalate lane takes ONLY escalation cards, because the strong
@@ -4406,6 +4445,7 @@ while _i<len(owned) and _i<len(_candidate_scan):
         _card_lane_health)
     if _lane_name is None:
         _lane_deferred[_defer]+=1
+        _lane_deferred_cards[_card[2]]=_defer
         if _defer.startswith("no-compatible-healthy-lane:"):
             details=",".join("%s=%s"%(name,state[1])
                              for name,state in sorted(_card_lane_health.items()))
@@ -4428,6 +4468,28 @@ if _lane_deferred:
 if _esc_waiting:
     log(d,"ESCALATE_QUEUED|%s|%d card(s) need the stronger model; escalate lane full"
         %(HOST,_esc_waiting))
+
+_review_withheld=[]
+for _cid,_admission in sorted(_POOL_V2_ADMISSIONS.items()):
+    _labels=_admission.get("labels") or ()
+    if "review" not in {str(_label).strip().lower() for _label in _labels}:
+        continue
+    _overlay=_admission.get("overlay") or {}
+    _reasons=governed_review_gate_reasons(
+        _admission.get("core") or {},_labels,
+        dependency_blocked=_overlay.get("reason")=="dependency",
+        owned=str(_overlay.get("reason") or "").startswith("owned-"),
+        capacity_available=_cid not in _lane_deferred_cards,
+    )
+    if _cid in _SEAT_BLOCKED:
+        _reasons=tuple((*_reasons,"wrong-seat"))
+    if not _pool_v2_dispatchable(_admission) or _reasons:
+        _fallback=str(_admission.get("reason") or "withheld")
+        _review_withheld.append((_cid,",".join(dict.fromkeys(_reasons or (_fallback,)))))
+for _cid,_reasons in _review_withheld[:12]:
+    log(d,"REVIEW_WITHHELD|%s|card=%s|reasons=%s"%(HOST,_cid,_reasons))
+if len(_review_withheld)>12:
+    log(d,"REVIEW_WITHHELD_OMITTED|%s|count=%d"%(HOST,len(_review_withheld)-12))
 
 
 def _observe_assigned_reviews():
@@ -4717,6 +4779,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         continue
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
+        _source_spec = _source_workspace_spec(
+            fresh_claimability["core"], fresh_claimability["labels"]
+        )
+        if _source_spec is not None:
+            _preclaim_source_ref(*_source_spec)
         workspace=_materialize_worker_workspace(
             default_workspace,
             fresh_claimability["core"],
@@ -4738,15 +4805,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 "claim not visible with an explicit revision in CardStore fold").strip()[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
-    # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
-    # returns normally. Releasing only after the Pi command leaves a dead claim
-    # in that case and drains the assignable pool. Bind cleanup to this exact
-    # claim generation so it cannot release a newer same-owner worker.
+    # The wrapper owns exact-generation release and snapshot retirement under
+    # one CardStore fence. The child must never release independently.
     _bi = _beat_interval()
     _bf_path = "~/.skcapstone/fleet/beats/" + name + ".json"
     child=(
-        "release_claim() { %s coord release-claim %s --owner %s "
-        "--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; "
         "idle_agent() { python3 -c \"import json,datetime;from pathlib import Path;"
         "p=Path.home()/'.skcapstone/coordination/agents'/('%s.json');"
         "d=json.loads(p.read_text());"
@@ -4767,16 +4830,15 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "sleep %s & wait $!; done; }; "
         "beat & BEAT=$!; "
         "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; }; "
-        'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
-        'trap "stop_beat; release_claim; idle_agent" EXIT; '
+        'trap "stop_beat; idle_agent; exit 143" HUP INT TERM; '
+        'trap "stop_beat; idle_agent" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s "
         "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s "
         "%s --approve --extension %s --name %s "
         "--provider skgateway --model %s --thinking off --no-context-files --no-skills --tools %s "
         '-p "$(cat %s)"; '
-        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; idle_agent; exit $rc"
-        % (SKC, cid, name, claimed_revision, name,
-           name,
+        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; idle_agent; exit $rc"
+        % (name,
            name, cid, claimed_revision, sess,
            _bf_path, _bf_path, _bf_path,
            _bi,
@@ -4790,12 +4852,16 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
         "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--live-snapshot",os.path.join(LIVE, HOST + ".json"),
         "--session",sess,"--worker-executable",PI,
         "--","bash","-lc",child,
     ]
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
-    launch_identity=_launch_claim_fields(name,claimed_revision,ok)
+    launch_identity=(
+        _launch_claim_fields(name,claimed_revision,ok)
+        if ok else "|owner=%s|claim_revision=%s" % (name, claimed_revision)
+    )
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
         (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))
