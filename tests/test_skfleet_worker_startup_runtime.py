@@ -24,6 +24,7 @@ from skcapstone.fleet.worker_watchdog import (
     StartupObservation,
     startup_actuation_fenced,
 )
+from skcapstone.seat_mail import MailPoll
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -154,6 +155,33 @@ def wrapper():
     return module
 
 
+@pytest.mark.parametrize("host", ["chiap01", "chiap02", "chiap03", "chiap04", "chiap08"])
+@pytest.mark.parametrize("lane", ["codex", "glm", "qwen", "kimi", "escalate"])
+def test_mailbox_canary_is_one_hello_and_one_direct_plus_all_poll(
+    tmp_path, monkeypatch, host, lane
+):
+    module = wrapper()
+    calls = []
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        module,
+        "startup_hello",
+        lambda home, owner, host=None: calls.append(("hello", owner, host)) or True,
+    )
+    monkeypatch.setattr(
+        module,
+        "poll_mail",
+        lambda owner: (
+            calls.append(("poll", owner))
+            or MailPoll("now", True, new_messages=2, help_or_handoff=1, digest="a" * 64)
+        ),
+    )
+    args = argparse.Namespace(owner="worker", host=host, lane=lane)
+    assert module.preflight_mailbox(args) is True
+    assert calls == [("hello", "worker", host), ("poll", "worker")]
+    assert args.mailbox_poll["help_or_handoff"] == 1
+
+
 @pytest.mark.parametrize(
     "fault", [None, "heartbeat", "session", "executable", "attribution", "node"]
 )
@@ -234,6 +262,7 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
     monkeypatch.setattr(module, "preflight_worktree", lambda: preflight)
+    monkeypatch.setattr(module, "preflight_mailbox", lambda args: True)
     args = argparse.Namespace(
         owner="worker",
         card="feedbeef",
@@ -256,7 +285,7 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
     (record,) = (tmp_path / "evidence/worker-startup").glob("*.json")
     result = json.loads(record.read_text())
     assert result["state"] == (
-        "startup-preflight-blocked" if preflight else "startup-heartbeat-missing"
+        "startup-preflight-blocked" if preflight else "startup-child-exited"
     )
     assert result["release_recommended"] is False
     if preflight:
@@ -266,6 +295,34 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
         assert not args.stdout.exists()
 
 
+def test_wrapper_fails_closed_before_work_when_mailbox_is_unavailable(tmp_path, monkeypatch):
+    module = wrapper()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    monkeypatch.setattr(module, "preflight_mailbox", lambda args: False)
+    monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
+    args = argparse.Namespace(
+        owner="worker",
+        card="feedbeef",
+        session="session-1",
+        claim_revision="rev-1",
+        host="chiap01",
+        lane="codex",
+        model="fake",
+        stdout=tmp_path / "work-never-started.log",
+        live_snapshot=None,
+        worker_executable=sys.executable,
+        startup_timeout=1.0,
+        command=[sys.executable, "-c", "raise SystemExit('must not run')"],
+        evidence_dir=tmp_path / "evidence/worker-exits",
+    )
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+    assert module.main() == 2
+    assert not args.stdout.exists()
+    (record,) = (tmp_path / "evidence/worker-startup").glob("*.json")
+    assert json.loads(record.read_text())["state"] == "startup-mailbox-unavailable"
+
+
 @pytest.mark.parametrize("exit_code", [0, 7])
 def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monkeypatch, exit_code):
     module = wrapper()
@@ -273,6 +330,7 @@ def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monke
     monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
     monkeypatch.setattr(module, "idle_owner_projection", lambda *args: None)
     monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    monkeypatch.setattr(module, "preflight_mailbox", lambda args: True)
     monkeypatch.setattr(
         module,
         "terminal_local_evidence",
@@ -385,6 +443,7 @@ def test_terminal_wrapper_exit_allows_real_next_claim_and_managed_launch(tmp_pat
     monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
     monkeypatch.setattr(module, "idle_owner_projection", lambda *args: None)
     monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    monkeypatch.setattr(module, "preflight_mailbox", lambda args: True)
     monkeypatch.setattr(module, "terminal_local_evidence", lambda child: child.poll() is not None)
 
     assert module.main() == 0
@@ -575,7 +634,7 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
     sleeper_pids = tmp_path / "sleeper-pids"
     sleep = tmp_path / "sleep"
     sleep.write_text(
-        '#!/bin/bash\nprintf "%s\\n" "$BASHPID" >> "$SLEEP_PID_FILE"\n' 'exec /bin/sleep "$@"\n'
+        '#!/bin/bash\nprintf "%s\\n" "$BASHPID" >> "$SLEEP_PID_FILE"\nexec /bin/sleep "$@"\n'
     )
     sleep.chmod(0o700)
     pi = tmp_path / "pi"
@@ -610,6 +669,7 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
         "s=importlib.util.spec_from_file_location('wrapper',sys.argv.pop(1)); "
         "m=importlib.util.module_from_spec(s);s.loader.exec_module(m); "
         "m.emit_work_mail=lambda *a:None;m.preflight_worktree=lambda:0; "
+        "m.preflight_mailbox=lambda a:True; "
         "raise SystemExit(m.main())"
     )
     command = [
