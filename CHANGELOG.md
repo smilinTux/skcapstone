@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Cards `2e6bb78e` and `30c6909d`: add role-bounded lifecycle-seat fan-out
+  allocation with source-head deduplication, the `sk-codex-mid` child default,
+  and explicit exclusion of Jarvis from recurring lifecycle scheduling.
+
 - Card `2d2a6d4d`: define SKRSI as SK Recursive SELF Improvement, with
   SELF meaning Systematic Evaluation, Learning, and Feedback, and link the
   canonical standalone project documentation.
