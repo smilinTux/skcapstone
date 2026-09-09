@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from skcapstone.fleet.terminal_capacity import invalidate_worker
+from skcapstone.fleet.terminal_capacity import retire_worker_generation
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 
 
@@ -347,23 +347,51 @@ def preflight_worktree() -> int:
     return r.returncode
 
 
-def publish_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen | None) -> bool:
-    """Publish capacity only after local process evidence proves child exit."""
-    if args.live_snapshot is None or child is None or child.poll() is None:
+def terminal_local_evidence(
+    child: subprocess.Popen | None,
+    *,
+    proc_root: Path = Path("/proc"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> bool:
+    """Prove that the exact child and every peer in this worker cgroup exited."""
+    if child is None or child.poll() is None or (proc_root / str(child.pid)).exists():
         return False
-    # Release is fenced by the claim identity and independent process/cgroup
-    # observations. A missing generation record therefore remains occupied.
-    invalidate_worker(
-        args.live_snapshot,
-        args.host,
-        args.card,
-        owner=args.owner,
-        card_id=args.card,
-        claim_revision=args.claim_revision,
-        process_evidence=child.poll() is not None,
-        cgroup_evidence=bool(getattr(args, "cgroup", None) or getattr(args, "unit", None)),
-    )
+    try:
+        control_group = next(
+            line[3:]
+            for line in (proc_root / "self/cgroup").read_text(encoding="utf-8").splitlines()
+            if line.startswith("0::")
+        )
+        if not control_group.startswith("/") or ".." in control_group.split("/"):
+            return False
+        members = {
+            int(value)
+            for value in (cgroup_root / control_group.lstrip("/") / "cgroup.procs")
+            .read_text(encoding="utf-8")
+            .split()
+        }
+    except (FileNotFoundError, OSError, StopIteration, TypeError, ValueError):
+        return False
+    if members - {os.getpid()}:
+        return False
     return True
+
+
+def publish_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen | None) -> bool:
+    """Publish only after CardStore, process-tree, and cgroup evidence agree."""
+    if args.live_snapshot is None or not terminal_local_evidence(child):
+        return False
+    return (
+        retire_worker_generation(
+            args.live_snapshot,
+            Path.home() / ".skcapstone",
+            args.host,
+            args.card,
+            args.owner,
+            args.claim_revision,
+        )
+        is not None
+    )
 
 
 def main() -> int:

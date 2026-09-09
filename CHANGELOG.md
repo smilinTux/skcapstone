@@ -10,10 +10,12 @@
   allocation with source-head deduplication, the `sk-codex-mid` child default,
   and explicit exclusion of Jarvis from recurring lifecycle scheduling.
 
-- Card `2ea03ff7`: publish terminal worker capacity atomically before claim
-  release, preserve concurrent live siblings, and reject source work whose
-  exact credential-free remote ref cannot be reconstructed before workspace
-  creation or claim.
+- Card `2ea03ff7`: publish terminal worker capacity only for an exact
+  CardStore-released claim generation after child-process and cgroup
+  reconciliation. Malformed reports remain unchanged, sibling occupancy is
+  preserved, and the next seat can claim and launch immediately. Source work
+  whose exact credential-free remote ref cannot be reconstructed is rejected
+  before workspace creation or claim.
 
 - Card `2d2a6d4d`: define SKRSI as SK Recursive SELF Improvement, with
   SELF meaning Systematic Evaluation, Learning, and Feedback, and link the

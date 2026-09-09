@@ -939,11 +939,27 @@ def publish_live(sessions, units=()):
         os.makedirs(LIVE, exist_ok=True)
         p = os.path.join(LIVE, HOST + ".json")
         tmp = p + ".new"
+        workers = []
+        for card in cards:
+            try:
+                folded = CardStore(Path(HOME) / ".skcapstone").fold(card)
+                owner = str(getattr(folded, "owner", "") or "")
+                revision = str(getattr(folded, "meta", {}).get("_claim_revision") or "")
+                if owner and revision:
+                    workers.append({
+                        "card_id": card,
+                        "owner": owner,
+                        "claim_revision": revision,
+                    })
+            except (OSError, TypeError, ValueError):
+                # Unresolved identity remains represented in cards and occupied.
+                continue
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({
                 "host": HOST,
                 "ts": time.time(),
                 "cards": cards,
+                "workers": workers,
                 "lanes": {
                     lane.get("name", lane.get("prefix", "unknown").rstrip("-")): {
                         "target": lane.get("target", 0),

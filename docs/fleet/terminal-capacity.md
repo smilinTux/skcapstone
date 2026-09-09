@@ -1,18 +1,29 @@
 # Terminal worker capacity
 
 Fleet workers receive the host's shared `fleet-live/<host>.json` path through
-the worker wrapper. On every normal or failed child exit, the wrapper takes an
-exclusive lock, removes only its card, and atomically replaces that snapshot
-before any later claim-release reconciliation. Sibling cards remain present.
-The wrapper publishes only when `child.poll()` confirms termination. A signal,
-preflight failure, missing child, or still-live process leaves the card
+the worker wrapper. Every snapshot records the card, owner, and exact claim
+revision for each resolved worker. On normal or failed child exit, the wrapper
+removes only that exact generation and atomically replaces the snapshot.
+Sibling cards and generations remain present.
+
+Capacity is released only when all of these facts agree:
+
+- the child process is terminal and absent from `/proc`;
+- the worker cgroup contains no process except the exiting wrapper;
+- CardStore contains an exact release for the same card, owner, and claim
+  revision, with no current or conflicting claim; and
+- the live snapshot contains exactly that generation.
+
+The CardStore card lock fences this check against a concurrent next claim. A
+signal, preflight failure, missing child, live process, occupied or unreadable
+cgroup, stale claim generation, or incomplete snapshot leaves capacity
 occupied.
 
-A missing or malformed snapshot is not evidence that another worker stopped.
-The terminal publisher starts from an empty card list for that write, while the
-scheduler continues to reconcile CardStore state, heartbeat, process, and
-transient-unit evidence. Ambiguous process evidence remains occupied and fails
-closed.
+A missing, unreadable, or malformed snapshot is not evidence that a worker
+stopped. The terminal publisher leaves the original bytes unchanged. A
+malformed target generation also leaves every valid sibling occupancy intact.
+The next normal fleet publication may replace the report only from current
+CardStore, process, heartbeat, and transient-unit evidence.
 
 Source-only cards are checked with credential-free `git ls-remote` before the
 scheduler creates a workspace or claims the card. An absent exact ref reports

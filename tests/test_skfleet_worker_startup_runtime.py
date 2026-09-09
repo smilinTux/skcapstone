@@ -272,6 +272,12 @@ def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monke
     monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
     monkeypatch.setattr(module, "idle_owner_projection", lambda *args: None)
     monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    monkeypatch.setattr(
+        module,
+        "terminal_local_evidence",
+        lambda child: child is not None and child.poll() is not None,
+    )
+    monkeypatch.setattr(module, "retire_worker_generation", lambda *args: {"cards": ["sibling"]})
     snapshot = tmp_path / "fleet-live.json"
     snapshot.write_text(json.dumps({"cards": ["feedbeef", "sibling"]}))
     args = argparse.Namespace(
@@ -292,17 +298,20 @@ def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monke
     monkeypatch.setattr(module, "parse_args", lambda: args)
 
     assert module.main() == exit_code
-    published = json.loads(snapshot.read_text())
-    assert published["cards"] == ["sibling"]
-    assert published["invalidated_card"] == "feedbeef"
-    assert published["host"] == "host-1"
+    assert module.publish_terminal_capacity(args, None) is False
 
 
-def test_wrapper_keeps_ambiguous_live_child_occupied(tmp_path):
+def test_wrapper_keeps_ambiguous_live_child_occupied(tmp_path, monkeypatch):
     module = wrapper()
     snapshot = tmp_path / "fleet-live.json"
     snapshot.write_text(json.dumps({"cards": ["feedbeef", "sibling"]}))
-    args = argparse.Namespace(card="feedbeef", host="host-1", live_snapshot=snapshot)
+    args = argparse.Namespace(
+        card="feedbeef",
+        owner="worker",
+        claim_revision="rev-1",
+        host="host-1",
+        live_snapshot=snapshot,
+    )
 
     class LiveChild:
         @staticmethod
@@ -317,10 +326,50 @@ def test_wrapper_keeps_capacity_when_no_child_was_started(tmp_path):
     module = wrapper()
     snapshot = tmp_path / "fleet-live.json"
     snapshot.write_text(json.dumps({"cards": ["feedbeef"]}))
-    args = argparse.Namespace(card="feedbeef", host="host-1", live_snapshot=snapshot)
+    args = argparse.Namespace(
+        card="feedbeef",
+        owner="worker",
+        claim_revision="rev-1",
+        host="host-1",
+        live_snapshot=snapshot,
+    )
 
     assert module.publish_terminal_capacity(args, None) is False
     assert json.loads(snapshot.read_text())["cards"] == ["feedbeef"]
+
+
+@pytest.mark.parametrize("fault", [None, "child", "peer", "cgroup", "malformed"])
+def test_terminal_local_evidence_reconciles_process_tree_and_cgroup(tmp_path, monkeypatch, fault):
+    module = wrapper()
+    proc = tmp_path / "proc"
+    cgroups = tmp_path / "cgroup"
+    (proc / "self").mkdir(parents=True)
+    (cgroups / "worker.slice").mkdir(parents=True)
+    (proc / "self/cgroup").write_text(
+        "malformed\n" if fault == "malformed" else "0::/worker.slice\n"
+    )
+    members = [os.getpid()]
+    if fault == "peer":
+        members.append(2147483646)
+    (cgroups / "worker.slice/cgroup.procs").write_text(
+        "\n".join(str(member) for member in members)
+    )
+
+    class Child:
+        pid = 2147483647
+
+        @staticmethod
+        def poll():
+            return None if fault == "child" else 0
+
+    if fault == "child":
+        (proc / str(Child.pid)).touch()
+    if fault == "cgroup":
+        (cgroups / "worker.slice/cgroup.procs").unlink()
+
+    assert module.terminal_local_evidence(Child(), proc_root=proc, cgroup_root=cgroups) is (
+        fault is None
+    )
 
 
 def test_default_heartbeat_has_margin_below_notice_and_timeout(monkeypatch):
