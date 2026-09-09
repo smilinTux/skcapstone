@@ -89,18 +89,20 @@ def test_stale_generation_cannot_remove_newer_claim(tmp_path):
     assert snapshot.read_bytes() == before
 
 
-def test_unreleased_generation_remains_occupied(tmp_path):
+def test_current_generation_is_released_and_retired_together(tmp_path):
     home = tmp_path / "coord"
     home.mkdir()
     store = CardStore(home)
     _claimed(store, "feedbeef", "worker", "rev-1")
     snapshot = tmp_path / "fleet-live.json"
-    before = _snapshot(snapshot, _worker("feedbeef", "worker", "rev-1"))
+    _snapshot(snapshot, _worker("feedbeef", "worker", "rev-1"))
 
     assert (
-        retire_worker_generation(snapshot, home, "chiap08", "feedbeef", "worker", "rev-1") is None
+        retire_worker_generation(snapshot, home, "chiap08", "feedbeef", "worker", "rev-1")
+        is not None
     )
-    assert snapshot.read_bytes() == before
+    assert store.fold("feedbeef").owner is None
+    assert json.loads(snapshot.read_text())["cards"] == []
 
 
 def test_concurrent_terminal_workers_preserve_live_siblings(tmp_path):
@@ -137,12 +139,12 @@ def test_exact_terminal_generation_allows_immediate_next_claim_and_launch(tmp_pa
     home.mkdir()
     store = CardStore(home)
     _claimed(store, "feedbeef", "worker-1", "rev-1")
-    _release(store, "feedbeef", "worker-1", "rev-1")
     snapshot = tmp_path / "fleet-live.json"
     _snapshot(snapshot, _worker("feedbeef", "worker-1", "rev-1"))
 
     retired = retire_worker_generation(snapshot, home, "chiap08", "feedbeef", "worker-1", "rev-1")
     assert retired is not None
+    assert store.fold("feedbeef").owner is None
     assert json.loads(snapshot.read_text())["cards"] == []
 
     store.append_event("feedbeef", "claim", "worker-2", owner="worker-2", claim_revision="rev-2")
@@ -156,3 +158,18 @@ def test_exact_terminal_generation_allows_immediate_next_claim_and_launch(tmp_pa
         check=True,
     )
     assert launched.stdout.strip() == "launched-next-seat"
+
+
+def test_invalidation_failure_releases_without_exposing_snapshot_capacity(tmp_path):
+    home = tmp_path / "coord"
+    home.mkdir()
+    store = CardStore(home)
+    _claimed(store, "feedbeef", "worker-1", "rev-1")
+    snapshot = tmp_path / "fleet-live.json"
+    before = _snapshot(snapshot, _worker("feedbeef", "worker-1", "wrong-revision"))
+
+    with pytest.raises(ValueError, match="exact worker generation"):
+        retire_worker_generation(snapshot, home, "chiap08", "feedbeef", "worker-1", "rev-1")
+
+    assert store.fold("feedbeef").owner is None
+    assert snapshot.read_bytes() == before

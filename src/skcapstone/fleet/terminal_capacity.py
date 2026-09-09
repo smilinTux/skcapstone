@@ -9,7 +9,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from skcoord.card_store import CardStore, card_mutation_lock
+from skcoord.card_store import (
+    CardStore,
+    card_mutation_lock,
+    current_claim_precondition,
+    mirror_coord_release,
+)
 
 
 def _load_required(path: Path) -> dict[str, Any]:
@@ -100,10 +105,30 @@ def retire_worker_generation(
     owner: str,
     claim_revision: str,
 ) -> dict[str, Any] | None:
-    """Fence CardStore release and snapshot invalidation under the card lock."""
+    """Release and retire one generation under the same CardStore fence.
+
+    A failed invalidation leaves the snapshot occupied. A failed release leaves
+    the CardStore claim occupied. The card lock prevents a newer claim from
+    appearing between the two writes.
+    """
     home = Path(coordination_home)
     store = CardStore(home)
     with card_mutation_lock(home, card):
+        try:
+            current_revision = current_claim_precondition(home, card, owner)
+        except ValueError:
+            return None
+        if current_revision is not None:
+            if current_revision != claim_revision:
+                return None
+            mirror_coord_release(
+                home,
+                card,
+                owner,
+                owner,
+                claim_revision,
+                transition_id=f"terminal-capacity:{owner}:{claim_revision}",
+            )
         if not _generation_was_released(store, card, owner, claim_revision):
             return None
         return invalidate_worker(path, host, card, owner, claim_revision)

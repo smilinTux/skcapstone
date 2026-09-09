@@ -4719,15 +4719,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 "claim not visible with an explicit revision in CardStore fold").strip()[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
-    # A worker can be terminated by tmux, SSH, or a service cgroup before Pi
-    # returns normally. Releasing only after the Pi command leaves a dead claim
-    # in that case and drains the assignable pool. Bind cleanup to this exact
-    # claim generation so it cannot release a newer same-owner worker.
+    # The wrapper owns exact-generation release and snapshot retirement under
+    # one CardStore fence. The child must never release independently.
     _bi = _beat_interval()
     _bf_path = "~/.skcapstone/fleet/beats/" + name + ".json"
     child=(
-        "release_claim() { %s coord release-claim %s --owner %s "
-        "--expected-claim-revision %s --agent %s >/dev/null 2>&1 || true; }; "
         "idle_agent() { python3 -c \"import json,datetime;from pathlib import Path;"
         "p=Path.home()/'.skcapstone/coordination/agents'/('%s.json');"
         "d=json.loads(p.read_text());"
@@ -4748,16 +4744,15 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "sleep %s & wait $!; done; }; "
         "beat & BEAT=$!; "
         "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; }; "
-        'trap "stop_beat; release_claim; idle_agent; exit 143" HUP INT TERM; '
-        'trap "stop_beat; release_claim; idle_agent" EXIT; '
+        'trap "stop_beat; idle_agent; exit 143" HUP INT TERM; '
+        'trap "stop_beat; idle_agent" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s "
         "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s "
         "%s --approve --extension %s --name %s "
         "--provider skgateway --model %s --thinking off --no-context-files --no-skills --tools %s "
         '-p "$(cat %s)"; '
-        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; release_claim; idle_agent; exit $rc"
-        % (SKC, cid, name, claimed_revision, name,
-           name,
+        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; idle_agent; exit $rc"
+        % (name,
            name, cid, claimed_revision, sess,
            _bf_path, _bf_path, _bf_path,
            _bi,
