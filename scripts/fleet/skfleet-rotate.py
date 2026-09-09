@@ -4348,6 +4348,27 @@ def _health_for(lane,model):
         endpoint=_GATEWAY_ENDPOINT,capacity_domains=_CAPACITY_DOMAINS[lane],
         active_revision=_active_gateway_revision)
 
+def _bounded_candidate_sequence(candidates, limit):
+    """Return a stable, duplicate-free candidate sequence for one rotation.
+
+    Candidate identity is the card id (the third tuple field).  The rotation
+    must not repeatedly select a rejected card in the same cycle, while still
+    allowing later compatible cards to fill a slot after a recoverable failure.
+    """
+    if limit <= 0:
+        return []
+    seen = set()
+    result = []
+    for candidate in candidates:
+        card_id = candidate[2] if len(candidate) > 2 else candidate
+        if card_id in seen:
+            continue
+        seen.add(card_id)
+        result.append(candidate)
+        if len(result) >= limit:
+            break
+    return result
+
 picks=[]; _i=0
 remaining={lane["name"]:lane["free"] for lane in LANES}
 _LANE_RANK={"qwen":0,"glm":1,"codex":2,"kimi":3,"escalate":4}
@@ -4363,8 +4384,11 @@ _lane_deferred=collections.Counter()
 # earlier version broke out entirely when the head card could not be placed, which
 # with lane affinity would let one waiting escalation card starve every ordinary
 # card queued behind it.
-while _i<len(owned) and len(picks)<MAX_LAUNCH:
-    _card=owned[_i]; _i+=1
+# Scan a bounded, deterministic sequence once per cycle.  Rejected candidates
+# are consumed by the scan and cannot be selected again during this rotation.
+_candidate_scan = _bounded_candidate_sequence(owned, MAX_LAUNCH)
+while _i<len(_candidate_scan) and len(picks)<MAX_LAUNCH:
+    _card=_candidate_scan[_i]; _i+=1
     _labels=_card[4]
     _esc=needs_escalation(_card[2], _card[3], _labels)
     _qwen_exclusive=qwen_first_exclusive(_card[2],_labels)
