@@ -92,7 +92,12 @@ def _cgroup_is_freshly_empty(cgroup: str | None, cgroup_root: Path) -> bool:
     return not members
 
 
-def collect_observations(home: Path) -> tuple[LivenessObservation, ...]:
+def collect_observations(
+    home: Path,
+    *,
+    runner: Callable[[list[str]], subprocess.CompletedProcess[str]] = _run,
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> tuple[LivenessObservation, ...]:
     """Collect conservative host local facts for every managed worker beat."""
     host = socket.gethostname()
     rows = []
@@ -104,7 +109,7 @@ def collect_observations(home: Path) -> tuple[LivenessObservation, ...]:
         card_id = str(beat.get("card_id") or "")
         unit = str(beat.get("unit") or "")
         if not unit and re.fullmatch(r"[0-9a-f]{8}", card_id):
-            listed = _run(
+            listed = runner(
                 [
                     "systemctl",
                     "--user",
@@ -119,13 +124,13 @@ def collect_observations(home: Path) -> tuple[LivenessObservation, ...]:
             unit = candidates[0] if len(candidates) == 1 else ""
         if not UNIT.fullmatch(unit) or UNIT.fullmatch(unit).group(1) != card_id:
             continue
-        show = _run(
+        show = runner(
             [
                 "systemctl",
                 "--user",
                 "show",
                 unit,
-                "--property=MainPID,ControlGroup,ActiveState,WorkingDirectory",
+                "--property=ExecMainPID,ControlGroup,ActiveState,WorkingDirectory",
             ]
         )
         properties = (
@@ -134,21 +139,38 @@ def collect_observations(home: Path) -> tuple[LivenessObservation, ...]:
             else {}
         )
         try:
-            pid = int(properties.get("MainPID", ""))
+            pid = int(properties.get("ExecMainPID", ""))
         except ValueError:
             pid = 0
-        cgroup = properties.get("ControlGroup") or None
+        if pid <= 0:
+            pid = 0
+        active = properties.get("ActiveState") == "active"
+        cgroup = (
+            properties.get("ControlGroup")
+            or (str(beat.get("cgroup") or "") if not active else "")
+            or None
+        )
         process_tree: tuple[int, ...] = ()
         if cgroup and cgroup.startswith("/"):
             try:
-                process_tree = tuple(
+                current_processes = tuple(
                     int(value)
-                    for value in (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "cgroup.procs")
+                    for value in (cgroup_root / cgroup.lstrip("/") / "cgroup.procs")
                     .read_text(encoding="utf-8")
                     .split()
                 )
             except (OSError, ValueError):
-                process_tree = ()
+                current_processes = None
+            historical_processes = beat.get("process_tree")
+            process_tree = (
+                tuple(int(value) for value in historical_processes)
+                if not active
+                and isinstance(historical_processes, list)
+                and all(isinstance(value, int) and value > 0 for value in historical_processes)
+                else (current_processes or ())
+            )
+        else:
+            current_processes = None
         workspace = Path(properties.get("WorkingDirectory") or ".")
         custody = workspace_custody(workspace)
         observed_at = datetime.now(timezone.utc)
@@ -165,9 +187,13 @@ def collect_observations(home: Path) -> tuple[LivenessObservation, ...]:
                 process_identity=f"pid:{pid}" if pid > 0 else None,
                 session_id=str(beat.get("session") or beat.get("session_id") or "") or None,
                 managed_session=True,
-                process_alive=properties.get("ActiveState") == "active",
+                process_alive=active,
                 session_alive=properties.get("ActiveState") in {"active", "inactive"},
-                live_children=max(0, len(process_tree) - (pid in process_tree)),
+                live_children=(
+                    max(0, len(current_processes) - (pid in current_processes))
+                    if current_processes is not None
+                    else 0
+                ),
                 child_activity_at=heartbeat_at,
                 heartbeat_at=heartbeat_at,
                 terminal_marker=beat.get("terminal_marker"),
@@ -181,7 +207,9 @@ def collect_observations(home: Path) -> tuple[LivenessObservation, ...]:
                 cleanup_failed=bool(beat.get("cleanup_failed", False)),
                 claim_active=_claim_revision(home, card_id) is not None,
                 current_claim_generation=_claim_revision(home, card_id),
-                cgroup_processes=len(process_tree) if cgroup else None,
+                cgroup_processes=(
+                    len(current_processes) if current_processes is not None else None
+                ),
                 unit=unit,
                 pid=pid or None,
                 process_tree=process_tree,
@@ -230,16 +258,18 @@ def authorize_observation(
     if show.returncode:
         return False
     properties = dict(line.split("=", 1) for line in show.stdout.splitlines() if "=" in line)
-    if properties != {
-        "Id": observation.unit,
-        "ExecMainPID": str(observation.pid),
-        "ControlGroup": observation.cgroup,
-        "ActiveState": "inactive",
-    }:
+    if (
+        properties.get("Id") != observation.unit
+        or properties.get("ExecMainPID") != str(observation.pid)
+        or properties.get("ActiveState") != "inactive"
+        or properties.get("ControlGroup") not in {"", observation.cgroup}
+        or set(properties) != {"Id", "ExecMainPID", "ControlGroup", "ActiveState"}
+    ):
         return False
-    cgroup = runner(["systemctl", "--user", "status", observation.unit or ""])
-    if cgroup.returncode not in {0, 3} or observation.cgroup not in cgroup.stdout:
-        return False
+    if properties["ControlGroup"]:
+        cgroup = runner(["systemctl", "--user", "status", observation.unit or ""])
+        if cgroup.returncode not in {0, 3} or observation.cgroup not in cgroup.stdout:
+            return False
     if observation.cgroup_processes != 0 or observation.live_children != 0:
         return False
     # This is the final host-owned retirement fence.  Do not authorize from

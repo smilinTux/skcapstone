@@ -99,6 +99,184 @@ def authoritative_cgroup(tmp_path: Path, row: LivenessObservation, members: str 
     return path
 
 
+def test_collector_preserves_terminal_exec_identity_with_empty_cgroup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Collect the systemd identity that survives a real active to inactive transition."""
+    unit = "skfleet-worker-codex-deadbeef.service"
+    cgroup = f"/user.slice/{unit}"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    beat_path = tmp_path / "fleet" / "beats" / "worker.json"
+    beat_path.parent.mkdir(parents=True)
+    beat_path.write_text(
+        json.dumps(
+            {
+                "agent": "worker",
+                "beat_id": "beat-1",
+                "host": "chiap08",
+                "card_id": "deadbeef",
+                "claim_revision": "generation-1",
+                "unit": unit,
+                "session_id": "codex-auto-deadbeef",
+                "beat_at": NOW.isoformat(),
+                "terminal_at": NOW.isoformat(),
+                "terminal_marker": "PASS_FOR_REVIEW",
+                "pid": 123,
+                "process_identity": "pid:123",
+                "process_tree": [123],
+                "cgroup": cgroup,
+                "workspace_path": str(workspace.resolve()),
+                "workspace_repository": "https://example.test/skcapstone.git",
+                "workspace_head": "a" * 40,
+                "workspace_custody_sha256": "b" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    authoritative_cgroup(tmp_path, observation(tmp_path), "")
+    monkeypatch.setattr(runtime, "_claim_revision", lambda *_: "generation-1")
+    monkeypatch.setattr(runtime.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        runtime,
+        "workspace_custody",
+        lambda *_: ("https://example.test/skcapstone.git", "a" * 40, "b" * 64),
+    )
+
+    def runner(argv: list[str]) -> SimpleNamespace:
+        assert "show" in argv
+        authorizing = "Id," in argv[-1]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f"Id={unit}\nExecMainPID=123\nControlGroup=\nActiveState=inactive\n"
+                if authorizing
+                else "ExecMainPID=123\nControlGroup=\nActiveState=inactive\n"
+                f"WorkingDirectory={workspace}\n"
+            ),
+        )
+
+    rows = runtime.collect_observations(tmp_path, runner=runner, cgroup_root=tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.pid == 123
+    assert row.process_identity == "pid:123"
+    assert row.process_tree == (123,)
+    assert row.cgroup == cgroup
+    assert row.cgroup_processes == 0
+    assert row.live_children == 0
+    assert row.process_alive is False
+    assert runtime.authorize_observation(
+        row, home=tmp_path, runner=runner, hostname="chiap08", cgroup_root=tmp_path
+    )
+    commands: list[list[str]] = []
+    receipt = _retirement_receipt(row)
+    assert receipt is not None
+    runtime.ProductionActions(
+        tmp_path,
+        "producer",
+        lambda argv: commands.append(argv) or SimpleNamespace(returncode=0, stdout=""),
+        cgroup_root=tmp_path,
+    ).retire(receipt)
+    assert commands == [["systemctl", "--user", "stop", unit]]
+
+
+@pytest.mark.parametrize("pid_property", ["ExecMainPID=0\n", ""])
+def test_collector_rejects_zero_or_missing_exec_main_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pid_property: str
+) -> None:
+    unit = "skfleet-worker-codex-deadbeef.service"
+    beat_path = tmp_path / "fleet" / "beats" / "worker.json"
+    beat_path.parent.mkdir(parents=True)
+    beat_path.write_text(
+        json.dumps(
+            {
+                "agent": "worker",
+                "card_id": "deadbeef",
+                "claim_revision": "generation-1",
+                "unit": unit,
+                "pid": 123,
+                "process_tree": [123],
+                "cgroup": f"/user.slice/{unit}",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime, "_claim_revision", lambda *_: "generation-1")
+    monkeypatch.setattr(runtime, "workspace_custody", lambda *_: None)
+
+    def runner(_argv: list[str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            returncode=0,
+            stdout=f"{pid_property}ControlGroup=\nActiveState=inactive\nWorkingDirectory=\n",
+        )
+
+    row = runtime.collect_observations(tmp_path, runner=runner, cgroup_root=tmp_path)[0]
+    assert row.pid is None
+    assert row.process_identity is None
+
+
+def test_collector_preserves_malformed_cgroup_as_failed_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = "skfleet-worker-codex-deadbeef.service"
+    cgroup = f"/user.slice/{unit}"
+    beat_path = tmp_path / "fleet" / "beats" / "worker.json"
+    beat_path.parent.mkdir(parents=True)
+    beat_path.write_text(
+        json.dumps(
+            {
+                "agent": "worker",
+                "card_id": "deadbeef",
+                "claim_revision": "generation-1",
+                "unit": unit,
+                "pid": 123,
+                "process_tree": [123],
+                "cgroup": cgroup,
+            }
+        ),
+        encoding="utf-8",
+    )
+    authoritative_cgroup(tmp_path, observation(tmp_path), "not-a-pid\n")
+    monkeypatch.setattr(runtime, "_claim_revision", lambda *_: "generation-1")
+    monkeypatch.setattr(runtime, "workspace_custody", lambda *_: None)
+
+    def runner(_argv: list[str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            returncode=0,
+            stdout="ExecMainPID=123\nControlGroup=\nActiveState=inactive\nWorkingDirectory=\n",
+        )
+
+    row = runtime.collect_observations(tmp_path, runner=runner, cgroup_root=tmp_path)[0]
+    assert row.process_tree == (123,)
+    assert row.cgroup_processes is None
+
+
+@pytest.mark.parametrize("exec_main_pid", ["0", "", "999"])
+def test_authorization_rejects_zero_missing_or_stale_exec_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exec_main_pid: str
+) -> None:
+    row = observation(tmp_path)
+    authoritative_fixture(tmp_path, row)
+    authoritative_cgroup(tmp_path, row)
+    monkeypatch.setattr(runtime, "_claim_revision", lambda *_: row.claim_generation)
+
+    def runner(argv: list[str]) -> SimpleNamespace:
+        if "show" in argv:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    f"Id={row.unit}\nExecMainPID={exec_main_pid}\n"
+                    "ControlGroup=\nActiveState=inactive\n"
+                ),
+            )
+        raise AssertionError("stale identity must fail before later authority reads")
+
+    assert not runtime.authorize_observation(
+        row, home=tmp_path, runner=runner, hostname=row.host, cgroup_root=tmp_path
+    )
+
+
 @pytest.mark.parametrize(
     "change",
     [
