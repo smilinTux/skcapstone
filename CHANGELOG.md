@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Card `cf9ccb43`: reject oversized unclaimed cards before dispatch with a
+  deterministic two-to-five-leaf recommendation. Active and review custody
+  remains advisory, checkout identity is required, reruns suppress duplicate
+  leaves, and the parent waits on leaves without a dependency cycle.
+
 - Card `44ad0d49`: add bounded elastic independent-review admission with
   source-head deduplication, reviewer independence, and physical-capacity
   limits.
