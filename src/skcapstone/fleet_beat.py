@@ -17,11 +17,6 @@ from pathlib import Path
 
 from .heartbeat import validate_agent_name
 
-# One shared allowlist for heartbeat and beat writers, not two (review
-# amendment 2; deduped by card 77d62d85 once PR431 and PR432 both landed).
-# The alias keeps the beat-domain name importable everywhere.
-validate_beat_owner = validate_agent_name
-
 # Disposition vocabulary (card C will use these; wrapper uses RUNNING only)
 DISPOSITIONS = frozenset(
     {
@@ -36,6 +31,10 @@ DEFAULT_BEAT_INTERVAL_S = 600  # 10 minutes
 SHADOW_ALERT_TTL_S = 900  # alert only, never actuate (measured p95 292s)
 ACTUATION_FLOOR_S = 3600  # minimum before any claim-affecting action
 STARTUP_GRACE_S = 120  # wrapper may take this long to first beat
+
+
+# One shared implementation with general heartbeat identity validation.
+validate_beat_owner = validate_agent_name
 
 
 @dataclass(frozen=True)
@@ -130,6 +129,10 @@ def write_agent_beat(
 
     This is the agent-side entry point (Card C). The wrapper cannot call
     this: emitter is fixed to "agent" and progress_token is allowed.
+
+    ``reason`` is kept in the event body, not the state record. A missing
+    reason falls back to the disposition and card so the required one-line
+    event is still emitted.
     """
     import subprocess
 
@@ -207,8 +210,8 @@ class BeatThresholds:
 class BeatClassification:
     """The result of classifying one worker's beats."""
 
-    state: str  # LIVE | STALLED | BLOCKED | DEAD | NEVER_STARTED | UNKNOWN
-    evidence: str  # agent_beat | wrapper_beat | none
+    state: str  # LIVE | LIVE PROGRESS UNKNOWN | STALLED | BLOCKED | DEAD | NEVER_STARTED | UNKNOWN
+    evidence: str  # agent_beat | wrapper_beat | skmail_activity | supervisor_unit | process_table | none
     age_s: float  # seconds since last beat (0 if never)
     disposition: str = ""  # from the beat, if any
     note: str = ""  # human-readable context
@@ -228,7 +231,8 @@ def classify(
     _now = now if now is not None else time.time()
     _th = thresholds or BeatThresholds()
 
-    # Prefer agent beats over wrapper beats (higher information content)
+    # Explicit precedence: agent beat outranks wrapper beat. Lower-ranked
+    # sources are joined by the monitor and must not be inferred here.
     agent_beats = [b for b in beats if b.owner == owner and b.emitter == "agent"]
     wrapper_beats = [b for b in beats if b.owner == owner and b.emitter == "wrapper"]
     best = agent_beats[-1] if agent_beats else (wrapper_beats[-1] if wrapper_beats else None)
@@ -290,8 +294,9 @@ def classify(
         )
 
     return BeatClassification(
-        state="LIVE",
+        state="LIVE" if best.emitter == "agent" else "LIVE PROGRESS UNKNOWN",
         evidence=evidence,
         age_s=age,
         disposition=best.disposition,
+        note="wrapper-only beat; worker progress is unknown" if best.emitter == "wrapper" else "",
     )
