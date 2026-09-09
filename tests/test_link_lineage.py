@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "scripts/fleet/link-lineage.py"
 spec = importlib.util.spec_from_file_location("link_lineage", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
@@ -416,6 +418,76 @@ def test_terminal_fail_is_reconciled_but_not_a_pass(tmp_path):
     )
     assert out["coverage"]["lineage-complete"] == 1
     assert out["records"]["org/repo#12"]["review_verdict"] == "FAIL"
+
+
+@pytest.mark.parametrize(
+    ("verdict", "token"),
+    [
+        ("PASS exact-head checks green", "PASS"),
+        ("FAIL|lint", "FAIL"),
+        ("BLOCKED: dependency unavailable", "BLOCKED"),
+    ],
+)
+def test_explained_terminal_verdict_resolves_without_review_work(tmp_path, verdict, token):
+    _home(tmp_path, "a1b2c3d4", "e5f6a7b8")
+    cards = [
+        {"id": "a1b2c3d4", "title": "Implement source", "labels": []},
+        {
+            "id": "e5f6a7b8",
+            "title": "[REVIEW] Check source",
+            "labels": ["review", "parent-a1b2c3d4"],
+            "status": "done",
+            "links": {"verdict": verdict, "pr": "org/repo#12", "commit": "a" * 40},
+        },
+    ]
+    out = mod.reconcile(
+        [
+            {
+                "repository": "org/repo",
+                "number": 12,
+                "body": "a1b2c3d4",
+                "headRefOid": "a" * 40,
+                "baseRefOid": "b" * 40,
+            }
+        ],
+        cards,
+        tmp_path,
+        reviewer_candidates=[_reviewer()],
+    )
+    assert out["coverage"]["lineage-complete"] == 1
+    assert out["records"]["org/repo#12"]["review_verdict"] == token
+    assert out["review_work_recommendations"] == []
+
+
+@pytest.mark.parametrize("verdict", ["PASSED", "FAILURE", "BLOCKEDISH", "PASS_FOR_REVIEW"])
+def test_malformed_terminal_prefix_fails_closed(tmp_path, verdict):
+    _home(tmp_path, "a1b2c3d4", "e5f6a7b8")
+    cards = [
+        {"id": "a1b2c3d4", "title": "Implement source", "labels": []},
+        {
+            "id": "e5f6a7b8",
+            "title": "[REVIEW] Check source",
+            "labels": ["review", "parent-a1b2c3d4"],
+            "status": "done",
+            "links": {"verdict": verdict, "pr": "org/repo#12", "commit": "a" * 40},
+        },
+    ]
+    out = mod.reconcile(
+        [
+            {
+                "repository": "org/repo",
+                "number": 12,
+                "body": "a1b2c3d4",
+                "headRefOid": "a" * 40,
+                "baseRefOid": "b" * 40,
+            }
+        ],
+        cards,
+        tmp_path,
+        reviewer_candidates=[_reviewer()],
+    )
+    assert out["coverage"]["unresolved"] == 1
+    assert len(out["review_work_recommendations"]) == 1
 
 
 def test_review_required_source_label_is_not_reviewer(tmp_path):
