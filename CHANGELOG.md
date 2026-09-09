@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `72240d71`: package the fleet rotation launcher in the SKCapstone wheel,
+  point recurring fleet units at that wheel-owned executable, and isolate the
+  CI libfuse refresh from unrelated third-party apt indexes.
+
 - Card `f398a4af`: emit one typed Seraph no-op receipt when a nonempty live
   selection is fully suppressed before launch, while preserving candidate
   diagnostics, admission controls, and exact-one receipt validation.
