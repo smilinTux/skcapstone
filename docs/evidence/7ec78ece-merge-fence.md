@@ -10,7 +10,7 @@ external actuation was performed.
 - implementation commits: `e2d19374` and `c87c60433cc6f4febb7c3b6053e5b80451bde78e`
 - implementation head: `c87c60433cc6f4febb7c3b6053e5b80451bde78e`
 - implementation tree: `c19d977bb5f7a3316c9186b662d7fca17086902c`
-- candidate patch SHA256: `47e1796db331511139f2eafe3e49fa11efe836cfcb15359b7d26ea03d704bed3`
+- implementation patch SHA256, `git diff --binary BASE..HEAD -- src tests`: `872f2e3c10a266f40b82897747948060f1a448593e4a3723ca25e304c0a7b504`
 - branch: `fix/7ec78ece-merge-fence`
 - isolated worktree: `/mnt/cloud/onedrive/projects/DAVE-AI/worktrees/skcapstone-7ec78ece`
 
