@@ -46,9 +46,21 @@ _REVIEW_TITLE_RE = re.compile(r"\[REVIEW", re.IGNORECASE)
 _OUTCOME_KEY_RE = re.compile(
     r"(verdict|outcome|result|disposition|review_decision)", re.IGNORECASE
 )
-_TERMINAL_VERDICT_RE = re.compile(r"^\s*(PASS(?!_FOR)|FAIL|BLOCKED)\b", re.IGNORECASE)
 _CHECK_KEY_RE = re.compile(r"(?:^|_)(?:check|checks|ci)(?:_|$)", re.IGNORECASE)
-_PENDING_CHECK_RE = re.compile(r"\b(?:pending|queued|in_progress|waiting)\b", re.IGNORECASE)
+_SUCCESS_CHECK_STATES = frozenset({"success", "successful", "passed", "pass"})
+
+
+def _is_terminal_verdict(value: str) -> bool:
+    """Accept only canonical terminal verdicts, never lookalike prefixes."""
+    verdict = str(value or "").strip()
+    if verdict in {"PASS", "FAIL"}:
+        return True
+    if not verdict.startswith("BLOCKED "):
+        return False
+    fields = verdict.split()[1:]
+    return any(
+        field.startswith("blocked_on=") and field != "blocked_on=" for field in fields
+    ) and any(field.startswith("referent=") and field != "referent=" for field in fields)
 
 
 def is_review_card(title: str) -> bool:
@@ -97,8 +109,8 @@ def recorded_verdict(card_id: str, home: Path) -> str | None:
     return latest[1] if latest else None
 
 
-def pending_checks(card_id: str, home: Path) -> list[str]:
-    """Return check links whose latest recorded state is still nonterminal."""
+def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
+    """Return check links whose latest recorded state is not exact success."""
     evidence_dir = Path(home) / "coordination" / "card_events"
     latest: dict[str, tuple[str, str]] = {}
     for path in sorted(glob.glob(str(evidence_dir / "*.jsonl"))):
@@ -120,7 +132,11 @@ def pending_checks(card_id: str, home: Path) -> list[str]:
                         latest[key] = candidate
         except OSError:
             continue
-    return sorted(key for key, (_, value) in latest.items() if _PENDING_CHECK_RE.search(value))
+    return sorted(
+        key
+        for key, (_, value) in latest.items()
+        if str(value).strip().lower() not in _SUCCESS_CHECK_STATES
+    )
 
 
 def validate_review_completion(card_id: str, title: str, home: Path) -> None:
@@ -137,12 +153,13 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
     if not is_review_card(title):
         return
     verdict = recorded_verdict(card_id, home)
-    if verdict and _TERMINAL_VERDICT_RE.match(verdict):
-        checks = pending_checks(card_id, home)
+    if verdict and _is_terminal_verdict(verdict):
+        checks = unsuccessful_checks(card_id, home)
         if not checks:
             return
         raise ValueError(
-            f"review card {card_id} still has pending required checks: " + ", ".join(checks)
+            f"review card {card_id} has required checks that are not successful: "
+            + ", ".join(checks)
         )
     if verdict:
         raise ValueError(

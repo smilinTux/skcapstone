@@ -77,7 +77,22 @@ def test_terminal_recorded_verdict_satisfies_it(tmp_path, verdict):
     validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
 
 
-@pytest.mark.parametrize("verdict", ["PASS_FOR_REVIEW", "PASS_FOR_REREVIEW"])
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        "PASS_FOR_REVIEW",
+        "PASS_FOR_REREVIEW",
+        "PASS_BOGUS",
+        "PASS extra",
+        "PASSING",
+        "UNKNOWN",
+        "pass",
+        "FAILURE",
+        "BLOCKED",
+        "BLOCKED blocked_on=card",
+        "BLOCKED referent=inc-01",
+    ],
+)
 def test_provisional_verdict_cannot_complete_review(tmp_path, verdict):
     home = _home(
         tmp_path,
@@ -99,8 +114,52 @@ def test_pending_required_check_blocks_terminal_pass(tmp_path):
             ("ci_check_python312", "pending", "2026-08-28T03:01:00"),
         ],
     )
-    with pytest.raises(ValueError, match="pending required checks"):
+    with pytest.raises(ValueError, match="not successful"):
         validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "pending",
+        "queued",
+        "in_progress",
+        "waiting",
+        "missing",
+        "cancelled",
+        "skipped",
+        "failure",
+        "timed_out",
+        "",
+        "unknown",
+    ],
+)
+def test_every_non_success_required_check_state_blocks_completion(tmp_path, state):
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[X][REVIEW] review",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00"),
+            ("ci_check_python312", state, "2026-08-28T03:01:00"),
+        ],
+    )
+    with pytest.raises(ValueError, match="not successful"):
+        validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
+
+
+@pytest.mark.parametrize("state", ["success", "successful", "passed", "pass"])
+def test_canonical_success_required_check_states_allow_completion(tmp_path, state):
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[X][REVIEW] review",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00"),
+            ("ci_check_python312", state, "2026-08-28T03:01:00"),
+        ],
+    )
+    validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
 
 
 def test_later_green_check_allows_terminal_pass(tmp_path):
