@@ -149,3 +149,23 @@ rolls back through its card-pinned artifact procedure. Seraph rolls back by
 disabling `skfleet-seraph.timer`, preserving append-only review evidence, and
 reverting its pinned source commit. A feed failure disables Link's eligibility
 input; it does not trigger GitHub mutations.
+### Converge the six lifecycle profiles
+
+After independently reviewed package installation and before enabling timers,
+converge the packaged control record and role profiles into the existing
+sovereign agent homes. The command refuses missing or mismatched identities and
+captures every replaced file in an exact rollback bundle.
+
+```bash
+python -m skcapstone.lifecycle_seats converge \
+  --home "$HOME/.skcapstone" \
+  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-six-seat-<change-id>"
+```
+
+Rollback fails closed if any installed target changed after convergence:
+
+```bash
+python -m skcapstone.lifecycle_seats rollback \
+  --home "$HOME/.skcapstone" \
+  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-six-seat-<change-id>"
+```

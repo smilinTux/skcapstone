@@ -51,8 +51,7 @@ read.
 
 Every cycle emits a health record with seat, host, cycle generation, mail
 poll result, work counts, and result. Link, Mero, Seraph, and Tank run every
-five minutes, Niobe runs on the dispatcher cadence, and ATLAS runs
-every fifteen. Each is a bounded one-shot. A host-local nonblocking lock turns
+five minutes, including Niobe and ATLAS. Each is a bounded one-shot. A host-local nonblocking lock turns
 overlap into a recorded no-op. A prior cycle is abandoned only after exact
 boot ID, PID, and process start evidence proves its process generation dead.
 Receipts survive retirement and no cycle leaves a persistent child worker.

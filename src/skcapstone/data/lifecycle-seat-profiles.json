@@ -86,7 +86,7 @@
       "activation_state": "active_bounded",
       "role": "operations_plane",
       "card_label": "seat-atlas",
-      "cadence_seconds": 900,
+      "cadence_seconds": 300,
       "timeout_seconds": 300,
       "owns": ["operational_observation", "authorized_action_execution", "postcondition_verification"],
       "denies": ["coordination_board_ownership", "card_claim", "reviewer_assignment", "merge", "policy_change", "unratified_action"]

@@ -385,7 +385,7 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "--seat tank" in tank and "TimeoutStartSec=300" in tank
     assert "OnUnitActiveSec=5min" in tank_timer
     assert "--seat atlas" in atlas and "TimeoutStartSec=300" in atlas
-    assert "OnUnitActiveSec=15min" in atlas_timer
+    assert "OnUnitActiveSec=5min" in atlas_timer
 
 
 def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
