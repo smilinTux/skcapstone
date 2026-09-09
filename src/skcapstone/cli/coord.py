@@ -335,12 +335,27 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--by", default="human", help="Creator name.")
     @click.option("--criteria", multiple=True, help="Acceptance criteria (repeatable).")
     @click.option("--dep", multiple=True, help="Dependency task IDs (repeatable).")
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
     @click.option(
         "--claim-for-me",
         is_flag=True,
         help="Atomically create and claim for the resolved active agent.",
     )
-    def coord_create(home, task_id, title, desc, priority, tag, by, criteria, dep, claim_for_me):
+    def coord_create(
+        home,
+        task_id,
+        title,
+        desc,
+        priority,
+        tag,
+        by,
+        criteria,
+        dep,
+        casey_authorization,
+        casey_change_id,
+        claim_for_me,
+    ):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
 
@@ -361,6 +376,12 @@ def register_coord_commands(main: click.Group) -> None:
             created_by=by,
             acceptance_criteria=list(criteria),
             dependencies=list(dep),
+        )
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(
+            by, Action.CREATE_CARD, task.id, casey_authorization, casey_change_id
         )
         if claim_for_me:
             from .. import active_agent_name
@@ -384,13 +405,15 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name claiming the task.")
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
     @click.option(
         "--force",
         is_flag=True,
         default=False,
         help="Compatibility flag. Dependency, review, and human gates still cannot be bypassed.",
     )
-    def coord_claim(task_id, home, agent, force):
+    def coord_claim(task_id, home, agent, casey_authorization, casey_change_id, force):
         """Claim a task for an agent.
 
         A task whose dependencies are not all done is blocked. The compatibility
@@ -402,6 +425,12 @@ def register_coord_commands(main: click.Group) -> None:
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(
+            agent, Action.CLAIM, task_id, casey_authorization, casey_change_id
+        )
         board = Board(home_path)
         try:
             ag = board.claim_task(agent, task_id, force=force)
@@ -414,7 +443,9 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name completing the task.")
-    def coord_complete(task_id, home, agent):
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_complete(task_id, home, agent, casey_authorization, casey_change_id):
         """Mark a task as completed."""
         from ..coordination import Board
 
@@ -422,6 +453,12 @@ def register_coord_commands(main: click.Group) -> None:
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(
+            agent, Action.COMPLETE_CARD, task_id, casey_authorization, casey_change_id
+        )
 
         # A review card must have said something before it can be closed. Without
         # this, completing one marks the parent as reviewed while leaving no record

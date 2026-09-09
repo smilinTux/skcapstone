@@ -3,13 +3,62 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .operator_authorization import AuthorizationEnvelope
+from .key_io import read_armored_public_key
+from .operator_authorization import (
+    AuthorizationEnvelope,
+    consume_authorization,
+    load_authorization,
+)
 from .seat_boundaries import Action, verify_casey_direction
 
 Operation = Callable[..., Any]
 Verifier = Callable[[bytes, str, str], bool]
+SCOPE = "skcapstone,skdashboard,skworld"
+
+
+def authorize_jarvis_entrypoint(
+    actor: str,
+    action: Action,
+    target: str,
+    authorization_path: Path | None,
+    change_id: str | None,
+) -> None:
+    """Gate a real mutation surface when its authenticated actor is Jarvis."""
+    if actor.strip().lower() != "jarvis":
+        return
+    if authorization_path is None:
+        raise ValueError(f"jarvis requires --casey-authorization for {action.value}")
+    if not change_id:
+        raise ValueError(f"jarvis requires --casey-change-id for {action.value}")
+
+    from capauth import resolve_capauth_home
+    from capauth.crypto import get_backend
+    from capauth.profile import load_profile
+
+    capauth_home = resolve_capauth_home()
+    profile = load_profile(base_dir=capauth_home)
+    handle = (profile.entity.handle or profile.entity.name).split("@")[0].lower()
+    if handle != "casey":
+        raise ValueError("active CapAuth human profile is not Casey")
+    public_armor = read_armored_public_key(capauth_home / "identity" / "public.asc")
+    if not public_armor:
+        raise ValueError("Casey public key is unavailable")
+    envelope = load_authorization(authorization_path)
+    verify_casey_direction(
+        actor,
+        action,
+        envelope=envelope,
+        target=target,
+        change_id=change_id,
+        scope=SCOPE,
+        public_key_armor=public_armor,
+        expected_fingerprint=profile.key_info.fingerprint,
+        verifier=get_backend(profile.crypto_backend).verify,
+    )
+    consume_authorization(envelope, capauth_home / "operator" / "used-authorizations")
 
 
 @dataclass(frozen=True)
@@ -19,9 +68,12 @@ class JarvisEmergencyGateway:
     actor: str
     envelope: AuthorizationEnvelope | None
     public_key_armor: str
+    expected_fingerprint: str
+    change_id: str
     verifier: Verifier
     operations: Mapping[Action, Operation]
-    scope: str = "skcapstone,skdashboard,skworld"
+    replay_store: Path
+    scope: str = SCOPE
 
     def _run(self, action: Action, target: str, /, *args: Any, **kwargs: Any) -> Any:
         verify_casey_direction(
@@ -29,10 +81,14 @@ class JarvisEmergencyGateway:
             action,
             envelope=self.envelope,
             target=target,
+            change_id=self.change_id,
             scope=self.scope,
             public_key_armor=self.public_key_armor,
+            expected_fingerprint=self.expected_fingerprint,
             verifier=self.verifier,
         )
+        assert self.envelope is not None
+        consume_authorization(self.envelope, self.replay_store)
         operation = self.operations.get(action)
         if operation is None:
             raise ValueError(f"no emergency operation registered for {action.value}")
