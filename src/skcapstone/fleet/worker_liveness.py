@@ -38,6 +38,8 @@ class LivenessObservation:
     cleanup_failed: bool = False
     claim_active: bool = True
     cpu_percent: float = 0.0
+    current_claim_generation: str | None = None
+    cgroup_processes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +118,24 @@ def classify(
             preserve_workspace=True,
             reason="incomplete-identity-or-session",
         )
+    if not o.current_claim_generation or o.current_claim_generation != o.claim_generation:
+        return _decision(
+            o,
+            "stale-claim",
+            True,
+            quarantine=True,
+            preserve_workspace=True,
+            reason="claim-generation-not-current",
+        )
+    if o.cgroup_processes is None or o.cgroup_processes < 0:
+        return _decision(
+            o,
+            "ambiguous",
+            True,
+            quarantine=True,
+            preserve_workspace=True,
+            reason="cgroup-process-state-unknown",
+        )
     if o.live_children < 0 or o.cleanup_failed:
         return _decision(
             o,
@@ -153,16 +173,25 @@ def classify(
             reason="invalid-terminal-marker",
         )
     if o.terminal_marker:
+        if o.terminal_at is None:
+            return _decision(
+                o,
+                "terminal-orphan",
+                True,
+                quarantine=True,
+                preserve_workspace=True,
+                reason="terminal-timestamp-missing",
+            )
         custody_safe = bool(o.workspace_recoverable and o.workspace_custody)
         commits_safe = not o.unpushed_commits or o.unpushed_commits_preserved
-        if o.live_children == 0 and custody_safe and commits_safe:
+        if o.live_children == 0 and o.cgroup_processes == 0 and custody_safe and commits_safe:
             return _decision(
                 o,
                 "retirement-ready",
                 True,
                 retire=True,
                 preserve_workspace=bool(o.unpushed_commits),
-                reason="terminal-zero-children-recoverable-workspace",
+                reason="terminal-zero-children-and-cgroup-recoverable-workspace",
             )
         return _decision(
             o,

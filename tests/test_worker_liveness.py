@@ -30,6 +30,8 @@ def obs(**changes: object) -> LivenessObservation:
         "assistance_requested_at": None,
         "workspace_recoverable": True,
         "workspace_custody": "workspace",
+        "current_claim_generation": "gen",
+        "cgroup_processes": 0,
     }
     values.update(changes)
     return LivenessObservation(**values)  # type: ignore[arg-type]
@@ -76,10 +78,11 @@ def test_retirement_requires_terminal_children_custody_and_preserved_commits() -
     safe = classify(obs(terminal_marker="PASS", terminal_at=NOW), now=NOW)
     assert safe.state == "retirement-ready" and safe.retire and not safe.quarantine
     for unsafe in (
-        obs(terminal_marker="PASS", live_children=1),
-        obs(terminal_marker="PASS", workspace_recoverable=False),
-        obs(terminal_marker="PASS", workspace_custody=None),
-        obs(terminal_marker="PASS", unpushed_commits=("abc123",)),
+        obs(terminal_marker="PASS", terminal_at=NOW, live_children=1),
+        obs(terminal_marker="PASS", terminal_at=NOW, cgroup_processes=1),
+        obs(terminal_marker="PASS", terminal_at=NOW, workspace_recoverable=False),
+        obs(terminal_marker="PASS", terminal_at=NOW, workspace_custody=None),
+        obs(terminal_marker="PASS", terminal_at=NOW, unpushed_commits=("abc123",)),
     ):
         decision = classify(unsafe, now=NOW)
         assert decision.state == "terminal-orphan"
@@ -87,12 +90,33 @@ def test_retirement_requires_terminal_children_custody_and_preserved_commits() -
     preserved = classify(
         obs(
             terminal_marker="PASS_FOR_REVIEW",
+            terminal_at=NOW,
             unpushed_commits=("abc123",),
             unpushed_commits_preserved=True,
         ),
         now=NOW,
     )
     assert preserved.retire and preserved.preserve_workspace
+
+
+def test_retirement_is_fenced_to_current_claim_generation_and_cgroup_truth() -> None:
+    missing_generation = classify(obs(current_claim_generation=None), now=NOW)
+    changed_generation = classify(obs(current_claim_generation="new-gen"), now=NOW)
+    missing_cgroup = classify(obs(cgroup_processes=None), now=NOW)
+    missing_terminal_time = classify(obs(terminal_marker="PASS"), now=NOW)
+
+    assert missing_generation.state == "stale-claim"
+    assert changed_generation.state == "stale-claim"
+    assert missing_cgroup.state == "ambiguous"
+    assert missing_terminal_time.state == "terminal-orphan"
+    for decision in (
+        missing_generation,
+        changed_generation,
+        missing_cgroup,
+        missing_terminal_time,
+    ):
+        assert decision.quarantine and decision.preserve_workspace
+        assert not decision.retire
 
 
 def test_dead_pane_stale_claim_high_cpu_without_identity_and_interruption_fail_closed() -> None:
@@ -111,7 +135,7 @@ def test_dead_pane_stale_claim_high_cpu_without_identity_and_interruption_fail_c
 
 
 def test_partial_cleanup_failure_never_retires() -> None:
-    decision = classify(obs(terminal_marker="PASS", cleanup_failed=True), now=NOW)
+    decision = classify(obs(terminal_marker="PASS", terminal_at=NOW, cleanup_failed=True), now=NOW)
     assert decision.state == "cleanup-failed"
     assert decision.quarantine and not decision.retire
 
@@ -121,7 +145,7 @@ def test_terminal_projection_reconciliation_is_exact_and_idempotent() -> None:
         WorkerProjection("agent", "card", "gen", "active"),
         WorkerProjection("agent", "other", "other-gen", "ready"),
     )
-    decision = classify(obs(terminal_marker="BLOCKED"), now=NOW)
+    decision = classify(obs(terminal_marker="BLOCKED", terminal_at=NOW), now=NOW)
     decisions = {("agent", "card", "gen"): decision}
     once = reconcile(projections, decisions)
     twice = reconcile(once, decisions)
@@ -134,7 +158,7 @@ def test_metrics_are_deterministic() -> None:
     rows = (
         classify(obs(), now=NOW),
         classify(obs(quiet_tool_wait=True), now=NOW),
-        classify(obs(terminal_marker="PASS", live_children=2), now=NOW),
+        classify(obs(terminal_marker="PASS", terminal_at=NOW, live_children=2), now=NOW),
         classify(obs(child_activity_at=NOW), now=NOW),
     )
     result = metrics(
