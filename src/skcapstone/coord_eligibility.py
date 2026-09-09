@@ -8,6 +8,7 @@ from typing import Collection
 
 from .card import Column, Kind
 from .card_store import CardStore
+from .coord_amendments import is_voided
 
 _EXCLUDED_LABELS = frozenset({"do-not-claim", "human-gate", "not-claimable", "superseded"})
 _CONTAINER_LABELS = frozenset({"parent-container", "sprint-container"})
@@ -73,6 +74,9 @@ def leaf_eligibility_counts(
             continue
         if card.status not in {Column.BACKLOG, Column.REVIEW} or card.owner:
             continue
+        # Void is authoritative raw-event state, not a projection detail.
+        if is_voided(home, card.id):
+            continue
         if (
             _is_container(card, labels, parent_ids)
             or _has_excluded_label(labels)
@@ -80,7 +84,9 @@ def leaf_eligibility_counts(
         ):
             continue
         if any(
-            dependency not in by_id or by_id[dependency].status != Column.DONE
+            dependency not in by_id
+            or by_id[dependency].status != Column.DONE
+            or is_voided(home, dependency)
             for dependency in card.dependencies
         ):
             continue
