@@ -132,7 +132,12 @@ Changelog = "https://github.com/smilinTux/skcapstone/releases"
 where = ["src"]
 
 [tool.setuptools]
-script-files = ["scripts/fleet/skfleet-rotate.py"]
+script-files = [
+    "scripts/fleet/pi-cardstore-guard.mjs",
+    "scripts/fleet/skfleet-pi-model-catalog.py",
+    "scripts/fleet/skfleet-rotate.py",
+    "scripts/fleet/skfleet-worker-wrapper.py",
+]
 
 [tool.setuptools.package-data]
 skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "defaults/.stignore", "defaults/**/.stignore", "data/*.json", "data/*.yaml", "data/*.sh", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer", "static/*.html", "static/**/*.css", "static/**/*.js"]

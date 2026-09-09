@@ -101,7 +101,13 @@ def test_rotation_launcher_is_installed_by_the_wheel() -> None:
     """A package upgrade cannot leave the active dispatcher outside the wheel."""
 
     pyproject = (ROOT / "pyproject.toml").read_text()
-    assert 'script-files = ["scripts/fleet/skfleet-rotate.py"]' in pyproject
+    for runtime_file in (
+        "pi-cardstore-guard.mjs",
+        "skfleet-pi-model-catalog.py",
+        "skfleet-rotate.py",
+        "skfleet-worker-wrapper.py",
+    ):
+        assert f'"scripts/fleet/{runtime_file}"' in pyproject
 
     for unit in (
         ROOT / "systemd/skfleet-niobe-live.service",
