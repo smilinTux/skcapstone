@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
+from skcapstone.fleet.terminal_capacity import invalidate_worker
 
 
 def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObservation:
@@ -313,6 +314,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stdout", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--mail-recipient", default="jarvis")
+    parser.add_argument("--live-snapshot", type=Path, default=None)
     parser.add_argument("--session", default="")
     parser.add_argument("--worker-executable", default="")
     parser.add_argument("--startup-timeout", type=float, default=120.0)
@@ -387,6 +389,13 @@ def main() -> int:
             startup_thread.join(timeout=6)
         # Always idle the worker projection on any exit path, including SIGTERM.
         idle_owner_projection(args.owner)
+        # Publish terminal capacity before the claim can be released. The
+        # fenced, atomic update removes only this card and preserves siblings.
+        if args.live_snapshot is not None:
+            try:
+                invalidate_worker(args.live_snapshot, args.host, args.card)
+            except OSError as exc:
+                sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
 
 
 if __name__ == "__main__":
