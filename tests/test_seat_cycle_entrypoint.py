@@ -281,17 +281,13 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     assert calls[1][-1] == "skfleet-worker-codex-review01.service"
 
 
-def test_seraph_rejects_missing_wheel_owned_dispatcher(
-    tmp_path, installed_dispatcher
-) -> None:
+def test_seraph_rejects_missing_wheel_owned_dispatcher(tmp_path, installed_dispatcher) -> None:
     installed_dispatcher.unlink()
 
     assert seraph_operation(tmp_path)["reason"] == "seraph_dispatcher_missing"
 
 
-def test_seraph_preserves_invoked_venv_when_python_is_a_symlink(
-    tmp_path, monkeypatch
-) -> None:
+def test_seraph_preserves_invoked_venv_when_python_is_a_symlink(tmp_path, monkeypatch) -> None:
     bindir = tmp_path / "venv" / "bin"
     bindir.mkdir(parents=True)
     interpreter = bindir / "python3"
