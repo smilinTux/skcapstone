@@ -212,7 +212,7 @@ def verify_seraph_dispatch(
         for line in completed.stdout.splitlines()
         if (match := _NOOP.fullmatch(line.strip()))
     ]
-    if completed.returncode != 0:
+    if completed.returncode != 0 and not launches:
         return {
             "cards_examined": 0,
             "recommendations": 0,
@@ -236,7 +236,8 @@ def verify_seraph_dispatch(
             "reason": "seraph_launch_receipt_missing",
         }
     store = CardStore(home)
-    succeeded = failed = invalid = 0
+    succeeded = failed = 0
+    invalid = int(completed.returncode != 0)
     source_heads: set[tuple[str, str]] = set()
     seen_cards: set[str] = set()
     for launch in launches:

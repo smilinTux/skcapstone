@@ -346,6 +346,43 @@ def test_seraph_reports_partial_batch_and_leaves_failed_item_retryable(
     assert cards["review02"].owner is None
 
 
+def test_seraph_preserves_valid_launch_when_selector_exits_nonzero(tmp_path, monkeypatch) -> None:
+    owner = "pi-seraph-chiap08-review01"
+    card = SimpleNamespace(
+        labels=["review", "seat-seraph"],
+        status=SimpleNamespace(value="doing"),
+        owner=owner,
+        meta={
+            "_claim_revision": "revision-1",
+            "link_source_card": "source01",
+            "link_head_revision": "a" * 40,
+        },
+        links={"producer_identity": "builder"},
+    )
+    output = (
+        "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|"
+        f"model=sk-codex-mid|owner={owner}|claim_revision=revision-1\n"
+    )
+
+    def run(command, **_kwargs):
+        if command[0] == "systemctl":
+            return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=1, stdout=output)
+
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
+        lambda *_: review_events(owner, "revision-1"),
+    )
+
+    result = seraph_operation(tmp_path)
+
+    assert result["reason"] == "seraph_dispatch_partial"
+    assert result["dispatch_succeeded"] == 1
+    assert result["dispatch_failed"] == 1
+
+
 def test_seraph_rejects_duplicate_source_head_and_producer_reviewer(tmp_path, monkeypatch) -> None:
     owners = {
         "review01": "pi-seraph-chiap08-review01",
