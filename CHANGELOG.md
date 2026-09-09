@@ -30,6 +30,17 @@
   source-head deduplication, reviewer independence, and physical-capacity
   limits.
 
+- Card `ca738f5c`: route Link and Mero lifecycle fan-out requests through the
+  production Niobe dispatcher with role and card-scope intersection,
+  atomic cross-card source-head reservation, verified runtime-seat authority,
+  exact claim and launch receipts, and request plus claim-generation-bound
+  recovery receipts.
+  Recovery now retains occupancy until the exact request, card, owner, claim
+  revision, session, and systemd unit tuple is terminal; card-level liveness
+  cannot authorize a duplicate retry.
+  Also allow the shared SKRSI handoff ledger to wait through bounded transient
+  SQLite writer contention instead of failing concurrent fan-out admission.
+
 - Cards `2e6bb78e` and `30c6909d`: add role-bounded lifecycle-seat fan-out
   allocation with source-head deduplication, the `sk-codex-mid` child default,
   and explicit exclusion of Jarvis from recurring lifecycle scheduling.

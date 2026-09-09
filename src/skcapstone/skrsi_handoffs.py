@@ -84,6 +84,8 @@ FIRST_WAVE_HANDOFFS = {
     "evidence-to-review": _contract("Link", "Seraph", "link", "source_card+head_revision"),
 }
 
+_SQLITE_LOCK_TIMEOUT_SECONDS = 5.0
+
 
 class HandoffError(SKRSIError):
     """A terminal or admission failure; receipt is available through read()."""

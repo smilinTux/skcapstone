@@ -283,6 +283,23 @@ def test_real_link_materialization_concurrent_replay_and_reviewer_collision(tmp_
     assert len([e for e in store._read_events(review) if e["action"] == "claim"]) == 1
 
 
+def test_handoff_admission_waits_through_transient_sqlite_writer_contention(tmp_path):
+    runtime = executor(tmp_path)
+    api = facade(runtime)
+    home = _home_with_source(tmp_path)
+    blocker = sqlite3.connect(runtime.path, isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(api.review, home, _item(home), "4" * 64, revision="revision-1")
+            time.sleep(0.2)
+            assert not future.done()
+            blocker.commit()
+            assert future.result(timeout=3)["handoff_state"] == "materialized"
+    finally:
+        blocker.close()
+
+
 def test_link_materialization_waits_for_bounded_sqlite_contention(tmp_path):
     runtime = executor(tmp_path)
     api = facade(runtime)
