@@ -18,6 +18,7 @@ from pathlib import Path
 
 from skcapstone.fleet.terminal_capacity import retire_worker_generation
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
+from skcapstone.seat_mail import poll_mail, startup_hello
 
 
 def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObservation:
@@ -117,6 +118,7 @@ def write_startup_report(
         "lane": args.lane,
         "child_pid": pid,
         "control_group": None,
+        "mailbox": getattr(args, "mailbox_poll", None),
     }
     try:
         payload["control_group"] = next(
@@ -150,6 +152,9 @@ def monitor_startup(
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
         observation = startup_observation(args, child.pid)
+        if child.poll() is not None:
+            write_startup_report(args, child.pid, "startup-child-exited", observation)
+            return
         state = classify_startup(observation, now=now)
         if state == "startup-ready" or stop.is_set() or time.monotonic() >= deadline:
             write_startup_report(args, child.pid, state, observation)
@@ -347,6 +352,21 @@ def preflight_worktree() -> int:
     return r.returncode
 
 
+def preflight_mailbox(args: argparse.Namespace) -> bool:
+    """Prove hello and read-only direct-plus-all mailbox access before work."""
+    hello = startup_hello(Path.home() / ".skcapstone", args.owner, host=args.host)
+    poll = poll_mail(args.owner)
+    args.mailbox_poll = {
+        "hello": hello,
+        "ok": poll.ok,
+        "new_messages": poll.new_messages,
+        "help_or_handoff": poll.help_or_handoff,
+        "digest": poll.digest,
+        "error": poll.error,
+    }
+    return hello and poll.ok
+
+
 def terminal_local_evidence(
     child: subprocess.Popen | None,
     *,
@@ -402,8 +422,10 @@ def main() -> int:
     if preflight == 2:
         write_startup_report(args, os.getpid(), "startup-preflight-blocked")
         return 2
+    if not preflight_mailbox(args):
+        write_startup_report(args, os.getpid(), "startup-mailbox-unavailable")
+        return 2
     args.stdout.parent.mkdir(parents=True, exist_ok=True)
-    emit_work_mail(args, "agent.hello", f"phase=started lane={args.lane} model={args.model}")
 
     def _stop(signum: int, _frame: object) -> None:
         idle_owner_projection(args.owner)

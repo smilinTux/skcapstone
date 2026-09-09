@@ -13,6 +13,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,14 +47,15 @@ def _now() -> str:
 
 
 def _mail_command() -> str | None:
+    """Resolve the installed helper without relying on a service PATH."""
     configured = os.environ.get("SKMAIL_BIN")
     if configured:
         return configured
+    sibling = Path(sys.executable).resolve().parent / "skmail"
+    if sibling.is_file() and os.access(sibling, os.X_OK):
+        return str(sibling)
     found = shutil.which("skmail")
-    if found:
-        return found
-    candidate = Path(__file__).resolve().parents[2] / "scripts" / "fleet" / "skmail"
-    return str(candidate) if candidate.exists() else None
+    return found if found else None
 
 
 def _run(command: list[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
@@ -135,7 +137,7 @@ def poll_mail(seat: str) -> MailPoll:
         return MailPoll(polled_at, False, error=type(exc).__name__)
     output = (result.stdout or "") + (result.stderr or "")
     if result.returncode != 0:
-        return MailPoll(polled_at, False, error=output[-240:] or "skmail_read_failed")
+        return MailPoll(polled_at, False, error=f"skmail_exit_{result.returncode}")
     match = _NEW_COUNT.search(result.stdout or "")
     new_messages = int(match.group(1)) if match else 0
     lower = output.lower()
