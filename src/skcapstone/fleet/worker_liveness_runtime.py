@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
 from skcapstone.card_store import CardStore
+from skcapstone.fleet.paths import default_paths
 from skcapstone.fleet.worker_liveness import (
     AssistanceRequest,
     CycleResult,
@@ -337,7 +338,7 @@ def run_production_cycle(
     now: datetime | None = None,
 ) -> CycleResult:
     """Invoke the shared decision cycle through every production adapter."""
-    root = home or Path(os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone"))
+    root = home or default_paths().root.parent
     actor = agent or os.environ.get("SKAGENT", "skfleet-rotate")
     actions = actions_factory(root, actor)
     observed = tuple(observations) if observations is not None else collect_observations(root)
