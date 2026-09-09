@@ -349,6 +349,7 @@ def run_production_cycle(
             for row in observed
         )
     )
+
     def authority(row: LivenessObservation) -> bool:
         """Revalidate one candidate against current local authority."""
         return authorize_observation(row, home=root)
