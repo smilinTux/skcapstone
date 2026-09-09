@@ -348,8 +348,13 @@ def _handle_coord(args: list[str]) -> None:
 
     elif sub == "complete" and len(args) > 1:
         agent = args[2] if len(args) > 2 else name
-        board.complete_task(agent, args[1])
-        console.print(f"  [green]Completed:[/] {args[1]} by {agent}")
+        from .coord_completion import complete_coord_task
+
+        try:
+            complete_coord_task(_home(), agent, args[1])
+            console.print(f"  [green]Completed:[/] {args[1]} by {agent}")
+        except ValueError as e:
+            console.print(f"  [red]{e}[/]")
 
     elif sub == "create" and len(args) > 1:
         from .coordination import Task

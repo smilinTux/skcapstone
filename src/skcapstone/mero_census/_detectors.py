@@ -264,18 +264,23 @@ class CensusDetectorsMixin:
     def _detect_review_identity_gap(self, card: Card, facts: dict) -> list[dict]:
         """Review receipts whose seat identities violate the boundary.
 
-        A recommendation must be written by link, a launch by jarvis, and the
-        assigned reviewer must be distinct from the card's workers and from
-        link. A review-column card with no receipt at all is also a gap.
+        A recommendation must be written by Link. The launch writer, reviewer,
+        and exact claim owner must agree, while the reviewer must differ from
+        the source producer. A review-column card with no receipt is also a gap.
         """
         status_value = str(getattr(card.status, "value", card.status))
         is_review_card = "review" in {str(label).strip().lower() for label in card.labels}
         if not is_review_card:
             return []
-        workers = {
-            str(event.get("owner") or "").strip().lower()
+        claims = {
+            str(event.get("claim_revision") or ""): str(event.get("owner") or "").strip().lower()
             for event in facts["claims"]
-            if event.get("owner")
+            if event.get("claim_revision") and event.get("owner")
+        }
+        recommendations = {
+            str(event.get("recommendation_id") or ""): event
+            for event in facts["review_rows"]
+            if event.get("action") == "review_assignment_recommendation"
         }
         gaps: list[dict] = []
         sources: list[dict] = []
@@ -287,13 +292,23 @@ class CensusDetectorsMixin:
                     {"receipt": event.get("event_id", ""), "defect": "recommender_not_link"}
                 )
                 sources.append(event)
-            if action == "review_assignment_launch" and writer != "jarvis":
+            reviewer = str(event.get("reviewer") or "").strip().lower()
+            recommendation = recommendations.get(str(event.get("recommendation_id") or ""), {})
+            producer = str(recommendation.get("author") or "").strip().lower()
+            recommended_reviewer = str(recommendation.get("reviewer") or "").strip().lower()
+            claim_owner = claims.get(str(event.get("claim_revision") or ""), "")
+            if action == "review_assignment_launch" and (
+                not recommendation
+                or not reviewer
+                or recommended_reviewer != reviewer
+                or writer != reviewer
+                or claim_owner != reviewer
+            ):
                 gaps.append(
-                    {"receipt": event.get("event_id", ""), "defect": "launcher_not_jarvis"}
+                    {"receipt": event.get("event_id", ""), "defect": "launch_identity_mismatch"}
                 )
                 sources.append(event)
-            reviewer = str(event.get("reviewer") or "").strip().lower()
-            if reviewer and (reviewer == "link" or reviewer in workers):
+            if reviewer and (reviewer == "link" or (producer and reviewer == producer)):
                 gaps.append(
                     {"receipt": event.get("event_id", ""), "defect": "reviewer_not_distinct"}
                 )

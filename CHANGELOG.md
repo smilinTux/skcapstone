@@ -27,6 +27,14 @@
   allocation with source-head deduplication, the `sk-codex-mid` child default,
   and explicit exclusion of Jarvis from recurring lifecycle scheduling.
 
+- Card `be4e7d37`: make governed review authoring fail fast, keep consumer
+  review metadata out of consumer outcomes, require terminal review verdicts
+  and the complete successful required-CI link set for both `[REVIEW]` and
+  `[REREVIEW]`, and validate Seraph launch receipts against the exact reviewer
+  claim identity. Add `coord gates` parity and bounded POOL_V2 review
+  diagnostics, preserve ordinary `[REPAIR]` authoring, and serialize concurrent
+  SQLite handoff initialization across Python runtimes.
+
 - Card `2ea03ff7`: publish terminal worker capacity only for an exact
   claim generation after child-process and cgroup reconciliation. Claim
   release and snapshot invalidation now share one CardStore fence; failures
