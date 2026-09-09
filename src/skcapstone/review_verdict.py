@@ -25,9 +25,10 @@ does not explain itself, and that rule works because it fires where the value is
 written. Asking reviewers to remember does not work; the worker brief has always
 told them to return an exact PASS or BLOCKED, and 39 did not.
 
-DELIBERATELY NARROW. Only cards that identify themselves as reviews are checked,
-and any recorded outcome satisfies it, including BLOCKED. This does not judge
-the verdict, it requires that one exists.
+DELIBERATELY NARROW. Only cards that identify themselves as reviews or
+rereviews are checked. PASS additionally requires the complete protected-branch
+CI set. FAIL and structured BLOCKED remain terminal without waiting for CI,
+because a reviewer must be able to stop an unsafe candidate immediately.
 """
 
 from __future__ import annotations
@@ -37,9 +38,9 @@ import json
 import re
 from pathlib import Path
 
-#: A card is a review when it says so in its title. The estate marks these with a
-#: [REVIEW] tag, sometimes alongside a size tag, e.g. "[SKW-X-01][S][REVIEW]".
-_REVIEW_TITLE_RE = re.compile(r"\[REVIEW", re.IGNORECASE)
+#: Governed review and rereview cards use either a terminal tag or a tag with an
+#: embedded identifier, for example [REVIEW] or [REREVIEW-119db735].
+_REVIEW_TITLE_RE = re.compile(r"\[RE(?:RE)?VIEW(?:\]|-)", re.IGNORECASE)
 
 #: Link keys that carry a verdict. Matched on shape rather than an exact list,
 #: because the store has many spellings of the same idea.
@@ -48,6 +49,16 @@ _OUTCOME_KEY_RE = re.compile(
 )
 _CHECK_KEY_RE = re.compile(r"(?:^|_)(?:check|checks|ci)(?:_|$)", re.IGNORECASE)
 _SUCCESS_CHECK_STATES = frozenset({"success", "successful", "passed", "pass"})
+_REQUIRED_CI_LINK_KEYS = frozenset(
+    {
+        "ci_check_docs",
+        "ci_check_gitleaks",
+        "ci_check_lint",
+        "ci_check_shim_imports",
+        "ci_check_python311",
+        "ci_check_python312",
+    }
+)
 
 
 def _is_terminal_verdict(value: str) -> bool:
@@ -110,7 +121,7 @@ def recorded_verdict(card_id: str, home: Path) -> str | None:
 
 
 def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
-    """Return check links whose latest recorded state is not exact success."""
+    """Return missing or non-successful required CI links."""
     evidence_dir = Path(home) / "coordination" / "card_events"
     latest: dict[str, tuple[str, str]] = {}
     for path in sorted(glob.glob(str(evidence_dir / "*.jsonl"))):
@@ -134,8 +145,8 @@ def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
             continue
     return sorted(
         key
-        for key, (_, value) in latest.items()
-        if str(value).strip().lower() not in _SUCCESS_CHECK_STATES
+        for key in _REQUIRED_CI_LINK_KEYS
+        if key not in latest or str(latest[key][1]).strip().lower() not in _SUCCESS_CHECK_STATES
     )
 
 
@@ -153,7 +164,7 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
     if not is_review_card(title):
         return
     verdict = recorded_verdict(card_id, home)
-    if verdict and _is_terminal_verdict(verdict):
+    if verdict == "PASS":
         checks = unsuccessful_checks(card_id, home)
         if not checks:
             return
@@ -161,6 +172,8 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
             f"review card {card_id} has required checks that are not successful: "
             + ", ".join(checks)
         )
+    if verdict and _is_terminal_verdict(verdict):
+        return
     if verdict:
         raise ValueError(
             f"review card {card_id} has nonterminal verdict {verdict!r}; "

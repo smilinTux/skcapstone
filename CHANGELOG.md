@@ -12,8 +12,9 @@
 
 - Card `be4e7d37`: make governed review authoring fail fast, keep consumer
   review metadata out of consumer outcomes, require terminal review verdicts
-  with no pending checks, and validate Seraph launch receipts against the exact
-  reviewer claim identity. Add `coord gates` parity and bounded POOL_V2 review
+  and the complete successful required-CI link set for both `[REVIEW]` and
+  `[REREVIEW]`, and validate Seraph launch receipts against the exact reviewer
+  claim identity. Add `coord gates` parity and bounded POOL_V2 review
   diagnostics, preserve ordinary `[REPAIR]` authoring, and serialize concurrent
   SQLite handoff initialization across Python runtimes.
 
