@@ -252,7 +252,7 @@ def test_launcher_reconciles_before_logical_alias_activation(monkeypatch, tmp_pa
     monkeypatch.setattr(subprocess, "run", refuse)
     assert namespace["_prepare_pi_glm_catalog"]() == (
         False,
-        "PI_MODEL_CATALOG_ERROR|ValueError|" "catalog must not be accessible by group or other",
+        "PI_MODEL_CATALOG_ERROR|ValueError|catalog must not be accessible by group or other",
     )
 
 
