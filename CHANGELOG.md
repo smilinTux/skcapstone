@@ -3,9 +3,13 @@
 ## Unreleased
 
 - Card `cf9ccb43`: reject oversized unclaimed cards before dispatch with a
-  deterministic two-to-five-leaf recommendation. Active and review custody
-  remains advisory, checkout identity is required, reruns suppress duplicate
-  leaves, and the parent waits on leaves without a dependency cycle.
+  deterministic two-to-five-leaf recommendation. Each leaf carries a concrete,
+  non-overlapping deliverable, acceptance criteria, verification scope, and
+  focused gate. A hash-bound parent composition contract proves complete
+  coverage, while unsliceable cards fail closed without placeholder work.
+  Active and review custody remains advisory, checkout identity is required,
+  reruns suppress duplicate leaves, and dependencies are added only where
+  required.
 
 - Card `44ad0d49`: add bounded elastic independent-review admission with
   source-head deduplication, reviewer independence, and physical-capacity

@@ -54,6 +54,30 @@ class LeafRecommendation:
     depends_on: tuple[str, ...]
     repository: str
     base_ref: str
+    deliverables: tuple[str, ...]
+    acceptance_criteria: tuple[str, ...]
+    verification_scope: tuple[str, ...]
+    focused_gates: tuple[str, ...]
+    mutation_boundaries: tuple[str, ...] = ()
+    external_effects: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CompositionVerificationContract:
+    """Proof obligation retained by the parent after all leaves complete."""
+
+    leaf_ids: tuple[str, ...]
+    deliverables: tuple[str, ...]
+    acceptance_criteria: tuple[str, ...]
+    verification_scope: tuple[str, ...]
+    focused_gates: tuple[str, ...]
+    coverage_sha256: str
+    checks: tuple[str, ...] = (
+        "every parent item is assigned to exactly one leaf",
+        "no leaf partition overlaps another leaf partition",
+        "every leaf focused gate passes",
+        "parent composition and full-suite verification pass",
+    )
 
 
 @dataclass(frozen=True)
@@ -64,6 +88,7 @@ class DecompositionRecommendation:
     leaves: tuple[LeafRecommendation, ...] = ()
     custody: str = "composition"
     parent_dependencies: tuple[str, ...] = ()
+    composition_verification: CompositionVerificationContract | None = None
 
 
 def _get(card: Any, name: str, default: Any = None) -> Any:
@@ -124,6 +149,33 @@ def _stable_id(parent: str, ordinal: int) -> str:
     return f"{parent}-leaf-{ordinal}-{digest}"
 
 
+def _strings(card: Any, *names: str) -> tuple[str, ...]:
+    value = _linked(card, *names)
+    if value is None:
+        return ()
+    items = _items(value)
+    if any(not isinstance(item, str) or not item.strip() for item in items):
+        return ()
+    return tuple(item.strip() for item in items)
+
+
+def _partition(items: tuple[str, ...], count: int) -> tuple[tuple[str, ...], ...]:
+    """Assign every ordered item exactly once using stable round-robin buckets."""
+    buckets: list[list[str]] = [[] for _ in range(count)]
+    for index, item in enumerate(items):
+        buckets[index % count].append(item)
+    return tuple(tuple(bucket) for bucket in buckets)
+
+
+def _coverage_digest(*groups: tuple[str, ...]) -> str:
+    payload = "\n".join(
+        f"{group_index}:{item_index}:{item}"
+        for group_index, group in enumerate(groups)
+        for item_index, item in enumerate(group)
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionRecommendation:
     """Return a deterministic recommendation without creating or changing cards."""
     signals = classify_card_scope(card)
@@ -147,7 +199,6 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             custody="composition" if composition else "leaf",
         )
     leaf_limit = min(5, max(2, max_leaves))
-    leaf_count = min(max(2, signals.independent_axes + 1), leaf_limit)
     if active:
         return DecompositionRecommendation(
             "advisory",
@@ -182,6 +233,36 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             custody="composition",
         )
     dependencies = tuple(sorted({value.strip() for value in raw_dependencies}))
+    deliverables = _strings(card, "deliverables", "outputs", "workstreams")
+    criteria = _strings(card, "acceptance_criteria", "criteria")
+    verification = _strings(card, "verification_surfaces", "test_surfaces", "verification")
+    gates = _strings(card, "focused_gates", "test_commands", "gates")
+    if min(len(deliverables), len(criteria), len(verification), len(gates)) < 2:
+        return DecompositionRecommendation(
+            "advisory",
+            "card is unsliceable without at least two concrete deliverables, "
+            "acceptance criteria, verification scopes, and focused gates",
+            signals,
+            custody="composition",
+        )
+    leaf_count = min(
+        max(2, signals.independent_axes + 1, (signals.workload + 1) // 2),
+        leaf_limit,
+        len(deliverables),
+        len(criteria),
+        len(verification),
+        len(gates),
+    )
+    deliverable_parts = _partition(deliverables, leaf_count)
+    criteria_parts = _partition(criteria, leaf_count)
+    verification_parts = _partition(verification, leaf_count)
+    gate_parts = _partition(gates, leaf_count)
+    mutation_parts = _partition(
+        _strings(card, "mutation_boundaries", "boundaries", "write_scopes"), leaf_count
+    )
+    effect_parts = _partition(
+        _strings(card, "external_effects", "effects", "side_effects"), leaf_count
+    )
     existing_successors = {
         str(value) for value in _items(_linked(card, "successors", "successor") or [])
     }
@@ -190,9 +271,15 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
         LeafRecommendation(
             leaf_ids[i - 1],
             f"{_get(card, 'title', card_id)}: leaf {i}",
-            dependencies + (() if i == 1 else (leaf_ids[i - 2],)),
+            dependencies,
             repository,
             base_ref,
+            deliverable_parts[i - 1],
+            criteria_parts[i - 1],
+            verification_parts[i - 1],
+            gate_parts[i - 1],
+            mutation_parts[i - 1],
+            effect_parts[i - 1],
         )
         for i in range(1, leaf_count + 1)
         if leaf_ids[i - 1] not in existing_successors
@@ -204,6 +291,14 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
         leaves,
         "composition",
         leaf_ids,
+        CompositionVerificationContract(
+            leaf_ids=leaf_ids,
+            deliverables=deliverables,
+            acceptance_criteria=criteria,
+            verification_scope=verification,
+            focused_gates=gates,
+            coverage_sha256=_coverage_digest(deliverables, criteria, verification, gates),
+        ),
     )
 
 
