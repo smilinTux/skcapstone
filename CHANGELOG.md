@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `f398a4af`: emit one typed Seraph no-op receipt when a nonempty live
+  selection is fully suppressed before launch, while preserving candidate
+  diagnostics, admission controls, and exact-one receipt validation.
+
 - Card `8daa0877`: accept typed Seraph launch and no-op receipts from either
   stdout or stderr while preserving duplicate receipt rejection.
 
