@@ -154,8 +154,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   an append-only idempotent outbox with retention and acknowledgement cursors.
 
 - Card `c4a2ab8f`: conservative long-runner liveness classification preserves
-  quiet tool waits, requests assistance after one hour, and permits retirement
-  only after attributable terminal and recoverable-workspace evidence.
+  quiet tool waits and drives assistance, reconciliation, metrics, and safe
+  retirement through one decision cycle. Retirement receipts bind exact host,
+  unit, process tree, cgroup, claim generation, beat, and workspace custody;
+  concurrent SQLite writers wait safely instead of losing lifecycle evidence.
 
 - Daily `coord-maintain` scheduler job (`config/jobs.d/coord-maintain.yaml`) and
   `coord maintain --lock-days` wiring for stale coordination lock prune. Cards

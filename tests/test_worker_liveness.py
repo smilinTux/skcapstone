@@ -1,11 +1,16 @@
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from skcapstone.fleet.worker_liveness import (
     LivenessObservation,
+    RuntimeActions,
+    SQLiteReceiptJournal,
     WorkerProjection,
     classify,
     metrics,
     reconcile,
+    run_cycle,
 )
 
 NOW = datetime(2026, 9, 8, 18, 0, tzinfo=timezone.utc)
@@ -13,10 +18,13 @@ NOW = datetime(2026, 9, 8, 18, 0, tzinfo=timezone.utc)
 
 def obs(**changes: object) -> LivenessObservation:
     values: dict[str, object] = {
+        "host": "chiap08",
+        "observer_host": "chiap08",
+        "observed_at": NOW,
         "owner": "agent",
         "card_id": "card",
         "claim_generation": "gen",
-        "process_identity": "pid",
+        "process_identity": "pid:123",
         "session_id": "session",
         "managed_session": True,
         "process_alive": True,
@@ -32,6 +40,18 @@ def obs(**changes: object) -> LivenessObservation:
         "workspace_custody": "workspace",
         "current_claim_generation": "gen",
         "cgroup_processes": 0,
+        "unit": "skfleet-worker-codex-card.service",
+        "pid": 123,
+        "process_tree": (123,),
+        "cgroup": "/user.slice/skfleet-worker-codex-card.service",
+        "process_observed_at": NOW,
+        "cgroup_observed_at": NOW,
+        "beat_id": "beat-1",
+        "workspace_path": "/work/card",
+        "workspace_repository": "smilinTux/skcapstone",
+        "workspace_head": "a" * 40,
+        "workspace_custody_at": NOW,
+        "workspace_custody_sha256": "b" * 64,
     }
     values.update(changes)
     return LivenessObservation(**values)  # type: ignore[arg-type]
@@ -176,3 +196,112 @@ def test_metrics_are_deterministic() -> None:
         "retirement_latency": 3,
         "preserved_work_outcomes": 1,
     }
+
+
+def test_runtime_connects_assistance_reconciliation_metrics_and_retirement() -> None:
+    calls: dict[str, list[object]] = {
+        "assistance": [],
+        "reconciliation": [],
+        "metrics": [],
+        "retirement": [],
+    }
+    actions = RuntimeActions(
+        calls["assistance"].append,
+        calls["reconciliation"].append,
+        calls["metrics"].append,
+        calls["retirement"].append,
+    )
+    terminal = obs(terminal_marker="PASS", terminal_at=NOW)
+    waiting = obs(
+        card_id="waiting", claim_generation="wait-gen", current_claim_generation="wait-gen"
+    )
+    result = run_cycle(
+        (terminal, waiting),
+        (
+            WorkerProjection("agent", "card", "gen", "active"),
+            WorkerProjection("agent", "waiting", "wait-gen", "active"),
+        ),
+        now=NOW,
+        actions=actions,
+    )
+    assert len(calls["assistance"]) == 1
+    assert [row.state for row in calls["reconciliation"]] == ["terminal", "active"]
+    assert calls["metrics"] == [result.metric_values]
+    assert calls["retirement"] == list(result.receipts)
+    receipt = result.receipts[0]
+    assert (
+        receipt.host,
+        receipt.observer_host,
+        receipt.unit,
+        receipt.pid,
+        receipt.process_tree,
+        receipt.cgroup,
+        receipt.claim_generation,
+        receipt.beat_id,
+        receipt.workspace_custody,
+    ) == (
+        "chiap08",
+        "chiap08",
+        "skfleet-worker-codex-card.service",
+        123,
+        (123,),
+        "/user.slice/skfleet-worker-codex-card.service",
+        "gen",
+        "beat-1",
+        "workspace",
+    )
+
+
+def test_incomplete_receipt_quarantines_and_never_calls_retirement() -> None:
+    retired: list[object] = []
+    actions = RuntimeActions(lambda _: None, lambda _: None, lambda _: None, retired.append)
+    for changes in (
+        {"host": ""},
+        {"observer_host": "chiap01"},
+        {"unit": None},
+        {"pid": None},
+        {"process_tree": ()},
+        {"process_tree": (999,)},
+        {"cgroup": None},
+        {"process_observed_at": None},
+        {"cgroup_observed_at": None},
+        {"beat_id": None},
+        {"heartbeat_at": None},
+        {"workspace_custody": None},
+        {"workspace_path": None},
+        {"workspace_repository": None},
+        {"workspace_head": None},
+        {"workspace_custody_at": None},
+        {"workspace_custody_sha256": None},
+    ):
+        result = run_cycle(
+            (obs(terminal_marker="PASS", terminal_at=NOW, **changes),),
+            (),
+            now=NOW,
+            actions=actions,
+        )
+        assert result.decisions[0].quarantine
+        assert not result.decisions[0].retire
+    assert retired == []
+
+
+def test_healthy_worker_is_never_retired_by_runtime() -> None:
+    retired: list[object] = []
+    actions = RuntimeActions(lambda _: None, lambda _: None, lambda _: None, retired.append)
+    result = run_cycle((obs(child_activity_at=NOW),), (), now=NOW, actions=actions)
+    assert result.decisions[0].state == "active-compute"
+    assert retired == []
+
+
+def test_sqlite_receipt_journal_tolerates_concurrent_writers(tmp_path) -> None:
+    journal = SQLiteReceiptJournal(tmp_path / "runtime" / "retirement.sqlite3")
+    receipt = run_cycle(
+        (obs(terminal_marker="PASS", terminal_at=NOW),),
+        (),
+        now=NOW,
+        actions=RuntimeActions(lambda _: None, lambda _: None, lambda _: None, lambda _: None),
+    ).receipts[0]
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(lambda _: journal.append(receipt), range(100)))
+    with sqlite3.connect(journal.path) as db:
+        assert db.execute("SELECT count(*) FROM retirement_receipts").fetchone() == (1,)

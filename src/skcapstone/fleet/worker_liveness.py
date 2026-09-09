@@ -1,19 +1,21 @@
-"""Pure, fail-closed long-runner liveness and retirement planning.
-
-Callers supply correlated observations. This module emits decisions and
-projection updates only. It never sends mail, mutates CardStore, terminates a
-session, or changes a workspace.
-"""
+"""Fail-closed long-runner decisions and their bounded runtime application."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import json
+import sqlite3
+import time
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
-from typing import Iterable, Mapping
+from pathlib import Path
+from typing import Callable, Iterable, Mapping
 
 
 @dataclass(frozen=True)
 class LivenessObservation:
+    host: str
+    observer_host: str
+    observed_at: datetime
     owner: str
     card_id: str
     claim_generation: str
@@ -40,6 +42,18 @@ class LivenessObservation:
     cpu_percent: float = 0.0
     current_claim_generation: str | None = None
     cgroup_processes: int | None = None
+    unit: str | None = None
+    pid: int | None = None
+    process_tree: tuple[int, ...] = ()
+    cgroup: str | None = None
+    process_observed_at: datetime | None = None
+    cgroup_observed_at: datetime | None = None
+    beat_id: str | None = None
+    workspace_path: str | None = None
+    workspace_repository: str | None = None
+    workspace_head: str | None = None
+    workspace_custody_at: datetime | None = None
+    workspace_custody_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,18 +88,122 @@ class WorkerProjection:
     state: str
 
 
+@dataclass(frozen=True)
+class RetirementReceipt:
+    """Exact immutable fence passed to the only retirement callback."""
+
+    host: str
+    observer_host: str
+    observed_at: datetime
+    unit: str
+    pid: int
+    process_tree: tuple[int, ...]
+    cgroup: str
+    process_observed_at: datetime
+    cgroup_observed_at: datetime
+    owner: str
+    card_id: str
+    claim_generation: str
+    beat_id: str
+    heartbeat_at: datetime
+    workspace_custody: str
+    workspace_path: str
+    workspace_repository: str
+    workspace_head: str
+    workspace_custody_at: datetime
+    workspace_custody_sha256: str
+    terminal_marker: str
+    terminal_at: datetime
+
+
+@dataclass(frozen=True)
+class RuntimeActions:
+    request_assistance: Callable[[AssistanceRequest], None]
+    reconcile_projection: Callable[[WorkerProjection], None]
+    publish_metrics: Callable[[Mapping[str, float | int]], None]
+    retire: Callable[[RetirementReceipt], None]
+
+
+@dataclass(frozen=True)
+class CycleResult:
+    decisions: tuple[LivenessDecision, ...]
+    projections: tuple[WorkerProjection, ...]
+    receipts: tuple[RetirementReceipt, ...]
+    metric_values: Mapping[str, float | int]
+
+
 TERMINAL_MARKERS = frozenset({"PASS", "PASS_FOR_REVIEW", "BLOCKED"})
 TERMINAL_STATES = frozenset({"terminal", "retirement-ready"})
+EVIDENCE_FRESHNESS = timedelta(minutes=2)
 
 
 def _attributable(o: LivenessObservation) -> bool:
     return bool(
-        o.owner
+        o.host
+        and o.observer_host == o.host
+        and o.observed_at
+        and o.owner
         and o.card_id
         and o.claim_generation
         and o.process_identity
         and o.session_id
         and o.managed_session
+    )
+
+
+def _retirement_receipt(o: LivenessObservation) -> RetirementReceipt | None:
+    """Return a complete exact fence, or None when any proof is absent."""
+    if not (
+        o.host
+        and o.observer_host == o.host
+        and o.observed_at
+        and o.unit
+        and o.pid
+        and o.process_tree
+        and o.pid in o.process_tree
+        and str(o.pid) in (o.process_identity or "")
+        and o.cgroup
+        and o.unit in o.cgroup
+        and o.process_observed_at
+        and o.cgroup_observed_at
+        and o.beat_id
+        and o.heartbeat_at
+        and o.workspace_custody
+        and o.workspace_path
+        and Path(o.workspace_path).is_absolute()
+        and o.workspace_repository
+        and o.workspace_head
+        and o.workspace_custody_at
+        and o.workspace_custody_sha256
+        and len(o.workspace_custody_sha256) == 64
+        and all(character in "0123456789abcdef" for character in o.workspace_custody_sha256)
+        and o.terminal_marker
+        and o.terminal_at
+    ):
+        return None
+    return RetirementReceipt(
+        o.host,
+        o.observer_host,
+        o.observed_at,
+        o.unit,
+        o.pid,
+        o.process_tree,
+        o.cgroup,
+        o.process_observed_at,
+        o.cgroup_observed_at,
+        o.owner,
+        o.card_id,
+        o.claim_generation,
+        o.beat_id,
+        o.heartbeat_at,
+        o.workspace_custody,
+        o.workspace_path,
+        o.workspace_repository,
+        o.workspace_head,
+        o.workspace_custody_at,
+        o.workspace_custody_sha256,
+        o.terminal_marker,
+        o.terminal_at,
     )
 
 
@@ -117,6 +235,24 @@ def classify(
             quarantine=True,
             preserve_workspace=True,
             reason="incomplete-identity-or-session",
+        )
+    evidence_times = (
+        o.observed_at,
+        o.process_observed_at,
+        o.cgroup_observed_at,
+        o.workspace_custody_at,
+    )
+    if any(
+        value is None or value > now or now - value > EVIDENCE_FRESHNESS
+        for value in evidence_times
+    ):
+        return _decision(
+            o,
+            "ambiguous",
+            True,
+            quarantine=True,
+            preserve_workspace=True,
+            reason="host-local-evidence-missing-stale-or-future",
         )
     if not o.current_claim_generation or o.current_claim_generation != o.claim_generation:
         return _decision(
@@ -184,7 +320,13 @@ def classify(
             )
         custody_safe = bool(o.workspace_recoverable and o.workspace_custody)
         commits_safe = not o.unpushed_commits or o.unpushed_commits_preserved
-        if o.live_children == 0 and o.cgroup_processes == 0 and custody_safe and commits_safe:
+        if (
+            o.live_children == 0
+            and o.cgroup_processes == 0
+            and custody_safe
+            and commits_safe
+            and _retirement_receipt(o) is not None
+        ):
             return _decision(
                 o,
                 "retirement-ready",
@@ -303,3 +445,88 @@ def metrics(
         "retirement_latency": sum(retires) / len(retires) if retires else 0,
         "preserved_work_outcomes": sum(preserved),
     }
+
+
+def run_cycle(
+    observations: Iterable[LivenessObservation],
+    projections: Iterable[WorkerProjection],
+    *,
+    now: datetime,
+    actions: RuntimeActions,
+) -> CycleResult:
+    """Apply one decision set to every real path through explicit adapters.
+
+    Retirement is last and receives the same exact observation that produced
+    the decision. Any incomplete provenance is already quarantined by
+    ``classify`` and can never reach the callback.
+    """
+    observed = tuple(observations)
+    decisions = tuple(classify(row, now=now) for row in observed)
+    keyed = {(d.owner, d.card_id, d.claim_generation): d for d in decisions}
+    projected = reconcile(projections, keyed)
+    for projection in projected:
+        actions.reconcile_projection(projection)
+    for decision in decisions:
+        if decision.assistance_request and decision.state == "assistance-due":
+            actions.request_assistance(decision.assistance_request)
+    assistance_latencies = tuple(
+        max(0.0, (now - activity).total_seconds())
+        for observation, decision in zip(observed, decisions, strict=True)
+        if decision.assistance_request and (activity := _latest_activity(observation)) is not None
+    )
+    retirement_latencies = tuple(
+        max(0.0, (now - observation.terminal_at).total_seconds())
+        for observation, decision in zip(observed, decisions, strict=True)
+        if decision.retire and observation.terminal_at is not None
+    )
+    values = metrics(
+        decisions,
+        assistance_latencies=assistance_latencies,
+        retirement_latencies=retirement_latencies,
+        preserved_work=(decision.preserve_workspace for decision in decisions),
+    )
+    actions.publish_metrics(values)
+    receipts = []
+    for observation, decision in zip(observed, decisions, strict=True):
+        if not decision.retire:
+            continue
+        receipt = _retirement_receipt(observation)
+        if receipt is None:
+            raise RuntimeError("retirement decision lost its exact evidence fence")
+        actions.retire(receipt)
+        receipts.append(receipt)
+    return CycleResult(decisions, projected, tuple(receipts), values)
+
+
+class SQLiteReceiptJournal:
+    """Small concurrent-writer-safe append-only retirement receipt journal."""
+
+    def __init__(self, path: Path, *, timeout: float = 10.0) -> None:
+        self.path = path
+        self.timeout = timeout
+
+    def append(self, receipt: RetirementReceipt) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + self.timeout
+        while True:
+            try:
+                with sqlite3.connect(self.path, timeout=self.timeout) as db:
+                    db.execute(f"PRAGMA busy_timeout={int(self.timeout * 1000)}")
+                    db.execute("PRAGMA journal_mode=WAL")
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS retirement_receipts "
+                        "(receipt_key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                    )
+                    key = ":".join(
+                        (receipt.host, receipt.unit, str(receipt.pid), receipt.claim_generation)
+                    )
+                    payload = json.dumps(asdict(receipt), default=str, sort_keys=True)
+                    db.execute(
+                        "INSERT OR IGNORE INTO retirement_receipts VALUES (?, ?)",
+                        (key, payload),
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)

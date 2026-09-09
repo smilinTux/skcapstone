@@ -99,6 +99,8 @@ class HandoffRuntime:
     Native CardStore locking remains responsible for distributed card claims.
     """
 
+    SQLITE_BUSY_TIMEOUT_MS = 30_000
+
     def __init__(self, path: Path, *, contracts=None):
         self.path = Path(path)
         self.contracts = dict(FIRST_WAVE_HANDOFFS if contracts is None else contracts)
@@ -120,8 +122,11 @@ class HandoffRuntime:
 
     @contextmanager
     def _db(self):
-        db = sqlite3.connect(self.path, timeout=0.1)
+        # Concurrent Link and Seraph cycles are normal. Let SQLite serialize
+        # writers instead of turning ordinary lock contention into a failure.
+        db = sqlite3.connect(self.path, timeout=self.SQLITE_BUSY_TIMEOUT_MS / 1000)
         try:
+            db.execute(f"PRAGMA busy_timeout={self.SQLITE_BUSY_TIMEOUT_MS}")
             with db:
                 yield db
         finally:
