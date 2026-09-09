@@ -4790,7 +4790,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
            _bf_path, _bf_path, _bf_path,
            _bi,
            name, name, shlex.quote(workspace), cid, shlex.quote(claimed_revision),
-           shlex.quote(sess), *(shlex.quote(value) for value in _fanout_env),
+           shlex.quote(sess), *(shlex.quote(value) for value in
+                                globals().get("_fanout_env", ("", "", ""))),
            shlex.quote(PI),
            shlex.quote(globals().get("PI_CARDSTORE_GUARD", "pi-cardstore-guard.mjs")),
            name, model,
