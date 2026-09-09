@@ -6,17 +6,23 @@ external actuation was performed.
 
 ## Exact source
 
-- protected base: `5dc02cb0a41f910f4f73536f6e1a3bb7548189e8`
-- implementation commit: `08422ac0fb5a45407d5e47db3a3118b16621e3c7`
-- implementation tree: `10c200e4c0a23ff9a42228d6934390cae2ad8cb0`
+- protected base: `1683ca48eff1b44fb4c15451f2df7882be54ea80`
+- implementation commits: `e2d19374` and `c87c60433cc6f4febb7c3b6053e5b80451bde78e`
+- implementation head: `c87c60433cc6f4febb7c3b6053e5b80451bde78e`
+- implementation tree: `c19d977bb5f7a3316c9186b662d7fca17086902c`
+- candidate patch SHA256: `47e1796db331511139f2eafe3e49fa11efe836cfcb15359b7d26ea03d704bed3`
 - branch: `fix/7ec78ece-merge-fence`
 - isolated worktree: `/mnt/cloud/onedrive/projects/DAVE-AI/worktrees/skcapstone-7ec78ece`
+
+The earlier source candidate was based on `5dc02cb0` and was superseded by
+this exact current-main refresh. Earlier review `ec865455` is stale and is
+not reused for this candidate.
 
 ## Changed file hashes
 
 ```text
 5fb58750f98398dee4fd272d7e454019adf993d1792bdba7620bd9903a66838d  src/skcapstone/link_merge_authority.py
-e65f5c3d24209d8c125dead74e2a87b0726f8cc59074fa498d8f02a2e5adb668  src/skcapstone/seat_boundaries.py
+f48e8ca5e0a0c4788d68247f6d8988183d5b6bfc810659bd166b747cc92cd75e  src/skcapstone/seat_boundaries.py
 f9f8fbb67d668f0b44d52e48d29d6626ec44f726bc1dd22ee932311ea8822ee2  tests/test_link_merge_authority.py
 ```
 
@@ -43,11 +49,21 @@ ruff check src/skcapstone/link_merge_authority.py src/skcapstone/seat_boundaries
 All checks passed!
 
 python -m pytest -q tests/test_link_merge_authority.py tests/test_link_cycle.py tests/fleet/test_seat_boundaries.py tests/test_link_review_work.py tests/test_review_freshness_gate.py
-151 passed in 6.15s
+161 passed in 1.43s
+
+python -m pytest -q tests/test_link_merge_authority.py::test_final_fence_rereads_exact_state_and_seals_receipt tests/test_link_merge_authority.py::test_final_fence_rejects_stale_or_post_merge_review tests/test_link_merge_authority.py::test_final_fence_rejects_missing_or_nonterminal_cardstore_pass tests/test_link_merge_authority.py::test_pr582_merge_cannot_beat_review_terminalization
+9 passed in 0.48s
+
+python -m pytest -q tests/test_integration.py tests/test_integration_backbone.py
+111 passed, 16 skipped in 11.50s
 
 python -m compileall -q src/skcapstone/link_merge_authority.py src/skcapstone/seat_boundaries.py
 git diff --check
 ```
+
+The prior candidate's `151 passed in 6.15s` result is retained as historical
+evidence for the stale-base candidate. The refreshed candidate was rerun from
+the exact current protected main above.
 
 Hosted CI was not triggered because this source card prohibits push and merge,
 and no hosted PR exists for this isolated unpushed branch.
@@ -57,7 +73,9 @@ and no hosted PR exists for this isolated unpushed branch.
 - producer seat: Tank
 - source card: `7ec78ece`
 - independent reviewer seat: Seraph
-- exactly one review card is created after this evidence is committed
+- exactly one new current review card must be created after this evidence is
+  committed
+- the stale review card `ec865455` must not be reused
 - Tank does not author the review verdict
 - zero-human-approval CardStore governance and Casey-directed Jarvis controls
   remain unchanged
