@@ -11,6 +11,9 @@
   atomic cross-card source-head reservation, verified runtime-seat authority,
   exact claim and launch receipts, and request plus claim-generation-bound
   recovery receipts.
+  Recovery now retains occupancy until the exact request, card, owner, claim
+  revision, session, and systemd unit tuple is terminal; card-level liveness
+  cannot authorize a duplicate retry.
   Also allow the shared SKRSI handoff ledger to wait through bounded transient
   SQLite writer contention instead of failing concurrent fan-out admission.
 

@@ -4409,14 +4409,18 @@ if _esc_waiting:
 def _observe_assigned_reviews():
     """Have Mero record current state for reviews launched by this host."""
     live_sessions = set(sh("tmux", "ls", "-F", "#{session_name}").split())
-    live_cards = set(_worker_cards(live_sessions, active_worker_units(), LANES))
+    live_units = active_worker_units()
     outcomes = _load_outcomes()
     for card_dir in glob.glob(os.path.join(CARDS, "*")):
         cid = os.path.basename(card_dir)
         rows = event_rows(cid)
         try:
             reconciled = reconcile_fanout_receipt(
-                Path(HOME) / ".skcapstone", cid, process_alive=cid in live_cards)
+                Path(HOME) / ".skcapstone",
+                cid,
+                live_sessions=live_sessions,
+                live_units=live_units,
+            )
             if reconciled is not None:
                 log(d, "FANOUT_RECONCILED|%s|%s|state=%s" %
                     (HOST, cid, reconciled["state"]))
@@ -4815,7 +4819,16 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 Path(HOME) / ".skcapstone",_fanout_request,
                 state="launched" if ok else "launch_failed",
                 claim_owner=name,claim_revision=claimed_revision,
-                process={"host":HOST,"session":sess,"unit":unit,"alive":ok})
+                process={
+                    "request_id":_fanout_request.request_id,
+                    "card_id":cid,
+                    "owner":name,
+                    "claim_revision":claimed_revision,
+                    "host":HOST,
+                    "session_id":sess,
+                    "unit":unit,
+                    "alive":ok,
+                })
         except (FanoutBoundaryError, OSError, ValueError) as exc:
             log(d,"FANOUT_LAUNCH_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
     if _review_recommendation is not None:

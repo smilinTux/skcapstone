@@ -86,7 +86,15 @@ def test_link_request_flows_through_niobe_with_exact_immutable_receipts(tmp_path
         state="launched",
         claim_owner="worker",
         claim_revision="claim-1",
-        process={"unit": "skfleet-worker-codex-deadbeef.service", "alive": True},
+        process={
+            "request_id": request.request_id,
+            "card_id": "deadbeef",
+            "owner": "worker",
+            "claim_revision": "claim-1",
+            "session_id": "worker-session",
+            "unit": "skfleet-worker-codex-deadbeef.service",
+            "alive": True,
+        },
     )
 
     assert pending_fanout_request(tmp_path, "deadbeef") is None
@@ -269,7 +277,7 @@ def test_requesting_seat_identity_rejects_caller_spoof(tmp_path: Path) -> None:
         ("doing", "worker", "claim-1", True, "occupied"),
         ("doing", "worker", "claim-1", False, "stopped"),
         ("doing", None, None, False, "released"),
-        ("doing", "worker-b", "claim-2", True, "reassigned"),
+        ("doing", "worker-b", "claim-2", True, "occupied"),
         ("done", None, None, False, "retired"),
     ],
 )
@@ -303,15 +311,158 @@ def test_reconciler_emits_stop_and_terminal_retirement_receipts(tmp_path: Path) 
         state="launched",
         claim_owner="worker",
         claim_revision="claim-1",
+        process={
+            "request_id": request.request_id,
+            "card_id": "deadbeef",
+            "owner": "worker",
+            "claim_revision": "claim-1",
+            "session_id": "worker-session",
+            "unit": "worker-unit.service",
+        },
     )
 
-    stopped = reconcile_fanout_receipt(tmp_path, "deadbeef", process_alive=False)
+    stopped = reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
     assert stopped is not None and stopped["state"] == "stopped"
-    assert reconcile_fanout_receipt(tmp_path, "deadbeef", process_alive=False) is None
+    assert (
+        reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
+        is None
+    )
 
     store.append_event("deadbeef", "complete", "worker")
-    retired = reconcile_fanout_receipt(tmp_path, "deadbeef", process_alive=False)
+    retired = reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
     assert retired is not None and retired["state"] == "retired"
+
+
+def _launched_request(tmp_path: Path) -> tuple[CardStore, LifecycleFanoutRequest]:
+    store = _card(tmp_path)
+    request = submit_fanout_request(tmp_path, _request())
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="claim-1")
+    append_fanout_receipt(
+        tmp_path,
+        request,
+        state="launched",
+        claim_owner="worker",
+        claim_revision="claim-1",
+        process={
+            "request_id": request.request_id,
+            "card_id": "deadbeef",
+            "owner": "worker",
+            "claim_revision": "claim-1",
+            "session_id": "session-1",
+            "unit": "unit-1.service",
+        },
+    )
+    return store, request
+
+
+def test_live_exact_old_worker_cannot_be_released_after_card_claim_disappears(
+    tmp_path: Path,
+) -> None:
+    store, _request_value = _launched_request(tmp_path)
+    store.append_event(
+        "deadbeef",
+        "release_claim",
+        "niobe",
+        released_owner="worker",
+        expected_claim_revision="claim-1",
+    )
+
+    receipt = reconcile_fanout_receipt(
+        tmp_path,
+        "deadbeef",
+        live_sessions={"session-1"},
+        live_units=set(),
+    )
+
+    assert receipt is not None and receipt["state"] == "occupied"
+    assert receipt["claim_owner"] == "worker"
+    assert pending_fanout_request(tmp_path, "deadbeef") is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("request_id", "f" * 64),
+        ("card_id", "feedface"),
+        ("owner", "other-worker"),
+        ("claim_revision", "claim-2"),
+        ("session_id", ""),
+        ("unit", ""),
+    ],
+)
+def test_recovery_rejects_mismatched_or_incomplete_worker_tuple(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    store, request = _launched_request(tmp_path)
+    rows = store._read_events("deadbeef")
+    launched = next(row for row in reversed(rows) if row.get("state") == "launched")
+    process = dict(launched["process"])
+    process[field] = value
+    store.append_event(
+        "deadbeef",
+        "niobe_fanout_receipt",
+        "niobe",
+        schema="skfleet.niobe-fanout-receipt/v1",
+        request_id=request.request_id,
+        source_head=request.source_head,
+        state="occupied",
+        claim_owner="worker",
+        claim_revision="claim-1",
+        process=process,
+    )
+
+    with pytest.raises(FanoutBoundaryError, match="worker tuple is stale or incomplete"):
+        reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
+
+
+def test_stale_prior_request_receipt_cannot_authorize_current_retry(tmp_path: Path) -> None:
+    store, old = _launched_request(tmp_path)
+    newer = _request(source_head="b" * 40).normalized()
+    store.append_event(
+        "deadbeef",
+        "niobe_fanout_request",
+        "link",
+        **{
+            key: value
+            for key, value in newer.as_event().items()
+            if key not in {"card_id", "requester"}
+        },
+    )
+    store.append_event(
+        "deadbeef",
+        "niobe_fanout_receipt",
+        "niobe",
+        schema="skfleet.niobe-fanout-receipt/v1",
+        request_id=old.request_id,
+        source_head=old.source_head,
+        state="released",
+        claim_owner="worker",
+        claim_revision="claim-1",
+        process={"alive": False},
+    )
+
+    assert (
+        reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
+        is None
+    )
+
+
+def test_exact_terminal_worker_allows_stopped_then_released_retry(tmp_path: Path) -> None:
+    store, request = _launched_request(tmp_path)
+    stopped = reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
+    assert stopped is not None and stopped["state"] == "stopped"
+    store.append_event(
+        "deadbeef",
+        "release_claim",
+        "niobe",
+        released_owner="worker",
+        expected_claim_revision="claim-1",
+    )
+    released = reconcile_fanout_receipt(
+        tmp_path, "deadbeef", live_sessions=set(), live_units=set()
+    )
+    assert released is not None and released["state"] == "released"
+    assert pending_fanout_request(tmp_path, "deadbeef") == request
 
 
 def test_reconciler_ignores_receipt_from_stale_request(tmp_path: Path) -> None:
@@ -333,7 +484,10 @@ def test_reconciler_ignores_receipt_from_stale_request(tmp_path: Path) -> None:
         },
     )
 
-    assert reconcile_fanout_receipt(tmp_path, "deadbeef", process_alive=False) is None
+    assert (
+        reconcile_fanout_receipt(tmp_path, "deadbeef", live_sessions=set(), live_units=set())
+        is None
+    )
 
 
 def test_runtime_receipt_rejects_stale_claim_generation(tmp_path: Path) -> None:

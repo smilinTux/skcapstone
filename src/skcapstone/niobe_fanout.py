@@ -9,7 +9,7 @@ import re
 import socket
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Collection, Mapping
 
 from .card_store import Card, CardStore
 from .niobe_activation import LIVE_UNIT, parse_activation
@@ -341,7 +341,22 @@ def append_fanout_receipt(
     if normalized_state in {"claimed", "launched", "occupied", "stopped"} and (
         card.owner != claim_owner or str(card.meta.get("_claim_revision") or "") != claim_revision
     ):
-        raise FanoutBoundaryError("fan-out receipt claim generation is stale")
+        recovery_process = dict(process or {})
+        exact_live_recovery = normalized_state == "occupied" and recovery_process == {
+            "request_id": request.request_id,
+            "card_id": request.card_id,
+            "owner": claim_owner,
+            "claim_revision": claim_revision,
+            "session_id": recovery_process.get("session_id"),
+            "unit": recovery_process.get("unit"),
+            "alive": True,
+        }
+        if (
+            not exact_live_recovery
+            or not recovery_process.get("session_id")
+            or not recovery_process.get("unit")
+        ):
+            raise FanoutBoundaryError("fan-out receipt claim generation is stale")
     identity = {
         "request_id": request.request_id,
         "source_head": request.source_head,
@@ -371,19 +386,27 @@ def reconcile_runtime_state(
 ) -> str:
     """Classify current truth for crash recovery and terminal retirement."""
 
+    # A live exact prior worker always retains occupancy. Card-level lifecycle
+    # or claim changes cannot prove that worker terminal or authorize retry.
+    if process_alive:
+        return "occupied"
     if lifecycle in {"done", "complete", "archived", "void"}:
         return "retired"
     if claim_owner and claim_revision:
         if (claim_owner, claim_revision) != (prior_owner, prior_revision):
             return "reassigned"
-        return "occupied" if process_alive else "stopped"
+        return "stopped"
     return "released"
 
 
 def reconcile_fanout_receipt(
-    home: Path, card_id: str, *, process_alive: bool
+    home: Path,
+    card_id: str,
+    *,
+    live_sessions: Collection[str],
+    live_units: Collection[str],
 ) -> dict[str, object] | None:
-    """Recover one request's receipt state from fresh claim and process truth."""
+    """Recover one request from its exact claim and worker-runtime tuple."""
 
     store = CardStore(home)
     rows = store._read_events(card_id)
@@ -409,6 +432,40 @@ def reconcile_fanout_receipt(
     prior_revision = str(prior.get("claim_revision") or "")
     if (prior_owner or prior_revision) and (not prior_owner or not prior_revision):
         raise FanoutBoundaryError("fan-out recovery receipt has incomplete claim identity")
+    binding = next(
+        (row for row in reversed(receipts) if row.get("state") in {"launched", "occupied"}),
+        None,
+    )
+    if binding is None:
+        return None
+    process = binding.get("process")
+    if not isinstance(process, Mapping):
+        raise FanoutBoundaryError("fan-out recovery receipt has no worker tuple")
+    tuple_request = str(process.get("request_id") or "")
+    tuple_card = str(process.get("card_id") or "")
+    tuple_owner = str(process.get("owner") or "")
+    tuple_revision = str(process.get("claim_revision") or "")
+    tuple_session = str(process.get("session_id") or "")
+    tuple_unit = str(process.get("unit") or "")
+    expected = (
+        request.request_id,
+        request.card_id,
+        str(binding.get("claim_owner") or ""),
+        str(binding.get("claim_revision") or ""),
+    )
+    if (
+        (
+            tuple_request,
+            tuple_card,
+            tuple_owner,
+            tuple_revision,
+        )
+        != expected
+        or not tuple_session
+        or not tuple_unit
+    ):
+        raise FanoutBoundaryError("fan-out recovery worker tuple is stale or incomplete")
+    process_alive = tuple_session in live_sessions or tuple_unit in live_units
     current_owner = card.owner
     current_revision = str(card.meta.get("_claim_revision") or "") or None
     lifecycle = str(getattr(card.status, "value", card.status)).lower()
@@ -420,8 +477,8 @@ def reconcile_fanout_receipt(
         prior_owner=prior_owner,
         prior_revision=prior_revision,
     )
-    receipt_owner = current_owner or prior_owner
-    receipt_revision = current_revision or prior_revision
+    receipt_owner = prior_owner if process_alive else current_owner or prior_owner
+    receipt_revision = prior_revision if process_alive else current_revision or prior_revision
     if not receipt_owner or not receipt_revision:
         return None
     if (
@@ -436,5 +493,13 @@ def reconcile_fanout_receipt(
         state=state,
         claim_owner=receipt_owner,
         claim_revision=receipt_revision,
-        process={"alive": process_alive},
+        process={
+            "request_id": tuple_request,
+            "card_id": tuple_card,
+            "owner": tuple_owner,
+            "claim_revision": tuple_revision,
+            "session_id": tuple_session,
+            "unit": tuple_unit,
+            "alive": process_alive,
+        },
     )
