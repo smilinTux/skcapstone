@@ -270,6 +270,19 @@ def evaluate_merge_as_link(actor: str, candidate: MergeCandidate) -> MergeDecisi
     return evaluate_link_merge(candidate)
 
 
+def authorize_merge_as_link(
+    actor: str, candidate: MergeCandidate, **kwargs: object
+) -> MergeDecision:
+    """Run the shared final merge fence only for the Link seat."""
+
+    require_authority(actor, Action.MERGE)
+    if actor.strip().lower() != Seat.LINK:
+        raise BoundaryError("only link may authorize the merge queue")
+    from .link_merge_authority import authorize_link_merge
+
+    return authorize_link_merge(candidate, **kwargs)  # type: ignore[arg-type]
+
+
 def authorize_recommendation_action(
     recommendation: DispatchRecommendation,
     *,
