@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Collection, Mapping
+from typing import TYPE_CHECKING, Callable, Collection, Mapping
 
 from .card_store import CardStore
+from .operator_authorization import AuthorizationEnvelope, verify_authorization
 
 if TYPE_CHECKING:
     from .link_merge_authority import MergeCandidate, MergeDecision
@@ -139,6 +140,46 @@ def require_authority(
     if seat is Seat.JARVIS and action is not Action.OBSERVE:
         if not casey_direction or not casey_direction.strip():
             raise BoundaryError(f"jarvis requires an explicit Casey direction for {action.value}")
+
+
+def verify_casey_direction(
+    actor: str,
+    action: Action,
+    *,
+    envelope: AuthorizationEnvelope | None,
+    target: str,
+    scope: str,
+    public_key_armor: str,
+    verifier: Callable[[bytes, str, str], bool],
+) -> None:
+    """Verify one signed Casey direction bound to an exact emergency action.
+
+    This is the shared mutation boundary used by Jarvis emergency entrypoints.
+    The envelope is deliberately not consumed here: one direction may authorize
+    a bounded workflow containing multiple exact operations, and every operation
+    still verifies its own action, target, change, scope, lifetime, and signature.
+    """
+
+    normalized = actor.strip().lower()
+    if normalized != Seat.JARVIS:
+        require_authority(actor, action)
+        return
+    if envelope is None:
+        raise BoundaryError(f"jarvis requires a signed Casey direction for {action.value}")
+    if envelope.issuer.strip().lower() != "casey":
+        raise BoundaryError("Jarvis emergency direction issuer must be Casey")
+    try:
+        verify_authorization(
+            envelope,
+            public_key_armor=public_key_armor,
+            verifier=verifier,
+            expected_action=f"jarvis.{action.value}",
+            expected_target=target,
+            expected_change_id=envelope.change_id,
+            expected_scope=scope,
+        )
+    except ValueError as exc:
+        raise BoundaryError(str(exc)) from exc
 
 
 def assign_distinct_reviewer(*, author: str, assigner: str, candidates: Collection[str]) -> str:

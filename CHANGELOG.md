@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Card `20a637fe`: enforce a nonblank Casey direction record for every Jarvis
-  emergency mutation and cover the complete emergency tool set in the runtime
-  boundary.
+- Card `20a637fe`: route every Jarvis emergency lifecycle operation through one
+  signed, exact-action Casey-direction gateway with fail-closed integration
+  coverage.
 
 - Card `44ad0d49`: add bounded elastic independent-review admission with
   source-head deduplication, reviewer independence, and physical-capacity

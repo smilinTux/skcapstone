@@ -31,8 +31,12 @@ retains emergency card creation, claim, completion, fleet, merge, deployment,
 release, verification, and actuation tools for explicit Casey-directed help.
 That tool availability does not transfer another seat's ownership, permit
 impersonation, or bypass a card, policy, exact-revision, or capability check.
-The runtime boundary rejects every Jarvis emergency mutation unless the caller
-supplies a nonblank Casey direction record. Jarvis receives no recurring
+Every Jarvis emergency tool is exposed through
+`skcapstone.jarvis_emergency.JarvisEmergencyGateway`. Before invoking the
+registered mutation, that gateway verifies a signed, unexpired Casey direction
+bound to the exact action, target, change, and product scope. Missing, forged,
+expired, substituted-action, substituted-target, and out-of-scope directions
+fail closed before the operation is called. Jarvis receives no recurring
 lifecycle schedule or standing authority from this exception.
 
 ## Shared operating contract
@@ -149,7 +153,7 @@ Niobe gains no application actuation authority from the Fleet Dispatcher seat. T
 The following actors are explicitly authorized for fleet mutation operations:
 
 - `niobe` (Fleet Dispatcher) - recurring fleet mutation authority
-- `jarvis` - emergency capability only with a nonblank Casey direction record
+- `jarvis` - emergency capability only through the signed Casey-direction gateway
 - Fenced system actors (named in deployment configuration) - bounded repair authority
 
 No other agent, seat, or process may perform fleet claim release, launch, stop, reassignment, rotation, or worker-health repair.

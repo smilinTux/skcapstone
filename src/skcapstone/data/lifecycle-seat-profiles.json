@@ -96,6 +96,9 @@
     "role": "casey_personal_assistant",
     "recurring_lifecycle": false,
     "requires_casey_direction": true,
+    "emergency_gateway": "skcapstone.jarvis_emergency.JarvisEmergencyGateway",
+    "direction_schema": "atlas-authorization/v1",
+    "direction_scope": "skcapstone,skdashboard,skworld",
     "emergency_tools": ["card_creation", "card_claim", "card_completion", "fleet", "merge", "deployment", "release", "verification", "actuation"]
   }
 }

@@ -40,6 +40,9 @@ def test_jarvis_is_emergency_only_and_keeps_requested_tools() -> None:
     jarvis = load_lifecycle_seat_profiles()["jarvis"]
     assert jarvis["recurring_lifecycle"] is False
     assert jarvis["requires_casey_direction"] is True
+    assert jarvis["emergency_gateway"] == ("skcapstone.jarvis_emergency.JarvisEmergencyGateway")
+    assert jarvis["direction_schema"] == "atlas-authorization/v1"
+    assert jarvis["direction_scope"] == "skcapstone,skdashboard,skworld"
     assert set(jarvis["emergency_tools"]) == {
         "card_creation",
         "card_claim",
