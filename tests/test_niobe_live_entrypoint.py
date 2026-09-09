@@ -49,12 +49,13 @@ def test_live_wrapper_validates_then_runs_exact_dispatcher(tmp_path: Path, monke
         activation_path=path,
         dispatcher=dispatcher,
         local_host="chiap08",
-        runner=lambda command, check: (
-            calls.append((command, check)) or SimpleNamespace(returncode=0)
+        runner=lambda command, check, env: (
+            calls.append((command, check, env)) or SimpleNamespace(returncode=0)
         ),
     )
     assert rc == 0
-    assert calls == [([sys.executable, str(dispatcher), "--go"], False)]
+    assert calls[0][:2] == ([sys.executable, str(dispatcher), "--go"], False)
+    assert calls[0][2]["SKFLEET_NIOBE_ACTIVATION"] == str(path.resolve())
 
 
 def test_live_wrapper_refuses_wrong_host(tmp_path: Path) -> None:

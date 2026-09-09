@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -41,7 +42,13 @@ def run_live(
     _verify_card_fence(home, activation.card_id, activation.card_revision)
     startup_hello(home, "niobe", host=host)
     poll_mail("niobe")
-    completed = runner([sys.executable, str(dispatcher), "--go"], check=False)
+    environment = os.environ.copy()
+    environment["SKFLEET_NIOBE_ACTIVATION"] = str(activation_path.resolve())
+    completed = runner(
+        [sys.executable, str(dispatcher), "--go"],
+        check=False,
+        env=environment,
+    )
     return int(completed.returncode)
 
 

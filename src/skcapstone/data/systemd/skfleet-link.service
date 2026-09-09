@@ -14,6 +14,7 @@ PrivateTmp=yes
 ProtectHome=read-only
 ReadWritePaths=%h/.skcapstone/coordination/seat-cycles
 ReadWritePaths=%h/.skcapstone/coordination/skmail.d
+ReadWritePaths=%h/.skcapstone/cards %h/.skcapstone/coordination/locks
 
 [Install]
 WantedBy=default.target
