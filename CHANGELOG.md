@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `bec8fb77`: emit one typed, cycle-bound Seraph candidate receipt for
+  every live launch, suppression, failure, or explicit no-work outcome, with
+  locked deduplication and continued bounded scanning.
+
 - Card `d2771026`: preserve executable startup evidence after the Pi Node
   process replaces its command line with its process title, while retaining
   exact descendant, interpreter, shebang, title, and fleet identity checks.
