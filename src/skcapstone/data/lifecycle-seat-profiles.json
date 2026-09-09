@@ -1,0 +1,110 @@
+{
+  "schema": "skfleet.lifecycle-seat-profiles/v1",
+  "product_scope": ["skcapstone", "skdashboard", "skworld"],
+  "repositories": [
+    "smilinTux/skcapstone",
+    "smilinTux/skdashboard",
+    "smilinTux/skworld",
+    "smilinTux/sk-standards"
+  ],
+  "default_model_route": "sk-codex-mid",
+  "default_model_profile": "gpt-5.6-luna",
+  "model_escalation_policy": {
+    "scope": "card",
+    "mode": "opt_in",
+    "automatic": false
+  },
+  "active_host": "chiap08",
+  "mail": {
+    "startup_hello_recipient": "all",
+    "poll_direct_and_all": true,
+    "write": true,
+    "automatic_ack": false,
+    "mail_is_authority": false,
+    "help_terms": ["help", "handoff", "dependency", "reviewer conflict"]
+  },
+  "beat": {
+    "enabled": true,
+    "mode": "per_cycle",
+    "include_mail_poll": true,
+    "stale_is_observation_only": true
+  },
+  "safe_retirement": {
+    "oneshot": true,
+    "overlap_action": "record_noop",
+    "abandon_only_after_exact_process_generation_is_dead": true,
+    "preserve_receipts": true,
+    "persistent_worker_after_cycle": false
+  },
+  "seats": {
+    "link": {
+      "identity": "link",
+      "activation_state": "active_bounded",
+      "role": "integrator",
+      "card_label": "seat-link",
+      "cadence_seconds": 300,
+      "timeout_seconds": 120,
+      "owns": ["pr_triage", "reviewer_assignment", "merge_eligibility", "eligible_merge"],
+      "denies": ["fleet_dispatch", "deployment", "release", "application_actuation"]
+    },
+    "mero": {
+      "identity": "mero",
+      "activation_state": "active_bounded",
+      "role": "overseer",
+      "card_label": "seat-mero",
+      "cadence_seconds": 300,
+      "timeout_seconds": 180,
+      "owns": ["read_only_observation", "drift_measurement", "typed_recommendation"],
+      "denies": ["card_claim", "fleet_dispatch", "merge", "deployment", "application_actuation"]
+    },
+    "seraph": {
+      "identity": "seraph",
+      "activation_state": "active_bounded",
+      "role": "independent_verifier",
+      "card_label": "seat-seraph",
+      "cadence_seconds": 300,
+      "timeout_seconds": 300,
+      "owns": ["independent_review", "exact_candidate_verification", "verdict"],
+      "denies": ["self_review", "merge", "fleet_dispatch", "deployment", "application_actuation"]
+    },
+    "niobe": {
+      "identity": "niobe",
+      "activation_state": "active_bounded",
+      "role": "fleet_dispatcher",
+      "card_label": "seat-niobe",
+      "cadence_seconds": 300,
+      "timeout_seconds": 300,
+      "owns": ["card_claim", "card_release", "worker_launch", "worker_stop", "reassignment", "rotation"],
+      "denies": ["review_verdict", "merge", "deployment", "release", "application_actuation"]
+    },
+    "tank": {
+      "identity": "tank",
+      "activation_state": "active_bounded",
+      "role": "release_install_operator",
+      "card_label": "seat-tank",
+      "cadence_seconds": 300,
+      "timeout_seconds": 300,
+      "owns": ["approved_artifact_release", "approved_artifact_install", "behavioral_verification", "rollback"],
+      "denies": ["source_authoring", "self_approval", "independent_review_of_own_release", "merge", "fleet_dispatch"]
+    },
+    "atlas": {
+      "identity": "atlas",
+      "activation_state": "active_bounded",
+      "role": "operations_plane",
+      "card_label": "seat-atlas",
+      "cadence_seconds": 300,
+      "timeout_seconds": 300,
+      "owns": ["operational_observation", "authorized_action_execution", "postcondition_verification"],
+      "denies": ["coordination_board_ownership", "card_claim", "reviewer_assignment", "merge", "policy_change", "unratified_action"]
+    }
+  },
+  "jarvis": {
+    "role": "casey_personal_assistant",
+    "recurring_lifecycle": false,
+    "requires_casey_direction": true,
+    "emergency_gateway": "skcapstone.jarvis_emergency.JarvisEmergencyGateway",
+    "direction_schema": "atlas-authorization/v1",
+    "direction_scope": "skcapstone,skdashboard,skworld",
+    "emergency_tools": ["card_creation", "card_claim", "card_completion", "fleet", "merge", "deployment", "release", "verification", "actuation"]
+  }
+}

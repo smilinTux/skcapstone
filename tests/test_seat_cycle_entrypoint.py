@@ -64,7 +64,10 @@ def control(path: Path) -> None:
                 "schema_version": 1,
                 "revision": "r1",
                 "active_host": "chiap08",
-                "seats": {"link": ["chiap08"], "mero": ["chiap08"], "seraph": ["chiap08"]},
+                "seats": {
+                    seat: ["chiap08"]
+                    for seat in ("link", "mero", "seraph", "niobe", "tank", "atlas")
+                },
             }
         ),
         encoding="utf-8",
@@ -684,7 +687,7 @@ def test_link_materialization_race_launches_once_and_replay_is_denied(
     assert len(claim_events) == 1
 
 
-def test_control_plane_requires_both_seats(tmp_path: Path) -> None:
+def test_control_plane_requires_all_six_seats(tmp_path: Path) -> None:
     path = tmp_path / "control.json"
     path.write_text(
         json.dumps(
@@ -700,7 +703,7 @@ def test_control_plane_requires_both_seats(tmp_path: Path) -> None:
     try:
         load_control_plane(path)
     except ValueError as exc:
-        assert "mero" in str(exc) or "seraph" in str(exc)
+        assert "not provisioned on active host" in str(exc)
     else:
         raise AssertionError("incomplete control plane accepted")
 
@@ -713,11 +716,15 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     mero_timer = (root / "systemd/skfleet-mero.timer").read_text()
     seraph = (root / "systemd/skfleet-seraph.service").read_text()
     seraph_timer = (root / "systemd/skfleet-seraph.timer").read_text()
+    tank = (root / "systemd/skfleet-tank.service").read_text()
+    tank_timer = (root / "systemd/skfleet-tank.timer").read_text()
+    atlas = (root / "systemd/skfleet-atlas.service").read_text()
+    atlas_timer = (root / "systemd/skfleet-atlas.timer").read_text()
     assert "TimeoutStartSec=120" in link
     assert "TimeoutStartSec=180" in mero
     assert "--seat link" in link and "--seat mero" in mero
     assert "OnUnitActiveSec=5min" in link_timer
-    assert "OnUnitActiveSec=10min" in mero_timer
+    assert "OnUnitActiveSec=5min" in mero_timer
     assert "skfleet-mero.service" in mero_timer
     assert "TimeoutStartSec=300" in seraph
     assert "--seat seraph" in seraph
@@ -726,3 +733,27 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "Environment=SKFLEET_SERAPH_BATCH_SIZE=2" in seraph
     assert "Environment=SKFLEET_CODEX_PHYSICAL_LIMIT=3" in seraph
     assert "skfleet-seraph.service" in seraph_timer
+    assert "--seat tank" in tank and "TimeoutStartSec=300" in tank
+    assert "OnUnitActiveSec=5min" in tank_timer
+    assert "--seat atlas" in atlas and "TimeoutStartSec=300" in atlas
+    assert "OnUnitActiveSec=5min" in atlas_timer
+
+
+def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    for seat in ("tank", "atlas"):
+        result = run_cycle(
+            seat=seat,
+            home=tmp_path / "home",
+            control_plane=control_path,
+            local_host="chiap08",
+            operation=lambda: {
+                "cards_examined": 0,
+                "recommendations": 0,
+                "suppressed": 0,
+                "reason": "presence_complete",
+            },
+        )
+        assert result.result == "presence_complete"
+        assert result.cards_examined == 0

@@ -153,6 +153,14 @@ skcapstone coord label <cardid> seat-<seat> --agent <you>
 skcapstone coord gates <cardid>
 ```
 
+Lifecycle seats must also appear in
+`src/skcapstone/data/lifecycle-seat-profiles.json` and
+`scripts/fleet/seat-placement.json`. The profile supplies role ownership,
+denials, cadence, timeout, SKMail behavior, safe retirement, and the shared
+`sk-codex-mid` default. Installation is incomplete until the packaged and
+source systemd units are byte-identical and the active-host readback matches
+placement.
+
 ---
 
 ## 7. Give the seat a charter, then tell it and everyone else

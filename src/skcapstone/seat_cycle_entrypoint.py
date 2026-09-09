@@ -22,6 +22,7 @@ from typing import Any, Callable
 from skcoord.card import Column
 from skcoord.card_store import CardStore
 
+from .lifecycle_seats import LIFECYCLE_SEATS
 from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
 from .link_review_work import load_review_work, reconcile_review_work_batch
@@ -30,7 +31,7 @@ from .seat_boundaries import BoundaryError
 from .seat_cycle_guard import CycleResult, SeatCycleGuard
 from .seat_mail import poll_mail, startup_hello
 
-_SEATS = frozenset({"link", "mero", "seraph"})
+_SEATS = LIFECYCLE_SEATS
 _LAUNCH = re.compile(
     r"^(?P<outcome>LAUNCHED|LAUNCH_FAILED)\|(?P<host>[^|]+)\|(?P<session>[^|]+)\|(?P<card>[^|]+)"
     r"\|lane=(?P<lane>[^|]+)\|model=(?P<model>[^|]+)"
@@ -111,7 +112,7 @@ def run_cycle(
     dry_run: bool = False,
     operation: Callable[[], dict[str, int]] | None = None,
 ) -> CycleSummary:
-    """Run one fenced Link or Mero cycle, or record a bounded no-op."""
+    """Run one fenced lifecycle-seat cycle, or record a bounded no-op."""
 
     seat = seat.strip().lower()
     if seat not in _SEATS:
@@ -196,6 +197,17 @@ def mero_operation(home: Path) -> dict[str, int]:
         "cards_examined": report.cards_examined,
         "recommendations": len(report.findings),
         "suppressed": report.suppressed_unchanged,
+    }
+
+
+def presence_operation() -> dict[str, int | str]:
+    """Record a bounded presence cycle without acquiring card authority."""
+
+    return {
+        "cards_examined": 0,
+        "recommendations": 0,
+        "suppressed": 0,
+        "reason": "presence_complete",
     }
 
 
@@ -532,10 +544,15 @@ def main(argv: list[str] | None = None) -> int:
         def operation() -> dict[str, int | str]:
             return seraph_operation(args.home)
 
-    else:
+    elif args.seat == "link":
 
         def operation() -> dict[str, int | str]:
             return link_operation(args.home, feed_path)
+
+    else:
+
+        def operation() -> dict[str, int | str]:
+            return presence_operation()
 
     summary = run_cycle(
         seat=args.seat,

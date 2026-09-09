@@ -85,9 +85,10 @@ def test_timeout_retains_saturated_slot_and_late_result_cannot_replace_receipt(t
         invoke(runtime, operation=work)
     assert started.is_set() and time.monotonic() - before < 1
     receipt = runtime.read("evidence-to-review", "work")
+    assert receipt["status"] == "saturated"
     with pytest.raises(HandoffError, match="saturated"):
         invoke(runtime, key="other")
-    with pytest.raises(HandoffError, match="timeout"):
+    with pytest.raises(HandoffError, match="saturated"):
         invoke(runtime, operation=work)
     release.set()
     assert calls == [1]

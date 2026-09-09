@@ -1,9 +1,9 @@
 [Unit]
-Description=Run the SKFleet Mero cycle every ten minutes
+Description=Run the SKFleet Mero cycle every five minutes
 
 [Timer]
 OnBootSec=7min
-OnUnitActiveSec=10min
+OnUnitActiveSec=5min
 Persistent=true
 Unit=skfleet-mero.service
 

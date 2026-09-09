@@ -346,6 +346,8 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--by", default="human", help="Creator name.")
     @click.option("--criteria", multiple=True, help="Acceptance criteria (repeatable).")
     @click.option("--dep", multiple=True, help="Dependency task IDs (repeatable).")
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
     @click.option(
         "--producer-identity",
         default=None,
@@ -371,6 +373,8 @@ def register_coord_commands(main: click.Group) -> None:
         by,
         criteria,
         dep,
+        casey_authorization,
+        casey_change_id,
         producer_identity,
         candidate_evidence_sha256,
         claim_for_me,
@@ -423,6 +427,12 @@ def register_coord_commands(main: click.Group) -> None:
             dependencies=list(dep),
             meta=meta,
         )
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(
+            by, Action.CREATE_CARD, task.id, casey_authorization, casey_change_id
+        )
         if claim_for_me:
             from .. import active_agent_name
 
@@ -445,13 +455,15 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name claiming the task.")
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
     @click.option(
         "--force",
         is_flag=True,
         default=False,
         help="Compatibility flag. Dependency, review, and human gates still cannot be bypassed.",
     )
-    def coord_claim(task_id, home, agent, force):
+    def coord_claim(task_id, home, agent, casey_authorization, casey_change_id, force):
         """Claim a task for an agent.
 
         A task whose dependencies are not all done is blocked. The compatibility
@@ -463,6 +475,12 @@ def register_coord_commands(main: click.Group) -> None:
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(
+            agent, Action.CLAIM, task_id, casey_authorization, casey_change_id
+        )
         board = Board(home_path)
         try:
             ag = board.claim_task(agent, task_id, force=force)
@@ -475,13 +493,21 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name completing the task.")
-    def coord_complete(task_id, home, agent):
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_complete(task_id, home, agent, casey_authorization, casey_change_id):
         """Mark a task as completed."""
         validate_task_id(task_id)
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
         from ..coord_completion import complete_coord_task
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(
+            agent, Action.COMPLETE_CARD, task_id, casey_authorization, casey_change_id
+        )
 
         try:
             ag = complete_coord_task(home_path, agent, task_id)
@@ -968,15 +994,28 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--order", default=None, type=int, help="Position within the column.")
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_move(task_id, column, home, order, agent):
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_move(task_id, column, home, order, agent, casey_authorization, casey_change_id):
         """Move a card to a kanban column (backlog/ready/doing/review/done)."""
         home_path = Path(home).expanduser()
         from ..coord_completion import move_coord_task
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        actor = agent or "coord-move"
+        authorize_jarvis_entrypoint(
+            actor,
+            Action.MOVE_CARD,
+            f"{task_id}:{column}",
+            casey_authorization,
+            casey_change_id,
+        )
 
         try:
             receipt = move_coord_task(
                 home_path,
-                agent or "coord-move",
+                actor,
                 task_id,
                 column,
                 order,

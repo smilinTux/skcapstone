@@ -4,9 +4,8 @@
 assistant and is not a lifecycle seat.
 
 This is the shortest safe path to full role-specific capacity. Routine work is
-automatic and notify-only. Casey is interrupted only for the external GitHub
-administrator readback and the explicit Niobe authority transition. ATLAS
-remains frozen unless Casey separately ratifies its operations scope.
+automatic and notify-only. Casey is interrupted only when a governing catalog
+or policy requires a human decision.
 
 ## 0. Local preflight
 
@@ -103,7 +102,7 @@ the named unit, exact rollback action, and a future expiry.
 
 ## 4. Tank and Seraph
 
-Tank is enabled as a card-scoped worker, not a permanent daemon. Tank executes
+Tank is active as a card-scoped worker, not a permanent daemon. Tank executes
 only an exact approved release or deployment card with pinned artifact and
 rollback evidence.
 
@@ -116,10 +115,19 @@ notify-only; production authority remains an external gate.
 
 ## 5. ATLAS and Jarvis
 
-ATLAS stays frozen with no healthy lifecycle beat until a separate Casey
-ratification authorizes a narrowly defined operations contract. Jarvis remains
-Casey's assistant. Jarvis may use emergency tools when Casey directs it, but
-does not claim lifecycle ownership or enter the lifecycle workflow.
+ATLAS is active for bounded presence and exact card-scoped operations. Its
+presence cycle reads SKMail and emits health but does not claim work or actuate.
+An operations card reaches ATLAS through Niobe and remains subject to the
+ActionIntent catalog, exact capability, rollback, and verification gates.
+Routine catalog-authorized work is notify-only.
+
+Jarvis remains Casey's assistant. Jarvis may use emergency card, fleet, merge,
+deployment, release, verification, and actuation tools when Casey directs it,
+but does not claim recurring lifecycle ownership or enter lifecycle timers.
+The runtime exposes Jarvis emergency operations only through
+`JarvisEmergencyGateway`. Each call verifies an unexpired Casey signature and
+exact action, target, change, and `skcapstone,skdashboard,skworld` scope before
+calling the mutation. A missing or mismatched direction fails closed.
 
 ## Rollback
 
@@ -141,3 +149,23 @@ rolls back through its card-pinned artifact procedure. Seraph rolls back by
 disabling `skfleet-seraph.timer`, preserving append-only review evidence, and
 reverting its pinned source commit. A feed failure disables Link's eligibility
 input; it does not trigger GitHub mutations.
+### Converge the six lifecycle profiles
+
+After independently reviewed package installation and before enabling timers,
+converge the packaged control record and role profiles into the existing
+sovereign agent homes. The command refuses missing or mismatched identities and
+captures every replaced file in an exact rollback bundle.
+
+```bash
+python -m skcapstone.lifecycle_seats converge \
+  --home "$HOME/.skcapstone" \
+  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-six-seat-<change-id>"
+```
+
+Rollback fails closed if any installed target changed after convergence:
+
+```bash
+python -m skcapstone.lifecycle_seats rollback \
+  --home "$HOME/.skcapstone" \
+  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-six-seat-<change-id>"
+```

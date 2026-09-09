@@ -13,6 +13,10 @@
   process replaces its command line with its process title, while retaining
   exact descendant, interpreter, shebang, title, and fleet identity checks.
 
+- Card `20a637fe`: route every Jarvis emergency lifecycle operation through one
+  signed, exact-action Casey-direction gateway with fail-closed integration
+  coverage.
+
 - Card `c6a5ce66`: preserve the invoked virtualenv interpreter directory when
   resolving the adjacent SKMail executable under a restricted service PATH.
 
@@ -33,6 +37,12 @@
 - Card `44ad0d49`: add bounded elastic independent-review admission with
   source-head deduplication, reviewer independence, and physical-capacity
   limits.
+
+- Card `20a637fe`: activate source-backed Link, Mero, Seraph, Niobe, Tank,
+  and ATLAS lifecycle profiles on chiap08 with `sk-codex-mid` defaults,
+  startup SKMail hello, direct and all-mail polling, bounded beats, and safe
+  one-shot retirement. Jarvis is excluded from recurring lifecycle work while
+  retaining Casey-directed emergency tools.
 
 - Card `ca738f5c`: route Link and Mero lifecycle fan-out requests through the
   production Niobe dispatcher with role and card-scope intersection,

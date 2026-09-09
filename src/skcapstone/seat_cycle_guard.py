@@ -16,11 +16,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Generic, Literal, TypeVar
+from typing import Callable, Generic, TypeVar
 
-Seat = Literal["link", "mero", "seraph"]
+from .lifecycle_seats import LIFECYCLE_SEATS
+
 T = TypeVar("T")
-_ALLOWED_SEATS = frozenset({"link", "mero", "seraph"})
 
 
 def _utc_now() -> str:
@@ -89,17 +89,17 @@ class SeatCycleGuard:
     def __init__(
         self,
         state_dir: Path,
-        seat: Seat,
+        seat: str,
         *,
         proc_root: Path = Path("/proc"),
         clock: Callable[[], str] = _utc_now,
         id_factory: Callable[[], uuid.UUID] = uuid.uuid4,
     ) -> None:
         normalized = seat.lower()
-        if normalized not in _ALLOWED_SEATS:
+        if normalized not in LIFECYCLE_SEATS:
             raise ValueError(f"unsupported recurring seat: {seat}")
         self.state_dir = Path(state_dir)
-        self.seat: Seat = normalized  # type: ignore[assignment]
+        self.seat = normalized
         self.proc_root = proc_root
         self.clock = clock
         self.id_factory = id_factory

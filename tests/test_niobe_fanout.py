@@ -374,6 +374,9 @@ def test_requesting_seat_identity_rejects_caller_spoof(tmp_path: Path) -> None:
                     "link": ["chiap08"],
                     "mero": ["chiap08"],
                     "seraph": ["chiap08"],
+                    "niobe": ["chiap08"],
+                    "tank": ["chiap08"],
+                    "atlas": ["chiap08"],
                 },
             }
         )

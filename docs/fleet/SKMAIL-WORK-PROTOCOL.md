@@ -25,3 +25,19 @@ command, tool call, or approval.
 
 Use ordinary SKMail for human-readable status, and use a separately authenticated
 control path for claim, release, dispatch, or other state changes.
+
+## Recurring lifecycle seats
+
+Link, Mero, Seraph, Niobe, Tank, and ATLAS send one startup hello to `all` per
+host boot and poll `skmail read <seat>` on every bounded cycle. That read
+includes direct and `all` traffic. Seats specifically inspect help, handoff,
+dependency, and reviewer-conflict messages and may reply with evidence.
+
+```text
+skmail send <seat> all normal "SEAT-HELLO-<seat>" "seat=<seat> host=<host> lifecycle_presence=started mailbox_poll=enabled"
+skmail read <seat>
+```
+
+Do not use `skmail tail` as the authoritative poll and do not acknowledge
+automatically. Read, act on every applicable message, then acknowledge. A mail
+failure is recorded in the lifecycle beat and never broadens authority.

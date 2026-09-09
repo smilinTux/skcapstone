@@ -1,0 +1,19 @@
+[Unit]
+Description=SKFleet ATLAS bounded operations-seat presence cycle
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=atlas
+Environment=SKCAPSTONE_AGENT=atlas
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.seat_cycle_entrypoint --seat atlas --home %h/.skcapstone --control-plane %h/.skcapstone/coordination/seat-control-plane.json
+TimeoutStartSec=300
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone/coordination/seat-cycles
+ReadWritePaths=%h/.skcapstone/coordination/skmail.d
+
+[Install]
+WantedBy=default.target

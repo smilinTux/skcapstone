@@ -287,8 +287,10 @@ class HandoffRuntime:
                     raise HandoffError("result hash mismatch")
                 return json.loads(value)
             time.sleep(min(0.01, max(0, deadline - time.monotonic())))
-        self._finish(boundary, key, policy, "timeout-uncertain", None)
-        raise HandoffError("timeout-uncertain")
+        # The operation may still be running and retains its bounded slot. To
+        # callers this is saturated uncertainty, never permission to retry.
+        self._finish(boundary, key, policy, "saturated", None)
+        raise HandoffError("timeout-saturated")
 
     def _replay_result(self, boundary, key, authorize, quality, authority, revision, deadline):
         # A replay is never allowed to mint fresh authority. Gate callbacks must

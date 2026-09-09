@@ -136,12 +136,34 @@ def test_link_cannot_dispatch_or_deploy(action: Action) -> None:
         require_authority("link", action)
 
 
-def test_jarvis_fleet_authority_does_not_imply_application_actuation() -> None:
-    """Fleet process control grants no application action authority."""
+def test_niobe_fleet_authority_does_not_imply_application_actuation() -> None:
+    """Recurring fleet process control grants no application action authority."""
 
-    require_authority("jarvis", Action.LAUNCH)
+    require_authority("niobe", Action.LAUNCH)
     with pytest.raises(BoundaryError):
-        require_authority("jarvis", Action.ACTUATE_APPLICATION)
+        require_authority("niobe", Action.ACTUATE_APPLICATION)
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        Action.CREATE_CARD,
+        Action.CLAIM,
+        Action.MOVE_CARD,
+        Action.COMPLETE_CARD,
+        Action.LAUNCH,
+        Action.MERGE,
+        Action.DEPLOY,
+        Action.RELEASE_ARTIFACT,
+        Action.VERIFY,
+        Action.ACTUATE_APPLICATION,
+    ],
+)
+def test_jarvis_emergency_tools_require_casey_direction(action: Action) -> None:
+    """Generic authority cannot substitute unsigned text for Casey's signature."""
+
+    with pytest.raises(BoundaryError, match="verified signed Casey direction"):
+        require_authority("jarvis", action)
 
 
 def test_only_explicit_fenced_actor_may_mutate_fleet() -> None:
@@ -152,13 +174,13 @@ def test_only_explicit_fenced_actor_may_mutate_fleet() -> None:
     require_authority("system-reaper", Action.RELEASE, fenced_system_actors={"system-reaper"})
 
 
-def test_jarvis_accepts_fresh_recommendation_once() -> None:
+def test_niobe_accepts_fresh_recommendation_once() -> None:
     """Exact current owner, revision, and process state satisfy the fence."""
 
     item = recommendation()
     authorize_recommendation_action(
         item,
-        actor="jarvis",
+        actor="niobe",
         action=Action.RELEASE,
         current_claim_owner=item.observed_claim_owner,
         current_claim_revision=item.observed_claim_revision,
@@ -188,7 +210,7 @@ def test_recommendation_replay_fails_closed() -> None:
     with pytest.raises(BoundaryError, match="replay"):
         authorize_recommendation_action(
             item,
-            actor="jarvis",
+            actor="niobe",
             action=Action.RELEASE,
             current_claim_owner=item.observed_claim_owner,
             current_claim_revision=item.observed_claim_revision,
@@ -205,7 +227,7 @@ def test_blank_observed_claim_revision_fails_closed(revision: str | None) -> Non
     with pytest.raises(BoundaryError, match="observed claim revision is required"):
         authorize_recommendation_action(
             item,
-            actor="jarvis",
+            actor="niobe",
             action=Action.RELEASE,
             current_claim_owner=item.observed_claim_owner,
             current_claim_revision=revision,
@@ -222,7 +244,7 @@ def test_blank_current_claim_revision_fails_closed(revision: str | None) -> None
     with pytest.raises(BoundaryError, match="current claim revision is required"):
         authorize_recommendation_action(
             item,
-            actor="jarvis",
+            actor="niobe",
             action=Action.RELEASE,
             current_claim_owner=item.observed_claim_owner,
             current_claim_revision=revision,
@@ -252,7 +274,7 @@ def test_stale_recommendation_fails_closed(changes: dict[str, object], message: 
     with pytest.raises(BoundaryError, match=message):
         authorize_recommendation_action(
             item,
-            actor="jarvis",
+            actor="niobe",
             action=Action.RELEASE,
             used_recommendation_ids=set(),
             **arguments,
