@@ -351,7 +351,18 @@ def publish_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen 
     """Publish capacity only after local process evidence proves child exit."""
     if args.live_snapshot is None or child is None or child.poll() is None:
         return False
-    invalidate_worker(args.live_snapshot, args.host, args.card)
+    # Release is fenced by the claim identity and independent process/cgroup
+    # observations. A missing generation record therefore remains occupied.
+    invalidate_worker(
+        args.live_snapshot,
+        args.host,
+        args.card,
+        owner=args.owner,
+        card_id=args.card,
+        claim_revision=args.claim_revision,
+        process_evidence=child.poll() is not None,
+        cgroup_evidence=bool(getattr(args, "cgroup", None) or getattr(args, "unit", None)),
+    )
     return True
 
 
