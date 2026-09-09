@@ -65,8 +65,9 @@ CardStore creation and claim fencing provide cross-cycle convergence.
 Seat-scoped selector cycles do not overwrite the generic fleet liveness and
 capacity snapshot.
 
-Installation must update the Python package, `~/.local/bin/skfleet-rotate.py`,
-and the Seraph service unit from one reviewed commit, recording old and new
+Installation must update the Python package, its wheel-owned
+`~/.skenv/bin/skfleet-rotate.py`, and the Seraph service unit from one reviewed
+commit, recording old and new
 SHA-256 hashes before the timer is restarted. Rollback restores all three
 pre-install bytes and runs `systemctl --user daemon-reload`; it does not delete
 receipts. Emergency rollback is to disable `skfleet-seraph.timer`, remove
