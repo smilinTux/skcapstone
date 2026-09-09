@@ -208,6 +208,20 @@ def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) 
     assert result["suppressed"] == 0
 
 
+def test_seraph_accepts_typed_receipt_on_stderr(tmp_path, monkeypatch) -> None:
+    receipt = (
+        "NOOP_RECEIPT|chiap08|reason=no_available_capacity|seat=seraph\n"
+    )
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout="launcher diagnostics\n", stderr=receipt
+        ),
+    )
+    result = seraph_operation(tmp_path)
+    assert result["reason"] == "seraph_no_available_capacity"
+
+
 def test_seraph_rejects_duplicate_launch_receipts(tmp_path, monkeypatch) -> None:
     receipt = (
         "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|model=model|"

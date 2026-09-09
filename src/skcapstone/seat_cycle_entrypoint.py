@@ -197,14 +197,20 @@ def verify_seraph_dispatch(
 ) -> dict[str, int | str]:
     """Verify one selector result against CardStore and its live worker unit."""
 
+    # The installed selector may emit its typed receipt on stderr while its
+    # launcher diagnostics remain on stdout.  Parse both streams as one
+    # producer boundary, but retain the exact-one invariant across streams.
+    parser_input = "\n".join(
+        part for part in (getattr(completed, "stdout", ""), getattr(completed, "stderr", "")) if part
+    )
     launches = [
         match.groupdict()
-        for line in completed.stdout.splitlines()
+        for line in parser_input.splitlines()
         if (match := _LAUNCH.fullmatch(line.strip()))
     ]
     noops = [
         match.groupdict()
-        for line in completed.stdout.splitlines()
+        for line in parser_input.splitlines()
         if (match := _NOOP.fullmatch(line.strip()))
     ]
     if completed.returncode != 0:
