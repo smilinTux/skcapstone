@@ -463,6 +463,33 @@ def test_native_pass_remains_awaiting_review(tmp_path: Path) -> None:
     assert namespace["blocked_backoff"](card) is True
 
 
+def test_consumer_review_verdict_is_dependency_metadata(tmp_path: Path) -> None:
+    card = "05fca2a1"
+    namespace = _native_namespace(
+        tmp_path,
+        {
+            card: [
+                {
+                    "action": "link",
+                    "link_key": "independent_review",
+                    "link_value": "425a3db1",
+                    "ts": "2026-09-09T06:00:00Z",
+                    "writer": "jarvis",
+                },
+                {
+                    "action": "link",
+                    "link_key": "review_verdict",
+                    "link_value": "PASS",
+                    "ts": "2026-09-09T06:00:01Z",
+                    "writer": "jarvis",
+                },
+            ]
+        },
+    )
+    assert card not in namespace["_load_outcomes"]()
+    assert namespace["awaiting_review"](card) is False
+
+
 def test_native_pass_supersedes_older_legacy_block(tmp_path: Path) -> None:
     """The 567e6b09 shape is reviewable, not a stale BLOCKED retry."""
     card = "567e6b09"

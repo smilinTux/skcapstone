@@ -62,3 +62,94 @@ def test_coord_create_help_documents_atomic_example():
     assert result.exit_code == 0
     assert "--claim-for-me" in result.output
     assert "without exposing an unowned card" in result.output
+
+
+def test_governed_review_create_lists_all_missing_admission_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "90dea47b",
+            "--title",
+            "[REVIEW] CapAuth candidate",
+        ],
+    )
+
+    assert result.exit_code != 0
+    for field in (
+        "review label",
+        "seat-seraph",
+        "producer_identity",
+        "candidate_evidence_sha256",
+    ):
+        assert field in result.output
+    assert CardStore(tmp_path).fold("90dea47b") is None
+
+
+def test_complete_governed_review_metadata_is_stored_atomically(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    from skcoord.card_store import CardCore
+
+    CardStore(tmp_path).create(CardCore(id="44ad0d49", title="source", created_by="source-worker"))
+    digest = "a" * 64
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "90dea47c",
+            "--title",
+            "[REVIEW] CapAuth candidate",
+            "--tag",
+            "review",
+            "--tag",
+            "seat-seraph",
+            "--tag",
+            "parent-44ad0d49",
+            "--producer-identity",
+            "source-worker",
+            "--candidate-evidence-sha256",
+            digest,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    card = CardStore(tmp_path).fold("90dea47c")
+    assert card is not None
+    assert card.meta["producer_identity"] == "source-worker"
+    assert card.meta["candidate_evidence_sha256"] == digest
+
+
+def test_ordinary_repair_card_does_not_require_review_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    from skcoord.card_store import CardCore
+
+    CardStore(tmp_path).create(CardCore(id="deadbeef", title="source", created_by="source-worker"))
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "be4e7d38",
+            "--title",
+            "[COMPONENT][S][REPAIR] Repair ordinary producer work",
+            "--tag",
+            "parent-deadbeef",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    card = CardStore(tmp_path).fold("be4e7d38")
+    assert card is not None
+    assert card.meta == {}
