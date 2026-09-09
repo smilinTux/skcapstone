@@ -1182,6 +1182,9 @@ def _fold_claimability(core, rows):
         "status": "backlog", "owner": None, "claim_revision": None,
         "archived": False, "voided": False, "terminal": False,
         "review_seen": False,
+        # Priority is an event-sourced overlay. Keep the immutable core value
+        # as the initial fallback, then fold authoritative set_priority events.
+        "priority": str(core.get("initial_priority") or "medium"),
         "title": str(core.get("title") or ""),
         "description": str(core.get("description") or ""),
         "acceptance_criteria": [
@@ -1282,6 +1285,10 @@ def _fold_claimability(core, rows):
             label = event.get("label")
             markers.pop("label:" + str(label).strip().lower(), None)
             state["labels"] = [x for x in state["labels"] if x != label]
+        elif action in ("set_priority", "priority"):
+            priority = event.get("priority")
+            if isinstance(priority, str) and priority.strip():
+                state["priority"] = priority.strip().lower()
         elif action == "describe":
             if event.get("title") is not None:
                 state["title"] = str(event.get("title"))
@@ -1404,6 +1411,7 @@ def authoritative_claimability(cid, core=None, fresh=False):
     labels = state["labels"]
     reason = _claimability_reason(core, state)
     state.update({"claimable": reason == "claimable", "reason": reason,
+                  "priority": state["priority"],
                   "core": folded_core, "host_pin": host_pin(folded_core, labels),
                   "source_revision": source_revision})
     return state
@@ -3810,7 +3818,8 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     if up.startswith("SKLEGAL") or "SKLEGAL" in blob: lane=0
     elif any(up.startswith(e) for e in ENG): lane=1
     else: lane=2
-    pool.append([lane,PRI.get(str(core.get("initial_priority")),4),cid,core,labels])
+    # Rank the folded current priority, not immutable core.initial_priority.
+    pool.append([lane,PRI.get(str(decision.get("priority", "medium")),4),cid,core,labels])
 
 # How many OTHER cards would this card unblock if it completed? A card sitting at
 # the head of a dependency chain is worth far more than an isolated one, because
@@ -3957,6 +3966,7 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         "seraph_review_admitted": seraph_review_admitted,
         "overlay": _pool_v2_overlay(cid, core, reason),
         "source_revision": claimability.get("source_revision"),
+        "current_priority": claimability.get("priority", "medium"),
     }
 
 
@@ -3985,7 +3995,7 @@ def _pool_v2_authority_rows(decisions, admissions, failed, unblocks, priorities,
         else:
             lane = 2
         rows.append([
-            lane, priorities.get(str(core.get("initial_priority")), 4),
+            lane, priorities.get(str(admission.get("current_priority", "medium")), 4),
             cid, core, labels, unblocks.get(cid, 0),
         ])
     rows.sort(key=lambda row: (row[0], -row[5], row[1], row[2]))
