@@ -4683,8 +4683,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
         continue
     try:
-        _fanout_request=pending_fanout_request(
-            Path(HOME) / ".skcapstone",cid,actor="niobe")
+        _fanout_request=pending_fanout_request(Path(HOME) / ".skcapstone",cid)
     except FanoutBoundaryError as exc:
         log(d,"FANOUT_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
         continue

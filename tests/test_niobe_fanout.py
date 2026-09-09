@@ -1,5 +1,8 @@
 """Production contract tests for role-bounded Niobe fan-out."""
 
+import hashlib
+import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -8,14 +11,30 @@ from skcoord.card_store import CardCore, CardStore
 from skcapstone.niobe_fanout import (
     FanoutBoundaryError,
     LifecycleFanoutRequest,
+    NiobeRuntimeIdentity,
+    RequestingSeatIdentity,
     append_fanout_receipt,
     pending_fanout_request,
     reconcile_fanout_receipt,
     reconcile_runtime_state,
+    resolve_niobe_runtime_identity,
+    resolve_requesting_seat_identity,
     submit_fanout_request,
 )
 
 HEAD = "a" * 40
+
+
+@pytest.fixture(autouse=True)
+def _verified_niobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "skcapstone.niobe_fanout.resolve_niobe_runtime_identity",
+        lambda _home: NiobeRuntimeIdentity("decision", "f" * 64, "chiap08", "unit"),
+    )
+    monkeypatch.setattr(
+        "skcapstone.niobe_fanout.resolve_requesting_seat_identity",
+        lambda _home: RequestingSeatIdentity("link", "chiap08", "control-1", "link-unit"),
+    )
 
 
 def _card(home: Path, card_id: str = "deadbeef", route: str = "integration") -> CardStore:
@@ -46,7 +65,7 @@ def test_link_request_flows_through_niobe_with_exact_immutable_receipts(tmp_path
     store = _card(tmp_path)
     request = submit_fanout_request(tmp_path, _request())
 
-    assert pending_fanout_request(tmp_path, "deadbeef", actor="niobe") == request
+    assert pending_fanout_request(tmp_path, "deadbeef") == request
     append_fanout_receipt(
         tmp_path,
         request,
@@ -70,7 +89,7 @@ def test_link_request_flows_through_niobe_with_exact_immutable_receipts(tmp_path
         process={"unit": "skfleet-worker-codex-deadbeef.service", "alive": True},
     )
 
-    assert pending_fanout_request(tmp_path, "deadbeef", actor="niobe") is None
+    assert pending_fanout_request(tmp_path, "deadbeef") is None
     assert claimed["writer"] == launched["writer"] == "niobe"
     assert claimed["claim_revision"] == launched["claim_revision"] == "claim-1"
     assert (
@@ -81,15 +100,14 @@ def test_link_request_flows_through_niobe_with_exact_immutable_receipts(tmp_path
                 if row["action"] == "niobe_fanout_receipt"
             ]
         )
-        == 3
+        == 4
     )
 
 
 @pytest.mark.parametrize(
     ("changes", "message"),
     [
-        ({"requester": "jarvis"}, "only Link or Mero"),
-        ({"requester": "mero", "route": "integration"}, "requester role"),
+        ({"requester": "jarvis"}, "verified runtime identity"),
         ({"route": "review"}, "card scope"),
         ({"model": "sk-codex-high"}, "bounded default"),
     ],
@@ -102,10 +120,20 @@ def test_role_and_card_scope_intersection_fails_closed(
         submit_fanout_request(tmp_path, _request(**changes))
 
 
+def test_verified_mero_runtime_cannot_request_link_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _card(tmp_path)
+    monkeypatch.setattr(
+        "skcapstone.niobe_fanout.resolve_requesting_seat_identity",
+        lambda _home: RequestingSeatIdentity("mero", "chiap08", "control-1", "mero-unit"),
+    )
+    with pytest.raises(FanoutBoundaryError, match="requester role"):
+        submit_fanout_request(tmp_path, _request(requester="mero"))
+
+
 def test_request_rejects_claimed_card_and_non_niobe_actuator(tmp_path: Path) -> None:
     store = _card(tmp_path)
-    with pytest.raises(FanoutBoundaryError, match="only Niobe"):
-        pending_fanout_request(tmp_path, "deadbeef", actor="jarvis")
     store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="claim-1")
     with pytest.raises(FanoutBoundaryError, match="unclaimed"):
         submit_fanout_request(tmp_path, _request())
@@ -115,15 +143,9 @@ def test_source_head_dedupes_across_cards_and_ambiguous_requests_fail(tmp_path: 
     store = _card(tmp_path)
     _card(tmp_path, "feedface")
     first = submit_fanout_request(tmp_path, _request())
-    append_fanout_receipt(
-        tmp_path,
-        first,
-        state="launched",
-        claim_owner="worker-a",
-        claim_revision="claim-a",
-    )
     submit_fanout_request(tmp_path, _request("feedface"))
-    assert pending_fanout_request(tmp_path, "feedface", actor="niobe") is None
+    assert pending_fanout_request(tmp_path, first.card_id) == first
+    assert pending_fanout_request(tmp_path, "feedface") is None
 
     store.append_event(
         "deadbeef",
@@ -136,7 +158,109 @@ def test_source_head_dedupes_across_cards_and_ambiguous_requests_fail(tmp_path: 
         schema="skfleet.niobe-fanout-request/v1",
     )
     with pytest.raises(FanoutBoundaryError, match="canonical|ambiguous"):
-        pending_fanout_request(tmp_path, "deadbeef", actor="niobe")
+        pending_fanout_request(tmp_path, "deadbeef")
+
+
+def test_source_head_reservation_is_atomic_across_cards(tmp_path: Path) -> None:
+    _card(tmp_path)
+    _card(tmp_path, "feedface")
+    submit_fanout_request(tmp_path, _request())
+    submit_fanout_request(tmp_path, _request("feedface"))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda card_id: pending_fanout_request(tmp_path, card_id), ("deadbeef", "feedface")
+            )
+        )
+
+    assert sum(result is not None for result in results) == 1
+
+
+def test_runtime_identity_rejects_spoofed_seat_without_systemd_service(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    core = home / "cards/c4e7a9b2/core.json"
+    core.parent.mkdir(parents=True)
+    core.write_text('{"id":"c4e7a9b2"}\n')
+    revision = hashlib.sha256(core.read_bytes()).hexdigest()
+    activation = {
+        "schema": "skfleet.niobe-activation/v1",
+        "state": "active",
+        "seat": "niobe",
+        "decision_id": "casey-niobe",
+        "authorized_by": "casey",
+        "card_id": "c4e7a9b2",
+        "card_revision": revision,
+        "host": "chiap08",
+        "live_unit": "skfleet-niobe-live.timer",
+        "product_scope": ["skcapstone", "skdashboard", "skworld"],
+        "card_label": "seat-niobe",
+        "allowed_actions": ["claim", "release", "launch", "stop", "reassign"],
+        "denied_actions": ["merge", "deploy", "application_actuation", "external_dispatch"],
+        "expires_at": "2099-10-06T22:00:00+00:00",
+        "rollback": {
+            "owner": "casey",
+            "action": "disable_skfleet-niobe-live.timer_enable_skfleet-niobe-shadow.timer",
+        },
+    }
+    path = home / "coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation))
+    environment = {"SKFLEET_NIOBE_ACTIVATION": str(path), "INVOCATION_ID": "a" * 32}
+
+    with pytest.raises(FanoutBoundaryError, match="outside its authorized service"):
+        resolve_niobe_runtime_identity(
+            home, environ=environment, hostname="chiap08", cgroup_text="0::/user.slice"
+        )
+    assert (
+        resolve_niobe_runtime_identity(
+            home,
+            environ=environment,
+            hostname="chiap08",
+            cgroup_text="0::/skfleet-niobe-live.service",
+        ).decision_id
+        == "casey-niobe"
+    )
+
+
+def test_requesting_seat_identity_rejects_caller_spoof(tmp_path: Path) -> None:
+    control = tmp_path / "coordination/seat-control-plane.json"
+    control.parent.mkdir(parents=True)
+    control.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "active_host": "chiap08",
+                "revision": "control-1",
+                "seats": {
+                    "link": ["chiap08"],
+                    "mero": ["chiap08"],
+                    "seraph": ["chiap08"],
+                },
+            }
+        )
+    )
+    environment = {
+        "SKAGENT": "link",
+        "SKCAPSTONE_AGENT": "link",
+        "INVOCATION_ID": "a" * 32,
+    }
+    with pytest.raises(FanoutBoundaryError, match="outside its authorized service"):
+        resolve_requesting_seat_identity(
+            tmp_path,
+            environ=environment,
+            hostname="chiap08",
+            cgroup_text="0::/skfleet-mero.service",
+        )
+    assert (
+        resolve_requesting_seat_identity(
+            tmp_path,
+            environ=environment,
+            hostname="chiap08",
+            cgroup_text="0::/skfleet-link.service",
+        ).seat
+        == "link"
+    )
 
 
 @pytest.mark.parametrize(
@@ -190,6 +314,44 @@ def test_reconciler_emits_stop_and_terminal_retirement_receipts(tmp_path: Path) 
     assert retired is not None and retired["state"] == "retired"
 
 
+def test_reconciler_ignores_receipt_from_stale_request(tmp_path: Path) -> None:
+    store = _card(tmp_path)
+    old = submit_fanout_request(tmp_path, _request())
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="claim-1")
+    append_fanout_receipt(
+        tmp_path, old, state="launched", claim_owner="worker", claim_revision="claim-1"
+    )
+    newer = _request(source_head="b" * 40).normalized()
+    store.append_event(
+        "deadbeef",
+        "niobe_fanout_request",
+        "link",
+        **{
+            key: value
+            for key, value in newer.as_event().items()
+            if key not in {"card_id", "requester"}
+        },
+    )
+
+    assert reconcile_fanout_receipt(tmp_path, "deadbeef", process_alive=False) is None
+
+
+def test_runtime_receipt_rejects_stale_claim_generation(tmp_path: Path) -> None:
+    store = _card(tmp_path)
+    request = submit_fanout_request(tmp_path, _request())
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="claim-1")
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="claim-2")
+
+    with pytest.raises(FanoutBoundaryError, match="claim generation is stale"):
+        append_fanout_receipt(
+            tmp_path,
+            request,
+            state="launched",
+            claim_owner="worker",
+            claim_revision="claim-1",
+        )
+
+
 def test_production_dispatcher_uses_one_niobe_path_before_claim_and_launch() -> None:
     source = (Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py").read_text(
         encoding="utf-8"
@@ -202,4 +364,4 @@ def test_production_dispatcher_uses_one_niobe_path_before_claim_and_launch() -> 
     launch = loop.index("_worker_launch_command(unit,workspace,inner)")
     receipt = loop.index('state="launched" if ok else "launch_failed"')
     assert authorize < materialize < claim < claimed < launch < receipt
-    assert 'actor="niobe"' in loop[authorize:materialize]
+    assert 'actor="niobe"' not in loop[authorize:materialize]

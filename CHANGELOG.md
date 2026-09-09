@@ -8,8 +8,9 @@
 
 - Card `ca738f5c`: route Link and Mero lifecycle fan-out requests through the
   production Niobe dispatcher with role and card-scope intersection,
-  source-head deduplication, exact claim and launch receipts, and reconciliation
-  receipts for occupancy, stop, release, reassignment, and terminal retirement.
+  atomic cross-card source-head reservation, verified runtime-seat authority,
+  exact claim and launch receipts, and request plus claim-generation-bound
+  recovery receipts.
 
 - Cards `2e6bb78e` and `30c6909d`: add role-bounded lifecycle-seat fan-out
   allocation with source-head deduplication, the `sk-codex-mid` child default,

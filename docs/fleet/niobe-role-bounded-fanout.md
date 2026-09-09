@@ -8,23 +8,29 @@ claim, and detached worker launcher.
 
 A request is accepted only when all of these statements are true:
 
-1. The writer is `link` or `mero`.
+1. The requester is resolved from the active Link or Mero systemd unit, matching
+   control-plane host, invocation, and cgroup evidence. Caller-supplied seat text
+   is never authority.
 2. The route is allowed by that seat's `SEAT_CHILD_ROUTES` entry.
 3. The target card has the exact `fanout-scope-<route>` label.
 4. The source head is a full lowercase Git SHA.
 5. The model is `sk-codex-mid`.
-6. No prior launched, occupied, or retired receipt exists for the source head.
+6. A board-wide CardStore mutation lock atomically reserves the source head
+   before materialization, so concurrent requests on different cards produce
+   exactly one winner.
 
 This makes effective authority the intersection of the requesting role and the
 card scope. Jarvis has no request path and is not a recurring lifecycle seat.
 
 ## Receipts and recovery
 
-Niobe appends immutable `skfleet.niobe-fanout-receipt/v1` events for workspace
-materialization, exact claim, launch, launch failure, occupancy, stop, release,
-reassignment, and terminal retirement. Runtime receipts include the exact claim
-owner and claim revision. Receipt identities are deterministic, so repeating a
-cycle cannot create a second logical transition.
+Niobe first verifies its active Casey decision, host, systemd invocation, and
+service cgroup. It then appends immutable `skfleet.niobe-fanout-receipt/v1`
+events for source-head reservation, workspace materialization, exact claim,
+launch, launch failure, occupancy, stop, release, reassignment, and terminal
+retirement. Runtime receipts include the exact request, claim owner, and claim
+revision. Receipt identities are deterministic, so repeating a cycle cannot
+create a second logical transition.
 
 Each selector cycle reconciles cards that contain fan-out events against fresh
 CardStore claim state and live worker units. A missing process with a current
@@ -37,7 +43,9 @@ If a claimed receipt cannot be persisted, Niobe releases only the exact claim
 generation and does not launch. If a launch receipt cannot be persisted after
 the detached unit exists, Niobe leaves the exact unit and claim intact. The
 next reconciliation cycle recovers its occupancy receipt from process and
-claim truth. The launcher never adds a broad worker stop surface.
+claim truth. Reconciliation considers only receipts carrying the latest exact
+request ID and source head, and claim-bearing recovery remains fenced to its
+claim generation. The launcher never adds a broad worker stop surface.
 
 ## Producer example
 
