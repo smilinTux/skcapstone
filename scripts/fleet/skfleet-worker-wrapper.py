@@ -80,6 +80,18 @@ def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObse
             matches = executable == expected_executable
             if executable.name in {"node", "nodejs"} and len(argv) > 1:
                 matches = Path(os.fsdecode(argv[1])).resolve() == expected_executable
+            if executable.name in {"node", "nodejs"} and not matches:
+                try:
+                    shebang = expected_executable.read_text(encoding="utf-8").splitlines()[0]
+                    declared = Path(shebang.split()[-1]).name
+                    title = (proc / "comm").read_text(encoding="utf-8").strip()
+                    matches = (
+                        shebang.startswith("#!")
+                        and declared in {"node", "nodejs"}
+                        and title == Path(args.worker_executable).name
+                    )
+                except (OSError, IndexError):
+                    pass
             if matches and attributed:
                 evidence = {
                     **identity,

@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `d2771026`: preserve executable startup evidence after the Pi Node
+  process replaces its command line with its process title, while retaining
+  exact descendant, interpreter, shebang, title, and fleet identity checks.
+
 - Card `a9f40c21`: resolve worker SKMail beside the active interpreter,
   require one startup hello and read-only direct-plus-all mailbox poll before
   work, and distinguish fast provider exits from missing executable evidence.

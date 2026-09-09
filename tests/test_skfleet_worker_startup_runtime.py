@@ -231,7 +231,7 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         if not node:
             pytest.skip("Node required for Pi shebang regression")
         script = tmp_path / "worker.js"
-        script.write_text(f"#!{node}\nsetTimeout(() => {{}}, 10000);\n")
+        script.write_text(f"#!{node}\nprocess.title = 'pi'; setTimeout(() => {{}}, 10000);\n")
         script.chmod(0o700)
         link = tmp_path / "pi"
         link.symlink_to(script)
@@ -240,6 +240,8 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         command = [str(link)]
     child = subprocess.Popen(command, env=env)
     try:
+        if fault == "node":
+            time.sleep(0.1)
         module.monitor_startup(args, child, threading.Event())
         (record,) = (tmp_path / "evidence/worker-startup").glob("*.json")
         result = json.loads(record.read_text())
