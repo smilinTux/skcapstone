@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `a9f40c21`: resolve worker SKMail beside the active interpreter,
+  require one startup hello and read-only direct-plus-all mailbox poll before
+  work, and distinguish fast provider exits from missing executable evidence.
+
 - Card `cf9ccb43`: reject oversized unclaimed cards before dispatch with a
   deterministic two-to-five-leaf recommendation. Each leaf carries a concrete,
   non-overlapping deliverable, acceptance criteria, verification scope, and
