@@ -4364,7 +4364,9 @@ def _bounded_candidate_sequence(candidates, limit):
     seen = set()
     result = []
     for candidate in candidates:
-        card_id = candidate[2] if len(candidate) > 2 else candidate
+        # Rotation candidates are tuples, but keeping scalar ids valid makes the
+        # helper safe for callers that have already projected the CardStore row.
+        card_id = candidate[2] if isinstance(candidate, (tuple, list)) and len(candidate) > 2 else candidate
         if card_id in seen:
             continue
         seen.add(card_id)
