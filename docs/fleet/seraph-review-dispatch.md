@@ -15,19 +15,24 @@ inheritance adds no approval authority and does not rewrite identity, source
 head, generation, evidence, claim, or launch receipts.
 
 Seraph runs as a bounded recurring seat on the active control-plane host. Each
-cycle invokes the ordinary fleet selector with `SKFLEET_ONLY_SEAT=seraph`, a
-dedicated target of one, and a host Codex limit of three on `sk-codex-mid`.
-The ordinary chiap08 target remains two. One ordinary worker therefore cannot
-consume the Seraph allocation, while the shared physical ceiling still prevents
-the two populations from exceeding three workers. The selector then performs the existing final
+cycle invokes the ordinary fleet selector with `SKFLEET_ONLY_SEAT=seraph` and
+uses `SKFLEET_SERAPH_BATCH_SIZE` for both its dedicated target and launch cap.
+The packaged default is two, values from one through eight are accepted, and
+the shared `SKFLEET_CODEX_PHYSICAL_LIMIT` remains the final physical ceiling.
+The default model is `sk-codex-mid`; governed routing may escalate an individual
+card when its declared work requires it. The selector then performs the existing final
 admission comparison, Link recommendation, exact claim readback, worker launch,
-and launch-receipt checks. Seraph reports success only after it observes exactly
-one canonical `LAUNCHED` receipt, the same owner and claim revision in
-CardStore, a producer-independent review card in `doing`, and its active worker
-unit. Zero eligible work and zero remaining physical or provider capacity emit
+and launch-receipt checks for every item. Seraph reports complete success only
+when every canonical `LAUNCHED` receipt matches the Link recommendation, exact
+claim revision, producer-independent review card in `doing`, and active worker
+unit. It reports a partial result when only part of the batch validates. A failed
+launch must carry its exact claim revision, have a matching negative launch
+receipt, and be released so the card remains retryable. Duplicate cards or two
+cards for the same source-card and head-revision pair fail validation. Zero
+eligible work and zero remaining physical or provider capacity emit
 distinct `NOOP_RECEIPT` reasons and are honest successful no-ops. A missing,
-duplicate, or malformed receipt, stale claim, or dead process is a suppressed
-failure. A producer cannot review its own candidate, and state
+duplicate, or malformed receipt, stale claim, dead process, or invalid item is a
+suppressed failure without discarding valid sibling results. A producer cannot review its own candidate, and state
 drift or recommendation replay prevents launch.
 
 Canonical review cards remain excluded from every generic fleet cycle. In an
@@ -42,8 +47,9 @@ The regression test creates its canonical review card through production
 `reconcile_review_work`, then runs the actual selector in one isolated child
 process against a temporary CardStore. Stateful `systemctl` and `systemd-run`
 shims prove the generic cycle does not claim or launch, the Seraph cycle makes
-exactly one real claim and active-unit launch receipt, and replay creates no
-duplicate. Test paths are discovered from the running interpreter and imported
+bounded real claims and active-unit launch receipts, and replay creates no
+duplicate. Unit tests also prove partial launch failure, retryability, batch
+configuration bounds, source-head dedupe, and producer independence. Test paths are discovered from the running interpreter and imported
 packages so hosted CI does not depend on a workstation home directory. A
 loopback gateway serves the production `/health` and `/queue` schemas, and the
 portable revision probe returns the same sealed runtime revision, so the test

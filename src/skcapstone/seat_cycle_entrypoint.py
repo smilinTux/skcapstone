@@ -31,10 +31,11 @@ from .seat_mail import poll_mail, startup_hello
 
 _SEATS = frozenset({"link", "mero", "seraph"})
 _LAUNCH = re.compile(
-    r"^LAUNCHED\|(?P<host>[^|]+)\|(?P<session>[^|]+)\|(?P<card>[^|]+)"
+    r"^(?P<outcome>LAUNCHED|LAUNCH_FAILED)\|(?P<host>[^|]+)\|(?P<session>[^|]+)\|(?P<card>[^|]+)"
     r"\|lane=(?P<lane>[^|]+)\|model=(?P<model>[^|]+)"
     r"\|owner=(?P<owner>[^|]+)\|claim_revision=(?P<revision>[^|]+)$"
 )
+_MAX_SERAPH_BATCH = 8
 _NOOP = re.compile(
     r"^NOOP_RECEIPT\|(?P<host>[^|]+)\|reason=(?P<reason>[^|]+)" r"\|seat=(?P<seat>[^|]+)$"
 )
@@ -54,6 +55,8 @@ class CycleSummary:
     cards_examined: int = 0
     recommendations: int = 0
     suppressed: int = 0
+    dispatch_succeeded: int = 0
+    dispatch_failed: int = 0
     reason: str | None = None
     source_revision: str | None = None
     evidence_sha256: str | None = None
@@ -169,6 +172,8 @@ def run_cycle(
             cards_examined=int(values.get("cards_examined", 0)),
             recommendations=int(values.get("recommendations", 0)),
             suppressed=int(values.get("suppressed", 0)),
+            dispatch_succeeded=int(values.get("dispatch_succeeded", 0)),
+            dispatch_failed=int(values.get("dispatch_failed", 0)),
             reason=str(reason) if reason is not None else None,
             source_revision=(
                 str(values["source_revision"]) if values.get("source_revision") else None
@@ -195,7 +200,7 @@ def verify_seraph_dispatch(
     home: Path,
     completed: subprocess.CompletedProcess[str],
 ) -> dict[str, int | str]:
-    """Verify one selector result against CardStore and its live worker unit."""
+    """Verify every selector result independently and report partial outcomes."""
 
     launches = [
         match.groupdict()
@@ -223,68 +228,135 @@ def verify_seraph_dispatch(
                 "suppressed": 0,
                 "reason": f"seraph_{reason}",
             }
-    if len(launches) != 1 or noops:
+    if not launches or noops:
         return {
             "cards_examined": len(launches),
             "recommendations": 0,
             "suppressed": 1,
             "reason": "seraph_launch_receipt_missing",
         }
-    launch = launches[0]
-    card = CardStore(home).fold(launch["card"])
-    status = getattr(getattr(card, "status", None), "value", getattr(card, "status", None))
-    producer = str((getattr(card, "links", {}) or {}).get("producer_identity") or "")
-    if (
-        card is None
-        or "review" not in card.labels
-        or status != "doing"
-        or card.owner != launch["owner"]
-        or card.meta.get("_claim_revision") != launch["revision"]
-        or launch["model"] != "sk-codex-mid"
-        or not launch["owner"].startswith("pi-seraph-")
-        or (producer and producer in launch["owner"])
-    ):
-        return {
-            "cards_examined": 1,
-            "recommendations": 0,
-            "suppressed": 1,
-            "reason": "seraph_claim_receipt_mismatch",
-        }
-    unit = f"skfleet-worker-{launch['lane']}-{launch['card']}.service"
-    active = subprocess.run(
-        ["systemctl", "--user", "is-active", "--quiet", unit],
-        capture_output=True,
-        timeout=10,
-    )
-    if active.returncode != 0:
-        return {
-            "cards_examined": 1,
-            "recommendations": 0,
-            "suppressed": 1,
-            "reason": "seraph_worker_not_active",
-        }
+    store = CardStore(home)
+    succeeded = failed = invalid = 0
+    source_heads: set[tuple[str, str]] = set()
+    seen_cards: set[str] = set()
+    for launch in launches:
+        card = store.fold(launch["card"])
+        events = store._read_events(launch["card"])
+        recommendations = [
+            event
+            for event in events
+            if event.get("action") == "review_assignment_recommendation"
+            and event.get("writer") == "link"
+            and event.get("reviewer") == launch["owner"]
+        ]
+        receipts = [
+            event
+            for event in events
+            if event.get("action") == "review_assignment_launch"
+            and event.get("reviewer") == launch["owner"]
+            and event.get("claim_revision") == launch["revision"]
+        ]
+        producer = str((getattr(card, "links", {}) or {}).get("producer_identity") or "")
+        source_head = (
+            str(getattr(card, "meta", {}).get("link_source_card") or ""),
+            str(getattr(card, "meta", {}).get("link_head_revision") or ""),
+        )
+        model_allowed = (launch["lane"] == "codex" and launch["model"] == "sk-codex-mid") or (
+            launch["lane"] == "escalate"
+            and launch["model"] == os.environ.get("SKFLEET_ESC_MODEL", "gpt-5.6-sol")
+        )
+        common_valid = (
+            card is not None
+            and launch["card"] not in seen_cards
+            and all(source_head)
+            and source_head not in source_heads
+            and "review" in card.labels
+            and "seat-seraph" in card.labels
+            and model_allowed
+            and launch["owner"].startswith("pi-seraph-")
+            and len(recommendations) == 1
+            and len(receipts) == 1
+            and recommendations[0].get("author") == producer
+            and producer != launch["owner"]
+            and producer != recommendations[0].get("reviewer")
+            and receipts[0].get("recommendation_id") == recommendations[0].get("recommendation_id")
+        )
+        seen_cards.add(launch["card"])
+        source_heads.add(source_head)
+        if not common_valid:
+            invalid += 1
+            continue
+        launched = launch["outcome"] == "LAUNCHED"
+        if receipts[0].get("launched") is not launched:
+            invalid += 1
+            continue
+        if launched:
+            status = getattr(getattr(card, "status", None), "value", getattr(card, "status", None))
+            if (
+                status != "doing"
+                or card.owner != launch["owner"]
+                or card.meta.get("_claim_revision") != launch["revision"]
+            ):
+                invalid += 1
+                continue
+            unit = f"skfleet-worker-{launch['lane']}-{launch['card']}.service"
+            active = subprocess.run(
+                ["systemctl", "--user", "is-active", "--quiet", unit],
+                capture_output=True,
+                timeout=10,
+            )
+            if active.returncode != 0:
+                invalid += 1
+                continue
+            succeeded += 1
+        elif card.owner is None:
+            failed += 1
+        else:
+            invalid += 1
+    suppressed = failed + invalid
+    if succeeded and suppressed:
+        reason = "seraph_dispatch_partial"
+    elif succeeded:
+        reason = "seraph_dispatch_complete"
+    else:
+        reason = "seraph_dispatch_failed"
     return {
-        "cards_examined": 1,
-        "recommendations": 1,
-        "suppressed": 0,
-        "reason": "seraph_dispatch_complete",
+        "cards_examined": len(launches),
+        "recommendations": succeeded,
+        "suppressed": suppressed,
+        "dispatch_succeeded": succeeded,
+        "dispatch_failed": suppressed,
+        "reason": reason,
     }
 
 
 def seraph_operation(home: Path) -> dict[str, int | str]:
-    """Launch at most one governed Seraph review through the fleet selector."""
+    """Launch one configurable, bounded Seraph review batch."""
 
     dispatcher = Path.home() / ".local/bin/skfleet-rotate.py"
+    try:
+        batch_size = int(os.environ.get("SKFLEET_SERAPH_BATCH_SIZE", "2"))
+    except ValueError:
+        batch_size = 0
+    if not 1 <= batch_size <= _MAX_SERAPH_BATCH:
+        return {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_succeeded": 0,
+            "dispatch_failed": 1,
+            "reason": "seraph_batch_size_invalid",
+        }
     env = os.environ.copy()
     env.update(
         {
             "SKFLEET_ONLY_SEAT": "seraph",
-            "SKFLEET_SEAT_TARGET": "1",
+            "SKFLEET_SEAT_TARGET": str(batch_size),
             "SKFLEET_CODEX_MODEL_S": "sk-codex-mid",
             "SKFLEET_QWEN_TARGET": "0",
             "SKFLEET_GLM_TARGET": "0",
             "SKFLEET_KIMI_TARGET": "0",
-            "SKFLEET_MAX_LAUNCH": "1",
+            "SKFLEET_MAX_LAUNCH": str(batch_size),
         }
     )
     completed = subprocess.run(

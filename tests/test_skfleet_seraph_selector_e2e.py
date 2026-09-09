@@ -319,6 +319,8 @@ cycle("replay", "seraph")
         "cards_examined": 1,
         "recommendations": 1,
         "suppressed": 0,
+        "dispatch_succeeded": 1,
+        "dispatch_failed": 0,
         "reason": "seraph_dispatch_complete",
     }
     claim_events = [

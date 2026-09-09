@@ -1,5 +1,11 @@
 # Changelog
 
+- Card `35a61efb`: changed Seraph's hard-coded single review launch into a
+  configurable batch bounded from one through eight, validated every exact
+  recommendation, claim revision, launch receipt, active worker, source head,
+  and producer identity independently, and made partial launch failures
+  truthful and safely retryable while retaining `sk-codex-mid` as the default.
+
 ## Unreleased
 
 - Cards `2e6bb78e` and `30c6909d`: add role-bounded lifecycle-seat fan-out
