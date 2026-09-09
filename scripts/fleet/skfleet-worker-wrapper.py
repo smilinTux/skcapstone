@@ -201,10 +201,43 @@ def classify_transport_failure(text: str) -> str | None:
     return None
 
 
-def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | None:
-    """Classify only terminal diagnostics that precede substantive output."""
+COMPLETION_OUTCOMES = frozenset({"PASS", "PASS_FOR_REVIEW", "BLOCKED"})
+
+
+def validate_completion_evidence(stdout: bytes, card_id: str) -> tuple[bool, str]:
+    """Require a card-bound, machine-readable terminal outcome.
+
+    Workers may write other progress text, but success is granted only when a
+    JSON object explicitly binds the outcome to this claim's card.  Lifecycle
+    words and links alone are deliberately insufficient.
+    """
+    text = stdout.decode("utf-8", errors="replace")
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        outcome = value.get("verdict", value.get("outcome"))
+        if value.get("card_id") == card_id and outcome in COMPLETION_OUTCOMES:
+            evidence = value.get("evidence")
+            if isinstance(evidence, list) and evidence:
+                return True, "valid_completion"
+            return False, "missing_evidence"
+    return False, "missing_terminal_card_outcome"
+
+
+def classify_pre_agent_failure(
+    stdout: bytes, stderr: bytes, rc: int, card_id: str = ""
+) -> str | None:
+    """Classify terminal diagnostics, including invalid zero-exit completion."""
     if rc == 0:
-        return None
+        valid, reason = validate_completion_evidence(stdout, card_id)
+        return None if valid else ("incomplete_" + reason)
     if not stdout:
         return classify_transport_failure(redact_stderr(stderr))
     text = stdout.decode("utf-8", errors="replace").strip()
@@ -290,8 +323,8 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
     stdout_tail = b""
     if stdout_size <= STDERR_LIMIT:
         stdout_tail = args.stdout.read_bytes()
-    failure = classify_pre_agent_failure(stdout_tail, stderr, rc)
-    if stdout_size and not failure:
+    failure = classify_pre_agent_failure(stdout_tail, stderr, rc, args.card)
+    if not failure:
         return
     attempted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     redacted = redact_stderr(stderr)
@@ -306,7 +339,9 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
         "owner": args.owner,
         "stderr": redacted,
         "stdout_log": args.stdout.name,
-        "transport_failure": failure,
+        "transport_failure": failure if failure in TRANSPORT_PATTERNS else None,
+        "completion_failure": failure if failure and failure.startswith("incomplete_") else None,
+        "reason": failure or "worker_exit",
     }
     digest = hashlib.sha256(
         f"{args.card}\0{args.claim_revision}\0{attempted_at}".encode()
@@ -459,12 +494,16 @@ def main() -> int:
             _, stderr = child.communicate()
         sys.stderr.buffer.write(stderr)
         record_terminal_exit(args, stderr, child.returncode)
+        valid, completion_reason = validate_completion_evidence(
+            args.stdout.read_bytes()[-STDERR_LIMIT:], args.card
+        ) if child.returncode == 0 else (False, "child_exit")
+        effective_rc = child.returncode if child.returncode else (0 if valid else 75)
         emit_work_mail(
             args,
-            "work.complete" if child.returncode == 0 else "work.blocked",
-            f"phase=finished exit_code={child.returncode}",
+            "work.complete" if valid else "work.blocked",
+            f"phase=finished exit_code={child.returncode} reason={completion_reason}",
         )
-        return child.returncode
+        return effective_rc
     finally:
         startup_stop.set()
         if startup_thread:
