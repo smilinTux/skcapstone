@@ -217,14 +217,22 @@ def verify_seraph_dispatch(
 ) -> dict[str, int | str]:
     """Verify every selector result independently and report partial outcomes."""
 
+    # The launcher writes its action log to stdout in normal operation, but
+    # worker/bootstrap failures can move the same typed lines to stderr.  A
+    # receipt is an output contract, not a stream contract, so inspect both
+    # streams without treating diagnostics as receipts.
+    output = "\n".join(
+        value for value in (getattr(completed, "stdout", ""), getattr(completed, "stderr", ""))
+        if value
+    )
     launches = [
         match.groupdict()
-        for line in completed.stdout.splitlines()
+        for line in output.splitlines()
         if (match := _LAUNCH.fullmatch(line.strip()))
     ]
     noops = [
         match.groupdict()
-        for line in completed.stdout.splitlines()
+        for line in output.splitlines()
         if (match := _NOOP.fullmatch(line.strip()))
     ]
     if completed.returncode != 0 and not launches:

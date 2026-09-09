@@ -180,6 +180,39 @@ def test_cycle_without_operation_is_explicit_noop(tmp_path: Path) -> None:
     assert result.reason == "operation_not_configured"
 
 
+def test_seraph_accepts_typed_launch_receipts_on_stderr(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="dispatcher diagnostics\n",
+                stderr=(
+                    "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|"
+                    "model=sk-codex-mid|owner=pi-seraph-chiap08-review01|"
+                    "claim_revision=revision-1\n"
+                ),
+            )
+        return SimpleNamespace(returncode=0)
+
+    card = SimpleNamespace(
+        labels=["review", "seat-seraph"],
+        status=SimpleNamespace(value="doing"),
+        owner="pi-seraph-chiap08-review01",
+        meta={"_claim_revision": "revision-1", "link_source_card": "source01", "link_head_revision": "a" * 40},
+        links={"producer_identity": "builder"},
+    )
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
+        lambda *_: review_events("pi-seraph-chiap08-review01", "revision-1"),
+    )
+    assert seraph_operation(tmp_path)["reason"] == "seraph_dispatch_complete"
+
+
 def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(tmp_path, monkeypatch) -> None:
     captured = {}
     calls = []
