@@ -103,6 +103,7 @@ def test_review_identity_gap_reviewer_not_distinct(tmp_path: Path) -> None:
         writer="link",
         reviewer="worker-x",
         recommendation_id="recx-2",
+        author="worker-x",
     )
     report = _census(home).run()
     gaps = [
@@ -112,6 +113,89 @@ def test_review_identity_gap_reviewer_not_distinct(tmp_path: Path) -> None:
     ]
     assert gaps
     assert any(g["defect"] == "reviewer_not_distinct" for g in gaps[0]["details"]["gaps"])
+
+
+def test_seraph_launch_identity_receipt_is_consistent(tmp_path: Path) -> None:
+    """The exact 206dc07d shape is valid: Seraph both claims and launches."""
+    home = _home(tmp_path)
+    store = CardStore(home)
+    store.create(
+        CardCore(id="206dc07d", title="review", created_by="jarvis", initial_labels=["review"])
+    )
+    reviewer = "pi-seraph-chiap08-206dc07d"
+    _add(
+        store,
+        "206dc07d",
+        "review_assignment_recommendation",
+        writer="link",
+        reviewer=reviewer,
+        author="jarvis",
+        recommendation_id="rec-206dc07d",
+    )
+    _add(
+        store,
+        "206dc07d",
+        "claim",
+        writer=reviewer,
+        owner=reviewer,
+        claim_revision="claim-206dc07d",
+        transition_id="claim-transition",
+    )
+    _add(
+        store,
+        "206dc07d",
+        "review_assignment_launch",
+        writer=reviewer,
+        reviewer=reviewer,
+        recommendation_id="rec-206dc07d",
+        claim_revision="claim-206dc07d",
+    )
+    report = _census(home).run()
+    assert not any(
+        finding["finding_type"] == mc.CensusFindingType.REVIEW_IDENTITY_GAP.value
+        for finding in report.findings
+    )
+
+
+def test_launch_receipt_must_match_exact_claim_owner(tmp_path: Path) -> None:
+    home = _home(tmp_path)
+    store = CardStore(home)
+    store.create(
+        CardCore(id="66660012", title="review", created_by="jarvis", initial_labels=["review"])
+    )
+    _add(
+        store,
+        "66660012",
+        "claim",
+        writer="seraph-a",
+        owner="seraph-a",
+        claim_revision="claim-a",
+        transition_id="claim-a",
+    )
+    _add(
+        store,
+        "66660012",
+        "review_assignment_recommendation",
+        writer="link",
+        reviewer="seraph-b",
+        author="producer",
+        recommendation_id="rec-b",
+    )
+    _add(
+        store,
+        "66660012",
+        "review_assignment_launch",
+        writer="seraph-b",
+        reviewer="seraph-b",
+        recommendation_id="rec-b",
+        claim_revision="claim-a",
+    )
+    gaps = [
+        finding
+        for finding in _census(home).run().findings
+        if finding["finding_type"] == mc.CensusFindingType.REVIEW_IDENTITY_GAP.value
+    ]
+    assert any(gap["defect"] == "launch_identity_mismatch" for gap in gaps[0]["details"]["gaps"])
 
 
 def test_selector_ready_counts(tmp_path: Path) -> None:

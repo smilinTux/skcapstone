@@ -25,9 +25,10 @@ does not explain itself, and that rule works because it fires where the value is
 written. Asking reviewers to remember does not work; the worker brief has always
 told them to return an exact PASS or BLOCKED, and 39 did not.
 
-DELIBERATELY NARROW. Only cards that identify themselves as reviews are checked,
-and any recorded outcome satisfies it, including BLOCKED. This does not judge
-the verdict, it requires that one exists.
+DELIBERATELY NARROW. Only cards that identify themselves as reviews or
+rereviews are checked. PASS additionally requires the complete protected-branch
+CI set. FAIL and structured BLOCKED remain terminal without waiting for CI,
+because a reviewer must be able to stop an unsafe candidate immediately.
 """
 
 from __future__ import annotations
@@ -37,15 +38,40 @@ import json
 import re
 from pathlib import Path
 
-#: A card is a review when it says so in its title. The estate marks these with a
-#: [REVIEW] tag, sometimes alongside a size tag, e.g. "[SKW-X-01][S][REVIEW]".
-_REVIEW_TITLE_RE = re.compile(r"\[REVIEW", re.IGNORECASE)
+#: Governed review and rereview cards use either a terminal tag or a tag with an
+#: embedded identifier, for example [REVIEW] or [REREVIEW-119db735].
+_REVIEW_TITLE_RE = re.compile(r"\[RE(?:RE)?VIEW(?:\]|-)", re.IGNORECASE)
 
 #: Link keys that carry a verdict. Matched on shape rather than an exact list,
 #: because the store has many spellings of the same idea.
 _OUTCOME_KEY_RE = re.compile(
     r"(verdict|outcome|result|disposition|review_decision)", re.IGNORECASE
 )
+_CHECK_KEY_RE = re.compile(r"(?:^|_)(?:check|checks|ci)(?:_|$)", re.IGNORECASE)
+_SUCCESS_CHECK_STATE = "SUCCESS"
+_REQUIRED_CI_LINK_KEYS = frozenset(
+    {
+        "ci_check_docs",
+        "ci_check_gitleaks",
+        "ci_check_lint",
+        "ci_check_shim_imports",
+        "ci_check_python311",
+        "ci_check_python312",
+    }
+)
+
+
+def _is_terminal_verdict(value: str) -> bool:
+    """Accept only canonical terminal verdicts, never lookalike prefixes."""
+    verdict = str(value or "").strip()
+    if verdict in {"PASS", "FAIL"}:
+        return True
+    if not verdict.startswith("BLOCKED "):
+        return False
+    fields = verdict.split()[1:]
+    return any(
+        field.startswith("blocked_on=") and field != "blocked_on=" for field in fields
+    ) and any(field.startswith("referent=") and field != "referent=" for field in fields)
 
 
 def is_review_card(title: str) -> bool:
@@ -94,6 +120,36 @@ def recorded_verdict(card_id: str, home: Path) -> str | None:
     return latest[1] if latest else None
 
 
+def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
+    """Return missing or non-successful required CI links."""
+    evidence_dir = Path(home) / "coordination" / "card_events"
+    latest: dict[str, tuple[str, str]] = {}
+    for path in sorted(glob.glob(str(evidence_dir / "*.jsonl"))):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if row.get("card_id") != card_id or row.get("action") != "link":
+                        continue
+                    key = str(row.get("link_key") or row.get("key") or "")
+                    value = str(row.get("link_value") or row.get("value") or "")
+                    if not _CHECK_KEY_RE.search(key):
+                        continue
+                    candidate = (str(row.get("ts") or ""), value)
+                    if key not in latest or candidate[0] >= latest[key][0]:
+                        latest[key] = candidate
+        except OSError:
+            continue
+    return sorted(
+        key
+        for key in _REQUIRED_CI_LINK_KEYS
+        if key not in latest or latest[key][1] != _SUCCESS_CHECK_STATE
+    )
+
+
 def validate_review_completion(card_id: str, title: str, home: Path) -> None:
     """Raise ValueError if a review card is being completed with no verdict.
 
@@ -107,14 +163,24 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
     """
     if not is_review_card(title):
         return
-    if recorded_verdict(card_id, home):
-        return
+    verdict = recorded_verdict(card_id, home)
+    if verdict == "PASS":
+        checks = unsuccessful_checks(card_id, home)
+        if not checks:
+            return
+        raise ValueError(
+            f"review card {card_id} has required checks that are not successful: "
+            + ", ".join(checks)
+        )
+    if verdict:
+        raise ValueError(
+            f"review card {card_id} has nonterminal verdict {verdict!r}; "
+            "record canonical PASS before completion"
+        )
     raise ValueError(
         f"review card {card_id} has recorded no verdict, so it cannot be "
         "completed. A review exists to produce a judgement, and completing one "
         "silently marks the parent as reviewed while leaving no record of what "
         "was found. Record the outcome first, for example: "
-        f"skcapstone coord link {card_id} verdict 'PASS ...' or a BLOCKED verdict "
-        "naming blocked_on with a category and a referent. BLOCKED is a perfectly "
-        "good answer here; saying nothing is not."
+        f"skcapstone coord link {card_id} verdict PASS after all required CI is SUCCESS."
     )
