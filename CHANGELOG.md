@@ -9,6 +9,9 @@
 
 ## Unreleased
 
+- Card `c6a5ce66`: preserve the invoked virtualenv interpreter directory when
+  resolving the adjacent SKMail executable under a restricted service PATH.
+
 - Card `a9f40c21`: resolve worker SKMail beside the active interpreter,
   require one startup hello and read-only direct-plus-all mailbox poll before
   work, and distinguish fast provider exits from missing executable evidence.
