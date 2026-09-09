@@ -4872,7 +4872,10 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     ]
     r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
-    launch_identity=_launch_claim_fields(name,claimed_revision,ok)
+    launch_identity=(
+        _launch_claim_fields(name,claimed_revision,ok)
+        if ok else "|owner=%s|claim_revision=%s" % (name, claimed_revision)
+    )
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
         (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))

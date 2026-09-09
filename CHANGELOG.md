@@ -1,5 +1,12 @@
 # Changelog
 
+- Card `35a61efb`: changed Seraph's hard-coded single review launch into a
+  configurable batch bounded from one through eight, validated every exact
+  recommendation, claim revision, launch receipt, active worker, source head,
+  and producer identity independently. A failed launch is retryable only after
+  its exact claim generation is released and CardStore confirms the card is
+  currently claimable. The default remains `sk-codex-mid`.
+
 ## Unreleased
 
 - Card `cf9ccb43`: reject oversized unclaimed cards before dispatch with a
