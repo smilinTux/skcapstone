@@ -124,7 +124,6 @@ def require_authority(
     action: Action,
     *,
     fenced_system_actors: Collection[str] = (),
-    casey_direction: str | None = None,
 ) -> None:
     """Reject actions not owned by the named seat or fenced system actor."""
 
@@ -138,8 +137,9 @@ def require_authority(
     if action not in _ALLOWED[seat]:
         raise BoundaryError(f"{seat.value} is not authorized for {action.value}")
     if seat is Seat.JARVIS and action is not Action.OBSERVE:
-        if not casey_direction or not casey_direction.strip():
-            raise BoundaryError(f"jarvis requires an explicit Casey direction for {action.value}")
+        raise BoundaryError(
+            f"jarvis requires a verified signed Casey direction for {action.value}"
+        )
 
 
 def verify_casey_direction(
@@ -150,6 +150,7 @@ def verify_casey_direction(
     target: str,
     scope: str,
     public_key_armor: str,
+    expected_fingerprint: str,
     verifier: Callable[[bytes, str, str], bool],
 ) -> None:
     """Verify one signed Casey direction bound to an exact emergency action.
@@ -168,6 +169,8 @@ def verify_casey_direction(
         raise BoundaryError(f"jarvis requires a signed Casey direction for {action.value}")
     if envelope.issuer.strip().lower() != "casey":
         raise BoundaryError("Jarvis emergency direction issuer must be Casey")
+    if not expected_fingerprint or envelope.issuer_fingerprint != expected_fingerprint:
+        raise BoundaryError("Jarvis emergency direction signer does not match Casey")
     try:
         verify_authorization(
             envelope,

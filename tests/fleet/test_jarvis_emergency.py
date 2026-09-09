@@ -46,16 +46,18 @@ ENTRYPOINTS = [
 
 
 @pytest.mark.parametrize(("method", "action"), ENTRYPOINTS)
-def test_each_entrypoint_verifies_before_mutation(method: str, action: Action) -> None:
+def test_each_entrypoint_verifies_before_mutation(tmp_path, method: str, action: Action) -> None:
     calls = []
     gateway = JarvisEmergencyGateway(
         actor="jarvis",
         envelope=_envelope(action),
         public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="CASEY-FINGERPRINT",
         verifier=lambda data, signature, key: (
             bool(data) and signature == "signed-by-casey" and key == "CASEY PUBLIC KEY"
         ),
         operations={action: lambda target: calls.append(target) or "ok"},
+        replay_store=tmp_path / "used",
     )
 
     assert getattr(gateway, method)(TARGET) == "ok"
@@ -63,14 +65,18 @@ def test_each_entrypoint_verifies_before_mutation(method: str, action: Action) -
 
 
 @pytest.mark.parametrize(("method", "action"), ENTRYPOINTS)
-def test_each_entrypoint_fails_closed_without_direction(method: str, action: Action) -> None:
+def test_each_entrypoint_fails_closed_without_direction(
+    tmp_path, method: str, action: Action
+) -> None:
     calls = []
     gateway = JarvisEmergencyGateway(
         actor="jarvis",
         envelope=None,
         public_key_armor="",
+        expected_fingerprint="CASEY-FINGERPRINT",
         verifier=lambda *_: True,
         operations={action: lambda target: calls.append(target)},
+        replay_store=tmp_path / "used",
     )
 
     with pytest.raises(BoundaryError, match="signed Casey direction"):
@@ -95,15 +101,17 @@ def test_each_entrypoint_fails_closed_without_direction(method: str, action: Act
         ),
     ],
 )
-def test_bypass_attempts_never_reach_operation(mutation, match: str) -> None:
+def test_bypass_attempts_never_reach_operation(tmp_path, mutation, match: str) -> None:
     calls = []
     envelope = mutation(_envelope(Action.MERGE))
     gateway = JarvisEmergencyGateway(
         actor="jarvis",
         envelope=envelope,
         public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="CASEY-FINGERPRINT",
         verifier=lambda _data, signature, _key: signature == "signed-by-casey",
         operations={Action.MERGE: lambda target: calls.append(target)},
+        replay_store=tmp_path / "used",
     )
 
     with pytest.raises(BoundaryError, match=match):
@@ -111,16 +119,74 @@ def test_bypass_attempts_never_reach_operation(mutation, match: str) -> None:
     assert calls == []
 
 
-def test_action_substitution_never_reaches_operation() -> None:
+def test_action_substitution_never_reaches_operation(tmp_path) -> None:
     calls = []
     gateway = JarvisEmergencyGateway(
         actor="jarvis",
         envelope=_envelope(Action.DEPLOY),
         public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="CASEY-FINGERPRINT",
         verifier=lambda *_: True,
         operations={Action.MERGE: lambda target: calls.append(target)},
+        replay_store=tmp_path / "used",
     )
 
     with pytest.raises(BoundaryError, match="does not match"):
+        gateway.merge(TARGET)
+    assert calls == []
+
+
+def test_wrong_signer_fingerprint_never_reaches_operation(tmp_path) -> None:
+    calls = []
+    gateway = JarvisEmergencyGateway(
+        actor="jarvis",
+        envelope=_envelope(Action.MERGE),
+        public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="A-DIFFERENT-FINGERPRINT",
+        verifier=lambda *_: True,
+        operations={Action.MERGE: lambda target: calls.append(target)},
+        replay_store=tmp_path / "used",
+    )
+
+    with pytest.raises(BoundaryError, match="does not match Casey"):
+        gateway.merge(TARGET)
+    assert calls == []
+
+
+def test_authorization_is_single_use(tmp_path) -> None:
+    calls = []
+    gateway = JarvisEmergencyGateway(
+        actor="jarvis",
+        envelope=_envelope(Action.MERGE),
+        public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="CASEY-FINGERPRINT",
+        verifier=lambda *_: True,
+        operations={Action.MERGE: lambda target: calls.append(target) or "ok"},
+        replay_store=tmp_path / "used",
+    )
+
+    assert gateway.merge(TARGET) == "ok"
+    with pytest.raises(ValueError, match="already been consumed"):
+        gateway.merge(TARGET)
+    assert calls == [TARGET]
+
+
+def test_unavailable_verification_fails_closed(tmp_path) -> None:
+    calls = []
+
+    def unavailable(*_args):
+        raise RuntimeError("verification unavailable")
+
+    gateway = JarvisEmergencyGateway(
+        actor="jarvis",
+        envelope=_envelope(Action.MERGE),
+        public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="CASEY-FINGERPRINT",
+        verifier=unavailable,
+        operations={Action.MERGE: lambda target: calls.append(target)},
+        replay_store=tmp_path / "used",
+    )
+
+    with pytest.raises(RuntimeError, match="verification unavailable"):
         gateway.merge(TARGET)
     assert calls == []

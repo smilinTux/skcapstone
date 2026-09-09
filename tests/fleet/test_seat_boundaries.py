@@ -159,18 +159,10 @@ def test_niobe_fleet_authority_does_not_imply_application_actuation() -> None:
     ],
 )
 def test_jarvis_emergency_tools_require_casey_direction(action: Action) -> None:
-    """Every Jarvis emergency tool fails closed without Casey's direction."""
+    """Generic authority cannot substitute unsigned text for Casey's signature."""
 
-    with pytest.raises(BoundaryError, match="explicit Casey direction"):
+    with pytest.raises(BoundaryError, match="verified signed Casey direction"):
         require_authority("jarvis", action)
-    require_authority("jarvis", action, casey_direction="casey-card-c4e7a9b2")
-
-
-def test_blank_casey_direction_fails_closed() -> None:
-    """Whitespace cannot masquerade as a Casey direction record."""
-
-    with pytest.raises(BoundaryError, match="explicit Casey direction"):
-        require_authority("jarvis", Action.MERGE, casey_direction="   ")
 
 
 def test_only_explicit_fenced_actor_may_mutate_fleet() -> None:

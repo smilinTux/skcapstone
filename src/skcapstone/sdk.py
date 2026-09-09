@@ -233,6 +233,7 @@ def coord_create(
     created_by: str = "",
     acceptance_criteria: Optional[list[str]] = None,
     dependencies: Optional[list[str]] = None,
+    casey_authorization: Optional[Path] = None,
 ) -> str:
     """Create a task on the shared coordination board.
 
@@ -265,6 +266,10 @@ def coord_create(
         acceptance_criteria=acceptance_criteria or [],
         dependencies=dependencies or [],
     )
+    from .jarvis_emergency import authorize_jarvis_entrypoint
+    from .seat_boundaries import Action
+
+    authorize_jarvis_entrypoint(task.created_by, Action.CREATE_CARD, task.id, casey_authorization)
     board.create_task(task)
     return task.id
 

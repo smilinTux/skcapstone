@@ -55,6 +55,7 @@ TOOLS: list[Tool] = [
                     "type": "boolean",
                     "default": False,
                 },
+                "casey_authorization": {"type": "string"},
             },
             "required": ["task_id", "agent_name"],
             "type": "object",
@@ -67,6 +68,7 @@ TOOLS: list[Tool] = [
             "properties": {
                 "agent_name": {"description": "Agent name completing the task", "type": "string"},
                 "task_id": {"description": "The task ID to complete", "type": "string"},
+                "casey_authorization": {"type": "string"},
             },
             "required": ["task_id", "agent_name"],
             "type": "object",
@@ -86,6 +88,7 @@ TOOLS: list[Tool] = [
                 },
                 "tags": {"description": "Task tags", "items": {"type": "string"}, "type": "array"},
                 "title": {"description": "Task title", "type": "string"},
+                "casey_authorization": {"type": "string"},
             },
             "required": ["title"],
             "type": "object",
@@ -214,6 +217,13 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
     if not task_id or not agent_name:
         return _error_response("task_id and agent_name are required")
 
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_jarvis_entrypoint(agent_name, Action.CLAIM, task_id, Path(auth) if auth else None)
     board = Board(_home())
     try:
         agent = board.claim_task(agent_name, task_id, force=bool(args.get("force", False)))
@@ -238,6 +248,15 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
     if not task_id or not agent_name:
         return _error_response("task_id and agent_name are required")
 
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_jarvis_entrypoint(
+        agent_name, Action.COMPLETE_CARD, task_id, Path(auth) if auth else None
+    )
     board = Board(_home())
     # board.complete_task() automatically mints Joules via _mint_joules_for_task
     agent = board.complete_task(agent_name, task_id)
@@ -282,6 +301,15 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
         priority=TaskPriority(args.get("priority", "medium")),
         tags=args.get("tags", []),
         created_by=args.get("created_by", "mcp"),
+    )
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_jarvis_entrypoint(
+        task.created_by, Action.CREATE_CARD, task.id, Path(auth) if auth else None
     )
     path = board.create_task(task)
     return _json_response(
