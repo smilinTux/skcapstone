@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,7 @@ def _functions(*names: str) -> dict[str, object]:
             r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
         ),
         "re": re,
+        "shlex": shlex,
     }
     exec(
         compile(ast.Module([nodes[name] for name in names], []), str(ROTATE), "exec"),
