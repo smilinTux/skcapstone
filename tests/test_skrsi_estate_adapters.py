@@ -91,8 +91,16 @@ def test_load_fans_out_extra_work_without_duplicates_or_cross_seat_ownership():
     assert not any(receipt.seat == "seat-conflict" for receipt in receipts)
     assert max(sum(r.seat == value for r in receipts) for value in {r.seat for r in receipts}) <= 2
     assert max(sum(r.host == value for r in receipts) for value in {r.host for r in receipts}) <= 3
-    assert max(sum(r.evaluator == value for r in receipts) for value in {r.evaluator for r in receipts}) <= 3
-    assert max(sum(r.route == value for r in receipts) for value in {r.route for r in receipts}) <= 4
+    assert (
+        max(
+            sum(r.evaluator == value for r in receipts)
+            for value in {r.evaluator for r in receipts}
+        )
+        <= 3
+    )
+    assert (
+        max(sum(r.route == value for r in receipts) for value in {r.route for r in receipts}) <= 4
+    )
 
 
 def test_source_head_deduplication_and_lifecycle_scope():

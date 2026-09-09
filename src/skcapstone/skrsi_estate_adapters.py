@@ -90,7 +90,9 @@ class FanoutReceipt:
     source_head: str = ""
 
 
-LIFECYCLE_SEATS = frozenset({"seraph", "link", "mero", "niobe", "tank", "atlas", "skcapstone", "skdashboard", "skworld"})
+LIFECYCLE_SEATS = frozenset(
+    {"seraph", "link", "mero", "niobe", "tank", "atlas", "skcapstone", "skdashboard", "skworld"}
+)
 DEFAULT_CHILD_MODEL = "sk-codex-mid"
 # Child lanes are narrower than their parent seat.  Jarvis is intentionally
 # absent: it is an authority seat, never a recurring lifecycle scheduler.
@@ -166,7 +168,9 @@ class BoundedFleetFanout:
                 # Source heads are globally unique launch identities.  This is
                 # deliberately checked before capacity so retries remain
                 # harmless even while the fleet is saturated.
-                source_prior = self._source_claims.get(item.source_head) if item.source_head else None
+                source_prior = (
+                    self._source_claims.get(item.source_head) if item.source_head else None
+                )
                 if source_prior is not None:
                     # A source-head replay is acknowledged by suppression, not
                     # returned as a second launch receipt.
