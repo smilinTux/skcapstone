@@ -22,6 +22,8 @@ from typing import Any, Callable
 
 from .skrsi_registry import SKRSIError, canonical_json
 
+_SQLITE_BUSY_TIMEOUT_MS = 2_000
+
 
 @dataclass(frozen=True)
 class HandoffContract:
@@ -99,8 +101,6 @@ class HandoffRuntime:
     Native CardStore locking remains responsible for distributed card claims.
     """
 
-    SQLITE_BUSY_TIMEOUT_MS = 30_000
-
     def __init__(self, path: Path, *, contracts=None):
         self.path = Path(path)
         self.contracts = dict(FIRST_WAVE_HANDOFFS if contracts is None else contracts)
@@ -122,11 +122,12 @@ class HandoffRuntime:
 
     @contextmanager
     def _db(self):
-        # Concurrent Link and Seraph cycles are normal. Let SQLite serialize
-        # writers instead of turning ordinary lock contention into a failure.
-        db = sqlite3.connect(self.path, timeout=self.SQLITE_BUSY_TIMEOUT_MS / 1000)
+        # SQLite's native busy handler retries only lock contention. Keep the
+        # wait bounded below the handoff deadline while allowing concurrent
+        # source-head replays to serialize at the shared transaction boundary.
+        db = sqlite3.connect(self.path, timeout=_SQLITE_BUSY_TIMEOUT_MS / 1_000)
         try:
-            db.execute(f"PRAGMA busy_timeout={self.SQLITE_BUSY_TIMEOUT_MS}")
+            db.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
             with db:
                 yield db
         finally:

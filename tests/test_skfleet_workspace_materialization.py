@@ -48,6 +48,36 @@ def _helpers() -> dict[str, object]:
     )
 
 
+def test_preclaim_source_ref_accepts_only_remote_exact_ref() -> None:
+    preflight = _load("_preclaim_source_ref")["_preclaim_source_ref"]
+    calls: list[list[str]] = []
+
+    def present(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "abc123\trefs/heads/main\n", "")
+
+    preflight("https://github.com/smilinTux/sklegal", "refs/heads/main", present)
+    assert calls == [
+        [
+            "git",
+            "ls-remote",
+            "--exit-code",
+            "https://github.com/smilinTux/sklegal",
+            "refs/heads/main",
+        ]
+    ]
+
+
+def test_preclaim_source_ref_blocks_before_workspace_creation() -> None:
+    preflight = _load("_preclaim_source_ref")["_preclaim_source_ref"]
+
+    def absent(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 2, "", "not found")
+
+    with pytest.raises(ValueError, match="reconstructability_blocked"):
+        preflight("https://github.com/smilinTux/sklegal", "missing", absent)
+
+
 def test_source_card_requires_exact_repository_and_base() -> None:
     spec = _helpers()["_source_workspace_spec"]
     with pytest.raises(ValueError, match="repository"):
@@ -284,10 +314,11 @@ def test_configured_source_workspace_is_still_verified(
 
 def test_materialization_precedes_claim_in_scheduler_source() -> None:
     source = ROTATE.read_text(encoding="utf-8")
+    preflight_at = source.index("_preclaim_source_ref(*_source_spec)")
     materialize_at = source.index("workspace=_materialize_worker_workspace(")
     claim_at = source.index(
         'claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name]',
         materialize_at,
     )
-    assert materialize_at < claim_at
+    assert preflight_at < materialize_at < claim_at
     assert "os.makedirs(workspace,exist_ok=True)" not in source
