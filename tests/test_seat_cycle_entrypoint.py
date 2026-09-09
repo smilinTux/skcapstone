@@ -289,6 +289,32 @@ def test_seraph_rejects_missing_wheel_owned_dispatcher(
     assert seraph_operation(tmp_path)["reason"] == "seraph_dispatcher_missing"
 
 
+def test_seraph_preserves_invoked_venv_when_python_is_a_symlink(
+    tmp_path, monkeypatch
+) -> None:
+    bindir = tmp_path / "venv" / "bin"
+    bindir.mkdir(parents=True)
+    interpreter = bindir / "python3"
+    interpreter.symlink_to("/usr/bin/python3")
+    dispatcher = bindir / "skfleet-rotate.py"
+    dispatcher.touch(mode=0o755)
+    captured = {}
+
+    def run(command, **_kwargs):
+        captured["command"] = command
+        return SimpleNamespace(
+            returncode=0,
+            stdout="NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat=seraph\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(interpreter))
+    monkeypatch.setattr(seat_entrypoint.subprocess, "run", run)
+
+    assert seraph_operation(tmp_path)["reason"] == "seraph_no_eligible_work"
+    assert captured["command"][0] == str(dispatcher)
+
+
 def test_seraph_zero_eligible_work_is_truthful_noop(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.subprocess.run",

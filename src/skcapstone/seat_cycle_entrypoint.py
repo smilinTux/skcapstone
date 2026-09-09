@@ -415,7 +415,7 @@ def _failed_launch_is_retryable(
 def seraph_operation(home: Path) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch."""
 
-    dispatcher = Path(sys.executable).resolve().parent / "skfleet-rotate.py"
+    dispatcher = Path(sys.executable).parent / "skfleet-rotate.py"
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,
