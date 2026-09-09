@@ -88,14 +88,15 @@ def test_terminal_pass_with_complete_ci_satisfies_it(tmp_path):
 
 
 @pytest.mark.parametrize("verdict", ["FAIL", "BLOCKED blocked_on=card referent=inc-01"])
-def test_negative_terminal_verdict_does_not_wait_for_ci(tmp_path, verdict):
+def test_negative_verdict_cannot_terminalize_governed_review(tmp_path, verdict):
     home = _home(
         tmp_path,
         "bbbbbbbb",
         "[X][REREVIEW] review",
         [("verdict", verdict, "2026-08-28T03:00:00")],
     )
-    validate_review_completion("bbbbbbbb", "[X][REREVIEW] review", home)
+    with pytest.raises(ValueError, match="canonical PASS"):
+        validate_review_completion("bbbbbbbb", "[X][REREVIEW] review", home)
 
 
 @pytest.mark.parametrize(

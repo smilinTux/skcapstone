@@ -971,15 +971,15 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_move(task_id, column, home, order, agent):
         """Move a card to a kanban column (backlog/ready/doing/review/done)."""
         home_path = Path(home).expanduser()
-        from skcoord.lifecycle import transition_task
+        from ..coord_completion import move_coord_task
 
         try:
-            receipt = transition_task(
+            receipt = move_coord_task(
                 home_path,
-                task_id=task_id,
-                column=column,
-                actor=agent or "coord-move",
-                order=order,
+                agent or "coord-move",
+                task_id,
+                column,
+                order,
             )
         except (OSError, RuntimeError, ValueError) as exc:
             message = str(exc)

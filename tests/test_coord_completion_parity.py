@@ -77,6 +77,14 @@ def _cli_complete(home: Path) -> tuple[bool, str]:
     return result.exit_code == 0, result.output
 
 
+def _cli_move(home: Path) -> tuple[bool, str]:
+    result = CliRunner().invoke(
+        _main(),
+        ["coord", "move", "abcd1234", "done", "--home", str(home), "--agent", "reviewer"],
+    )
+    return result.exit_code == 0, result.output
+
+
 async def _mcp_complete(home: Path) -> tuple[bool, str]:
     with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(home)):
         result = await call_tool(
@@ -86,20 +94,40 @@ async def _mcp_complete(home: Path) -> tuple[bool, str]:
     return "error" not in payload, str(payload)
 
 
+async def _mcp_move(home: Path) -> tuple[bool, str]:
+    with patch("skcapstone.mcp_tools._helpers.SHARED_ROOT", str(home)):
+        result = await call_tool(
+            "coord_move",
+            {"task_id": "abcd1234", "column": "done", "agent": "reviewer"},
+        )
+    payload = json.loads(result[0].text)
+    return "error" not in payload, str(payload)
+
+
+async def _invoke(home: Path, entrypoint: str) -> tuple[bool, str]:
+    if entrypoint == "cli_complete":
+        return _cli_complete(home)
+    if entrypoint == "cli_move":
+        return _cli_move(home)
+    if entrypoint == "mcp_complete":
+        return await _mcp_complete(home)
+    return await _mcp_move(home)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("title", ["[X][REVIEW] review", "[X][REREVIEW] rereview"])
-@pytest.mark.parametrize("entrypoint", ["cli", "mcp"])
+@pytest.mark.parametrize("entrypoint", ["cli_complete", "cli_move", "mcp_complete", "mcp_move"])
 async def test_cli_mcp_accept_only_complete_exact_success(
     tmp_path: Path, title: str, entrypoint: str
 ) -> None:
     home = _review_home(tmp_path, title, "SUCCESS")
-    ok, detail = _cli_complete(home) if entrypoint == "cli" else await _mcp_complete(home)
+    ok, detail = await _invoke(home, entrypoint)
     assert ok, detail
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("title", ["[X][REVIEW] review", "[X][REREVIEW] rereview"])
-@pytest.mark.parametrize("entrypoint", ["cli", "mcp"])
+@pytest.mark.parametrize("entrypoint", ["cli_complete", "cli_move", "mcp_complete", "mcp_move"])
 @pytest.mark.parametrize(
     "state",
     [
@@ -118,6 +146,6 @@ async def test_cli_mcp_fail_closed_for_noncanonical_or_incomplete_ci(
     tmp_path: Path, title: str, entrypoint: str, state: str | None
 ) -> None:
     home = _review_home(tmp_path, title, state)
-    ok, detail = _cli_complete(home) if entrypoint == "cli" else await _mcp_complete(home)
+    ok, detail = await _invoke(home, entrypoint)
     assert not ok, detail
     assert Board(home).load_agent("reviewer").current_task == "abcd1234"

@@ -172,19 +172,15 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
             f"review card {card_id} has required checks that are not successful: "
             + ", ".join(checks)
         )
-    if verdict and _is_terminal_verdict(verdict):
-        return
     if verdict:
         raise ValueError(
             f"review card {card_id} has nonterminal verdict {verdict!r}; "
-            "record terminal PASS, FAIL, or structured BLOCKED before completion"
+            "record canonical PASS before completion"
         )
     raise ValueError(
         f"review card {card_id} has recorded no verdict, so it cannot be "
         "completed. A review exists to produce a judgement, and completing one "
         "silently marks the parent as reviewed while leaving no record of what "
         "was found. Record the outcome first, for example: "
-        f"skcapstone coord link {card_id} verdict 'PASS ...' or a BLOCKED verdict "
-        "naming blocked_on with a category and a referent. BLOCKED is a perfectly "
-        "good answer here; saying nothing is not."
+        f"skcapstone coord link {card_id} verdict PASS after all required CI is SUCCESS."
     )

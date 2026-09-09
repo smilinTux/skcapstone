@@ -370,9 +370,8 @@ async def _handle_coord_kanban(_args: dict) -> list[TextContent]:
 
 async def _handle_coord_move(args: dict) -> list[TextContent]:
     """Move a card to a kanban column."""
-    from skcoord.lifecycle import transition_task
-
     from ..card import Column
+    from ..coord_completion import move_coord_task
 
     task_id = args.get("task_id", "")
     column = args.get("column", "")
@@ -382,12 +381,12 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
         return _error_response(f"invalid column '{column}'")
 
     try:
-        receipt = transition_task(
+        receipt = move_coord_task(
             _shared_root(),
-            task_id=task_id,
-            column=column,
-            actor=args.get("agent", "") or "coord-move",
-            order=args.get("order"),
+            args.get("agent", "") or "coord-move",
+            task_id,
+            column,
+            args.get("order"),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         message = str(exc)
