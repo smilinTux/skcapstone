@@ -239,7 +239,7 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
     gates = _strings(card, "focused_gates", "test_commands", "gates")
     if min(len(deliverables), len(criteria), len(verification), len(gates)) < 2:
         return DecompositionRecommendation(
-            "advisory",
+            "reject",
             "card is unsliceable without at least two concrete deliverables, "
             "acceptance criteria, verification scopes, and focused gates",
             signals,

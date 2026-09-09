@@ -82,7 +82,7 @@ def test_unsliceable_card_is_rejected_without_placeholder_leaves():
     card = _card(3)
     card["focused_gates"] = ["python -m pytest -q tests/all.py"]
     result = recommend_decomposition(card)
-    assert result.decision == "advisory"
+    assert result.decision == "reject"
     assert result.reason.startswith("card is unsliceable")
     assert result.leaves == ()
     assert result.composition_verification is None
