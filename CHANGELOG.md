@@ -8,8 +8,9 @@
   focused gate. A hash-bound parent composition contract proves complete
   coverage, while unsliceable cards fail closed without placeholder work.
   Active and review custody remains advisory, checkout identity is required,
-  reruns suppress duplicate leaves, and dependencies are added only where
-  required.
+  and dependencies are added only where required. The composition digest binds
+  every per-leaf assignment, and reruns suppress a successor only when its
+  canonical content and digest match exactly.
 
 - Card `44ad0d49`: add bounded elastic independent-review admission with
   source-head deduplication, reviewer independence, and physical-capacity

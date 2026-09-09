@@ -63,6 +63,7 @@ class LeafRecommendation:
     external_effects: tuple[str, ...] = ()
     repositories: tuple[str, ...] = ()
     base_identities: tuple[str, ...] = ()
+    composition_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ class DecompositionRecommendation:
     custody: str = "composition"
     parent_dependencies: tuple[str, ...] = ()
     composition_verification: CompositionVerificationContract | None = None
+    successor_mismatches: tuple[str, ...] = ()
 
 
 def _get(card: Any, name: str, default: Any = None) -> Any:
@@ -175,9 +177,42 @@ def _partition(items: tuple[str, ...], count: int) -> tuple[tuple[str, ...], ...
     return tuple(tuple(bucket) for bucket in buckets)
 
 
-def _coverage_digest(*groups: tuple[str, ...]) -> str:
-    payload = json.dumps(groups, ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(payload.encode()).hexdigest()
+def _canonical_json(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _leaf_manifest(leaf: LeafRecommendation) -> dict[str, Any]:
+    """Return the complete, stable assignment contract for one leaf."""
+    return {
+        "id": leaf.id,
+        "title": leaf.title,
+        "repositories": list(leaf.repositories),
+        "base_identities": list(leaf.base_identities),
+        "deliverables": list(leaf.deliverables),
+        "acceptance_criteria": list(leaf.acceptance_criteria),
+        "verification_scope": list(leaf.verification_scope),
+        "focused_gates": list(leaf.focused_gates),
+        "mutation_boundaries": list(leaf.mutation_boundaries),
+        "external_effects": list(leaf.external_effects),
+        "dependencies": list(leaf.depends_on),
+    }
+
+
+def _composition_digest(leaves: Sequence[LeafRecommendation]) -> str:
+    return hashlib.sha256(_canonical_json([_leaf_manifest(leaf) for leaf in leaves])).hexdigest()
+
+
+def _successor_matches(
+    successor: Any, expected: LeafRecommendation, composition_sha256: str
+) -> bool:
+    """Bare IDs never prove idempotency; exact canonical content and digest do."""
+    if not isinstance(successor, Mapping):
+        return False
+    actual = {key: successor.get(key) for key in _leaf_manifest(expected)}
+    return (
+        actual == _leaf_manifest(expected)
+        and successor.get("composition_sha256") == composition_sha256
+    )
 
 
 def _repository_identities(card: Any) -> tuple[tuple[str, str], ...]:
@@ -284,11 +319,8 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
         identity_parts = tuple((identities[0],) for _ in range(leaf_count))
     else:
         identity_parts = _partition(identities, leaf_count)
-    existing_successors = {
-        str(value) for value in _items(_linked(card, "successors", "successor") or [])
-    }
     leaf_ids = tuple(_stable_id(card_id, i) for i in range(1, leaf_count + 1))
-    leaves = tuple(
+    assigned_leaves = tuple(
         LeafRecommendation(
             leaf_ids[i - 1],
             f"{_get(card, 'title', card_id)}: leaf {i}",
@@ -305,7 +337,42 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             tuple(f"{repository}@{base}" for repository, base in identity_parts[i - 1]),
         )
         for i in range(1, leaf_count + 1)
-        if leaf_ids[i - 1] not in existing_successors
+    )
+    coverage_sha256 = _composition_digest(assigned_leaves)
+    assigned_leaves = tuple(
+        LeafRecommendation(
+            **{
+                **leaf.__dict__,
+                "composition_sha256": coverage_sha256,
+            }
+        )
+        for leaf in assigned_leaves
+    )
+    existing_successors = _items(_linked(card, "successor_cards", "successors", "successor") or [])
+    existing_by_id: dict[str, list[Mapping[str, Any]]] = {}
+    for successor in existing_successors:
+        if isinstance(successor, Mapping) and successor.get("id"):
+            existing_by_id.setdefault(str(successor["id"]), []).append(successor)
+    bare_ids = {
+        str(successor) for successor in existing_successors if not isinstance(successor, Mapping)
+    }
+    mismatches = tuple(
+        leaf.id
+        for leaf in assigned_leaves
+        if leaf.id in bare_ids
+        or (
+            leaf.id in existing_by_id
+            and (
+                len(existing_by_id[leaf.id]) != 1
+                or not _successor_matches(existing_by_id[leaf.id][0], leaf, coverage_sha256)
+            )
+        )
+    )
+    leaves = tuple(
+        leaf
+        for leaf in assigned_leaves
+        if len(existing_by_id.get(leaf.id, ())) != 1
+        or not _successor_matches(existing_by_id[leaf.id][0], leaf, coverage_sha256)
     )
     return DecompositionRecommendation(
         "reject",
@@ -327,18 +394,9 @@ def recommend_decomposition(card: Any, *, max_leaves: int = 5) -> DecompositionR
             ),
             external_effects=_strings(card, "external_effects", "effects", "side_effects"),
             dependencies=dependencies,
-            coverage_sha256=_coverage_digest(
-                tuple(repository for repository, _ in identities),
-                tuple(f"{repository}@{base}" for repository, base in identities),
-                deliverables,
-                criteria,
-                verification,
-                gates,
-                _strings(card, "mutation_boundaries", "boundaries", "write_scopes"),
-                _strings(card, "external_effects", "effects", "side_effects"),
-                dependencies,
-            ),
+            coverage_sha256=coverage_sha256,
         ),
+        mismatches,
     )
 
 

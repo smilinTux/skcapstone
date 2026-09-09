@@ -1,3 +1,5 @@
+from dataclasses import asdict
+
 from skcapstone.fleet.card_slicing import classify_card_scope, recommend_decomposition
 
 
@@ -227,13 +229,100 @@ def test_classification_uses_structural_signals_not_model_family():
     assert signals.independent_axes == 2
 
 
-def test_existing_successor_is_not_recommended_but_parent_contract_is_stable():
+def _successor_record(leaf):
+    value = asdict(leaf)
+    value["dependencies"] = value.pop("depends_on")
+    value.pop("repository")
+    value.pop("base_ref")
+    for key, item in tuple(value.items()):
+        if isinstance(item, tuple):
+            value[key] = list(item)
+    return value
+
+
+def test_exact_existing_successors_make_rerun_idempotent():
+    card = _card(2)
+    first = recommend_decomposition(card)
+    successors = [_successor_record(leaf) for leaf in first.leaves]
+    rerun = recommend_decomposition({**card, "successor_cards": successors})
+    assert rerun.leaves == ()
+    assert rerun.parent_dependencies == first.parent_dependencies
+    assert rerun.composition_verification == first.composition_verification
+    assert rerun.successor_mismatches == ()
+
+
+def test_bare_successor_id_collision_never_suppresses_expected_leaf():
     card = _card(2)
     first = recommend_decomposition(card)
     rerun = recommend_decomposition({**card, "successors": [first.leaves[0].id]})
-    assert tuple(leaf.id for leaf in rerun.leaves) == (first.leaves[1].id,)
-    assert rerun.parent_dependencies == first.parent_dependencies
-    assert rerun.composition_verification == first.composition_verification
+    assert tuple(leaf.id for leaf in rerun.leaves) == tuple(leaf.id for leaf in first.leaves)
+    assert rerun.successor_mismatches == (first.leaves[0].id,)
+
+
+def test_duplicate_successor_id_collision_never_suppresses_expected_leaf():
+    card = _card(2)
+    first = recommend_decomposition(card)
+    exact = _successor_record(first.leaves[0])
+    collision = {**exact, "deliverables": ["different-work"]}
+    rerun = recommend_decomposition({**card, "successor_cards": [exact, collision]})
+    assert first.leaves[0].id in {leaf.id for leaf in rerun.leaves}
+    assert rerun.successor_mismatches == (first.leaves[0].id,)
+
+
+def test_tampered_successor_content_is_recommended_for_reconciliation():
+    card = _card(2)
+    first = recommend_decomposition(card)
+    fields = (
+        "repositories",
+        "base_identities",
+        "deliverables",
+        "acceptance_criteria",
+        "verification_scope",
+        "focused_gates",
+        "mutation_boundaries",
+        "external_effects",
+        "dependencies",
+    )
+    for field in fields:
+        successor = _successor_record(first.leaves[0])
+        successor[field] = ["tampered"]
+        rerun = recommend_decomposition({**card, "successor_cards": [successor]})
+        assert first.leaves[0].id in {leaf.id for leaf in rerun.leaves}, field
+        assert rerun.successor_mismatches == (first.leaves[0].id,), field
+
+
+def test_stale_successor_digest_never_suppresses_expected_leaf():
+    card = _card(2)
+    first = recommend_decomposition(card)
+    successor = _successor_record(first.leaves[0])
+    successor["composition_sha256"] = "0" * 64
+    rerun = recommend_decomposition({**card, "successor_cards": [successor]})
+    assert first.leaves[0].id in {leaf.id for leaf in rerun.leaves}
+    assert rerun.successor_mismatches == (first.leaves[0].id,)
+
+
+def test_digest_binds_each_per_leaf_assignment():
+    card = _card(2, external_effects=["effect-a", "effect-b"])
+    original = recommend_decomposition(card)
+    digest = original.composition_verification.coverage_sha256
+    assert all(leaf.composition_sha256 == digest for leaf in original.leaves)
+    for field in (
+        "repository",
+        "base_ref",
+        "deliverables",
+        "acceptance_criteria",
+        "verification_surfaces",
+        "focused_gates",
+        "mutation_boundaries",
+        "external_effects",
+        "dependencies",
+    ):
+        changed_card = dict(card)
+        changed_card[field] = (
+            "changed" if field in {"repository", "base_ref"} else ["changed-a", "changed-b"]
+        )
+        changed = recommend_decomposition(changed_card)
+        assert changed.composition_verification.coverage_sha256 != digest, field
 
 
 def test_no_artificial_sibling_dependencies_or_parent_leaf_cycle():
