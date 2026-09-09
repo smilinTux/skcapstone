@@ -114,7 +114,11 @@ def _canonical_review(home: Path) -> tuple[CardStore, str]:
 
 def test_real_selector_claims_and_launches_one_canonical_seraph_review(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    # The subprocess must exercise source-bound materialization, independent of
+    # any workspace override inherited from the developer or fleet runner.
+    monkeypatch.setenv("SKFLEET_WORKSPACE", str(tmp_path / "ambient-workspace"))
     repository = "https://github.com/smilinTux/skcapstone"
     origin = tmp_path / "origin.git"
     seed = tmp_path / "seed"
@@ -236,6 +240,7 @@ cycle("replay", "seraph")
 """
     skcoord_root = Path(lifecycle_reassessment.__file__).resolve().parents[1]
     env = os.environ.copy()
+    env.pop("SKFLEET_WORKSPACE", None)
     env.update(
         {
             "HOME": str(home),
@@ -319,6 +324,9 @@ cycle("replay", "seraph")
         "cards_examined": 1,
         "recommendations": 1,
         "suppressed": 0,
+        "dispatch_succeeded": 1,
+        "dispatch_failed": 0,
+        "dispatch_retryable": 0,
         "reason": "seraph_dispatch_complete",
     }
     claim_events = [
