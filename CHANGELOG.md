@@ -10,7 +10,8 @@
 ## Unreleased
 
 - Card `2e0772ba`: package the fleet launcher's complete adjacent runtime
-  closure so live Seraph dispatch does not depend on stale host-local files.
+  closure, including SKMail and worktree helpers, so live Seraph dispatch does
+  not depend on stale host-local files.
 
 - Card `7c4f1a2b`: resolve Seraph's dispatcher beside the active SKCapstone
   interpreter and fail closed when the wheel-owned launcher is missing.

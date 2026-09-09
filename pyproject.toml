@@ -137,6 +137,9 @@ script-files = [
     "scripts/fleet/skfleet-pi-model-catalog.py",
     "scripts/fleet/skfleet-rotate.py",
     "scripts/fleet/skfleet-worker-wrapper.py",
+    "scripts/fleet/skmail_work.py",
+    "scripts/fleet/skmail_writer.py",
+    "scripts/fleet/worktree-hygiene.py",
 ]
 
 [tool.setuptools.package-data]

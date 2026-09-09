@@ -106,6 +106,9 @@ def test_rotation_launcher_is_installed_by_the_wheel() -> None:
         "skfleet-pi-model-catalog.py",
         "skfleet-rotate.py",
         "skfleet-worker-wrapper.py",
+        "skmail_work.py",
+        "skmail_writer.py",
+        "worktree-hygiene.py",
     ):
         assert f'"scripts/fleet/{runtime_file}"' in pyproject
 
