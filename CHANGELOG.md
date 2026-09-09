@@ -9,6 +9,9 @@
 
 ## Unreleased
 
+- Card `7c4f1a2b`: resolve Seraph's dispatcher beside the active SKCapstone
+  interpreter and fail closed when the wheel-owned launcher is missing.
+
 - Card `72240d71`: package the fleet rotation launcher in the SKCapstone wheel,
   point recurring fleet units at that wheel-owned executable, and isolate the
   CI libfuse refresh from unrelated third-party apt indexes.

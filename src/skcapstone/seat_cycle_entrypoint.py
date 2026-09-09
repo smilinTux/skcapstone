@@ -14,6 +14,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -414,7 +415,16 @@ def _failed_launch_is_retryable(
 def seraph_operation(home: Path) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch."""
 
-    dispatcher = Path.home() / ".local/bin/skfleet-rotate.py"
+    dispatcher = Path(sys.executable).resolve().parent / "skfleet-rotate.py"
+    if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
+        return {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_succeeded": 0,
+            "dispatch_failed": 1,
+            "reason": "seraph_dispatcher_missing",
+        }
     try:
         batch_size = int(os.environ.get("SKFLEET_SERAPH_BATCH_SIZE", "2"))
     except ValueError:

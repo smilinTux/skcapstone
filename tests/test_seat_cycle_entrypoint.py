@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import skcapstone.seat_cycle_entrypoint as seat_entrypoint
 from skcapstone.card import Column
 from skcapstone.card_store import CardCore, CardStore
 from skcapstone.link_review_work import card_generation, reconcile_review_work
@@ -19,6 +20,20 @@ from skcapstone.seat_cycle_entrypoint import (
     run_cycle,
     seraph_operation,
 )
+
+
+@pytest.fixture(autouse=True)
+def installed_dispatcher(tmp_path, monkeypatch):
+    """Provide the wheel-owned launcher expected by Seraph unit tests."""
+
+    bindir = tmp_path / "skenv-bin"
+    bindir.mkdir()
+    interpreter = bindir / "python3"
+    interpreter.touch(mode=0o755)
+    dispatcher = bindir / "skfleet-rotate.py"
+    dispatcher.touch(mode=0o755)
+    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(interpreter))
+    return dispatcher
 
 
 def review_events(
@@ -217,7 +232,9 @@ def test_seraph_accepts_typed_launch_receipts_on_stderr(tmp_path, monkeypatch) -
     assert seraph_operation(tmp_path)["reason"] == "seraph_dispatch_complete"
 
 
-def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(tmp_path, monkeypatch) -> None:
+def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
+    tmp_path, monkeypatch, installed_dispatcher
+) -> None:
     captured = {}
     calls = []
 
@@ -255,12 +272,21 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(tmp_path, monke
     )
     result = seraph_operation(tmp_path)
     assert result["reason"] == "seraph_dispatch_complete"
+    assert calls[0][0] == str(installed_dispatcher)
     assert captured["SKFLEET_ONLY_SEAT"] == "seraph"
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
     assert "SKFLEET_TARGET" not in captured
     assert captured["SKFLEET_CODEX_MODEL_S"] == "sk-codex-mid"
     assert calls[1][-1] == "skfleet-worker-codex-review01.service"
+
+
+def test_seraph_rejects_missing_wheel_owned_dispatcher(
+    tmp_path, installed_dispatcher
+) -> None:
+    installed_dispatcher.unlink()
+
+    assert seraph_operation(tmp_path)["reason"] == "seraph_dispatcher_missing"
 
 
 def test_seraph_zero_eligible_work_is_truthful_noop(tmp_path, monkeypatch) -> None:
