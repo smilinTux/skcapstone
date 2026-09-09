@@ -547,6 +547,21 @@ def _noop_reason(pool, owned, lane_deferred):
     return "no_eligible_work"
 
 
+def _seraph_terminal_noop(
+    host, only_seat, dry, pick_count, processed_picks, launch_receipts
+):
+    """Return one receipt only when every selected live Seraph pick was suppressed."""
+    if (
+        only_seat == "seraph"
+        and not dry
+        and pick_count
+        and processed_picks == pick_count
+        and launch_receipts == 0
+    ):
+        return "NOOP_RECEIPT|%s|reason=all_candidates_suppressed|seat=seraph" % host
+    return None
+
+
 def _coord_task_claimable(core):
     """Return whether the task-only coord claim command accepts this card kind."""
     return core.get("kind") == "task"
@@ -4591,11 +4606,14 @@ if not picks:
 
 raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0
 launched=0
+launch_receipts=0
+processed_picks=0
 launch_remaining={lane["name"]:lane["free"] for lane in LANES}
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     if launched>=MAX_LAUNCH or not any(launch_remaining.values()):
         break
+    processed_picks+=1
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,core)) for lane in LANES}
@@ -4933,6 +4951,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
         (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))
+    launch_receipts+=1
     if _fanout_request is not None:
         try:
             append_fanout_receipt(
@@ -4987,6 +5006,15 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         launched+=1
         launch_remaining[_LANE["name"]]-=1
     time.sleep(2)
+
+# A selected Seraph candidate can be suppressed before claim, leaving no worker
+# attempt to emit the normal launch receipt. Preserve the diagnostics above, but
+# close that producer contract with one bounded terminal receipt for the cycle.
+_terminal_noop = _seraph_terminal_noop(
+    HOST, _ONLY_SEAT, DRY, len(picks), processed_picks, launch_receipts
+)
+if _terminal_noop:
+    log(d, _terminal_noop)
 
 # Republish after launching, because the first publish is a snapshot of the
 # workers that existed when this tick STARTED. Publishing only there means a host

@@ -302,3 +302,18 @@ def test_seraph_selector_does_not_publish_seat_snapshot_as_global_capacity() -> 
     assert "if not ONLY_SEAT:\n    publish_live(sessions, worker_units)" in rotate
     assert "NOOP_RECEIPT|%s|reason=no_available_capacity|seat=%s" in rotate
     assert "NOOP_RECEIPT|%s|reason=%s|seat=%s" in rotate
+
+
+def test_seraph_all_suppressed_picks_emit_one_terminal_noop() -> None:
+    rotate = ROTATE.read_text(encoding="utf-8")
+    helpers = _load_functions("_seraph_terminal_noop")
+    receipt = helpers["_seraph_terminal_noop"](
+        "chiap08", "seraph", False, 2, 2, 0
+    )
+    assert receipt == (
+        "NOOP_RECEIPT|chiap08|reason=all_candidates_suppressed|seat=seraph"
+    )
+    assert helpers["_seraph_terminal_noop"](
+        "chiap08", "seraph", False, 2, 2, 1
+    ) is None
+    assert "launch_receipts+=1" in rotate

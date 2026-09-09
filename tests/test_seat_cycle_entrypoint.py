@@ -293,6 +293,33 @@ def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) 
     assert result["suppressed"] == 0
 
 
+def test_seraph_all_suppressed_noop_is_accepted_from_stderr(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="REVIEW_ASSIGNMENT_BLOCKED|chiap08|review01|incomplete producer evidence\n",
+            stderr="NOOP_RECEIPT|chiap08|reason=all_candidates_suppressed|seat=seraph\n",
+        ),
+    )
+    result = seraph_operation(tmp_path)
+    assert result["reason"] == "seraph_all_candidates_suppressed"
+    assert result["suppressed"] == 0
+
+
+def test_seraph_rejects_duplicate_noop_receipts(tmp_path, monkeypatch) -> None:
+    receipt = "NOOP_RECEIPT|chiap08|reason=all_candidates_suppressed|seat=seraph\n"
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=receipt + receipt, stderr=""
+        ),
+    )
+    result = seraph_operation(tmp_path)
+    assert result["reason"] == "seraph_launch_receipt_missing"
+    assert result["suppressed"] == 1
+
+
 def test_seraph_rejects_duplicate_launch_receipts(tmp_path, monkeypatch) -> None:
     receipt = (
         "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|model=model|"
