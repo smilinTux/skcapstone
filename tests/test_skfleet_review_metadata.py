@@ -21,6 +21,7 @@ from skcapstone.seat_runtime import (
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 COORD = ROOT / "src" / "skcapstone" / "cli" / "coord.py"
+SOURCE_BINDING = {"link_source_card": "source01", "link_head_revision": "a" * 40}
 
 
 class BoundaryError(Exception):
@@ -109,6 +110,7 @@ def test_typed_metadata_wins_over_stale_description() -> None:
             "producer_identity": "current-producer",
             "candidate_evidence_sha256": digest,
         },
+        "meta": SOURCE_BINDING,
     }
 
     reviewer, _recommendation, _handoff = namespace["_review_assignment"](
@@ -124,6 +126,8 @@ def test_coord_create_help_example_supplies_claimable_review_metadata() -> None:
     source = COORD.read_text(encoding="utf-8")
     assert "coord link e5f6a7b8 producer_identity pi-codex-source" in source
     assert "coord link e5f6a7b8 candidate_evidence_sha256 " in source
+    assert "coord link e5f6a7b8 link_source_card a1b2c3d4" in source
+    assert "coord link e5f6a7b8 link_head_revision " in source
     namespace, seen, _handoffs = _load_assignment()
     digest = "a" * 64
 
@@ -136,6 +140,7 @@ def test_coord_create_help_example_supplies_claimable_review_metadata() -> None:
                 "producer_identity": "pi-codex-source",
                 "candidate_evidence_sha256": digest,
             },
+            "meta": SOURCE_BINDING,
         },
         ["review"],
         "link",
@@ -151,7 +156,8 @@ def test_legacy_description_remains_supported() -> None:
     core = {
         "description": "Producer identity: legacy-producer. Candidate evidence sha256="
         + digest
-        + "."
+        + ".",
+        "meta": SOURCE_BINDING,
     }
 
     namespace["_review_assignment"]("deadbeef", core, ["review"], "link")
@@ -185,13 +191,30 @@ def test_incomplete_or_malformed_typed_metadata_fails_closed(links) -> None:
     assert seen == []
 
 
+def test_review_without_source_binding_fails_before_recommendation() -> None:
+    namespace, seen, handoffs = _load_assignment()
+    core = {
+        "links": {
+            "producer_identity": "producer",
+            "candidate_evidence_sha256": "a" * 64,
+        }
+    }
+
+    with pytest.raises(BoundaryError):
+        namespace["_review_assignment"]("8daa0871", core, ["review", "seat-seraph"], "seraph")
+
+    assert seen == []
+    assert handoffs == []
+
+
 def test_only_live_successful_launch_consumes_review_recommendation() -> None:
     digest = "f" * 64
     core = {
         "links": {
             "producer_identity": "producer",
             "candidate_evidence_sha256": digest,
-        }
+        },
+        "meta": SOURCE_BINDING,
     }
     events = [
         {
@@ -237,7 +260,8 @@ def test_released_review_claim_does_not_consume_recommendation() -> None:
             "links": {
                 "producer_identity": "producer",
                 "candidate_evidence_sha256": "f" * 64,
-            }
+            },
+            "meta": SOURCE_BINDING,
         },
         ["review"],
         "link",
@@ -263,7 +287,8 @@ def test_changed_review_generation_gets_a_distinct_recommendation(tmp_path: Path
         "links": {
             "producer_identity": "producer",
             "candidate_evidence_sha256": "a" * 64,
-        }
+        },
+        "meta": SOURCE_BINDING,
     }
     namespace = _load_real_assignment(home)
 

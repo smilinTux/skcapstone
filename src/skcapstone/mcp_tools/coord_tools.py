@@ -237,6 +237,9 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
     )
     board = Board(_home())
     try:
+        from ..review_admission import assert_governed_review_claim
+
+        assert_governed_review_claim(_home(), task_id, agent_name)
         agent = board.claim_task(agent_name, task_id, force=bool(args.get("force", False)))
         return _json_response(
             {

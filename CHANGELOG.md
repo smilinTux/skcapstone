@@ -9,6 +9,9 @@
 
 ## Unreleased
 
+- Card `5ae93ae0`: require every governed Seraph review card to carry its
+  immutable source-card and head-revision binding before scheduler admission.
+
 - Card `2e0772ba`: package the fleet launcher's complete adjacent runtime
   closure, including SKMail and worktree helpers, so live Seraph dispatch does
   not depend on stale host-local files.

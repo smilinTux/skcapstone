@@ -106,6 +106,10 @@ def test_canonical_review_card_enters_only_seraph_selector() -> None:
             "producer_identity": "mero",
             "candidate_evidence_sha256": "a" * 64,
         },
+        "meta": {
+            "link_source_card": "source",
+            "link_head_revision": "b" * 40,
+        },
     }
     claimability = {
         "claimable": False,

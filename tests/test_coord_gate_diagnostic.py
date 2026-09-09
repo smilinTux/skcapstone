@@ -24,6 +24,7 @@ def test_original_incomplete_review_shape_reports_exact_reasons() -> None:
     ) == (
         "wrong-seat",
         "absent-typed-metadata",
+        "absent-source-binding",
         "dependency",
         "ownership",
         "capacity",
@@ -36,6 +37,8 @@ def test_complete_seraph_review_has_no_review_gate_reasons() -> None:
         "meta": {
             "producer_identity": "producer",
             "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "source01",
+            "link_head_revision": "a" * 40,
         },
     }
 
@@ -65,6 +68,7 @@ def test_coord_gates_reports_live_review_contract_reasons(tmp_path, monkeypatch)
     assert report["reasons"] == [
         "wrong-seat",
         "absent-typed-metadata",
+        "absent-source-binding",
         "dependency",
         "ownership",
         "capacity",

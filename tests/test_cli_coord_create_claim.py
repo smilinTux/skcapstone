@@ -86,6 +86,8 @@ def test_governed_review_create_lists_all_missing_admission_fields(tmp_path, mon
         "seat-seraph",
         "producer_identity",
         "candidate_evidence_sha256",
+        "source_card",
+        "head_revision",
     ):
         assert field in result.output
     assert CardStore(tmp_path).fold("90dea47b") is None
@@ -118,6 +120,10 @@ def test_complete_governed_review_metadata_is_stored_atomically(tmp_path, monkey
             "source-worker",
             "--candidate-evidence-sha256",
             digest,
+            "--source-card",
+            "44ad0d49",
+            "--head-revision",
+            "b" * 40,
         ],
     )
 
@@ -126,6 +132,8 @@ def test_complete_governed_review_metadata_is_stored_atomically(tmp_path, monkey
     assert card is not None
     assert card.meta["producer_identity"] == "source-worker"
     assert card.meta["candidate_evidence_sha256"] == digest
+    assert card.meta["link_source_card"] == "44ad0d49"
+    assert card.meta["link_head_revision"] == "b" * 40
 
 
 def test_ordinary_repair_card_does_not_require_review_metadata(tmp_path, monkeypatch):

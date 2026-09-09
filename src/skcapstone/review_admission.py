@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 
 def governed_review_metadata(
@@ -33,6 +34,21 @@ def governed_review_metadata(
     return producer_match.group(1).strip(), evidence_match.group(1)
 
 
+def governed_review_source_binding(
+    core: Mapping[str, object], labels: Sequence[str]
+) -> tuple[str, str] | None:
+    """Return the immutable source card and revision for Seraph review work."""
+    if "review" not in {str(label).strip().lower() for label in labels}:
+        return None
+    links = core.get("links") if isinstance(core.get("links"), dict) else {}
+    meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
+    source = str(links.get("link_source_card") or meta.get("link_source_card") or "").strip()
+    head = str(links.get("link_head_revision") or meta.get("link_head_revision") or "").strip()
+    if not source or not re.fullmatch(r"[0-9a-f]{40}", head):
+        return None
+    return source, head
+
+
 def governed_review_gate_reasons(
     core: Mapping[str, object],
     labels: Sequence[str],
@@ -50,6 +66,8 @@ def governed_review_gate_reasons(
         reasons.append("wrong-seat")
     if governed_review_metadata(core, labels) is None:
         reasons.append("absent-typed-metadata")
+    if governed_review_source_binding(core, labels) is None:
+        reasons.append("absent-source-binding")
     if dependency_blocked:
         reasons.append("dependency")
     if owned:
@@ -57,3 +75,27 @@ def governed_review_gate_reasons(
     if not capacity_available:
         reasons.append("capacity")
     return tuple(reasons)
+
+
+def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
+    """Fail closed when a SKCapstone claim bypasses governed review admission."""
+    from .card_store import CardStore
+
+    card = CardStore(home).fold(card_id)
+    if card is None:
+        return
+    labels = [str(label).strip().lower() for label in card.labels]
+    if "review" not in labels:
+        return
+    core = {
+        "title": card.title,
+        "description": card.description,
+        "links": card.links,
+        "meta": card.meta,
+    }
+    reasons = governed_review_gate_reasons(core, labels)
+    reviewer = agent.strip().lower()
+    if reviewer != "seraph" and not reviewer.startswith("pi-seraph-"):
+        reasons = ("wrong-reviewer", *reasons)
+    if reasons:
+        raise ValueError("governed review claim denied: " + ", ".join(dict.fromkeys(reasons)))

@@ -199,6 +199,10 @@ def _governed_review_metadata(core, labels):
             return None
         producer = producer_match.group(1).strip()
         evidence = evidence_match.group(1)
+    source = str(links.get("link_source_card") or meta.get("link_source_card") or "").strip()
+    head = str(links.get("link_head_revision") or meta.get("link_head_revision") or "").strip()
+    if not source or not re.fullmatch(r"[0-9a-f]{40}", head):
+        return None
     return producer, evidence
 
 
@@ -1361,6 +1365,7 @@ def _fold_claimability(core, rows):
             "producer_identity", "candidate_evidence_sha256", "pr",
             "pull_request", "open_pr", "evidence", "evidence_sha256",
             "repository", "base_ref",
+            "link_source_card", "link_head_revision",
         }:
             value = event.get("link_value")
             if not isinstance(value, str) or not value.strip():

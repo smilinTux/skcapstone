@@ -302,6 +302,9 @@ def register_coord_commands(main: click.Group) -> None:
             "    coord link e5f6a7b8 producer_identity pi-codex-source --agent mero\n"
             "    coord link e5f6a7b8 candidate_evidence_sha256 "
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --agent mero\n"
+            "    coord link e5f6a7b8 link_source_card a1b2c3d4 --agent mero\n"
+            "    coord link e5f6a7b8 link_head_revision "
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --agent mero\n"
             "\n"
             "\b\n"
             "  Something that needs a human first. Note the LABEL, not [HUMAN] in the\n"
@@ -358,6 +361,8 @@ def register_coord_commands(main: click.Group) -> None:
         default=None,
         help="64-hex candidate evidence digest for governed review cards.",
     )
+    @click.option("--source-card", default=None, help="Governed review source card ID.")
+    @click.option("--head-revision", default=None, help="Governed review source head SHA.")
     @click.option(
         "--claim-for-me",
         is_flag=True,
@@ -377,6 +382,8 @@ def register_coord_commands(main: click.Group) -> None:
         casey_change_id,
         producer_identity,
         candidate_evidence_sha256,
+        source_card,
+        head_revision,
         claim_for_me,
     ):
         """Create a new task on the board."""
@@ -396,6 +403,10 @@ def register_coord_commands(main: click.Group) -> None:
                 missing.append("producer_identity")
             if not re.fullmatch(r"[0-9a-fA-F]{64}", str(candidate_evidence_sha256 or "")):
                 missing.append("candidate_evidence_sha256")
+            if not str(source_card or "").strip():
+                missing.append("source_card")
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", str(head_revision or "")):
+                missing.append("head_revision")
             if missing:
                 raise click.ClickException(
                     "incomplete governed review card; missing: " + ", ".join(missing)
@@ -406,6 +417,8 @@ def register_coord_commands(main: click.Group) -> None:
             meta = {
                 "producer_identity": str(producer_identity).strip(),
                 "candidate_evidence_sha256": str(candidate_evidence_sha256).lower(),
+                "link_source_card": str(source_card).strip(),
+                "link_head_revision": str(head_revision).lower(),
             }
 
         validate_agent_name(by)
@@ -440,6 +453,8 @@ def register_coord_commands(main: click.Group) -> None:
             if not owner:
                 raise click.ClickException("no active agent could be resolved")
             validate_agent_name(owner)
+            if governed_review and owner.strip().lower() != "seraph":
+                raise click.ClickException("governed review cards may be claimed only by Seraph")
             try:
                 path, revision = board.create_claimed_task(task, owner)
             except (RuntimeError, ValueError) as exc:
@@ -483,6 +498,9 @@ def register_coord_commands(main: click.Group) -> None:
         )
         board = Board(home_path)
         try:
+            from ..review_admission import assert_governed_review_claim
+
+            assert_governed_review_claim(home_path, task_id, agent)
             ag = board.claim_task(agent, task_id, force=force)
             console.print(f"\n  [green]Claimed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
         except ValueError as e:

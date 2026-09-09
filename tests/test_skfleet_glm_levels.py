@@ -125,6 +125,10 @@ def _review_card(core_title="Fix the widget"):
         + "a" * 64
         + ". Candidate commit: c.",
         "links": {},
+        "meta": {
+            "link_source_card": "source01",
+            "link_head_revision": "a" * 40,
+        },
     }
 
 
