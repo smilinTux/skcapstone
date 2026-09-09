@@ -148,6 +148,7 @@ def verify_casey_direction(
     *,
     envelope: AuthorizationEnvelope | None,
     target: str,
+    change_id: str,
     scope: str,
     public_key_armor: str,
     expected_fingerprint: str,
@@ -178,7 +179,7 @@ def verify_casey_direction(
             verifier=verifier,
             expected_action=f"jarvis.{action.value}",
             expected_target=target,
-            expected_change_id=envelope.change_id,
+            expected_change_id=change_id,
             expected_scope=scope,
         )
     except ValueError as exc:

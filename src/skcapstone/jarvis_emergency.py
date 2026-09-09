@@ -24,12 +24,15 @@ def authorize_jarvis_entrypoint(
     action: Action,
     target: str,
     authorization_path: Path | None,
+    change_id: str | None,
 ) -> None:
     """Gate a real mutation surface when its authenticated actor is Jarvis."""
     if actor.strip().lower() != "jarvis":
         return
     if authorization_path is None:
         raise ValueError(f"jarvis requires --casey-authorization for {action.value}")
+    if not change_id:
+        raise ValueError(f"jarvis requires --casey-change-id for {action.value}")
 
     from capauth import resolve_capauth_home
     from capauth.crypto import get_backend
@@ -49,6 +52,7 @@ def authorize_jarvis_entrypoint(
         action,
         envelope=envelope,
         target=target,
+        change_id=change_id,
         scope=SCOPE,
         public_key_armor=public_armor,
         expected_fingerprint=profile.key_info.fingerprint,
@@ -65,6 +69,7 @@ class JarvisEmergencyGateway:
     envelope: AuthorizationEnvelope | None
     public_key_armor: str
     expected_fingerprint: str
+    change_id: str
     verifier: Verifier
     operations: Mapping[Action, Operation]
     replay_store: Path
@@ -76,6 +81,7 @@ class JarvisEmergencyGateway:
             action,
             envelope=self.envelope,
             target=target,
+            change_id=self.change_id,
             scope=self.scope,
             public_key_armor=self.public_key_armor,
             expected_fingerprint=self.expected_fingerprint,

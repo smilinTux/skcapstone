@@ -53,6 +53,7 @@ def test_each_entrypoint_verifies_before_mutation(tmp_path, method: str, action:
         envelope=_envelope(action),
         public_key_armor="CASEY PUBLIC KEY",
         expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
         verifier=lambda data, signature, key: (
             bool(data) and signature == "signed-by-casey" and key == "CASEY PUBLIC KEY"
         ),
@@ -74,6 +75,7 @@ def test_each_entrypoint_fails_closed_without_direction(
         envelope=None,
         public_key_armor="",
         expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
         verifier=lambda *_: True,
         operations={action: lambda target: calls.append(target)},
         replay_store=tmp_path / "used",
@@ -109,6 +111,7 @@ def test_bypass_attempts_never_reach_operation(tmp_path, mutation, match: str) -
         envelope=envelope,
         public_key_armor="CASEY PUBLIC KEY",
         expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
         verifier=lambda _data, signature, _key: signature == "signed-by-casey",
         operations={Action.MERGE: lambda target: calls.append(target)},
         replay_store=tmp_path / "used",
@@ -126,6 +129,7 @@ def test_action_substitution_never_reaches_operation(tmp_path) -> None:
         envelope=_envelope(Action.DEPLOY),
         public_key_armor="CASEY PUBLIC KEY",
         expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
         verifier=lambda *_: True,
         operations={Action.MERGE: lambda target: calls.append(target)},
         replay_store=tmp_path / "used",
@@ -143,12 +147,31 @@ def test_wrong_signer_fingerprint_never_reaches_operation(tmp_path) -> None:
         envelope=_envelope(Action.MERGE),
         public_key_armor="CASEY PUBLIC KEY",
         expected_fingerprint="A-DIFFERENT-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
         verifier=lambda *_: True,
         operations={Action.MERGE: lambda target: calls.append(target)},
         replay_store=tmp_path / "used",
     )
 
     with pytest.raises(BoundaryError, match="does not match Casey"):
+        gateway.merge(TARGET)
+    assert calls == []
+
+
+def test_wrong_change_never_reaches_operation(tmp_path) -> None:
+    calls = []
+    gateway = JarvisEmergencyGateway(
+        actor="jarvis",
+        envelope=_envelope(Action.MERGE),
+        public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="a-different-change",
+        verifier=lambda *_: True,
+        operations={Action.MERGE: lambda target: calls.append(target)},
+        replay_store=tmp_path / "used",
+    )
+
+    with pytest.raises(BoundaryError, match="does not match"):
         gateway.merge(TARGET)
     assert calls == []
 
@@ -160,6 +183,7 @@ def test_authorization_is_single_use(tmp_path) -> None:
         envelope=_envelope(Action.MERGE),
         public_key_armor="CASEY PUBLIC KEY",
         expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
         verifier=lambda *_: True,
         operations={Action.MERGE: lambda target: calls.append(target) or "ok"},
         replay_store=tmp_path / "used",
@@ -182,6 +206,7 @@ def test_unavailable_verification_fails_closed(tmp_path) -> None:
         envelope=_envelope(Action.MERGE),
         public_key_armor="CASEY PUBLIC KEY",
         expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
         verifier=unavailable,
         operations={Action.MERGE: lambda target: calls.append(target)},
         replay_store=tmp_path / "used",
