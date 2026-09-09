@@ -1,5 +1,9 @@
 # Changelog
 
+- Card `7ec78ece`: refreshed the lifecycle merge-authority fence onto current
+  protected main, preserving exact base, head, tree, patch, CI, independent
+  review, concurrency, and PR582 sequencing requirements.
+
 - Card `35a61efb`: changed Seraph's hard-coded single review launch into a
   configurable batch bounded from one through eight, validated every exact
   recommendation, claim revision, launch receipt, active worker, source head,
