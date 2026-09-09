@@ -25,6 +25,12 @@ def test_all_six_profiles_share_the_runtime_contract() -> None:
         "smilinTux/sk-standards",
     ]
     assert value["default_model_route"] == "sk-codex-mid"
+    assert value["default_model_profile"] == "gpt-5.6-luna"
+    assert value["model_escalation_policy"] == {
+        "scope": "card",
+        "mode": "opt_in",
+        "automatic": False,
+    }
     assert value["active_host"] == "chiap08"
     assert value["mail"] == {
         "startup_hello_recipient": "all",
@@ -124,6 +130,12 @@ def test_profile_convergence_is_exact_idempotent_and_rollback_safe(tmp_path: Pat
     assert all(b'"read_direct_and_all":true' in value for value in installed.values())
     assert all(b'"look_for_help_and_handoffs":true' in value for value in installed.values())
     assert all(b'"interval_seconds":300' in value for value in installed.values())
+    assert all(b'"model_route":"sk-codex-mid"' in value for value in installed.values())
+    assert all(b'"model_profile":"gpt-5.6-luna"' in value for value in installed.values())
+    assert all(
+        b'"model_escalation_policy":{"automatic":false,"mode":"opt_in","scope":"card"}' in value
+        for value in installed.values()
+    )
     assert all((home / "agents" / seat / STARTUP_FILENAME).is_file() for seat in LIFECYCLE_SEATS)
     assert load_seat_control_plane() == json.loads(
         (home / "coordination/seat-control-plane.json").read_text()

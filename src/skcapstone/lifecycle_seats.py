@@ -27,6 +27,14 @@ def load_lifecycle_seat_profiles() -> dict[str, Any]:
         raise ValueError("lifecycle seat set does not match the canonical six seats")
     if value.get("default_model_route") != "sk-codex-mid":
         raise ValueError("lifecycle seats must default to sk-codex-mid")
+    if value.get("default_model_profile") != "gpt-5.6-luna":
+        raise ValueError("lifecycle seats must default to gpt-5.6-luna")
+    if value.get("model_escalation_policy") != {
+        "scope": "card",
+        "mode": "opt_in",
+        "automatic": False,
+    }:
+        raise ValueError("model escalation must be card-scoped and opt-in")
     if value.get("jarvis", {}).get("recurring_lifecycle") is not False:
         raise ValueError("Jarvis must remain outside recurring lifecycle work")
     return value
@@ -89,6 +97,8 @@ def converge_lifecycle_seats(home: Path, rollback_dir: Path) -> dict[str, Any]:
             "schema": "sk.lifecycle-seat/v1",
             "seat": seat,
             "model_route": profiles["default_model_route"],
+            "model_profile": profiles["default_model_profile"],
+            "model_escalation_policy": profiles["model_escalation_policy"],
             "product_scope": profiles["product_scope"],
             "role": seat_profile["role"],
             "activation_state": seat_profile["activation_state"],
