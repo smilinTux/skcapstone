@@ -95,7 +95,11 @@ def test_nonresponsive_worker_is_quarantined_after_checkpoint() -> None:
 
 
 def test_retirement_requires_terminal_children_custody_and_preserved_commits() -> None:
-    safe = classify(obs(terminal_marker="PASS", terminal_at=NOW), now=NOW)
+    safe = classify(
+        obs(terminal_marker="PASS", terminal_at=NOW, heartbeat_at=NOW),
+        now=NOW,
+        authorize_retirement=lambda _: True,
+    )
     assert safe.state == "retirement-ready" and safe.retire and not safe.quarantine
     for unsafe in (
         obs(terminal_marker="PASS", terminal_at=NOW, live_children=1),
@@ -104,17 +108,19 @@ def test_retirement_requires_terminal_children_custody_and_preserved_commits() -
         obs(terminal_marker="PASS", terminal_at=NOW, workspace_custody=None),
         obs(terminal_marker="PASS", terminal_at=NOW, unpushed_commits=("abc123",)),
     ):
-        decision = classify(unsafe, now=NOW)
+        decision = classify(unsafe, now=NOW, authorize_retirement=lambda _: True)
         assert decision.state == "terminal-orphan"
         assert decision.quarantine and decision.preserve_workspace and not decision.retire
     preserved = classify(
         obs(
             terminal_marker="PASS_FOR_REVIEW",
             terminal_at=NOW,
+            heartbeat_at=NOW,
             unpushed_commits=("abc123",),
             unpushed_commits_preserved=True,
         ),
         now=NOW,
+        authorize_retirement=lambda _: True,
     )
     assert preserved.retire and preserved.preserve_workspace
 
@@ -165,7 +171,11 @@ def test_terminal_projection_reconciliation_is_exact_and_idempotent() -> None:
         WorkerProjection("agent", "card", "gen", "active"),
         WorkerProjection("agent", "other", "other-gen", "ready"),
     )
-    decision = classify(obs(terminal_marker="BLOCKED", terminal_at=NOW), now=NOW)
+    decision = classify(
+        obs(terminal_marker="BLOCKED", terminal_at=NOW, heartbeat_at=NOW),
+        now=NOW,
+        authorize_retirement=lambda _: True,
+    )
     decisions = {("agent", "card", "gen"): decision}
     once = reconcile(projections, decisions)
     twice = reconcile(once, decisions)
@@ -210,8 +220,9 @@ def test_runtime_connects_assistance_reconciliation_metrics_and_retirement() -> 
         calls["reconciliation"].append,
         calls["metrics"].append,
         calls["retirement"].append,
+        lambda _: True,
     )
-    terminal = obs(terminal_marker="PASS", terminal_at=NOW)
+    terminal = obs(terminal_marker="PASS", terminal_at=NOW, heartbeat_at=NOW)
     waiting = obs(
         card_id="waiting", claim_generation="wait-gen", current_claim_generation="wait-gen"
     )
@@ -254,7 +265,9 @@ def test_runtime_connects_assistance_reconciliation_metrics_and_retirement() -> 
 
 def test_incomplete_receipt_quarantines_and_never_calls_retirement() -> None:
     retired: list[object] = []
-    actions = RuntimeActions(lambda _: None, lambda _: None, lambda _: None, retired.append)
+    actions = RuntimeActions(
+        lambda _: None, lambda _: None, lambda _: None, retired.append, lambda _: True
+    )
     for changes in (
         {"host": ""},
         {"observer_host": "chiap01"},
@@ -287,7 +300,9 @@ def test_incomplete_receipt_quarantines_and_never_calls_retirement() -> None:
 
 def test_healthy_worker_is_never_retired_by_runtime() -> None:
     retired: list[object] = []
-    actions = RuntimeActions(lambda _: None, lambda _: None, lambda _: None, retired.append)
+    actions = RuntimeActions(
+        lambda _: None, lambda _: None, lambda _: None, retired.append, lambda _: True
+    )
     result = run_cycle((obs(child_activity_at=NOW),), (), now=NOW, actions=actions)
     assert result.decisions[0].state == "active-compute"
     assert retired == []
@@ -296,10 +311,12 @@ def test_healthy_worker_is_never_retired_by_runtime() -> None:
 def test_sqlite_receipt_journal_tolerates_concurrent_writers(tmp_path) -> None:
     journal = SQLiteReceiptJournal(tmp_path / "runtime" / "retirement.sqlite3")
     receipt = run_cycle(
-        (obs(terminal_marker="PASS", terminal_at=NOW),),
+        (obs(terminal_marker="PASS", terminal_at=NOW, heartbeat_at=NOW),),
         (),
         now=NOW,
-        actions=RuntimeActions(lambda _: None, lambda _: None, lambda _: None, lambda _: None),
+        actions=RuntimeActions(
+            lambda _: None, lambda _: None, lambda _: None, lambda _: None, lambda _: True
+        ),
     ).receipts[0]
     with ThreadPoolExecutor(max_workers=12) as pool:
         list(pool.map(lambda _: journal.append(receipt), range(100)))

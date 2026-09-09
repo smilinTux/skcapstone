@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from skcapstone.card_store import CardStore
 from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
+from skcapstone.fleet.worker_liveness_runtime import run_production_cycle
 from skcapstone.coord_eligibility import leaf_eligibility_counts
 from skcapstone.fleet_lane_health import (
     acquire_lane_snapshot,
@@ -280,6 +281,11 @@ PI_MCP_PROXY_LABEL="mcp-required"
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
 STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+# The timer driven production entrypoint always traverses the liveness decision
+# surface. Empty or incomplete evidence still publishes truthful zero metrics
+# and grants no assistance, reconciliation, or retirement authority.
+run_production_cycle(Path(HOME), agent=os.environ.get("SKAGENT", "skfleet-rotate"))
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 

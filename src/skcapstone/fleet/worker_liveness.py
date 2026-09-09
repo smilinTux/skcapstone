@@ -122,6 +122,7 @@ class RuntimeActions:
     reconcile_projection: Callable[[WorkerProjection], None]
     publish_metrics: Callable[[Mapping[str, float | int]], None]
     retire: Callable[[RetirementReceipt], None]
+    authorize_retirement: Callable[[LivenessObservation], bool] = lambda _: False
 
 
 @dataclass(frozen=True)
@@ -161,9 +162,9 @@ def _retirement_receipt(o: LivenessObservation) -> RetirementReceipt | None:
         and o.pid
         and o.process_tree
         and o.pid in o.process_tree
-        and str(o.pid) in (o.process_identity or "")
+        and o.process_identity == f"pid:{o.pid}"
         and o.cgroup
-        and o.unit in o.cgroup
+        and o.cgroup.endswith(f"/{o.unit}")
         and o.process_observed_at
         and o.cgroup_observed_at
         and o.beat_id
@@ -173,6 +174,8 @@ def _retirement_receipt(o: LivenessObservation) -> RetirementReceipt | None:
         and Path(o.workspace_path).is_absolute()
         and o.workspace_repository
         and o.workspace_head
+        and len(o.workspace_head) in {40, 64}
+        and all(character in "0123456789abcdef" for character in o.workspace_head)
         and o.workspace_custody_at
         and o.workspace_custody_sha256
         and len(o.workspace_custody_sha256) == 64
@@ -224,6 +227,7 @@ def classify(
     now: datetime,
     assist_after: timedelta = timedelta(hours=1),
     checkpoint_after: timedelta = timedelta(minutes=15),
+    authorize_retirement: Callable[[LivenessObservation], bool] | None = None,
 ) -> LivenessDecision:
     """Classify one exact worker generation without performing actuation."""
     attributable = _attributable(o)
@@ -318,6 +322,18 @@ def classify(
                 preserve_workspace=True,
                 reason="terminal-timestamp-missing",
             )
+        if o.heartbeat_at is None or any(
+            value > now or now - value > EVIDENCE_FRESHNESS
+            for value in (o.heartbeat_at, o.terminal_at)
+        ):
+            return _decision(
+                o,
+                "terminal-orphan",
+                True,
+                quarantine=True,
+                preserve_workspace=True,
+                reason="beat-or-terminal-evidence-stale-or-future",
+            )
         custody_safe = bool(o.workspace_recoverable and o.workspace_custody)
         commits_safe = not o.unpushed_commits or o.unpushed_commits_preserved
         if (
@@ -326,6 +342,8 @@ def classify(
             and custody_safe
             and commits_safe
             and _retirement_receipt(o) is not None
+            and authorize_retirement is not None
+            and authorize_retirement(o)
         ):
             return _decision(
                 o,
@@ -461,7 +479,10 @@ def run_cycle(
     ``classify`` and can never reach the callback.
     """
     observed = tuple(observations)
-    decisions = tuple(classify(row, now=now) for row in observed)
+    decisions = tuple(
+        classify(row, now=now, authorize_retirement=actions.authorize_retirement)
+        for row in observed
+    )
     keyed = {(d.owner, d.card_id, d.claim_generation): d for d in decisions}
     projected = reconcile(projections, keyed)
     for projection in projected:
@@ -491,7 +512,7 @@ def run_cycle(
         if not decision.retire:
             continue
         receipt = _retirement_receipt(observation)
-        if receipt is None:
+        if receipt is None or not actions.authorize_retirement(observation):
             raise RuntimeError("retirement decision lost its exact evidence fence")
         actions.retire(receipt)
         receipts.append(receipt)
