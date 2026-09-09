@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `44ad0d49`: add bounded elastic independent-review admission with
+  source-head deduplication, reviewer independence, and physical-capacity
+  limits.
+
 - Cards `2e6bb78e` and `30c6909d`: add role-bounded lifecycle-seat fan-out
   allocation with source-head deduplication, the `sk-codex-mid` child default,
   and explicit exclusion of Jarvis from recurring lifecycle scheduling.
