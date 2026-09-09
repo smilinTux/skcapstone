@@ -9,6 +9,9 @@
 
 ## Unreleased
 
+- Card `8daa0877`: accept typed Seraph launch and no-op receipts from either
+  stdout or stderr while preserving duplicate receipt rejection.
+
 - Card `d2771026`: preserve executable startup evidence after the Pi Node
   process replaces its command line with its process title, while retaining
   exact descendant, interpreter, shebang, title, and fleet identity checks.

@@ -201,7 +201,11 @@ def test_seraph_accepts_typed_launch_receipts_on_stderr(tmp_path, monkeypatch) -
         labels=["review", "seat-seraph"],
         status=SimpleNamespace(value="doing"),
         owner="pi-seraph-chiap08-review01",
-        meta={"_claim_revision": "revision-1", "link_source_card": "source01", "link_head_revision": "a" * 40},
+        meta={
+            "_claim_revision": "revision-1",
+            "link_source_card": "source01",
+            "link_head_revision": "a" * 40,
+        },
         links={"producer_identity": "builder"},
     )
     monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)

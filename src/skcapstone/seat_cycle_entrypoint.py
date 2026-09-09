@@ -222,7 +222,8 @@ def verify_seraph_dispatch(
     # receipt is an output contract, not a stream contract, so inspect both
     # streams without treating diagnostics as receipts.
     output = "\n".join(
-        value for value in (getattr(completed, "stdout", ""), getattr(completed, "stderr", ""))
+        value
+        for value in (getattr(completed, "stdout", ""), getattr(completed, "stderr", ""))
         if value
     )
     launches = [
