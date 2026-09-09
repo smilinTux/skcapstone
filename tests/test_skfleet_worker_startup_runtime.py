@@ -6,7 +6,6 @@ import datetime
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import signal
@@ -14,8 +13,10 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
+
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_HEARTBEAT_TIMEOUT_S,
     HOST_LOCAL_BEAT_NOTICE_S,
@@ -232,6 +233,11 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
     monkeypatch.setattr(module, "preflight_worktree", lambda: preflight)
+    monkeypatch.setattr(
+        module,
+        "validate_cardstore_completion",
+        lambda _args: (True, "valid_cardstore_completion", "PASS_FOR_REVIEW"),
+    )
     args = argparse.Namespace(
         owner="worker",
         card="feedbeef",
@@ -382,7 +388,7 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
     sleeper_pids = tmp_path / "sleeper-pids"
     sleep = tmp_path / "sleep"
     sleep.write_text(
-        '#!/bin/bash\nprintf "%s\\n" "$BASHPID" >> "$SLEEP_PID_FILE"\n' 'exec /bin/sleep "$@"\n'
+        '#!/bin/bash\nprintf "%s\\n" "$BASHPID" >> "$SLEEP_PID_FILE"\nexec /bin/sleep "$@"\n'
     )
     sleep.chmod(0o700)
     pi = tmp_path / "pi"
@@ -417,6 +423,8 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
         "s=importlib.util.spec_from_file_location('wrapper',sys.argv.pop(1)); "
         "m=importlib.util.module_from_spec(s);s.loader.exec_module(m); "
         "m.emit_work_mail=lambda *a:None;m.preflight_worktree=lambda:0; "
+        "m.validate_cardstore_completion=lambda a:"
+        "(True,'valid_cardstore_completion','PASS_FOR_REVIEW'); "
         "raise SystemExit(m.main())"
     )
     command = [

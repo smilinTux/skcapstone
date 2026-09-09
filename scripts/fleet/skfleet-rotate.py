@@ -2089,6 +2089,8 @@ def blocked_backoff(cid):
     # fresh structured failure and starts a new bounded interval.
     if _transport_retry_held(cid):
         return True
+    if _completion_retry_held(cid):
+        return True
     if launch_attempts(cid) >= 3 and lifecycle_state(cid)!="complete":
         # ...unless the world changed since the last attempt. Without this the
         # counter is a one-way door: nothing resets it, so a card parked here is
@@ -2203,6 +2205,9 @@ _LAUNCH_TTL_H = float(os.environ.get("SKFLEET_LAUNCH_TTL_H", "6"))
 _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
 _TRANSPORT_RETRY_COOLDOWN_S = float(
     os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
+)
+_COMPLETION_RETRY_COOLDOWN_S = float(
+    os.environ.get("SKFLEET_COMPLETION_RETRY_COOLDOWN_S", "300")
 )
 _GATEWAY_ERROR_RE = re.compile(r"^\s*(404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
 
@@ -2341,6 +2346,18 @@ def _transport_retry_held(cid):
     """Hold a failed transport until the bounded recovery interval opens."""
     failed_at = _latest_transport_failure_epoch(cid)
     return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
+
+def _completion_retry_held(cid):
+    """Durably fence an invalid completion for one bounded recovery interval."""
+    latest = 0.0
+    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+        try:
+            event = json.load(open(path, encoding="utf-8"))
+            if event.get("card_id") == cid and event.get("completion_failure"):
+                latest = max(latest, _ts_epoch(event.get("attempted_at")))
+        except (OSError, TypeError, ValueError):
+            continue
+    return bool(latest and time.time() - latest < _COMPLETION_RETRY_COOLDOWN_S)
 
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""

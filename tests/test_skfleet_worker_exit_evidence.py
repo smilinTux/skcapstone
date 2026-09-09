@@ -27,6 +27,7 @@ def _wrapper():
 
 def _scheduler_namespace() -> dict[str, object]:
     wanted = {
+        "_completion_retry_held",
         "_latest_transport_failure_epoch",
         "_transport_failure_logs",
         "_transport_failure_claims",
@@ -37,6 +38,7 @@ def _scheduler_namespace() -> dict[str, object]:
         "unclaimable",
     }
     constants = {
+        "_COMPLETION_RETRY_COOLDOWN_S",
         "_LAUNCH_TTL_H",
         "_LOGDIR",
         "_WORKER_EXIT_DIR",
@@ -97,6 +99,8 @@ def test_zero_stdout_exit_records_bounded_redacted_claim_evidence(tmp_path: Path
         model="qwen-local",
         stdout=stdout,
         evidence_dir=evidence,
+        attempt_id="attempt-1",
+        session="codex-auto-deadbeef",
     )
     stderr = b"x" * 3000 + b" api_key=supersecretvalue Connection refused"
     module.record_terminal_exit(args, stderr, 17)
@@ -114,13 +118,14 @@ def test_zero_stdout_exit_records_bounded_redacted_claim_evidence(tmp_path: Path
         "child_exit_code": 17,
     }
     assert {key: payload[key] for key in expected} == expected
-    assert "supersecretvalue" not in payload["stderr"]
-    assert len(payload["stderr"]) <= module.STDERR_LIMIT
+    assert "stderr" not in payload
+    assert payload["stderr_bytes"] == len(stderr)
+    assert len(payload["stderr_sha256"]) == 64
     assert payload["transport_failure"] == "connection_failure"
     assert payload["attempted_at"]
 
 
-def test_substantive_stdout_does_not_create_terminal_record(tmp_path: Path) -> None:
+def test_invalid_zero_exit_creates_terminal_record(tmp_path: Path) -> None:
     module = _wrapper()
     stdout = tmp_path / "feedface.log"
     stdout.write_text("agent completed substantive work", encoding="utf-8")
@@ -133,9 +138,15 @@ def test_substantive_stdout_does_not_create_terminal_record(tmp_path: Path) -> N
         model="model",
         stdout=stdout,
         evidence_dir=tmp_path / "evidence",
+        attempt_id="attempt-2",
+        session="codex-auto-feedface",
     )
-    module.record_terminal_exit(args, b"", 0)
-    assert not args.evidence_dir.exists()
+    module.record_terminal_exit(args, b"", 0, (False, "missing_terminal_card_outcome", None))
+    (record,) = args.evidence_dir.glob("*.json")
+    payload = json.loads(record.read_text())
+    assert payload["completion_failure"] == "incomplete_missing_terminal_card_outcome"
+    assert payload["attempt_id"] == "attempt-2"
+    assert payload["session_id"] == "codex-auto-feedface"
 
 
 def test_substantive_failure_mentioning_429_remains_substantive(tmp_path: Path) -> None:
@@ -152,9 +163,14 @@ def test_substantive_failure_mentioning_429_remains_substantive(tmp_path: Path) 
         model="model",
         stdout=stdout,
         evidence_dir=tmp_path / "evidence",
+        attempt_id="attempt-3",
+        session="codex-auto-feedface",
     )
     module.record_terminal_exit(args, b"", 1)
-    assert not args.evidence_dir.exists()
+    (record,) = args.evidence_dir.glob("*.json")
+    payload = json.loads(record.read_text())
+    assert payload["transport_failure"] is None
+    assert payload["reason"] == "child_exit"
 
 
 def test_transport_exit_is_held_then_does_not_consume_attempt(tmp_path: Path) -> None:
@@ -188,6 +204,37 @@ def test_transport_exit_is_held_then_does_not_consume_attempt(tmp_path: Path) ->
     )
     assert namespace["_reporting_launches"](card) == 0
     assert namespace["_transport_retry_held"](card) is True
+
+
+def test_completion_failure_is_durably_and_boundedly_fenced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    namespace = _scheduler_namespace()
+    card = "deadbeef"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    now = time.time()
+    attempted = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now))
+    (evidence / f"{card}-completion.json").write_text(
+        json.dumps(
+            {
+                "card_id": card,
+                "attempted_at": attempted,
+                "completion_failure": "incomplete_missing_evidence",
+            }
+        )
+    )
+    namespace.update(
+        {
+            "_WORKER_EXIT_DIR": str(evidence),
+            "_COMPLETION_RETRY_COOLDOWN_S": 300,
+            "_ts_epoch": lambda _value: now,
+        }
+    )
+    monkeypatch.setattr(time, "time", lambda: now + 1)
+    assert namespace["_completion_retry_held"](card) is True
+    monkeypatch.setattr(time, "time", lambda: now + 301)
+    assert namespace["_completion_retry_held"](card) is False
 
 
 def test_three_shared_transport_failures_do_not_consume_attempts(tmp_path: Path) -> None:
