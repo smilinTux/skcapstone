@@ -285,7 +285,7 @@ STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 # The timer driven production entrypoint always traverses the liveness decision
 # surface. Empty or incomplete evidence still publishes truthful zero metrics
 # and grants no assistance, reconciliation, or retirement authority.
-run_production_cycle(Path(HOME), agent=os.environ.get("SKAGENT", "skfleet-rotate"))
+run_production_cycle(agent=os.environ.get("SKAGENT", "skfleet-rotate"))
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 

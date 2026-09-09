@@ -78,6 +78,20 @@ def _timestamp(value: object) -> datetime | None:
         return None
 
 
+def _cgroup_is_freshly_empty(cgroup: str | None, cgroup_root: Path) -> bool:
+    """Read the exact host-owned membership file and require an empty cgroup."""
+    try:
+        relative = Path(cgroup or "").relative_to("/")
+        process_file = (cgroup_root / relative / "cgroup.procs").resolve(strict=True)
+        trusted_root = cgroup_root.resolve(strict=True)
+        if not process_file.is_relative_to(trusted_root):
+            return False
+        members = tuple(int(value) for value in process_file.read_text(encoding="utf-8").split())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return not members
+
+
 def collect_observations(home: Path) -> tuple[LivenessObservation, ...]:
     """Collect conservative host local facts for every managed worker beat."""
     host = socket.gethostname()
@@ -193,6 +207,7 @@ def authorize_observation(
     home: Path,
     runner: Callable[[list[str]], subprocess.CompletedProcess[str]] = _run,
     hostname: str | None = None,
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
 ) -> bool:
     """Re-read every retirement fact from host and CardStore authority."""
     match = UNIT.fullmatch(observation.unit or "")
@@ -226,6 +241,12 @@ def authorize_observation(
     if cgroup.returncode not in {0, 3} or observation.cgroup not in cgroup.stdout:
         return False
     if observation.cgroup_processes != 0 or observation.live_children != 0:
+        return False
+    # This is the final host-owned retirement fence.  Do not authorize from
+    # the membership cached during collection: a process can join the cgroup
+    # after classification and before actuation.  The exact authoritative
+    # file must still be readable and empty immediately before stop.
+    if not _cgroup_is_freshly_empty(observation.cgroup, cgroup_root):
         return False
     custody = workspace_custody(Path(observation.workspace_path or ""))
     if custody != (
@@ -274,10 +295,17 @@ def authorize_observation(
 class ProductionActions:
     """Concrete adapters used by the timer driven fleet runtime."""
 
-    def __init__(self, home: Path, agent: str, runner: Callable[[list[str]], object] = _run):
+    def __init__(
+        self,
+        home: Path,
+        agent: str,
+        runner: Callable[[list[str]], object] = _run,
+        cgroup_root: Path = Path("/sys/fs/cgroup"),
+    ):
         self.home = home
         self.agent = agent
         self.runner = runner
+        self.cgroup_root = cgroup_root
 
     def request_assistance(self, request: AssistanceRequest) -> None:
         """Send a generation fenced structured SKMail status request."""
@@ -323,6 +351,8 @@ class ProductionActions:
         SQLiteReceiptJournal(
             self.home / "evidence" / "fleet-liveness" / "retirements.sqlite3"
         ).append(receipt)
+        if not _cgroup_is_freshly_empty(receipt.cgroup, self.cgroup_root):
+            raise RuntimeError(f"retirement authority changed for {receipt.unit}")
         result = self.runner(["systemctl", "--user", "stop", receipt.unit])
         if getattr(result, "returncode", 1):
             raise RuntimeError(f"retirement failed for {receipt.unit}")
