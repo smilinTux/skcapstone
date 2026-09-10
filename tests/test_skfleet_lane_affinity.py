@@ -178,6 +178,39 @@ def test_qwen_suitable_is_nonexclusive() -> None:
     )
 
 
+def test_qwen_first_falls_back_when_qwen_lane_is_explicitly_disabled() -> None:
+    namespace = _load_lane_helpers()
+    namespace["event_rows"] = lambda cid: []
+    exclusive = namespace["qwen_first_exclusive"]("04acd4b0", ["qwen-first"])
+    selected, reason = namespace["select_compatible_lane"](
+        ["qwen-first"],
+        False,
+        ["qwen", "glm", "codex"],
+        {"qwen": 0, "glm": 0, "codex": 1},
+        True,
+        exclusive,
+        None,
+        False,
+    )
+    assert exclusive is True
+    assert (selected, reason) == ("codex", "compatible")
+
+
+def test_qwen_only_falls_back_when_qwen_lane_is_explicitly_disabled() -> None:
+    namespace = _load_lane_helpers()
+    selected, reason = namespace["select_compatible_lane"](
+        ["qwen-only"],
+        False,
+        ["qwen", "codex"],
+        {"qwen": 0, "codex": 1},
+        True,
+        False,
+        None,
+        False,
+    )
+    assert (selected, reason) == ("codex", "compatible")
+
+
 def test_qwen_gets_first_refusal_only_when_category_allows_it() -> None:
     namespace = _load_lane_helpers()
     order = ["qwen", "glm", "codex", "escalate"]
@@ -279,8 +312,22 @@ def test_pool_and_immediate_preclaim_use_the_same_affinity_predicate() -> None:
     assert "qwen_suitable(_card[3]),_qwen_exclusive" in source
     assert 'qwen_suitable(fresh_claimability["core"]),' in source
     assert 'qwen_first_exclusive(cid,fresh_claimability["labels"])' in source
+    assert source.count("QWEN_TARGET>0") == 3
     assert "DRY_SELECTION|" in source
     health_check = source.index("admitted,health_reason=_health_for(")
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"')
     assert health_check < claim
     assert "SKIPPED_LANE_HEALTH|" in source[health_check:claim]
+
+
+def test_fold_preserves_exact_base_revision_link_for_materialization() -> None:
+    namespace = _load_lane_helpers()
+    core = _core("fold0002", ["source-only"])
+    revision = "a" * 40
+
+    folded = namespace["_fold_claimability"](
+        core,
+        [{"action": "link", "link_key": "base_revision", "link_value": revision}],
+    )
+
+    assert folded["links"]["base_revision"] == revision

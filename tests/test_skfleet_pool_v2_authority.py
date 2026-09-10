@@ -147,6 +147,12 @@ def test_canonical_review_card_enters_only_seraph_selector() -> None:
     assert rejected["seraph_review_admitted"] is False
     assert helpers["_pool_v2_ready_ids"](decisions, {card_id: rejected}) == set()
 
+    terminal = dict(core)
+    terminal["links"] = {"pr": ""}
+    terminal_claimability = dict(claimability, reason="archive", core=terminal)
+    archived = helpers["_pool_v2_admission"](card_id, terminal, terminal_claimability)
+    assert archived["governed_review"] is False
+
 
 def test_preclaim_requires_identical_snapshot_fingerprint() -> None:
     """Any source, overlay, or claimability drift produces zero launch authority."""
