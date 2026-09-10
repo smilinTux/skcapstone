@@ -150,6 +150,21 @@ def test_no_distinct_reviewer_fails_closed() -> None:
         )
 
 
+def test_reviewer_alias_of_producer_principal_fails_closed() -> None:
+    with pytest.raises(BoundaryError, match="no distinct"):
+        recommend_one_reviewer(
+            pr(),
+            producer=ProducerIdentity("seraph", "chiap01", "source-session", "/work/source"),
+            candidates=[
+                ReviewerIdentity(
+                    "alias", "pi-seraph-chiap08-review01", "chiap02", "review", "/work/review"
+                )
+            ],
+            review_card_id="feedface",
+            review_card_revision=HASH,
+        )
+
+
 def test_niobe_validates_fresh_handoff() -> None:
     item = handoff()
     assert item is not None

@@ -1,19 +1,23 @@
 [Unit]
-Description=SKFleet Tank bounded release-seat presence cycle
+Description=SKFleet Tank bounded release dispatcher
 After=network-online.target
 
 [Service]
 Type=oneshot
 Environment=SKAGENT=tank
 Environment=SKCAPSTONE_AGENT=tank
+Environment=SKFLEET_TARGET=2
+Environment=SKFLEET_TANK_BATCH_SIZE=2
+Environment=SKFLEET_CODEX_PHYSICAL_LIMIT=3
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.skenv/bin/python3 -m skcapstone.seat_cycle_entrypoint --seat tank --home %h/.skcapstone --control-plane %h/.skcapstone/coordination/seat-control-plane.json
 TimeoutStartSec=300
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=read-only
-ReadWritePaths=%h/.skcapstone/coordination/seat-cycles
-ReadWritePaths=%h/.skcapstone/coordination/skmail.d
+ReadWritePaths=%h/.skcapstone/cards %h/.skcapstone/coordination/locks
+ReadWritePaths=%h/.skcapstone/coordination/seat-cycles %h/.skcapstone/coordination/skmail.d
+ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet
 
 [Install]
 WantedBy=default.target

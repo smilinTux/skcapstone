@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import collections
 import hashlib
 import json
 import re
@@ -22,7 +23,12 @@ def _load_helpers(*names: str) -> dict[str, object]:
     }
     assert set(functions) == set(names)
     module = ast.Module(body=[functions[name] for name in names], type_ignores=[])
-    namespace: dict[str, object] = {"hashlib": hashlib, "json": json, "re": re}
+    namespace: dict[str, object] = {
+        "collections": collections,
+        "hashlib": hashlib,
+        "json": json,
+        "re": re,
+    }
     exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
 
@@ -164,6 +170,63 @@ def test_preclaim_requires_identical_snapshot_fingerprint() -> None:
     assert matches(selected, None) is False
 
 
+def test_seraph_preclaim_batch_rejects_duplicate_source_heads() -> None:
+    """An ambiguous source/head pair cannot reach claim or launch selection."""
+    unique = _load_helpers("_seraph_unique_source_heads")["_seraph_unique_source_heads"]
+    unique.__globals__["_ONLY_SEAT"] = "seraph"
+
+    def row(card_id: str, source: str, head: str) -> tuple[object, ...]:
+        return (
+            0,
+            1,
+            card_id,
+            {
+                "meta": {
+                    "link_source_card": source,
+                    "link_head_revision": head,
+                }
+            },
+            [],
+            0,
+        )
+
+    first = row("review01", "source", "a" * 40)
+    duplicate = row("review02", "source", "a" * 40)
+    other_head = row("review03", "source", "b" * 40)
+
+    admitted, withheld = unique([first, duplicate, other_head])
+
+    assert admitted == [other_head]
+    assert withheld == {("source", "a" * 40)}
+
+
+def test_seraph_preclaim_batch_allows_distinct_heads_concurrently() -> None:
+    """Distinct source heads remain in the same bounded dispatch batch."""
+    unique = _load_helpers("_seraph_unique_source_heads")["_seraph_unique_source_heads"]
+    unique.__globals__["_ONLY_SEAT"] = "seraph"
+    rows = [
+        (
+            0,
+            1,
+            "review01",
+            {
+                "meta": {
+                    "link_source_card": "source",
+                    "link_head_revision": head,
+                }
+            },
+            [],
+            0,
+        )
+        for head in ("a" * 40, "b" * 40)
+    ]
+
+    admitted, withheld = unique(rows)
+
+    assert admitted == rows
+    assert withheld == set()
+
+
 def test_worker_runtime_contract_is_unchanged() -> None:
     """The authority repair does not alter Kimi, wrapper, heartbeat, or attribution."""
     source = ROTATE.read_text(encoding="utf-8")
@@ -174,6 +237,94 @@ def test_worker_runtime_contract_is_unchanged() -> None:
     assert '"--session",sess,"--worker-executable",PI,' in source
     assert "actor=name," in source
     assert "trap 'trap - HUP INT TERM; " in source
+
+
+def test_role_seats_require_exact_label_and_dispatch_opt_in() -> None:
+    """Tank and ATLAS cannot leak into generic or mismatched dispatch."""
+    helpers = _load_helpers(
+        "_role_seat_metadata", "_pool_v2_dispatchable", "_pool_v2_ready_ids",
+        "_pool_v2_authority_rows"
+    )
+    helpers.update(
+        {"_SEAT_LABEL_PREFIX": "seat-", "_CATEGORY_OPT_IN": "dispatch-approved"}
+    )
+    card_id = "a8100007"
+    decision = [SimpleNamespace(card_id=card_id, eligible=True)]
+    admission = _admission(card_id)
+    admission["labels"] = ["seat-tank", "dispatch-approved"]
+    admission["core"]["links"] = {"approved_artifact_sha256": "a" * 64}
+    args = (decision, {card_id: admission}, False, {}, {"high": 1}, (), "chiap08")
+
+    helpers["_ONLY_SEAT"] = "tank"
+    assert [row[2] for row in helpers["_pool_v2_authority_rows"](*args)[0]] == [card_id]
+    helpers["_ONLY_SEAT"] = "atlas"
+    assert helpers["_pool_v2_authority_rows"](*args)[0] == []
+    helpers["_ONLY_SEAT"] = ""
+    assert helpers["_pool_v2_authority_rows"](*args)[0] == []
+
+    admission["labels"] = ["seat-tank"]
+    helpers["_ONLY_SEAT"] = "tank"
+    assert helpers["_pool_v2_authority_rows"](*args)[0] == []
+    admission["labels"] = ["seat-tank", "seat-atlas", "dispatch-approved"]
+    assert helpers["_pool_v2_authority_rows"](*args)[0] == []
+
+
+def test_role_seats_require_exact_authority_metadata() -> None:
+    helpers = _load_helpers(
+        "_role_seat_metadata", "_pool_v2_dispatchable", "_pool_v2_ready_ids",
+        "_pool_v2_authority_rows"
+    )
+    helpers.update(
+        {"_SEAT_LABEL_PREFIX": "seat-", "_CATEGORY_OPT_IN": "dispatch-approved"}
+    )
+
+    def selected(seat: str, links: dict[str, str]) -> list[object]:
+        card_id = "a8100007"
+        admission = _admission(card_id)
+        admission["labels"] = [f"seat-{seat}", "dispatch-approved"]
+        admission["core"]["links"] = links
+        helpers["_ONLY_SEAT"] = seat
+        return helpers["_pool_v2_authority_rows"](
+            [SimpleNamespace(card_id=card_id, eligible=True)],
+            {card_id: admission}, False, {}, {"high": 1}, (), "chiap08"
+        )[0]
+
+    assert selected("tank", {}) == []
+    assert selected("tank", {"approved_artifact_sha256": "bad"}) == []
+    assert len(selected("tank", {"approved_artifact_sha256": "a" * 64})) == 1
+    assert selected("atlas", {"verification_target": "prod"}) == []
+    assert selected("atlas", {"verification_evidence_sha256": "b" * 64}) == []
+    assert len(selected("atlas", {
+        "verification_target": "release-42/postconditions",
+        "verification_evidence_sha256": "b" * 64,
+    })) == 1
+
+
+def test_unsupported_worker_card_id_is_filtered_before_selection() -> None:
+    """A legacy ID cannot consume a bounded launch opportunity."""
+    helpers = _load_helpers(
+        "_pool_v2_dispatchable", "_pool_v2_ready_ids", "_pool_v2_authority_rows"
+    )
+    helpers.update(
+        {
+            "_SEAT_LABEL_PREFIX": "seat-",
+            "_CATEGORY_OPT_IN": "dispatch-approved",
+            "_ONLY_SEAT": "",
+        }
+    )
+    unsupported = "a8100007-01"
+    supported = "a8100008"
+    decisions = [
+        SimpleNamespace(card_id=card_id, eligible=True)
+        for card_id in (unsupported, supported)
+    ]
+    admissions = {card_id: _admission(card_id) for card_id in (unsupported, supported)}
+
+    selected, _ = helpers["_pool_v2_authority_rows"](
+        decisions, admissions, False, {}, {"high": 1}, (), "chiap08"
+    )
+
+    assert [row[2] for row in selected] == [supported]
 
 
 def test_authority_and_preclaim_are_wired_into_launcher() -> None:

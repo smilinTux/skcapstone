@@ -119,3 +119,12 @@ def test_rotation_launcher_is_installed_by_the_wheel() -> None:
         text = unit.read_text()
         assert "%h/.skenv/bin/skfleet-rotate.py" in text
         assert "%h/.local/bin/skfleet-rotate.py" not in text
+
+
+def test_tank_and_atlas_prompts_preserve_role_fences() -> None:
+    """Seat prompts bind exact metadata and never grant ATLAS actuation."""
+    source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
+    assert "approved artifact with sha256=%s" in source
+    assert "Verify only target %s against evidence sha256=%s" in source
+    assert "Do not deploy, dispatch, invoke an actuator" in source
+    assert "Act only on the card-bound ActionIntent" not in source

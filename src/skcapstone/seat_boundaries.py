@@ -188,14 +188,26 @@ def verify_casey_direction(
         raise BoundaryError(str(exc)) from exc
 
 
+def canonical_principal(identity: str) -> str:
+    """Return the stable lifecycle principal behind a display identity."""
+
+    normalized = identity.strip().casefold().replace("_", "-")
+    if normalized.startswith("pi-"):
+        normalized = normalized[3:]
+    for seat in Seat:
+        if normalized == seat.value or normalized.startswith(f"{seat.value}-"):
+            return seat.value
+    return normalized
+
+
 def assign_distinct_reviewer(*, author: str, assigner: str, candidates: Collection[str]) -> str:
     """Choose the first stable reviewer distinct from author and Link."""
 
     require_authority(assigner, Action.ASSIGN_REVIEWER)
-    excluded = {author.strip().lower(), assigner.strip().lower()}
+    excluded = {canonical_principal(author), canonical_principal(assigner)}
     for candidate in candidates:
         normalized = candidate.strip()
-        if normalized and normalized.lower() not in excluded:
+        if normalized and canonical_principal(normalized) not in excluded:
             return normalized
     raise BoundaryError("no distinct reviewer is available")
 

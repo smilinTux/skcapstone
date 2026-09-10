@@ -62,26 +62,32 @@ def _executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def _canonical_review(home: Path) -> tuple[CardStore, str]:
+def _canonical_review(
+    home: Path,
+    *,
+    source_card: str = "9c71f24a",
+    head_revision: str = "a" * 40,
+    pr: int = 548,
+) -> tuple[CardStore, str]:
     card_home = home / ".skcapstone"
-    card_home.mkdir()
+    card_home.mkdir(exist_ok=True)
     store = CardStore(card_home)
     store.create(
         CardCore(
-            id="9c71f24a",
+            id=source_card,
             title="Source",
             created_by="mero",
             initial_labels=["do-not-claim"],
         )
     )
     store.append_event(
-        "9c71f24a",
+        source_card,
         "link",
         "mero",
         link_key="repository",
         link_value="https://github.com/smilinTux/skcapstone",
     )
-    store.append_event("9c71f24a", "link", "mero", link_key="base_ref", link_value="main")
+    store.append_event(source_card, "link", "mero", link_key="base_ref", link_value="main")
     result = reconcile_review_work(
         card_home,
         {
@@ -90,11 +96,11 @@ def _canonical_review(home: Path) -> tuple[CardStore, str]:
             "repository": "smilinTux/skcapstone",
             "workspace_repository": "https://github.com/smilinTux/skcapstone",
             "base_ref": "main",
-            "pr": 548,
-            "head_revision": "a" * 40,
+            "pr": pr,
+            "head_revision": head_revision,
             "base_revision": "b" * 40,
-            "source_card": "9c71f24a",
-            "card_generation": card_generation(store.fold("9c71f24a")),
+            "source_card": source_card,
+            "card_generation": card_generation(store.fold(source_card)),
             "source_owner": "mero",
             "reviewer_candidates": [
                 {
@@ -112,7 +118,7 @@ def _canonical_review(home: Path) -> tuple[CardStore, str]:
     return store, result.review_card_id
 
 
-def test_real_selector_claims_and_launches_one_canonical_seraph_review(
+def test_real_selector_runs_distinct_heads_concurrently_and_blocks_duplicates(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -158,7 +164,14 @@ def test_real_selector_claims_and_launches_one_canonical_seraph_review(
     ).stdout.strip()
     home = tmp_path / "home"
     home.mkdir()
-    store, card_id = _canonical_review(home)
+    store, first_card_id = _canonical_review(home)
+    store, second_card_id = _canonical_review(
+        home,
+        source_card="9c71f24b",
+        head_revision="e" * 40,
+        pr=549,
+    )
+    card_ids = (first_card_id, second_card_id)
     placement = home / ".skcapstone" / "coordination" / "seat-placement.json"
     placement.write_text(
         json.dumps({"schema_version": 1, "seats": {"seraph": ["chiap08"]}}),
@@ -178,17 +191,18 @@ def test_real_selector_claims_and_launches_one_canonical_seraph_review(
     _executable(
         fake_bin / "systemctl",
         f'if [ "$1" = "--user" ] && [ "$2" = "list-units" ]; then '
-        f'[ ! -s {unit_state} ] || printf "%s loaded active running\\n" "$(cat {unit_state})"; '
+        f'[ ! -s {unit_state} ] || while read unit; do '
+        f'printf "%s loaded active running\\n" "$unit"; done < {unit_state}; '
         "exit 0; fi\n"
         f'if [ "$1" = "--user" ] && [ "$2" = "is-active" ]; then '
-        f'[ -s {unit_state} ] && [ "$(cat {unit_state})" = "$4" ]; exit $?; fi\n'
+        f'[ -s {unit_state} ] && grep -Fxq "$4" {unit_state}; exit $?; fi\n'
         "exit 1",
     )
     _executable(
         fake_bin / "systemd-run",
         f'printf "%s\\n" "$@" >> {launch_argv}\n'
         f'while [ "$#" -gt 0 ]; do '
-        f'if [ "$1" = "--unit" ]; then shift; printf "%s" "$1" > {unit_state}; break; fi; '
+        f'if [ "$1" = "--unit" ]; then shift; printf "%s\\n" "$1" >> {unit_state}; break; fi; '
         "shift; done",
     )
     skc = home / ".skenv" / "bin" / "skcapstone"
@@ -198,6 +212,8 @@ def test_real_selector_claims_and_launches_one_canonical_seraph_review(
     output_dir = tmp_path / "outputs"
     output_dir.mkdir()
     verified_path = tmp_path / "verified.json"
+    duplicate_path = tmp_path / "duplicates.json"
+    active_snapshot_path = tmp_path / "active-snapshot.txt"
     harness = """
 import contextlib
 import fcntl
@@ -209,11 +225,13 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from skcoord.card_store import CardStore
+from skcapstone.link_review_work import card_generation, reconcile_review_work
 from skcapstone.seat_cycle_entrypoint import verify_seraph_dispatch
 
 os.uname = lambda: SimpleNamespace(nodename="chiap08")
 fcntl.flock = lambda *_args: None
-script, output_dir, verified_path = sys.argv[1:]
+script, output_dir, verified_path, duplicate_path, active_snapshot_path = sys.argv[1:]
 
 def cycle(name, seat):
     os.environ["SKFLEET_ONLY_SEAT"] = seat
@@ -236,6 +254,39 @@ verified = verify_seraph_dispatch(
     subprocess.CompletedProcess([], 0, stdout=seraph, stderr=""),
 )
 Path(verified_path).write_text(json.dumps(verified), encoding="utf-8")
+store = CardStore(Path(os.environ["SKCAPSTONE_HOME"]))
+source = store.fold("9c71f24a")
+candidate = {
+    "kind": "review-work",
+    "reason": "missing_terminal_review",
+    "repository": "smilinTux/skcapstone",
+    "workspace_repository": "https://github.com/smilinTux/skcapstone",
+    "base_ref": "main",
+    "pr": 548,
+    "head_revision": "f" * 40,
+    "base_revision": "b" * 40,
+    "source_card": "9c71f24a",
+    "card_generation": card_generation(source),
+    "source_owner": "mero",
+    "reviewer_candidates": [{
+        "name": "Seraph",
+        "seat": "seraph",
+        "identity": "pi-seraph-chiap08-review",
+        "eligible": True,
+    }],
+}
+duplicate_ids = [
+    reconcile_review_work(
+        Path(os.environ["SKCAPSTONE_HOME"]),
+        candidate,
+        evidence_sha256=digest * 64,
+    ).review_card_id
+    for digest in ("d", "e")
+]
+Path(duplicate_path).write_text(json.dumps(duplicate_ids), encoding="utf-8")
+unit_state = Path(os.environ["SKFLEET_TEST_UNIT_STATE"])
+Path(active_snapshot_path).write_text(unit_state.read_text(encoding="utf-8"), encoding="utf-8")
+unit_state.unlink()
 cycle("replay", "seraph")
 """
     skcoord_root = Path(lifecycle_reassessment.__file__).resolve().parents[1]
@@ -256,15 +307,16 @@ cycle("replay", "seraph")
             "GIT_CONFIG_KEY_0": f"url.file://{origin}.insteadOf",
             "GIT_CONFIG_VALUE_0": repository,
             "SKFLEET_TEST_PYTHON": sys.executable,
+            "SKFLEET_TEST_UNIT_STATE": str(unit_state),
             "SKFLEET_TARGET": "2",
             "SKFLEET_GLM_TARGET": "0",
             "SKFLEET_QWEN_TARGET": "0",
             "SKFLEET_KIMI_TARGET": "0",
             "SKFLEET_ESC_TARGET": "0",
-            "SKFLEET_SEAT_TARGET": "1",
+            "SKFLEET_SEAT_TARGET": "2",
             "SKFLEET_CODEX_PHYSICAL_LIMIT": "3",
             "SKFLEET_CODEX_MODEL_S": "sk-codex-mid",
-            "SKFLEET_MAX_LAUNCH": "1",
+            "SKFLEET_MAX_LAUNCH": "2",
             "SKFLEET_PI_CARDSTORE_GUARD": str(
                 ROOT / "scripts" / "fleet" / "pi-cardstore-guard.mjs"
             ),
@@ -283,6 +335,8 @@ cycle("replay", "seraph")
                 str(ROTATE),
                 str(output_dir),
                 str(verified_path),
+                str(duplicate_path),
+                str(active_snapshot_path),
             ],
             env=env,
             capture_output=True,
@@ -301,8 +355,9 @@ cycle("replay", "seraph")
     replay_output = (output_dir / "replay.out").read_text(encoding="utf-8")
     assert "LAUNCHED|" not in generic_output
     assert "NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat=generic" in generic_output
-    assert seraph_output.count("LAUNCHED|") == 1
-    assert "LAUNCHED|chiap08|codex-auto-" + card_id in seraph_output
+    assert seraph_output.count("LAUNCHED|") == 2
+    for card_id in card_ids:
+        assert "LAUNCHED|chiap08|codex-auto-" + card_id in seraph_output
     assert "LANE_ADMISSION_BLOCKED|" not in seraph_output
     assert "LAUNCHED|" not in replay_output
 
@@ -314,41 +369,55 @@ cycle("replay", "seraph")
     codex_lane = next(row for row in lane_snapshot["lanes"] if row["lane"] == "codex")
     assert codex_lane["domains"] == [{"capacity_domain": "codex", "max": 3, "state": "healthy"}]
 
-    folded = store.fold(card_id)
-    assert folded is not None
-    assert folded.owner == f"pi-seraph-chiap08-{card_id}"
-    unit = f"skfleet-worker-codex-{card_id}.service"
-    assert unit_state.read_text(encoding="utf-8") == unit
-    assert launch_argv.read_text(encoding="utf-8").splitlines().count(unit) == 1
+    folded_cards = [store.fold(card_id) for card_id in card_ids]
+    assert all(folded is not None for folded in folded_cards)
+    assert [folded.owner for folded in folded_cards] == [
+        f"pi-seraph-chiap08-{card_id}" for card_id in card_ids
+    ]
+    units = [f"skfleet-worker-codex-{card_id}.service" for card_id in card_ids]
+    assert sorted(active_snapshot_path.read_text(encoding="utf-8").splitlines()) == sorted(units)
+    launch_lines = launch_argv.read_text(encoding="utf-8").splitlines()
+    assert all(launch_lines.count(unit) == 1 for unit in units)
     assert json.loads(verified_path.read_text(encoding="utf-8")) == {
-        "cards_examined": 1,
-        "recommendations": 1,
+        "cards_examined": 2,
+        "recommendations": 2,
         "suppressed": 0,
-        "dispatch_succeeded": 1,
+        "dispatch_succeeded": 2,
         "dispatch_failed": 0,
         "dispatch_retryable": 0,
         "reason": "seraph_dispatch_complete",
     }
-    claim_events = [
-        event for event in store._read_events(card_id) if event.get("action") == "claim"
-    ]
-    receipt_events = [
-        event
-        for event in store._read_events(card_id)
-        if event.get("action") == "review_assignment_launch" and event.get("launched") is True
-    ]
-    assert len(claim_events) == 1
-    assert len(receipt_events) == 1
-    workspace = home / ".skcapstone" / "fleet" / "workspaces" / folded.owner
-    assert (workspace / "REAL-GIT-WORKSPACE.txt").read_text(encoding="utf-8") == (
-        "real Link to Seraph workspace\n"
-    )
+    duplicate_ids = json.loads(duplicate_path.read_text(encoding="utf-8"))
+    assert len(set(duplicate_ids)) == 2
+    for duplicate_id in duplicate_ids:
+        assert not [
+            event
+            for event in store._read_events(duplicate_id)
+            if event.get("action") in {"claim", "review_assignment_launch"}
+        ]
+    for card_id, folded in zip(card_ids, folded_cards, strict=True):
+        claim_events = [
+            event for event in store._read_events(card_id) if event.get("action") == "claim"
+        ]
+        receipt_events = [
+            event
+            for event in store._read_events(card_id)
+            if event.get("action") == "review_assignment_launch"
+            and event.get("launched") is True
+        ]
+        assert len(claim_events) == 1
+        assert len(receipt_events) == 1
+        workspace = home / ".skcapstone" / "fleet" / "workspaces" / folded.owner
+        assert (workspace / "REAL-GIT-WORKSPACE.txt").read_text(encoding="utf-8") == (
+            "real Link to Seraph workspace\n"
+        )
     git_checks = {
         "origin": ["config", "--get", "remote.origin.url"],
         "branch": ["branch", "--show-current"],
         "status": ["status", "--porcelain=v1"],
         "revision": ["rev-parse", "HEAD"],
     }
+    workspace = home / ".skcapstone" / "fleet" / "workspaces" / folded_cards[0].owner
     observed = {
         name: subprocess.run(
             ["git", "-C", str(workspace), *command],

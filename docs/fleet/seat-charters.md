@@ -24,7 +24,7 @@ exception, not a profile default.
 | **Overseer** (`mero`) | Read-only convergence and drift measurement. Emits typed recommendations, alerts, observations, and briefs. | Fleet mutation, merge, application action dispatch, or any actuation |
 | **Independent Verifier** (`seraph`) | Exact-candidate review and PASS, FAIL, or BLOCKED evidence. | Self-review, merge, dispatch, deployment, or actuation |
 | **Release and Install Operator** (`tank`) | Release and installation of exact approved artifacts, behavioral verification, and bounded rollback. | Source authoring, self-approval, independent review of its own release, merge, or dispatch |
-| **Operations** (`atlas`) | Operational observation and authorized card-scoped action execution under the Atlas Constitution. | Coordination-board ownership, card claiming, reviewer assignment, merge, policy change, or unratified action |
+| **Postcondition Verifier** (`atlas`) | Exact-target verification and postcondition evidence for governed releases. | Deployment, dispatch, actuation, coordination-board ownership, card claiming, reviewer assignment, merge, or policy change |
 
 Jarvis is Casey's personal assistant, not a recurring lifecycle seat. Jarvis
 retains emergency card creation, claim, completion, fleet, merge, deployment,
@@ -56,10 +56,13 @@ overlap into a recorded no-op. A prior cycle is abandoned only after exact
 boot ID, PID, and process start evidence proves its process generation dead.
 Receipts survive retirement and no cycle leaves a persistent child worker.
 
-Tank and ATLAS presence cycles do not acquire work or authority. Exact
-`seat-tank` and `seat-atlas` cards are still claimed and launched atomically by
-Niobe through the normal dispatcher. Tank consumes only reviewed artifacts.
-ATLAS acts only through the existing ActionIntent and authorization catalog.
+Tank and ATLAS run bounded batches through Niobe's existing selector, claim,
+and launch primitives. Admission requires exactly one matching `seat-tank` or
+`seat-atlas` label plus `dispatch-approved`; generic workers cannot consume
+either lane. Tank additionally requires `approved_artifact_sha256` metadata and
+consumes only bytes matching that digest. ATLAS additionally requires an exact
+`verification_target` and `verification_evidence_sha256`; it observes and
+records postconditions only and cannot deploy, dispatch, or actuate.
 Routine documented action classes are notify-only. A human gate exists only
 where the governing catalog, irreversible-effect policy, protected-data rule,
 or external authority requires it.

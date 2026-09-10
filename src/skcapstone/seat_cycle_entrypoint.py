@@ -28,7 +28,7 @@ from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
 from .link_review_work import load_review_work, reconcile_review_work_batch
 from .mero_census import run_blocker_census
-from .seat_boundaries import BoundaryError
+from .seat_boundaries import BoundaryError, canonical_principal
 from .seat_cycle_guard import CycleResult, SeatCycleGuard
 from .seat_mail import poll_mail, startup_hello
 
@@ -39,6 +39,7 @@ _LAUNCH = re.compile(
     r"\|owner=(?P<owner>[^|]+)\|claim_revision=(?P<revision>[^|]+)$"
 )
 _MAX_SERAPH_BATCH = 8
+_MAX_ROLE_BATCH = 8
 _NOOP = re.compile(
     r"^NOOP_RECEIPT\|(?P<host>[^|]+)\|reason=(?P<reason>[^|]+)" r"\|seat=(?P<seat>[^|]+)$"
 )
@@ -307,8 +308,9 @@ def verify_seraph_dispatch(
             and len(recommendations) == 1
             and len(receipts) == 1
             and recommendations[0].get("author") == producer
-            and producer != launch["owner"]
-            and producer != recommendations[0].get("reviewer")
+            and canonical_principal(producer) != canonical_principal(launch["owner"])
+            and canonical_principal(producer)
+            != canonical_principal(str(recommendations[0].get("reviewer") or ""))
             and receipts[0].get("recommendation_id") == recommendations[0].get("recommendation_id")
         )
         seen_cards.add(launch["card"])
@@ -456,6 +458,187 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
     return verify_seraph_dispatch(home, completed)
 
 
+def verify_role_dispatch(
+    home: Path, completed: subprocess.CompletedProcess[str], seat: str
+) -> dict[str, int | str]:
+    """Verify a bounded Tank or ATLAS selector result."""
+
+    output = "\n".join(
+        value
+        for value in (getattr(completed, "stdout", ""), getattr(completed, "stderr", ""))
+        if value
+    )
+    launches = [
+        match.groupdict()
+        for line in output.splitlines()
+        if (match := _LAUNCH.fullmatch(line.strip()))
+    ]
+    noops = [
+        match.groupdict()
+        for line in output.splitlines()
+        if (match := _NOOP.fullmatch(line.strip()))
+    ]
+    if not launches and len(noops) == 1 and noops[0]["seat"] == seat:
+        reason = noops[0]["reason"]
+        if completed.returncode == 0 and reason in {"no_eligible_work", "no_available_capacity"}:
+            return {
+                "cards_examined": 0,
+                "recommendations": 0,
+                "suppressed": 0,
+                "reason": f"{seat}_{reason}",
+            }
+    if not launches or noops:
+        return {
+            "cards_examined": len(launches),
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_succeeded": 0,
+            "dispatch_failed": 1,
+            "reason": f"{seat}_dispatch_failed",
+        }
+
+    store = CardStore(home)
+    succeeded = failed = 0
+    invalid = int(completed.returncode != 0)
+    seen_cards: set[str] = set()
+    for launch in launches:
+        card = store.fold(launch["card"])
+        events = store._read_events(launch["card"])
+        labels = {str(label).strip().lower() for label in getattr(card, "labels", ())}
+        seat_labels = {label for label in labels if label.startswith("seat-")}
+        valid = (
+            card is not None
+            and launch["card"] not in seen_cards
+            and launch["owner"].startswith(f"pi-{seat}-")
+            and seat_labels == {f"seat-{seat}"}
+            and "dispatch-approved" in labels
+            and launch["lane"] == "codex"
+            and launch["model"] == "sk-codex-mid"
+        )
+        seen_cards.add(launch["card"])
+        if not valid:
+            invalid += 1
+            continue
+        if launch["outcome"] == "LAUNCHED":
+            status = getattr(getattr(card, "status", None), "value", getattr(card, "status", None))
+            if (
+                status != "doing"
+                or card.owner != launch["owner"]
+                or card.meta.get("_claim_revision") != launch["revision"]
+            ):
+                invalid += 1
+                continue
+            unit = f"skfleet-worker-{launch['lane']}-{launch['card']}.service"
+            active = subprocess.run(
+                ["systemctl", "--user", "is-active", "--quiet", unit],
+                capture_output=True,
+                timeout=10,
+            )
+            if active.returncode != 0:
+                invalid += 1
+                continue
+            succeeded += 1
+        elif _failed_claim_is_retryable(store, launch, card, events):
+            failed += 1
+        else:
+            invalid += 1
+    suppressed = failed + invalid
+    reason = (
+        f"{seat}_dispatch_partial"
+        if succeeded and suppressed
+        else f"{seat}_dispatch_complete" if succeeded else f"{seat}_dispatch_failed"
+    )
+    return {
+        "cards_examined": len(launches),
+        "recommendations": succeeded,
+        "suppressed": suppressed,
+        "dispatch_succeeded": succeeded,
+        "dispatch_failed": suppressed,
+        "dispatch_retryable": failed,
+        "reason": reason,
+    }
+
+
+def _failed_claim_is_retryable(
+    store: CardStore,
+    launch: dict[str, str],
+    card: object,
+    events: list[dict[str, object]],
+) -> bool:
+    """Require exact-generation claim release after a failed role launch."""
+
+    owner, revision = launch["owner"], launch["revision"]
+    claims = [
+        index
+        for index, event in enumerate(events)
+        if event.get("action") == "claim"
+        and event.get("owner") == owner
+        and (event.get("claim_revision") or event.get("event_id")) == revision
+    ]
+    releases = [
+        index
+        for index, event in enumerate(events)
+        if event.get("action") == "release_claim"
+        and event.get("released_owner") == owner
+        and event.get("expected_claim_revision") == revision
+    ]
+    if (
+        len(claims) != 1
+        or len(releases) != 1
+        or claims[0] >= releases[0]
+        or getattr(card, "owner", None) is not None
+        or getattr(card, "status", None) != Column.BACKLOG
+        or bool(getattr(card, "archived", False))
+    ):
+        return False
+    return all(
+        (dependency := store.fold(dependency_id)) is not None and dependency.status == Column.DONE
+        for dependency_id in getattr(card, "dependencies", ())
+    )
+
+
+def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
+    """Launch one configurable, bounded Tank or ATLAS batch."""
+
+    env_name = f"SKFLEET_{seat.upper()}_BATCH_SIZE"
+    try:
+        batch_size = int(os.environ.get(env_name, "2"))
+    except ValueError:
+        batch_size = 0
+    if seat not in {"tank", "atlas"} or not 1 <= batch_size <= _MAX_ROLE_BATCH:
+        return {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_succeeded": 0,
+            "dispatch_failed": 1,
+            "reason": f"{seat}_batch_size_invalid",
+        }
+    env = os.environ.copy()
+    env.update(
+        {
+            "SKFLEET_ONLY_SEAT": seat,
+            "SKFLEET_SEAT_TARGET": str(batch_size),
+            "SKFLEET_CODEX_MODEL_S": "sk-codex-mid",
+            "SKFLEET_CODEX_MODEL_M": "sk-codex-mid",
+            "SKFLEET_CODEX_MODEL_L": "sk-codex-mid",
+            "SKFLEET_CODEX_MODEL_XL": "sk-codex-mid",
+            "SKFLEET_QWEN_TARGET": "0",
+            "SKFLEET_GLM_TARGET": "0",
+            "SKFLEET_KIMI_TARGET": "0",
+            "SKFLEET_MAX_LAUNCH": str(batch_size),
+        }
+    )
+    completed = subprocess.run(
+        [str(Path.home() / ".local/bin/skfleet-rotate.py"), "--go"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    return verify_role_dispatch(home, completed, seat)
+
+
 def _emit_review_work(home: Path, lineage_path: Path, feed_reason: str) -> dict[str, int | str]:
     try:
         source_revision, evidence_sha256, recommendations = load_review_work(lineage_path)
@@ -571,6 +754,11 @@ def main(argv: list[str] | None = None) -> int:
 
         def operation() -> dict[str, int | str]:
             return link_operation(args.home, feed_path)
+
+    elif args.seat in {"tank", "atlas"}:
+
+        def operation() -> dict[str, int | str]:
+            return role_dispatch_operation(args.home, args.seat)
 
     else:
 

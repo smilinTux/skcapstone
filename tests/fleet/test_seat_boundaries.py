@@ -76,6 +76,14 @@ def test_link_fails_closed_without_a_distinct_reviewer() -> None:
         )
 
 
+@pytest.mark.parametrize("alias", ["seraph", "pi-seraph-chiap08-card01", "SERAPH_worker"])
+def test_link_rejects_reviewer_aliases_of_the_producer_principal(alias: str) -> None:
+    """Display identity changes cannot turn a producer into an independent reviewer."""
+
+    with pytest.raises(BoundaryError, match="no distinct reviewer"):
+        assign_distinct_reviewer(author="seraph", assigner="link", candidates=[alias])
+
+
 @pytest.mark.parametrize("candidate", ["", "   "])
 def test_link_skips_blank_reviewer(candidate: str) -> None:
     """Blank identities are never accepted as reviewers."""

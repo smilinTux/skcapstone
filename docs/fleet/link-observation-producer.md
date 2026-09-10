@@ -23,11 +23,32 @@ lineage never replace the last valid feed. Incomplete runs write only a
 `.blocked.json` diagnostic beside the target.
 
 The producer has no merge, deployment, release, card-claim, or fleet-mutation
-path. A producer run is not permission to enable the Link timer. The producer
-timer is intentionally not installed yet; every PR must first have a terminal
-review outcome, and the Link timer remains disabled until a fresh producer
-output is observed. FAIL and BLOCKED outcomes remain visible to Link but
-cannot satisfy merge eligibility, which requires exact independent PASS.
+path. `skfleet-link-producer.timer` refreshes lineage and then attempts feed
+publication every five minutes, starting four minutes before Link's initial
+cycle. It runs as the separate `link-producer` identity. Incomplete lineage is
+a bounded diagnostic outcome: it preserves the last valid feed and does not
+stop Link's independent review-work fallback. FAIL and BLOCKED outcomes remain
+visible to Link but cannot satisfy merge eligibility, which requires exact
+independent PASS.
+
+The service supplies the exact lifecycle repository scope through
+`SKFLEET_LINK_REPOSITORIES`: `smilinTux/skcapstone`,
+`smilinTux/skdashboard`, `smilinTux/skworld`, and
+`smilinTux/sk-standards`. The producer fails closed before connector access
+when this setting is empty, malformed, duplicated, missing a product, or
+contains an additional repository.
+
+Install and activate the producer independently:
+
+```bash
+install -m 0755 scripts/fleet/link-lineage.py ~/.local/bin/link-lineage.py
+install -m 0755 scripts/fleet/skfleet-link-producer.py \
+  ~/.local/bin/skfleet-link-producer.py
+install -m 0644 systemd/skfleet-link-producer.{service,timer} \
+  ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now skfleet-link-producer.timer
+```
 
 Dry run:
 

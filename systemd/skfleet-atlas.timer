@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the bounded ATLAS lifecycle presence cycle every five minutes
+Description=Run the bounded ATLAS operations dispatcher every five minutes
 
 [Timer]
 OnBootSec=4min

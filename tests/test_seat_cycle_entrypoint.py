@@ -17,6 +17,7 @@ from skcapstone.link_review_work import card_generation, reconcile_review_work
 from skcapstone.seat_cycle_entrypoint import (
     link_operation,
     load_control_plane,
+    role_dispatch_operation,
     run_cycle,
     seraph_operation,
 )
@@ -823,6 +824,8 @@ def test_control_plane_requires_all_six_seats(tmp_path: Path) -> None:
 def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     root = Path(__file__).parents[1]
     link = (root / "systemd/skfleet-link.service").read_text()
+    producer = (root / "systemd/skfleet-link-producer.service").read_text()
+    producer_timer = (root / "systemd/skfleet-link-producer.timer").read_text()
     mero = (root / "systemd/skfleet-mero.service").read_text()
     link_timer = (root / "systemd/skfleet-link.timer").read_text()
     mero_timer = (root / "systemd/skfleet-mero.timer").read_text()
@@ -832,7 +835,17 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     tank_timer = (root / "systemd/skfleet-tank.timer").read_text()
     atlas = (root / "systemd/skfleet-atlas.service").read_text()
     atlas_timer = (root / "systemd/skfleet-atlas.timer").read_text()
+    niobe = (root / "systemd/skfleet-niobe-live.service").read_text()
     assert "TimeoutStartSec=120" in link
+    assert "SKAGENT=link-producer" in producer
+    assert (
+        "SKFLEET_LINK_REPOSITORIES=smilinTux/skcapstone,smilinTux/skdashboard,"
+        "smilinTux/skworld,smilinTux/sk-standards" in producer
+    )
+    assert "Before=skfleet-link.service" in producer
+    assert "skfleet-link-producer.py" in producer
+    assert "OnBootSec=1min" in producer_timer
+    assert "OnUnitActiveSec=5min" in producer_timer
     assert "TimeoutStartSec=180" in mero
     assert "--seat link" in link and "--seat mero" in mero
     assert "OnUnitActiveSec=5min" in link_timer
@@ -844,11 +857,26 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "Environment=SKFLEET_TARGET=2" in seraph
     assert "Environment=SKFLEET_SERAPH_BATCH_SIZE=2" in seraph
     assert "Environment=SKFLEET_CODEX_PHYSICAL_LIMIT=3" in seraph
+    assert "Environment=SKFLEET_TARGET=3" in niobe
+    assert "Environment=SKFLEET_GLM_TARGET=0" in niobe
+    assert "Environment=SKFLEET_KIMI_TARGET=0" in niobe
     assert "skfleet-seraph.service" in seraph_timer
     assert "--seat tank" in tank and "TimeoutStartSec=300" in tank
+    assert "SKFLEET_TANK_BATCH_SIZE=2" in tank
+    assert "ProtectHome=read-only" in tank
+    assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in tank
     assert "OnUnitActiveSec=5min" in tank_timer
     assert "--seat atlas" in atlas and "TimeoutStartSec=300" in atlas
+    assert "SKFLEET_ATLAS_BATCH_SIZE=2" in atlas
+    assert "ProtectHome=read-only" in atlas
+    assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in atlas
+    assert "bounded postcondition verifier" in atlas
     assert "OnUnitActiveSec=5min" in atlas_timer
+    for seat in ("tank", "atlas"):
+        assert (root / "systemd" / f"skfleet-{seat}.service").read_bytes() == (
+            root / "src" / "skcapstone" / "data" / "systemd" /
+            f"skfleet-{seat}.service"
+        ).read_bytes()
 
 
 def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
@@ -869,3 +897,50 @@ def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> 
         )
         assert result.result == "presence_complete"
         assert result.cards_examined == 0
+
+
+@pytest.mark.parametrize("seat", ["tank", "atlas"])
+def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -> None:
+    captured = {}
+    card_id = "a8100007"
+    owner = f"pi-{seat}-chiap08-{card_id}"
+    card = SimpleNamespace(
+        labels=[f"seat-{seat}", "dispatch-approved"],
+        status=SimpleNamespace(value="doing"),
+        owner=owner,
+        meta={"_claim_revision": "revision-1"},
+    )
+
+    def run(command, **kwargs):
+        if command[0] == "systemctl":
+            return SimpleNamespace(returncode=0)
+        captured.update(kwargs["env"])
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
+                f"model=sk-codex-mid|owner={owner}|claim_revision=revision-1\n"
+            ),
+        )
+
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore._read_events", lambda *_: [])
+
+    result = role_dispatch_operation(tmp_path, seat)
+
+    assert result["reason"] == f"{seat}_dispatch_complete"
+    assert captured["SKFLEET_ONLY_SEAT"] == seat
+    assert captured["SKFLEET_SEAT_TARGET"] == "2"
+    assert captured["SKFLEET_MAX_LAUNCH"] == "2"
+    assert captured["SKFLEET_GLM_TARGET"] == "0"
+    assert {captured[f"SKFLEET_CODEX_MODEL_{size}"] for size in ("S", "M", "L", "XL")} == {
+        "sk-codex-mid"
+    }
+
+
+@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("batch", ["0", "-1", "9", "invalid"])
+def test_role_dispatch_rejects_invalid_batch(tmp_path, monkeypatch, seat, batch) -> None:
+    monkeypatch.setenv(f"SKFLEET_{seat.upper()}_BATCH_SIZE", batch)
+    assert role_dispatch_operation(tmp_path, seat)["reason"] == f"{seat}_batch_size_invalid"

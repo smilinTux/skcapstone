@@ -31,7 +31,7 @@ from skcapstone.scheduler_decision import (
 from skcapstone.review_admission import (
     governed_review_gate_reasons,
 )
-from skcapstone.seat_boundaries import BoundaryError
+from skcapstone.seat_boundaries import BoundaryError, canonical_principal
 from skcapstone.niobe_fanout import (
     FanoutBoundaryError,
     append_fanout_receipt,
@@ -214,6 +214,8 @@ def _review_assignment(cid, core, labels, reviewer):
     if metadata is None:
         raise BoundaryError("review card lacks complete producer evidence metadata")
     producer, evidence = metadata
+    if canonical_principal(producer) == canonical_principal(reviewer):
+        raise BoundaryError("producer and reviewer resolve to the same principal")
     card = CardStore(Path(HOME) / ".skcapstone").fold(cid)
     if card is None:
         raise BoundaryError("review card is missing")
@@ -300,7 +302,9 @@ PI_NATIVE_TOOLS=("read", "bash", "edit", "write", "grep", "find", "ls")
 PI_MCP_PROXY_LABEL="mcp-required"
 ESC_MODEL=os.environ.get("SKFLEET_ESC_MODEL","gpt-5.6-sol")
 PRI={"critical":0,"high":1,"medium":2,"low":3}
-STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+STAMP=os.environ.get("SKFLEET_ROTATION_ID", "")
+if not re.fullmatch(r"[0-9a-f]{32}", STAMP):
+    STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 # The timer driven production entrypoint always traverses the liveness decision
 # surface. Empty or incomplete evidence still publishes truthful zero metrics
@@ -689,12 +693,14 @@ def _log_once_per_hour(d, event, cid, message, state_dir=None, now=None):
     return True
 
 os.makedirs(os.path.join(HOME,".skcapstone/fleet"),exist_ok=True)
+d=os.path.join(EVID,STAMP)
 lock=open(os.path.join(HOME,".skcapstone/fleet/rotate.lock"),"w")
 try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError:
-    print("  rotation already running on %s"%HOST); sys.exit(0)
+    log(d,"NOOP_RECEIPT|%s|reason=rotation_overlap|seat=%s"%
+        (HOST,ONLY_SEAT or "niobe"))
+    sys.exit(0)
 
-d=os.path.join(EVID,STAMP)
 
 if HOST not in ROTATION_HOSTS:
     log(d,"NOOP|%s|host is outside the authorized chiap01-chiap03 worker fleet"%HOST)
@@ -1089,9 +1095,10 @@ if not ONLY_SEAT:
     publish_live(sessions, worker_units)
 
 if free==0:
+    log(d,"NOOP|%s|all slots busy"%HOST)
     log(d,"NOOP_RECEIPT|%s|reason=no_available_capacity|seat=%s"%
         (HOST,ONLY_SEAT or "generic"))
-    log(d,"NOOP|%s|all slots busy"%HOST); sys.exit(0)
+    sys.exit(0)
 
 # ---- assignable pool: unclaimed, not human, not drift, DEPENDENCIES SATISFIED
 # Cards that were launched before and never produced a claim event cannot be
@@ -1159,6 +1166,20 @@ _OVERLAY_ACTIONS = {
 }
 _claim_rows = {}
 _legacy_claim_rows = None
+
+
+def _role_seat_metadata(core, seat):
+    """Return exact card-bound authority metadata for Tank or ATLAS."""
+    links = core.get("links") if isinstance(core.get("links"), dict) else {}
+    if seat == "tank":
+        digest = str(links.get("approved_artifact_sha256") or "").strip().lower()
+        return (digest,) if re.fullmatch(r"[0-9a-f]{64}", digest) else None
+    if seat == "atlas":
+        target = str(links.get("verification_target") or "").strip()
+        digest = str(links.get("verification_evidence_sha256") or "").strip().lower()
+        if target and re.fullmatch(r"[0-9a-f]{64}", digest):
+            return target, digest
+    return None
 
 
 def _strict_card_events(cid, fresh=False):
@@ -4042,10 +4063,25 @@ def _pool_v2_authority_rows(decisions, admissions, failed, unblocks, priorities,
     rows = []
     pinned = set()
     for cid in sorted(ready_ids):
+        if not re.fullmatch(r"[0-9a-f]{8}", cid):
+            continue
         admission = admissions[cid]
         core = admission["core"]
         only_seat = globals().get("_ONLY_SEAT", "")
-        if only_seat and seat_for(cid, core) != only_seat:
+        seat_labels = {
+            str(label).strip().lower()
+            for label in admission["labels"]
+            if str(label).strip().lower().startswith(_SEAT_LABEL_PREFIX)
+        }
+        if only_seat and seat_labels != {"seat-" + only_seat}:
+            continue
+        if not only_seat and seat_labels & {"seat-tank", "seat-atlas"}:
+            continue
+        if only_seat in {"tank", "atlas"} and _CATEGORY_OPT_IN not in {
+            str(label).strip().lower() for label in admission["labels"]
+        }:
+            continue
+        if only_seat in {"tank", "atlas"} and _role_seat_metadata(core, only_seat) is None:
             continue
         title = admission["title"]
         labels = admission["labels"]
@@ -4087,6 +4123,29 @@ def _pool_v2_preclaim_handoff(cid, selected, fresh, reviewer):
     if not _pool_v2_preclaim_matches(selected, fresh):
         raise BoundaryError("POOL_V2 admission changed before claim")
     return _review_assignment(cid, fresh["core"], fresh["labels"], reviewer)
+
+
+def _seraph_unique_source_heads(candidates):
+    """Exclude every ambiguous source/head pair before claim or launch."""
+    if globals().get("_ONLY_SEAT", "") != "seraph":
+        return list(candidates), set()
+    grouped = collections.Counter(
+        (
+            str((row[3].get("meta") or {}).get("link_source_card") or ""),
+            str((row[3].get("meta") or {}).get("link_head_revision") or ""),
+        )
+        for row in candidates
+    )
+    duplicates = {key for key, count in grouped.items() if not all(key) or count > 1}
+    return [
+        row
+        for row in candidates
+        if (
+            str((row[3].get("meta") or {}).get("link_source_card") or ""),
+            str((row[3].get("meta") or {}).get("link_head_revision") or ""),
+        )
+        not in duplicates
+    ], duplicates
 
 
 def _shadow_pool_v2():
@@ -4229,6 +4288,13 @@ pool, _PINNED_IDS = _pool_v2_authority_rows(
     _POOL_V2_DECISIONS or (), _POOL_V2_ADMISSIONS, _POOL_V2_FAILED,
     unblocks, PRI, ENG, HOST
 )
+pool, _DUPLICATE_SERAPH_SOURCE_HEADS = _seraph_unique_source_heads(pool)
+for _source_head in sorted(_DUPLICATE_SERAPH_SOURCE_HEADS):
+    log(
+        d,
+        "REVIEW_SOURCE_HEAD_WITHHELD|%s|source=%s|head=%s|reason=duplicate"
+        % (HOST, _source_head[0] or "missing", _source_head[1] or "missing"),
+    )
 log(d, "POOL_AUTHORITY|%s|source=POOL_V2|ready=%d|legacy_ready=%d" %
     (HOST, len(pool), _legacy_ready))
 
@@ -4605,9 +4671,10 @@ if not picks:
     detail = _selection_diagnostic(
         pool, owned, LANES, owner_host, reporting_capacity())
     log(d,"SELECTION_EMPTY|%s|%s"%(HOST,detail))
+    log(d,"NOOP|%s|selection empty: %s"%(HOST,detail))
     log(d,"NOOP_RECEIPT|%s|reason=%s|seat=%s"%
         (HOST,_noop_reason(pool,owned,_lane_deferred),_ONLY_SEAT or "generic"))
-    log(d,"NOOP|%s|selection empty: %s"%(HOST,detail)); sys.exit(0)
+    sys.exit(0)
 
 raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0
 launched=0
@@ -4766,6 +4833,25 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     name = _worker_owner(_LANE["name"], cid, _seat)
     if _seat:
         log(d, "SEAT|%s|%s|running under seat %s as %s" % (HOST, cid, _seat, name))
+    if _seat == "tank":
+        _artifact_sha256, = _role_seat_metadata(core, "tank")
+        brief += (
+            "\nTANK ROLE FENCE:\n"
+            "- Release or install only the approved artifact with sha256=%s.\n"
+            "- This exact governed release surface is the only exception to the "
+            "generic no-deploy worker rail.\n"
+            "- Do not author source, merge, approve your own work, or review this release.\n"
+        ) % _artifact_sha256
+    elif _seat == "atlas":
+        _verification_target, _verification_evidence_sha256 = _role_seat_metadata(
+            core, "atlas"
+        )
+        brief += (
+            "\nATLAS ROLE FENCE:\n"
+            "- Verify only target %s against evidence sha256=%s.\n"
+            "- Record observed postconditions and a PASS, FAIL, or BLOCKED result.\n"
+            "- Do not deploy, dispatch, invoke an actuator, or change the target.\n"
+        ) % (_verification_target, _verification_evidence_sha256)
     sess="%s%s"%(_LANE["prefix"],cid)
     model=_LANE["model"]
     if _LANE["name"]=="glm":
@@ -5053,3 +5139,5 @@ if lane_drift:
 if claim_refused:
     log(d,"CLAIM_REFUSED_TOTAL|%s|%d claim command(s) refused or not visible "
         "in the authoritative fold"%(HOST,claim_refused))
+log(d,"CYCLE_RECEIPT|%s|seat=%s|launched=%d|attempted=%d|receipts=%d"%
+    (HOST,_ONLY_SEAT or "niobe",launched,processed_picks,launch_receipts))

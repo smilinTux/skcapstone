@@ -360,7 +360,7 @@ def fetch_prs(repo: str) -> list[dict[str, Any]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", default="smilinTux/skcapstone")
+    ap.add_argument("--repo", action="append")
     ap.add_argument("--home", type=Path, default=Path.home() / ".skcapstone")
     ap.add_argument("--output", type=Path)
     ap.add_argument("--exclude", type=Path)
@@ -371,7 +371,9 @@ def main() -> int:
         c.model_dump(mode="json") for c in CardStore(args.home).list_cards(include_archived=True)
     ]
     exclusions = json.loads(args.exclude.read_text()) if args.exclude else {}
-    report = reconcile(fetch_prs(args.repo), cards, args.home, exclusions)
+    repositories = args.repo or ["smilinTux/skcapstone"]
+    pull_requests = [row for repo in repositories for row in fetch_prs(repo)]
+    report = reconcile(pull_requests, cards, args.home, exclusions)
     rendered = _json(report) + "\n"
     if args.output:
         args.output.write_text(rendered, encoding="utf-8")

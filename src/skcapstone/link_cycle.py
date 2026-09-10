@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Iterable, Mapping, Sequence
 
 from .link_merge_authority import IndependentReview, MergeCandidate
-from .seat_boundaries import BoundaryError, evaluate_merge_as_link
+from .seat_boundaries import BoundaryError, canonical_principal, evaluate_merge_as_link
 
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -197,9 +197,13 @@ def recommend_one_reviewer(
         if (
             candidate.eligible
             and candidate.name.strip()
-            and candidate.identity.strip().lower() != "link"
+            and canonical_principal(candidate.identity) != "link"
             and all(value.strip() for value in values)
-            and all(left.lower() != right.lower() for left, right in zip(values, producer_values))
+            and canonical_principal(candidate.identity) != canonical_principal(producer.identity)
+            and all(
+                left.casefold() != right.casefold()
+                for left, right in zip(values[1:], producer_values[1:])
+            )
         ):
             selected = candidate
             break

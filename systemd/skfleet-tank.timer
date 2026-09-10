@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the bounded Tank lifecycle presence cycle every five minutes
+Description=Run the bounded Tank release dispatcher every five minutes
 
 [Timer]
 OnBootSec=2min
