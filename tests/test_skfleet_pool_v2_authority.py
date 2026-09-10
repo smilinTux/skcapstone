@@ -87,7 +87,7 @@ def test_malformed_review_stale_drift_and_unknown_fail_closed() -> None:
     assert ready_ids(decisions, admissions, failed=True) == set()
 
 
-def test_canonical_review_card_enters_only_seraph_selector() -> None:
+def test_canonical_review_card_enters_seraph_or_elastic_codex_selector() -> None:
     """A complete canonical review reaches Seraph without becoming generic work."""
     helpers = _load_helpers(
         "_governed_review_metadata",
@@ -137,7 +137,8 @@ def test_canonical_review_card_enters_only_seraph_selector() -> None:
     helpers["_ONLY_SEAT"] = ""
     generic = helpers["_pool_v2_admission"](card_id, core, claimability)
     assert generic["seraph_review_admitted"] is False
-    assert helpers["_pool_v2_ready_ids"](decisions, {card_id: generic}) == set()
+    assert generic["elastic_review_admitted"] is True
+    assert helpers["_pool_v2_ready_ids"](decisions, {card_id: generic}) == {card_id}
 
     incomplete = dict(core)
     incomplete["links"] = {"producer_identity": "mero"}

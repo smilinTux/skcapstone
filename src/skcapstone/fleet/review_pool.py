@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,21 @@ MUTATING_TOKENS = frozenset(
     {"commit", "push", "merge", "reset", "checkout", "clean", "write", "rm"}
 )
 VERDICTS = frozenset({"PASS", "PASS_FOR_REVIEW", "BLOCKED"})
+
+
+def review_fanout_limit(eligible: int, free_codex_slots: int, configured_maximum: int) -> int:
+    """Return the exact bounded review fanout, rejecting invalid capacity."""
+    values = (eligible, free_codex_slots, configured_maximum)
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in values):
+        raise ReviewAdmissionError("review capacities must be non-negative integers")
+    return min(values)
+
+
+def elastic_reviewer_identity(host: str, card_id: str) -> str:
+    """Return a claim-fenced managed Codex reviewer identity."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", host) or not re.fullmatch(r"[0-9a-f]{8}", card_id):
+        raise ReviewAdmissionError("invalid review host or card identity")
+    return f"pi-codex-review-{host}-{card_id}"
 
 
 def validate_request(request: ReviewRequest) -> None:
