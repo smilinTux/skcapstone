@@ -8,8 +8,8 @@ its own node's status subtree, scheduler (Phase 2) writes placements.
 
 from __future__ import annotations
 
-import json
 import fcntl
+import json
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone

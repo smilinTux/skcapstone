@@ -278,9 +278,7 @@ def _frozen_claim_status(
     """Release an exact prelaunch claim when the human freeze has won."""
     if store.actuation_allowed(paths):
         return None
-    released = _release_exact(
-        coordination_home, request["card_id"], owner, revision, actor=owner
-    )
+    released = _release_exact(coordination_home, request["card_id"], owner, revision, actor=owner)
     return _write_status(
         paths,
         node,
@@ -441,8 +439,7 @@ def consume_one(
             if prior.get("state") == "running":
                 return _reconcile_running(paths, coordination_home, node, request, prior)
             if prior.get("state") not in {"failed", "frozen"} or (
-                prior.get("state") == "failed"
-                and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
+                prior.get("state") == "failed" and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
             ):
                 continue
         attempt = int(prior.get("attempt") or 0) + 1
@@ -568,9 +565,7 @@ def recover_stale(
     alive, _ = _process_state(status)
     if alive is not False:
         return False
-    released = _release_exact(
-        coordination_home, card_id, owner, revision, actor="niobe"
-    )
+    released = _release_exact(coordination_home, card_id, owner, revision, actor="niobe")
     if released:
         _write_status(paths, node, request, "stale", owner=owner, claim_revision=revision)
     return released
