@@ -133,10 +133,12 @@ def test_github_rest_nested_head_and_base_shas_are_supported() -> None:
     assert payload["records"][0]["observation"]["base_sha"] == BASE
 
 
-def test_missing_lineage_is_blocked_without_replacing_last_feed(tmp_path: Path) -> None:
+def test_global_unresolved_count_does_not_hide_a_complete_record(tmp_path: Path) -> None:
     lineage_path = tmp_path / "lineage.json"
     output = tmp_path / "link-observations.json"
-    write_lineage(lineage_path, lineage(complete=False))
+    value = lineage()
+    value["coverage"]["unresolved"] = 1
+    write_lineage(lineage_path, value)
     output.write_text("last-valid-feed\n", encoding="utf-8")
     result = produce(
         connector=FakeConnector([row()]),
@@ -145,10 +147,11 @@ def test_missing_lineage_is_blocked_without_replacing_last_feed(tmp_path: Path) 
         output_path=output,
         producer=producer(),
     )
-    assert result.healthy is False
-    assert result.reason == "lineage_incomplete"
-    assert output.read_text() == "last-valid-feed\n"
-    assert result.blocked_path and result.blocked_path.exists()
+    assert result.healthy is True
+    assert result.reason == "complete"
+    payload = json.loads(output.read_text())
+    assert payload["lineage_status"]["complete"] == 1
+    assert payload["lineage_status"]["unresolved"] == 0
 
 
 def test_orphaned_pr_is_blocked(tmp_path: Path) -> None:
@@ -163,6 +166,23 @@ def test_orphaned_pr_is_blocked(tmp_path: Path) -> None:
     )
     assert result.healthy is False
     assert result.reason == "lineage_incomplete"
+
+
+def test_mixed_lineage_publishes_complete_subset_and_reports_omission() -> None:
+    second = row()
+    second["number"] = 43
+    second["headRefOid"] = "c" * 40
+    payload, result = build_feed(
+        FakeConnector([row(), second]),
+        repositories=["smilinTux/skcapstone"],
+        lineage=lineage(),
+        producer=producer(),
+    )
+    assert result.healthy is True
+    assert result.reason == "complete_with_unresolved"
+    assert len(payload["records"]) == 1
+    assert payload["lineage_status"]["complete"] == 1
+    assert payload["lineage_status"]["unresolved"] == 1
 
 
 def test_stale_snapshot_connector_data_is_rejected(tmp_path: Path) -> None:

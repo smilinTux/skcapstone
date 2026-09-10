@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `b7f31a20`: publish fresh Link observations for fully governed PRs even
+  when unrelated legacy PRs still lack lineage, while keeping every incomplete
+  PR out of dispatch and recording a hashed omission summary in the feed.
+
 - Card `ac4e80f5`: validate repository, named base ref, and exact base revision
   across CLI, MCP, SDK, Link review materialization, and fleet preclaim. Legacy
   SHA bindings require an explicit named ref, and workers fetch and verify the

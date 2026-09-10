@@ -154,13 +154,16 @@ def _producer(value: object) -> ProducerIdentity:
 
 
 def _canonical_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "source_revision": raw.get("source_revision"),
         "observed_at": raw.get("observed_at"),
         "producer": raw.get("producer"),
         "records": raw.get("records"),
         "reviewer_candidates": raw.get("reviewer_candidates"),
     }
+    if "lineage_status" in raw:
+        payload["lineage_status"] = raw.get("lineage_status")
+    return payload
 
 
 def load_observation_feed(

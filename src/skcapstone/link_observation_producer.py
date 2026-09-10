@@ -252,11 +252,11 @@ def build_feed(
     now: datetime | None = None,
     max_age: timedelta = DEFAULT_MAX_AGE,
 ) -> tuple[dict[str, Any] | None, ProducerResult]:
-    """Build one feed, refusing healthy output when any source is incomplete."""
+    """Build a feed from complete lineage while reporting omitted PRs."""
 
     producer.validate()
     coverage = lineage.get("coverage")
-    if not isinstance(coverage, dict) or int(coverage.get("unresolved", -1)) != 0:
+    if not isinstance(coverage, dict):
         return None, ProducerResult(healthy=False, reason="lineage_incomplete", records=0)
     timestamp = now or _now()
     raw_rows: list[dict[str, Any]] = []
@@ -358,7 +358,7 @@ def build_feed(
         )
 
     source_revision = _digest({"repositories": list(repositories), "pull_requests": raw_rows})
-    if missing:
+    if missing and not records:
         return None, ProducerResult(
             healthy=False,
             reason="lineage_incomplete",
@@ -372,11 +372,16 @@ def build_feed(
         "producer": producer.as_dict(),
         "records": records,
         "reviewer_candidates": list(lineage["reviewer_candidates"]),
+        "lineage_status": {
+            "complete": len(records),
+            "unresolved": len(missing),
+            "unresolved_sha256": _digest(sorted(missing)),
+        },
     }
     payload["evidence_sha256"] = _digest(_canonical_payload(payload))
     return payload, ProducerResult(
         healthy=True,
-        reason="complete",
+        reason="complete_with_unresolved" if missing else "complete",
         records=len(records),
         source_revision=source_revision,
         evidence_sha256=str(payload["evidence_sha256"]),
