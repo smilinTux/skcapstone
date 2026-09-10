@@ -20,6 +20,7 @@ import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 HOSTS = tuple(os.environ.get("SKFLEET_HOSTS", "chiap01 chiap02 chiap03 chiap04 chiap08").split())
@@ -300,11 +301,17 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
         return "MALFORMED PROJECTION", now
     if worker.projection_state == "stale":
         return "STALE PROJECTION", now
+    heartbeat_fresh = False
+    try:
+        heartbeat = datetime.fromisoformat(worker.heartbeat_at.replace("Z", "+00:00"))
+        heartbeat_fresh = 0 <= now - int(heartbeat.timestamp()) <= 900
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        pass
     if worker.evidence_source.startswith("direct-seat-record") and (
         worker.projection_state != "valid"
         or worker.claim_state != "exact"
         or worker.completion_state != "running"
-        or not worker.heartbeat_at
+        or not heartbeat_fresh
         or not worker.process_record
     ):
         return "STALE PROJECTION", now
@@ -438,7 +445,7 @@ def main() -> int:
             row.evidence_source.startswith("direct-seat-record")
             and row.claim_state == "exact"
             and row.projection_state == "valid"
-            and bool(row.heartbeat_at)
+            and disposition != "STALE PROJECTION"
             and bool(row.process_record)
         )
         if direct_active:
