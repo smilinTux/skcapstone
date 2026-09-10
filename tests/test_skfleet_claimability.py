@@ -261,9 +261,7 @@ def test_empty_source_binding_link_event_fails_closed(key: str, value: str) -> N
         ("fd16ac85", "pr"),
     ],
 )
-def test_empty_optional_historical_review_links_are_ignored(
-    card_id: str, key: str
-) -> None:
+def test_empty_optional_historical_review_links_are_ignored(card_id: str, key: str) -> None:
     namespace = _load_claimability()
     core = _core(card_id)
     event = _event(
