@@ -30,6 +30,12 @@ export function isCardEventMutation(command) {
   return EVENT_PATH.test(expanded) && MUTATION.test(expanded);
 }
 
+export function isCurrentFleetCardReclaim(command, cardId = process.env.SKFLEET_CARD_ID) {
+  if (typeof command !== "string" || !/^[a-z0-9]{8}$/.test(cardId ?? "")) return false;
+  const escaped = cardId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\bskcapstone\\s+coord\\s+claim\\s+["']?${escaped}["']?(?:\\s|$)`).test(command);
+}
+
 export default function cardStoreGuard(pi) {
   pi.on("tool_call", async (event) => {
     if (
@@ -47,6 +53,13 @@ export default function cardStoreGuard(pi) {
         block: true,
         terminate: true,
         reason: "Direct CardStore JSONL mutation is forbidden. Use skcapstone coord.",
+      };
+    }
+    if (event.toolName === "bash" && isCurrentFleetCardReclaim(event.input?.command)) {
+      return {
+        block: true,
+        terminate: false,
+        reason: "This fleet card is already claimed at the dispatched revision. Continue without claiming it again.",
       };
     }
   });

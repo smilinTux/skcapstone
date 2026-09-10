@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -21,7 +22,7 @@ ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 STATIC_CHECK = ROOT / "scripts" / "check-coord-write-guidance.py"
 
 
-def _hook(event: dict[str, object]) -> object:
+def _hook(event: dict[str, object], *, env: dict[str, str] | None = None) -> object:
     script = f"""
 import guard from {json.dumps(GUARD.as_uri())};
 let hook;
@@ -33,8 +34,36 @@ console.log(JSON.stringify((await hook({json.dumps(event)})) ?? null));
         check=True,
         capture_output=True,
         text=True,
+        env={**os.environ, **(env or {})},
     )
     return json.loads(result.stdout)
+
+
+def test_current_fleet_card_cannot_be_reclaimed_but_worker_continues() -> None:
+    verdict = _hook(
+        {
+            "toolName": "bash",
+            "input": {"command": "skcapstone coord claim deadbeef --agent worker"},
+        },
+        env={"SKFLEET_CARD_ID": "deadbeef"},
+    )
+    assert verdict == {
+        "block": True,
+        "terminate": False,
+        "reason": (
+            "This fleet card is already claimed at the dispatched revision. "
+            "Continue without claiming it again."
+        ),
+    }
+
+
+def test_other_card_claim_and_nonfleet_claim_remain_available() -> None:
+    event = {
+        "toolName": "bash",
+        "input": {"command": "skcapstone coord claim feedbeef --agent worker"},
+    }
+    assert _hook(event, env={"SKFLEET_CARD_ID": "deadbeef"}) is None
+    assert _hook(event, env={"SKFLEET_CARD_ID": ""}) is None
 
 
 def _main() -> click.Group:

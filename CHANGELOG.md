@@ -9,6 +9,9 @@
 
 ## Unreleased
 
+- Card `b7f31a22`: prevent a dispatched fleet worker from re-claiming its
+  already-owned card and invalidating the launch receipt's claim revision.
+
 - Card `b7f31a20`: publish fresh Link observations for fully governed PRs even
   when unrelated legacy PRs still lack lineage, while keeping every incomplete
   PR out of dispatch and recording a hashed omission summary in the feed.
