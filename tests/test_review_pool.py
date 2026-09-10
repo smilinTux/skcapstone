@@ -2,9 +2,25 @@ from skcapstone.fleet.review_pool import (
     ReviewAdmissionError,
     ReviewRequest,
     append_jsonl,
+    elastic_reviewer_identity,
+    review_fanout_limit,
     run_bounded,
     validate_request,
 )
+
+
+def test_barrington_and_ziowk_reviews_fill_only_free_bounded_slots():
+    cards = ["ba771001", "2100c001"]
+    assert review_fanout_limit(len(cards), 3, 2) == 2
+    identities = [elastic_reviewer_identity("chiap01", card) for card in cards]
+    assert len(set(identities)) == 2
+    assert all(identity.endswith(card) for identity, card in zip(identities, cards))
+
+
+def test_review_fanout_never_exceeds_any_boundary():
+    assert review_fanout_limit(5, 1, 4) == 1
+    assert review_fanout_limit(1, 5, 4) == 1
+    assert review_fanout_limit(5, 4, 0) == 0
 
 
 def request(card, reviewer, identity):
