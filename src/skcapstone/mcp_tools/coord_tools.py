@@ -55,6 +55,8 @@ TOOLS: list[Tool] = [
                     "type": "boolean",
                     "default": False,
                 },
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
             },
             "required": ["task_id", "agent_name"],
             "type": "object",
@@ -67,6 +69,8 @@ TOOLS: list[Tool] = [
             "properties": {
                 "agent_name": {"description": "Agent name completing the task", "type": "string"},
                 "task_id": {"description": "The task ID to complete", "type": "string"},
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
             },
             "required": ["task_id", "agent_name"],
             "type": "object",
@@ -86,6 +90,17 @@ TOOLS: list[Tool] = [
                 },
                 "tags": {"description": "Task tags", "items": {"type": "string"}, "type": "array"},
                 "title": {"description": "Task title", "type": "string"},
+                "repository": {
+                    "description": "Credential-free HTTPS source repository",
+                    "type": "string",
+                },
+                "base_ref": {"description": "Named source branch or tag", "type": "string"},
+                "base_revision": {
+                    "description": "Exact 40-hex source commit SHA",
+                    "type": "string",
+                },
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
             },
             "required": ["title"],
             "type": "object",
@@ -116,6 +131,8 @@ TOOLS: list[Tool] = [
                 },
                 "order": {"description": "Position within the column", "type": "integer"},
                 "task_id": {"description": "The card/task ID", "type": "string"},
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
             },
             "required": ["task_id", "column"],
             "type": "object",
@@ -214,8 +231,24 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
     if not task_id or not agent_name:
         return _error_response("task_id and agent_name are required")
 
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_jarvis_entrypoint(
+        agent_name,
+        Action.CLAIM,
+        task_id,
+        Path(auth) if auth else None,
+        args.get("casey_change_id"),
+    )
     board = Board(_home())
     try:
+        from ..review_admission import assert_governed_review_claim
+
+        assert_governed_review_claim(_home(), task_id, agent_name)
         agent = board.claim_task(agent_name, task_id, force=bool(args.get("force", False)))
         return _json_response(
             {
@@ -231,23 +264,38 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
 
 async def _handle_coord_complete(args: dict) -> list[TextContent]:
     """Complete a task on the board."""
-    from ..coordination import Board
+    from ..coord_completion import complete_coord_task
 
     task_id = args.get("task_id", "")
     agent_name = args.get("agent_name", "")
     if not task_id or not agent_name:
         return _error_response("task_id and agent_name are required")
 
-    board = Board(_home())
-    # board.complete_task() automatically mints Joules via _mint_joules_for_task
-    agent = board.complete_task(agent_name, task_id)
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_jarvis_entrypoint(
+        agent_name,
+        Action.COMPLETE_CARD,
+        task_id,
+        Path(auth) if auth else None,
+        args.get("casey_change_id"),
+    )
+    home = _home()
+    try:
+        agent = complete_coord_task(home, agent_name, task_id)
+    except ValueError as exc:
+        return _error_response(str(exc))
 
     # Report minted Joules in the response (best-effort)
     joules_minted = 0
     try:
-        from ..coordination import _PRIORITY_JOULE_MAP
+        from ..coordination import _PRIORITY_JOULE_MAP, Board
 
-        for t in board.load_tasks():
+        for t in Board(home).load_tasks():
             if t.id == task_id:
                 _cat, _evt, joules_minted = _PRIORITY_JOULE_MAP.get(
                     t.priority.value, ("community", "support_ticket", 50)
@@ -275,13 +323,36 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
     if not title:
         return _error_response("title is required")
 
+    from ..source_binding import source_binding_meta
+
     board = Board(_home())
+    tags = args.get("tags", [])
+    try:
+        binding_meta = source_binding_meta(
+            tags, args.get("repository"), args.get("base_ref"), args.get("base_revision")
+        )
+    except ValueError as exc:
+        return _error_response(str(exc))
     task = Task(
         title=title,
         description=args.get("description", ""),
         priority=TaskPriority(args.get("priority", "medium")),
-        tags=args.get("tags", []),
+        tags=tags,
         created_by=args.get("created_by", "mcp"),
+        meta=binding_meta,
+    )
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_jarvis_entrypoint(
+        task.created_by,
+        Action.CREATE_CARD,
+        task.id,
+        Path(auth) if auth else None,
+        args.get("casey_change_id"),
     )
     path = board.create_task(task)
     return _json_response(
@@ -368,9 +439,8 @@ async def _handle_coord_kanban(_args: dict) -> list[TextContent]:
 
 async def _handle_coord_move(args: dict) -> list[TextContent]:
     """Move a card to a kanban column."""
-    from skcoord.lifecycle import transition_task
-
     from ..card import Column
+    from ..coord_completion import move_coord_task
 
     task_id = args.get("task_id", "")
     column = args.get("column", "")
@@ -379,13 +449,28 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
     if column not in {c.value for c in Column}:
         return _error_response(f"invalid column '{column}'")
 
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..seat_boundaries import Action
+
+    actor = args.get("agent", "") or "coord-move"
+    auth = args.get("casey_authorization")
+
     try:
-        receipt = transition_task(
+        authorize_jarvis_entrypoint(
+            actor,
+            Action.MOVE_CARD,
+            f"{task_id}:{column}",
+            Path(auth) if auth else None,
+            args.get("casey_change_id"),
+        )
+        receipt = move_coord_task(
             _shared_root(),
-            task_id=task_id,
-            column=column,
-            actor=args.get("agent", "") or "coord-move",
-            order=args.get("order"),
+            actor,
+            task_id,
+            column,
+            args.get("order"),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         message = str(exc)

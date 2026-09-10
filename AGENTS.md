@@ -29,6 +29,24 @@ skcapstone coord status
 
 See what tasks are open, what's claimed, and which agents are active.
 
+## Coordination Write Boundary
+
+All worker verdict, evidence, status, claim, label, dependency, and lifecycle
+writes must use `skcapstone coord`. Never create, append, rewrite, rename, or
+delete CardStore JSONL directly. Use CLI reads for normal verification. Raw file
+inspection is reserved for emergency operator diagnostics.
+
+Good:
+
+```bash
+skcapstone coord link <card_id> verdict PASS_FOR_REVIEW --agent <your_name>
+skcapstone coord link <card_id> evidence <repo-relative-path> --agent <your_name>
+skcapstone coord move <card_id> review --agent <your_name>
+```
+
+Bad: opening a file below `cards/<card_id>/events/` or
+`coordination/card_events/` and writing JSONL yourself.
+
 ## Step 3: Claim Work
 
 ```bash

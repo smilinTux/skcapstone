@@ -295,7 +295,8 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
         # skcapstone services
         for _unit in skcapstone.service skcapstone@.service \
                      skcapstone-memory-compress.service skcapstone-memory-compress.timer \
-                     skcomms-heartbeat.service skcomms-heartbeat.timer; do
+                     skcomms-heartbeat.service skcomms-heartbeat.timer \
+                     skfleet-link-producer.service skfleet-link-producer.timer; do
             _src="$REPO_ROOT/systemd/$_unit"
             if [[ -f "$_src" ]]; then
                 # Substitute agent name in non-template units

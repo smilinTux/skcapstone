@@ -37,8 +37,24 @@ case "$cmd" in
   send)
     from="$1"; to="$2"; prio="$3"; re="$4"; shift 4; body="$*"
     case "$prio" in urgent|normal|fyi) ;; *) echo "priority must be urgent|normal|fyi" >&2; exit 2;; esac
-    python3 "$(dirname "$0")/skmail_writer.py" "$from" "$to" "$prio" "$re" "$body" \
-      --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null
+    WRITER="$(dirname "$0")/skmail_writer.py"
+    err="$(mktemp)"
+    if ! python3 "$WRITER" "$from" "$to" "$prio" "$re" "$body" \
+        --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null 2>"$err"; then
+      # Self-heal (cards fda425ac / 4a3d1119): a recurring cross-host defect
+      # appends foreign records straight into another writer's file, blocking
+      # all canonical appends for that writer. Quarantine them into their
+      # canonical files losslessly, then retry the append exactly once.
+      if grep -q "writer identity does not match" "$err"; then
+        python3 "$WRITER" "$from" --quarantine \
+          --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null
+        python3 "$WRITER" "$from" "$to" "$prio" "$re" "$body" \
+          --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null
+      else
+        cat "$err" >&2; rm -f "$err"; exit 1
+      fi
+    fi
+    rm -f "$err"
     echo "sent to $to [$prio] re $re"
     ;;
   read|ack|tail)

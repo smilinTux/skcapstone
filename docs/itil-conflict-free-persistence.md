@@ -1,3 +1,9 @@
+# Current coordination write boundary
+
+This document is historical implementation detail only. Agents must never
+perform raw CardStore JSONL writes. Use `skcapstone coord` for every
+coordination write.
+
 # ITIL Persistence Refactor — Conflict-Free Syncthing Replication
 
 **Design doc — implementation-ready. prb-7810b08e / chg-11d0e1c7.**

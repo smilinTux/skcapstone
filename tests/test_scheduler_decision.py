@@ -1,13 +1,16 @@
 """Scheduler eligibility reasons form one stable, complete partition."""
 
 import ast
+import hashlib
 import json
+import re
 import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
 
 import pytest
+from skcoord.card_store import CardCore, CardStore
 
 from skcapstone.scheduler_decision import (
     SchedulerDecision,
@@ -15,6 +18,12 @@ from skcapstone.scheduler_decision import (
     classify_scheduler,
     classify_scheduler_population,
     pool_v2,
+)
+from skcapstone.seat_boundaries import BoundaryError
+from skcapstone.seat_runtime import (
+    authorize_review_launch,
+    recommend_reviewer,
+    review_state_revision,
 )
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -124,6 +133,7 @@ def test_pool_v2_rejects_duplicate_card_decisions() -> None:
 
 
 def _launcher_function(name: str, namespace: dict) -> object:
+    namespace.setdefault("re", re)
     source = SCRIPT.read_text(encoding="utf-8")
     tree = ast.parse(source)
     function = next(
@@ -131,6 +141,376 @@ def _launcher_function(name: str, namespace: dict) -> object:
     )
     exec(compile(ast.Module(body=[function], type_ignores=[]), source, "exec"), namespace)
     return namespace[name]
+
+
+def _admission(
+    card_id: str,
+    *,
+    claimable: object = True,
+    reason: str = "claimable",
+    labels: list[str] | None = None,
+    core: dict[str, object] | None = None,
+    governed_review: bool = False,
+) -> dict[str, object]:
+    card_core = core or {
+        "id": card_id,
+        "title": f"[CARD][S] {card_id}",
+        "initial_priority": "high",
+    }
+    return {
+        "card_id": card_id,
+        "claimable": claimable,
+        "reason": reason,
+        "host_pin": None,
+        "title": str(card_core["title"]),
+        "labels": list(labels or []),
+        "core": card_core,
+        "governed_review": governed_review,
+        "overlay": {"reason": reason},
+        "source_revision": hashlib.sha256(card_id.encode()).hexdigest(),
+    }
+
+
+def _authoritative_claimability_for(card_home: Path):
+    """Load the launcher's real fold against one isolated CardStore."""
+
+    dependency_value = _launcher_function("_dependency_value", {})
+    task_claimable = _launcher_function("_coord_task_claimable", {})
+    fold = _launcher_function(
+        "_fold_claimability",
+        {
+            "_COLUMNS": {"backlog", "ready", "doing", "review", "done"},
+            "_dependency_value": dependency_value,
+        },
+    )
+
+    def host_pin(_core, _labels):
+        return None
+
+    reason = _launcher_function(
+        "_claimability_reason",
+        {
+            "_coord_task_claimable": task_claimable,
+            "_NOT_CLAIMABLE": {"not-claimable", "sprint-container", "do-not-claim"},
+            "_SENSITIVE_CATEGORY": re.compile(
+                r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
+                r"deploy|production|release|migrat)",
+                re.I,
+            ),
+            "_CATEGORY_OPT_IN": "dispatch-approved",
+            "non_implementation": lambda core, labels: (
+                "[HUMAN]" in str(core.get("title") or "").upper() or "human-gate" in labels
+            ),
+            "_dep_satisfied": lambda _dependency: True,
+            "host_pin": host_pin,
+            "HOST": "chiap08",
+        },
+    )
+    store = CardStore(card_home)
+    snapshot = _launcher_function(
+        "_authoritative_card_snapshot",
+        {
+            "os": __import__("os"),
+            "json": json,
+            "hashlib": hashlib,
+            "CARDS": str(card_home / "cards"),
+            "_strict_card_events": lambda cid, fresh=False: store._read_events(cid),
+            "_legacy_claimability_events": lambda fresh=False: {},
+            "_fold_claimability": fold,
+        },
+    )
+    return _launcher_function(
+        "authoritative_claimability",
+        {
+            "_authoritative_card_snapshot": snapshot,
+            "_claimability_reason": reason,
+            "host_pin": host_pin,
+        },
+    )
+
+
+def test_pool_v2_authority_includes_only_claimable_rows_and_fails_closed() -> None:
+    dispatchable = _launcher_function("_pool_v2_dispatchable", {})
+    ready_ids = _launcher_function("_pool_v2_ready_ids", {"_pool_v2_dispatchable": dispatchable})
+    decisions = (
+        SchedulerDecision("claim000", "ready", True),
+        SchedulerDecision("review00", "ready", True),
+        SchedulerDecision("unsafe00", "ready", True),
+        SchedulerDecision("blocked0", "dependency", False),
+    )
+    admissions = {
+        "claim000": _admission("claim000"),
+        "review00": _admission(
+            "review00",
+            claimable=False,
+            reason="review",
+            labels=["review"],
+            governed_review=True,
+        ),
+        "unsafe00": _admission("unsafe00", claimable=False, reason="dependency"),
+        "blocked0": _admission("blocked0"),
+    }
+
+    assert ready_ids(decisions, admissions) == {"claim000"}
+    assert ready_ids(decisions, admissions, failed=True) == set()
+
+
+def test_only_v2_claimable_row_launches_and_nonclaimable_rows_do_not() -> None:
+    dispatchable = _launcher_function("_pool_v2_dispatchable", {})
+    ready_ids = _launcher_function("_pool_v2_ready_ids", {"_pool_v2_dispatchable": dispatchable})
+    authority_rows = _launcher_function(
+        "_pool_v2_authority_rows",
+        {"_pool_v2_ready_ids": ready_ids, "json": json},
+    )
+    decisions = classify_scheduler_population(
+        (
+            SchedulerFacts("1e9ac000"),
+            SchedulerFacts("0a1b2200"),
+            SchedulerFacts("ae71e000", awaiting_review=True),
+            SchedulerFacts("57a1e000", owner_health="stale"),
+        )
+    )
+    admissions = {
+        "1e9ac000": _admission("1e9ac000"),
+        "0a1b2200": _admission("0a1b2200"),
+        "ae71e000": _admission("ae71e000", claimable=False, reason="review"),
+        "57a1e000": _admission("57a1e000", claimable=False, reason="owned-ready"),
+    }
+
+    rows, _pinned = authority_rows(decisions, admissions, False, {}, {"high": 1}, (), "chiap08")
+
+    assert {row[2] for row in rows} == {"1e9ac000", "0a1b2200"}
+
+
+def test_pool_v2_preclaim_accepts_unchanged_claimable_only() -> None:
+    dispatchable = _launcher_function("_pool_v2_dispatchable", {})
+    fingerprint = _launcher_function(
+        "_pool_v2_fingerprint", {"hashlib": __import__("hashlib"), "json": json}
+    )
+    matches = _launcher_function(
+        "_pool_v2_preclaim_matches",
+        {
+            "_pool_v2_dispatchable": dispatchable,
+            "_pool_v2_fingerprint": fingerprint,
+        },
+    )
+    selected = _admission("claim000")
+
+    assert matches(selected, dict(selected)) is True
+    assert matches(selected, {**selected, "source_revision": "b"}) is False
+    assert (
+        matches(
+            {"claimable": False, "reason": "dependency"},
+            {"claimable": False, "reason": "dependency"},
+        )
+        is False
+    )
+
+
+def test_legacy_8_pool_v2_8_excludes_review_rows_from_authority(tmp_path) -> None:
+    card_home = tmp_path / ".skcapstone"
+    card_home.mkdir()
+    store = CardStore(card_home)
+    card_ids = [f"{index:08x}" for index in range(64)]
+    legacy_ids = set(card_ids[:8])
+    for cid in card_ids:
+        review = cid not in legacy_ids
+        parent_id = f"{int(cid, 16) + 64:08x}"
+        if review:
+            store.create(
+                CardCore(
+                    id=parent_id,
+                    title=f"Source candidate {cid}",
+                    created_by="producer",
+                )
+            )
+        store.create(
+            CardCore(
+                id=cid,
+                title=(f"[REVIEW] Candidate {cid}" if review else f"[CARD][S] Candidate {cid}"),
+                created_by="producer",
+                initial_priority="high",
+                initial_labels=(
+                    ["review", f"parent-{parent_id}", "qwen-suitable"]
+                    if review
+                    else ["qwen-suitable"]
+                ),
+            )
+        )
+        if review:
+            store.append_event(
+                cid,
+                "link",
+                "fixture",
+                link_key="producer_identity",
+                link_value="producer",
+            )
+            store.append_event(
+                cid,
+                "link",
+                "fixture",
+                link_key="candidate_evidence_sha256",
+                link_value=hashlib.sha256(cid.encode()).hexdigest(),
+            )
+
+    claimability_for = _authoritative_claimability_for(card_home)
+    metadata = _launcher_function("_governed_review_metadata", {"re": re})
+    dispatchable = _launcher_function("_pool_v2_dispatchable", {})
+    ready_ids = _launcher_function("_pool_v2_ready_ids", {"_pool_v2_dispatchable": dispatchable})
+    fingerprint = _launcher_function("_pool_v2_fingerprint", {"hashlib": hashlib, "json": json})
+    matches = _launcher_function(
+        "_pool_v2_preclaim_matches",
+        {
+            "_pool_v2_dispatchable": dispatchable,
+            "_pool_v2_fingerprint": fingerprint,
+        },
+    )
+    admission = _launcher_function(
+        "_pool_v2_admission",
+        {
+            "_governed_review_metadata": metadata,
+            "_pool_v2_overlay": lambda cid, core, reason: {"reason": reason},
+        },
+    )
+    review_assignment = _launcher_function(
+        "_review_assignment",
+        {
+            "_governed_review_metadata": metadata,
+            "BoundaryError": BoundaryError,
+            "hashlib": hashlib,
+            "Path": Path,
+            "CardStore": CardStore,
+            "HOME": str(tmp_path),
+            "_card_process_snapshot": lambda cid: {"sessions": []},
+            "_current_claim_identity_fresh": lambda cid: (None, None, None),
+            "event_rows": lambda cid: store._read_events(cid),
+            "recommend_reviewer": recommend_reviewer,
+            "review_state_revision": review_state_revision,
+            "authorize_review_launch": authorize_review_launch,
+        },
+    )
+    preclaim_handoff = _launcher_function(
+        "_pool_v2_preclaim_handoff",
+        {
+            "_pool_v2_preclaim_matches": matches,
+            "_review_assignment": review_assignment,
+            "BoundaryError": BoundaryError,
+        },
+    )
+    authority_rows = _launcher_function(
+        "_pool_v2_authority_rows",
+        {"_pool_v2_ready_ids": ready_ids, "json": json},
+    )
+    partition_owner = _launcher_function("_partition_owner", {"hashlib": hashlib})
+    rotation_hosts = ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
+    seat_owner = _launcher_function(
+        "_seat_owner",
+        {"_partition_owner": partition_owner, "ROTATION_HOSTS": rotation_hosts},
+    )
+    owner_map = _launcher_function(
+        "_pool_v2_owner_map",
+        {"_seat_owner": seat_owner, "seat_for": lambda cid, core: None},
+    )
+    lane_compatibility = _launcher_function("lane_compatibility", {"_LANE_ONLY_LABELS": {}})
+    select_lane = _launcher_function(
+        "select_compatible_lane", {"lane_compatibility": lane_compatibility}
+    )
+    legacy_selector = _launcher_function(
+        "_legacy_selector_decision",
+        {
+            "excluded": set(),
+            "_REVIEW_READBACK_BLOCKED": set(),
+            "unclaimable": lambda cid: False,
+            "itil_terminal": lambda cid: False,
+            "lifecycle_state": lambda cid: "open",
+            "awaiting_review": lambda cid: False,
+            "outcome_lifecycle_bucket": lambda lifecycle, historical_review: "open",
+            "blocked_backoff": lambda cid: False,
+            "terminal_review_verdict": lambda cid, core: False,
+            "authoritative_claimability": claimability_for,
+            "json": json,
+        },
+    )
+    actual_legacy_ids = {
+        cid
+        for cid in card_ids
+        if legacy_selector(cid, str(card_home / "cards" / cid / "core.json"))["eligible"]
+    }
+    decisions = classify_scheduler_population(
+        SchedulerFacts(cid, awaiting_review=cid not in legacy_ids) for cid in card_ids
+    )
+    admissions = {}
+    for cid in card_ids:
+        claimability = claimability_for(cid)
+        core = claimability["core"]
+        admissions[cid] = admission(cid, core, claimability)
+
+    rows, pinned_ids = authority_rows(
+        decisions,
+        admissions,
+        False,
+        {},
+        {"high": 1},
+        (),
+        "chiap08",
+    )
+    authority_ids = {row[2] for row in rows}
+    owners, blocked = owner_map(rows, "chiap08", pinned_ids)
+    selected_ids = set()
+    for host in rotation_hosts:
+        remaining = {"qwen": 64}
+        for row in rows:
+            cid = row[2]
+            if owners[cid] != host:
+                continue
+            lane, lane_reason = select_lane(
+                admissions[cid]["labels"],
+                False,
+                [{"name": "qwen"}],
+                remaining,
+            )
+            assert (lane, lane_reason) == ("qwen", "compatible")
+            remaining[lane] -= 1
+            selected_ids.add(cid)
+    review_id = card_ids[8]
+    reviewer_identity = f"pi-codex-chiap08-{review_id}"
+    selected_admission = admissions[review_id]
+    drifted_admission = {**selected_admission, "source_revision": "f" * 64}
+    before_actions = [event["action"] for event in store._read_events(review_id)]
+    with pytest.raises(BoundaryError, match="admission changed"):
+        preclaim_handoff(
+            review_id,
+            selected_admission,
+            drifted_admission,
+            reviewer_identity,
+        )
+    assert [event["action"] for event in store._read_events(review_id)] == before_actions
+
+    assert actual_legacy_ids == legacy_ids
+    assert pool_v2("chiap08", decisions).ready == 8
+    assert authority_ids == selected_ids == legacy_ids
+    assert blocked == {}
+    assert matches(admissions[review_id], dict(admissions[review_id])) is False
+    assert [event["action"] for event in store._read_events(review_id)].count(
+        "review_assignment_recommendation"
+    ) == 0
+
+
+@pytest.mark.parametrize(
+    "admission",
+    [
+        {"claimable": False, "reason": "review"},
+        {"claimable": False, "reason": "review", "governed_review": False},
+        {"claimable": False, "reason": "dependency", "governed_review": True},
+        {"claimable": None, "reason": "review", "governed_review": True},
+        {},
+        None,
+    ],
+)
+def test_pool_v2_review_dispatch_rejects_incomplete_or_unknown(admission) -> None:
+    dispatchable = _launcher_function("_pool_v2_dispatchable", {})
+
+    assert dispatchable(admission) is False
 
 
 def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path) -> None:

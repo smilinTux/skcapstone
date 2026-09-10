@@ -70,7 +70,7 @@ def test_exact_five_host_lane_targets_and_chiap08_dry_summary() -> None:
     assert 'GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")' in source
     assert 'QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")' in source
     assert '"target":TARGET' in source
-    assert '"target":0 if glm_held else GLM_TARGET' in source
+    assert '"target":0 if glm_held or not glm_catalog_ready else GLM_TARGET' in source
     assert '"target":QWEN_TARGET' in source
     assert '"target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))' in source
 
@@ -270,6 +270,44 @@ def test_existing_holds_reservations_capacity_and_cadence_remain() -> None:
     assert 'MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))' in rotate
     assert 'remaining={lane["name"]:lane["free"] for lane in LANES}' in rotate
     assert "off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0" in rotate
-    assert '_LANE_RANK={"qwen":0,"glm":1,"codex":2,"escalate":3}' in rotate
+    assert '_LANE_RANK={"qwen":0,"glm":1,"codex":2,"kimi":3,"escalate":4}' in rotate
     assert "chiap01 chiap02 chiap03 chiap04 chiap08" in watch
     assert "sleep 300" in watch
+
+
+def test_seraph_capacity_isolated_from_generic_workers_and_physically_bounded() -> None:
+    """One generic worker cannot consume Seraph's reserved review slot."""
+    capacity = _load_functions("_seat_capacity")["_seat_capacity"]
+    owners = {
+        "generic1": "pi-codex-chiap08-generic1",
+        "review01": "pi-seraph-chiap08-review01",
+    }
+
+    assert capacity("seraph", 1, 3, ["generic1"], owners.get) == 1
+    assert capacity("seraph", 1, 3, ["generic1", "review01"], owners.get) == 0
+    assert capacity("seraph", 1, 2, ["generic1", "generic2"], owners.get) == 0
+
+
+def test_seraph_noop_reason_distinguishes_work_from_capacity() -> None:
+    """Empty work and physical or provider saturation remain distinguishable."""
+    reason = _load_functions("_noop_reason")["_noop_reason"]
+    assert reason([], [], {}) == "no_eligible_work"
+    row = [0, 0, "review01", {}, ["review", "seat-seraph"], 0]
+    assert reason([row], [row], {"no-free-lane:codex": 1}) == "no_available_capacity"
+    assert reason([row], [row], {"no-compatible-healthy-lane:codex": 1}) == "no_available_capacity"
+
+
+def test_seraph_selector_does_not_publish_seat_snapshot_as_global_capacity() -> None:
+    rotate = ROTATE.read_text(encoding="utf-8")
+    assert "if not ONLY_SEAT:\n    publish_live(sessions, worker_units)" in rotate
+    assert "NOOP_RECEIPT|%s|reason=no_available_capacity|seat=%s" in rotate
+    assert "NOOP_RECEIPT|%s|reason=%s|seat=%s" in rotate
+
+
+def test_seraph_all_suppressed_picks_emit_one_terminal_noop() -> None:
+    rotate = ROTATE.read_text(encoding="utf-8")
+    helpers = _load_functions("_seraph_terminal_noop")
+    receipt = helpers["_seraph_terminal_noop"]("chiap08", "seraph", False, 2, 2, 0)
+    assert receipt == ("NOOP_RECEIPT|chiap08|reason=all_candidates_suppressed|seat=seraph")
+    assert helpers["_seraph_terminal_noop"]("chiap08", "seraph", False, 2, 2, 1) is None
+    assert "launch_receipts+=1" in rotate

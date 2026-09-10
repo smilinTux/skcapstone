@@ -1,0 +1,3 @@
+# Repository authority controls only. Routine source review stays autonomous.
+/.github/ @smilinTux/lifecycle-authority-owners
+/SECURITY.md @smilinTux/lifecycle-authority-owners

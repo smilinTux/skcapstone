@@ -1,0 +1,10 @@
+[Unit]
+Description=Run bounded Niobe fleet dispatch every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:3,8,13,18,23,28,33,38,43,48,53,58:00
+Persistent=false
+Unit=skfleet-niobe-live.service
+
+[Install]
+WantedBy=timers.target

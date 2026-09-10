@@ -1,0 +1,503 @@
+import hashlib
+import json
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+import skcapstone.link_review_work as review_work_module
+from skcapstone.card_store import CardCore, CardStore
+from skcapstone.link_review_work import (
+    card_generation,
+    load_review_work,
+    reconcile_review_work,
+    reconcile_review_work_batch,
+    review_card_id,
+)
+
+
+def _manifest(item):
+    data = {
+        "schema": "skfleet.link-lineage/v1",
+        "source_revision": "1" * 64,
+        "coverage": {"unresolved": 1},
+        "records": {},
+        "reviewer_candidates": [],
+        "diagnostics": [],
+        "unresolved_prs": [7],
+        "review_work_recommendations": [item],
+    }
+    encoded = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    data["evidence_hash"] = hashlib.sha256(encoded.encode()).hexdigest()
+    return data
+
+
+def _item(home=None):
+    item = {
+        "kind": "review-work",
+        "reason": "missing_terminal_review",
+        "repository": "org/repo",
+        "workspace_repository": "https://github.com/org/repo",
+        "base_ref": "main",
+        "pr": 7,
+        "head_revision": "a" * 40,
+        "base_revision": "b" * 40,
+        "source_card": "source01",
+        "card_generation": "2" * 64,
+        "source_owner": "builder",
+        "reviewer_candidates": [
+            {"name": "Seraph", "seat": "seraph", "identity": "seraph", "eligible": True}
+        ],
+    }
+    if home is not None:
+        item["card_generation"] = card_generation(CardStore(home).fold("source01"))
+    return item
+
+
+def _home_with_source(tmp_path, name=".skcapstone"):
+    home = tmp_path / name
+    home.mkdir()
+    store = CardStore(home)
+    store.create(
+        CardCore(
+            id="source01",
+            title="Source",
+            created_by="builder",
+            created_at="2026-09-07T00:00:00+00:00",
+        )
+    )
+    store.append_event(
+        "source01",
+        "link",
+        "builder",
+        link_key="repository",
+        link_value="https://github.com/org/repo",
+    )
+    store.append_event("source01", "link", "builder", link_key="base_ref", link_value="main")
+    return home
+
+
+def test_loads_exact_review_work_from_signed_manifest(tmp_path):
+    path = tmp_path / "lineage.json"
+    path.write_text(json.dumps(_manifest(_item())))
+    revision, evidence, work = load_review_work(path)
+    assert revision == "1" * 64
+    assert len(evidence) == 64
+    assert work == [_item()]
+
+
+def test_rejects_non_distinct_reviewer_and_tampering(tmp_path):
+    item = _item()
+    item["source_owner"] = "seraph"
+    path = tmp_path / "lineage.json"
+    path.write_text(json.dumps(_manifest(item)))
+    with pytest.raises(ValueError, match="not distinct"):
+        load_review_work(path)
+    data = _manifest(_item())
+    data["source_revision"] = "3" * 64
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="evidence invalid"):
+        load_review_work(path)
+
+
+@pytest.mark.parametrize("source_card", [None, "bad/id", ""])
+def test_rejects_missing_or_path_like_source_card(tmp_path, source_card):
+    item = _item()
+    if source_card is None:
+        item.pop("source_card")
+    else:
+        item["source_card"] = source_card
+    path = tmp_path / "lineage.json"
+    path.write_text(json.dumps(_manifest(item)))
+
+    with pytest.raises(ValueError, match="source card invalid"):
+        load_review_work(path)
+
+
+def test_reconcile_is_restart_idempotent_and_launchable(tmp_path):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    first = reconcile_review_work(home, item, evidence_sha256="4" * 64)
+    second = reconcile_review_work(home, item, evidence_sha256="4" * 64)
+
+    assert first.created is True
+    assert second.created is False
+    assert first.launchable is second.launchable is True
+    assert first.review_card_id == second.review_card_id
+    card = CardStore(home).fold(first.review_card_id)
+    assert card is not None
+    assert card.owner is None
+    assert card.status.value == "backlog"
+    assert "review" in card.labels
+    assert card.links["producer_identity"] == "builder"
+    assert card.links["repository"] == "https://github.com/org/repo"
+    assert card.links["base_ref"] == "main"
+    assert "source-only" in card.labels
+
+
+def test_reconcile_converges_for_cross_host_order(tmp_path):
+    homes = [_home_with_source(tmp_path, host) for host in ("chiap01", "chiap08")]
+    item = _item(homes[0])
+    results = [reconcile_review_work(home, dict(item), evidence_sha256="5" * 64) for home in homes]
+
+    expected = review_card_id("source01", "a" * 40, item["card_generation"], "5" * 64)
+    assert {result.review_card_id for result in results} == {expected}
+    cores = [(home / "cards" / expected / "core.json").read_bytes() for home in homes]
+    assert cores[0] == cores[1]
+
+
+def test_new_head_gets_distinct_review_card(tmp_path):
+    home = _home_with_source(tmp_path)
+    first = reconcile_review_work(home, _item(home), evidence_sha256="6" * 64)
+    changed = _item(home)
+    changed["head_revision"] = "c" * 40
+    second = reconcile_review_work(home, changed, evidence_sha256="6" * 64)
+
+    assert first.review_card_id != second.review_card_id
+
+
+def test_ready_review_card_reproduces_reviewer_preflight_rejection(tmp_path):
+    home = _home_with_source(tmp_path)
+    store = CardStore(home)
+    item = _item(home)
+    card_id = review_card_id("source01", "a" * 40, item["card_generation"], "6" * 64)
+    store.create(
+        CardCore(
+            id=card_id,
+            title="[REVIEW] exact head",
+            initial_labels=["review", "parent-source01"],
+            meta={
+                "link_source_card": "source01",
+                "link_head_revision": "a" * 40,
+                "link_card_generation": item["card_generation"],
+                "link_evidence_sha256": "6" * 64,
+                "link_review_class": "review",
+            },
+        )
+    )
+    store.append_event(card_id, "move", "coordinator", column="ready")
+
+    result = reconcile_review_work(home, item, evidence_sha256="6" * 64)
+
+    assert result.launchable is False
+    assert result.reason == "review card is not unclaimed review work"
+
+
+def test_duplicate_matching_cards_fail_closed(tmp_path):
+    home = _home_with_source(tmp_path)
+    store = CardStore(home)
+    metadata = {
+        "link_source_card": "source01",
+        "link_head_revision": "a" * 40,
+        "link_card_generation": _item(home)["card_generation"],
+        "link_evidence_sha256": "7" * 64,
+        "link_review_class": "review",
+    }
+    store.create(CardCore(id="duplicate1", title="one", meta=metadata))
+    store.create(CardCore(id="duplicate2", title="two", meta=metadata))
+
+    result = reconcile_review_work(home, _item(home), evidence_sha256="7" * 64)
+
+    assert result.launchable is False
+    assert result.reason == "duplicate_review_cards"
+
+
+def test_batch_scans_existing_cards_once(tmp_path, monkeypatch):
+    home = _home_with_source(tmp_path)
+    calls = 0
+    original = CardStore.list_cards
+
+    def counted(store, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(store, *args, **kwargs)
+
+    monkeypatch.setattr(CardStore, "list_cards", counted)
+    item = _item(home)
+    results = reconcile_review_work_batch(home, [item, item], evidence_sha256="8" * 64)
+
+    # One batch index plus the governed create's own safety scan. The repeated
+    # recommendation does not trigger another full scan.
+    assert calls == 2
+    assert [result.created for result in results] == [True, False]
+    assert all(result.launchable for result in results)
+
+
+def test_noncanonical_manual_card_fails_closed(tmp_path):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    CardStore(home).create(
+        CardCore(
+            id="manual01",
+            title="manual",
+            meta={
+                "link_source_card": "source01",
+                "link_head_revision": "a" * 40,
+                "link_card_generation": item["card_generation"],
+                "link_evidence_sha256": "9" * 64,
+                "link_review_class": "review",
+            },
+        )
+    )
+
+    result = reconcile_review_work(home, item, evidence_sha256="9" * 64)
+
+    assert result.launchable is False
+    assert result.reason == "noncanonical_review_card"
+
+
+def test_canonical_card_with_wrong_parent_fails_closed(tmp_path):
+    home = _home_with_source(tmp_path)
+    store = CardStore(home)
+    store.create(CardCore(id="other", title="Other source"))
+    item = _item(home)
+    card_id = review_card_id("source01", "a" * 40, item["card_generation"], "a" * 64)
+    store.create(
+        CardCore(
+            id=card_id,
+            title="manual",
+            initial_labels=["review", "parent-other"],
+            meta={
+                "link_source_card": "source01",
+                "link_head_revision": "a" * 40,
+                "link_card_generation": item["card_generation"],
+                "link_evidence_sha256": "a" * 64,
+                "link_review_class": "review",
+            },
+        )
+    )
+
+    result = reconcile_review_work(home, item, evidence_sha256="a" * 64)
+
+    assert result.launchable is False
+    assert result.reason == "review_parent_invalid"
+
+
+def test_changed_recommendation_fails_closed_without_duplicate_event(tmp_path):
+    home = _home_with_source(tmp_path)
+    first = reconcile_review_work(home, _item(home), evidence_sha256="b" * 64)
+    changed = _item(home)
+    changed["reviewer_candidates"][0]["identity"] = "seraph-two"
+    changed["reviewer_candidates"][0]["name"] = "seraph-two"
+
+    second = reconcile_review_work(home, changed, evidence_sha256="b" * 64)
+
+    assert first.launchable is True
+    assert second.launchable is False
+    assert second.reason == "review recommendation is not recorded exactly"
+    events = CardStore(home)._read_events(first.review_card_id)
+    assert sum(event["action"] == "review_assignment_recommendation" for event in events) == 1
+
+
+@pytest.mark.parametrize("stale_generation", ["0" * 64, "f" * 64])
+def test_stale_source_generation_is_launch_inert(tmp_path, stale_generation):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    item["card_generation"] = stale_generation
+    before = set(CardStore(home).list_card_ids())
+
+    result = reconcile_review_work(home, item, evidence_sha256="d" * 64)
+
+    assert result.launchable is False
+    assert result.created is False
+    assert result.reason == "source_generation_changed"
+    assert set(CardStore(home).list_card_ids()) == before
+
+
+def test_missing_or_malformed_source_is_launch_inert(tmp_path, monkeypatch):
+    missing_home = tmp_path / "missing"
+    missing_home.mkdir()
+    missing = reconcile_review_work(missing_home, _item(), evidence_sha256="d" * 64)
+    assert missing.launchable is False
+    assert missing.reason == "source_card_missing"
+
+    home = _home_with_source(tmp_path, "malformed")
+    item = _item(home)
+    original = CardStore.fold
+
+    def malformed_source(store, card_id):
+        if card_id == "source01":
+            raise ValueError("malformed source")
+        return original(store, card_id)
+
+    monkeypatch.setattr(CardStore, "fold", malformed_source)
+    malformed = reconcile_review_work(home, item, evidence_sha256="d" * 64)
+    assert malformed.launchable is False
+    assert malformed.reason == "source_card_malformed"
+
+
+def test_malformed_supplied_generation_is_launch_inert(tmp_path):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    item["card_generation"] = "not-a-generation"
+
+    result = reconcile_review_work(home, item, evidence_sha256="d" * 64)
+
+    assert result.launchable is False
+    assert result.reason == "source_generation_invalid"
+
+
+def test_source_amendment_between_recommendation_and_launch_fails_closed(tmp_path, monkeypatch):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    original = review_work_module.recommend_reviewer
+
+    def amend_after_recommendation(*args, **kwargs):
+        recommendation = original(*args, **kwargs)
+        CardStore(home).append_event("source01", "add_label", "racer", label="amended")
+        return recommendation
+
+    monkeypatch.setattr(review_work_module, "recommend_reviewer", amend_after_recommendation)
+
+    result = reconcile_review_work(home, item, evidence_sha256="e" * 64)
+
+    assert result.launchable is False
+    assert result.reason == "source_generation_changed"
+
+
+def test_changed_source_generation_has_distinct_review_identity(tmp_path):
+    home = _home_with_source(tmp_path)
+    first_item = _item(home)
+    first = reconcile_review_work(home, first_item, evidence_sha256="f" * 64)
+    CardStore(home).append_event(first.review_card_id, "complete", "reviewer")
+    CardStore(home).append_event("source01", "add_label", "builder", label="amended")
+    second_item = _item(home)
+
+    second = reconcile_review_work(home, second_item, evidence_sha256="f" * 64)
+
+    assert first.launchable is second.launchable is True
+    assert first.review_card_id != second.review_card_id
+
+
+@pytest.mark.parametrize(
+    "repository,base_ref,reason",
+    [
+        ("https://token@github.com/org/repo", "main", "source_workspace_repository_invalid"),
+        ("http://github.com/org/repo", "main", "source_workspace_repository_invalid"),
+        ("https://github.com/org/repo", "--upload-pack=x", "source_workspace_base_ref_invalid"),
+    ],
+)
+def test_workspace_binding_rejects_unsafe_recommendations(tmp_path, repository, base_ref, reason):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    item["workspace_repository"] = repository
+    item["base_ref"] = base_ref
+
+    result = reconcile_review_work(home, item, evidence_sha256="1" * 64)
+
+    assert result.created is False
+    assert result.launchable is False
+    assert result.reason == reason
+
+
+def test_workspace_binding_falls_back_to_parent_and_rejects_conflict(tmp_path):
+    home = _home_with_source(tmp_path)
+    inherited = _item(home)
+    inherited.pop("workspace_repository")
+    inherited.pop("base_ref")
+    first = reconcile_review_work(home, inherited, evidence_sha256="2" * 64)
+    card = CardStore(home).fold(first.review_card_id)
+
+    assert first.launchable is True
+    assert card.links["repository"] == "https://github.com/org/repo"
+    assert card.links["base_ref"] == "main"
+
+    conflicting = _item(home)
+    conflicting["workspace_repository"] = "https://github.com/org/other"
+    second = reconcile_review_work(home, conflicting, evidence_sha256="3" * 64)
+    assert second.reason == "source_workspace_binding_conflict"
+    assert second.created is False
+
+
+def test_existing_canonical_card_inherits_binding_without_identity_rewrite(tmp_path):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    card_id = review_card_id("source01", "a" * 40, item["card_generation"], "0" * 64)
+    meta = {
+        "link_source_card": "source01",
+        "link_head_revision": "a" * 40,
+        "link_card_generation": item["card_generation"],
+        "link_evidence_sha256": "0" * 64,
+        "link_review_class": "review",
+    }
+    CardStore(home).create(
+        CardCore(
+            id=card_id,
+            title="legacy canonical review",
+            created_by="link",
+            initial_labels=["review", "seat-seraph", "parent-source01"],
+            meta=meta,
+        )
+    )
+    before = CardStore(home).fold(card_id)
+
+    result = reconcile_review_work(home, item, evidence_sha256="0" * 64)
+    after = CardStore(home).fold(card_id)
+
+    assert result.created is False
+    assert result.launchable is True
+    assert after.id == before.id
+    assert after.meta == before.meta
+    assert after.owner == before.owner
+    assert after.links["repository"] == "https://github.com/org/repo"
+    assert after.links["base_ref"] == "main"
+
+
+def test_parent_workspace_drift_after_recommendation_fails_closed(tmp_path, monkeypatch):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+    original = review_work_module.recommend_reviewer
+
+    def drift_after_recommendation(*args, **kwargs):
+        recommendation = original(*args, **kwargs)
+        CardStore(home).append_event(
+            "source01",
+            "link",
+            "builder",
+            link_key="repository",
+            link_value="https://github.com/org/drifted",
+        )
+        return recommendation
+
+    monkeypatch.setattr(review_work_module, "recommend_reviewer", drift_after_recommendation)
+    result = reconcile_review_work(home, item, evidence_sha256="9" * 64)
+
+    assert result.launchable is False
+    assert result.reason == "source_workspace_binding_drifted"
+
+
+def test_missing_workspace_binding_fails_before_card_creation(tmp_path):
+    home = tmp_path / "missing-binding"
+    home.mkdir()
+    store = CardStore(home)
+    store.create(CardCore(id="source01", title="Source", created_by="builder"))
+    item = _item()
+    item.pop("workspace_repository")
+    item.pop("base_ref")
+    item["card_generation"] = card_generation(store.fold("source01"))
+
+    result = reconcile_review_work(home, item, evidence_sha256="8" * 64)
+
+    assert result.reason == "source_workspace_binding_missing"
+    assert result.created is False
+    assert store.fold(result.review_card_id) is None
+
+
+def test_concurrent_reconcile_persists_one_card_and_one_binding(tmp_path):
+    home = _home_with_source(tmp_path)
+    item = _item(home)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(
+            pool.map(
+                lambda _: reconcile_review_work(home, item, evidence_sha256="7" * 64),
+                range(8),
+            )
+        )
+
+    assert sum(result.created for result in results) == 1
+    assert all(result.launchable for result in results)
+    card_id = results[0].review_card_id
+    assert {result.review_card_id for result in results} == {card_id}
+    events = CardStore(home)._read_events(card_id)
+    assert sum(event.get("link_key") == "repository" for event in events) == 1
+    assert sum(event.get("link_key") == "base_ref" for event in events) == 1

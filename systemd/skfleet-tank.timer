@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the bounded Tank release dispatcher every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=false
+Unit=skfleet-tank.service
+
+[Install]
+WantedBy=timers.target

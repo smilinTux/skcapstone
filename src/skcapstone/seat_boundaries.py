@@ -1,4 +1,4 @@
-"""Fail-closed authority boundaries for the five operating seats."""
+"""Fail-closed authority boundaries for lifecycle seats."""
 
 from __future__ import annotations
 
@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Collection, Mapping
+from typing import TYPE_CHECKING, Callable, Collection, Mapping
 
 from .card_store import CardStore
+from .operator_authorization import AuthorizationEnvelope, verify_authorization
 
 if TYPE_CHECKING:
     from .link_merge_authority import MergeCandidate, MergeDecision
@@ -25,6 +26,10 @@ class Seat(StrEnum):
     JARVIS = "jarvis"
     LINK = "link"
     MERO = "mero"
+    SERAPH = "seraph"
+    NIOBE = "niobe"
+    TANK = "tank"
+    ATLAS = "atlas"
 
 
 class Action(StrEnum):
@@ -45,10 +50,32 @@ class Action(StrEnum):
     REPAIR_WORKER = "repair_worker"
     DEPLOY = "deploy"
     ACTUATE_APPLICATION = "actuate_application"
+    CREATE_CARD = "create_card"
+    MOVE_CARD = "move_card"
+    COMPLETE_CARD = "complete_card"
+    RELEASE_ARTIFACT = "release_artifact"
+    VERIFY = "verify"
+
+
+JARVIS_DIRECT_ACTIONS = frozenset(
+    {
+        Action.CREATE_CARD,
+        Action.CLAIM,
+        Action.MOVE_CARD,
+        Action.COMPLETE_CARD,
+        Action.LAUNCH,
+        Action.RELEASE,
+        Action.STOP,
+        Action.REASSIGN,
+        Action.ROTATE,
+        Action.REPAIR_WORKER,
+        Action.VERIFY,
+    }
+)
 
 
 _ALLOWED = {
-    Seat.MERO: frozenset({Action.OBSERVE, Action.RECOMMEND}),
+    Seat.MERO: frozenset({Action.OBSERVE, Action.RECOMMEND, Action.CREATE_CARD}),
     Seat.LINK: frozenset(
         {
             Action.OBSERVE,
@@ -57,8 +84,27 @@ _ALLOWED = {
             Action.ASSIGN_REVIEWER,
             Action.EVALUATE_MERGE,
             Action.MERGE,
+            Action.CREATE_CARD,
         }
     ),
+    Seat.SERAPH: frozenset({Action.OBSERVE, Action.CREATE_CARD}),
+    Seat.NIOBE: frozenset(
+        {
+            Action.OBSERVE,
+            Action.CLAIM,
+            Action.RELEASE,
+            Action.LAUNCH,
+            Action.STOP,
+            Action.REASSIGN,
+            Action.ROTATE,
+            Action.REPAIR_WORKER,
+            Action.CREATE_CARD,
+        }
+    ),
+    Seat.TANK: frozenset({Action.OBSERVE, Action.DEPLOY, Action.CREATE_CARD}),
+    Seat.ATLAS: frozenset({Action.OBSERVE, Action.ACTUATE_APPLICATION, Action.CREATE_CARD}),
+    # Jarvis is not scheduled as a recurring seat. These capabilities remain
+    # available only for explicit Casey-directed emergency assistance.
     Seat.JARVIS: frozenset(
         {
             Action.OBSERVE,
@@ -69,6 +115,14 @@ _ALLOWED = {
             Action.REASSIGN,
             Action.ROTATE,
             Action.REPAIR_WORKER,
+            Action.CREATE_CARD,
+            Action.MOVE_CARD,
+            Action.COMPLETE_CARD,
+            Action.MERGE,
+            Action.DEPLOY,
+            Action.RELEASE_ARTIFACT,
+            Action.VERIFY,
+            Action.ACTUATE_APPLICATION,
         }
     ),
 }
@@ -84,6 +138,17 @@ _FLEET_MUTATIONS = frozenset(
     }
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def canonical_human_principal(identity: str) -> str:
+    """Normalize a CapAuth URI, handle, or local name to its human principal."""
+
+    normalized = identity.strip().casefold()
+    if normalized.startswith("capauth:"):
+        normalized = normalized.removeprefix("capauth:")
+    if ":" in normalized:
+        return ""
+    return normalized.split("@", 1)[0]
 
 
 def require_authority(
@@ -103,23 +168,83 @@ def require_authority(
         raise BoundaryError(f"unknown or unfenced actor: {actor}") from exc
     if action not in _ALLOWED[seat]:
         raise BoundaryError(f"{seat.value} is not authorized for {action.value}")
+    if seat is Seat.JARVIS and action not in JARVIS_DIRECT_ACTIONS | {Action.OBSERVE}:
+        raise BoundaryError(
+            f"jarvis requires a verified signed Casey direction for {action.value}"
+        )
+
+
+def verify_casey_direction(
+    actor: str,
+    action: Action,
+    *,
+    envelope: AuthorizationEnvelope | None,
+    target: str,
+    change_id: str,
+    scope: str,
+    public_key_armor: str,
+    expected_fingerprint: str,
+    verifier: Callable[[bytes, str, str], bool],
+) -> None:
+    """Verify one signed Casey direction bound to an exact emergency action.
+
+    This is the shared mutation boundary used by Jarvis emergency entrypoints.
+    The envelope is deliberately not consumed here: one direction may authorize
+    a bounded workflow containing multiple exact operations, and every operation
+    still verifies its own action, target, change, scope, lifetime, and signature.
+    """
+
+    normalized = actor.strip().lower()
+    if normalized != Seat.JARVIS:
+        require_authority(actor, action)
+        return
+    if envelope is None:
+        raise BoundaryError(f"jarvis requires a signed Casey direction for {action.value}")
+    if canonical_human_principal(envelope.issuer) != "casey":
+        raise BoundaryError("Jarvis emergency direction issuer must be Casey")
+    if not expected_fingerprint or envelope.issuer_fingerprint != expected_fingerprint:
+        raise BoundaryError("Jarvis emergency direction signer does not match Casey")
+    try:
+        verify_authorization(
+            envelope,
+            public_key_armor=public_key_armor,
+            verifier=verifier,
+            expected_action=f"jarvis.{action.value}",
+            expected_target=target,
+            expected_change_id=change_id,
+            expected_scope=scope,
+        )
+    except ValueError as exc:
+        raise BoundaryError(str(exc)) from exc
+
+
+def canonical_principal(identity: str) -> str:
+    """Return the stable lifecycle principal behind a display identity."""
+
+    normalized = identity.strip().casefold().replace("_", "-")
+    if normalized.startswith("pi-"):
+        normalized = normalized[3:]
+    for seat in Seat:
+        if normalized == seat.value or normalized.startswith(f"{seat.value}-"):
+            return seat.value
+    return normalized
 
 
 def assign_distinct_reviewer(*, author: str, assigner: str, candidates: Collection[str]) -> str:
     """Choose the first stable reviewer distinct from author and Link."""
 
     require_authority(assigner, Action.ASSIGN_REVIEWER)
-    excluded = {author.strip().lower(), assigner.strip().lower()}
+    excluded = {canonical_principal(author), canonical_principal(assigner)}
     for candidate in candidates:
         normalized = candidate.strip()
-        if normalized and normalized.lower() not in excluded:
+        if normalized and canonical_principal(normalized) not in excluded:
             return normalized
     raise BoundaryError("no distinct reviewer is available")
 
 
 @dataclass(frozen=True)
 class DispatchRecommendation:
-    """Advisory observation that only Jarvis may evaluate and act upon."""
+    """Advisory observation that the dispatcher may evaluate and act upon."""
 
     card_id: str
     recommendation_id: str
@@ -197,12 +322,12 @@ def authorize_recommendation_action(
     current_process: Mapping[str, object],
     used_recommendation_ids: Collection[str],
 ) -> None:
-    """Fence Jarvis action against replay and stale CardStore/process state."""
+    """Fence Niobe action against replay and stale CardStore/process state."""
 
     recommendation.validate()
     require_authority(actor, action)
-    if actor.strip().lower() != Seat.JARVIS:
-        raise BoundaryError("only jarvis may act on a recommendation")
+    if actor.strip().lower() != Seat.NIOBE:
+        raise BoundaryError("only niobe may act on a recurring recommendation")
     if recommendation.recommendation_id in used_recommendation_ids:
         raise BoundaryError("recommendation replay denied")
     if recommendation.observed_claim_owner != current_claim_owner:

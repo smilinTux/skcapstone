@@ -561,6 +561,13 @@ def format_claude_md(ctx: dict[str, Any]) -> str:
 
     lines.extend(
         [
+            "## Coordination Write Boundary",
+            "",
+            "Use `skcapstone coord` for every verdict, evidence, status, claim, label, "
+            "dependency, and lifecycle write. Never create, append, rewrite, rename, "
+            "or delete CardStore JSONL. Use CLI reads normally; raw file inspection "
+            "is only for emergency operator diagnostics.",
+            "",
             "## CLI Reference",
             "",
             "```bash",

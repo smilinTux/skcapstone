@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import ast
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -98,17 +97,20 @@ def _load_review_assignment(
         "HOME": "/home/test",
         "hashlib": __import__("hashlib"),
         "BoundaryError": _BoundaryError,
+        "CardStore": lambda _home: SimpleNamespace(fold=lambda _cid: object()),
         "event_rows": _event_rows,
         "_current_claim_identity_fresh": _current_claim_identity_fresh,
         "_card_process_snapshot": _card_process_snapshot,
         "recommend_reviewer": recommend_reviewer,
+        "review_state_revision": lambda _card: "0" * 64,
         "authorize_review_launch": authorize_review_launch,
     }
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     body = [
         node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_review_assignment"
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"_governed_review_metadata", "_review_assignment"}
     ]
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace, captured
@@ -123,18 +125,22 @@ def _review_card(core_title="Fix the widget"):
         + "a" * 64
         + ". Candidate commit: c.",
         "links": {},
+        "meta": {
+            "link_source_card": "source01",
+            "link_head_revision": "a" * 40,
+        },
     }
 
 
 @pytest.mark.parametrize(
     ("title", "expected"),
     [
-        ("[GBH-S4-01][XL] Run ten pilots", "glm-5.3"),
-        ("[SKGW-COMPAT-R2-07][L] Qualify clients", "glm-4.7"),
-        ("[SKLEGAL][S1-05B][L] Provision audit", "glm-4.7"),
-        ("[FLEET-GLM-CAP-09][S][DEPLOY] Enforce ceiling", "glm-4.6"),
-        ("[SKCOORD-VOLATILE-CI-R1][S] Stabilize identity", "glm-4.6"),
-        ("[MERO-01][M] Pin the census clock", "glm-4.6"),
+        ("[GBH-S4-01][XL] Run ten pilots", "sk-glm-l"),
+        ("[SKGW-COMPAT-R2-07][L] Qualify clients", "sk-glm-l"),
+        ("[SKLEGAL][S1-05B][L] Provision audit", "sk-glm-l"),
+        ("[FLEET-GLM-CAP-09][S][DEPLOY] Enforce ceiling", "sk-glm-s"),
+        ("[SKCOORD-VOLATILE-CI-R1][S] Stabilize identity", "sk-glm-s"),
+        ("[MERO-01][M] Pin the census clock", "sk-glm-m"),
         ("[SKDASH][LIVE-UI-DATA-R1] Repair icons", None),
         ("[SK CONTROL PLANE][SPRINT 1] Pulse", None),
     ],
@@ -147,10 +153,10 @@ def test_glm_level_selected_from_title_size_marker(title: str, expected) -> None
 def test_glm_levels_default_table_is_exact() -> None:
     namespace = _load_glm_helpers()
     assert namespace["_GLM_LEVELS"] == {
-        "S": "glm-4.6",
-        "M": "glm-4.6",
-        "L": "glm-4.7",
-        "XL": "glm-5.3",
+        "S": "sk-glm-s",
+        "M": "sk-glm-m",
+        "L": "sk-glm-l",
+        "XL": "sk-glm-l",
     }
 
 

@@ -67,10 +67,15 @@ skcapstone coord board               # Regenerate BOARD.md
 skcapstone coord briefing --format json      # Machine-readable protocol
 ```
 
+Every verdict, evidence, status, claim, label, dependency, and lifecycle write
+must use `skcapstone coord`. Never create, append, rewrite, rename, or delete
+CardStore JSONL. Use CLI reads for normal verification. Raw file inspection is
+reserved for emergency operator diagnostics.
+
 ## Key Rules
 
 1. **Read before you write** — check the board before starting work
-2. **Own your file** — only write to `~/.skcapstone/coordination/agents/<your_name>.json`
+2. **Use the CLI write boundary** — never mutate coordination storage directly
 3. **Tasks are immutable** — never edit a task file after creation
 4. **Claim before working** — prevents duplicate effort across agents
 5. **Create discovered work** — if you find something that needs doing, add a task

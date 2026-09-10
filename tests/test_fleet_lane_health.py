@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from skcapstone.fleet_lane_health import (
+    ENDPOINT_TIMEOUT_SECONDS,
     MAX_ENDPOINT_BYTES,
     acquire_lane_snapshot,
     active_gateway_revision,
@@ -74,7 +80,7 @@ def _documents(*, codex: str = "up", qwen_a: str = "down") -> dict[str, dict[str
 
 def _opener(documents: dict[str, dict[str, Any]], calls: list[str]):
     def open_url(url: str, *, timeout: float) -> Response:
-        assert timeout == 5
+        assert timeout == ENDPOINT_TIMEOUT_SECONDS == 8
         calls.append(url)
         path = "/" + url.rsplit("/", 1)[-1]
         value = documents[path]
@@ -119,6 +125,69 @@ def test_cold_start_fetches_each_endpoint_once_and_atomically_seals(tmp_path: Pa
     assert json.loads(path.read_text()) == snapshot
     assert not list(tmp_path.glob("*.new"))
     assert _admit(snapshot, "qwen", "qwen-model") == (True, "healthy")
+
+
+@pytest.mark.parametrize("size", ["S", "M", "L", "XL"])
+@pytest.mark.parametrize("overrides", [None, "distinct", "shared"])
+@pytest.mark.parametrize("backend_status", ["up", "down"])
+def test_rotator_codex_size_aliases_have_exact_health_admission(
+    tmp_path: Path, monkeypatch, size: str, overrides: str | None, backend_status: str
+) -> None:
+    """Configured role aliases share capacity health without duplicate bindings."""
+    for level in ("S", "M", "L", "XL"):
+        key = "SKFLEET_CODEX_MODEL_" + level
+        monkeypatch.delenv(key, raising=False)
+        if overrides:
+            monkeypatch.setenv(key, "custom-" + (level if overrides == "distinct" else "shared"))
+    script = Path(__file__).parents[1] / "scripts/fleet/skfleet-rotate.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    names = {"_CODEX_LEVEL_DEFAULTS", "_CODEX_LEVELS", "_GLM_SIZE_RE"}
+    body = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)
+        or isinstance(node, ast.FunctionDef)
+        and node.name in {"_codex_model_for", "_lane_model"}
+    ]
+    start = next(
+        i
+        for i, node in enumerate(tree.body)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "_health_lanes" for t in node.targets)
+    )
+    end = next(i for i in range(start + 1, len(tree.body)) if isinstance(tree.body[i], ast.Assign))
+    namespace = {
+        "os": os,
+        "re": re,
+        "LANES": [{"name": "codex", "model": "sk-codex-mid"}, {"name": "glm", "model": "glm-4.6"}],
+        "_GLM_LEVELS": {"S": "glm-4.6", "XL": "glm-5.3"},
+    }
+    exec(
+        compile(
+            ast.Module(body=body + tree.body[start:end], type_ignores=[]), str(script), "exec"
+        ),
+        namespace,
+    )
+    lanes = namespace["_health_lanes"]
+    codex_models = [lane["model"] for lane in lanes if lane["name"] == "codex"]
+    assert len(codex_models) == len(set(codex_models))
+    assert set(codex_models) == {"sk-codex-mid", *namespace["_CODEX_LEVELS"].values()}
+    model = namespace["_lane_model"](namespace["LANES"][0], {"title": f"[{size}] Work"})
+    assert model == namespace["_CODEX_LEVELS"][size]
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT,
+        lanes,
+        {"codex": ("codex",), "glm": ("zai",)},
+        tmp_path / "health.json",
+        "cycle-1",
+        opener=_opener(_documents(codex=backend_status), []),
+        revision_resolver=lambda endpoint: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    expected = (True, "healthy") if backend_status == "up" else (False, "model_owner_backend_down")
+    assert _admit(snapshot, "codex", model) == expected
+    assert _admit(snapshot, "codex", "unconfigured-alias") == (False, "model-mismatch")
 
 
 def test_active_revision_is_bound_to_configured_endpoint_host_and_port() -> None:
@@ -222,7 +291,7 @@ def test_endpoint_failure_and_revision_failure_seal_fail_closed_evidence(tmp_pat
 def test_rotate_checks_same_cycle_admission_before_claim() -> None:
     source = (Path(__file__).resolve().parents[1] / "scripts/fleet/skfleet-rotate.py").read_text()
     acquire = source.index("_lane_health_snapshot=acquire_lane_snapshot(")
-    selection = source.index("while _i<len(owned)")
+    selection = source.index("while _i<len(owned) and _i<len(_candidate_scan)")
     preclaim = source.index("admitted,health_reason=_health_for(")
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"')
     assert acquire < selection < preclaim < claim

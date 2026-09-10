@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -44,8 +45,8 @@ def register_coord_commands(main: click.Group) -> None:
             "\n"
             "\b\n"
             "  coord link can print success while storing an empty value. Read the\n"
-            "  verdict back before believing it:\n"
-            "    grep -h '<id>' ~/.skcapstone/coordination/card_events/*.jsonl\n"
+            "  verdict back through the mediated CLI before believing it:\n"
+            "    coord kanban --json\n"
             "\n"
             "\b\n"
             "WHERE TO LOOK\n"
@@ -87,7 +88,19 @@ def register_coord_commands(main: click.Group) -> None:
         type=click.Choice(["open", "claimed", "in_progress", "review", "done", "blocked"]),
         help="Only tasks in this status.",
     )
-    def coord_status(home, tag, parent, status_filter):
+    @click.option(
+        "--include-done",
+        is_flag=True,
+        default=False,
+        help="List done cards in the table (hidden by default).",
+    )
+    @click.option(
+        "--include-idle-agents",
+        is_flag=True,
+        default=False,
+        help="List idle/stale agent projections (hidden by default).",
+    )
+    def coord_status(home, tag, parent, status_filter, include_done, include_idle_agents):
         """Show the coordination board overview."""
         from ..coordination import Board
 
@@ -168,7 +181,7 @@ def register_coord_commands(main: click.Group) -> None:
         }
 
         for v in views:
-            if v.status.value == "done" and status_filter is None:
+            if v.status.value == "done" and status_filter is None and not include_done:
                 continue
             t = v.task
             status_label = _status_label(v)
@@ -187,8 +200,14 @@ def register_coord_commands(main: click.Group) -> None:
 
         if agents:
             console.print()
+            shown = 0
+            hidden = 0
             for ag in agents:
                 projected = display_state(ag)
+                if not include_idle_agents and not ag.current_task and projected != "active":
+                    hidden += 1
+                    continue
+                shown += 1
                 icon = {
                     "active": "[green]ACTIVE[/]",
                     "idle": "[yellow]IDLE[/]",
@@ -196,7 +215,22 @@ def register_coord_commands(main: click.Group) -> None:
                 }.get(projected, "[dim]OFFLINE[/]")
                 current = f" -> [cyan]{ag.current_task}[/]" if ag.current_task else ""
                 console.print(f"  {icon} [bold]{ag.agent}[/]{current}")
+            if hidden:
+                console.print(
+                    f"  [dim]({hidden} idle/stale agent projections hidden; "
+                    f"--include-idle-agents to show)[/]"
+                )
         console.print()
+
+    @coord.command("gates")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_gates(task_id, home):
+        """Explain why TASK_ID is or is not admitted for dispatch."""
+        validate_task_id(task_id)
+        from ..coord_gate_diagnostic import diagnose
+
+        console.print(json.dumps(diagnose(Path(home).expanduser(), task_id), sort_keys=True))
 
     @coord.command(
         "create",
@@ -247,6 +281,10 @@ def register_coord_commands(main: click.Group) -> None:
             "      --criteria 'Every nav item renders its icon at 1x and 2x.' \\\n"
             "      --criteria 'No new dependency is added.'\n"
             "\n"
+            "  Create work for this agent without exposing an unowned card:\n"
+            "    SKAGENT=mero coord create --claim-for-me \\\n"
+            "      --title '[SKDASH-NAV-02][S] Repair the nav labels'\n"
+            "\n"
             "\b\n"
             "  Work owned by a standing seat, so its verdicts carry the seat identity:\n"
             "    coord create --by mero --priority critical \\\n"
@@ -266,6 +304,9 @@ def register_coord_commands(main: click.Group) -> None:
             "    coord link e5f6a7b8 producer_identity pi-codex-source --agent mero\n"
             "    coord link e5f6a7b8 candidate_evidence_sha256 "
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --agent mero\n"
+            "    coord link e5f6a7b8 link_source_card a1b2c3d4 --agent mero\n"
+            "    coord link e5f6a7b8 link_head_revision "
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --agent mero\n"
             "\n"
             "\b\n"
             "  Something that needs a human first. Note the LABEL, not [HUMAN] in the\n"
@@ -310,9 +351,91 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--by", default="human", help="Creator name.")
     @click.option("--criteria", multiple=True, help="Acceptance criteria (repeatable).")
     @click.option("--dep", multiple=True, help="Dependency task IDs (repeatable).")
-    def coord_create(home, task_id, title, desc, priority, tag, by, criteria, dep):
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    @click.option(
+        "--producer-identity",
+        default=None,
+        help="Typed producer identity for governed review cards.",
+    )
+    @click.option(
+        "--candidate-evidence-sha256",
+        default=None,
+        help="64-hex candidate evidence digest for governed review cards.",
+    )
+    @click.option("--source-card", default=None, help="Governed review source card ID.")
+    @click.option("--head-revision", default=None, help="Governed review source head SHA.")
+    @click.option("--repository", default=None, help="Credential-free HTTPS source repository.")
+    @click.option("--base-ref", default=None, help="Named source branch or tag, such as main.")
+    @click.option("--base-revision", default=None, help="Exact 40-hex source commit SHA.")
+    @click.option(
+        "--claim-for-me",
+        is_flag=True,
+        help="Atomically create and claim for the resolved active agent.",
+    )
+    def coord_create(
+        home,
+        task_id,
+        title,
+        desc,
+        priority,
+        tag,
+        by,
+        criteria,
+        dep,
+        casey_authorization,
+        casey_change_id,
+        producer_identity,
+        candidate_evidence_sha256,
+        source_card,
+        head_revision,
+        repository,
+        base_ref,
+        base_revision,
+        claim_for_me,
+    ):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
+
+        labels = {str(value).strip().lower() for value in tag}
+        governed_review = "review" in labels or any(
+            marker in title.upper() for marker in ("[REVIEW]", "[REREVIEW]")
+        )
+        if governed_review:
+            missing = []
+            if "review" not in labels:
+                missing.append("review label")
+            if "seat-seraph" not in labels:
+                missing.append("seat-seraph")
+            if not str(producer_identity or "").strip():
+                missing.append("producer_identity")
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", str(candidate_evidence_sha256 or "")):
+                missing.append("candidate_evidence_sha256")
+            if not str(source_card or "").strip():
+                missing.append("source_card")
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", str(head_revision or "")):
+                missing.append("head_revision")
+            if missing:
+                raise click.ClickException(
+                    "incomplete governed review card; missing: " + ", ".join(missing)
+                )
+
+        from ..source_binding import source_binding_meta
+
+        try:
+            binding_meta = source_binding_meta(list(tag), repository, base_ref, base_revision)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+
+        meta = {}
+        if governed_review:
+            meta = {
+                "producer_identity": str(producer_identity).strip(),
+                "candidate_evidence_sha256": str(candidate_evidence_sha256).lower(),
+                "link_source_card": str(source_card).strip(),
+                "link_head_revision": str(head_revision).lower(),
+            }
+        meta.update(binding_meta)
 
         validate_agent_name(by)
         if task_id:
@@ -331,22 +454,47 @@ def register_coord_commands(main: click.Group) -> None:
             created_by=by,
             acceptance_criteria=list(criteria),
             dependencies=list(dep),
+            meta=meta,
         )
-        path = board.create_task(task)
-        console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(
+            by, Action.CREATE_CARD, task.id, casey_authorization, casey_change_id
+        )
+        if claim_for_me:
+            from .. import active_agent_name
+
+            owner = active_agent_name()
+            if not owner:
+                raise click.ClickException("no active agent could be resolved")
+            validate_agent_name(owner)
+            if governed_review and owner.strip().lower() != "seraph":
+                raise click.ClickException("governed review cards may be claimed only by Seraph")
+            try:
+                path, revision = board.create_claimed_task(task, owner)
+            except (RuntimeError, ValueError) as exc:
+                raise click.ClickException(str(exc)) from None
+            console.print(f"\n  [green]Created and claimed:[/] [{task.id}] {task.title}")
+            console.print(f"  [dim]owner={owner} status=doing claim_revision={revision}[/]")
+        else:
+            path = board.create_task(task)
+            console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
         console.print(f"  [dim]{path}[/]\n")
 
     @coord.command("claim")
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name claiming the task.")
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
     @click.option(
         "--force",
         is_flag=True,
         default=False,
         help="Compatibility flag. Dependency, review, and human gates still cannot be bypassed.",
     )
-    def coord_claim(task_id, home, agent, force):
+    def coord_claim(task_id, home, agent, casey_authorization, casey_change_id, force):
         """Claim a task for an agent.
 
         A task whose dependencies are not all done is blocked. The compatibility
@@ -358,8 +506,17 @@ def register_coord_commands(main: click.Group) -> None:
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(
+            agent, Action.CLAIM, task_id, casey_authorization, casey_change_id
+        )
         board = Board(home_path)
         try:
+            from ..review_admission import assert_governed_review_claim
+
+            assert_governed_review_claim(home_path, task_id, agent)
             ag = board.claim_task(agent, task_id, force=force)
             console.print(f"\n  [green]Claimed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
         except ValueError as e:
@@ -370,37 +527,24 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name completing the task.")
-    def coord_complete(task_id, home, agent):
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_complete(task_id, home, agent, casey_authorization, casey_change_id):
         """Mark a task as completed."""
-        from ..coordination import Board
-
         validate_task_id(task_id)
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
+        from ..coord_completion import complete_coord_task
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
 
-        # A review card must have said something before it can be closed. Without
-        # this, completing one marks the parent as reviewed while leaving no record
-        # of what was found, and silence reads as approval. Measured 2026-08-28:
-        # 39 of 317 completed review cards had recorded no verdict at all.
-        from ..review_verdict import validate_review_completion
+        authorize_jarvis_entrypoint(
+            agent, Action.COMPLETE_CARD, task_id, casey_authorization, casey_change_id
+        )
 
-        _title = ""
-        _core = home_path / "cards" / task_id / "core.json"
-        if _core.exists():
-            try:
-                _title = str(json.loads(_core.read_text()).get("title") or "")
-            except (ValueError, OSError):
-                _title = ""
         try:
-            validate_review_completion(task_id, _title, home_path)
-        except ValueError as e:
-            console.print(f"\n  [red]Refused:[/] {e}\n")
-            sys.exit(1)
-
-        board = Board(home_path)
-        try:
-            ag = board.complete_task(agent, task_id)
+            ag = complete_coord_task(home_path, agent, task_id)
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
             sys.exit(1)
@@ -510,14 +654,24 @@ def register_coord_commands(main: click.Group) -> None:
 
     @coord.command("board")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_board(home):
+    @click.option(
+        "--include-done",
+        is_flag=True,
+        default=False,
+        help="Include the full Done section (summarized by default).",
+    )
+    def coord_board(home, include_done):
         """Generate and display the BOARD.md overview."""
         from ..coordination import Board
 
         home_path = Path(home).expanduser()
         board = Board(home_path)
-        path = board.write_board_md()
-        md = board.generate_board_md()
+        try:
+            path = board.write_board_md(include_done=include_done)
+            md = board.generate_board_md(include_done=include_done)
+        except TypeError:
+            path = board.write_board_md()
+            md = board.generate_board_md()
         console.print(md)
         console.print(f"\n  [dim]Written to {path}[/]\n")
 
@@ -826,7 +980,10 @@ def register_coord_commands(main: click.Group) -> None:
     @coord.command("maintain")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option(
-        "--done-days", default=14, type=int, help="Archive done tasks older than N days."
+        "--done-days",
+        default=7,
+        type=int,
+        help="Archive done tasks older than N days (completion age when known).",
     )
     @click.option(
         "--backlog-days",
@@ -834,12 +991,18 @@ def register_coord_commands(main: click.Group) -> None:
         type=int,
         help="Archive unclaimed open tasks older than N days.",
     )
+    @click.option(
+        "--lock-days",
+        default=7,
+        type=int,
+        help="Prune idle coordination lock files older than N days.",
+    )
     @click.option("--dry-run", is_flag=True, default=False)
-    def coord_maintain(home, done_days, backlog_days, dry_run):
+    def coord_maintain(home, done_days, backlog_days, lock_days, dry_run):
         """Keep the board bounded: archive old done + ancient open tasks.
 
         Runs both sweeps in one shot (for the scheduler). Reversible: delete the
-        per-writer archive index to restore.
+        per-writer archive index to restore. Also prunes stale lock files.
         """
         from ..coordination import Board
 
@@ -847,11 +1010,17 @@ def register_coord_commands(main: click.Group) -> None:
         board = Board(home_path)
         done = board.archive_done_tasks(older_than_days=done_days, dry_run=dry_run)
         stale = board.age_stale_open(older_than_days=backlog_days, dry_run=dry_run)
+        # prune_stale_locks ships in skcoord after board-opt; keep CLI runnable
+        # against older registry wheels during the cutover window.
+        prune = getattr(board, "prune_stale_locks", None)
+        locks = prune(older_than_days=lock_days, dry_run=dry_run) if prune is not None else []
         verb = "Would archive" if dry_run else "Archived"
+        lock_verb = "Would prune" if dry_run else "Pruned"
         console.print(
             f"\n  [green]{verb} {len(done)} done (>{done_days}d) + "
-            f"{len(stale)} stale-open (>{backlog_days}d) = {len(done) + len(stale)} total.[/]\n"
+            f"{len(stale)} stale-open (>{backlog_days}d) = {len(done) + len(stale)} total.[/]"
         )
+        console.print(f"  [green]{lock_verb} {len(locks)} lock file(s) (>{lock_days}d).[/]\n")
 
     @coord.command("move")
     @click.argument("task_id")
@@ -859,18 +1028,31 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--order", default=None, type=int, help="Position within the column.")
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_move(task_id, column, home, order, agent):
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_move(task_id, column, home, order, agent, casey_authorization, casey_change_id):
         """Move a card to a kanban column (backlog/ready/doing/review/done)."""
         home_path = Path(home).expanduser()
-        from skcoord.lifecycle import transition_task
+        from ..coord_completion import move_coord_task
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        actor = agent or "coord-move"
+        authorize_jarvis_entrypoint(
+            actor,
+            Action.MOVE_CARD,
+            f"{task_id}:{column}",
+            casey_authorization,
+            casey_change_id,
+        )
 
         try:
-            receipt = transition_task(
+            receipt = move_coord_task(
                 home_path,
-                task_id=task_id,
-                column=column,
-                actor=agent or "coord-move",
-                order=order,
+                actor,
+                task_id,
+                column,
+                order,
             )
         except (OSError, RuntimeError, ValueError) as exc:
             message = str(exc)
@@ -1061,12 +1243,48 @@ def register_coord_commands(main: click.Group) -> None:
     @coord.command("briefing")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
-    def coord_briefing(home, fmt):
+    @click.option(
+        "--include-done",
+        is_flag=True,
+        default=False,
+        help="Include done cards in the board snapshot (hidden by default).",
+    )
+    def coord_briefing(home, fmt, include_done):
         """Print the full coordination protocol for any AI agent."""
         from ..coordination import get_briefing_json, get_briefing_text
 
         home_path = Path(home).expanduser()
+        write_policy = {
+            "rule": (
+                "All verdict, evidence, status, claim, label, dependency, and lifecycle "
+                "writes use skcapstone coord. Never create, append, rewrite, rename, or "
+                "delete CardStore JSONL."
+            ),
+            "good": "skcapstone coord link <card> verdict PASS_FOR_REVIEW --agent <name>",
+            "bad": "Creating, appending, rewriting, renaming, or deleting CardStore JSONL.",
+            "read_boundary": (
+                "Use CLI reads normally. Raw file inspection is emergency operator "
+                "diagnostics only."
+            ),
+        }
         if fmt == "json":
-            click.echo(get_briefing_json(home_path))
+            try:
+                payload = get_briefing_json(home_path, include_done=include_done)
+            except TypeError:
+                payload = get_briefing_json(home_path)
+            briefing = json.loads(payload)
+            briefing["coord_write_policy"] = write_policy
+            click.echo(json.dumps(briefing, indent=2))
         else:
-            click.echo(get_briefing_text(home_path))
+            try:
+                payload = get_briefing_text(home_path, include_done=include_done)
+            except TypeError:
+                payload = get_briefing_text(home_path)
+            click.echo(
+                "# Coordination Write Boundary\n\n"
+                f"RULE: {write_policy['rule']}\n"
+                f"GOOD: {write_policy['good']}\n"
+                f"BAD: {write_policy['bad']}\n\n"
+                f"READS: {write_policy['read_boundary']}\n\n"
+                f"{payload}"
+            )

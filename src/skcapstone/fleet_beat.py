@@ -123,7 +123,8 @@ def write_agent_beat(
     sequence: int = 0,
     progress_token: str = "",
     *,
-    skmail_recipient: str = "",
+    reason: str = "",
+    skmail_recipient: str = "heartbeat",
 ) -> Beat:
     """Write an agent beat. Non-RUNNING dispositions also emit one skmail.
 
@@ -143,8 +144,9 @@ def write_agent_beat(
         sequence=sequence,
         progress_token=progress_token,
     )
-    if disposition != "RUNNING" and skmail_recipient:
+    if disposition != "RUNNING":
         # A block is an event with history, not a state to be overwritten
+        one_line_reason = " ".join(reason.split()) or "%s %s" % (disposition, card_id)
         try:
             subprocess.run(
                 [
@@ -154,7 +156,7 @@ def write_agent_beat(
                     skmail_recipient,
                     "normal",
                     "beat disposition",
-                    "%s %s" % (disposition, card_id),
+                    "%s: %s" % (disposition, one_line_reason),
                 ],
                 capture_output=True,
                 timeout=10,

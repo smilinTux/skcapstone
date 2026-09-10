@@ -9,6 +9,58 @@ The selector's `authoritative_claimability()` function is the dispatch
 authority. If this document and that function disagree, the function wins and
 this document must be corrected.
 
+## Source workspace bindings
+
+Every newly authored `source-only` card carries one complete binding:
+
+```text
+repository     credential-free HTTPS repository URL
+base_ref       named branch or tag, never a commit SHA
+base_revision  exact lowercase 40-hex commit SHA
+```
+
+CLI, MCP, and SDK creation validate the same tuple before writing the card.
+The fleet fetches `base_ref`, proves `base_revision` is reachable from that
+fetch, and checks out the exact revision before claiming the card. A legacy
+card with a SHA in `base_ref` is accepted only when separate metadata supplies
+the named ref and the SHA agrees with `base_revision`. The fleet never guesses
+the remote default branch.
+
+```text
+skcapstone coord create --title 'Bound source work' --tag source-only \
+  --repository https://github.com/smilinTux/skcapstone \
+  --base-ref main --base-revision <40-hex-commit>
+```
+
+## Governed review cards
+
+A review or rereview card is governed when it carries the `review` label or a
+`[REVIEW]` or `[REREVIEW]` marker in its title. `[REPAIR]` alone identifies
+ordinary producer work and does not make a card a governed review. Author a
+governed review with all four admission facts:
+`review`, `seat-seraph`, a non-empty `producer_identity`, and a lowercase
+64-hex `candidate_evidence_sha256`. The CLI fails before writing a card and
+lists every missing field:
+
+```text
+skcapstone coord create --title '[REVIEW] verify candidate' \
+  --tag review --tag seat-seraph \
+  --producer-identity pi-codex-source \
+  --candidate-evidence-sha256 <64-hex-digest>
+```
+
+The typed producer and digest are retained as creation metadata and are read by
+the same selector contract used by POOL_V2. Do not infer review admission from
+lifecycle state, links, or a successful create operation alone.
+
+Completion applies the same contract to `[REVIEW]` and `[REREVIEW]`. `PASS`
+fails closed unless the card records all six protected-branch CI links as
+terminal success: `ci_check_docs`, `ci_check_gitleaks`, `ci_check_lint`,
+`ci_check_shim_imports`, `ci_check_python311`, and `ci_check_python312`.
+Missing or partial link sets do not count as green CI. Exact `FAIL` and a
+structured `BLOCKED` remain terminal without waiting for CI so an independent
+reviewer can reject an unsafe candidate immediately.
+
 Human approval is separate from machine state. A complete dependency, a label,
 an elapsed deadline, or a successful CLI write never manufactures human
 authority. Record the exact human decision and its evidence first, then make

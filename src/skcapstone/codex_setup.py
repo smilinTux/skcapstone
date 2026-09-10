@@ -105,6 +105,8 @@ echo "agent=$AGENT"
 echo "agent_home=$AGENT_HOME"
 echo "skmemory_home=$AGENT_HOME/memory"
 echo
+echo "coord_write_boundary=Use skcapstone coord for all coordination writes; never mutate CardStore JSONL directly."
+echo
 
 echo "## skcapstone context"
 if command -v skcapstone >/dev/null 2>&1; then
@@ -164,6 +166,11 @@ local sovereign stack, run:
 Treat that output as the current agent context. When asked who you are, what
 profile is active, or what your OOF/status is, answer from the current
 SKMemory ritual / SKCapstone context instead of generic Codex defaults.
+
+Use `skcapstone coord` for every verdict, evidence, status, claim, label,
+dependency, and lifecycle write. Never create, append, rewrite, rename, or
+delete CardStore JSONL. Use CLI reads normally; raw file inspection is only
+for emergency operator diagnostics.
 {END_MARKER}
 """
 
@@ -299,6 +306,11 @@ At the start of SK* work, run:
 Treat that output as current SKCapstone, SKMemory, and SKWhisper context.
 CapAuth and SKWhisper capabilities are exposed through SKCapstone; do not
 start duplicate standalone MCP services for them.
+
+Use `skcapstone coord` for every verdict, evidence, status, claim, label,
+dependency, and lifecycle write. Never create, append, rewrite, rename, or
+delete CardStore JSONL. Use CLI reads normally; raw file inspection is only
+for emergency operator diagnostics.
 {PI_END_MARKER}
 """
     agents_file = base / "AGENTS.md"

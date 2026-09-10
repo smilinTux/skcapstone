@@ -260,6 +260,11 @@ def generate_soul_instructions() -> str:
 {relationships_block}
 ## Sovereign Capabilities
 
+Use `skcapstone coord` for every verdict, evidence, status, claim, label,
+dependency, and lifecycle write. Never create, append, rewrite, rename, or
+delete CardStore JSONL. Use CLI reads normally; raw file inspection is only
+for emergency operator diagnostics.
+
 You have the **skcapstone** MCP server available. Use it for:
 - `agent_status` / `soul_show` - check your identity and soul
 - `memory_store` / `memory_search` / `memory_recall` - persistent memory

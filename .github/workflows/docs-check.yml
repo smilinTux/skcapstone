@@ -4,6 +4,6 @@ permissions:
   contents: read
 jobs:
   docs:
-    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@main
+    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@e8d352e1a4c136643106de36c0880310d9fb1ed6 # main
     with:
       tiers: "1,2,3"

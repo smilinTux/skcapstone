@@ -5,16 +5,16 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def test_rotation_wires_link_jarvis_and_mero_in_order() -> None:
+def test_rotation_wires_link_reviewer_and_mero_in_order() -> None:
     """Review launches use all three governed runtime stages."""
 
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
     link = source.index("recommend_reviewer(")
-    jarvis = source.index("authorize_review_launch(", link)
-    claim = source.index('claim=subprocess.run([SKC,"coord","claim"', jarvis)
+    reviewer = source.index("authorize_review_launch(", link)
+    claim = source.index('claim=subprocess.run([SKC,"coord","claim"', reviewer)
     receipt = source.index("append_review_launch_receipt(", claim)
     mero = source.index("MeroObservation(", receipt)
-    assert link < jarvis < claim < receipt < mero
+    assert link < reviewer < claim < receipt < mero
 
 
 def test_non_review_cards_bypass_assignment() -> None:
@@ -31,7 +31,7 @@ def test_dry_run_exits_before_link_writes() -> None:
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
     loop = source.index("for _LANE,")
     dry = source.index("if DRY:", loop)
-    assignment = source.index("_review_assignment(", dry)
+    assignment = source.index("_pool_v2_preclaim_handoff(", dry)
     assert dry < assignment
 
 
@@ -87,11 +87,44 @@ def test_mero_blocked_and_stale_states_fail_closed() -> None:
 
 
 def test_rotation_uses_the_packaged_runtime_interpreter() -> None:
-    """The source-backed drop-in uses the environment that owns SKCapstone."""
+    """The drop-in uses the wheel-owned interpreter and launcher."""
 
     dropin = ROOT / "scripts/fleet/systemd/skfleet-rotate.service.d/seat-runtime-python.conf"
     assert dropin.read_bytes() == (
         b"[Service]\n"
         b"ExecStart=\n"
-        b"ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-rotate.py --go\n"
+        b"ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet-rotate.py --go\n"
     )
+
+
+def test_rotation_launcher_is_installed_by_the_wheel() -> None:
+    """A package upgrade cannot leave the active dispatcher outside the wheel."""
+
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    for runtime_file in (
+        "pi-cardstore-guard.mjs",
+        "skfleet-pi-model-catalog.py",
+        "skfleet-rotate.py",
+        "skfleet-worker-wrapper.py",
+        "skmail_work.py",
+        "skmail_writer.py",
+        "worktree-hygiene.py",
+    ):
+        assert f'"scripts/fleet/{runtime_file}"' in pyproject
+
+    for unit in (
+        ROOT / "systemd/skfleet-niobe-live.service",
+        ROOT / "src/skcapstone/data/systemd/skfleet-niobe-live.service",
+    ):
+        text = unit.read_text()
+        assert "%h/.skenv/bin/skfleet-rotate.py" in text
+        assert "%h/.local/bin/skfleet-rotate.py" not in text
+
+
+def test_tank_and_atlas_prompts_preserve_role_fences() -> None:
+    """Seat prompts bind exact metadata and never grant ATLAS actuation."""
+    source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
+    assert "approved artifact with sha256=%s" in source
+    assert "Verify only target %s against evidence sha256=%s" in source
+    assert "Do not deploy, dispatch, invoke an actuator" in source
+    assert "Act only on the card-bound ActionIntent" not in source

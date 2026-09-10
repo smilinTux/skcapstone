@@ -2198,9 +2198,9 @@ def _check_yolo() -> list[Check]:
     cannot see live shell functions, so it reads the env var and greps rc files.
 
     Returns:
-        One Check per harness tool (claude/codex/opencode) that has YOLO active
-        in the env or persisted in an rc file; nothing for tools left at the
-        safe default, plus a single summary line when all are default-off.
+        One Check per harness tool (claude/codex/opencode/agent) that has YOLO
+        active in the env or persisted in an rc file; nothing for tools left at
+        the safe default, plus a single summary line when all are default-off.
     """
     rc_files = [
         Path.home() / ".bashrc",
@@ -2219,6 +2219,7 @@ def _check_yolo() -> list[Check]:
         ("claude", "SK_CLAUDE_YOLO", "--dangerously-skip-permissions"),
         ("codex", "SK_CODEX_YOLO", "--dangerously-bypass-approvals-and-sandbox"),
         ("opencode", "SK_OPENCODE_YOLO", "all-tools-allowed"),
+        ("agent", "SK_CURSOR_YOLO", "--yolo"),
     ]
 
     checks: list[Check] = []

@@ -1,0 +1,27 @@
+[Unit]
+Description=SKFleet Niobe bounded live dispatcher
+After=network-online.target
+OnFailure=skfleet-rotate-alert.service
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=niobe
+Environment=SKCAPSTONE_AGENT=niobe
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SKFLEET_TARGET=3
+Environment=SKFLEET_QWEN_TARGET=0
+Environment=SKFLEET_GLM_TARGET=0
+Environment=SKFLEET_KIMI_TARGET=0
+Environment=SKFLEET_MAX_LAUNCH=10
+Environment=SKFLEET_BEAT_INTERVAL=60
+Environment=SKFLEET_CODEX_MODEL_S=sk-codex-mid
+Environment=SKFLEET_CODEX_MODEL_M=sk-codex-mid
+Environment=SKFLEET_CODEX_MODEL_L=sk-codex-mid
+Environment=SKFLEET_CODEX_MODEL_XL=sk-codex-mid
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.niobe_live_entrypoint --activation %h/.skcapstone/coordination/niobe-activation.json --dispatcher %h/.skenv/bin/skfleet-rotate.py --unit skfleet-niobe-live.timer
+TimeoutStartSec=300
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

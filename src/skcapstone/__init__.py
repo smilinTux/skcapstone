@@ -89,14 +89,18 @@ def _detect_active_agent(root: str | None = None) -> str | None:
     """Best-effort active agent discovery.
 
     Resolution order:
-    1. Explicit SKAGENT / SKCAPSTONE_AGENT environment variable
+    1. Explicit SKAGENT / SKCAPSTONE_AGENT / SKMEMORY_AGENT environment variable
     2. Explicit SK_DEFAULT_AGENT if that agent directory exists
     3. The sole installed non-template agent (never guess when several exist)
 
     Returns:
         The active agent name if one can be resolved, else None.
     """
-    env_agent = (os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT", "")).strip()
+    env_agent = (
+        os.environ.get("SKAGENT")
+        or os.environ.get("SKCAPSTONE_AGENT")
+        or os.environ.get("SKMEMORY_AGENT", "")
+    ).strip()
     if env_agent:
         return env_agent
 
@@ -112,8 +116,9 @@ def _detect_active_agent(root: str | None = None) -> str | None:
     )
     if not candidates:
         return None
-    if DEFAULT_AGENT in candidates:
-        return DEFAULT_AGENT
+    default_agent = (os.environ.get("SK_DEFAULT_AGENT") or DEFAULT_AGENT).strip()
+    if default_agent in candidates:
+        return default_agent
     return candidates[0] if len(candidates) == 1 else None
 
 

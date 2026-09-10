@@ -105,6 +105,11 @@ def mandate_template(name: str, role: str) -> str:
     header = (
         f"# {name} - Lightweight {role} agent\n\n"
         f"Created {created} via `skcapstone init --non-interactive`.\n"
+        "\n## Coordination write boundary\n\n"
+        "Use `skcapstone coord` for every verdict, evidence, status, claim, label, "
+        "dependency, and lifecycle write. Never create, append, rewrite, rename, or "
+        "delete CardStore JSONL. Use CLI reads normally; raw file inspection is only "
+        "for emergency operator diagnostics.\n"
     )
 
     if role == ROLE_REVIEWER:

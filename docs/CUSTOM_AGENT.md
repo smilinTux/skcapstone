@@ -357,6 +357,7 @@ unset _SK_PICKER
 export SK_CLAUDE_YOLO=1
 export SK_CODEX_YOLO=1
 export SK_OPENCODE_YOLO=1
+export SK_CURSOR_YOLO=1
 ```
 
 Common usage:
@@ -365,27 +366,32 @@ Common usage:
 claude
 codex
 opencode
+agent
 
 claude --agent lumina
 codex --agent jarvis
 opencode --agent opus
+agent --agent jarvis
 
 SKAGENT=sovereign codex
 skswitch tester
 opencode
 ```
 
-YOLO mode (per-tool permission bypass — opt-in):
+YOLO mode (per-tool permission bypass — opt-in, except Codex and Cursor Agent
+which default on in the wrapper):
 
 - `SK_CLAUDE_YOLO=1` adds `--dangerously-skip-permissions`
 - `SK_CODEX_YOLO=1` adds `--dangerously-bypass-approvals-and-sandbox`
 - `SK_OPENCODE_YOLO=1` sets `OPENCODE_PERMISSION='{"*":"allow"}'`
+- `SK_CURSOR_YOLO=1` adds `--yolo` (Cursor Agent Run Everything)
 
 Each var is read live by its wrapper function, so it composes the usual ways:
 
 - **Global:** `export SK_CLAUDE_YOLO=1` in `~/.bashrc` → every launch bypasses.
 - **One launch:** `SK_CLAUDE_YOLO=1 claude` → bypass just this run.
-- **Opt out once** (when global is on): `SK_CLAUDE_YOLO=0 claude`.
+- **Opt out once** (when global is on): `SK_CLAUDE_YOLO=0 claude` or
+  `SK_CURSOR_YOLO=0 agent`.
 
 `skcapstone doctor` reports the state under `harness:yolo:*`: it flags the
 common trap where the bypass is active in the current shell but not persisted
@@ -397,6 +403,7 @@ Missing binary handling:
 - `claude` offers `npm install -g @anthropic-ai/claude-code`
 - `codex` offers `npm install -g @openai/codex`
 - `opencode` offers `curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path`
+- `agent` / `cursor-agent` offers `curl -fsS https://cursor.com/install | bash`
 
 In non-interactive shells, the launcher prints the standard install command and exits instead of hanging on a prompt.
 

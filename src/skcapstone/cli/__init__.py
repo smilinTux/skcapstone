@@ -94,6 +94,7 @@ from .session import register_session_commands  # noqa: E402
 from .setup import register_setup_commands  # noqa: E402
 from .shell_cmd import register_shell_commands  # noqa: E402
 from .skills_cmd import register_skills_commands  # noqa: E402
+from .skrsi_cmd import register_skrsi_commands  # noqa: E402
 from .skseed import register_skseed_commands  # noqa: E402
 from .soul import register_soul_commands  # noqa: E402
 from .status import register_status_commands  # noqa: E402
@@ -108,6 +109,7 @@ from .usage_cmd import register_usage_commands  # noqa: E402
 from .version_cmd import register_version_commands  # noqa: E402
 
 register_setup_commands(main)
+register_skrsi_commands(main)
 register_shell_commands(main)
 register_status_commands(main)
 register_card_commands(main)

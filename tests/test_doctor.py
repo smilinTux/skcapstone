@@ -664,7 +664,12 @@ class TestCheckYolo:
     def _clean_env(self, monkeypatch, tmp_path):
         """Point HOME at tmp_path and clear all YOLO vars."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        for var in ("SK_CLAUDE_YOLO", "SK_CODEX_YOLO", "SK_OPENCODE_YOLO"):
+        for var in (
+            "SK_CLAUDE_YOLO",
+            "SK_CODEX_YOLO",
+            "SK_OPENCODE_YOLO",
+            "SK_CURSOR_YOLO",
+        ):
             monkeypatch.delenv(var, raising=False)
 
     def test_default_off_reports_safe(self, tmp_path, monkeypatch):

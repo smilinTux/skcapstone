@@ -1,3 +1,9 @@
+# Current coordination write boundary
+
+This document is historical implementation detail only. Agents must never
+perform raw CardStore JSONL writes. Use `skcapstone coord` for every
+coordination write.
+
 # Kanban Write-Path (Phase 3) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

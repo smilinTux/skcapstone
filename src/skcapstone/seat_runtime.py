@@ -24,6 +24,10 @@ def review_state_revision(card: Card) -> str:
         "owner": card.owner,
         "labels": sorted(card.labels),
         "dependencies": sorted(card.dependencies),
+        "title": card.title,
+        "description": card.description,
+        "acceptance_criteria": card.acceptance_criteria,
+        "links": card.links,
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     return hashlib.sha256(raw).hexdigest()
@@ -82,11 +86,12 @@ def recommend_reviewer(
     home: Path,
     *,
     card_id: str,
-    recommendation_id: str,
+    recommendation_id: str | None,
     author: str,
     candidates: list[str],
     observed_process: Mapping[str, object],
     evidence_sha256: str,
+    expected_state_revision: str | None = None,
 ) -> ReviewAssignmentRecommendation:
     """Have Link append one revision-bound, distinct-reviewer recommendation."""
 
@@ -95,15 +100,30 @@ def recommend_reviewer(
     if (
         card is None
         or card.owner is not None
-        or getattr(card.status, "value", card.status) != "backlog"
+        or getattr(card.status, "value", card.status) not in {"backlog", "review"}
     ):
-        raise BoundaryError("review card is not unclaimed backlog work")
+        raise BoundaryError("review card is not unclaimed review work")
+    if "review" not in {str(label).lower() for label in card.labels}:
+        raise BoundaryError("review card lacks the review label")
+    state_revision = review_state_revision(card)
+    if expected_state_revision is not None and expected_state_revision != state_revision:
+        raise BoundaryError("review card state changed before recommendation")
+    reviewer = assign_distinct_reviewer(author=author, assigner="link", candidates=candidates)
+    if recommendation_id is None:
+        recommendation_id = (
+            "link-review-"
+            + hashlib.sha256(
+                (
+                    card_id + "\0" + reviewer + "\0" + evidence_sha256 + "\0" + state_revision
+                ).encode()
+            ).hexdigest()[:32]
+        )
     recommendation = ReviewAssignmentRecommendation(
         card_id=card_id,
         recommendation_id=recommendation_id,
         author=author.strip(),
-        reviewer=assign_distinct_reviewer(author=author, assigner="link", candidates=candidates),
-        observed_state_revision=review_state_revision(card),
+        reviewer=reviewer,
+        observed_state_revision=state_revision,
         observed_process=dict(observed_process),
         evidence_sha256=evidence_sha256,
     )
@@ -119,7 +139,7 @@ def recommend_reviewer(
 
 @dataclass(frozen=True)
 class ReviewLaunchHandoff:
-    """Exact input Jarvis may pass to the existing claim and launch path."""
+    """Exact input one governed reviewer may pass to the claim path."""
 
     card_id: str
     reviewer: str
@@ -135,21 +155,30 @@ def authorize_review_launch(
     current_process: Mapping[str, object],
     used_recommendation_ids: set[str],
 ) -> ReviewLaunchHandoff:
-    """Let Jarvis validate fresh card state before the existing claim path runs."""
+    """Validate one recorded Link recommendation for its exact reviewer."""
 
     recommendation.validate()
-    require_authority(actor, Action.LAUNCH)
-    if actor.strip().lower() != "jarvis":
-        raise BoundaryError("only jarvis may authorize a review launch")
+    if actor.strip() != recommendation.reviewer:
+        raise BoundaryError("only the exact recommended reviewer may launch")
+    require_authority(actor, Action.LAUNCH, fenced_system_actors={recommendation.reviewer.lower()})
     if recommendation.recommendation_id in used_recommendation_ids:
         raise BoundaryError("recommendation replay denied")
-    card = CardStore(home).fold(recommendation.card_id)
+    store = CardStore(home)
+    recorded = any(
+        event.get("action") == "review_assignment_recommendation"
+        and event.get("writer") == "link"
+        and all(event.get(key) == value for key, value in recommendation.as_event().items())
+        for event in store._read_events(recommendation.card_id)
+    )
+    if not recorded:
+        raise BoundaryError("review recommendation is not recorded exactly")
+    card = store.fold(recommendation.card_id)
     if (
         card is None
         or card.owner is not None
-        or getattr(card.status, "value", card.status) != "backlog"
+        or getattr(card.status, "value", card.status) not in {"backlog", "review"}
     ):
-        raise BoundaryError("review card is no longer unclaimed backlog work")
+        raise BoundaryError("review card is no longer unclaimed review work")
     current_revision = review_state_revision(card)
     if current_revision != recommendation.observed_state_revision:
         raise BoundaryError("review card state changed after assignment")
@@ -171,18 +200,26 @@ def append_review_launch_receipt(
     claim_revision: str,
     launched: bool,
 ) -> dict[str, object]:
-    """Record Jarvis's exact claim generation and launch result."""
+    """Record one governed reviewer's exact claim generation and result."""
 
-    require_authority(actor, Action.LAUNCH)
-    if actor.strip().lower() != "jarvis":
-        raise BoundaryError("only jarvis may record a review launch")
+    if actor.strip() != handoff.reviewer:
+        raise BoundaryError("only the exact recommended reviewer may record launch")
+    require_authority(actor, Action.LAUNCH, fenced_system_actors={handoff.reviewer.lower()})
     if not claim_revision.strip():
         raise BoundaryError("claim revision is required")
-    return CardStore(home).append_event(
+    store = CardStore(home)
+    card = store.fold(handoff.card_id)
+    if (
+        card is None
+        or card.owner != handoff.reviewer
+        or card.meta.get("_claim_revision") != claim_revision
+    ):
+        raise BoundaryError("review launch receipt does not match the exact claim")
+    return store.append_event(
         handoff.card_id,
         "review_assignment_launch",
-        "jarvis",
-        transition_id=("jarvis-" + handoff.recommendation_id + "-" + claim_revision),
+        actor,
+        transition_id=(actor + "-" + handoff.recommendation_id + "-" + claim_revision),
         schema="skfleet.review-assignment-launch/v1",
         recommendation_id=handoff.recommendation_id,
         reviewer=handoff.reviewer,

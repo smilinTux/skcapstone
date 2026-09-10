@@ -85,7 +85,12 @@ class TestPublishGating:
         # PyYAML 1.1 parses the unquoted Actions key `on` as boolean true.
         assert "workflow_call" in workflow[True]
         versions = workflow["jobs"]["unit"]["strategy"]["matrix"]["python-version"]
-        assert versions == ["3.11", "3.12"]
+        assert versions == "${{ fromJSON(needs.classify.outputs.matrix) }}"
+        matrix_step = next(
+            step for step in workflow["jobs"]["classify"]["steps"] if step.get("id") == "matrix"
+        )
+        assert '["3.11","3.12"]' in matrix_step["run"]
+        assert '["3.10","3.11","3.12","3.13","3.14"]' in matrix_step["run"]
 
     def test_npm_publish_job_is_retired(self, publish):
         """The npm publish job was dropped; skcapstone is Python-first.

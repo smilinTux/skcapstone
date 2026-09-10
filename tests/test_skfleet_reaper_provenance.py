@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
+WRAPPER = ROOT / "scripts" / "fleet" / "skfleet-worker-wrapper.py"
 
 
 def _claim_event(
@@ -712,10 +714,109 @@ def test_successful_launch_records_exact_claim_generation() -> None:
     assert fields("pi-codex-chiap02-deadbeef", "", True) == ""
 
 
+def _release_commands(source: str) -> list[tuple[str, list[object]]]:
+    """Enumerate actual subprocess argv and generated shell cleanup commands."""
+    commands = []
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.func.attr == "run"
+            and node.args
+            and isinstance(node.args[0], ast.List)
+        ):
+            argv = [
+                item.value if isinstance(item, ast.Constant) else item
+                for item in node.args[0].elts
+            ]
+            if "release-claim" in argv:
+                commands.append((f"subprocess line {node.lineno}", argv))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            for command in re.findall(r"release_claim\(\) \{([^}]+)\}", node.value):
+                argv = shlex.split(command)
+                if "release-claim" in argv:
+                    commands.append((f"shell line {node.lineno}", argv))
+    return commands
+
+
+def _assert_release_command_fenced(path: str, argv: list[object]) -> None:
+    """Every release supplies nonempty owner and exact-generation arguments."""
+    for flag in ("--owner", "--expected-claim-revision"):
+        assert flag in argv, f"{path} lacks {flag}"
+        index = argv.index(flag)
+        assert index + 1 < len(argv), f"{path} has no value for {flag}"
+        value = argv[index + 1]
+        assert not isinstance(value, str) or (
+            value and not value.startswith("--")
+        ), f"{path} has an empty or missing value for {flag}"
+
+
 def test_every_fleet_release_call_supplies_expected_revision() -> None:
-    """The reaper, worker trap, and launch-failure path all use the fence."""
-    source = ROTATE.read_text(encoding="utf-8")
-    assert source.count("--expected-claim-revision") == 3
+    """Enumerate every release path across rotation and wrapper ownership."""
+    commands = []
+    for path in (ROTATE, WRAPPER):
+        commands.extend(_release_commands(path.read_text(encoding="utf-8")))
+    assert any(path.startswith("subprocess") for path, _ in commands)
+    for path, argv in commands:
+        _assert_release_command_fenced(path, argv)
+
+
+def test_rotation_child_has_no_independent_release_path() -> None:
+    """Only the wrapper may atomically release and retire one generation."""
+    commands = _release_commands(ROTATE.read_text(encoding="utf-8"))
+    assert not any(path.startswith("shell") for path, _ in commands)
+
+
+def test_launch_failure_releases_the_exact_claimed_revision() -> None:
+    """Execute the launch-failure branch with distinct card, owner, and revision."""
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    branch = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.UnaryOp)
+        and isinstance(node.test.op, ast.Not)
+        and isinstance(node.test.operand, ast.Name)
+        and node.test.operand.id == "ok"
+    )
+    commands = []
+    namespace = dict(
+        ok=False,
+        SKC="skcapstone",
+        cid="feedbeef",
+        name="worker-owner",
+        claimed_revision="exact-revision",
+        subprocess=SimpleNamespace(run=lambda command, **kwargs: commands.append(command)),
+    )
+    exec(compile(ast.Module(body=[branch], type_ignores=[]), "launch-failure", "exec"), namespace)
+    assert commands == [
+        [
+            "skcapstone",
+            "coord",
+            "release-claim",
+            "feedbeef",
+            "--owner",
+            "worker-owner",
+            "--expected-claim-revision",
+            "exact-revision",
+            "--agent",
+            "worker-owner",
+        ]
+    ]
+
+
+@pytest.mark.parametrize("flag", ["--owner", "--expected-claim-revision"])
+def test_release_fence_check_rejects_missing_argument_on_every_path(flag: str) -> None:
+    """Removing either fence from any enumerated command fails validation."""
+    commands = _release_commands(ROTATE.read_text(encoding="utf-8"))
+    assert commands
+    for path, argv in commands:
+        unfenced = list(argv)
+        unfenced.remove(flag)
+        with pytest.raises(AssertionError, match=f"lacks {flag}"):
+            _assert_release_command_fenced(path, unfenced)
 
 
 def test_genuine_dead_fleet_claim_with_exact_generation_is_released(

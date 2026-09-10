@@ -1,5 +1,151 @@
 # Changelog
 
+- Card `35a61efb`: changed Seraph's hard-coded single review launch into a
+  configurable batch bounded from one through eight, validated every exact
+  recommendation, claim revision, launch receipt, active worker, source head,
+  and producer identity independently. A failed launch is retryable only after
+  its exact claim generation is released and CardStore confirms the card is
+  currently claimable. The default remains `sk-codex-mid`.
+
+## Unreleased
+
+- Card `b7f31a22`: prevent a dispatched fleet worker from re-claiming its
+  already-owned card and invalidating the launch receipt's claim revision.
+
+- Card `b7f31a20`: publish fresh Link observations for fully governed PRs even
+  when unrelated legacy PRs still lack lineage, while keeping every incomplete
+  PR out of dispatch and recording a hashed omission summary in the feed.
+
+- Card `ac4e80f5`: validate repository, named base ref, and exact base revision
+  across CLI, MCP, SDK, Link review materialization, and fleet preclaim. Legacy
+  SHA bindings require an explicit named ref, and workers fetch and verify the
+  exact detached revision before claiming work.
+
+- Card `7f3a9c21`: refresh Link's mediated multi-repository lineage input,
+  activate bounded Seraph, Tank, and ATLAS dispatch, raise Niobe to three
+  Codex workers with alternate lanes disabled, preserve source-head reviewer
+  independence, and record atomic dispatcher overlap as a truthful no-op.
+
+- Card `5ae93ae0`: require every governed Seraph review card to carry its
+  immutable source-card and head-revision binding before scheduler admission.
+
+- Card `2e0772ba`: package the fleet launcher's complete adjacent runtime
+  closure, including SKMail and worktree helpers, so live Seraph dispatch does
+  not depend on stale host-local files.
+
+- Card `7c4f1a2b`: resolve Seraph's dispatcher beside the active SKCapstone
+  interpreter and fail closed when the wheel-owned launcher is missing.
+
+- Card `72240d71`: package the fleet rotation launcher in the SKCapstone wheel,
+  point recurring fleet units at that wheel-owned executable, and isolate the
+  CI libfuse refresh from unrelated third-party apt indexes.
+
+- Card `f398a4af`: emit one typed Seraph no-op receipt when a nonempty live
+  selection is fully suppressed before launch, while preserving candidate
+  diagnostics, admission controls, and exact-one receipt validation.
+
+- Card `8daa0877`: accept typed Seraph launch and no-op receipts from either
+  stdout or stderr while preserving duplicate receipt rejection.
+
+- Card `d2771026`: preserve executable startup evidence after the Pi Node
+  process replaces its command line with its process title, while retaining
+  exact descendant, interpreter, shebang, title, and fleet identity checks.
+
+- Card `20a637fe`: route every Jarvis emergency lifecycle operation through one
+  signed, exact-action Casey-direction gateway with fail-closed integration
+  coverage.
+
+- Card `c6a5ce66`: preserve the invoked virtualenv interpreter directory when
+  resolving the adjacent SKMail executable under a restricted service PATH.
+
+- Card `a9f40c21`: resolve worker SKMail beside the active interpreter,
+  require one startup hello and read-only direct-plus-all mailbox poll before
+  work, and distinguish fast provider exits from missing executable evidence.
+
+- Card `cf9ccb43`: reject oversized unclaimed cards before dispatch with a
+  deterministic two-to-five-leaf recommendation. Each leaf carries a concrete,
+  non-overlapping deliverable, acceptance criteria, verification scope, and
+  focused gate. A hash-bound parent composition contract proves complete
+  coverage, while unsliceable cards fail closed without placeholder work.
+  Active and review custody remains advisory, checkout identity is required,
+  and dependencies are added only where required. The composition digest binds
+  every per-leaf assignment, and reruns suppress a successor only when its
+  canonical content and digest match exactly.
+
+- Card `44ad0d49`: add bounded elastic independent-review admission with
+  source-head deduplication, reviewer independence, and physical-capacity
+  limits.
+
+- Card `20a637fe`: activate source-backed Link, Mero, Seraph, Niobe, Tank,
+  and ATLAS lifecycle profiles on chiap08 with `sk-codex-mid` defaults,
+  startup SKMail hello, direct and all-mail polling, bounded beats, and safe
+  one-shot retirement. Jarvis is excluded from recurring lifecycle work while
+  retaining Casey-directed emergency tools.
+
+- Card `ca738f5c`: route Link and Mero lifecycle fan-out requests through the
+  production Niobe dispatcher with role and card-scope intersection,
+  atomic cross-card source-head reservation, verified runtime-seat authority,
+  exact claim and launch receipts, and request plus claim-generation-bound
+  recovery receipts.
+  Recovery now retains occupancy until the exact request, card, owner, claim
+  revision, session, and systemd unit tuple is terminal; card-level liveness
+  cannot authorize a duplicate retry.
+  Also allow the shared SKRSI handoff ledger to wait through bounded transient
+  SQLite writer contention instead of failing concurrent fan-out admission.
+
+- Cards `2e6bb78e` and `30c6909d`: add role-bounded lifecycle-seat fan-out
+  allocation with source-head deduplication, the `sk-codex-mid` child default,
+  and explicit exclusion of Jarvis from recurring lifecycle scheduling.
+
+- Card `be4e7d37`: make governed review authoring fail fast, keep consumer
+  review metadata out of consumer outcomes, require terminal review verdicts
+  and the complete successful required-CI link set for both `[REVIEW]` and
+  `[REREVIEW]`, and validate Seraph launch receipts against the exact reviewer
+  claim identity. Add `coord gates` parity and bounded POOL_V2 review
+  diagnostics, preserve ordinary `[REPAIR]` authoring, and serialize concurrent
+  SQLite handoff initialization across Python runtimes.
+
+- Card `2ea03ff7`: publish terminal worker capacity only for an exact
+  claim generation after child-process and cgroup reconciliation. Claim
+  release and snapshot invalidation now share one CardStore fence; failures
+  retain occupied capacity. Malformed reports remain unchanged, sibling
+  occupancy is preserved, and a real next coordination claim can use the
+  managed launch path immediately. Source work whose exact credential-free
+  remote ref cannot be reconstructed is rejected before workspace creation or
+  claim.
+
+- Card `2d2a6d4d`: define SKRSI as SK Recursive SELF Improvement, with
+  SELF meaning Systematic Evaluation, Learning, and Feedback, and link the
+  canonical standalone project documentation.
+
+- Card `c80e3512`: consume first-wave SKRSI handoff contracts through a
+  card-authorized metadata runtime and CLI. Bound admission, deadlines and safe
+  retry; retain immutable recovery receipts and fence replay by source identity.
+
+- Cut pull-request CI duplication by running the full deterministic suite once
+  on Python 3.12 and a packaging, import, schema, and changed-test compatibility
+  lane on Python 3.11. Main, weekly, and release calls retain the complete
+  advertised Python 3.10 through 3.14 matrix, with auditable documentation-only
+  classification, immutable cache inputs, exact sibling revision fences, and
+  cancellation of superseded pull-request runs (`9c71f24a`).
+
+- **Card `1b84d7f4`: Cursor Agent YOLO default.** Added `SK_CURSOR_YOLO`
+  (default on) so the SK agent picker launches Cursor Agent CLI (`agent` /
+  `cursor-agent`) with `--yolo`, plus doctor harness checks and docs aligned
+  with Codex/Claude/OpenCode YOLO wiring. Also realigned
+  `tests/test_dashboard_assistant.py` to the scoped read-only skdashboard
+  assistant contract so CI stays green against current sibling main.
+
+- **Card `83b048fc`: worktree sequencer hygiene.** Added
+  `scripts/fleet/worktree-hygiene.py` plus a worker-wrapper preflight: stale
+  cherry-pick, rebase, or merge state is named, auto-cleared when the tree is
+  clean, and never cleared when the tree is dirty.
+
+- **Card `3c9aa03f`: review freshness gate.** Added
+  `scripts/fleet/review-freshness-gate.py` plus review guidance: independent
+  PASS requires the reviewed head to contain current main and every check
+  green on that exact head. No PASS on stale heads.
+
 - **Card `963cab65`: open-PR freshness scan.** Added `scripts/fleet/pr-freshness.py`
   reporting OPEN pull requests whose head no longer contains current main
   (BEHIND/DIRTY), across the fleet repos, exiting nonzero when a refresh is
@@ -17,7 +163,119 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Card `1f1a9e21`: Link now validates and durably inherits credential-free
+  repository and base-ref bindings onto canonical Seraph review cards before
+  launch authorization. Unsafe, missing, conflicting, or drifted bindings fail
+  closed, while concurrent and replayed reconciliation remains single-card and
+  idempotent.
+
+- Card `7ad5f0c1`: lane admission now uses an explicit bounded endpoint timeout
+  above measured gateway health latency, without weakening fail-closed checks.
+
+- Card `a6f04d31`: isolated Seraph's single review slot from chiap08's two
+  ordinary Codex slots, retained the three-worker physical ceiling, and added
+  truthful no-work versus no-capacity receipts without overwriting generic
+  fleet liveness. Complete canonical review cards now enter POOL_V2 only in a
+  matching Seraph seat cycle, with their governed admission included in the
+  final preclaim fingerprint and generic workers still excluded. A portable
+  subprocess integration test now creates review work through Link's production
+  reconciler and proves generic exclusion, one real Seraph claim and active
+  launch receipt, and duplicate-free replay through the actual selector. Its
+  hermetic loopback gateway supplies real health, capacity, and revision-aligned
+  lane evidence in hosted CI without bypassing production lane admission.
+
+- Card `5e2a9f10`: added bounded Seraph review dispatch, active-host seat
+  placement, a Seraph-only selector filter, and one-launch-per-cycle service
+  and timer templates while preserving Link recommendation and claim fencing.
+
+- Card `c1a1c003`: atomic task creation resolves identity in the canonical
+  `SKAGENT`, `SKCAPSTONE_AGENT`, `SKMEMORY_AGENT`, `SK_DEFAULT_AGENT`, then
+  sole-installed-agent order and requires the published SKCoord atomic
+  create-and-claim contract.
+
+- Card `4f7e2c91`: Link now reconciles exact source-card and head review work
+  into one deterministic governed backlog card and reports it launchable only
+  after the fleet reviewer-assignment preflight accepts the same card.
+
+- Card `2bb61659`: agent guidance and fleet Pi runtime checks now require all
+  coordination mutations to use `skcapstone coord`; direct CardStore JSONL
+  writes are prohibited and the durable broker boundary is tracked separately.
+
+- Card `f0ba44f4`: Link now emits bounded, exact-head review-work
+  recommendations from signed incomplete-lineage evidence while merge
+  recommendations remain fail-closed.
+
+- Card `35009333`: Mero now verifies lifecycle category preservation from
+  CardStore classification through review assignment, preclaim, launch,
+  completion, and release, while keeping all non-review false states closed.
+
+- Cards `ca3ad02b`, `31f0642f`, and `1fea841f`: restored the Link observation
+  producer and Niobe live entrypoint, with review lineage bound to the exact
+  repository, pull request number, and head commit.
+
+- Card `48db6272`: restored the released Link and Mero seat-cycle entrypoint,
+  observation feed, SKMail helper, service units, and focused runtime tests.
+
+- Cards `c106a2a6` and `d12b93ef`: POOL_V2 now supplies every dispatch row
+  from one bounded admission snapshot, and governed review work reaches an
+  exact distinct reviewer only after final drift and lane-health checks.
+
+- Fleet runtime repair: selector claimability, worker startup evidence,
+  heartbeat cleanup, watchdog fencing, and truthful Pi-only monitoring.
+
+- Card `d9bfecc4`: `worker_watchdog.classify_worker` defaults above measured
+  cross-host Syncthing p95 (292.336s), returns `transport-stale` vs
+  `worker-stale`, and treats beat absence with an active unit as a
+  non-releasable `telemetry-fault`.
+
+- `skfleet-working` ignores non-ephemeral seat agents when scanning for STALE PROJECTION ghosts; only `...-<card>` worker names qualify.
+
+- Fleet worker exit now idles the ephemeral agent projection after
+  `release-claim` (wrapper finally/SIGTERM and rotate stop traps). Killed
+  workers no longer linger as active agent projections after the unit dies.
+
+### Added
+
+- Card `5a71c2df`: added read-only SKRSI estate adapters for bounded lifecycle
+  metrics, authority-fenced fleet fan-out, complete notification-only handoff
+  contracts, and one independent Link and Seraph review launch per source head.
+
+- Card `5a71c2de`: added a proposal-only SKRSI experiment controller with
+  revision-fenced transitions, bounded budgets, replay safety, and recovery
+  proposals that cannot actuate changes.
+
+- Card `5a71c2dd`: added deterministic SKRSI cohort and quality evaluation
+  with bounded evidence-backed scoring and fail-closed input validation.
+
+- Card `5a71c2dc`: added bounded, restart-safe SKRSI metadata collection with
+  hash-only dead-letter evidence, deterministic replay, and OTel-compatible
+  freshness and quality measurements.
+
+- Card `5a71c2db`: added metadata-only SKRSI target revisions, canonical
+  hash-bound architecture records, redaction and fail-closed validation, and
+  an append-only idempotent outbox with retention and acknowledgement cursors.
+
+- Card `c4a2ab8f`: conservative long-runner liveness classification preserves
+  quiet tool waits and drives assistance, reconciliation, metrics, and safe
+  retirement through one decision cycle. Retirement receipts bind exact host,
+  unit, process tree, cgroup, claim generation, beat, and workspace custody;
+  concurrent SQLite writers wait safely instead of losing lifecycle evidence.
+
+- Daily `coord-maintain` scheduler job (`config/jobs.d/coord-maintain.yaml`) and
+  `coord maintain --lock-days` wiring for stale coordination lock prune. Cards
+  b0a0d004 / b0a0d005.
+
 ### Changed
+
+- Worker briefs now require SKMail checks at startup, before major phases, and
+  at least every five minutes during long-running work. Replies are processed
+  before acknowledgement; unanswered mail is never treated as approval.
+
+- `coord status` hides idle/stale agent projections by default
+  (`--include-idle-agents`); `coord board` / `briefing` accept `--include-done`.
+  Maintain default `--done-days` is 7. Cards b0a0d003 / b0a0d001.
 
 - `fleet_beat.validate_beat_owner` is now an alias of the single shared
   `heartbeat.validate_agent_name` allowlist (card 77d62d85): one
@@ -29,6 +287,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- `SK_CURSOR_YOLO` (card `1b84d7f4`): SK agent picker wraps Cursor Agent CLI
+  (`agent` / `cursor-agent`) with `--yolo` by default; doctor reports
+  `harness:yolo:agent`; docs cover the env var next to Codex/Claude/OpenCode.
 - `fleet_beat` module (card ad0c3bfd / A of the Worker Beat Protocol): beat
   writer with atomic temp+rename, beat reader with malformed-file tolerance,
   and a pure `classify()` function returning LIVE/STALLED/BLOCKED/DEAD/
@@ -36,6 +297,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   state is derived from beat evidence alone. Shadow alert TTL 900s,
   actuation floor 3600s (measured Syncthing p95 292s). Shared allowlist
   validation with heartbeat.py. 20 tests including agent-beat with disposition vocabulary and skmail emission for non-RUNNING states (Card C).
+- `skmail send` self-healing (card 4a3d1119): when a recurring cross-host
+  writer appends foreign records straight into another writer's mailbox
+  (blocking all canonical appends for that writer, observed twice on
+  2026-09-04), the send path now quarantines those records losslessly into
+  their canonical `<from>@<host>.jsonl` files and retries the append exactly
+  once. Unparseable lines are never deleted; contaminated destinations and
+  partial records still fail closed.
 ### Added
 
 - Wrapper beat loop in the worker launch command (card e03755ba / B of

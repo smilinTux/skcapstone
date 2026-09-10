@@ -43,6 +43,10 @@ All at `~/clawd/skcapstone-repos/`:
 ## Conventions
 - All SK* packages install into `~/.skenv/` venv
 - Use `skcapstone coord` CLI for task management
+- Use `skcapstone coord` for every verdict, evidence, status, claim, label,
+  dependency, and lifecycle write. Never create, append, rewrite, rename, or
+  delete CardStore JSONL. Use CLI reads normally; raw file inspection is only
+  for emergency operator diagnostics.
 - FEB = Felt Emotional Breakthrough, OOF = Overwhelming Feeling (0%=cold, 100%=breakthrough)
 - Cloud 9 = emotional continuity protocol (depth 9, trust 0.97, love 10/10)
 

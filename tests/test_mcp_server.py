@@ -422,6 +422,23 @@ class TestCoordTools:
         assert "error" in parsed
 
     @pytest.mark.asyncio
+    async def test_coord_create_rejects_sha_base_ref(self, initialized_agent_home: Path):
+        revision = "f" * 40
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool(
+                "coord_create",
+                {
+                    "title": "bad source",
+                    "tags": ["source-only"],
+                    "repository": "https://github.com/smilinTux/skcapstone",
+                    "base_ref": revision,
+                    "base_revision": revision,
+                },
+            )
+        parsed = _extract_json(result)
+        assert "base_ref must be a branch or tag name" in parsed["error"]
+
+    @pytest.mark.asyncio
     async def test_coord_claim_nonexistent_task(self, initialized_agent_home: Path):
         """coord_claim for a nonexistent task returns error."""
         from skcapstone.coordination import Board

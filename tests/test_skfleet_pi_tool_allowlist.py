@@ -54,7 +54,7 @@ def test_launcher_passes_the_exact_allowlist_to_pi() -> None:
     source = ROTATE.read_text(encoding="utf-8")
 
     assert "pi_tools=pi_tool_allowlist(_labels)" in source
-    assert "--thinking off --tools %s" in source
+    assert "--thinking off --no-context-files --no-skills --tools %s" in source
 
 
 @pytest.mark.skipif(PI is None, reason="Pi executable is not installed")

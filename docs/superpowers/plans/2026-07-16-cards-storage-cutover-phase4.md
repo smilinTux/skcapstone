@@ -1,3 +1,9 @@
+# Current coordination write boundary
+
+This document is historical implementation detail only. Agents must never
+perform raw CardStore JSONL writes. Use `skcapstone coord` for every
+coordination write.
+
 # Cards Storage Cutover (Phase 4) Implementation Plan
 
 **Status: 4a-4d SHIPPED and proven live. READ CUTOVER APPLIED node-wide on noroc2027 (2026-08-05): every coord writer carries `SKCOORD_CARD_STORE=1`. 4e-core (code default-ON + catastrophe guard) SHIPPED (#92). 4e one-way-door gate CLOSED (2026-08-05): the `export_to_legacy()` store->legacy exporter (`coord export-legacy`) makes legacy write retirement reversible; retirement (move `tasks/*.json` -> read-only `legacy/`, drop the derived-status scan) is now unblocked.**

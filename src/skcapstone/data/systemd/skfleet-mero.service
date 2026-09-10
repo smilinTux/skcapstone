@@ -1,0 +1,19 @@
+[Unit]
+Description=SKFleet Mero bounded blocker census cycle
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=mero
+Environment=SKCAPSTONE_AGENT=mero
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.seat_cycle_entrypoint --seat mero --home %h/.skcapstone --control-plane %h/.skcapstone/coordination/seat-control-plane.json
+TimeoutStartSec=180
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone/coordination/seat-cycles %h/.skcapstone/cards %h/.skcapstone/coordination/locks
+ReadWritePaths=%h/.skcapstone/coordination/skmail.d
+
+[Install]
+WantedBy=default.target

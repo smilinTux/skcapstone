@@ -66,6 +66,23 @@ def test_coord_create_writes_task(home: Path):
     assert task["priority"] == "high"
 
 
+def test_coord_create_source_binding_parity(home: Path):
+    revision = "e" * 40
+    tid = sdk.coord_create(
+        "source",
+        tags=["source-only"],
+        repository="https://github.com/smilinTux/skcapstone",
+        base_ref="main",
+        base_revision=revision,
+    )
+    task = json.loads(next((home / "coordination" / "tasks").glob(f"{tid}*.json")).read_text())
+    assert task["meta"] == {
+        "repository": "https://github.com/smilinTux/skcapstone",
+        "base_ref": "main",
+        "base_revision": revision,
+    }
+
+
 def test_register_service_writes_registry(home: Path):
     path = sdk.register_service(
         "skvoice", health_url="http://localhost:9/health", pid_file="/tmp/x.pid"

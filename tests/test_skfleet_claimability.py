@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,7 @@ def _load_claimability() -> dict[str, object]:
         "_dependency_value",
         "_fold_claimability",
         "_claimability_reason",
+        "_authoritative_card_snapshot",
         "_authoritative_card_state",
         "authoritative_claimability",
     }
@@ -45,6 +47,8 @@ def _load_claimability() -> dict[str, object]:
         "_dep_satisfied": lambda _dep: True,
         "host_pin": lambda _core, _labels: None,
         "json": json,
+        "hashlib": hashlib,
+        "re": re,
         "non_implementation": lambda core, labels: (
             "[HUMAN]" in str(core.get("title") or "").upper() or "human-gate" in labels
         ),
@@ -106,7 +110,7 @@ def _release(ts: str, writer: str, owner: str, revision: str) -> dict[str, objec
                 _event("2026-08-29T10:28:23Z", "worker", "move", column="review"),
                 _release("2026-08-29T11:22:36Z", "lumina", "worker", "rev-a"),
             ],
-            "claimable",
+            "review",
         ),
         (
             "79396786",
@@ -136,7 +140,7 @@ def _release(ts: str, writer: str, owner: str, revision: str) -> dict[str, objec
                 _event("2026-08-29T10:32:16Z", "worker", "move", column="review"),
                 _release("2026-08-29T11:22:44Z", "lumina", "worker", "rev-a"),
             ],
-            "claimable",
+            "review",
         ),
         (
             "dd659b4c",
@@ -202,6 +206,93 @@ def test_cross_writer_timestamp_order_and_stale_projection_parity() -> None:
     assert namespace["_claimability_reason"](core, state) == "owned-review"
 
 
+def test_source_bindings_fold_from_normal_link_events() -> None:
+    namespace = _load_claimability()
+    core = _core("source01", labels=["source-only"])
+    events = [
+        _event(
+            "2026-09-08T22:00:00Z",
+            "jarvis",
+            "link",
+            link_key="repository",
+            link_value="https://github.com/smilinTux/sklegal",
+        ),
+        _event(
+            "2026-09-08T22:00:01Z",
+            "jarvis",
+            "link",
+            link_key="base_ref",
+            link_value="main",
+        ),
+    ]
+    state = namespace["_fold_claimability"](core, events)
+    assert state["links"] == {
+        "repository": "https://github.com/smilinTux/sklegal",
+        "base_ref": "main",
+    }
+    assert not any(state["review_markers"].values())
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [("repository", ""), ("base_ref", "   "), ("base_revision", "")],
+)
+def test_empty_source_binding_link_event_fails_closed(key: str, value: str) -> None:
+    namespace = _load_claimability()
+    core = _core("source02", labels=["source-only"])
+    event = _event(
+        "2026-09-08T22:00:00Z",
+        "jarvis",
+        "link",
+        link_key=key,
+        link_value=value,
+    )
+    with pytest.raises(ValueError, match="typed review metadata is malformed"):
+        namespace["_fold_claimability"](core, [event])
+
+
+@pytest.mark.parametrize(
+    ("card_id", "key"),
+    [
+        ("7ddb7d1e", "pr"),
+        ("835a7e9d", "pr"),
+        ("a830be09", "evidence_sha256"),
+        ("bdf2774a", "pr"),
+        ("fd16ac85", "pr"),
+    ],
+)
+def test_empty_optional_historical_review_links_are_ignored(card_id: str, key: str) -> None:
+    namespace = _load_claimability()
+    core = _core(card_id)
+    event = _event(
+        "2026-09-08T22:00:00Z",
+        "jarvis",
+        "link",
+        link_key=key,
+        link_value="",
+    )
+
+    state = namespace["_fold_claimability"](core, [event])
+
+    assert key not in state["links"]
+
+
+@pytest.mark.parametrize("key", ["pr", "evidence", "evidence_sha256"])
+def test_each_empty_optional_review_link_is_ignored(key: str) -> None:
+    namespace = _load_claimability()
+    event = _event(
+        "2026-09-08T22:00:00Z",
+        "jarvis",
+        "link",
+        link_key=key,
+        link_value="   ",
+    )
+
+    state = namespace["_fold_claimability"](_core("optional"), [event])
+
+    assert key not in state["links"]
+
+
 def test_terminal_review_dependency_gate_and_host_pin_reasons() -> None:
     namespace = _load_claimability()
     core = _core("states01")
@@ -228,7 +319,7 @@ def test_terminal_review_dependency_gate_and_host_pin_reasons() -> None:
         core,
         [_event("2026-08-29T10:00:00Z", "worker", "move", column="review")],
     )
-    assert namespace["_claimability_reason"](core, review) == "claimable"
+    assert namespace["_claimability_reason"](core, review) == "review"
 
     dependent_core = {**core, "dependencies": ["missing-dep"]}
     dependent = namespace["_fold_claimability"](dependent_core, [])
@@ -240,10 +331,85 @@ def test_terminal_review_dependency_gate_and_host_pin_reasons() -> None:
     assert namespace["_claimability_reason"](core, review) == "host-pin:chiap08"
 
 
+def test_governed_reviewer_reaches_assignment_without_admitting_source_cards() -> None:
+    namespace = _load_claimability()
+    core = {
+        **_core("feedbeef", labels=["review"]),
+        "title": "[REVIEW] Independently evaluate candidate",
+        "links": {"producer_identity": "producer", "candidate_evidence_sha256": "a" * 64},
+    }
+    state = namespace["_fold_claimability"](core, [])
+    assert namespace["_claimability_reason"](core, state) == "review"
+    for links in (
+        {"open_pr": "https://example.invalid/pr/1"},
+        {"candidate_evidence_sha256": "a" * 64},
+    ):
+        source = {**core, "links": links, "description": "PASS_FOR_REVIEW source candidate"}
+        folded = namespace["_fold_claimability"](source, [])
+        assert namespace["_claimability_reason"](source, folded) == "review"
+
+
+def test_review_markers_are_not_executable_after_claim_release() -> None:
+    namespace = _load_claimability()
+    for labels, description in ((["review"], "ordinary"), ([], "PASS_FOR_REVIEW evidence exists")):
+        core = {**_core("review-marker", labels=labels), "description": description}
+        state = namespace["_fold_claimability"](core, [])
+        assert namespace["_claimability_reason"](core, state) == "review"
+
+
+@pytest.mark.parametrize(
+    ("core_update", "events", "expected"),
+    [
+        ({"title": "[HUMAN] Review approval"}, [], "human-gate"),
+        ({"dependencies": ["blocked-dependency"]}, [], "dependency"),
+        ({"title": "[REVIEW] Production deployment"}, [], "sensitive-category"),
+        (
+            {},
+            [_claim("2026-09-07T10:00:00Z", "other-reviewer", "revision-1")],
+            "owned-doing",
+        ),
+    ],
+)
+def test_review_marker_never_overrides_safety_exclusions(
+    core_update: dict[str, object],
+    events: list[dict[str, object]],
+    expected: str,
+) -> None:
+    """Review routing happens only after every ordinary exclusion."""
+
+    namespace = _load_claimability()
+    namespace["_dep_satisfied"] = lambda _dep: False
+    core = {
+        **_core("review-safety", labels=["review"]),
+        "links": {
+            "producer_identity": "producer",
+            "candidate_evidence_sha256": "a" * 64,
+        },
+        **core_update,
+    }
+    state = namespace["_fold_claimability"](core, events)
+
+    assert namespace["_claimability_reason"](core, state) == expected
+
+
+def test_review_evidence_and_open_pr_links_are_folded_and_excluded() -> None:
+    namespace = _load_claimability()
+    for links in (
+        {"open_pr": "https://example.invalid/pr/1"},
+        {"candidate_evidence_sha256": "a" * 64},
+    ):
+        core = {**_core("review-link", labels=[]), "links": links}
+        state = namespace["_fold_claimability"](core, [])
+        assert state["links"] == links
+        assert namespace["_claimability_reason"](core, state) == "review"
+
+
 def test_pool_and_preclaim_call_the_same_predicate() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert "decision=authoritative_claimability(cid,core)" in source
-    assert "fresh_claimability=authoritative_claimability(cid,fresh=True)" in source
+    assert (
+        "fresh_claimability=authoritative_claimability(" "cid,core=_fresh_core,fresh=True)"
+    ) in source
     assert source.index("if blocked_backoff(cid):") < source.index(
         "decision=authoritative_claimability(cid,core)"
     )
@@ -349,3 +515,203 @@ def test_malformed_core_identity_fails_closed_in_pool_and_preclaim(
     (card_dir / "core.json").write_text(json.dumps(core), encoding="utf-8")
     namespace["CARDS"] = str(tmp_path)
     assert namespace["authoritative_claimability"](card_id, fresh=True) == expected
+
+
+def test_late_claim_after_complete_does_not_resurrect_56f9d32f() -> None:
+    """Exact 56f9d32f stream: complete, late claim, release, late claim, release."""
+    namespace = _load_claimability()
+    core = _core("56f9d32f")
+    events = [
+        _claim("2026-09-04T09:56:00Z", "pi-codex-chiap04-56f9d32f", "b52e11d2"),
+        _event(
+            "2026-09-04T21:26:12Z",
+            "jarvis",
+            "release_claim",
+            released_owner="pi-codex-chiap04-56f9d32f",
+            expected_claim_revision="b52e11d2",
+        ),
+        _event("2026-09-04T21:26:13Z", "jarvis", "complete"),
+        _claim("2026-09-04T21:29:11Z", "pi-codex-chiap04-56f9d32f", "21ed5df5"),
+        _release(
+            "2026-09-04T22:25:28Z",
+            "pi-codex-chiap04-56f9d32f",
+            "pi-codex-chiap04-56f9d32f",
+            "21ed5df5",
+        ),
+        _claim("2026-09-04T22:29:11Z", "pi-codex-chiap04-56f9d32f", "4c04a452"),
+        _release(
+            "2026-09-04T22:30:18Z",
+            "pi-codex-chiap04-56f9d32f",
+            "pi-codex-chiap04-56f9d32f",
+            "4c04a452",
+        ),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "done"
+    assert state["owner"] is None
+    assert state["claim_revision"] is None
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
+def test_release_after_complete_keeps_status_done() -> None:
+    """A zombie worker's matching release must not fold a done card to backlog."""
+    namespace = _load_claimability()
+    core = _core("relv0001")
+    events = [
+        _claim("2026-09-04T21:29:11Z", "worker", "rev-a"),
+        _event("2026-09-04T21:26:13Z", "coordinator", "complete"),
+    ]
+    state = namespace["_fold_claimability"](core, events)
+    assert state["status"] == "done"
+    # The late claim was ignored, so owner is already None and a later
+    # release with a stale owner does not match; feed a hypothetical stream
+    # where the claim DID precede the complete instead.
+    events2 = [
+        _claim("2026-09-04T20:00:00Z", "worker", "rev-a"),
+        _event("2026-09-04T20:30:00Z", "coordinator", "complete"),
+        _release("2026-09-04T20:31:00Z", "worker", "worker", "rev-a"),
+    ]
+    state2 = namespace["_fold_claimability"](core, list(reversed(events2)))
+    assert state2["status"] == "done"
+    assert state2["owner"] is None
+    assert state2["claim_revision"] is None
+    assert namespace["_claimability_reason"](core, state2) == "done"
+
+
+def test_void_is_sticky_against_late_claim_and_release() -> None:
+    namespace = _load_claimability()
+    core = _core("void0001")
+    events = [
+        _event("2026-09-04T10:00:00Z", "coordinator", "void"),
+        _claim("2026-09-04T10:05:00Z", "worker", "rev-a"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["voided"] is True
+    assert state["owner"] is None
+    assert state["status"] == "backlog"
+    assert namespace["_claimability_reason"](core, state) == "void"
+
+
+def test_reopen_clears_terminal_stickiness() -> None:
+    """Explicit reopen is the one sanctioned revival path."""
+    namespace = _load_claimability()
+    core = _core("reopen001")
+    events = [
+        _claim("2026-09-04T09:00:00Z", "worker", "rev-a"),
+        _event("2026-09-04T10:00:00Z", "coordinator", "complete"),
+        _event("2026-09-04T11:00:00Z", "coordinator", "reopen", column="ready"),
+        _claim("2026-09-04T12:00:00Z", "worker2", "rev-b"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "doing"
+    assert state["owner"] == "worker2"
+    assert namespace["_claimability_reason"](core, state) == "owned-doing"
+
+
+@pytest.mark.parametrize("action", ["move", "reopen"])
+def test_explicit_return_to_ready_clears_review_history(action: str) -> None:
+    namespace = _load_claimability()
+    core = _core("feedbeef")
+    events = [
+        _claim("2026-09-04T09:00:00Z", "worker", "rev-a"),
+        _event("2026-09-04T10:00:00Z", "worker", "move", column="review"),
+        _release("2026-09-04T11:00:00Z", "worker", "worker", "rev-a"),
+    ]
+    folded = namespace["_fold_claimability"](core, events)
+    assert namespace["_claimability_reason"](core, folded) == "review"
+    events.append(_event("2026-09-04T12:00:00Z", "coordinator", action, column="ready"))
+    folded = namespace["_fold_claimability"](core, events)
+    assert namespace["_claimability_reason"](core, folded) == "claimable"
+
+
+@pytest.mark.parametrize("action", ["move", "reopen"])
+@pytest.mark.parametrize("marker", ["evidence_sha256", "pr", "title", "description"])
+def test_explicit_executable_transition_preserves_but_supersedes_review_markers(action, marker):
+    namespace = _load_claimability()
+    core = _core("feedbeef")
+    if marker in {"evidence_sha256", "pr"}:
+        core["links"] = {marker: "historical-value"}
+        new_marker = dict(action="link", link_key=marker, link_value="new-value")
+    elif marker == "title":
+        core["title"] = "[REVIEW] Historical candidate"
+        new_marker = dict(action="describe", title="[REVIEW] New candidate")
+    else:
+        core["description"] = "PASS_FOR_REVIEW historical candidate"
+        new_marker = dict(action="describe", description="PASS_FOR_REVIEW new candidate")
+    prior = namespace["_fold_claimability"](core, [])
+    assert namespace["_claimability_reason"](core, prior) == "review"
+    events = [_event("2026-09-04T12:00:00Z", "coordinator", action, column="ready")]
+    current = namespace["_fold_claimability"](core, events)
+    assert namespace["_claimability_reason"](core, current) == "claimable"
+    for key in ("links", "title", "description"):
+        assert current[key] == prior[key]
+    events.append(_event("2026-09-04T13:00:00Z", "worker", **new_marker))
+    newer = namespace["_fold_claimability"](core, events)
+    assert namespace["_claimability_reason"](core, newer) == "review"
+
+
+def test_historical_4d98b588_stream_stays_done() -> None:
+    """claim, move, claim, complete, assign, unassign, claim -> done."""
+    namespace = _load_claimability()
+    core = _core("4d98b588")
+    events = [
+        _claim("2026-08-28T01:00:00Z", "worker", "rev-a"),
+        _event("2026-08-28T02:00:00Z", "worker", "move", column="doing"),
+        _claim("2026-08-28T03:00:00Z", "worker", "rev-b"),
+        _event("2026-08-28T04:00:00Z", "coordinator", "complete"),
+        _event("2026-08-28T05:00:00Z", "coordinator", "assign", owner="reviewer"),
+        _event("2026-08-28T06:00:00Z", "coordinator", "unassign"),
+        _claim("2026-08-28T07:00:00Z", "worker", "rev-c"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "done"
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
+def test_historical_92bd87a3_stream_stays_done() -> None:
+    """claim, complete, assign, unassign -> done."""
+    namespace = _load_claimability()
+    core = _core("92bd87a3")
+    events = [
+        _claim("2026-08-28T01:00:00Z", "worker", "rev-a"),
+        _event("2026-08-28T02:00:00Z", "coordinator", "complete"),
+        _event("2026-08-28T03:00:00Z", "coordinator", "assign", owner="reviewer"),
+        _event("2026-08-28T04:00:00Z", "coordinator", "unassign"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "done"
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
+def test_cross_host_completion_race_resolves_terminal() -> None:
+    """A complete written by another node wins over a later local claim view."""
+    namespace = _load_claimability()
+    core = _core("race0001")
+    events = [
+        _event("2026-09-04T21:26:13Z", "jarvis@chiap08", "complete"),
+        _claim("2026-09-04T21:29:11Z", "pi-codex-chiap04", "rev-a"),
+        _release(
+            "2026-09-04T21:30:00Z",
+            "pi-codex-chiap04",
+            "pi-codex-chiap04",
+            "rev-a",
+        ),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "done"
+    assert state["owner"] is None
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
+def test_unreleased_live_claim_still_folds_doing() -> None:
+    """Guard does not change normal in-flight claim semantics."""
+    namespace = _load_claimability()
+    core = _core("alive001")
+    events = [
+        _event("2026-09-04T10:00:00Z", "coordinator", "move", column="ready"),
+        _claim("2026-09-04T10:01:00Z", "worker", "rev-a"),
+    ]
+    state = namespace["_fold_claimability"](core, list(reversed(events)))
+    assert state["status"] == "doing"
+    assert state["owner"] == "worker"
+    assert namespace["_claimability_reason"](core, state) == "owned-doing"

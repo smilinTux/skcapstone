@@ -104,12 +104,44 @@ class TestActiveAgentDetection:
 
         assert detect_active_agent(str(tmp_path)) == "jarvis"
 
+    @pytest.mark.parametrize(
+        ("environment", "expected"),
+        [
+            ({"SKAGENT": "one", "SKCAPSTONE_AGENT": "two", "SKMEMORY_AGENT": "three"}, "one"),
+            ({"SKCAPSTONE_AGENT": "two", "SKMEMORY_AGENT": "three"}, "two"),
+            ({"SKMEMORY_AGENT": "three"}, "three"),
+        ],
+    )
+    def test_explicit_environment_precedence(
+        self, tmp_path: Path, monkeypatch, environment, expected
+    ):
+        _make_agent_home(tmp_path, "one")
+        _make_agent_home(tmp_path, "two")
+        _make_agent_home(tmp_path, "three")
+        for name in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT"):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in environment.items():
+            monkeypatch.setenv(name, value)
+
+        assert detect_active_agent(str(tmp_path)) == expected
+
+    def test_default_agent_precedes_sole_agent_fallback(self, tmp_path: Path, monkeypatch):
+        _make_agent_home(tmp_path, "jarvis")
+        _make_agent_home(tmp_path, "lumina")
+        for name in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("SK_DEFAULT_AGENT", "lumina")
+
+        assert detect_active_agent(str(tmp_path)) == "lumina"
+
     def test_single_installed_agent_is_safe_fallback(self, tmp_path: Path, monkeypatch):
         import skcapstone
 
         _make_agent_home(tmp_path, "jarvis")
         monkeypatch.delenv("SKAGENT", raising=False)
         monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.delenv("SKMEMORY_AGENT", raising=False)
+        monkeypatch.delenv("SK_DEFAULT_AGENT", raising=False)
         monkeypatch.setattr(skcapstone, "DEFAULT_AGENT", "")
 
         assert detect_active_agent(str(tmp_path)) == "jarvis"
@@ -121,6 +153,8 @@ class TestActiveAgentDetection:
         _make_agent_home(tmp_path, "lumina")
         monkeypatch.delenv("SKAGENT", raising=False)
         monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.delenv("SKMEMORY_AGENT", raising=False)
+        monkeypatch.delenv("SK_DEFAULT_AGENT", raising=False)
         monkeypatch.setattr(skcapstone, "DEFAULT_AGENT", "")
 
         assert detect_active_agent(str(tmp_path)) is None
