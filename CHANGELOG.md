@@ -1,5 +1,7 @@
 # Changelog
 
+- Card `e9fc91b4`: skip Niobe fanout reconciliation for cards without an exact request and matching receipt, avoiding false activation failures for unrelated and terminal cards.
+
 - Card 5e7a3f11: retire an exact running reviewer generation when its source is explicitly superseded, while preserving its output and leaving current or newer claim generations untouched.
 
 - `coord bootstrap` now creates `evidence/decisions/` explicitly, not only its
