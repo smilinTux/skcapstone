@@ -628,6 +628,51 @@ def _noop_reason(pool, owned, lane_deferred):
     return "no_eligible_work"
 
 
+def _worker_mail_routing(environ=os.environ):
+    """Return configured recipients after case-insensitive exclusions."""
+    raw = environ.get("SKFLEET_MAIL_RECIPIENTS")
+    requested = ("jarvis", "lumina") if raw is None else tuple(
+        value.strip().lower() for value in raw.split(",") if value.strip()
+    )
+    if not requested:
+        requested = ("jarvis",)
+    excluded = {
+        value.strip().lower()
+        for value in environ.get("SKFLEET_EXCLUDED_MAIL_RECIPIENTS", "").split(",")
+        if value.strip()
+    }
+    allowed = tuple(dict.fromkeys(
+        value for value in requested
+        if value not in excluded and value != "all"
+        and re.fullmatch(r"[a-z0-9][a-z0-9-]*", value)
+    ))
+    if not allowed:
+        raise ValueError("worker mail routing has no allowed recipient")
+    return allowed
+
+
+def _worker_mail_instructions(recipients):
+    """Build the worker brief fragment from the exact allowed recipients."""
+    allowed = ", ".join(recipients)
+    review_contact = recipients[-1]
+    return (
+        "- Return exact PASS, PASS_FOR_REVIEW, or BLOCKED with a real hashed "
+        "artifact, and notify %s by skmail.\n"
+        "\n"
+        "HOW TO SEND MAIL. This is the ONLY mailbox. Use the command; do not invent a\n"
+        "file format or a directory:\n"
+        "    skmail send <you> <to> <urgent|normal|fyi> \"<subject>\" \"<body>\"\n"
+        "  <you> is your own agent name, the value of SKAGENT, expanded, not the literal.\n"
+        "  <to> must be one of: %s. Never broadcast to all.\n"
+        "  Read your own mail with:  skmail read <you>     recent traffic:  skmail tail\n"
+        "HOW TO CHAT OR GET HELP. SKMail is asynchronous worker chat. Ask %s for\n"
+        "coordination, review, evidence, or help. Check for replies with skmail read\n"
+        "\"$SKAGENT\" and skmail tail 20, then run skmail ack \"$SKAGENT\" after\n"
+        "processing the reply.\n"
+        % (allowed, allowed, review_contact)
+    )
+
+
 def _seraph_terminal_noop(
     host, only_seat, dry, pick_count, processed_picks, launch_receipts
 ):
@@ -923,6 +968,11 @@ if ONLY_SEAT:
     _codex["target"]=SEAT_TARGET
 free=sum(_L["free"] for _L in LANES)
 log(d, "SLOTS|%s|%s" % (HOST, _slot_summary(LANES)))
+try:
+    WORKER_MAIL_RECIPIENTS = _worker_mail_routing()
+except ValueError as exc:
+    log(d, "BLOCKED|%s|%s" % (HOST, exc))
+    sys.exit(2)
 
 # ---- worker liveness -------------------------------------------------------
 # A claim used to be reaped from elapsed time alone, which is wrong in both
@@ -4843,20 +4893,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     _RAILS=("CONSTRAINTS (standing rails, non-negotiable):\n"
       "- CardStore is append-only. Build JSON with a serializer and parse every line before appending. Never concatenate strings into JSON.\n"
       "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
-      "- Return exact PASS, PASS_FOR_REVIEW, or BLOCKED with a real hashed artifact, and notify jarvis and lumina by skmail.\n"
-      "\n"
-      "HOW TO SEND MAIL. This is the ONLY mailbox. Use the command; do not invent a\n"
-      "file format or a directory:\n"
-      "    skmail send <you> <to> <urgent|normal|fyi> \"<subject>\" \"<body>\"\n"
-      "  <you> is your own agent name, the value of SKAGENT, expanded, not the literal.\n"
-      "  <to> may be jarvis, lumina, another agent name, or all.\n"
-      "  Read your own mail with:  skmail read <you>     recent traffic:  skmail tail\n"
-      "HOW TO CHAT OR GET HELP. SKMail is asynchronous worker chat. Ask Jarvis for\n"
-      "coordination or help with: skmail send \"$SKAGENT\" jarvis normal \"help: <subject>\"\n"
-      "\"card:<id> state:<state> tried:<action> need:<specific help> next:<action>\"\n"
-      "Use lumina for review or evidence questions, and all only for a shared fleet\n"
-      "issue. Check for replies with skmail read \"$SKAGENT\" and skmail tail 20,\n"
-      "then run skmail ack \"$SKAGENT\" after processing the reply.\n"
+      + _worker_mail_instructions(WORKER_MAIL_RECIPIENTS) +
       "MAIL CHECK CADENCE. Check mail after startup, before each major phase, and\n"
       "at least every five minutes during a long-running task. Mail does not interrupt\n"
       "a tool call, so process new instructions at the next safe boundary. Never\n"
@@ -5159,6 +5196,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
         "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--mail-recipient",WORKER_MAIL_RECIPIENTS[0],
         "--live-snapshot",os.path.join(LIVE, HOST + ".json"),
         "--session",sess,"--worker-executable",PI,
         "--","bash","-lc",child,
