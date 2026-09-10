@@ -65,6 +65,7 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
     ("labels", "escalation_required", "expected"),
     [
         (["codex-only"], False, (("codex",), "required-lane:codex")),
+        (["qwen-only"], False, (("qwen",), "required-lane:qwen")),
         (["glm-only"], False, (("glm",), "required-lane:glm")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
@@ -178,6 +179,37 @@ def test_qwen_suitable_is_nonexclusive() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("labels", "qwen_enabled", "glm_enabled", "expected"),
+    [
+        (["qwen-first"], True, True, "qwen"),
+        (["qwen-first"], False, True, "codex"),
+        (["glm-first"], True, True, "glm"),
+        (["glm-first"], True, False, "codex"),
+        (["qwen-only"], False, True, None),
+        (["glm-only"], True, False, None),
+    ],
+)
+def test_disabled_preferred_lane_fallback_is_safe(
+    labels: list[str], qwen_enabled: bool, glm_enabled: bool, expected: str | None
+) -> None:
+    namespace = _load_lane_helpers()
+    namespace["event_rows"] = lambda cid: []
+    selected, _reason = namespace["select_compatible_lane"](
+        labels,
+        False,
+        ["qwen", "glm", "codex"],
+        {"qwen": int(qwen_enabled), "glm": int(glm_enabled), "codex": 1},
+        True,
+        namespace["qwen_first_exclusive"]("preferred", labels),
+        None,
+        qwen_enabled,
+        glm_enabled,
+    )
+
+    assert selected == expected
+
+
 def test_qwen_gets_first_refusal_only_when_category_allows_it() -> None:
     namespace = _load_lane_helpers()
     order = ["qwen", "glm", "codex", "escalate"]
@@ -279,6 +311,7 @@ def test_pool_and_immediate_preclaim_use_the_same_affinity_predicate() -> None:
     assert "qwen_suitable(_card[3]),_qwen_exclusive" in source
     assert 'qwen_suitable(fresh_claimability["core"]),' in source
     assert 'qwen_first_exclusive(cid,fresh_claimability["labels"])' in source
+    assert source.count("QWEN_TARGET>0,GLM_TARGET>0") == 3
     assert "DRY_SELECTION|" in source
     health_check = source.index("admitted,health_reason=_health_for(")
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"')

@@ -233,7 +233,10 @@ def test_source_bindings_fold_from_normal_link_events() -> None:
     assert not any(state["review_markers"].values())
 
 
-@pytest.mark.parametrize("key,value", [("repository", ""), ("base_ref", "   ")])
+@pytest.mark.parametrize(
+    "key,value",
+    [("repository", ""), ("base_ref", "   "), ("base_revision", "")],
+)
 def test_empty_source_binding_link_event_fails_closed(key: str, value: str) -> None:
     namespace = _load_claimability()
     core = _core("source02", labels=["source-only"])
@@ -246,6 +249,50 @@ def test_empty_source_binding_link_event_fails_closed(key: str, value: str) -> N
     )
     with pytest.raises(ValueError, match="typed review metadata is malformed"):
         namespace["_fold_claimability"](core, [event])
+
+
+@pytest.mark.parametrize(
+    ("card_id", "key"),
+    [
+        ("7ddb7d1e", "pr"),
+        ("835a7e9d", "pr"),
+        ("a830be09", "evidence_sha256"),
+        ("bdf2774a", "pr"),
+        ("fd16ac85", "pr"),
+    ],
+)
+def test_empty_optional_historical_review_links_are_ignored(
+    card_id: str, key: str
+) -> None:
+    namespace = _load_claimability()
+    core = _core(card_id)
+    event = _event(
+        "2026-09-08T22:00:00Z",
+        "jarvis",
+        "link",
+        link_key=key,
+        link_value="",
+    )
+
+    state = namespace["_fold_claimability"](core, [event])
+
+    assert key not in state["links"]
+
+
+@pytest.mark.parametrize("key", ["pr", "evidence", "evidence_sha256"])
+def test_each_empty_optional_review_link_is_ignored(key: str) -> None:
+    namespace = _load_claimability()
+    event = _event(
+        "2026-09-08T22:00:00Z",
+        "jarvis",
+        "link",
+        link_key=key,
+        link_value="   ",
+    )
+
+    state = namespace["_fold_claimability"](_core("optional"), [event])
+
+    assert key not in state["links"]
 
 
 def test_terminal_review_dependency_gate_and_host_pin_reasons() -> None:

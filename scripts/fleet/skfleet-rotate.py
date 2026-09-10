@@ -1445,11 +1445,13 @@ def _fold_claimability(core, rows):
         elif action == "link" and event.get("link_key") in {
             "producer_identity", "candidate_evidence_sha256", "pr",
             "pull_request", "open_pr", "evidence", "evidence_sha256",
-            "repository", "base_ref",
+            "repository", "base_ref", "base_revision",
             "link_source_card", "link_head_revision",
         }:
             value = event.get("link_value")
             if not isinstance(value, str) or not value.strip():
+                if event.get("link_key") in {"pr", "evidence", "evidence_sha256"}:
+                    continue
                 raise ValueError("typed review metadata is malformed")
             state["links"][str(event["link_key"])] = value.strip()
             if event["link_key"] in review_link_keys:
@@ -4389,6 +4391,7 @@ owned=[x for x in pool if owns(x[2])]
 _ESCALATE_LABEL="needs-stronger-model"
 _LANE_ONLY_LABELS={
     "codex-only":"codex",
+    "qwen-only":"qwen",
     "glm-only":"glm",
     "kimi-only":"kimi",
     "escalation-only":"escalate",
@@ -4427,14 +4430,20 @@ def qwen_first_exclusive(cid,labels):
 
 
 def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
-                       qwen_exclusive=False):
+                       qwen_exclusive=False, qwen_enabled=True, glm_enabled=True):
     """Return compatible lanes and a stable routing reason."""
     normalized={str(label).strip().lower() for label in (labels or [])}
     required={lane for label,lane in _LANE_ONLY_LABELS.items() if label in normalized}
     if normalized & {"kimi", "kimi-only", "kimi-suitable", "kimi-lane"}:
         required.add("kimi")
     if qwen_exclusive:
-        required.add("qwen")
+        required.add(
+            "qwen" if qwen_enabled or "qwen-only" in normalized else "codex"
+        )
+    if "glm-first" in normalized:
+        required.add(
+            "glm" if glm_enabled or "glm-only" in normalized else "codex"
+        )
     if escalation_required:
         required.add("escalate")
     if len(required)>1:
@@ -4448,10 +4457,12 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
 
 def select_compatible_lane(
         labels, escalation_required, lane_order, remaining, qwen_allowed=True,
-        qwen_exclusive=False, lane_health_by_name=None):
+        qwen_exclusive=False, lane_health_by_name=None, qwen_enabled=True,
+        glm_enabled=True):
     """Choose the first free compatible lane without consuming another lane."""
     compatible,reason=lane_compatibility(
-        labels,escalation_required,qwen_allowed,qwen_exclusive)
+        labels,escalation_required,qwen_allowed,qwen_exclusive,
+        qwen_enabled,glm_enabled)
     if not compatible:
         return None,reason
     health=lane_health_by_name or {}
@@ -4600,7 +4611,7 @@ while _i<len(owned) and _i<len(_candidate_scan):
         for lane in LANES}
     _lane_name,_defer=select_compatible_lane(
         _labels,_esc,lane_order,remaining,qwen_suitable(_card[3]),_qwen_exclusive,
-        _card_lane_health)
+        _card_lane_health,QWEN_TARGET>0,GLM_TARGET>0)
     if _lane_name is None:
         _lane_deferred[_defer]+=1
         _lane_deferred_cards[_card[2]]=_defer
@@ -4751,7 +4762,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         lane["name"],_lane_model(lane,core)) for lane in LANES}
     _attempt_lane_name,_attempt_defer=select_compatible_lane(
         _labels,_attempt_escalation,lane_order,launch_remaining,
-        qwen_suitable(core),qwen_first_exclusive(cid,_labels),_attempt_health)
+        qwen_suitable(core),qwen_first_exclusive(cid,_labels),_attempt_health,
+        QWEN_TARGET>0,GLM_TARGET>0)
     if _attempt_lane_name is None:
         log(d,"SKIPPED_ATTEMPT_ADMISSION|%s|%s|reason=%s"%
             (HOST,cid,_attempt_defer))
@@ -4941,7 +4953,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     compatible,affinity_reason=lane_compatibility(
         fresh_claimability["labels"],fresh_escalation,
         qwen_suitable(fresh_claimability["core"]),
-        qwen_first_exclusive(cid,fresh_claimability["labels"]))
+        qwen_first_exclusive(cid,fresh_claimability["labels"]),
+        QWEN_TARGET>0,GLM_TARGET>0)
     if _LANE["name"] not in compatible:
         lane_drift += 1
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
