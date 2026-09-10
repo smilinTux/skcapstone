@@ -132,6 +132,116 @@ def test_freeze_blocks_offer_and_consume_before_side_effects(
     assert builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01") is None
 
 
+def test_freeze_during_materialization_prevents_claim_and_remains_retryable(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = SimpleNamespace(owner=None, meta={})
+    claims = []
+
+    def materialize_then_freeze(_request, workspace):
+        store.set_frozen(paths, True, writer=operator, reason="synchronized test")
+        return workspace
+
+    monkeypatch.setattr(
+        builder_dispatch.Board,
+        "claim_task",
+        lambda *_args: claims.append("unexpected"),
+    )
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("frozen request launched"),
+        materializer=materialize_then_freeze,
+    )
+    assert result["state"] == "frozen"
+    assert result["attempt"] == 0
+    assert claims == []
+    store.set_frozen(paths, False, writer=operator, reason="resume test")
+
+    def claim(_self, owner, _card_id):
+        claims.append(owner)
+        folded.owner = owner
+        folded.meta = {"_claim_revision": "claim-after-freeze"}
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    resumed = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=46, poll=lambda: None),
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert resumed["state"] == "running"
+    assert resumed["attempt"] == 1
+    assert len(claims) == 1
+
+
+def test_freeze_after_claim_releases_generation_and_prevents_launch(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = SimpleNamespace(owner=None, meta={})
+    claims = []
+    releases = []
+
+    def claim(_self, owner, _card_id):
+        claims.append(owner)
+        folded.owner = owner
+        folded.meta = {"_claim_revision": f"claim-{len(claims)}"}
+        if len(claims) == 1:
+            store.set_frozen(paths, True, writer=operator, reason="synchronized test")
+
+    def release(_self, owner, _card_id, **kwargs):
+        releases.append((owner, kwargs["expected_claim_revision"]))
+        folded.owner = None
+        folded.meta = {}
+        return True
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    launches = []
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: launches.append(True),
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert result["state"] == "frozen"
+    assert result["claim_released"] is True
+    assert releases == [(claims[0], "claim-1")]
+    assert launches == []
+    store.set_frozen(paths, False, writer=operator, reason="resume test")
+    resumed = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=47, poll=lambda: None),
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert resumed["state"] == "running"
+    assert resumed["attempt"] == 1
+    assert len(claims) == 2
+
+
 def test_live_old_worker_refreshes_and_cannot_be_reaped(
     paths, operator, noded41, monkeypatch, tmp_path
 ) -> None:
