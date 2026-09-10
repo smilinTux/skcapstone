@@ -140,6 +140,12 @@ def write_process_record(
         pass
 
 
+def maintain_process_record(args: argparse.Namespace, pid: int, stop: threading.Event) -> None:
+    """Refresh direct-seat liveness until the wrapped process exits."""
+    while not stop.wait(60):
+        write_process_record(args, pid=pid, completion_state="running")
+
+
 def write_startup_report(
     args: argparse.Namespace, pid: int, state: str, observation: StartupObservation | None = None
 ) -> None:
@@ -480,12 +486,21 @@ def main() -> int:
         with args.stdout.open("wb") as stdout:
             child = subprocess.Popen(args.command, stdout=stdout, stderr=subprocess.PIPE)
             write_process_record(args, pid=child.pid, completion_state="running")
+            process_record_stop = threading.Event()
+            process_record_thread = threading.Thread(
+                target=maintain_process_record,
+                args=(args, child.pid, process_record_stop),
+                daemon=True,
+            )
+            process_record_thread.start()
             if args.session and args.worker_executable:
                 startup_thread = threading.Thread(
                     target=monitor_startup, args=(args, child, startup_stop), daemon=True
                 )
                 startup_thread.start()
             _, stderr = child.communicate()
+            process_record_stop.set()
+            process_record_thread.join(timeout=1)
         sys.stderr.buffer.write(stderr)
         record_terminal_exit(args, stderr, child.returncode)
         write_process_record(
