@@ -1,5 +1,7 @@
 # Changelog
 
+- Card 5e7a3f11: retire an exact running reviewer generation when its source is explicitly superseded, while preserving its output and leaving current or newer claim generations untouched.
+
 - Card `35a61efb`: changed Seraph's hard-coded single review launch into a
   configurable batch bounded from one through eight, validated every exact
   recommendation, claim revision, launch receipt, active worker, source head,
