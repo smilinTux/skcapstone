@@ -605,6 +605,16 @@ def _failed_claim_is_retryable(
 def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
     """Launch one configurable, bounded Tank or ATLAS batch."""
 
+    dispatcher = Path(sys.executable).parent / "skfleet-rotate.py"
+    if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
+        return {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_succeeded": 0,
+            "dispatch_failed": 1,
+            "reason": f"{seat}_dispatcher_missing",
+        }
     env_name = f"SKFLEET_{seat.upper()}_BATCH_SIZE"
     try:
         batch_size = int(os.environ.get(env_name, "2"))
@@ -635,7 +645,7 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
         }
     )
     completed = subprocess.run(
-        [str(Path.home() / ".local/bin/skfleet-rotate.py"), "--go"],
+        [str(dispatcher), "--go"],
         env=env,
         capture_output=True,
         text=True,
