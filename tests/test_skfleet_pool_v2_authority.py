@@ -140,6 +140,9 @@ def test_canonical_review_card_enters_seraph_or_elastic_codex_selector() -> None
     assert generic["elastic_review_admitted"] is True
     assert helpers["_pool_v2_ready_ids"](decisions, {card_id: generic}) == {card_id}
 
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "not (seraph_review_admitted or elastic_review_admitted)" in source
+
     incomplete = dict(core)
     incomplete["links"] = {"producer_identity": "mero"}
     incomplete_claimability = dict(claimability, core=incomplete)

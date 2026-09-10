@@ -4260,6 +4260,9 @@ def _shadow_pool_v2():
             seraph_review_admitted = _POOL_V2_ADMISSIONS[cid].get(
                 "seraph_review_admitted"
             ) is True
+            elastic_review_admitted = _POOL_V2_ADMISSIONS[cid].get(
+                "elastic_review_admitted"
+            ) is True
             owner_health = None
             if reason.startswith("owned-"):
                 if cid in class_ids.get("dead_worker_claims", set()):
@@ -4304,7 +4307,7 @@ def _shadow_pool_v2():
                     ),
                     awaiting_review=(
                         awaiting_review(cid) or reason == "review"
-                    ) and not seraph_review_admitted,
+                    ) and not (seraph_review_admitted or elastic_review_admitted),
                     backoff=blocked_backoff(cid),
                     attempt_limit=unclaimable(cid),
                     host_pin_elsewhere=reason.startswith("host-pin:"),
