@@ -23,6 +23,8 @@ from skcapstone.fleet_lane_health import (
     cycle_id as new_cycle_id,
     lane_health,
 )
+from skcapstone.fleet import builder_dispatch, store as fleet_store
+from skcapstone.fleet.paths import default_paths as default_fleet_paths
 from skcapstone.scheduler_decision import (
     SchedulerFacts,
     classify_scheduler_population,
@@ -4481,6 +4483,38 @@ def owns(cid):
     # pinned to chiap08 but hashed into chiap02's slice means NO host takes it.
     return owner_host(cid) == HOST
 owned=[x for x in pool if owns(x[2])]
+
+# Niobe may place one generic medium source card on a Ready builder standby.
+# The remote node claims the card itself, so the CardStore fence remains the
+# authority and this scheduler never impersonates a remote worker.
+if _ONLY_SEAT == "niobe":
+    for _candidate in tuple(owned):
+        _remote_core = dict(_candidate[3], id=_candidate[2])
+        try:
+            _remote_request = builder_dispatch.offer(
+                default_fleet_paths(),
+                _remote_core,
+                _candidate[4],
+                writer=fleet_store.Writer(
+                    role="scheduler", node="niobe", identity="niobe"
+                ),
+            )
+        except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
+            log(d, "BUILDER_DISPATCH_BLOCKED|%s|%s|%s" % (HOST, _candidate[2], _exc))
+            continue
+        if _remote_request is not None:
+            log(
+                d,
+                "BUILDER_DISPATCH_OFFERED|%s|%s|node=%s|request_id=%s"
+                % (
+                    HOST,
+                    _candidate[2],
+                    _remote_request["node"],
+                    _remote_request["request_id"],
+                ),
+            )
+            owned.remove(_candidate)
+            break
 
 # Never steal another host's hash slice without an authoritative shared lock.
 # Syncthing propagation is not a compare-and-swap primitive. Measured 2026-08-28:
