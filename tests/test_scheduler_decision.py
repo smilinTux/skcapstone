@@ -445,6 +445,8 @@ def test_legacy_8_pool_v2_8_excludes_review_rows_from_authority(tmp_path) -> Non
         core = claimability["core"]
         admissions[cid] = admission(cid, core, claimability)
 
+    owner_map.__globals__["_POOL_V2_ADMISSIONS"] = admissions
+
     rows, pinned_ids = authority_rows(
         decisions,
         admissions,

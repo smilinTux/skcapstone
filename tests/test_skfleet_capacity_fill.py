@@ -73,5 +73,5 @@ def test_runtime_counts_only_successful_launches() -> None:
     assert "_bounded_candidate_sequence(owned, MAX_CANDIDATE_SCAN)" in source
     assert "if launched>=MAX_LAUNCH or not any(launch_remaining.values()):" in source
     assert "_attempt_lane_name,_attempt_defer=select_compatible_lane(" in source
-    assert "launch_remaining," in source
+    assert "_attempt_remaining," in source
     assert "else:\n        launched+=1" in source

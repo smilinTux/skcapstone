@@ -4370,14 +4370,27 @@ pool, _PINNED_IDS = _pool_v2_authority_rows(
     unblocks, PRI, ENG, HOST
 )
 pool, _DUPLICATE_SERAPH_SOURCE_HEADS = _seraph_unique_source_heads(pool)
-_elastic_rows = [row for row in pool if _POOL_V2_ADMISSIONS[row[2]].get("elastic_review_admitted")]
+_elastic_rows = [
+    row
+    for row in pool
+    if _POOL_V2_ADMISSIONS[row[2]].get("elastic_review_admitted")
+]
 _elastic_limit = review_fanout_limit(
     len(_elastic_rows),
-    max(0, CODEX_PHYSICAL_LIMIT - sum(len(lane["busy"]) for lane in LANES if lane["name"] == "codex")),
+    max(
+        0,
+        CODEX_PHYSICAL_LIMIT
+        - sum(len(lane["busy"]) for lane in LANES if lane["name"] == "codex"),
+    ),
     REVIEW_MAXIMUM,
 )
 _elastic_ids = {row[2] for row in _elastic_rows[:_elastic_limit]}
-pool = [row for row in pool if not _POOL_V2_ADMISSIONS[row[2]].get("elastic_review_admitted") or row[2] in _elastic_ids]
+pool = [
+    row
+    for row in pool
+    if not _POOL_V2_ADMISSIONS[row[2]].get("elastic_review_admitted")
+    or row[2] in _elastic_ids
+]
 for _source_head in sorted(_DUPLICATE_SERAPH_SOURCE_HEADS):
     log(
         d,
