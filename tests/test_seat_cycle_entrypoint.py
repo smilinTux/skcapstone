@@ -342,6 +342,19 @@ def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) 
     assert result["suppressed"] == 0
 
 
+def test_seraph_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="NOOP_RECEIPT|chiap08|reason=rotation_overlap|seat=seraph\n",
+        ),
+    )
+    result = seraph_operation(tmp_path)
+    assert result["reason"] == "seraph_rotation_overlap"
+    assert result["suppressed"] == 0
+
+
 def test_seraph_all_suppressed_noop_is_accepted_from_stderr(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.subprocess.run",
@@ -937,6 +950,22 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
     assert {captured[f"SKFLEET_CODEX_MODEL_{size}"] for size in ("S", "M", "L", "XL")} == {
         "sk-codex-mid"
     }
+
+
+@pytest.mark.parametrize("seat", ["tank", "atlas"])
+def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, seat) -> None:
+    monkeypatch.setattr(
+        "skcapstone.seat_cycle_entrypoint.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=f"NOOP_RECEIPT|chiap08|reason=rotation_overlap|seat={seat}\n",
+        ),
+    )
+
+    result = role_dispatch_operation(tmp_path, seat)
+
+    assert result["reason"] == f"{seat}_rotation_overlap"
+    assert result["suppressed"] == 0
 
 
 @pytest.mark.parametrize("seat", ["tank", "atlas"])

@@ -251,6 +251,7 @@ def verify_seraph_dispatch(
             "no_eligible_work",
             "no_available_capacity",
             "all_candidates_suppressed",
+            "rotation_overlap",
         }:
             return {
                 "cards_examined": 0,
@@ -480,7 +481,11 @@ def verify_role_dispatch(
     ]
     if not launches and len(noops) == 1 and noops[0]["seat"] == seat:
         reason = noops[0]["reason"]
-        if completed.returncode == 0 and reason in {"no_eligible_work", "no_available_capacity"}:
+        if completed.returncode == 0 and reason in {
+            "no_eligible_work",
+            "no_available_capacity",
+            "rotation_overlap",
+        }:
             return {
                 "cards_examined": 0,
                 "recommendations": 0,
