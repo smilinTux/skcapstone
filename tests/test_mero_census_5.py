@@ -1,8 +1,8 @@
-"""Card 2516480b negative tests: Mero cannot mutate anything.
+"""Card 2516480b negative tests: Mero cannot mutate lifecycle state.
 
 AC4 of the census. Sixteen refusals prove Mero holds exactly OBSERVE and
-RECOMMEND: no claim, release, launch, stop, reassign, rotate, repair, merge,
-deploy, card creation or mutation, selector rerun, credential or protected
+RECOMMEND plus governed card creation: no claim, release, launch, stop, reassign,
+rotate, repair, merge, deploy, lifecycle mutation, selector rerun, credential or protected
 data reach, and no write path that changes lifecycle state.
 """
 
@@ -45,8 +45,8 @@ class TestMeroCannotMutate:
         for action in (Action.MERGE, Action.DEPLOY, Action.EVALUATE_MERGE):
             self._assert_refused("mero", action)
 
-    def test_mero_holds_exactly_observe_and_recommend(self) -> None:
-        allowed = {Action.OBSERVE, Action.RECOMMEND}
+    def test_mero_holds_observe_recommend_and_card_creation(self) -> None:
+        allowed = {Action.OBSERVE, Action.RECOMMEND, Action.CREATE_CARD}
         for action in Action:
             if action in allowed:
                 require_authority("mero", action)
@@ -94,12 +94,11 @@ class TestMeroCannotMutate:
         assert before.archived == after.archived
         assert before.dependencies == after.dependencies
 
-    def test_creating_a_card_stays_outside_mero(self) -> None:
-        """Card creation is a governed store write, not a Mero seat action.
+    def test_card_lifecycle_mutation_stays_outside_mero_census(self) -> None:
+        """Mero's census remains observation-only after card creation is authorized.
 
-        Mero's module exposes no create path at all; the only creation API is
-        the store's governed ``create``, whose use by Mero is denied by the
-        seat boundary tests above (no CREATE action exists for any seat).
+        Creation is exposed through the governed coordination surface, not this
+        census module. Claiming and later lifecycle transitions remain denied.
         """
         assert not hasattr(mc.MeroBlockerCensus, "create")
         assert not hasattr(mc.MeroBlockerCensus, "claim")

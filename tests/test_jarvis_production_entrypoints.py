@@ -1,4 +1,4 @@
-"""Jarvis cannot bypass Casey authorization through real card surfaces."""
+"""Jarvis can coordinate directly while external effects remain gated."""
 
 import asyncio
 
@@ -9,28 +9,26 @@ from skcapstone.cli import main
 from skcapstone.mcp_server import call_tool
 
 
-def test_cli_claim_fails_before_board_mutation_for_unsigned_jarvis(tmp_path) -> None:
+def test_cli_claim_reaches_board_without_signed_jarvis_artifact(tmp_path) -> None:
     result = CliRunner().invoke(
         main,
         ["coord", "claim", "deadbeef", "--home", str(tmp_path), "--agent", "jarvis"],
     )
 
     assert result.exit_code != 0
-    assert "--casey-authorization" in str(result.exception)
+    assert "casey-authorization" not in str(result.exception)
 
 
-def test_mcp_complete_fails_before_board_mutation_for_unsigned_jarvis(
-    tmp_path, monkeypatch
-) -> None:
+def test_mcp_complete_reaches_board_without_signed_jarvis_artifact(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
     response = asyncio.run(
         call_tool("coord_complete", {"task_id": "deadbeef", "agent_name": "jarvis"})
     )
 
-    assert "casey-authorization" in response[0].text
+    assert "casey-authorization" not in response[0].text
 
 
-def test_cli_move_fails_before_board_mutation_for_unsigned_jarvis(tmp_path) -> None:
+def test_cli_move_reaches_board_without_signed_jarvis_artifact(tmp_path) -> None:
     result = CliRunner().invoke(
         main,
         [
@@ -46,7 +44,7 @@ def test_cli_move_fails_before_board_mutation_for_unsigned_jarvis(tmp_path) -> N
     )
 
     assert result.exit_code != 0
-    assert "--casey-authorization" in str(result.exception)
+    assert "casey-authorization" not in str(result.exception)
 
 
 def test_cli_move_does_not_gate_non_jarvis_actor(tmp_path) -> None:
@@ -68,7 +66,7 @@ def test_cli_move_does_not_gate_non_jarvis_actor(tmp_path) -> None:
     assert "casey-authorization" not in str(result.exception)
 
 
-def test_mcp_move_fails_before_board_mutation_for_unsigned_jarvis(tmp_path, monkeypatch) -> None:
+def test_mcp_move_reaches_board_without_signed_jarvis_artifact(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
     response = asyncio.run(
         call_tool(
@@ -77,7 +75,7 @@ def test_mcp_move_fails_before_board_mutation_for_unsigned_jarvis(tmp_path, monk
         )
     )
 
-    assert "casey-authorization" in response[0].text
+    assert "casey-authorization" not in response[0].text
 
 
 def test_mcp_move_does_not_gate_non_jarvis_actor(tmp_path, monkeypatch) -> None:
@@ -92,12 +90,10 @@ def test_mcp_move_does_not_gate_non_jarvis_actor(tmp_path, monkeypatch) -> None:
     assert "casey-authorization" not in response[0].text
 
 
-def test_sdk_create_fails_before_board_mutation_for_unsigned_jarvis(tmp_path, monkeypatch) -> None:
+def test_sdk_create_allows_unsigned_jarvis_coordination(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(sdk, "_shared_home", lambda: tmp_path)
 
-    try:
-        sdk.coord_create("must not exist", created_by="jarvis")
-    except ValueError as exc:
-        assert "--casey-authorization" in str(exc)
-    else:
-        raise AssertionError("unsigned Jarvis SDK mutation was accepted")
+    created = sdk.coord_create("directed repair", created_by="jarvis")
+
+    assert isinstance(created, str)
+    assert created

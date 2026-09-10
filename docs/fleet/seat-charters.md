@@ -32,12 +32,14 @@ release, verification, and actuation tools for explicit Casey-directed help.
 That tool availability does not transfer another seat's ownership, permit
 impersonation, or bypass a card, policy, exact-revision, or capability check.
 Every Jarvis emergency tool is exposed through
-`skcapstone.jarvis_emergency.JarvisEmergencyGateway`. Before invoking the
-registered mutation, that gateway verifies a signed, unexpired Casey direction
-bound to the exact action, target, change, and product scope. Missing, forged,
-expired, substituted-action, substituted-target, and out-of-scope directions
-fail closed before the operation is called. Jarvis receives no recurring
-lifecycle schedule or standing authority from this exception.
+`skcapstone.jarvis_emergency.JarvisEmergencyGateway`. Reversible coordination
+runs immediately under Jarvis with Casey ownership provenance. Before merge,
+deployment, artifact release, or application actuation, the gateway verifies a
+signed, unexpired Casey direction bound to the exact action, target, change, and
+product scope. Missing, forged, expired, substituted-action,
+substituted-target, and out-of-scope directions fail closed before an external
+effect. Jarvis receives no recurring lifecycle schedule or standing authority
+from this exception.
 
 ## Shared operating contract
 
@@ -152,10 +154,17 @@ Niobe gains no application actuation authority from the Fleet Dispatcher seat. T
 
 ### Fenced System Actors
 
+Every lifecycle seat may create a correctly typed card within its product and
+role scope. Card creation is coordination, not approval. Normal schema,
+dependency, sensitivity, deduplication, and dispatch admission checks still
+apply, and the creating seat is recorded as provenance.
+
 The following actors are explicitly authorized for fleet mutation operations:
 
 - `niobe` (Fleet Dispatcher) - recurring fleet mutation authority
-- `jarvis` - emergency capability only through the signed Casey-direction gateway
+- `jarvis` - Casey-directed assistance. Reversible coordination is immediate and
+  attributed to Jarvis under Casey's configured ownership. Merge, deployment,
+  release, and application actuation still use the signed Casey-direction gateway.
 - Fenced system actors (named in deployment configuration) - bounded repair authority
 
 No other agent, seat, or process may perform fleet claim release, launch, stop, reassignment, rotation, or worker-health repair.

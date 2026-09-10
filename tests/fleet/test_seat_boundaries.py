@@ -56,6 +56,11 @@ def test_mero_is_read_only(action: Action) -> None:
         require_authority("mero", action)
 
 
+@pytest.mark.parametrize("seat", ["link", "mero", "seraph", "niobe", "tank", "atlas"])
+def test_every_lifecycle_seat_can_create_cards(seat: str) -> None:
+    require_authority(seat, Action.CREATE_CARD)
+
+
 def test_link_assigns_a_distinct_reviewer() -> None:
     """Link skips itself and the source author deterministically."""
 
@@ -155,15 +160,9 @@ def test_niobe_fleet_authority_does_not_imply_application_actuation() -> None:
 @pytest.mark.parametrize(
     "action",
     [
-        Action.CREATE_CARD,
-        Action.CLAIM,
-        Action.MOVE_CARD,
-        Action.COMPLETE_CARD,
-        Action.LAUNCH,
         Action.MERGE,
         Action.DEPLOY,
         Action.RELEASE_ARTIFACT,
-        Action.VERIFY,
         Action.ACTUATE_APPLICATION,
     ],
 )
@@ -172,6 +171,14 @@ def test_jarvis_emergency_tools_require_casey_direction(action: Action) -> None:
 
     with pytest.raises(BoundaryError, match="verified signed Casey direction"):
         require_authority("jarvis", action)
+
+
+@pytest.mark.parametrize(
+    "action",
+    [Action.CREATE_CARD, Action.CLAIM, Action.MOVE_CARD, Action.COMPLETE_CARD, Action.LAUNCH],
+)
+def test_jarvis_can_perform_direct_coordination(action: Action) -> None:
+    require_authority("jarvis", action)
 
 
 def test_only_explicit_fenced_actor_may_mutate_fleet() -> None:

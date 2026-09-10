@@ -6,7 +6,7 @@ import pytest
 
 from skcapstone.jarvis_emergency import JarvisEmergencyGateway
 from skcapstone.operator_authorization import AuthorizationEnvelope, authorization_id
-from skcapstone.seat_boundaries import Action, BoundaryError
+from skcapstone.seat_boundaries import JARVIS_DIRECT_ACTIONS, Action, BoundaryError
 
 SCOPE = "skcapstone,skdashboard,skworld"
 TARGET = "smilinTux/skcapstone#572"
@@ -44,6 +44,8 @@ ENTRYPOINTS = [
     ("verify", Action.VERIFY),
     ("actuate", Action.ACTUATE_APPLICATION),
 ]
+DIRECT_ENTRYPOINTS = [item for item in ENTRYPOINTS if item[1] in JARVIS_DIRECT_ACTIONS]
+SIGNED_ENTRYPOINTS = [item for item in ENTRYPOINTS if item[1] not in JARVIS_DIRECT_ACTIONS]
 
 
 @pytest.mark.parametrize(("method", "action"), ENTRYPOINTS)
@@ -66,7 +68,7 @@ def test_each_entrypoint_verifies_before_mutation(tmp_path, method: str, action:
     assert calls == [TARGET]
 
 
-@pytest.mark.parametrize(("method", "action"), ENTRYPOINTS)
+@pytest.mark.parametrize(("method", "action"), SIGNED_ENTRYPOINTS)
 def test_each_entrypoint_fails_closed_without_direction(
     tmp_path, method: str, action: Action
 ) -> None:
@@ -85,6 +87,26 @@ def test_each_entrypoint_fails_closed_without_direction(
     with pytest.raises(BoundaryError, match="signed Casey direction"):
         getattr(gateway, method)(TARGET)
     assert calls == []
+
+
+@pytest.mark.parametrize(("method", "action"), DIRECT_ENTRYPOINTS)
+def test_direct_coordination_does_not_require_signed_artifact(
+    tmp_path, method: str, action: Action
+) -> None:
+    calls = []
+    gateway = JarvisEmergencyGateway(
+        actor="jarvis",
+        envelope=None,
+        public_key_armor="",
+        expected_fingerprint="",
+        change_id="",
+        verifier=lambda *_: False,
+        operations={action: lambda target: calls.append(target) or "ok"},
+        replay_store=tmp_path / "used",
+    )
+
+    assert getattr(gateway, method)(TARGET) == "ok"
+    assert calls == [TARGET]
 
 
 @pytest.mark.parametrize(
@@ -157,6 +179,46 @@ def test_wrong_signer_fingerprint_never_reaches_operation(tmp_path) -> None:
     with pytest.raises(BoundaryError, match="does not match Casey"):
         gateway.merge(TARGET)
     assert calls == []
+
+
+@pytest.mark.parametrize("issuer", ["casey", "casey@skworld.io", "capauth:casey@skworld.io"])
+def test_casey_issuer_handle_forms_are_equivalent(tmp_path, issuer: str) -> None:
+    gateway = JarvisEmergencyGateway(
+        actor="jarvis",
+        envelope=_envelope(Action.MERGE, issuer=issuer),
+        public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
+        verifier=lambda *_: True,
+        operations={Action.MERGE: lambda target: target},
+        replay_store=tmp_path / "used",
+    )
+
+    assert gateway.merge(TARGET) == TARGET
+
+
+@pytest.mark.parametrize(
+    "issuer",
+    [
+        "mallory:casey@skworld.io",
+        ":".join(["https", "//mallory", "casey@evil.example"]),
+        "urn:evil:casey",
+    ],
+)
+def test_unknown_casey_identity_schemes_fail_closed(tmp_path, issuer: str) -> None:
+    gateway = JarvisEmergencyGateway(
+        actor="jarvis",
+        envelope=_envelope(Action.MERGE, issuer=issuer),
+        public_key_armor="CASEY PUBLIC KEY",
+        expected_fingerprint="CASEY-FINGERPRINT",
+        change_id="casey-direction-20a637fe",
+        verifier=lambda *_: True,
+        operations={Action.MERGE: lambda target: target},
+        replay_store=tmp_path / "used",
+    )
+
+    with pytest.raises(BoundaryError, match="issuer"):
+        gateway.merge(TARGET)
 
 
 def test_wrong_change_never_reaches_operation(tmp_path) -> None:

@@ -57,8 +57,25 @@ class Action(StrEnum):
     VERIFY = "verify"
 
 
+JARVIS_DIRECT_ACTIONS = frozenset(
+    {
+        Action.CREATE_CARD,
+        Action.CLAIM,
+        Action.MOVE_CARD,
+        Action.COMPLETE_CARD,
+        Action.LAUNCH,
+        Action.RELEASE,
+        Action.STOP,
+        Action.REASSIGN,
+        Action.ROTATE,
+        Action.REPAIR_WORKER,
+        Action.VERIFY,
+    }
+)
+
+
 _ALLOWED = {
-    Seat.MERO: frozenset({Action.OBSERVE, Action.RECOMMEND}),
+    Seat.MERO: frozenset({Action.OBSERVE, Action.RECOMMEND, Action.CREATE_CARD}),
     Seat.LINK: frozenset(
         {
             Action.OBSERVE,
@@ -67,9 +84,10 @@ _ALLOWED = {
             Action.ASSIGN_REVIEWER,
             Action.EVALUATE_MERGE,
             Action.MERGE,
+            Action.CREATE_CARD,
         }
     ),
-    Seat.SERAPH: frozenset({Action.OBSERVE}),
+    Seat.SERAPH: frozenset({Action.OBSERVE, Action.CREATE_CARD}),
     Seat.NIOBE: frozenset(
         {
             Action.OBSERVE,
@@ -80,10 +98,11 @@ _ALLOWED = {
             Action.REASSIGN,
             Action.ROTATE,
             Action.REPAIR_WORKER,
+            Action.CREATE_CARD,
         }
     ),
-    Seat.TANK: frozenset({Action.OBSERVE, Action.DEPLOY}),
-    Seat.ATLAS: frozenset({Action.OBSERVE, Action.ACTUATE_APPLICATION}),
+    Seat.TANK: frozenset({Action.OBSERVE, Action.DEPLOY, Action.CREATE_CARD}),
+    Seat.ATLAS: frozenset({Action.OBSERVE, Action.ACTUATE_APPLICATION, Action.CREATE_CARD}),
     # Jarvis is not scheduled as a recurring seat. These capabilities remain
     # available only for explicit Casey-directed emergency assistance.
     Seat.JARVIS: frozenset(
@@ -121,6 +140,17 @@ _FLEET_MUTATIONS = frozenset(
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
+def canonical_human_principal(identity: str) -> str:
+    """Normalize a CapAuth URI, handle, or local name to its human principal."""
+
+    normalized = identity.strip().casefold()
+    if normalized.startswith("capauth:"):
+        normalized = normalized.removeprefix("capauth:")
+    if ":" in normalized:
+        return ""
+    return normalized.split("@", 1)[0]
+
+
 def require_authority(
     actor: str,
     action: Action,
@@ -138,7 +168,7 @@ def require_authority(
         raise BoundaryError(f"unknown or unfenced actor: {actor}") from exc
     if action not in _ALLOWED[seat]:
         raise BoundaryError(f"{seat.value} is not authorized for {action.value}")
-    if seat is Seat.JARVIS and action is not Action.OBSERVE:
+    if seat is Seat.JARVIS and action not in JARVIS_DIRECT_ACTIONS | {Action.OBSERVE}:
         raise BoundaryError(
             f"jarvis requires a verified signed Casey direction for {action.value}"
         )
@@ -170,7 +200,7 @@ def verify_casey_direction(
         return
     if envelope is None:
         raise BoundaryError(f"jarvis requires a signed Casey direction for {action.value}")
-    if envelope.issuer.strip().lower() != "casey":
+    if canonical_human_principal(envelope.issuer) != "casey":
         raise BoundaryError("Jarvis emergency direction issuer must be Casey")
     if not expected_fingerprint or envelope.issuer_fingerprint != expected_fingerprint:
         raise BoundaryError("Jarvis emergency direction signer does not match Casey")

@@ -121,11 +121,12 @@ An operations card reaches ATLAS through Niobe and remains subject to the
 ActionIntent catalog, exact capability, rollback, and verification gates.
 Routine catalog-authorized work is notify-only.
 
-Jarvis remains Casey's assistant. Jarvis may use emergency card, fleet, merge,
-deployment, release, verification, and actuation tools when Casey directs it,
+Jarvis remains Casey's assistant. Jarvis may use card, fleet, and verification
+tools immediately when Casey directs it. Merge, deployment, release, and
+actuation retain exact signed direction because they create external effects,
 but does not claim recurring lifecycle ownership or enter lifecycle timers.
 The runtime exposes Jarvis emergency operations only through
-`JarvisEmergencyGateway`. Each call verifies an unexpired Casey signature and
+`JarvisEmergencyGateway`. Each external-effect call verifies an unexpired Casey signature and
 exact action, target, change, and `skcapstone,skdashboard,skworld` scope before
 calling the mutation. A missing or mismatched direction fails closed.
 

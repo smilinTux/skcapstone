@@ -12,7 +12,13 @@ from .operator_authorization import (
     consume_authorization,
     load_authorization,
 )
-from .seat_boundaries import Action, verify_casey_direction
+from .seat_boundaries import (
+    JARVIS_DIRECT_ACTIONS,
+    Action,
+    canonical_human_principal,
+    require_authority,
+    verify_casey_direction,
+)
 
 Operation = Callable[..., Any]
 Verifier = Callable[[bytes, str, str], bool]
@@ -29,6 +35,8 @@ def authorize_jarvis_entrypoint(
     """Gate a real mutation surface when its authenticated actor is Jarvis."""
     if actor.strip().lower() != "jarvis":
         return
+    if action in JARVIS_DIRECT_ACTIONS:
+        return
     if authorization_path is None:
         raise ValueError(f"jarvis requires --casey-authorization for {action.value}")
     if not change_id:
@@ -40,7 +48,7 @@ def authorize_jarvis_entrypoint(
 
     capauth_home = resolve_capauth_home()
     profile = load_profile(base_dir=capauth_home)
-    handle = (profile.entity.handle or profile.entity.name).split("@")[0].lower()
+    handle = canonical_human_principal(profile.entity.handle or profile.entity.name)
     if handle != "casey":
         raise ValueError("active CapAuth human profile is not Casey")
     public_armor = read_armored_public_key(capauth_home / "identity" / "public.asc")
@@ -63,7 +71,7 @@ def authorize_jarvis_entrypoint(
 
 @dataclass(frozen=True)
 class JarvisEmergencyGateway:
-    """Expose emergency tools only after exact signed-direction verification."""
+    """Expose direct coordination and signed external-effect operations."""
 
     actor: str
     envelope: AuthorizationEnvelope | None
@@ -76,19 +84,22 @@ class JarvisEmergencyGateway:
     scope: str = SCOPE
 
     def _run(self, action: Action, target: str, /, *args: Any, **kwargs: Any) -> Any:
-        verify_casey_direction(
-            self.actor,
-            action,
-            envelope=self.envelope,
-            target=target,
-            change_id=self.change_id,
-            scope=self.scope,
-            public_key_armor=self.public_key_armor,
-            expected_fingerprint=self.expected_fingerprint,
-            verifier=self.verifier,
-        )
-        assert self.envelope is not None
-        consume_authorization(self.envelope, self.replay_store)
+        if action in JARVIS_DIRECT_ACTIONS:
+            require_authority(self.actor, action)
+        else:
+            verify_casey_direction(
+                self.actor,
+                action,
+                envelope=self.envelope,
+                target=target,
+                change_id=self.change_id,
+                scope=self.scope,
+                public_key_armor=self.public_key_armor,
+                expected_fingerprint=self.expected_fingerprint,
+                verifier=self.verifier,
+            )
+            assert self.envelope is not None
+            consume_authorization(self.envelope, self.replay_store)
         operation = self.operations.get(action)
         if operation is None:
             raise ValueError(f"no emergency operation registered for {action.value}")
