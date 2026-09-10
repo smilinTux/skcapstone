@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `2ebebda8`: admit governed reviews to bounded elastic Codex fanout while
+  preserving exact source, producer, reviewer identity, claim generation,
+  capacity, verdict, and retry-safe release fencing.
+
 - Card `b7f31a22`: prevent a dispatched fleet worker from re-claiming its
   already-owned card and invalidating the launch receipt's claim revision.
 
