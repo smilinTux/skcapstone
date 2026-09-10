@@ -266,6 +266,33 @@ def _release_exact(
     )
 
 
+def _frozen_claim_status(
+    paths: FleetPaths,
+    coordination_home: Path,
+    node: str,
+    request: dict,
+    owner: str,
+    revision: str,
+    prior_attempt: int,
+) -> dict | None:
+    """Release an exact prelaunch claim when the human freeze has won."""
+    if store.actuation_allowed(paths):
+        return None
+    released = _release_exact(
+        coordination_home, request["card_id"], owner, revision, actor=owner
+    )
+    return _write_status(
+        paths,
+        node,
+        request,
+        "frozen" if released else "blocked",
+        owner=owner,
+        claim_revision=revision,
+        attempt=prior_attempt,
+        claim_released=released,
+    )
+
+
 def _reconcile_running(
     paths: FleetPaths, coordination_home: Path, node: str, request: dict, status: dict
 ) -> dict:
@@ -413,19 +440,55 @@ def consume_one(
         if prior.get("request_id") == request.get("request_id"):
             if prior.get("state") == "running":
                 return _reconcile_running(paths, coordination_home, node, request, prior)
-            if prior.get("state") != "failed" or int(prior.get("attempt") or 1) >= MAX_ATTEMPTS:
+            if prior.get("state") not in {"failed", "frozen"} or (
+                prior.get("state") == "failed"
+                and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
+            ):
                 continue
         attempt = int(prior.get("attempt") or 0) + 1
         owner = f"pi-builder-standby-{node}-{request['card_id']}"
         workspace = paths.root / "workspaces" / owner
+        if not store.actuation_allowed(paths):
+            return None
         materializer(request, workspace)
+        if not store.actuation_allowed(paths):
+            return _write_status(
+                paths,
+                node,
+                request,
+                "frozen",
+                attempt=int(prior.get("attempt") or 0),
+                claim_released=False,
+            )
         Board(coordination_home).claim_task(owner, request["card_id"])
         card = CardStore(coordination_home).fold(request["card_id"])
         revision = str(card.meta.get("_claim_revision") or "") if card else ""
         if not card or card.owner != owner or not revision:
             raise BuilderDispatchError("claimed generation is not authoritative")
+        frozen = _frozen_claim_status(
+            paths,
+            coordination_home,
+            node,
+            request,
+            owner,
+            revision,
+            int(prior.get("attempt") or 0),
+        )
+        if frozen is not None:
+            return frozen
         startup_hello(coordination_home, owner, host=node)
         command = worker_command(request, owner, revision, workspace)
+        frozen = _frozen_claim_status(
+            paths,
+            coordination_home,
+            node,
+            request,
+            owner,
+            revision,
+            int(prior.get("attempt") or 0),
+        )
+        if frozen is not None:
+            return frozen
         run = launcher or (lambda argv, cwd: subprocess.Popen(argv, cwd=cwd))
         try:
             process = run(command, workspace)
