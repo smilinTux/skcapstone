@@ -310,9 +310,20 @@ STAMP=os.environ.get("SKFLEET_ROTATION_ID", "")
 if not re.fullmatch(r"[0-9a-f]{32}", STAMP):
     STAMP=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
+
+def _ensure_runtime_console_path(executable=sys.executable, environ=os.environ):
+    """Expose console scripts installed beside the running Python."""
+    runtime_bin = os.path.dirname(os.path.abspath(executable))
+    entries = [entry for entry in environ.get("PATH", "").split(os.pathsep) if entry]
+    if runtime_bin not in entries:
+        environ["PATH"] = os.pathsep.join([runtime_bin, *entries])
+    return os.path.join(runtime_bin, "skcapstone")
+
+
 # The timer driven production entrypoint always traverses the liveness decision
 # surface. Empty or incomplete evidence still publishes truthful zero metrics
 # and grants no assistance, reconciliation, or retirement authority.
+_ensure_runtime_console_path()
 run_production_cycle(agent=os.environ.get("SKAGENT", "skfleet-rotate"))
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
