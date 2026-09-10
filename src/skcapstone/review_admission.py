@@ -95,7 +95,10 @@ def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
     }
     reasons = governed_review_gate_reasons(core, labels)
     reviewer = agent.strip().lower()
-    if reviewer != "seraph" and not reviewer.startswith("pi-seraph-"):
+    elastic = re.fullmatch(
+        rf"pi-codex-review-[a-z0-9][a-z0-9-]*-{re.escape(card_id.lower())}", reviewer
+    )
+    if reviewer != "seraph" and not reviewer.startswith("pi-seraph-") and not elastic:
         reasons = ("wrong-reviewer", *reasons)
     if reasons:
         raise ValueError("governed review claim denied: " + ", ".join(dict.fromkeys(reasons)))

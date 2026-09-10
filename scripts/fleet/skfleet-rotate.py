@@ -31,6 +31,7 @@ from skcapstone.scheduler_decision import (
 from skcapstone.review_admission import (
     governed_review_gate_reasons,
 )
+from skcapstone.fleet.review_pool import elastic_reviewer_identity, review_fanout_limit
 from skcapstone.seat_boundaries import BoundaryError
 from skcapstone.niobe_fanout import (
     FanoutBoundaryError,
@@ -288,6 +289,7 @@ ONLY_SEAT=os.environ.get("SKFLEET_ONLY_SEAT","").strip().lower()
 SEAT_TARGET=_required_lane_target("SKFLEET_SEAT_TARGET", default="0")
 CODEX_PHYSICAL_LIMIT=_required_lane_target(
     "SKFLEET_CODEX_PHYSICAL_LIMIT", default=str(TARGET))
+REVIEW_MAXIMUM=_required_lane_target("SKFLEET_REVIEW_MAXIMUM", default="2")
 _SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
@@ -4049,6 +4051,11 @@ def _pool_v2_dispatchable(admission):
         and admission.get("reason") == "review"
         and admission.get("seraph_review_admitted") is True
     )
+    elastic_review = (
+        admission.get("claimable") is False
+        and admission.get("reason") == "review"
+        and admission.get("elastic_review_admitted") is True
+    )
     return bool(
         isinstance(admission.get("card_id"), str)
         and isinstance(admission.get("core"), dict)
@@ -4057,7 +4064,7 @@ def _pool_v2_dispatchable(admission):
         and isinstance(admission.get("labels"), list)
         and isinstance(admission.get("overlay"), dict)
         and re.fullmatch(r"[0-9a-f]{64}", str(admission.get("source_revision") or ""))
-        and (ordinary or seraph_review)
+        and (ordinary or seraph_review or elastic_review)
     )
 
 
@@ -4114,6 +4121,13 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         and governed_review
         and seat_for(cid, folded_core) == "seraph"
     )
+    elastic_review_admitted = bool(
+        not globals().get("_ONLY_SEAT", "")
+        and reason == "review"
+        and claimability.get("claimable") is False
+        and governed_review
+        and seat_for(cid, folded_core) == "seraph"
+    )
     return {
         "card_id": cid,
         "claimable": claimability.get("claimable"),
@@ -4124,6 +4138,7 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         "core": claimability.get("core"),
         "governed_review": governed_review,
         "seraph_review_admitted": seraph_review_admitted,
+        "elastic_review_admitted": elastic_review_admitted,
         "overlay": _pool_v2_overlay(cid, core, reason),
         "source_revision": claimability.get("source_revision"),
     }
@@ -4182,8 +4197,9 @@ def _pool_v2_owner_map(rows, host, pinned_ids):
     blocked = {}
     for row in rows:
         cid, core = row[2], row[3]
+        elastic = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
         owner, reason = _seat_owner(
-            cid, seat_for(cid, core), host if cid in pinned_ids else None
+            cid, None if elastic else seat_for(cid, core), host if cid in pinned_ids else None
         )
         owners[cid] = owner if owner is not None else "unassigned:%s" % reason
         if owner is None:
@@ -4255,6 +4271,9 @@ def _shadow_pool_v2():
             seraph_review_admitted = _POOL_V2_ADMISSIONS[cid].get(
                 "seraph_review_admitted"
             ) is True
+            elastic_review_admitted = _POOL_V2_ADMISSIONS[cid].get(
+                "elastic_review_admitted"
+            ) is True
             owner_health = None
             if reason.startswith("owned-"):
                 if cid in class_ids.get("dead_worker_claims", set()):
@@ -4299,7 +4318,7 @@ def _shadow_pool_v2():
                     ),
                     awaiting_review=(
                         awaiting_review(cid) or reason == "review"
-                    ) and not seraph_review_admitted,
+                    ) and not (seraph_review_admitted or elastic_review_admitted),
                     backoff=blocked_backoff(cid),
                     attempt_limit=unclaimable(cid),
                     host_pin_elsewhere=reason.startswith("host-pin:"),
@@ -4362,6 +4381,27 @@ pool, _PINNED_IDS = _pool_v2_authority_rows(
     unblocks, PRI, ENG, HOST
 )
 pool, _DUPLICATE_SERAPH_SOURCE_HEADS = _seraph_unique_source_heads(pool)
+_elastic_rows = [
+    row
+    for row in pool
+    if _POOL_V2_ADMISSIONS[row[2]].get("elastic_review_admitted")
+]
+_elastic_limit = review_fanout_limit(
+    len(_elastic_rows),
+    max(
+        0,
+        CODEX_PHYSICAL_LIMIT
+        - sum(len(lane["busy"]) for lane in LANES if lane["name"] == "codex"),
+    ),
+    REVIEW_MAXIMUM,
+)
+_elastic_ids = {row[2] for row in _elastic_rows[:_elastic_limit]}
+pool = [
+    row
+    for row in pool
+    if not _POOL_V2_ADMISSIONS[row[2]].get("elastic_review_admitted")
+    or row[2] in _elastic_ids
+]
 for _source_head in sorted(_DUPLICATE_SERAPH_SOURCE_HEADS):
     log(
         d,
@@ -4771,8 +4811,13 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,core)) for lane in LANES}
+    _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
+    _attempt_remaining = (
+        {name: slots if name == "codex" else 0 for name, slots in launch_remaining.items()}
+        if _elastic_review else launch_remaining
+    )
     _attempt_lane_name,_attempt_defer=select_compatible_lane(
-        _labels,_attempt_escalation,lane_order,launch_remaining,
+        _labels,_attempt_escalation,lane_order,_attempt_remaining,
         qwen_suitable(core),qwen_first_exclusive(cid,_labels),_attempt_health,
         QWEN_TARGET>0,GLM_TARGET>0)
     if _attempt_lane_name is None:
@@ -4909,11 +4954,12 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "append, rewrite, rename, or delete CardStore JSONL. Use CLI reads for normal "
       "verification; raw file inspection is emergency operator diagnostics only.\n\n"
       "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
-    _seat = seat_for(cid, core)
+    _seat = None if _elastic_review else seat_for(cid, core)
     # A seat-owned card runs under the seat's identity, not the lane's. The
     # Worker identity stays lane-based so slot accounting, liveness, and reaping
     # remain unchanged; only the agent identity moves.
-    name = _worker_owner(_LANE["name"], cid, _seat)
+    name = (elastic_reviewer_identity(HOST, cid) if _elastic_review
+            else _worker_owner(_LANE["name"], cid, _seat))
     if _seat:
         log(d, "SEAT|%s|%s|running under seat %s as %s" % (HOST, cid, _seat, name))
     if _seat == "tank":
