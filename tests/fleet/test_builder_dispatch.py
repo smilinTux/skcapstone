@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from contextlib import contextmanager
 import json
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -104,8 +104,9 @@ def test_consumer_claims_exact_generation_and_reports_running(
         paths,
         tmp_path,
         "node-ziowk01",
-        launcher=lambda command, cwd: calls.append((command, cwd))
-        or SimpleNamespace(pid=42, poll=lambda: None),
+        launcher=lambda command, cwd: (
+            calls.append((command, cwd)) or SimpleNamespace(pid=42, poll=lambda: None)
+        ),
         materializer=lambda _request, workspace: workspace,
     )
     assert result["request_id"] == request["request_id"]
@@ -251,7 +252,9 @@ def test_freeze_winning_atomic_exclusion_prevents_process_creation(
     _node(paths, operator, noded41)
     store.set_frozen(paths, False, writer=operator, reason="test setup")
     builder_dispatch.offer(
-        paths, _card(), ["sk-m", "source-only"],
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
         writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
     folded = SimpleNamespace(owner=None, meta={})
@@ -279,7 +282,9 @@ def test_freeze_winning_atomic_exclusion_prevents_process_creation(
     monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(builder_dispatch.store, "actuation_exclusion", freeze_wins)
     result = builder_dispatch.consume_one(
-        paths, tmp_path, "node-ziowk01",
+        paths,
+        tmp_path,
+        "node-ziowk01",
         launcher=lambda *_args: pytest.fail("frozen process created"),
         materializer=lambda _request, workspace: workspace,
     )
@@ -316,10 +321,17 @@ def test_live_old_worker_refreshes_and_cannot_be_reaped(
         materializer=lambda _request, workspace: workspace,
     )
     status["heartbeat_at"] = "2026-09-10T00:00:00Z"
-    builder_dispatch._write_status(paths, "node-ziowk01", request, "running", **{
-        key: value for key, value in status.items()
-        if key not in {"schema", "request_id", "card_id", "node", "state", "heartbeat_at"}
-    })
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "running",
+        **{
+            key: value
+            for key, value in status.items()
+            if key not in {"schema", "request_id", "card_id", "node", "state", "heartbeat_at"}
+        },
+    )
     assert not builder_dispatch.recover_stale(
         paths,
         tmp_path,
@@ -381,9 +393,12 @@ def test_dead_worker_recovery_releases_only_matching_generation(
             {"actor": "niobe", "expected_claim_revision": "claim-dead"},
         )
     ]
-    assert builder_dispatch._load(
-        builder_dispatch.status_path(paths, "node-ziowk01", "24b00003")
-    )["state"] == "stale"
+    assert (
+        builder_dispatch._load(builder_dispatch.status_path(paths, "node-ziowk01", "24b00003"))[
+            "state"
+        ]
+        == "stale"
+    )
 
 
 def test_terminal_request_does_not_starve_next_request(
