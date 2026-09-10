@@ -200,12 +200,14 @@ def run_once(paths: FleetPaths, node: str) -> dict:
         from .builder_dispatch import consume_one
 
         dispatch = consume_one(paths, paths.root.parent, node)
-    return {
+    result = {
         "heartbeat": heartbeat,
         "node": node_written,
         "join": join_written,
-        "dispatch": dispatch,
     }
+    if dispatch is not None:
+        result["dispatch"] = dispatch
+    return result
 
 
 def main_loop(

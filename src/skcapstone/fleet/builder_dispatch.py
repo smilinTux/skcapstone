@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -24,6 +25,8 @@ ROLE = "builder-standby"
 PROVIDER = "skgateway"
 LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
+MAX_ATTEMPTS = 2
+_PROCESSES: dict[str, object] = {}
 
 
 class BuilderDispatchError(ValueError):
@@ -126,6 +129,8 @@ def offer(
     """Place and publish one idempotent Niobe-owned builder dispatch."""
     if writer.role != "scheduler" or writer.node != "niobe":
         raise BuilderDispatchError("only the Niobe scheduler may offer builder work")
+    if not store.actuation_allowed(paths):
+        return None
     if not eligible(core, labels):
         return None
     card_id = core["id"].lower()
@@ -136,6 +141,15 @@ def offer(
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
         if existing and existing.get("base_revision") == revision:
+            prior = _load(status_path(paths, view.name, card_id)) or {}
+            if prior.get("request_id") == existing.get("request_id") and (
+                prior.get("state") in TERMINAL_STATES
+                and not (
+                    prior.get("state") == "failed"
+                    and int(prior.get("attempt") or 1) < MAX_ATTEMPTS
+                )
+            ):
+                return None
             return existing
     builders = [view for view in ready if not _node_busy(paths, view.name)]
     decision = scheduler.select(builders, scheduler.Workload("job", card_id))
@@ -176,12 +190,133 @@ def _write_status(paths: FleetPaths, node: str, request: dict, state: str, **ext
         "node": node,
         "state": state,
         "heartbeat_at": _iso(_now()),
+        "writer": {"role": "sknoded", "node": node, "identity": store.writer_identity()},
         **extra,
     }
     path = status_path(paths, node, request["card_id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return payload
+
+
+def _send_status(owner: str, request: dict, state: str) -> bool:
+    """Send one best-effort, attributable lifecycle notice to coordination."""
+    command = os.environ.get("SKMAIL_BIN") or shutil.which("skmail")
+    if command is None:
+        return False
+    try:
+        result = subprocess.run(
+            [
+                command,
+                "send",
+                owner,
+                "jarvis",
+                "normal" if state == "completed" else "urgent",
+                f"BUILDER-DISPATCH-{request['card_id']}-{state.upper()}",
+                f"card={request['card_id']} request_id={request['request_id']} state={state}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _proc_start_ticks(pid: int) -> str | None:
+    """Return the Linux process birth token used to fence PID reuse."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(") ", 1)[1].split()[19]
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _process_state(status: dict) -> tuple[bool | None, int | None]:
+    """Return exact-generation liveness, or unknown when death is unproven."""
+    request_id = str(status.get("request_id") or "")
+    process = _PROCESSES.get(request_id)
+    if process is not None:
+        code = process.poll()
+        if code is None:
+            return True, None
+        _PROCESSES.pop(request_id, None)
+        return False, int(code)
+    try:
+        pid = int(status["pid"])
+        expected = str(status["pid_start_ticks"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    if not expected:
+        return None, None
+    current = _proc_start_ticks(pid)
+    return (current == expected, None) if current is not None else (False, None)
+
+
+def _release_exact(
+    coordination_home: Path, card_id: str, owner: str, revision: str, *, actor: str
+) -> bool:
+    """Release only the generation still authoritative in CardStore."""
+    card = CardStore(coordination_home).fold(card_id)
+    if not card or card.owner != owner or card.meta.get("_claim_revision") != revision:
+        return False
+    return Board(coordination_home).release_claim(
+        owner, card_id, actor=actor, expected_claim_revision=revision
+    )
+
+
+def _reconcile_running(
+    paths: FleetPaths, coordination_home: Path, node: str, request: dict, status: dict
+) -> dict:
+    """Refresh one live generation or close it after exact process death."""
+    alive, exit_code = _process_state(status)
+    owner = str(status.get("owner") or "")
+    revision = str(status.get("claim_revision") or "")
+    common = {
+        "owner": owner,
+        "claim_revision": revision,
+        "pid": status.get("pid"),
+        "pid_start_ticks": status.get("pid_start_ticks"),
+        "attempt": int(status.get("attempt") or 1),
+    }
+    if alive is not False:
+        return _write_status(
+            paths,
+            node,
+            request,
+            "running",
+            **common,
+            liveness="live" if alive else "unknown",
+        )
+    card = CardStore(coordination_home).fold(request["card_id"])
+    if card and getattr(card.status, "value", card.status) == "done":
+        state = "completed"
+        released = False
+        completion = {
+            "verdict": card.links.get("verdict"),
+            "evidence": card.links.get("evidence"),
+            "evidence_sha256": card.links.get("evidence_sha256")
+            or card.links.get("candidate_evidence_sha256"),
+        }
+    else:
+        released = _release_exact(
+            coordination_home, request["card_id"], owner, revision, actor=owner
+        )
+        state = "failed" if released else "blocked"
+        completion = None
+    mail_sent = _send_status(owner, request, state)
+    return _write_status(
+        paths,
+        node,
+        request,
+        state,
+        **common,
+        exit_code=exit_code,
+        claim_released=released,
+        mail_sent=mail_sent,
+        completion=completion,
+    )
 
 
 def worker_command(request: dict, owner: str, claim_revision: str, workspace: Path) -> list[str]:
@@ -267,6 +402,8 @@ def consume_one(
     spec = store.read_spec(paths, "node", node) or {}
     if spec.get("spec", {}).get("role") != ROLE or spec.get("spec", {}).get("actuate") is not True:
         return None
+    if not store.actuation_allowed(paths):
+        return None
     directory = paths.root / "dispatch" / node
     for path in sorted(directory.glob("*.json")) if directory.exists() else ():
         request = _load(path) or {}
@@ -274,9 +411,13 @@ def consume_one(
             continue
         prior = _load(status_path(paths, node, request["card_id"])) or {}
         if prior.get("request_id") == request.get("request_id"):
-            return None
+            if prior.get("state") == "running":
+                return _reconcile_running(paths, coordination_home, node, request, prior)
+            if prior.get("state") != "failed" or int(prior.get("attempt") or 1) >= MAX_ATTEMPTS:
+                continue
+        attempt = int(prior.get("attempt") or 0) + 1
         owner = f"pi-builder-standby-{node}-{request['card_id']}"
-        workspace = Path.home() / ".skcapstone/fleet/workspaces" / owner
+        workspace = paths.root / "workspaces" / owner
         materializer(request, workspace)
         Board(coordination_home).claim_task(owner, request["card_id"])
         card = CardStore(coordination_home).fold(request["card_id"])
@@ -289,8 +430,25 @@ def consume_one(
         try:
             process = run(command, workspace)
         except Exception:
-            _write_status(paths, node, request, "failed", owner=owner, claim_revision=revision)
+            released = _release_exact(
+                coordination_home, request["card_id"], owner, revision, actor=owner
+            )
+            state = "failed" if released else "blocked"
+            _write_status(
+                paths,
+                node,
+                request,
+                state,
+                owner=owner,
+                claim_revision=revision,
+                attempt=attempt,
+                claim_released=released,
+                mail_sent=_send_status(owner, request, state),
+            )
             raise
+        pid = getattr(process, "pid", None)
+        if pid is not None:
+            _PROCESSES[request["request_id"]] = process
         return _write_status(
             paths,
             node,
@@ -298,7 +456,9 @@ def consume_one(
             "running",
             owner=owner,
             claim_revision=revision,
-            pid=getattr(process, "pid", None),
+            pid=pid,
+            pid_start_ticks=_proc_start_ticks(pid) if pid is not None else None,
+            attempt=attempt,
         )
     return None
 
@@ -328,11 +488,11 @@ def recover_stale(
         return False
     owner = str(status.get("owner") or "")
     revision = str(status.get("claim_revision") or "")
-    card = CardStore(coordination_home).fold(card_id)
-    if not card or card.owner != owner or card.meta.get("_claim_revision") != revision:
+    alive, _ = _process_state(status)
+    if alive is not False:
         return False
-    released = Board(coordination_home).release_claim(
-        owner, card_id, actor="niobe", expected_claim_revision=revision
+    released = _release_exact(
+        coordination_home, card_id, owner, revision, actor="niobe"
     )
     if released:
         _write_status(paths, node, request, "stale", owner=owner, claim_revision=revision)
