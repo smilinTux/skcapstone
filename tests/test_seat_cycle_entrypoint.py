@@ -926,6 +926,7 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
     def run(command, **kwargs):
         if command[0] == "systemctl":
             return SimpleNamespace(returncode=0)
+        captured["command"] = command
         captured.update(kwargs["env"])
         return SimpleNamespace(
             returncode=0,
@@ -942,6 +943,9 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
     result = role_dispatch_operation(tmp_path, seat)
 
     assert result["reason"] == f"{seat}_dispatch_complete"
+    assert captured["command"][0] == str(
+        Path(seat_entrypoint.sys.executable).parent / "skfleet-rotate.py"
+    )
     assert captured["SKFLEET_ONLY_SEAT"] == seat
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
@@ -972,3 +976,14 @@ def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, 
 def test_role_dispatch_rejects_invalid_batch(tmp_path, monkeypatch, seat, batch) -> None:
     monkeypatch.setenv(f"SKFLEET_{seat.upper()}_BATCH_SIZE", batch)
     assert role_dispatch_operation(tmp_path, seat)["reason"] == f"{seat}_batch_size_invalid"
+
+
+@pytest.mark.parametrize("seat", ["tank", "atlas"])
+def test_role_dispatch_rejects_missing_wheel_owned_dispatcher(tmp_path, monkeypatch, seat) -> None:
+    bindir = tmp_path / "venv" / "bin"
+    bindir.mkdir(parents=True)
+    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(bindir / "python3"))
+
+    result = role_dispatch_operation(tmp_path, seat)
+
+    assert result["reason"] == f"{seat}_dispatcher_missing"
