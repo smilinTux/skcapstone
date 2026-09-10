@@ -1,5 +1,10 @@
 # Changelog
 
+- `coord bootstrap` now creates `evidence/decisions/` explicitly, not only its
+  `evidence/` parent. The decision log is where a discharged human gate is
+  recorded, and leaving it absent meant the first writer had to `mkdir` it by
+  hand, which is the manual step this command exists to remove.
+
 - Card `35a61efb`: changed Seraph's hard-coded single review launch into a
   configurable batch bounded from one through eight, validated every exact
   recommendation, claim revision, launch receipt, active worker, source head,

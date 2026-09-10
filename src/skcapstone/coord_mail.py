@@ -170,7 +170,11 @@ def bootstrap(home: Path, agent: str | None = None) -> dict:
         if not p.exists():
             p.mkdir(parents=True, exist_ok=True)
             created.append(str(p.relative_to(home)))
-    for top in ("cards", "evidence"):
+    # "evidence/decisions" is created explicitly, not just its parent: the
+    # decision log is the durable record a human gate is discharged into,
+    # and a bootstrap that leaves it absent means the first writer has to
+    # mkdir it by hand, which is exactly the manual step this removes.
+    for top in ("cards", "evidence", "evidence/decisions"):
         p = home / top
         if not p.exists():
             p.mkdir(parents=True, exist_ok=True)

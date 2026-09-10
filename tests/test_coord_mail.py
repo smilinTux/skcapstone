@@ -103,6 +103,7 @@ def test_bootstrap_creates_skeleton_and_is_idempotent(tmp_path):
         assert (tmp_path / "coordination" / sub).is_dir()
     assert (tmp_path / "cards").is_dir()
     assert (tmp_path / "evidence").is_dir()
+    assert (tmp_path / "evidence" / "decisions").is_dir()
     assert first["created"], "first run must create something"
 
     second = bootstrap(tmp_path, agent="lumina")
