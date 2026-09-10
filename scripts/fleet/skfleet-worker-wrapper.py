@@ -196,6 +196,13 @@ def monitor_review_supersession(
             os.killpg(child.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+        for _ in range(20):
+            if child.poll() is not None or stop.wait(0.25):
+                return
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         return
 
 
@@ -240,20 +247,37 @@ def record_review_supersession(args: argparse.Namespace, stderr: bytes) -> Path 
     return path
 
 
-def release_superseded_review_claim(args: argparse.Namespace) -> None:
-    """CAS-release only the obsolete review generation after evidence publication."""
-    if not hasattr(args, "review_supersession"):
-        return
+def release_superseded_review_claim(args: argparse.Namespace) -> bool:
+    """CAS-release this exact terminal generation through the locked Board."""
     from skcoord.coordination import Board
 
-    released = Board(Path.home() / ".skcapstone").release_claim(
-        args.owner,
-        args.card,
-        actor=args.owner,
-        expected_claim_revision=args.claim_revision,
-    )
+    home = Path.home() / ".skcapstone"
+    try:
+        released = Board(home).release_claim(
+            args.owner,
+            args.card,
+            actor=args.owner,
+            expected_claim_revision=args.claim_revision,
+        )
+    except (RuntimeError, ValueError):
+        released = False
     if not released:
-        raise RuntimeError("superseded review exact claim was not released")
+        store = CardStore(home)
+        card = store.fold(args.card)
+        released = bool(
+            card is not None
+            and card.owner is None
+            and not card.meta.get("_claim_revision")
+            and any(
+                event.get("action") == "release_claim"
+                and event.get("released_owner") == args.owner
+                and event.get("expected_claim_revision") == args.claim_revision
+                for event in store._read_events(args.card)
+            )
+        )
+    if not released:
+        raise RuntimeError("terminal worker exact claim was not released")
+    return True
 
 
 def write_startup_report(
@@ -399,33 +423,11 @@ def emit_work_mail(args: argparse.Namespace, kind: str, body: str) -> None:
         return
 
 
-def idle_owner_projection(owner: str) -> None:
-    """Clear the ephemeral worker agent file so monitors stop listing ghosts.
-
-    release-claim frees the card, but the agent projection can stay
-    state=active with current_task set. skfleet-working then shows
-    STALE PROJECTION after the unit is gone. Fail soft: never block exit.
-    """
-    path = Path.home() / ".skcapstone" / "coordination" / "agents" / f"{owner}.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    if not isinstance(data, dict) or data.get("agent") != owner:
-        return
-    data["state"] = "idle"
-    data["current_task"] = None
-    data["claimed_tasks"] = []
-    data["last_seen"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    try:
-        temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(path)
-    except OSError:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
+def idle_owner_projection(
+    owner: str, card_id: str | None = None, claim_revision: str | None = None
+) -> None:
+    """Leave projection mutation to locked Board writes and reconciliation."""
+    del owner, card_id, claim_revision
 
 
 def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> None:
@@ -570,6 +572,28 @@ def publish_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen 
     )
 
 
+def finalize_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen | None) -> bool:
+    """Release one exact Board generation before retiring snapshot capacity."""
+    if not hasattr(args, "review_supersession") and args.live_snapshot is None:
+        return True
+    released = release_superseded_review_claim(args)
+    try:
+        publish_terminal_capacity(args, child)
+    except (OSError, ValueError) as exc:
+        sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
+    return released
+
+
+def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | None) -> None:
+    """Release exact custody before removing the worker projection."""
+    terminalized = not hasattr(args, "review_supersession")
+    try:
+        terminalized = finalize_terminal_capacity(args, child)
+    finally:
+        if terminalized:
+            idle_owner_projection(args.owner, args.card, args.claim_revision)
+
+
 def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
@@ -584,7 +608,6 @@ def main() -> int:
     args.stdout.parent.mkdir(parents=True, exist_ok=True)
 
     def _stop(signum: int, _frame: object) -> None:
-        idle_owner_projection(args.owner)
         raise SystemExit(128 + signum)
 
     signal.signal(signal.SIGTERM, _stop)
@@ -644,15 +667,8 @@ def main() -> int:
             startup_thread.join(timeout=6)
         if supersession_thread:
             supersession_thread.join(timeout=1)
-        # Always idle the worker projection on any exit path, including SIGTERM.
-        idle_owner_projection(args.owner)
-        # Publish terminal capacity before the claim can be released. The
-        # fenced, atomic update removes only this card and preserves siblings.
-        try:
-            publish_terminal_capacity(args, child)
-        except OSError as exc:
-            sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
-        release_superseded_review_claim(args)
+        # A failed release must remain visible for fenced reconciliation.
+        finalize_worker_exit(args, child)
 
 
 if __name__ == "__main__":
