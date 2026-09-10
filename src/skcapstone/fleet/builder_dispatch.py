@@ -490,13 +490,27 @@ def consume_one(
         if frozen is not None:
             return frozen
         run = launcher or (lambda argv, cwd: subprocess.Popen(argv, cwd=cwd))
+        exclusion_acquired = False
         try:
-            process = run(command, workspace)
+            with store.actuation_exclusion(paths):
+                exclusion_acquired = True
+                frozen = _frozen_claim_status(
+                    paths,
+                    coordination_home,
+                    node,
+                    request,
+                    owner,
+                    revision,
+                    int(prior.get("attempt") or 0),
+                )
+                if frozen is not None:
+                    return frozen
+                process = run(command, workspace)
         except Exception:
             released = _release_exact(
                 coordination_home, request["card_id"], owner, revision, actor=owner
             )
-            state = "failed" if released else "blocked"
+            state = "failed" if released and exclusion_acquired else "blocked"
             _write_status(
                 paths,
                 node,
@@ -504,7 +518,7 @@ def consume_one(
                 state,
                 owner=owner,
                 claim_revision=revision,
-                attempt=attempt,
+                attempt=attempt if exclusion_acquired else int(prior.get("attempt") or 0),
                 claim_released=released,
                 mail_sent=_send_status(owner, request, state),
             )

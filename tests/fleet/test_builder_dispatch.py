@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import contextmanager
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -142,6 +144,7 @@ def test_freeze_during_materialization_prevents_claim_and_remains_retryable(
         ["sk-m", "source-only"],
         writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
+    store.set_frozen(paths, False, writer=operator, reason="test setup")
     folded = SimpleNamespace(owner=None, meta={})
     claims = []
 
@@ -240,6 +243,49 @@ def test_freeze_after_claim_releases_generation_and_prevents_launch(
     assert resumed["state"] == "running"
     assert resumed["attempt"] == 1
     assert len(claims) == 2
+
+
+def test_freeze_winning_atomic_exclusion_prevents_process_creation(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    store.set_frozen(paths, False, writer=operator, reason="test setup")
+    builder_dispatch.offer(
+        paths, _card(), ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = SimpleNamespace(owner=None, meta={})
+    releases = []
+
+    def claim(_self, owner, _card_id):
+        folded.owner = owner
+        folded.meta = {"_claim_revision": "atomic-claim"}
+
+    def release(_self, owner, _card_id, **kwargs):
+        releases.append((owner, kwargs["expected_claim_revision"]))
+        folded.owner = None
+        return True
+
+    @contextmanager
+    def freeze_wins(_paths):
+        payload = json.loads(paths.freeze_path().read_text(encoding="utf-8"))
+        payload["frozen"] = True
+        store._dump(paths.freeze_path(), payload)
+        yield
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(builder_dispatch.store, "actuation_exclusion", freeze_wins)
+    result = builder_dispatch.consume_one(
+        paths, tmp_path, "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("frozen process created"),
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert result["state"] == "frozen"
+    assert result["attempt"] == 0
+    assert releases == [(result["owner"], "atomic-claim")]
 
 
 def test_live_old_worker_refreshes_and_cannot_be_reaped(
