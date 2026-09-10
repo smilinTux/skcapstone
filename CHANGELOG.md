@@ -14,6 +14,18 @@
 - Card `2ebebda8`: admit governed reviews to bounded elastic Codex fanout while
   preserving exact source, producer, reviewer identity, claim generation,
   capacity, verdict, and retry-safe release fencing.
+### Fixed
+
+- `scripts/telegram-catchup-all.sh` no longer loses most of its config. The
+  per-group import ran inside a `while read ... done < "$CONFIG"` loop and
+  inherited `telegram.yaml` as its stdin, so an unauthorized Telethon session
+  prompting for a phone number consumed the rest of the config and the loop
+  exited early. Every daily run reported "Success: 0 Failed: 2 Skipped: 0":
+  22 groups configured, 2 attempted, 19 silently dropped and never named in
+  any log, including `project-dr-chiro-ai`. Redirecting stdin from
+  `/dev/null` makes a prompting CLI fail fast on its own group and lets the
+  loop walk the whole config. Verified: 21 attempted, 1 skipped (disabled).
+
 
 - Card `b7f31a22`: prevent a dispatched fleet worker from re-claiming its
   already-owned card and invalidating the launch receipt's claim revision.
