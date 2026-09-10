@@ -193,7 +193,19 @@ def run_once(paths: FleetPaths, node: str) -> dict:
     if unadmitted and store.read_node_file(paths, node, "join.json") is None:
         join = build_join_request(paths, node, report["status"]["capacity"], now_iso)
         join_written = store.write_node_file(paths, writer, "join.json", join, if_changed=False)
-    return {"heartbeat": heartbeat, "node": node_written, "join": join_written}
+    dispatch = None
+    if (spec := store.read_spec(paths, "node", node)) and (
+        spec.get("spec", {}).get("role") == "builder-standby"
+    ):
+        from .builder_dispatch import consume_one
+
+        dispatch = consume_one(paths, paths.root.parent, node)
+    return {
+        "heartbeat": heartbeat,
+        "node": node_written,
+        "join": join_written,
+        "dispatch": dispatch,
+    }
 
 
 def main_loop(
