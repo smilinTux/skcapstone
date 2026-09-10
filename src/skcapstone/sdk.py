@@ -233,6 +233,9 @@ def coord_create(
     created_by: str = "",
     acceptance_criteria: Optional[list[str]] = None,
     dependencies: Optional[list[str]] = None,
+    repository: Optional[str] = None,
+    base_ref: Optional[str] = None,
+    base_revision: Optional[str] = None,
     casey_authorization: Optional[Path] = None,
     casey_change_id: Optional[str] = None,
 ) -> str:
@@ -257,15 +260,19 @@ def coord_create(
     except ValueError:
         prio = TaskPriority.MEDIUM
 
+    from .source_binding import source_binding_meta
+
     board = Board(_shared_home())
+    task_tags = tags or []
     task = Task(
         title=title,
         description=description,
         priority=prio,
-        tags=tags or [],
+        tags=task_tags,
         created_by=created_by or _agent_name(),
         acceptance_criteria=acceptance_criteria or [],
         dependencies=dependencies or [],
+        meta=source_binding_meta(task_tags, repository, base_ref, base_revision),
     )
     from .jarvis_emergency import authorize_jarvis_entrypoint
     from .seat_boundaries import Action

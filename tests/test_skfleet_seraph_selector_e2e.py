@@ -67,6 +67,7 @@ def _canonical_review(
     *,
     source_card: str = "9c71f24a",
     head_revision: str = "a" * 40,
+    base_revision: str = "b" * 40,
     pr: int = 548,
 ) -> tuple[CardStore, str]:
     card_home = home / ".skcapstone"
@@ -98,7 +99,7 @@ def _canonical_review(
             "base_ref": "main",
             "pr": pr,
             "head_revision": head_revision,
-            "base_revision": "b" * 40,
+            "base_revision": base_revision,
             "source_card": source_card,
             "card_generation": card_generation(store.fold(source_card)),
             "source_owner": "mero",
@@ -164,11 +165,12 @@ def test_real_selector_runs_distinct_heads_concurrently_and_blocks_duplicates(
     ).stdout.strip()
     home = tmp_path / "home"
     home.mkdir()
-    store, first_card_id = _canonical_review(home)
+    store, first_card_id = _canonical_review(home, base_revision=expected_revision)
     store, second_card_id = _canonical_review(
         home,
         source_card="9c71f24b",
         head_revision="e" * 40,
+        base_revision=expected_revision,
         pr=549,
     )
     card_ids = (first_card_id, second_card_id)
@@ -428,7 +430,7 @@ cycle("replay", "seraph")
     }
     assert observed == {
         "origin": repository,
-        "branch": "main",
+        "branch": "",
         "status": "",
         "revision": expected_revision,
     }

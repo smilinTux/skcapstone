@@ -56,7 +56,12 @@ def test_preclaim_source_ref_accepts_only_remote_exact_ref() -> None:
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, "abc123\trefs/heads/main\n", "")
 
-    preflight("https://github.com/smilinTux/sklegal", "refs/heads/main", present)
+    preflight(
+        "https://github.com/smilinTux/sklegal",
+        "refs/heads/main",
+        "a" * 40,
+        runner=present,
+    )
     assert calls == [
         [
             "git",
@@ -106,6 +111,86 @@ def test_source_card_rejects_unsafe_repository_links(repository: str) -> None:
         )
 
 
+def test_legacy_sha_base_ref_normalizes_to_default_ref_and_exact_revision() -> None:
+    spec = _helpers()["_source_workspace_spec"]
+    revision = "a" * 40
+
+    assert spec(
+        {
+            "links": {
+                "repository": "https://github.com/smilinTux/sklegal",
+                "base_ref": revision,
+            },
+            "meta": {"base_ref": "main", "base_revision": revision},
+        },
+        ["source-only"],
+    ) == ("https://github.com/smilinTux/sklegal", "main", revision)
+
+
+def test_legacy_sha_base_ref_rejects_conflicting_exact_revision() -> None:
+    spec = _helpers()["_source_workspace_spec"]
+    with pytest.raises(ValueError, match="conflicts"):
+        spec(
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "a" * 40,
+                },
+                "meta": {"base_revision": "b" * 40},
+            },
+            ["source-only"],
+        )
+
+
+def test_exact_revision_is_checked_out_after_named_ref_clone(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    revision = "c" * 40
+    calls: list[list[str]] = []
+
+    def clone(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[1] == "clone":
+            checkout = Path(command[-1])
+            checkout.mkdir()
+            (checkout / ".git").mkdir()
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[-2:] == ["--get", "remote.origin.url"]:
+            output = "https://github.com/smilinTux/sklegal\n"
+        elif "status" in command or "fetch" in command or "checkout" in command:
+            output = ""
+        elif "rev-parse" in command:
+            output = revision + "\n"
+        else:
+            output = "f" * 40 + "\n"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    assert materialize(
+        str(target),
+        {
+            "meta": {
+                "repository": "https://github.com/smilinTux/sklegal",
+                "base_ref": "main",
+                "base_revision": revision,
+            }
+        },
+        ["source-only"],
+        runner=clone,
+    ) == str(target)
+    checkout_call = [
+        "git",
+        "-C",
+        str(target.with_name(".worker.materializing-" + str(os.getpid()))),
+        "checkout",
+        "--quiet",
+        "--detach",
+        revision,
+    ]
+    assert checkout_call in calls
+    fetch_at = next(index for index, command in enumerate(calls) if "fetch" in command)
+    assert fetch_at < calls.index(checkout_call)
+
+
 def test_non_source_card_keeps_empty_working_directory(tmp_path: Path) -> None:
     materialize = _helpers()["_materialize_worker_workspace"]
     target = tmp_path / "worker"
@@ -132,10 +217,8 @@ def test_source_checkout_is_cloned_atomically(tmp_path: Path) -> None:
             )
         if "status" in command:
             return subprocess.CompletedProcess(command, 0, "", "")
-        if command[-2:] == ["rev-parse", "HEAD"]:
-            return subprocess.CompletedProcess(command, 0, "abc123\n", "")
-        if command[-2:] == ["rev-parse", "FETCH_HEAD"]:
-            return subprocess.CompletedProcess(command, 0, "abc123\n", "")
+        if "rev-parse" in command:
+            return subprocess.CompletedProcess(command, 0, "a" * 40 + "\n", "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
     result = materialize(
@@ -144,6 +227,7 @@ def test_source_checkout_is_cloned_atomically(tmp_path: Path) -> None:
             "links": {
                 "repository": "https://github.com/smilinTux/sklegal",
                 "base_ref": "main",
+                "base_revision": "a" * 40,
             }
         },
         ["source-only"],
@@ -151,9 +235,10 @@ def test_source_checkout_is_cloned_atomically(tmp_path: Path) -> None:
     )
     assert result == str(target)
     assert (target / ".git").is_dir()
-    assert calls[0][1:7] == [
+    assert calls[0][1:8] == [
         "clone",
         "--quiet",
+        "--no-checkout",
         "--single-branch",
         "--branch",
         "main",
@@ -178,6 +263,7 @@ def test_failed_clone_leaves_no_partial_workspace(tmp_path: Path) -> None:
                 "links": {
                     "repository": "https://github.com/smilinTux/sklegal",
                     "base_ref": "main",
+                    "base_revision": "a" * 40,
                 }
             },
             ["source-only"],
@@ -194,6 +280,7 @@ def test_interrupted_clone_cleans_up_and_can_retry(tmp_path: Path) -> None:
         "links": {
             "repository": "https://github.com/smilinTux/sklegal",
             "base_ref": "main",
+            "base_revision": "a" * 40,
         }
     }
 
@@ -245,6 +332,7 @@ def test_existing_dirty_workspace_is_preserved_and_rejected(tmp_path: Path) -> N
                 "links": {
                     "repository": "https://github.com/smilinTux/sklegal",
                     "base_ref": "main",
+                    "base_revision": "a" * 40,
                 }
             },
             ["source-only"],
@@ -273,6 +361,7 @@ def test_existing_clean_source_workspace_is_reused(tmp_path: Path) -> None:
             "links": {
                 "repository": "https://github.com/smilinTux/sklegal",
                 "base_ref": "main",
+                "base_revision": "a" * 40,
             }
         },
         ["source-only"],
@@ -305,6 +394,7 @@ def test_configured_source_workspace_is_still_verified(
                 "links": {
                     "repository": "https://github.com/smilinTux/sklegal",
                     "base_ref": "main",
+                    "base_revision": "a" * 40,
                 }
             },
             ["source-only"],
@@ -315,10 +405,7 @@ def test_configured_source_workspace_is_still_verified(
 def test_materialization_precedes_claim_in_scheduler_source() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     preflight_at = source.index("_preclaim_source_ref(*_source_spec)")
-    materialize_at = source.index("workspace=_materialize_worker_workspace(")
-    claim_at = source.index(
-        'claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name]',
-        materialize_at,
-    )
+    materialize_at = source.index("_materialize_worker_workspace(", preflight_at)
+    claim_at = source.index("claim=subprocess.run(", materialize_at)
     assert preflight_at < materialize_at < claim_at
     assert "os.makedirs(workspace,exist_ok=True)" not in source

@@ -90,6 +90,15 @@ TOOLS: list[Tool] = [
                 },
                 "tags": {"description": "Task tags", "items": {"type": "string"}, "type": "array"},
                 "title": {"description": "Task title", "type": "string"},
+                "repository": {
+                    "description": "Credential-free HTTPS source repository",
+                    "type": "string",
+                },
+                "base_ref": {"description": "Named source branch or tag", "type": "string"},
+                "base_revision": {
+                    "description": "Exact 40-hex source commit SHA",
+                    "type": "string",
+                },
                 "casey_authorization": {"type": "string"},
                 "casey_change_id": {"type": "string"},
             },
@@ -314,13 +323,23 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
     if not title:
         return _error_response("title is required")
 
+    from ..source_binding import source_binding_meta
+
     board = Board(_home())
+    tags = args.get("tags", [])
+    try:
+        binding_meta = source_binding_meta(
+            tags, args.get("repository"), args.get("base_ref"), args.get("base_revision")
+        )
+    except ValueError as exc:
+        return _error_response(str(exc))
     task = Task(
         title=title,
         description=args.get("description", ""),
         priority=TaskPriority(args.get("priority", "medium")),
-        tags=args.get("tags", []),
+        tags=tags,
         created_by=args.get("created_by", "mcp"),
+        meta=binding_meta,
     )
     from pathlib import Path
 

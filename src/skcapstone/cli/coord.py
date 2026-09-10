@@ -363,6 +363,9 @@ def register_coord_commands(main: click.Group) -> None:
     )
     @click.option("--source-card", default=None, help="Governed review source card ID.")
     @click.option("--head-revision", default=None, help="Governed review source head SHA.")
+    @click.option("--repository", default=None, help="Credential-free HTTPS source repository.")
+    @click.option("--base-ref", default=None, help="Named source branch or tag, such as main.")
+    @click.option("--base-revision", default=None, help="Exact 40-hex source commit SHA.")
     @click.option(
         "--claim-for-me",
         is_flag=True,
@@ -384,6 +387,9 @@ def register_coord_commands(main: click.Group) -> None:
         candidate_evidence_sha256,
         source_card,
         head_revision,
+        repository,
+        base_ref,
+        base_revision,
         claim_for_me,
     ):
         """Create a new task on the board."""
@@ -412,6 +418,13 @@ def register_coord_commands(main: click.Group) -> None:
                     "incomplete governed review card; missing: " + ", ".join(missing)
                 )
 
+        from ..source_binding import source_binding_meta
+
+        try:
+            binding_meta = source_binding_meta(list(tag), repository, base_ref, base_revision)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+
         meta = {}
         if governed_review:
             meta = {
@@ -420,6 +433,7 @@ def register_coord_commands(main: click.Group) -> None:
                 "link_source_card": str(source_card).strip(),
                 "link_head_revision": str(head_revision).lower(),
             }
+        meta.update(binding_meta)
 
         validate_agent_name(by)
         if task_id:

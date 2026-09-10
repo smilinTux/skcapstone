@@ -394,8 +394,29 @@ def _source_workspace_spec(core, labels):
     if "source-only" not in normalized:
         return None
     links = core.get("links") if isinstance(core.get("links"), dict) else {}
-    repository = str(links.get("repository") or "").strip()
-    base_ref = str(links.get("base_ref") or "").strip()
+    meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
+    link_repository = str(links.get("repository") or "").strip()
+    meta_repository = str(meta.get("repository") or "").strip()
+    if link_repository and meta_repository and link_repository != meta_repository:
+        raise ValueError("source binding conflict: repository")
+    repository = link_repository or meta_repository
+    link_ref = str(links.get("base_ref") or "").strip()
+    meta_ref = str(meta.get("base_ref") or meta.get("named_base_ref") or "").strip()
+    link_revision = str(links.get("base_revision") or "").strip().lower()
+    meta_revision = str(meta.get("base_revision") or "").strip().lower()
+    if link_revision and meta_revision and link_revision != meta_revision:
+        raise ValueError("source binding conflict: base_revision")
+    base_revision = link_revision or meta_revision
+    legacy_revision = link_ref.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", link_ref) else ""
+    if legacy_revision:
+        if base_revision and base_revision != legacy_revision:
+            raise ValueError("legacy SHA base_ref conflicts with base_revision")
+        base_revision = legacy_revision
+        base_ref = meta_ref if meta_ref and meta_ref.lower() != legacy_revision else ""
+    else:
+        if link_ref and meta_ref and link_ref != meta_ref:
+            raise ValueError("source binding conflict: base_ref")
+        base_ref = link_ref or meta_ref
     parsed = urlsplit(repository)
     if (
         parsed.scheme != "https"
@@ -408,42 +429,79 @@ def _source_workspace_spec(core, labels):
         raise ValueError(
             "source card requires a credential-free https repository link"
         )
+    if not base_ref and legacy_revision:
+        raise ValueError("legacy SHA base_ref requires an available named base_ref")
     if not re.fullmatch(r"[A-Za-z0-9._/-]+", base_ref) or base_ref.startswith("-"):
         raise ValueError("source card requires a bounded base_ref link")
-    return repository, base_ref
+    if not re.fullmatch(r"[0-9a-f]{40}", base_revision):
+        raise ValueError("source card requires an exact 40-hex base_revision")
+    return repository, base_ref, base_revision
 
 
-def _verify_source_workspace(path, repository, base_ref, runner=subprocess.run):
-    """Verify source identity, cleanliness, and the fetched base revision."""
-    commands = (
-        (["git", "-C", str(path), "config", "--get", "remote.origin.url"], "origin"),
-        (["git", "-C", str(path), "status", "--porcelain=v1"], "clean"),
-        (["git", "-C", str(path), "fetch", "--quiet", "origin", base_ref], "fetch"),
-        (["git", "-C", str(path), "rev-parse", "HEAD"], "head"),
-        (["git", "-C", str(path), "rev-parse", "FETCH_HEAD"], "base"),
-    )
-    values = {}
-    for command, name in commands:
-        result = runner(command, capture_output=True, text=True)
+def _verify_source_workspace(path, repository, base_ref, base_revision,
+                             checkout=False, runner=subprocess.run):
+    """Fetch a named ref and verify one clean checkout at its exact revision."""
+    def run(command, name):
+        kwargs = {"capture_output": True, "text": True}
+        if "fetch" in command:
+            kwargs["env"] = dict(
+                os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/bin/false"
+            )
+        result = runner(command, **kwargs)
         if result.returncode != 0:
             raise ValueError(f"workspace {name} verification failed")
-        values[name] = result.stdout.strip()
+        return result.stdout.strip()
+
+    origin = run(
+        ["git", "-C", str(path), "config", "--get", "remote.origin.url"], "origin"
+    )
     expected = repository.rstrip("/").removesuffix(".git")
-    observed = values["origin"].rstrip("/").removesuffix(".git")
+    observed = origin.rstrip("/").removesuffix(".git")
     if observed != expected:
         raise ValueError("workspace repository does not match card binding")
-    if values["clean"]:
+    if not checkout and run(
+        ["git", "-C", str(path), "status", "--porcelain=v1"], "clean"
+    ):
         raise ValueError("workspace contains uncommitted custody state")
-    if not values["head"] or values["head"] != values["base"]:
-        raise ValueError("workspace HEAD does not match fetched base_ref")
+    run(
+        ["git", "-C", str(path), "fetch", "--quiet", "origin", base_ref],
+        "fetch",
+    )
+    run(
+        ["git", "-C", str(path), "merge-base", "--is-ancestor",
+         base_revision, "FETCH_HEAD"],
+        "base_revision reachability",
+    )
+    if checkout:
+        run(
+            ["git", "-C", str(path), "checkout", "--quiet", "--detach", base_revision],
+            "exact base_revision checkout",
+        )
+        if run(["git", "-C", str(path), "status", "--porcelain=v1"], "clean"):
+            raise ValueError("workspace contains uncommitted custody state")
+    head = run(["git", "-C", str(path), "rev-parse", "HEAD^{commit}"], "head")
+    exact = run(
+        ["git", "-C", str(path), "rev-parse", f"{base_revision}^{{commit}}"],
+        "base_revision",
+    )
+    if not head or head != exact:
+        raise ValueError("workspace HEAD does not match exact base_revision")
 
 
-def _preclaim_source_ref(repository, base_ref, runner=subprocess.run):
+def _preclaim_source_ref(repository, base_ref, base_revision, runner=subprocess.run):
     """Check reconstructability before creating a reviewer workspace."""
-    result = runner(["git", "ls-remote", "--exit-code", repository, base_ref],
-                    capture_output=True, text=True)
+    candidates = [base_ref] if base_ref.startswith("refs/") else [
+        f"refs/heads/{base_ref}", f"refs/tags/{base_ref}"
+    ]
+    result = runner(
+        ["git", "ls-remote", "--exit-code", repository, *candidates],
+        capture_output=True, text=True,
+        env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/bin/false"))
     if result.returncode != 0:
         raise ValueError("reconstructability_blocked: exact source ref absent from credential-free remote")
+    refs = {line.split("\t", 1)[1] for line in result.stdout.splitlines() if "\t" in line}
+    if len(refs) != 1:
+        raise ValueError("reconstructability_blocked: base_ref is missing or ambiguous")
 
 
 def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
@@ -453,42 +511,42 @@ def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     if configured:
         checkout = _resolve_workspace_root(configured)
         if spec is not None:
-            _verify_source_workspace(checkout, *spec, runner)
+            _verify_source_workspace(checkout, *spec, runner=runner)
         return checkout
     if spec is None:
         os.makedirs(default, exist_ok=True)
         return default
-    repository, base_ref = spec
+    repository, base_ref, base_revision = spec
     target = Path(default)
     if target.exists() and any(target.iterdir()):
         checkout = _resolve_workspace_root(target)
-        _verify_source_workspace(checkout, repository, base_ref, runner)
+        _verify_source_workspace(
+            checkout, repository, base_ref, base_revision, runner=runner
+        )
         return checkout
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.materializing-{os.getpid()}")
     if temporary.exists():
         raise ValueError("workspace materialization temporary path already exists")
     try:
+        clone_command = [
+            "git", "clone", "--quiet", "--no-checkout", "--single-branch",
+            "--branch", base_ref,
+        ]
+        clone_command.extend(["--", repository, str(temporary)])
         result = runner(
-            [
-                "git",
-                "clone",
-                "--quiet",
-                "--single-branch",
-                "--branch",
-                base_ref,
-                "--",
-                repository,
-                str(temporary),
-            ],
+            clone_command,
             capture_output=True,
             text=True,
+            env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/bin/false"),
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "git clone failed").strip()
             raise ValueError(f"workspace materialization failed: {detail[:160]}")
         _resolve_workspace_root(temporary)
-        _verify_source_workspace(temporary, repository, base_ref, runner)
+        _verify_source_workspace(
+            temporary, repository, base_ref, base_revision, checkout=True, runner=runner
+        )
         if target.exists():
             target.rmdir()
         temporary.replace(target)

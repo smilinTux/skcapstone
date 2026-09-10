@@ -9,6 +9,29 @@ The selector's `authoritative_claimability()` function is the dispatch
 authority. If this document and that function disagree, the function wins and
 this document must be corrected.
 
+## Source workspace bindings
+
+Every newly authored `source-only` card carries one complete binding:
+
+```text
+repository     credential-free HTTPS repository URL
+base_ref       named branch or tag, never a commit SHA
+base_revision  exact lowercase 40-hex commit SHA
+```
+
+CLI, MCP, and SDK creation validate the same tuple before writing the card.
+The fleet fetches `base_ref`, proves `base_revision` is reachable from that
+fetch, and checks out the exact revision before claiming the card. A legacy
+card with a SHA in `base_ref` is accepted only when separate metadata supplies
+the named ref and the SHA agrees with `base_revision`. The fleet never guesses
+the remote default branch.
+
+```text
+skcapstone coord create --title 'Bound source work' --tag source-only \
+  --repository https://github.com/smilinTux/skcapstone \
+  --base-ref main --base-revision <40-hex-commit>
+```
+
 ## Governed review cards
 
 A review or rereview card is governed when it carries the `review` label or a

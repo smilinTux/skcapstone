@@ -527,12 +527,14 @@ def _failed_seraph_result(
     monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: events
-        or review_events(
-            reviewer,
-            "revision-1",
-            launched=False,
-            release_revision=release_revision,
+        lambda *_: (
+            events
+            or review_events(
+                reviewer,
+                "revision-1",
+                launched=False,
+                release_revision=release_revision,
+            )
         ),
     )
     return seraph_operation(tmp_path)
@@ -734,6 +736,7 @@ def test_link_materialization_race_launches_once_and_replay_is_denied(
         "head_revision": "a" * 40,
         "workspace_repository": "https://github.com/org/repo",
         "base_ref": "main",
+        "base_revision": "b" * 40,
         "card_generation": card_generation(store.fold("source01")),
         "source_owner": "builder",
         "reviewer_candidates": [{"name": "Seraph", "seat": "seraph", "identity": "seraph"}],

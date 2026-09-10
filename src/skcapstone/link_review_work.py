@@ -117,14 +117,18 @@ def _source_workspace_binding(source: Any, item: dict[str, Any]) -> tuple[str, s
 
 
 def _persist_workspace_binding(
-    store: CardStore, card_id: str, repository: str, base_ref: str
+    store: CardStore, card_id: str, repository: str, base_ref: str, base_revision: str
 ) -> None:
     """Idempotently inherit an exact parent workspace onto a canonical review card."""
 
     card = store.fold(card_id)
     if card is None:
         raise ValueError("review_card_missing")
-    for key, expected in (("repository", repository), ("base_ref", base_ref)):
+    for key, expected in (
+        ("repository", repository),
+        ("base_ref", base_ref),
+        ("base_revision", base_revision),
+    ):
         observed = str(card.links.get(key) or "").strip()
         if observed and observed != expected:
             raise ValueError("review_workspace_binding_conflict")
@@ -158,6 +162,7 @@ def reconcile_review_work(
 
     source_card = str(item["source_card"])
     head_revision = str(item["head_revision"])
+    base_revision = str(item.get("base_revision") or "").lower()
     supplied_generation = str(item["card_generation"])
     review_class = "review"
     card_id = review_card_id(
@@ -174,6 +179,10 @@ def reconcile_review_work(
     if not _DIGEST.fullmatch(evidence_sha256):
         return ReviewWorkResult(
             source_card, head_revision, card_id, False, False, "candidate_evidence_invalid"
+        )
+    if not _SHA.fullmatch(base_revision):
+        return ReviewWorkResult(
+            source_card, head_revision, card_id, False, False, "review_work_base_invalid"
         )
     store = CardStore(home)
     try:
@@ -221,6 +230,7 @@ def reconcile_review_work(
             "link_card_generation": supplied_generation,
             "link_evidence_sha256": evidence_sha256,
             "link_review_class": review_class,
+            "base_revision": base_revision,
         }
         if (
             existing is not None
@@ -286,7 +296,7 @@ def reconcile_review_work(
                 link_value=evidence_sha256,
             )
         try:
-            _persist_workspace_binding(store, card_id, repository, base_ref)
+            _persist_workspace_binding(store, card_id, repository, base_ref, base_revision)
         except ValueError as exc:
             return ReviewWorkResult(source_card, head_revision, card_id, created, False, str(exc))
         card = store.fold(card_id)

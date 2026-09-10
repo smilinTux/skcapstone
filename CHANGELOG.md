@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- Card `ac4e80f5`: validate repository, named base ref, and exact base revision
+  across CLI, MCP, SDK, Link review materialization, and fleet preclaim. Legacy
+  SHA bindings require an explicit named ref, and workers fetch and verify the
+  exact detached revision before claiming work.
+
 - Card `7f3a9c21`: refresh Link's mediated multi-repository lineage input,
   activate bounded Seraph, Tank, and ATLAS dispatch, raise Niobe to three
   Codex workers with alternate lanes disabled, preserve source-head reviewer

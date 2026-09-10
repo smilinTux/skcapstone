@@ -161,3 +161,89 @@ def test_ordinary_repair_card_does_not_require_review_metadata(tmp_path, monkeyp
     card = CardStore(tmp_path).fold("be4e7d38")
     assert card is not None
     assert card.meta == {}
+
+
+def test_source_card_stores_named_ref_and_exact_revision_atomically(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    revision = "c" * 40
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "a1b2c3e3",
+            "--title",
+            "Bound source work",
+            "--tag",
+            "source-only",
+            "--repository",
+            "https://github.com/smilinTux/skcapstone",
+            "--base-ref",
+            "main",
+            "--base-revision",
+            revision,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    card = CardStore(tmp_path).fold("a1b2c3e3")
+    assert card is not None
+    assert card.meta["repository"] == "https://github.com/smilinTux/skcapstone"
+    assert card.meta["base_ref"] == "main"
+    assert card.meta["base_revision"] == revision
+
+
+def test_source_card_rejects_sha_in_base_ref_before_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    revision = "d" * 40
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "a1b2c3e4",
+            "--title",
+            "Malformed source work",
+            "--tag",
+            "source-only",
+            "--repository",
+            "https://github.com/smilinTux/skcapstone",
+            "--base-ref",
+            revision,
+            "--base-revision",
+            revision,
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "base_ref must be a branch or tag name, not a commit SHA" in result.output
+    assert CardStore(tmp_path).fold("a1b2c3e4") is None
+
+
+def test_source_card_lists_missing_binding_fields_before_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "a1b2c3e5",
+            "--title",
+            "Incomplete source work",
+            "--tag",
+            "source-only",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "repository, base_ref, base_revision" in result.output
+    assert CardStore(tmp_path).fold("a1b2c3e5") is None
