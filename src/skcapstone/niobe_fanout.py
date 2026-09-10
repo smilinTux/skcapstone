@@ -433,7 +433,6 @@ def reconcile_fanout_receipt(
 ) -> dict[str, object] | None:
     """Recover one request from its exact claim and worker-runtime tuple."""
 
-    authority = resolve_niobe_runtime_identity(home)
     store = CardStore(home)
     rows = store._read_events(card_id)
     requests = [row for row in rows if row.get("action") == "niobe_fanout_request"]
@@ -449,6 +448,7 @@ def reconcile_fanout_receipt(
     ]
     if not receipts:
         return None
+    authority = resolve_niobe_runtime_identity(home)
     card = store.fold(card_id)
     if card is None:
         raise FanoutBoundaryError("fan-out card is missing")

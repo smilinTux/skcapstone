@@ -306,6 +306,25 @@ def test_receipt_mutations_require_verified_niobe_runtime(
     assert len(store._read_events("deadbeef")) == 3
 
 
+@pytest.mark.parametrize("with_request", [False, True])
+def test_reconciliation_skips_irrelevant_cards_without_niobe_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_request: bool
+) -> None:
+    store = _card(tmp_path, card_id="3a11f071")
+    if with_request:
+        submit_fanout_request(tmp_path, _request(card_id="3a11f071"))
+    store.append_event("3a11f071", "void", "jarvis", reason="superseded review")
+    monkeypatch.setattr(
+        "skcapstone.niobe_fanout.resolve_niobe_runtime_identity",
+        lambda _home: (_ for _ in ()).throw(FanoutBoundaryError("activation missing")),
+    )
+
+    assert (
+        reconcile_fanout_receipt(tmp_path, "3a11f071", live_sessions=set(), live_units=set())
+        is None
+    )
+
+
 def test_reconciliation_rejects_forged_writer_receipt(tmp_path: Path) -> None:
     store = _card(tmp_path)
     request = submit_fanout_request(tmp_path, _request())

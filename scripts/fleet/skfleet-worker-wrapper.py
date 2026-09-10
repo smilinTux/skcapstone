@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 
+from skcapstone.card_store import CardStore
 from skcapstone.fleet.terminal_capacity import retire_worker_generation
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 from skcapstone.seat_mail import poll_mail, startup_hello
@@ -144,6 +145,99 @@ def maintain_process_record(args: argparse.Namespace, pid: int, stop: threading.
     """Refresh direct-seat liveness until the wrapped process exits."""
     while not stop.wait(60):
         write_process_record(args, pid=pid, completion_state="running")
+
+
+def review_supersession(args: argparse.Namespace) -> dict[str, str] | None:
+    """Return exact supersession evidence for this claimed review generation."""
+    card = CardStore(Path.home() / ".skcapstone").fold(args.card)
+    if card is None or "review" not in {str(label).lower() for label in card.labels}:
+        return None
+    claim_revision = str(card.meta.get("_claim_revision") or "")
+    if card.owner != args.owner or claim_revision != args.claim_revision:
+        return None
+    superseded_by = str(card.links.get("superseded_by") or "").strip()
+    if not superseded_by:
+        return None
+    source_card = str(card.meta.get("link_source_card") or "").strip()
+    source_head = str(card.meta.get("link_head_revision") or "").strip().lower()
+    source = CardStore(Path.home() / ".skcapstone").fold(source_card) if source_card else None
+    current_head = ""
+    if source is not None:
+        for key in ("candidate", "commit", "head"):
+            value = str(source.links.get(key) or "").strip().lower()
+            if re.fullmatch(r"[0-9a-f]{40}", value):
+                current_head = value
+                break
+    if not re.fullmatch(r"[0-9a-f]{40}", source_head) or not current_head:
+        return None
+    if current_head == source_head:
+        return None
+    return {
+        "card_id": args.card,
+        "claim_revision": args.claim_revision,
+        "owner": args.owner,
+        "source_card": source_card,
+        "reviewed_head": source_head,
+        "current_head": current_head,
+        "superseded_by": superseded_by,
+    }
+
+
+def monitor_review_supersession(
+    args: argparse.Namespace, child: subprocess.Popen, stop: threading.Event
+) -> None:
+    """Stop only this child process group when its review generation is obsolete."""
+    while child.poll() is None and not stop.wait(15):
+        evidence = review_supersession(args)
+        if evidence is None:
+            continue
+        args.review_supersession = evidence
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        return
+
+
+def record_review_supersession(args: argparse.Namespace, stderr: bytes) -> Path | None:
+    """Preserve immutable findings and exact generation evidence after stopping."""
+    evidence = getattr(args, "review_supersession", None)
+    if not isinstance(evidence, dict):
+        return None
+    try:
+        unit_cgroup = next(
+            line[3:]
+            for line in Path("/proc/self/cgroup").read_text().splitlines()
+            if line.startswith("0::")
+        )
+    except (OSError, StopIteration):
+        unit_cgroup = ""
+    stdout_digest = hashlib.sha256()
+    with args.stdout.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            stdout_digest.update(chunk)
+    payload = {
+        **evidence,
+        "host": args.host,
+        "lane": args.lane,
+        "session_id": args.session,
+        "unit_cgroup": unit_cgroup,
+        "stdout_log": str(args.stdout),
+        "stdout_sha256": stdout_digest.hexdigest(),
+        "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+        "stopped_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    directory = args.evidence_dir / "review-supersession"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{args.card}-{args.claim_revision}.json"
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+    return path
 
 
 def write_startup_report(
@@ -481,10 +575,13 @@ def main() -> int:
     signal.signal(signal.SIGINT, _stop)
     startup_stop = threading.Event()
     startup_thread = None
+    supersession_thread = None
     child = None
     try:
         with args.stdout.open("wb") as stdout:
-            child = subprocess.Popen(args.command, stdout=stdout, stderr=subprocess.PIPE)
+            child = subprocess.Popen(
+                args.command, stdout=stdout, stderr=subprocess.PIPE, start_new_session=True
+            )
             write_process_record(args, pid=child.pid, completion_state="running")
             process_record_stop = threading.Event()
             process_record_thread = threading.Thread(
@@ -498,11 +595,22 @@ def main() -> int:
                     target=monitor_startup, args=(args, child, startup_stop), daemon=True
                 )
                 startup_thread.start()
+            supersession_thread = threading.Thread(
+                target=monitor_review_supersession,
+                args=(args, child, startup_stop),
+                daemon=True,
+            )
+            supersession_thread.start()
             _, stderr = child.communicate()
             process_record_stop.set()
             process_record_thread.join(timeout=1)
         sys.stderr.buffer.write(stderr)
-        record_terminal_exit(args, stderr, child.returncode)
+        final_supersession = review_supersession(args)
+        if final_supersession is not None and not hasattr(args, "review_supersession"):
+            args.review_supersession = final_supersession
+        record_review_supersession(args, stderr)
+        result_code = 75 if hasattr(args, "review_supersession") else child.returncode
+        record_terminal_exit(args, stderr, result_code)
         write_process_record(
             args,
             pid=child.pid,
@@ -510,14 +618,16 @@ def main() -> int:
         )
         emit_work_mail(
             args,
-            "work.complete" if child.returncode == 0 else "work.blocked",
-            f"phase=finished exit_code={child.returncode}",
+            "work.complete" if result_code == 0 else "work.blocked",
+            f"phase=finished exit_code={result_code}",
         )
-        return child.returncode
+        return result_code
     finally:
         startup_stop.set()
         if startup_thread:
             startup_thread.join(timeout=6)
+        if supersession_thread:
+            supersession_thread.join(timeout=1)
         # Always idle the worker projection on any exit path, including SIGTERM.
         idle_owner_projection(args.owner)
         # Publish terminal capacity before the claim can be released. The
