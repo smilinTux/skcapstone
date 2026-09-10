@@ -20,6 +20,7 @@ import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 HOSTS = tuple(os.environ.get("SKFLEET_HOSTS", "chiap01 chiap02 chiap03 chiap04 chiap08").split())
@@ -64,6 +65,9 @@ class Worker:
     evidence_source: str = "systemd+proc+cardstore"
     projection_state: str = "valid"
     projection_error: str = ""
+    completion_state: str = "running"
+    heartbeat_at: str = ""
+    process_record: str = ""
 
 
 REMOTE = r"""
@@ -80,6 +84,7 @@ units={p[0]:p[1:4] for line in unit_lines if len(p:=line.split()) >= 4}
 seen_units=set()
 process_agents=set()
 projection_agents=set()
+projection_identity={}
 for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
     if '.sync-conflict-' in path.name:
         continue
@@ -90,20 +95,45 @@ for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
         agent=projection.get('agent','')
         if isinstance(agent,str) and agent and agent == path.stem:
             projection_agents.add(agent)
+            projection_identity[agent] = (
+                projection.get('current_task') or '',
+                str(projection.get('_claim_revision') or ''),
+                projection.get('state'),
+            )
     except (OSError,json.JSONDecodeError,TypeError,AttributeError):
         pass
 try:
     tmux=set(subprocess.run(['tmux','list-sessions','-F','#{session_name}'],capture_output=True,text=True).stdout.split())
 except Exception:
     tmux=set()
+# Direct-seat processes do not have an ephemeral worker name. They are only
+# eligible when their bounded record and environment provide the full identity.
+process_records={}
+record_dir=Path.home()/'.skcapstone/fleet/direct-seats'
+for record_path in record_dir.glob('*.json'):
+    try:
+        record=json.loads(record_path.read_text())
+        required=('card','owner','claim_revision','heartbeat_at','completion_state','pid')
+        if (all(isinstance(record.get(key), str) and record.get(key) for key in required[:-1])
+                and record.get('completion_state') in {'running', 'completed', 'failed'}
+                and isinstance(record.get('pid'), int) and record['pid'] > 0):
+            process_records[(record['owner'], record['card'], str(record['claim_revision']))]=(record, str(record_path))
+    except (OSError,json.JSONDecodeError,TypeError,AttributeError):
+        pass
 for raw in glob.glob('/proc/[0-9]*/comm'):
     try:
         pid=int(raw.split('/')[2])
         if open(raw).read().strip()!='pi': continue
         env=dict(x.split('=',1) for x in open('/proc/%d/environ'%pid,'rb').read().decode(errors='replace').split('\0') if '=' in x)
         agent=env.get('SKAGENT','')
-        card=agent.rsplit('-',1)[-1]
-        if not agent.startswith('pi-') or len(card)!=8: continue
+        card=env.get('SKFLEET_CARD_ID') or agent.rsplit('-',1)[-1]
+        revision=env.get('SKFLEET_CLAIM_REVISION','')
+        direct_record=process_records.get((agent, card, revision))
+        if direct_record and direct_record[0].get('pid') != pid:
+            direct_record=None
+        direct=direct_record is not None
+        if not agent.startswith('pi-') or (len(card)!=8 and not direct): continue
+        if not (agent and card and (agent.endswith('-'+card) or agent == card)) and not direct: continue
         process_agents.add(agent)
         stat=open('/proc/%d/stat'%pid).read().split()
         ticks=os.sysconf(os.sysconf_names['SC_CLK_TCK'])
@@ -121,8 +151,15 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         try:
             folded=CardStore(Path.home()/'.skcapstone').fold(card)
             status=folded.status.value
-            claim='exact' if folded.owner==agent and folded.meta.get('_claim_revision') else 'mismatch'
-            projection_state='valid' if agent in projection_agents else 'missing'
+            folded_revision=str(folded.meta.get('_claim_revision',''))
+            claim='exact' if (folded.owner==agent and folded_revision
+                              and (not direct or folded_revision == revision)) else 'mismatch'
+            identity=projection_identity.get(agent)
+            direct_projection_exact=(identity is not None and identity[0] == card
+                                     and identity[1] == revision and identity[2] == 'active')
+            projection_state=('valid' if (agent in projection_agents and
+                                          (not direct or direct_projection_exact)) else
+                              'mismatch' if direct else 'missing')
             projection_error=''
             claim_owner=folded.owner or ''
             claim_revision=str(folded.meta.get('_claim_revision',''))
@@ -136,7 +173,9 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
             claim_owner=''
             claim_revision=''
         state=units.get(unit,['not-found','inactive','dead'])
-        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error),sort_keys=True))
+        process_record=direct_record[1] if direct_record else ''
+        record_value=direct_record[0] if direct_record else {}
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error,completion_state=str(record_value.get('completion_state','running')),heartbeat_at=str(record_value.get('heartbeat_at','')),process_record=process_record,evidence_source='direct-seat-record+proc+cardstore' if direct else 'systemd+proc+cardstore'),sort_keys=True))
     except (FileNotFoundError,ProcessLookupError,PermissionError,ValueError,KeyError,json.JSONDecodeError):
         pass
 for unit in sorted(set(units)-seen_units):
@@ -261,6 +300,20 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
         samples.pop(key, None)
         return "MALFORMED PROJECTION", now
     if worker.projection_state == "stale":
+        return "STALE PROJECTION", now
+    heartbeat_fresh = False
+    try:
+        heartbeat = datetime.fromisoformat(worker.heartbeat_at.replace("Z", "+00:00"))
+        heartbeat_fresh = 0 <= now - int(heartbeat.timestamp()) <= 900
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        pass
+    if worker.evidence_source.startswith("direct-seat-record") and (
+        worker.projection_state != "valid"
+        or worker.claim_state != "exact"
+        or worker.completion_state != "running"
+        or not heartbeat_fresh
+        or not worker.process_record
+    ):
         return "STALE PROJECTION", now
     if worker.unit in {"", "not-found"}:
         samples.pop(key, None)
@@ -388,6 +441,15 @@ def main() -> int:
         )
         state = "running; output buffered until completion"
         disposition, first_seen = assess(row, samples, now)
+        direct_active = (
+            row.evidence_source.startswith("direct-seat-record")
+            and row.claim_state == "exact"
+            and row.projection_state == "valid"
+            and disposition != "STALE PROJECTION"
+            and bool(row.process_record)
+        )
+        if direct_active:
+            state = "DIRECT SEAT ACTIVE"
         if disposition == "MALFORMED PROJECTION":
             state = f"MALFORMED PROJECTION ({row.projection_error or 'invalid'})"
             alerts.append((row, "malformed-projection"))
@@ -406,7 +468,7 @@ def main() -> int:
         elif row in worker_rows and counts[row.card] > 1:
             state = "DUPLICATE card process"
             alerts.append((row, "duplicate"))
-        elif owner == "orphan-process":
+        elif owner == "orphan-process" and not direct_active:
             state = "ORPHAN: no unit or tmux owner"
             alerts.append((row, "orphan"))
         elif row.claim_state != "exact":

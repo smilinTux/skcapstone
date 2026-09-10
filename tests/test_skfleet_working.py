@@ -293,6 +293,75 @@ def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_proj
     assert row.projection_error == ("ValueError" if broken_projection else "")
 
 
+def test_direct_seat_active_requires_exact_process_projection_claim_join(
+    monkeypatch, tmp_path, capsys
+):
+    """The c1841391 seat process is active only after every identity joins."""
+    monitor = load_monitor()
+    exact = worker(
+        monitor,
+        agent="pi-chiap08",
+        card="deadbeef",
+        unit="legacy",
+        evidence_source="direct-seat-record+proc+cardstore",
+        completion_state="running",
+        heartbeat_at="1970-01-01T00:01:40+00:00",
+        process_record="/home/test/.skcapstone/fleet/direct-seats/pi-chiap08.json",
+    )
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [exact])
+    assert result == 0
+    assert "DIRECT SEAT ACTIVE" in output
+
+    mismatched = worker(
+        monitor,
+        agent="pi-chiap08",
+        card="deadbeef",
+        unit="legacy",
+        evidence_source="direct-seat-record+proc+cardstore",
+        claim_state="mismatch",
+        completion_state="running",
+        heartbeat_at="1970-01-01T00:01:40+00:00",
+    )
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [mismatched])
+    assert result == 0
+    assert "DIRECT SEAT ACTIVE" not in output
+    assert "STALE PROJECTION" in output
+
+
+def test_direct_seat_terminal_process_is_not_active(monkeypatch, tmp_path, capsys):
+    """A bounded terminal record never presents as a live fleet worker."""
+    monitor = load_monitor()
+    row = worker(
+        monitor,
+        agent="pi-chiap08",
+        card="deadbeef",
+        unit="legacy",
+        evidence_source="direct-seat-record+proc+cardstore",
+        completion_state="completed",
+        heartbeat_at="1970-01-01T00:01:40+00:00",
+    )
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row])
+    assert result == 0
+    assert "DIRECT SEAT ACTIVE" not in output
+
+
+def test_direct_seat_stale_heartbeat_is_not_active(monkeypatch, tmp_path, capsys):
+    monitor = load_monitor()
+    row = worker(
+        monitor,
+        agent="pi-chiap08",
+        unit="legacy",
+        evidence_source="direct-seat-record+proc+cardstore",
+        completion_state="running",
+        heartbeat_at="1970-01-01T00:00:01+00:00",
+        process_record="/bounded/record.json",
+    )
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row], now=1000)
+    assert result == 0
+    assert "DIRECT SEAT ACTIVE" not in output
+    assert "STALE PROJECTION" in output
+
+
 def test_collect_parses_unit_diagnostic_and_ignores_noise(monkeypatch):
     """The SSH wrapper preserves a unit fallback row and separate diagnostics."""
     monitor = load_monitor()
